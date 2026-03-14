@@ -1,6 +1,7 @@
 FROM ghcr.io/ggml-org/llama.cpp:server-cuda
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV LD_LIBRARY_PATH=/app/lib:/app:$LD_LIBRARY_PATH
 
 # Install Node.js 20 + python3 (for model download)
 RUN apt-get update && apt-get install -y \
