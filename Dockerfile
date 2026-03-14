@@ -1,11 +1,13 @@
 FROM ghcr.io/ggml-org/llama.cpp:server-cuda AS llama
 
-FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Copy pre-built llama-server binary and libs
-COPY --from=llama /llama-server /llama.cpp/build/bin/llama-server
+COPY --from=llama /app/llama-server /llama.cpp/build/bin/llama-server
+COPY --from=llama /app/lib/ /usr/local/lib/
+RUN ldconfig
 
 # Install Node.js 20 + python3 (for model download)
 RUN apt-get update && apt-get install -y \
