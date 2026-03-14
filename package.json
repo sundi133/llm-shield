@@ -2,6 +2,7 @@
   "name": "llama-serverless",
   "version": "1.0.0",
   "type": "module",
+  "license": "MIT",
   "dependencies": {
     "runpod-sdk": "^1.0.0",
     "node-fetch": "^3.3.2"
