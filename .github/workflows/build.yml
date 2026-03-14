@@ -29,5 +29,6 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
+            ${{ env.DOCKERHUB_USER }}/llm-shield:v2
             ${{ env.DOCKERHUB_USER }}/llm-shield:latest
             ${{ env.DOCKERHUB_USER }}/llm-shield:${{ github.sha }}
