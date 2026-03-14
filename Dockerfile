@@ -1,25 +1,19 @@
-FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
+FROM ghcr.io/ggml-org/llama.cpp:server-cuda AS llama
+
+FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PATH=/usr/local/cuda-12.8/bin:$PATH
-ENV LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH
 
-# Install system deps + Node.js 20
+# Copy pre-built llama-server binary and libs
+COPY --from=llama /llama-server /llama.cpp/build/bin/llama-server
+
+# Install Node.js 20 + python3 (for model download)
 RUN apt-get update && apt-get install -y \
-    git cmake build-essential \
     python3 python3-pip \
-    wget curl ca-certificates \
+    curl ca-certificates \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
-
-# Build llama.cpp with CUDA
-RUN git clone https://github.com/ggml-org/llama.cpp /llama.cpp
-WORKDIR /llama.cpp
-RUN cmake -B build \
-    -DGGML_CUDA=ON \
-    -DCMAKE_CUDA_ARCHITECTURES="86;89;90" \
-    && cmake --build build --config Release -j2
 
 # Download models
 RUN pip3 install huggingface_hub && python3 -c "\
