@@ -15,6 +15,13 @@ RUN apt-get update && apt-get install -y \
     python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
+# Download models
+RUN pip3 install --no-cache-dir huggingface_hub && python3 -c "\
+from huggingface_hub import hf_hub_download; \
+hf_hub_download(repo_id='unsloth/Qwen3-8B-GGUF',   filename='Qwen3-8B-Q4_K_M.gguf',   local_dir='/models'); \
+hf_hub_download(repo_id='unsloth/Qwen3-0.6B-GGUF', filename='Qwen3-0.6B-Q4_K_M.gguf', local_dir='/models'); \
+print('Models downloaded!')"
+
 # Install Python deps
 WORKDIR /runpod
 COPY requirements.txt .

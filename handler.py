@@ -4,8 +4,8 @@ import requests
 import time
 
 LLAMA_URL = "http://127.0.0.1:8000"
-MODEL_PATH = "/runpod-volume/models/Qwen3-8B-Q4_K_M.gguf"
-DRAFT_MODEL_PATH = "/runpod-volume/models/Qwen3-0.6B-Q4_K_M.gguf"
+MODEL_PATH = "/models/Qwen3-8B-Q4_K_M.gguf"
+DRAFT_MODEL_PATH = "/models/Qwen3-0.6B-Q4_K_M.gguf"
 
 def start_server():
     subprocess.Popen([
