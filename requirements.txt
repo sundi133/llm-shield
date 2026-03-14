@@ -1,2 +1,4 @@
-runpod
+fastapi
+uvicorn
 requests
+pydantic
