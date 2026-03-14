@@ -10,28 +10,18 @@ RUN find / -name "libmtmd.so*" -o -name "libllama.so*" -o -name "libggml*.so*" 2
     && find / -name "libggml*.so*" 2>/dev/null -exec cp -P {} /usr/local/lib/ \; \
     && ldconfig
 
-# Install Node.js 20 + python3 (for model download)
+# Install python3 + pip
 RUN apt-get update && apt-get install -y \
     python3 python3-pip \
-    curl ca-certificates \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Download models
-RUN pip3 install huggingface_hub && python3 -c "\
-from huggingface_hub import hf_hub_download; \
-hf_hub_download(repo_id='unsloth/Qwen3-8B-GGUF',   filename='Qwen3-8B-Q4_K_M.gguf',   local_dir='/models'); \
-hf_hub_download(repo_id='unsloth/Qwen3-0.6B-GGUF', filename='Qwen3-0.6B-Q4_K_M.gguf', local_dir='/models'); \
-print('Models downloaded!')"
-
-# Install Node deps
+# Install Python deps
 WORKDIR /runpod
-COPY package.json .
-RUN npm install
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-COPY handler.js .
+COPY handler.py .
 
-# Override the default entrypoint (llama-server) so Node starts instead
+# Override the default entrypoint (llama-server) so Python starts instead
 ENTRYPOINT []
-CMD ["node", "handler.js"]
+CMD ["python3", "handler.py"]
