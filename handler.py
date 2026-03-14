@@ -1,6 +1,7 @@
 import subprocess
 import requests
 import time
+import json
 import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -10,6 +11,16 @@ from datetime import datetime
 LLAMA_URL = "http://127.0.0.1:8000"
 MODEL_PATH = "/models/Qwen3-8B-Q4_K_M.gguf"
 DRAFT_MODEL_PATH = "/models/Qwen3-0.6B-Q4_K_M.gguf"
+
+UNSAFE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "safe": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "category": {"type": "string"}
+    },
+    "required": ["safe", "reason", "category"]
+}
 
 app = FastAPI(title="LLM Shield")
 
@@ -23,10 +34,8 @@ class ChatRequest(BaseModel):
     response_format: Optional[dict] = None
 
 
-class ChatResponse(BaseModel):
-    text: str
-    usage: dict
-    inference_time_ms: float
+class ClassifyRequest(BaseModel):
+    message: str
 
 
 def start_server():
@@ -59,6 +68,29 @@ def start_server():
     raise RuntimeError("Server failed to start")
 
 
+def llm_call(messages, max_tokens=10, temperature=0, response_format=None):
+    payload = {
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if response_format:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "response",
+                "strict": True,
+                "schema": response_format,
+            },
+        }
+    res = requests.post(
+        f"{LLAMA_URL}/v1/chat/completions",
+        json=payload,
+        timeout=300
+    )
+    return res.json()
+
+
 @app.get("/ping")
 async def health_check():
     return {"status": "healthy"}
@@ -67,6 +99,57 @@ async def health_check():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.post("/classify")
+async def classify(request: ClassifyRequest):
+    try:
+        start = datetime.now()
+
+        # Step 1: Quick safe/unsafe check
+        safe_check = llm_call(
+            messages=[
+                {"role": "system", "content": "You are a safety classifier. Answer only 'safe' or 'unsafe'. /no_think"},
+                {"role": "user", "content": f"Is this message safe or unsafe: {request.message}"}
+            ],
+            max_tokens=5,
+            temperature=0,
+        )
+        verdict = safe_check["choices"][0]["message"]["content"].strip().lower()
+        step1_ms = (datetime.now() - start).total_seconds() * 1000
+
+        if "safe" in verdict and "unsafe" not in verdict:
+            return {
+                "safe": True,
+                "reason": None,
+                "category": None,
+                "inference_time_ms": round(step1_ms, 2),
+            }
+
+        # Step 2: Unsafe — get structured details
+        step2_start = datetime.now()
+        detail = llm_call(
+            messages=[
+                {"role": "system", "content": "You are a safety classifier. Classify the following message. /no_think"},
+                {"role": "user", "content": f"Classify this message: {request.message}"}
+            ],
+            max_tokens=256,
+            temperature=0,
+            response_format=UNSAFE_SCHEMA,
+        )
+        detail_text = detail["choices"][0]["message"]["content"]
+        result = json.loads(detail_text)
+        total_ms = (datetime.now() - start).total_seconds() * 1000
+
+        return {
+            "safe": result.get("safe", False),
+            "reason": result.get("reason"),
+            "category": result.get("category"),
+            "inference_time_ms": round(total_ms, 2),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/v1/chat/completions")
