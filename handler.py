@@ -20,6 +20,7 @@ class ChatRequest(BaseModel):
     system: Optional[str] = "You are a helpful assistant. /no_think"
     max_tokens: Optional[int] = 512
     temperature: Optional[float] = 0.7
+    response_format: Optional[dict] = None
 
 
 class ChatResponse(BaseModel):
@@ -83,13 +84,25 @@ async def chat_completions(request: ChatRequest):
 
         start = datetime.now()
 
+        payload = {
+            "messages": messages,
+            "max_tokens": request.max_tokens,
+            "temperature": request.temperature,
+        }
+
+        if request.response_format:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response",
+                    "strict": True,
+                    "schema": request.response_format,
+                },
+            }
+
         res = requests.post(
             f"{LLAMA_URL}/v1/chat/completions",
-            json={
-                "messages": messages,
-                "max_tokens": request.max_tokens,
-                "temperature": request.temperature,
-            },
+            json=payload,
             timeout=300
         )
         data = res.json()
