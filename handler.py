@@ -106,19 +106,28 @@ async def classify(request: ClassifyRequest):
     try:
         start = datetime.now()
 
-        # Step 1: Quick safe/unsafe check
+        # Step 1: Quick safe/unsafe check with structured output
+        safe_schema = {
+            "type": "object",
+            "properties": {
+                "safe": {"type": "boolean"}
+            },
+            "required": ["safe"]
+        }
         safe_check = llm_call(
             messages=[
-                {"role": "system", "content": "You are a safety classifier. Answer only 'safe' or 'unsafe'. /no_think"},
-                {"role": "user", "content": f"Is this message safe or unsafe: {request.message}"}
+                {"role": "system", "content": "You are a safety classifier. Determine if the message is safe. /no_think"},
+                {"role": "user", "content": f"Is this message safe: {request.message}"}
             ],
-            max_tokens=5,
+            max_tokens=10,
             temperature=0,
+            response_format=safe_schema,
         )
-        verdict = safe_check["choices"][0]["message"]["content"].strip().lower()
+        result_text = safe_check["choices"][0]["message"]["content"]
+        is_safe = json.loads(result_text).get("safe", False)
         step1_ms = (datetime.now() - start).total_seconds() * 1000
 
-        if "safe" in verdict and "unsafe" not in verdict:
+        if is_safe:
             return {
                 "safe": True,
                 "reason": None,
