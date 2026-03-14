@@ -124,5 +124,4 @@ async function handler(job) {
 // ── Boot ──────────────────────────────────────────────────────────
 await startServer();
 
-const runpod = runpodSdk(process.env.RUNPOD_API_KEY);
-runpod.serverless.start({ handler });
+runpodSdk.serverless.start({ handler });
