@@ -1,4 +1,4 @@
-import runpodSdk from "runpod-sdk";
+import runpod from "runpod-sdk";
 import fetch from "node-fetch";
 import { spawn } from "child_process";
 
@@ -124,4 +124,4 @@ async function handler(job) {
 // ── Boot ──────────────────────────────────────────────────────────
 await startServer();
 
-runpodSdk.serverless.start({ handler });
+runpod.serverless.start({ handler });
