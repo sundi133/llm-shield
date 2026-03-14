@@ -3,8 +3,8 @@ import fetch from "node-fetch";
 import { spawn } from "child_process";
 
 const LLAMA_URL = "http://127.0.0.1:8000";
-const MODEL_PATH = "/runpod-volume/models/Qwen3-8B-Q4_K_M.gguf";
-const DRAFT_MODEL_PATH = "/runpod-volume/models/Qwen3-0.6B-Q4_K_M.gguf";
+const MODEL_PATH = "/models/Qwen3-8B-Q4_K_M.gguf";
+const DRAFT_MODEL_PATH = "/models/Qwen3-0.6B-Q4_K_M.gguf";
 
 // ── Start llama-server ────────────────────────────────────────────
 function startServer() {
