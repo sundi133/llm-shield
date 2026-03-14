@@ -18,8 +18,8 @@ RUN git clone https://github.com/ggml-org/llama.cpp /llama.cpp
 WORKDIR /llama.cpp
 RUN cmake -B build \
     -DGGML_CUDA=ON \
-    -DCMAKE_CUDA_ARCHITECTURES="86;89;90;120" \
-    && cmake --build build --config Release -j$(nproc)
+    -DCMAKE_CUDA_ARCHITECTURES="86;89;90" \
+    && cmake --build build --config Release -j2
 
 # Download models
 RUN pip3 install huggingface_hub && python3 -c "\
