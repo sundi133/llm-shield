@@ -35,11 +35,14 @@ def start_server():
         "-md", DRAFT_MODEL_PATH,
         "-ngl", "99",
         "-ngld", "99",
-        "-c", "32768",
+        "-c", "8192",
         "--flash-attn", "auto",
         "--host", "0.0.0.0",
         "--port", "8000",
-        "-np", "4",
+        "-np", "8",
+        "--draft-max", "16",
+        "--cache-type-k", "q8_0",
+        "--cache-type-v", "q8_0",
         "--log-disable",
     ])
     for i in range(60):
