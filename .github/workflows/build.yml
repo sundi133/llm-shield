@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
 
+env:
+  DOCKERHUB_USER: sundi133
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,7 +19,7 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
+          username: ${{ env.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and Push
@@ -26,5 +29,5 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/llm-shield:latest
-            ${{ secrets.DOCKER_USERNAME }}/llm-shield:${{ github.sha }}
+            ${{ env.DOCKERHUB_USER }}/llm-shield:latest
+            ${{ env.DOCKERHUB_USER }}/llm-shield:${{ github.sha }}
