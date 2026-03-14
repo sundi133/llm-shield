@@ -1,13 +1,6 @@
-FROM ghcr.io/ggml-org/llama.cpp:server-cuda AS llama
-
-FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+FROM ghcr.io/ggml-org/llama.cpp:server-cuda
 
 ENV DEBIAN_FRONTEND=noninteractive
-
-# Copy pre-built llama-server binary and libs
-COPY --from=llama /app/llama-server /llama.cpp/build/bin/llama-server
-COPY --from=llama /app/lib/ /usr/local/lib/
-RUN ldconfig
 
 # Install Node.js 20 + python3 (for model download)
 RUN apt-get update && apt-get install -y \
@@ -25,10 +18,12 @@ hf_hub_download(repo_id='unsloth/Qwen3-0.6B-GGUF', filename='Qwen3-0.6B-Q4_K_M.g
 print('Models downloaded!')"
 
 # Install Node deps
-WORKDIR /app
+WORKDIR /runpod
 COPY package.json .
 RUN npm install
 
 COPY handler.js .
 
+# Override the default entrypoint (llama-server) so Node starts instead
+ENTRYPOINT []
 CMD ["node", "handler.js"]

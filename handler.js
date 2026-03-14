@@ -9,7 +9,7 @@ const DRAFT_MODEL_PATH = "/models/Qwen3-0.6B-Q4_K_M.gguf";
 // ── Start llama-server ────────────────────────────────────────────
 function startServer() {
   return new Promise((resolve, reject) => {
-    const proc = spawn("/llama.cpp/build/bin/llama-server", [
+    const proc = spawn("/app/llama-server", [
       "-m",           MODEL_PATH,
       "-md",          DRAFT_MODEL_PATH,
       "-ngl",         "99",
