@@ -2,7 +2,7 @@ import runpodSdk from "runpod-sdk";
 import fetch from "node-fetch";
 import { spawn } from "child_process";
 
-const LLAMA_URL = "http://127.0.0.1:8080";
+const LLAMA_URL = "http://127.0.0.1:8000";
 const MODEL_PATH = "/models/Qwen3-8B-Q4_K_M.gguf";
 const DRAFT_MODEL_PATH = "/models/Qwen3-0.6B-Q4_K_M.gguf";
 
@@ -17,7 +17,7 @@ function startServer() {
       "-c",           "32768",
       "--flash-attn", "auto",
       "--host",       "127.0.0.1",
-      "--port",       "8080",
+      "--port",       "8000",
       "-np",          "4",
       "--log-disable",
     ]);
@@ -54,25 +54,20 @@ function startServer() {
 async function handler(job) {
   const input = job.input ?? {};
 
-  const prompt      = input.prompt ?? "";
-  const system      = input.system ?? "You are a helpful assistant. /no_think";
-  const maxTokens   = input.max_tokens ?? 512;
-  const temperature = input.temperature ?? 0.7;
+  const maxTokens   = input.max_tokens ?? 10;
+  const temperature = input.temperature ?? 0;
   const stream      = input.stream ?? false;
   let   messages    = input.messages ?? [];
 
-  // Build messages if plain prompt provided
-  if (prompt && messages.length === 0) {
+  // Build messages from prompt if no messages provided
+  if (messages.length === 0 && input.prompt) {
     messages = [
-      { role: "system", content: system },
-      { role: "user",   content: prompt },
+      { role: "system", content: input.system ?? "You are a helpful assistant. /no_think" },
+      { role: "user",   content: input.prompt },
     ];
-  } else if (messages.length > 0 && !messages.find(m => m.role === "system")) {
-    messages.unshift({ role: "system", content: system });
   }
 
   const payload = {
-    model:       "qwen3-8b",
     messages,
     max_tokens:  maxTokens,
     temperature,
