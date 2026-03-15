@@ -1,0 +1,242 @@
+guardrails:
+  # --- Fast-tier input guardrails (CPU-only) ---
+  keyword_blocklist:
+    enabled: true
+    action: block
+    settings:
+      keywords:
+        - hack
+        - exploit
+        - malware
+        - ransomware
+      case_insensitive: true
+
+  length_limit:
+    enabled: true
+    action: block
+    settings:
+      max_chars: 10000
+      max_tokens: 4096
+      encoding: cl100k_base
+
+  regex_pattern:
+    enabled: true
+    action: block
+    settings:
+      patterns:
+        - pattern: '\b\d{3}-\d{2}-\d{4}\b'
+          description: "SSN pattern"
+          action: block
+        - pattern: 'password\s*=\s*\S+'
+          description: "Password in text"
+          action: warn
+
+  pii_detection:
+    enabled: true
+    action: warn
+    settings:
+      entities:
+        - PHONE_NUMBER
+        - EMAIL_ADDRESS
+        - CREDIT_CARD
+        - US_SSN
+        - IP_ADDRESS
+      score_threshold: 0.7
+
+  language_detection:
+    enabled: false
+    action: warn
+    settings:
+      allowed_languages:
+        - en
+
+  sentiment:
+    enabled: false
+    action: warn
+    settings:
+      min_polarity: -0.8
+
+  rate_limiter:
+    enabled: true
+    action: block
+    settings:
+      max_requests: 100
+      window_seconds: 60
+
+  # --- Slow-tier input guardrails (LLM-based) ---
+  adversarial_detection:
+    enabled: true
+    action: block
+    settings:
+      confidence_threshold: 0.7
+
+  topic_restriction:
+    enabled: true
+    action: block
+    settings:
+      blocked_topics:
+        - weapons
+        - illegal_activities
+
+  topic_enforcement:
+    enabled: false
+    action: block
+    settings:
+      allowed_topics: []
+      blocked_topics: []
+      system_purpose: ""
+      confidence_threshold: 0.6
+
+  # --- Fast-tier output guardrails ---
+  role_redaction:
+    enabled: true
+    action: warn
+    settings:
+      redaction_marker: "[REDACTED]"
+      pii_clearance_required: confidential
+      pii_patterns:
+        ssn: '\b\d{3}-\d{2}-\d{4}\b'
+        credit_card: '\b(?:\d{4}[- ]?){3}\d{4}\b'
+        email: '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        phone: '\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b'
+
+  # --- Slow-tier output guardrails (LLM-based) ---
+  hallucinated_links:
+    enabled: false
+    action: warn
+    settings: {}
+
+  tone_enforcement:
+    enabled: false
+    action: warn
+    settings:
+      tone_guidelines: "Professional, helpful, and concise. Avoid slang, sarcasm, or overly casual language."
+
+  factual_grounding:
+    enabled: false
+    action: warn
+    settings:
+      require_citations: false
+
+  bias_detection:
+    enabled: false
+    action: warn
+    settings:
+      categories:
+        - gender
+        - racial
+        - age
+        - religious
+        - socioeconomic
+        - disability
+
+  # --- Agentic guardrails ---
+  rbac_guard:
+    enabled: true
+    action: block
+    settings: {}
+
+  data_access_guard:
+    enabled: true
+    action: block
+    settings: {}
+
+  mcp_guard:
+    enabled: true
+    action: block
+    settings:
+      require_registration: true
+      min_trust_score: 0.5
+
+  action_guard:
+    enabled: true
+    action: block
+    settings:
+      max_actions_per_type:
+        delete: 5
+        modify: 10
+        execute: 20
+      sensitive_actions:
+        - delete
+        - modify_permissions
+        - export_data
+      require_approval_for:
+        - delete_account
+        - bulk_export
+
+rbac:
+  roles:
+    customer-support:
+      allowed_tools:
+        - search_knowledge_base
+        - get_customer_info
+      denied_tools:
+        - execute_sql
+        - modify_account
+      max_tokens_per_request: 2048
+      rate_limit: "60/min"
+      data_clearance: internal
+      allowed_data_scopes:
+        - customer_faq
+        - product_info
+      denied_data_scopes:
+        - financial_records
+        - employee_data
+
+    internal-analyst:
+      allowed_tools:
+        - search_knowledge_base
+        - execute_sql
+        - generate_report
+      denied_tools:
+        - modify_account
+        - delete_records
+      max_tokens_per_request: 4096
+      rate_limit: "120/min"
+      data_clearance: confidential
+      allowed_data_scopes:
+        - customer_faq
+        - product_info
+        - financial_records
+      denied_data_scopes:
+        - employee_data
+
+    admin:
+      allowed_tools: []
+      denied_tools: []
+      max_tokens_per_request: 8192
+      rate_limit: "300/min"
+      data_clearance: restricted
+      allowed_data_scopes: []
+      denied_data_scopes: []
+
+  agents:
+    support-bot-1: customer-support
+    analytics-agent: internal-analyst
+    admin-agent: admin
+
+pipeline:
+  fast_timeout_ms: 500
+  slow_timeout_ms: 5000
+
+auth:
+  enabled: false
+  # API keys — plaintext or hashed with "sha256:" prefix
+  # Use SHIELD_API_KEYS env var to add keys without editing this file
+  # Use SHIELD_AUTH_ENABLED=true env var to enable auth
+  api_keys: []
+  # Paths that don't require authentication
+  public_paths:
+    - /health
+    - /ping
+    - /docs
+    - /redoc
+    - /openapi.json
+    - /docs/oauth2-redirect
+    - /playground
+    - /static
+
+llm_backend:
+  url: "http://127.0.0.1:8000"
+  model_path: "/models/Qwen3-8B-Q4_K_M.gguf"
+  draft_model_path: "/models/Qwen3-0.6B-Q4_K_M.gguf"

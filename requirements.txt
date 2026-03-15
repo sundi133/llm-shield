@@ -2,3 +2,13 @@ fastapi
 uvicorn
 requests
 pydantic
+httpx
+pyyaml
+pydantic-settings
+pyahocorasick
+tiktoken
+langdetect
+textblob
+aiosqlite
+pytest
+pytest-asyncio

@@ -2,3 +2,9 @@ node_modules
 .git
 *.md
 .env
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+storage/audit.db
+tests/

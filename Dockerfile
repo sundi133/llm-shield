@@ -27,7 +27,14 @@ WORKDIR /runpod
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
+# Copy application code
 COPY handler.py .
+COPY config/ config/
+COPY core/ core/
+COPY guardrails/ guardrails/
+COPY api/ api/
+COPY storage/ storage/
+COPY static/ static/
 
 # Override the default entrypoint (llama-server) so Python starts instead
 ENTRYPOINT []

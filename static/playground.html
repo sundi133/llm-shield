@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Shield Playground</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem 1rem;
+  }
+  h1 { color: #58a6ff; margin-bottom: 0.5rem; font-size: 1.8rem; }
+  .subtitle { color: #8b949e; margin-bottom: 2rem; font-size: 0.95rem; }
+  .container { width: 100%; max-width: 800px; }
+  .card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  label { display: block; color: #8b949e; font-size: 0.85rem; margin-bottom: 0.4rem; font-weight: 600; }
+  textarea, input[type="text"] {
+    width: 100%;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #c9d1d9;
+    padding: 0.75rem;
+    font-family: inherit;
+    font-size: 0.95rem;
+    resize: vertical;
+  }
+  textarea { min-height: 120px; }
+  textarea:focus, input:focus { outline: none; border-color: #58a6ff; }
+  .row { display: flex; gap: 1rem; margin-top: 1rem; }
+  .row > * { flex: 1; }
+  button {
+    padding: 0.7rem 1.5rem;
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .btn-classify { background: #238636; color: #fff; border-color: #238636; }
+  .btn-classify:hover { background: #2ea043; }
+  .btn-shield { background: #1f6feb; color: #fff; border-color: #1f6feb; }
+  .btn-shield:hover { background: #388bfd; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .results-panel {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 1rem;
+    min-height: 100px;
+    white-space: pre-wrap;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    overflow-x: auto;
+  }
+  .badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-right: 0.5rem;
+  }
+  .badge-safe { background: #238636; color: #fff; }
+  .badge-unsafe { background: #da3633; color: #fff; }
+  .latency { color: #8b949e; font-size: 0.8rem; margin-top: 0.5rem; }
+  .result-header { display: flex; align-items: center; margin-bottom: 0.75rem; }
+  .guardrail-item {
+    border-left: 3px solid #30363d;
+    padding: 0.4rem 0.8rem;
+    margin: 0.4rem 0;
+    font-size: 0.85rem;
+  }
+  .guardrail-pass { border-left-color: #238636; }
+  .guardrail-block { border-left-color: #da3633; }
+  .guardrail-warn { border-left-color: #d29922; }
+</style>
+</head>
+<body>
+  <h1>LLM Shield Playground</h1>
+  <p class="subtitle">Test guardrails interactively</p>
+
+  <div class="container">
+    <div class="card">
+      <label for="api-key">API Key (required if auth enabled)</label>
+      <input type="text" id="api-key" placeholder="Your Shield API key">
+
+      <label for="agent-key" style="margin-top: 1rem;">Agent Key (optional, for RBAC)</label>
+      <input type="text" id="agent-key" placeholder="e.g. support-bot-1">
+
+      <label for="input-text" style="margin-top: 1rem;">Message</label>
+      <textarea id="input-text" placeholder="Type a message to test against the guardrails..."></textarea>
+
+      <div class="row">
+        <button class="btn-classify" id="btn-classify" onclick="doClassify()">Classify</button>
+        <button class="btn-shield" id="btn-shield" onclick="doShieldChat()">Shield Chat</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <label>Results</label>
+      <div class="results-panel" id="results">Awaiting input...</div>
+    </div>
+  </div>
+
+<script>
+  const resultsEl = document.getElementById("results");
+
+  function getInput() {
+    return document.getElementById("input-text").value.trim();
+  }
+
+  function getAgentKey() {
+    return document.getElementById("agent-key").value.trim();
+  }
+
+  function getApiKey() {
+    return document.getElementById("api-key").value.trim();
+  }
+
+  function buildHeaders() {
+    const headers = { "Content-Type": "application/json" };
+    const apiKey = getApiKey();
+    if (apiKey) headers["Authorization"] = "Bearer " + apiKey;
+    const agentKey = getAgentKey();
+    if (agentKey) headers["X-Agent-Key"] = agentKey;
+    return headers;
+  }
+
+  function setLoading(loading) {
+    document.getElementById("btn-classify").disabled = loading;
+    document.getElementById("btn-shield").disabled = loading;
+    if (loading) {
+      resultsEl.innerHTML = "Processing...";
+    }
+  }
+
+  function renderClassifyResult(data, latencyMs) {
+    const safe = data.safe;
+    const badge = safe
+      ? '<span class="badge badge-safe">SAFE</span>'
+      : '<span class="badge badge-unsafe">UNSAFE</span>';
+
+    let html = '<div class="result-header">' + badge + '</div>';
+
+    if (data.guardrail_results && data.guardrail_results.results) {
+      html += renderGuardrails(data.guardrail_results.results);
+    }
+
+    if (data.reason) {
+      html += '\n<strong>Reason:</strong> ' + escapeHtml(data.reason);
+    }
+
+    html += '<div class="latency">Latency: ' + latencyMs + 'ms</div>';
+    resultsEl.innerHTML = html;
+  }
+
+  function renderShieldResult(data, latencyMs) {
+    const blocked = data.blocked;
+    const badge = blocked
+      ? '<span class="badge badge-unsafe">BLOCKED</span>'
+      : '<span class="badge badge-safe">ALLOWED</span>';
+
+    let html = '<div class="result-header">' + badge + '</div>';
+
+    if (data.block_reason) {
+      html += '<strong>Block reason:</strong> ' + escapeHtml(data.block_reason) + '\n\n';
+    }
+
+    if (data.text) {
+      html += '<strong>Response:</strong>\n' + escapeHtml(data.text) + '\n\n';
+    }
+
+    if (data.guardrail_results && data.guardrail_results.results) {
+      html += renderGuardrails(data.guardrail_results.results);
+    }
+
+    html += '<div class="latency">Latency: ' + latencyMs + 'ms</div>';
+    resultsEl.innerHTML = html;
+  }
+
+  function renderGuardrails(results) {
+    let html = '<strong>Guardrail Results:</strong>\n';
+    for (const r of results) {
+      const cls = r.action === "block" ? "guardrail-block"
+                : r.action === "warn" ? "guardrail-warn"
+                : "guardrail-pass";
+      html += '<div class="guardrail-item ' + cls + '">'
+            + '<strong>' + escapeHtml(r.guardrail_name) + '</strong> '
+            + '[' + r.action + '] '
+            + (r.message ? escapeHtml(r.message) : '')
+            + '</div>';
+    }
+    return html;
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  async function doClassify() {
+    const message = getInput();
+    if (!message) { resultsEl.innerHTML = "Please enter a message."; return; }
+
+    setLoading(true);
+    const start = performance.now();
+    try {
+      const resp = await fetch("/classify", {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify({ message: message }),
+      });
+      const data = await resp.json();
+      const latency = Math.round(performance.now() - start);
+      renderClassifyResult(data, latency);
+    } catch (err) {
+      resultsEl.innerHTML = "Error: " + escapeHtml(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function doShieldChat() {
+    const message = getInput();
+    if (!message) { resultsEl.innerHTML = "Please enter a message."; return; }
+
+    setLoading(true);
+    const start = performance.now();
+    try {
+      const resp = await fetch("/v1/shield/chat/completions", {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify({ prompt: message }),
+      });
+      const data = await resp.json();
+      const latency = Math.round(performance.now() - start);
+      renderShieldResult(data, latency);
+    } catch (err) {
+      resultsEl.innerHTML = "Error: " + escapeHtml(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+</script>
+</body>
+</html>
