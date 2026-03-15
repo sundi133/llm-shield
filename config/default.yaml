@@ -63,6 +63,18 @@ guardrails:
       max_requests: 100
       window_seconds: 60
 
+  system_prompt_leak:
+    enabled: true
+    action: block
+    settings:
+      extra_patterns: []
+
+  toxicity:
+    enabled: false
+    action: block
+    settings:
+      threshold: 0.7
+
   # --- Slow-tier input guardrails (LLM-based) ---
   safety_check:
     enabled: true

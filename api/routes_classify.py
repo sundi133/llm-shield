@@ -42,6 +42,13 @@ _NAME_MAP = {
     "rate_limiter": "rate_limiter",
     "safety-check": "safety_check",
     "safety_check": "safety_check",
+    "system-prompt-leak": "system_prompt_leak",
+    "system_prompt_leak": "system_prompt_leak",
+    "toxicity": "toxicity",
+    "toxicity-detection": "toxicity",
+    "input-toxicity": "toxicity",
+    "custom-regex": "regex_pattern",
+    "custom-regex-patterns": "regex_pattern",
 }
 
 
@@ -149,6 +156,18 @@ def _translate_settings(guardrail_name: str, raw: dict) -> dict:
             settings["max_requests"] = raw["max_requests"]
         if "window_seconds" in raw:
             settings["window_seconds"] = raw["window_seconds"]
+
+    elif guardrail_name == "system_prompt_leak":
+        if "extra_patterns" in raw:
+            settings["extra_patterns"] = raw["extra_patterns"]
+        if "extraPatterns" in raw:
+            settings["extra_patterns"] = raw["extraPatterns"]
+
+    elif guardrail_name == "toxicity":
+        if "threshold" in raw:
+            settings["threshold"] = raw["threshold"]
+        if "categories" in raw:
+            settings["categories"] = raw["categories"]
 
     return settings
 
