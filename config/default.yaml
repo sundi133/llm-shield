@@ -64,6 +64,11 @@ guardrails:
       window_seconds: 60
 
   # --- Slow-tier input guardrails (LLM-based) ---
+  safety_check:
+    enabled: true
+    action: block
+    settings: {}
+
   adversarial_detection:
     enabled: true
     action: block

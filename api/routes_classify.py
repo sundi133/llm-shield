@@ -40,6 +40,8 @@ _NAME_MAP = {
     "length_limit": "length_limit",
     "rate-limiter": "rate_limiter",
     "rate_limiter": "rate_limiter",
+    "safety-check": "safety_check",
+    "safety_check": "safety_check",
 }
 
 
