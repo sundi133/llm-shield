@@ -65,6 +65,19 @@ def start_server():
     raise RuntimeError("Server failed to start")
 
 
+def _ensure_no_think(messages: list) -> list:
+    """Append /no_think to the system message to disable Qwen3 thinking mode.
+
+    This prevents thinking tokens from corrupting structured JSON output.
+    """
+    messages = [dict(m) for m in messages]  # shallow copy
+    for m in messages:
+        if m.get("role") == "system" and "/no_think" not in m.get("content", ""):
+            m["content"] = m["content"].rstrip() + " /no_think"
+            break
+    return messages
+
+
 def llm_call(
     messages: list,
     max_tokens: int = 10,
@@ -73,6 +86,7 @@ def llm_call(
 ) -> dict:
     """Synchronous LLM call to the llama-server."""
     llama_url = _get_llama_url()
+    messages = _ensure_no_think(messages)
     payload = {
         "messages": messages,
         "max_tokens": max_tokens,
@@ -103,6 +117,7 @@ async def async_llm_call(
 ) -> dict:
     """Async LLM call to the llama-server using httpx."""
     llama_url = _get_llama_url()
+    messages = _ensure_no_think(messages)
     payload = {
         "messages": messages,
         "max_tokens": max_tokens,
