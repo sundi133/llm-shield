@@ -151,7 +151,7 @@ def test_classify_requires_auth(app_with_auth):
 
 
 def test_classify_with_valid_key(app_with_auth):
-    """Classify endpoint works with valid key (will fail at LLM call, but auth passes)."""
+    """Classify endpoint works with valid key — auth passes (not 401/403)."""
     from starlette.testclient import TestClient
     client = TestClient(app_with_auth)
     resp = client.post(
@@ -159,8 +159,10 @@ def test_classify_with_valid_key(app_with_auth):
         json={"message": "hello"},
         headers={"Authorization": "Bearer test-key-123"},
     )
-    # 500 is expected because LLM backend isn't running, but auth passed (not 401/403)
-    assert resp.status_code == 500
+    # With no per-request overrides, runs default pipeline (CPU guardrails pass)
+    assert resp.status_code in (200, 500)  # 200 if pipeline runs, 500 only if unexpected error
+    assert resp.status_code != 401
+    assert resp.status_code != 403
 
 
 def test_auth_disabled_allows_all(app_without_auth):
