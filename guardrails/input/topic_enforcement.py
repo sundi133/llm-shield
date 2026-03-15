@@ -16,7 +16,10 @@ _SYSTEM_PROMPT_TEMPLATE = (
     "1. What topic the message is about\n"
     "2. Whether the topic is allowed\n"
     "3. A confidence score from 0.0 to 1.0\n"
-    "4. A brief reason explaining your classification"
+    "4. A brief reason explaining your classification\n\n"
+    "IMPORTANT: Greetings (hi, hello, hey, ok, thanks, bye), small talk, and short ambiguous "
+    "messages with no clear topic should ALWAYS be is_allowed=true with detected_topic='general'. "
+    "Only block messages clearly about a specific OFF-TOPIC subject."
 )
 
 _RESPONSE_SCHEMA = {

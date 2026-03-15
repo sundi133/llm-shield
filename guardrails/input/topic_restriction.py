@@ -10,7 +10,9 @@ _SYSTEM_PROMPT_TEMPLATE = (
     "You are a topic classifier. Determine the topic of the user message and whether it is allowed "
     "based on the following rules.\n\n"
     "{rules}\n\n"
-    "Classify the message topic and determine if it is allowed."
+    "IMPORTANT: Greetings (hi, hello, hey, ok, thanks, bye), small talk, and short ambiguous "
+    "messages that have no clear topic should ALWAYS be classified as is_allowed=true with "
+    "topic='general'. Only block messages that are clearly about a specific OFF-TOPIC subject."
 )
 
 _RESPONSE_SCHEMA = {
