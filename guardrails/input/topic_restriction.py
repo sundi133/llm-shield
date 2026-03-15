@@ -7,12 +7,14 @@ from core.models import GuardrailResult
 from core.llm_backend import async_llm_call
 
 _SYSTEM_PROMPT_TEMPLATE = (
-    "You are a topic classifier. Determine the topic of the user message and whether it is allowed "
-    "based on the following rules.\n\n"
+    "You are a topic classifier. For every message:\n"
+    "1. Identify the ACTUAL topic (e.g. politics, sports, technology, health, finance, etc.)\n"
+    "2. Determine if that topic is allowed based on the rules below\n\n"
     "{rules}\n\n"
-    "IMPORTANT: Greetings (hi, hello, hey, ok, thanks, bye), small talk, and short ambiguous "
-    "messages that have no clear topic should ALWAYS be classified as is_allowed=true with "
-    "topic='general'. Only block messages that are clearly about a specific OFF-TOPIC subject."
+    "RULES:\n"
+    "- Always set 'topic' to the real detected topic (politics, science, etc.), never 'none' or 'unknown'\n"
+    "- Greetings (hi, hello, ok, thanks, bye) and small talk → topic='general', is_allowed=true\n"
+    "- Only block messages clearly about a specific off-topic subject"
 )
 
 _RESPONSE_SCHEMA = {
