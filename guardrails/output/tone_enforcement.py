@@ -8,22 +8,28 @@ from core.llm_backend import async_llm_call
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a brand voice compliance checker. Evaluate whether the given text adheres to "
-    "the following tone and style guidelines:\n\n"
-    "{tone_guidelines}\n\n"
-    "Analyze the text for compliance and identify any issues."
+    "the following tone and style guidelines.\n\n"
+    "Brand voice description: {brand_voice}\n\n"
+    "The following tones are explicitly BLOCKED and must be flagged: {blocked_tones}\n\n"
+    "Analyze the text for compliance. If any blocked tone is detected, mark as non-compliant. "
+    "Identify specific issues and classify detected tone."
 )
 
 _RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
         "compliant": {"type": "boolean"},
+        "detected_tones": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
         "issues": {
             "type": "array",
             "items": {"type": "string"},
         },
         "severity": {"type": "string"},
     },
-    "required": ["compliant", "issues", "severity"],
+    "required": ["compliant", "detected_tones", "issues", "severity"],
     "additionalProperties": False,
 }
 
@@ -38,12 +44,23 @@ class ToneEnforcementGuardrail(BaseGuardrail):
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         start = time.perf_counter()
 
-        tone_guidelines = self.settings.get(
-            "tone_guidelines",
-            "Professional, helpful, and concise. Avoid slang, sarcasm, or overly casual language.",
+        blocked_tones = self.settings.get("blocked_tones", [
+            "Sarcastic", "Aggressive", "Condescending", "Overly casual",
+            "Rude", "Passive-aggressive", "Dismissive",
+        ])
+        brand_voice = self.settings.get(
+            "brand_voice_description",
+            self.settings.get(
+                "tone_guidelines",
+                "Professional, helpful, and empathetic",
+            ),
         )
+        auto_correct = self.settings.get("auto_correct", False)
 
-        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(tone_guidelines=tone_guidelines)
+        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
+            brand_voice=brand_voice,
+            blocked_tones=", ".join(blocked_tones),
+        )
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -70,17 +87,23 @@ class ToneEnforcementGuardrail(BaseGuardrail):
             )
 
         compliant = result.get("compliant", True)
+        detected_tones = result.get("detected_tones", [])
         issues = result.get("issues", [])
         severity = result.get("severity", "low")
         elapsed = (time.perf_counter() - start) * 1000
 
+        result["blocked_tones"] = blocked_tones
+        result["brand_voice_description"] = brand_voice
+        result["auto_correct"] = auto_correct
+
         if not compliant:
             issue_summary = "; ".join(issues) if issues else "Tone does not match guidelines"
+            tone_summary = ", ".join(detected_tones) if detected_tones else "off-brand"
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Tone violation ({severity}): {issue_summary}",
+                message=f"Tone violation ({severity}): detected {tone_summary} — {issue_summary}",
                 details=result,
                 latency_ms=elapsed,
             )

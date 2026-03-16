@@ -16,6 +16,7 @@ from api.routes_audit import router as audit_router
 from api.routes_mcp import router as mcp_router
 from api.routes_action import router as action_router
 from api.routes_topic import router as topic_router
+from api.routes_classify_output import router as classify_output_router
 from storage.audit_log import audit_logger
 
 
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(health_router)
     app.include_router(classify_router)
+    app.include_router(classify_output_router)
     app.include_router(gateway_router)
     app.include_router(config_router)
     app.include_router(audit_router)

@@ -124,10 +124,19 @@ guardrails:
     settings: {}
 
   tone_enforcement:
-    enabled: false
+    enabled: true
     action: warn
     settings:
-      tone_guidelines: "Professional, helpful, and concise. Avoid slang, sarcasm, or overly casual language."
+      blocked_tones:
+        - Sarcastic
+        - Aggressive
+        - Condescending
+        - Overly casual
+        - Rude
+        - Passive-aggressive
+        - Dismissive
+      brand_voice_description: "Professional, helpful, and empathetic"
+      auto_correct: false
 
   factual_grounding:
     enabled: false
@@ -136,16 +145,48 @@ guardrails:
       require_citations: false
 
   bias_detection:
-    enabled: false
+    enabled: true
     action: warn
     settings:
       categories:
-        - gender
-        - racial
-        - age
-        - religious
-        - socioeconomic
-        - disability
+        - Gender
+        - Racial
+        - Age
+        - Political
+        - Religious
+        - Disability
+        - Socioeconomic
+        - Sexual orientation
+      threshold: 0.60
+      auto_regenerate: false
+
+  pii_leakage:
+    enabled: true
+    action: log
+    settings:
+      pii_types:
+        - SSN
+        - Credit Card
+        - Email
+        - Phone Number
+        - API Key
+        - Password
+        - Address
+        - Date of Birth
+        - Passport Number
+        - Bank Account
+      threshold: 0.80
+      auto_redact: false
+      mode: mask
+      use_presidio: true
+
+  competitor_mention:
+    enabled: true
+    action: log
+    settings:
+      competitors: []
+      replacement_message: "I can only provide information about our products and services."
+      detect_indirect: false
 
   # --- Agentic guardrails ---
   rbac_guard:

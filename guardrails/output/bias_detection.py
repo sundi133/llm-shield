@@ -9,13 +9,17 @@ from core.llm_backend import async_llm_call
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a bias detection specialist. Analyze the given text for any biased language, "
     "stereotypes, or unfair generalizations. Focus on the following bias categories: {categories}.\n\n"
-    "Identify specific instances of bias, classify the type, and assess severity (low, medium, high)."
+    "Sensitivity threshold: {threshold} (0=lenient, 1=strict). At higher thresholds, flag even subtle "
+    "or borderline bias. At lower thresholds, only flag clear and obvious bias.\n\n"
+    "Identify specific instances of bias, classify the type, assess severity (low, medium, high), "
+    "and provide an overall bias_score from 0.0 (no bias) to 1.0 (extreme bias)."
 )
 
 _RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
         "biased": {"type": "boolean"},
+        "bias_score": {"type": "number"},
         "instances": {
             "type": "array",
             "items": {
@@ -30,7 +34,7 @@ _RESPONSE_SCHEMA = {
             },
         },
     },
-    "required": ["biased", "instances"],
+    "required": ["biased", "bias_score", "instances"],
     "additionalProperties": False,
 }
 
@@ -45,11 +49,19 @@ class BiasDetectionGuardrail(BaseGuardrail):
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         start = time.perf_counter()
 
-        default_categories = ["gender", "racial", "age", "religious", "socioeconomic", "disability"]
+        default_categories = [
+            "gender", "racial", "age", "political", "religious",
+            "disability", "socioeconomic", "sexual orientation",
+        ]
         categories = self.settings.get("categories", default_categories)
         categories_str = ", ".join(categories)
+        threshold = self.settings.get("threshold", 0.60)
+        auto_regenerate = self.settings.get("auto_regenerate", False)
 
-        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(categories=categories_str)
+        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
+            categories=categories_str,
+            threshold=threshold,
+        )
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -76,10 +88,15 @@ class BiasDetectionGuardrail(BaseGuardrail):
             )
 
         biased = result.get("biased", False)
+        bias_score = result.get("bias_score", 0.0)
         instances = result.get("instances", [])
         elapsed = (time.perf_counter() - start) * 1000
 
-        if biased and instances:
+        result["threshold"] = threshold
+        result["auto_regenerate"] = auto_regenerate
+
+        # Flag if biased AND score meets threshold
+        if biased and bias_score >= threshold and instances:
             types = set(i.get("bias_type", "unknown") for i in instances)
             max_severity = "low"
             for inst in instances:
@@ -94,7 +111,7 @@ class BiasDetectionGuardrail(BaseGuardrail):
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Bias detected ({max_severity} severity): {', '.join(types)} bias in {len(instances)} instance(s)",
+                message=f"Bias detected (score: {bias_score:.2f}, {max_severity} severity): {', '.join(types)} bias in {len(instances)} instance(s)",
                 details=result,
                 latency_ms=elapsed,
             )
