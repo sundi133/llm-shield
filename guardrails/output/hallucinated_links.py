@@ -6,11 +6,15 @@ import time
 from typing import Optional
 from urllib.parse import urlparse
 
-import httpx
-
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call
+
+try:
+    import httpx
+    _HAS_HTTPX = True
+except ImportError:
+    _HAS_HTTPX = False
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +95,7 @@ _MAX_CONCURRENT_CHECKS = 10
 _MAX_URLS_FOR_LLM = 15
 
 
-async def _http_head_check(url: str, client: httpx.AsyncClient) -> dict:
+async def _http_head_check(url: str, client) -> dict:
     """Perform an HTTP HEAD request to check if URL exists.
 
     Returns dict with url, status, reachable, and error fields.
@@ -104,19 +108,24 @@ async def _http_head_check(url: str, client: httpx.AsyncClient) -> dict:
             "reachable": resp.status_code < 400,
             "error": None,
         }
-    except httpx.TimeoutException:
-        return {"url": url, "status": None, "reachable": False, "error": "timeout"}
-    except httpx.ConnectError:
-        return {"url": url, "status": None, "reachable": False, "error": "connection_failed"}
     except Exception as e:
+        err_name = type(e).__name__
+        if "Timeout" in err_name:
+            return {"url": url, "status": None, "reachable": False, "error": "timeout"}
+        if "Connect" in err_name:
+            return {"url": url, "status": None, "reachable": False, "error": "connection_failed"}
         return {"url": url, "status": None, "reachable": False, "error": str(e)}
 
 
 async def _batch_http_check(urls: list[str]) -> list[dict]:
     """Check multiple URLs concurrently with HTTP HEAD requests."""
+    if not _HAS_HTTPX:
+        # Return all as uncertain if httpx not available
+        return [{"url": u, "status": None, "reachable": False, "error": "httpx_not_installed"} for u in urls]
+
     sem = asyncio.Semaphore(_MAX_CONCURRENT_CHECKS)
 
-    async def _check(url: str, client: httpx.AsyncClient) -> dict:
+    async def _check(url: str, client) -> dict:
         async with sem:
             return await _http_head_check(url, client)
 
