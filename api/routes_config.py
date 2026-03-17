@@ -1,5 +1,7 @@
 """Configuration management routes for LLM Shield."""
 
+import os
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
@@ -80,10 +82,50 @@ async def update_config(body: dict):
             _config_module.config.guardrails[name] = GuardrailConfig(**updates)
             updated.append(name)
 
+    # Persist to disk if CONFIG_PATH is set (e.g. network volume)
+    _persist_config()
+
     return {
         "status": "updated",
         "updated_guardrails": updated,
     }
+
+
+def _persist_config():
+    """Write the current in-memory config back to CONFIG_PATH (if set)."""
+    config_path = os.getenv("CONFIG_PATH")
+    if not config_path or _config_module.config is None:
+        return
+
+    try:
+        import yaml
+
+        cfg = _config_module.config
+
+        # Build YAML-serializable dict
+        data = {
+            "guardrails": {
+                name: gcfg.model_dump()
+                for name, gcfg in cfg.guardrails.items()
+            },
+            "rbac": {
+                "roles": {
+                    name: {
+                        k: v for k, v in role.model_dump().items()
+                    }
+                    for name, role in cfg.rbac.roles.items()
+                },
+                "agents": cfg.rbac.agents,
+            },
+            "pipeline": cfg.pipeline.model_dump(),
+            "auth": cfg.auth.model_dump(),
+            "llm_backend": cfg.llm_backend,
+        }
+
+        with open(config_path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+    except Exception:
+        pass  # best-effort — don't crash the API on write failure
 
 
 @router.get("/guardrails")
