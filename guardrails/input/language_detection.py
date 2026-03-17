@@ -63,10 +63,9 @@ class LanguageDetectionGuardrail(BaseGuardrail):
             )
 
         if detected_lang not in self._allowed_languages:
-            action = self._action
             return GuardrailResult(
-                passed=action not in ("block",),
-                action=action,
+                passed=False,
+                action=self.configured_action,
                 guardrail_name=self.name,
                 message=f"Detected language '{detected_lang}' is not in allowed list: {self._allowed_languages}.",
                 details={
