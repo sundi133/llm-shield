@@ -10,27 +10,38 @@ from core.llm_backend import async_llm_call
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a strict topic enforcement classifier. Your job is to determine whether "
-    "the user's message falls within the allowed topics for this system.\n\n"
+    "ALL parts of the user's message fall within the allowed topics for this system.\n\n"
     "{rules}\n\n"
     "Classify the message and determine:\n"
-    "1. What topic the message is about\n"
-    "2. Whether the topic is allowed\n"
-    "3. A confidence score from 0.0 to 1.0\n"
+    "1. Identify ALL distinct topics/questions in the message (a message can contain multiple)\n"
+    "2. For EACH topic, determine if it is allowed and assign a confidence score (0.0 to 1.0)\n"
+    "3. If ANY topic is not allowed, set overall_allowed to false\n"
     "4. A brief reason explaining your classification\n\n"
     "IMPORTANT: Greetings (hi, hello, hey, ok, thanks, bye), small talk, and short ambiguous "
-    "messages with no clear topic should ALWAYS be is_allowed=true with detected_topic='general'. "
-    "Only block messages clearly about a specific OFF-TOPIC subject."
+    "messages with no clear topic should ALWAYS be allowed with topic='general'. "
+    "Only block messages clearly about a specific OFF-TOPIC subject.\n"
+    "Be strict: each distinct question or request is a separate topic that must be checked."
 )
 
 _RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
-        "detected_topic": {"type": "string"},
-        "is_allowed": {"type": "boolean"},
-        "confidence": {"type": "number"},
+        "topics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "is_allowed": {"type": "boolean"},
+                    "confidence": {"type": "number"},
+                },
+                "required": ["topic", "is_allowed", "confidence"],
+            },
+        },
+        "overall_allowed": {"type": "boolean"},
         "reason": {"type": "string"},
     },
-    "required": ["detected_topic", "is_allowed", "confidence", "reason"],
+    "required": ["topics", "overall_allowed", "reason"],
     "additionalProperties": False,
 }
 
@@ -133,41 +144,52 @@ class TopicEnforcementGuardrail(BaseGuardrail):
                 latency_ms=elapsed,
             )
 
-        detected_topic = result.get("detected_topic", "unknown")
-        is_allowed = result.get("is_allowed", True)
-        confidence = result.get("confidence", 0.0)
+        topics = result.get("topics", [])
+        overall_allowed = result.get("overall_allowed", True)
         reason = result.get("reason", "")
         elapsed = (time.perf_counter() - start) * 1000
 
+        blocked_topics = []
+        low_confidence_topics = []
+        all_topic_names = [t["topic"] for t in topics]
+
+        for t in topics:
+            if not t.get("is_allowed", True):
+                conf = t.get("confidence", 1.0)
+                if conf < confidence_threshold:
+                    low_confidence_topics.append(t["topic"])
+                else:
+                    blocked_topics.append(t["topic"])
+
         details = {
-            "detected_topic": detected_topic,
-            "is_allowed": is_allowed,
-            "confidence": confidence,
+            "topics": topics,
+            "overall_allowed": overall_allowed,
             "reason": reason,
             "allowed_topics": allowed,
-            "blocked_topics": blocked,
+            "blocked_topics_config": blocked,
+            "blocked_topics_detected": blocked_topics,
         }
 
-        # Low confidence — don't enforce, just log
-        if not is_allowed and confidence < confidence_threshold:
+        # Low confidence only — don't enforce, just log
+        if not blocked_topics and low_confidence_topics:
             return GuardrailResult(
                 passed=True,
                 action="log",
                 guardrail_name=self.name,
                 message=(
-                    f"Topic '{detected_topic}' may be off-topic but confidence "
-                    f"({confidence:.2f}) is below threshold ({confidence_threshold})"
+                    f"Topic(s) {', '.join(low_confidence_topics)} may be off-topic "
+                    f"but confidence is below threshold ({confidence_threshold})"
                 ),
                 details=details,
                 latency_ms=elapsed,
             )
 
-        if not is_allowed:
+        if blocked_topics or not overall_allowed:
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Topic '{detected_topic}' is not allowed: {reason}",
+                message=f"Blocked topic(s): {', '.join(blocked_topics or all_topic_names)}. {reason}",
                 details=details,
                 latency_ms=elapsed,
             )
@@ -176,7 +198,7 @@ class TopicEnforcementGuardrail(BaseGuardrail):
             passed=True,
             action="pass",
             guardrail_name=self.name,
-            message=f"Topic '{detected_topic}' is allowed (confidence: {confidence:.2f})",
+            message=f"All topics allowed: {', '.join(all_topic_names)}",
             details=details,
             latency_ms=elapsed,
         )

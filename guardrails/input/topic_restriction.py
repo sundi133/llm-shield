@@ -8,23 +8,35 @@ from core.llm_backend import async_llm_call
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a topic classifier. For every message:\n"
-    "1. Identify the ACTUAL topic (e.g. politics, sports, technology, health, finance, etc.)\n"
-    "2. Determine if that topic is allowed based on the rules below\n\n"
+    "1. Identify ALL distinct topics in the message (a message can contain multiple topics)\n"
+    "2. For EACH topic, determine if it is allowed based on the rules below\n"
+    "3. If ANY topic is not allowed, set overall_allowed to false\n\n"
     "{rules}\n\n"
     "RULES:\n"
-    "- Always set 'topic' to the real detected topic (politics, science, etc.), never 'none' or 'unknown'\n"
-    "- Greetings (hi, hello, ok, thanks, bye) and small talk → topic='general', is_allowed=true\n"
-    "- Only block messages clearly about a specific off-topic subject"
+    "- Always identify every separate subject/question in the message as its own topic\n"
+    "- Greetings (hi, hello, ok, thanks, bye) and small talk → topic='general', allowed=true\n"
+    "- If even ONE topic is off-topic/not allowed, set overall_allowed=false\n"
+    "- Be strict: each distinct question or request is a separate topic"
 )
 
 _RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
-        "topic": {"type": "string"},
-        "is_allowed": {"type": "boolean"},
+        "topics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "is_allowed": {"type": "boolean"},
+                },
+                "required": ["topic", "is_allowed"],
+            },
+        },
+        "overall_allowed": {"type": "boolean"},
         "reason": {"type": "string"},
     },
-    "required": ["topic", "is_allowed", "reason"],
+    "required": ["topics", "overall_allowed", "reason"],
     "additionalProperties": False,
 }
 
@@ -78,17 +90,20 @@ class TopicRestrictionGuardrail(BaseGuardrail):
                 latency_ms=elapsed,
             )
 
-        is_allowed = result.get("is_allowed", True)
-        topic = result.get("topic", "unknown")
+        overall_allowed = result.get("overall_allowed", True)
+        topics = result.get("topics", [])
         reason = result.get("reason", "")
         elapsed = (time.perf_counter() - start) * 1000
 
-        if not is_allowed:
+        blocked_topics = [t["topic"] for t in topics if not t.get("is_allowed", True)]
+        all_topic_names = [t["topic"] for t in topics]
+
+        if not overall_allowed or blocked_topics:
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Topic '{topic}' is not allowed: {reason}",
+                message=f"Blocked topic(s): {', '.join(blocked_topics)}. {reason}",
                 details=result,
                 latency_ms=elapsed,
             )
@@ -97,7 +112,7 @@ class TopicRestrictionGuardrail(BaseGuardrail):
             passed=True,
             action="pass",
             guardrail_name=self.name,
-            message=f"Topic '{topic}' is allowed",
+            message=f"All topics allowed: {', '.join(all_topic_names)}",
             details=result,
             latency_ms=elapsed,
         )

@@ -6,7 +6,8 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 import config.schema as _config_module
-from config.schema import GuardrailConfig
+from config.schema import GuardrailConfig, RBACRole
+from core.rbac import enforcer as rbac_enforcer
 from guardrails.registry import list_guardrails
 
 router = APIRouter(prefix="/v1/shield", tags=["config"])
@@ -82,12 +83,46 @@ async def update_config(body: dict):
             _config_module.config.guardrails[name] = GuardrailConfig(**updates)
             updated.append(name)
 
+    # ── RBAC updates ──────────────────────────────────────────────
+    rbac_update = body.get("rbac", {})
+    updated_roles = []
+    updated_agents = []
+
+    # Update or create roles
+    for role_name, role_data in rbac_update.get("roles", {}).items():
+        if role_name in _config_module.config.rbac.roles:
+            existing_role = _config_module.config.rbac.roles[role_name]
+            for field in (
+                "allowed_tools", "denied_tools",
+                "max_tokens_per_request", "rate_limit",
+                "data_clearance", "allowed_data_scopes", "denied_data_scopes",
+            ):
+                if field in role_data:
+                    setattr(existing_role, field, role_data[field])
+            updated_roles.append(role_name)
+        else:
+            _config_module.config.rbac.roles[role_name] = RBACRole(
+                name=role_name, **role_data
+            )
+            updated_roles.append(role_name)
+
+    # Update agent-to-role mappings
+    for agent_key, role_name in rbac_update.get("agents", {}).items():
+        _config_module.config.rbac.agents[agent_key] = role_name
+        updated_agents.append(agent_key)
+
+    # Reload the RBAC enforcer so changes take effect immediately
+    if updated_roles or updated_agents:
+        rbac_enforcer.reload()
+
     # Persist to disk if CONFIG_PATH is set (e.g. network volume)
     _persist_config()
 
     return {
         "status": "updated",
         "updated_guardrails": updated,
+        "updated_roles": updated_roles,
+        "updated_agents": updated_agents,
     }
 
 
