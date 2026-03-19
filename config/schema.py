@@ -104,6 +104,7 @@ def load_config(path: Optional[str] = None) -> ShieldConfig:
     rbac_raw = raw.get("rbac", {})
     roles = {}
     for role_name, role_data in rbac_raw.get("roles", {}).items():
+        role_data.pop("name", None)
         roles[role_name] = RBACRole(name=role_name, **role_data)
     agents = rbac_raw.get("agents", {})
     rbac = RBACConfig(roles=roles, agents=agents)
