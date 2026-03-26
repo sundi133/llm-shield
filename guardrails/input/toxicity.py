@@ -48,10 +48,23 @@ class ToxicityGuardrail(BaseGuardrail):
         threshold = self.settings.get("threshold", 0.7)
         start = time.perf_counter()
 
+        # Build messages with conversation history for multi-turn awareness
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": content},
         ]
+
+        conversation_history = (context or {}).get("conversation_history", [])
+        if conversation_history:
+            prior_turns = conversation_history[:-1][-6:]
+            for turn in prior_turns:
+                messages.append(
+                    {
+                        "role": turn.get("role", "user"),
+                        "content": turn.get("content", ""),
+                    }
+                )
+
+        messages.append({"role": "user", "content": content})
 
         try:
             response = await async_llm_call(
