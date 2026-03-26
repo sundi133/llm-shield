@@ -10,6 +10,7 @@ from config.schema import GuardrailConfig
 def blocklist_guard(mock_config):
     """Create a KeywordBlocklistGuardrail with mock config active."""
     from guardrails.input.keyword_blocklist import KeywordBlocklistGuardrail
+
     return KeywordBlocklistGuardrail()
 
 
@@ -17,6 +18,7 @@ def blocklist_guard(mock_config):
 def empty_blocklist_guard():
     """Create a KeywordBlocklistGuardrail with no keywords configured."""
     from config.schema import ShieldConfig
+
     empty_config = ShieldConfig(
         guardrails={
             "keyword_blocklist": GuardrailConfig(
@@ -28,6 +30,7 @@ def empty_blocklist_guard():
     )
     with patch("config.schema.config", empty_config):
         from guardrails.input.keyword_blocklist import KeywordBlocklistGuardrail
+
         return KeywordBlocklistGuardrail()
 
 

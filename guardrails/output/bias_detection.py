@@ -46,12 +46,20 @@ class BiasDetectionGuardrail(BaseGuardrail):
     tier = "slow"
     stage = "output"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         start = time.perf_counter()
 
         default_categories = [
-            "gender", "racial", "age", "political", "religious",
-            "disability", "socioeconomic", "sexual orientation",
+            "gender",
+            "racial",
+            "age",
+            "political",
+            "religious",
+            "disability",
+            "socioeconomic",
+            "sexual orientation",
         ]
         categories = self.settings.get("categories", default_categories)
         categories_str = ", ".join(categories)

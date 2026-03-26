@@ -27,7 +27,11 @@ async def check_topic(body: TopicCheckRequest):
 
     # Allow per-request overrides via request body
     context = {}
-    if body.allowed_topics is not None or body.blocked_topics is not None or body.system_purpose is not None:
+    if (
+        body.allowed_topics is not None
+        or body.blocked_topics is not None
+        or body.system_purpose is not None
+    ):
         context["_settings_override"] = {}
         if body.allowed_topics is not None:
             context["_settings_override"]["allowed_topics"] = body.allowed_topics
@@ -44,6 +48,7 @@ async def check_topic(body: TopicCheckRequest):
         # Temporarily inject into config
         import config.schema as _config_module
         from config.schema import GuardrailConfig
+
         cfg = _config_module.config
         had_config = guard.name in cfg.guardrails if cfg else False
         if cfg:

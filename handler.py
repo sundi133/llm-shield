@@ -19,7 +19,9 @@ def _seed_config():
     # Ensure parent directory exists
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
 
-    default = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "default.yaml")
+    default = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "config", "default.yaml"
+    )
     if os.path.exists(default):
         shutil.copy2(default, config_path)
         print(f"Seeded config to {config_path}")

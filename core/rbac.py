@@ -5,7 +5,6 @@ from typing import Optional
 import config.schema as _config_module
 from config.schema import RBACRole
 
-
 # Clearance level mapping
 _CLEARANCE_LEVELS = {
     "public": 0,

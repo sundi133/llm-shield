@@ -57,7 +57,9 @@ class SystemPromptLeakGuardrail(BaseGuardrail):
             except re.error:
                 pass
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         for pattern in self._compiled:
             match = pattern.search(content)
             if match:

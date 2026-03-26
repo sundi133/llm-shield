@@ -30,7 +30,9 @@ class SentimentGuardrail(BaseGuardrail):
             )
             self._available = False
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         if not self._available:
             return GuardrailResult(
                 passed=True,
@@ -40,6 +42,7 @@ class SentimentGuardrail(BaseGuardrail):
             )
 
         from textblob import TextBlob
+
         blob = TextBlob(content)
         polarity = blob.sentiment.polarity
         subjectivity = blob.sentiment.subjectivity

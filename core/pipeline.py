@@ -7,7 +7,9 @@ from guardrails.base import BaseGuardrail
 from guardrails.registry import get_by_stage, get_by_tier
 
 
-async def _run_guardrail(guardrail: BaseGuardrail, content: str, context: Optional[dict] = None) -> GuardrailResult:
+async def _run_guardrail(
+    guardrail: BaseGuardrail, content: str, context: Optional[dict] = None
+) -> GuardrailResult:
     """Run a single guardrail, catching exceptions gracefully."""
     start = datetime.now()
     try:
@@ -64,9 +66,7 @@ async def run_pipeline(
     all_results.extend(fast_results)
 
     # Check if any fast-tier guardrail blocked
-    blocked = any(
-        not r.passed and r.action == "block" for r in fast_results
-    )
+    blocked = any(not r.passed and r.action == "block" for r in fast_results)
     if blocked:
         total_ms = (datetime.now() - start).total_seconds() * 1000
         return PipelineResult(
@@ -80,9 +80,7 @@ async def run_pipeline(
     all_results.extend(slow_results)
 
     # Determine final allowed status
-    allowed = not any(
-        not r.passed and r.action == "block" for r in all_results
-    )
+    allowed = not any(not r.passed and r.action == "block" for r in all_results)
     total_ms = (datetime.now() - start).total_seconds() * 1000
 
     return PipelineResult(

@@ -25,19 +25,24 @@ class RegexPatternGuardrail(BaseGuardrail):
             action = entry.get("action", "block")
             try:
                 compiled = re.compile(pattern_str, re.IGNORECASE)
-                self._patterns.append({
-                    "compiled": compiled,
-                    "pattern": pattern_str,
-                    "description": description,
-                    "action": action,
-                })
+                self._patterns.append(
+                    {
+                        "compiled": compiled,
+                        "pattern": pattern_str,
+                        "description": description,
+                        "action": action,
+                    }
+                )
             except re.error:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     f"Invalid regex pattern skipped: {pattern_str}"
                 )
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         matched_patterns: list[dict] = []
         worst_action = "pass"
         action_priority = {"pass": 0, "log": 1, "warn": 2, "block": 3}
@@ -45,13 +50,17 @@ class RegexPatternGuardrail(BaseGuardrail):
         for entry in self._patterns:
             match = entry["compiled"].search(content)
             if match:
-                matched_patterns.append({
-                    "pattern": entry["pattern"],
-                    "description": entry["description"],
-                    "action": entry["action"],
-                    "matched_text": match.group(),
-                })
-                if action_priority.get(entry["action"], 0) > action_priority.get(worst_action, 0):
+                matched_patterns.append(
+                    {
+                        "pattern": entry["pattern"],
+                        "description": entry["description"],
+                        "action": entry["action"],
+                        "matched_text": match.group(),
+                    }
+                )
+                if action_priority.get(entry["action"], 0) > action_priority.get(
+                    worst_action, 0
+                ):
                     worst_action = entry["action"]
 
         if matched_patterns:

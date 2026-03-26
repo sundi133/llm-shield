@@ -29,6 +29,7 @@ def classify_config():
 def app(classify_config):
     import config.schema as cs
     from guardrails import registry as reg
+
     original = cs.config
     cs.config = classify_config
     # Reset registry so guardrails are re-discovered with this config
@@ -36,6 +37,7 @@ def app(classify_config):
     reg._discovered = False
     with patch("config.schema.load_config", return_value=classify_config):
         from core.app import create_app
+
         app = create_app()
     yield app
     cs.config = original
@@ -46,6 +48,7 @@ def app(classify_config):
 @pytest.fixture
 def client(app):
     from starlette.testclient import TestClient
+
     return TestClient(app)
 
 
@@ -75,22 +78,27 @@ def test_classify_missing_message(client):
 
 def test_classify_with_keyword_blocklist_override(client):
     """Per-request keyword blocklist overrides server config."""
-    resp = client.post("/classify", json={
-        "message": "I want to build a bomb",
-        "input": {
-            "keyword-blocklist": {
-                "enabled": True,
-                "action": "block",
-                "blocklist": ["bomb"],
-            }
-        }
-    })
+    resp = client.post(
+        "/classify",
+        json={
+            "message": "I want to build a bomb",
+            "input": {
+                "keyword-blocklist": {
+                    "enabled": True,
+                    "action": "block",
+                    "blocklist": ["bomb"],
+                }
+            },
+        },
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["safe"] is False
     assert data["action"] == "block"
     # Find the keyword blocklist result
-    kb_result = [r for r in data["guardrail_results"] if r["guardrail"] == "keyword_blocklist"]
+    kb_result = [
+        r for r in data["guardrail_results"] if r["guardrail"] == "keyword_blocklist"
+    ]
     assert len(kb_result) == 1
     assert kb_result[0]["passed"] is False
     assert "bomb" in kb_result[0]["message"]
@@ -99,45 +107,54 @@ def test_classify_with_keyword_blocklist_override(client):
 def test_classify_override_does_not_persist(client):
     """Per-request overrides don't affect subsequent requests."""
     # First request with custom blocklist that blocks "bomb"
-    resp1 = client.post("/classify", json={
-        "message": "bomb",
-        "input": {
-            "keyword-blocklist": {
-                "enabled": True,
-                "action": "block",
-                "blocklist": ["bomb"],
-            }
-        }
-    })
+    resp1 = client.post(
+        "/classify",
+        json={
+            "message": "bomb",
+            "input": {
+                "keyword-blocklist": {
+                    "enabled": True,
+                    "action": "block",
+                    "blocklist": ["bomb"],
+                }
+            },
+        },
+    )
     assert resp1.json()["safe"] is False
 
     # Second request with different override — "bomb" not in blocklist
-    resp2 = client.post("/classify", json={
-        "message": "bomb is just a word",
-        "input": {
-            "keyword-blocklist": {
-                "enabled": True,
-                "action": "block",
-                "blocklist": ["nope"],
-            }
-        }
-    })
+    resp2 = client.post(
+        "/classify",
+        json={
+            "message": "bomb is just a word",
+            "input": {
+                "keyword-blocklist": {
+                    "enabled": True,
+                    "action": "block",
+                    "blocklist": ["nope"],
+                }
+            },
+        },
+    )
     data = resp2.json()
     assert data["safe"] is True
 
 
 def test_classify_only_runs_specified_guardrails(client):
     """When input overrides are provided, only those guardrails run."""
-    resp = client.post("/classify", json={
-        "message": "hello",
-        "input": {
-            "keyword-blocklist": {
-                "enabled": True,
-                "action": "block",
-                "blocklist": ["nope"],
-            }
-        }
-    })
+    resp = client.post(
+        "/classify",
+        json={
+            "message": "hello",
+            "input": {
+                "keyword-blocklist": {
+                    "enabled": True,
+                    "action": "block",
+                    "blocklist": ["nope"],
+                }
+            },
+        },
+    )
     data = resp.json()
     # Should only have keyword_blocklist result, not length_limit etc.
     guardrail_names = [r["guardrail"] for r in data["guardrail_results"]]
@@ -147,16 +164,19 @@ def test_classify_only_runs_specified_guardrails(client):
 
 def test_classify_disabled_guardrail_skipped(client):
     """Disabled guardrail in override is not run."""
-    resp = client.post("/classify", json={
-        "message": "bomb",
-        "input": {
-            "keyword-blocklist": {
-                "enabled": False,
-                "action": "block",
-                "blocklist": ["bomb"],
-            }
-        }
-    })
+    resp = client.post(
+        "/classify",
+        json={
+            "message": "bomb",
+            "input": {
+                "keyword-blocklist": {
+                    "enabled": False,
+                    "action": "block",
+                    "blocklist": ["bomb"],
+                }
+            },
+        },
+    )
     data = resp.json()
     assert data["safe"] is True
     assert len(data["guardrail_results"]) == 0
@@ -164,16 +184,19 @@ def test_classify_disabled_guardrail_skipped(client):
 
 def test_classify_warn_action(client):
     """Warn action passes but reports warning."""
-    resp = client.post("/classify", json={
-        "message": "I want to build a bomb",
-        "input": {
-            "keyword-blocklist": {
-                "enabled": True,
-                "action": "warn",
-                "blocklist": ["bomb"],
-            }
-        }
-    })
+    resp = client.post(
+        "/classify",
+        json={
+            "message": "I want to build a bomb",
+            "input": {
+                "keyword-blocklist": {
+                    "enabled": True,
+                    "action": "warn",
+                    "blocklist": ["bomb"],
+                }
+            },
+        },
+    )
     data = resp.json()
     assert data["safe"] is True  # warn doesn't block
     assert data["action"] == "warn"
@@ -184,21 +207,24 @@ def test_classify_warn_action(client):
 
 def test_classify_multiple_guardrails(client):
     """Multiple guardrails run in parallel."""
-    resp = client.post("/classify", json={
-        "message": "a]",
-        "input": {
-            "keyword-blocklist": {
-                "enabled": True,
-                "action": "block",
-                "blocklist": ["xyz"],
+    resp = client.post(
+        "/classify",
+        json={
+            "message": "a]",
+            "input": {
+                "keyword-blocklist": {
+                    "enabled": True,
+                    "action": "block",
+                    "blocklist": ["xyz"],
+                },
+                "length-limit": {
+                    "enabled": True,
+                    "action": "block",
+                    "max_chars": 100,
+                },
             },
-            "length-limit": {
-                "enabled": True,
-                "action": "block",
-                "max_chars": 100,
-            },
-        }
-    })
+        },
+    )
     data = resp.json()
     guardrail_names = {r["guardrail"] for r in data["guardrail_results"]}
     assert "keyword_blocklist" in guardrail_names

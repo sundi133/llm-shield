@@ -14,6 +14,7 @@ def rate_guard(mock_config):
     fresh_store = StateStore()
     with patch("guardrails.input.rate_limiter._state_store", fresh_store):
         from guardrails.input.rate_limiter import RateLimiterGuardrail
+
         guard = RateLimiterGuardrail()
         guard._store = fresh_store
         return guard

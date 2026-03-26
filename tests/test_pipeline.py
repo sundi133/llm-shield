@@ -13,7 +13,9 @@ class MockFastPass(BaseGuardrail):
     tier = "fast"
     stage = "input"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         return GuardrailResult(passed=True, action="pass", guardrail_name=self.name)
 
     @property
@@ -26,8 +28,15 @@ class MockFastBlock(BaseGuardrail):
     tier = "fast"
     stage = "input"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
-        return GuardrailResult(passed=False, action="block", guardrail_name=self.name, message="Blocked by fast tier")
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
+        return GuardrailResult(
+            passed=False,
+            action="block",
+            guardrail_name=self.name,
+            message="Blocked by fast tier",
+        )
 
     @property
     def enabled(self) -> bool:
@@ -39,8 +48,15 @@ class MockFastWarn(BaseGuardrail):
     tier = "fast"
     stage = "input"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
-        return GuardrailResult(passed=True, action="warn", guardrail_name=self.name, message="Warning from fast tier")
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
+        return GuardrailResult(
+            passed=True,
+            action="warn",
+            guardrail_name=self.name,
+            message="Warning from fast tier",
+        )
 
     @property
     def enabled(self) -> bool:
@@ -52,7 +68,9 @@ class MockSlowPass(BaseGuardrail):
     tier = "slow"
     stage = "input"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         return GuardrailResult(passed=True, action="pass", guardrail_name=self.name)
 
     @property
@@ -65,8 +83,15 @@ class MockSlowBlock(BaseGuardrail):
     tier = "slow"
     stage = "input"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
-        return GuardrailResult(passed=False, action="block", guardrail_name=self.name, message="Blocked by slow tier")
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
+        return GuardrailResult(
+            passed=False,
+            action="block",
+            guardrail_name=self.name,
+            message="Blocked by slow tier",
+        )
 
     @property
     def enabled(self) -> bool:

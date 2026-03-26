@@ -37,16 +37,18 @@ class PipelineConfig(BaseModel):
 class AuthConfig(BaseModel):
     enabled: bool = False
     api_keys: list[str] = Field(default_factory=list)
-    public_paths: list[str] = Field(default_factory=lambda: [
-        "/health",
-        "/ping",
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-        "/docs/oauth2-redirect",
-        "/playground",
-        "/static",
-    ])
+    public_paths: list[str] = Field(
+        default_factory=lambda: [
+            "/health",
+            "/ping",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/docs/oauth2-redirect",
+            "/playground",
+            "/static",
+        ]
+    )
 
 
 class ShieldConfig(BaseModel):
@@ -54,11 +56,13 @@ class ShieldConfig(BaseModel):
     rbac: RBACConfig = Field(default_factory=RBACConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
-    llm_backend: dict = Field(default_factory=lambda: {
-        "url": "http://127.0.0.1:8000",
-        "model_path": "/models/Qwen3-8B-Q4_K_M.gguf",
-        "draft_model_path": "/models/Qwen3-0.6B-Q4_K_M.gguf",
-    })
+    llm_backend: dict = Field(
+        default_factory=lambda: {
+            "url": "http://127.0.0.1:8000",
+            "model_path": "/models/Qwen3-8B-Q4_K_M.gguf",
+            "draft_model_path": "/models/Qwen3-0.6B-Q4_K_M.gguf",
+        }
+    )
 
 
 def load_config(path: Optional[str] = None) -> ShieldConfig:
@@ -114,11 +118,14 @@ def load_config(path: Optional[str] = None) -> ShieldConfig:
     pipeline = PipelineConfig(**pipeline_raw)
 
     # Parse llm_backend section
-    llm_backend = raw.get("llm_backend", {
-        "url": "http://127.0.0.1:8000",
-        "model_path": "/models/Qwen3-8B-Q4_K_M.gguf",
-        "draft_model_path": "/models/Qwen3-0.6B-Q4_K_M.gguf",
-    })
+    llm_backend = raw.get(
+        "llm_backend",
+        {
+            "url": "http://127.0.0.1:8000",
+            "model_path": "/models/Qwen3-8B-Q4_K_M.gguf",
+            "draft_model_path": "/models/Qwen3-0.6B-Q4_K_M.gguf",
+        },
+    )
 
     # Parse auth section
     auth_raw = raw.get("auth", {})

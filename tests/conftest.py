@@ -3,7 +3,13 @@
 import pytest
 from unittest.mock import patch
 
-from config.schema import ShieldConfig, GuardrailConfig, RBACConfig, RBACRole, PipelineConfig
+from config.schema import (
+    ShieldConfig,
+    GuardrailConfig,
+    RBACConfig,
+    RBACRole,
+    PipelineConfig,
+)
 
 
 @pytest.fixture

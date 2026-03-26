@@ -42,11 +42,15 @@ class FactualGroundingGuardrail(BaseGuardrail):
     tier = "slow"
     stage = "output"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         start = time.perf_counter()
 
         require_citations = self.settings.get("require_citations", False)
-        system_prompt = _SYSTEM_PROMPT_CITATIONS if require_citations else _SYSTEM_PROMPT
+        system_prompt = (
+            _SYSTEM_PROMPT_CITATIONS if require_citations else _SYSTEM_PROMPT
+        )
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -79,7 +83,9 @@ class FactualGroundingGuardrail(BaseGuardrail):
 
         if not grounded and unsupported:
             claims_summary = "; ".join(unsupported[:3])
-            suffix = f" (and {len(unsupported) - 3} more)" if len(unsupported) > 3 else ""
+            suffix = (
+                f" (and {len(unsupported) - 3} more)" if len(unsupported) > 3 else ""
+            )
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,

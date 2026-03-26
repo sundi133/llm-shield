@@ -45,7 +45,9 @@ class AdversarialGuardrail(BaseGuardrail):
     tier = "slow"
     stage = "input"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         confidence_threshold = self.settings.get("confidence_threshold", 0.7)
         start = time.perf_counter()
 

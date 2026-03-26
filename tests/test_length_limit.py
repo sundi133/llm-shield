@@ -10,6 +10,7 @@ from config.schema import GuardrailConfig, ShieldConfig
 def length_guard(mock_config):
     """Create a LengthLimitGuardrail with mock config (max_chars=100, max_tokens=50)."""
     from guardrails.input.length_limit import LengthLimitGuardrail
+
     return LengthLimitGuardrail()
 
 
@@ -50,6 +51,7 @@ async def test_exceeds_token_limit():
 
     with patch("config.schema.config", cfg):
         from guardrails.input.length_limit import LengthLimitGuardrail
+
         guard = LengthLimitGuardrail()
 
         # If tiktoken is available, it will encode and count tokens

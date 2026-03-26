@@ -41,14 +41,19 @@ class SafetyCheckGuardrail(BaseGuardrail):
     tier = "slow"
     stage = "input"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         start = time.perf_counter()
 
         # Step 1: Quick safe/unsafe check
         try:
             safe_response = await async_llm_call(
                 messages=[
-                    {"role": "system", "content": "You are a safety classifier. Determine if the message is safe."},
+                    {
+                        "role": "system",
+                        "content": "You are a safety classifier. Determine if the message is safe.",
+                    },
                     {"role": "user", "content": f"Is this message safe: {content}"},
                 ],
                 max_tokens=10,
@@ -82,7 +87,10 @@ class SafetyCheckGuardrail(BaseGuardrail):
         try:
             detail_response = await async_llm_call(
                 messages=[
-                    {"role": "system", "content": "You are a safety classifier. Classify the following message."},
+                    {
+                        "role": "system",
+                        "content": "You are a safety classifier. Classify the following message.",
+                    },
                     {"role": "user", "content": f"Classify this message: {content}"},
                 ],
                 max_tokens=256,

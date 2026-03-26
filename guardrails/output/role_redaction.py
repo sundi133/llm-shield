@@ -44,7 +44,9 @@ class RoleRedactionGuard(BaseGuardrail):
     tier = "fast"
     stage = "output"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         start = datetime.now()
         context = context or {}
 
@@ -73,11 +75,13 @@ class RoleRedactionGuard(BaseGuardrail):
             classification = match.group(1).lower()
             data_level = _CLEARANCE_LEVELS.get(classification, 0)
             if data_level > agent_clearance:
-                redactions_made.append({
-                    "type": "classification",
-                    "classification": classification,
-                    "data_level": data_level,
-                })
+                redactions_made.append(
+                    {
+                        "type": "classification",
+                        "classification": classification,
+                        "data_level": data_level,
+                    }
+                )
                 return redaction_marker
             # Keep the content but strip the markers
             return match.group(2)
@@ -91,11 +95,13 @@ class RoleRedactionGuard(BaseGuardrail):
                 matches = re.findall(pattern, redacted_text)
                 if matches:
                     redacted_text = re.sub(pattern, redaction_marker, redacted_text)
-                    redactions_made.append({
-                        "type": "pii",
-                        "pii_type": pii_type,
-                        "count": len(matches),
-                    })
+                    redactions_made.append(
+                        {
+                            "type": "pii",
+                            "pii_type": pii_type,
+                            "count": len(matches),
+                        }
+                    )
 
         elapsed = (datetime.now() - start).total_seconds() * 1000
 

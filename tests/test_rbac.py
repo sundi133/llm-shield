@@ -10,6 +10,7 @@ from config.schema import RBACRole, RBACConfig, ShieldConfig
 def rbac_enforcer(mock_config):
     """Create an RBACEnforcer with mock config."""
     from core.rbac import RBACEnforcer
+
     return RBACEnforcer()
 
 
@@ -74,4 +75,4 @@ def test_clearance_levels(rbac_enforcer):
     admin_role = rbac_enforcer.resolve_role("agent-admin")
 
     assert rbac_enforcer.get_clearance_level(viewer_role) == 0  # public
-    assert rbac_enforcer.get_clearance_level(admin_role) == 3   # restricted
+    assert rbac_enforcer.get_clearance_level(admin_role) == 3  # restricted

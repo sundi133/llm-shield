@@ -42,7 +42,9 @@ class ToxicityGuardrail(BaseGuardrail):
     tier = "slow"
     stage = "input"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         threshold = self.settings.get("threshold", 0.7)
         start = time.perf_counter()
 

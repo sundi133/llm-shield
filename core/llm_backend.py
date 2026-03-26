@@ -26,7 +26,9 @@ def _get_model_path() -> str:
 
 def _get_draft_model_path() -> str:
     if _config_module.config and _config_module.config.llm_backend:
-        return _config_module.config.llm_backend.get("draft_model_path", _DEFAULT_DRAFT_MODEL_PATH)
+        return _config_module.config.llm_backend.get(
+            "draft_model_path", _DEFAULT_DRAFT_MODEL_PATH
+        )
     return _DEFAULT_DRAFT_MODEL_PATH
 
 
@@ -36,22 +38,36 @@ def start_server():
     model_path = _get_model_path()
     draft_model_path = _get_draft_model_path()
 
-    subprocess.Popen([
-        "/app/llama-server",
-        "-m", model_path,
-        "-md", draft_model_path,
-        "-ngl", "99",
-        "-ngld", "99",
-        "-c", "8192",
-        "--flash-attn", "auto",
-        "--host", "0.0.0.0",
-        "--port", "8000",
-        "-np", "8",
-        "--draft-max", "16",
-        "--cache-type-k", "q8_0",
-        "--cache-type-v", "q8_0",
-        "--log-disable",
-    ])
+    subprocess.Popen(
+        [
+            "/app/llama-server",
+            "-m",
+            model_path,
+            "-md",
+            draft_model_path,
+            "-ngl",
+            "99",
+            "-ngld",
+            "99",
+            "-c",
+            "8192",
+            "--flash-attn",
+            "auto",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8000",
+            "-np",
+            "8",
+            "--draft-max",
+            "16",
+            "--cache-type-k",
+            "q8_0",
+            "--cache-type-v",
+            "q8_0",
+            "--log-disable",
+        ]
+    )
     for i in range(60):
         try:
             r = requests.get(f"{llama_url}/health", timeout=2)

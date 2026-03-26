@@ -23,15 +23,19 @@ class LengthLimitGuardrail(BaseGuardrail):
         if self._max_tokens is not None:
             try:
                 import tiktoken
+
                 self._encoder = tiktoken.get_encoding(self._encoding_name)
             except ImportError:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "tiktoken not installed; token counting disabled for length_limit guardrail."
                 )
                 self._max_tokens = None
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         char_count = len(content)
 
         if char_count > self._max_chars:

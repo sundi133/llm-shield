@@ -62,12 +62,18 @@ async def shield_chat_completions(request: Request):
     role = getattr(request.state, "role", None)
     role_name = getattr(request.state, "role_name", None)
 
+    # Build conversation history for multi-turn awareness (exclude system messages)
+    conversation_history = [
+        msg for msg in messages if msg.get("role") in ("user", "assistant")
+    ]
+
     # Build context for guardrails
     context = {
         "agent_key": agent_key,
         "role": role,
         "role_name": role_name,
         "endpoint": "/v1/shield/chat/completions",
+        "conversation_history": conversation_history,
         **{k: v for k, v in body.items() if k != "messages"},
     }
 
@@ -85,25 +91,32 @@ async def shield_chat_completions(request: Request):
         latency_ms = (datetime.now() - start_time).total_seconds() * 1000
         # Log to audit
         triggered = [r.guardrail_name for r in input_result.results if not r.passed]
-        await audit_logger.log({
-            "agent_key": agent_key,
-            "endpoint": "/v1/shield/chat/completions",
-            "input_text": last_user_msg,
-            "action_taken": "block",
-            "guardrails_triggered": triggered,
-            "latency_ms": round(latency_ms, 2),
-            "metadata": {"stage": "input", "role": role_name},
-        })
+        await audit_logger.log(
+            {
+                "agent_key": agent_key,
+                "endpoint": "/v1/shield/chat/completions",
+                "input_text": last_user_msg,
+                "action_taken": "block",
+                "guardrails_triggered": triggered,
+                "latency_ms": round(latency_ms, 2),
+                "metadata": {"stage": "input", "role": role_name},
+            }
+        )
 
         block_reasons = [
-            r.message for r in input_result.results
+            r.message
+            for r in input_result.results
             if not r.passed and r.action == "block"
         ]
         return JSONResponse(
             status_code=403,
             content={
                 "blocked": True,
-                "block_reason": "; ".join(block_reasons) if block_reasons else "Blocked by guardrail",
+                "block_reason": (
+                    "; ".join(block_reasons)
+                    if block_reasons
+                    else "Blocked by guardrail"
+                ),
                 "guardrail_results": input_result.model_dump(),
             },
         )
@@ -145,25 +158,32 @@ async def shield_chat_completions(request: Request):
 
     if not output_result.allowed:
         triggered = [r.guardrail_name for r in output_result.results if not r.passed]
-        await audit_logger.log({
-            "agent_key": agent_key,
-            "endpoint": "/v1/shield/chat/completions",
-            "input_text": last_user_msg,
-            "action_taken": "block",
-            "guardrails_triggered": triggered,
-            "latency_ms": round(latency_ms, 2),
-            "metadata": {"stage": "output", "role": role_name},
-        })
+        await audit_logger.log(
+            {
+                "agent_key": agent_key,
+                "endpoint": "/v1/shield/chat/completions",
+                "input_text": last_user_msg,
+                "action_taken": "block",
+                "guardrails_triggered": triggered,
+                "latency_ms": round(latency_ms, 2),
+                "metadata": {"stage": "output", "role": role_name},
+            }
+        )
 
         block_reasons = [
-            r.message for r in output_result.results
+            r.message
+            for r in output_result.results
             if not r.passed and r.action == "block"
         ]
         return JSONResponse(
             status_code=403,
             content={
                 "blocked": True,
-                "block_reason": "; ".join(block_reasons) if block_reasons else "Blocked by output guardrail",
+                "block_reason": (
+                    "; ".join(block_reasons)
+                    if block_reasons
+                    else "Blocked by output guardrail"
+                ),
                 "guardrail_results": output_result.model_dump(),
             },
         )
@@ -175,18 +195,21 @@ async def shield_chat_completions(request: Request):
 
     # Log successful request
     triggered = [
-        r.guardrail_name for r in (input_result.results + output_result.results)
+        r.guardrail_name
+        for r in (input_result.results + output_result.results)
         if not r.passed
     ]
-    await audit_logger.log({
-        "agent_key": agent_key,
-        "endpoint": "/v1/shield/chat/completions",
-        "input_text": last_user_msg,
-        "action_taken": "pass" if not triggered else "warn",
-        "guardrails_triggered": triggered,
-        "latency_ms": round(latency_ms, 2),
-        "metadata": {"stage": "complete", "role": role_name},
-    })
+    await audit_logger.log(
+        {
+            "agent_key": agent_key,
+            "endpoint": "/v1/shield/chat/completions",
+            "input_text": last_user_msg,
+            "action_taken": "pass" if not triggered else "warn",
+            "guardrails_triggered": triggered,
+            "latency_ms": round(latency_ms, 2),
+            "metadata": {"stage": "complete", "role": role_name},
+        }
+    )
 
     response = ShieldResponse(
         text=llm_response_text,

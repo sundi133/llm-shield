@@ -41,13 +41,23 @@ class ToneEnforcementGuardrail(BaseGuardrail):
     tier = "slow"
     stage = "output"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         start = time.perf_counter()
 
-        blocked_tones = self.settings.get("blocked_tones", [
-            "Sarcastic", "Aggressive", "Condescending", "Overly casual",
-            "Rude", "Passive-aggressive", "Dismissive",
-        ])
+        blocked_tones = self.settings.get(
+            "blocked_tones",
+            [
+                "Sarcastic",
+                "Aggressive",
+                "Condescending",
+                "Overly casual",
+                "Rude",
+                "Passive-aggressive",
+                "Dismissive",
+            ],
+        )
         brand_voice = self.settings.get(
             "brand_voice_description",
             self.settings.get(
@@ -97,7 +107,9 @@ class ToneEnforcementGuardrail(BaseGuardrail):
         result["auto_correct"] = auto_correct
 
         if not compliant:
-            issue_summary = "; ".join(issues) if issues else "Tone does not match guidelines"
+            issue_summary = (
+                "; ".join(issues) if issues else "Tone does not match guidelines"
+            )
             tone_summary = ", ".join(detected_tones) if detected_tones else "off-brand"
             return GuardrailResult(
                 passed=False,

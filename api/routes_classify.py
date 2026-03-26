@@ -88,7 +88,9 @@ def _translate_settings(guardrail_name: str, raw: dict) -> dict:
             else:
                 settings["blocked_topics"] = custom["topics"]
         if "system_purpose" in raw or "systemPurpose" in raw:
-            settings["system_purpose"] = raw.get("system_purpose") or raw.get("systemPurpose", "")
+            settings["system_purpose"] = raw.get("system_purpose") or raw.get(
+                "systemPurpose", ""
+            )
         if "confidence_threshold" in raw:
             settings["confidence_threshold"] = raw["confidence_threshold"]
         # Direct keys
@@ -103,11 +105,20 @@ def _translate_settings(guardrail_name: str, raw: dict) -> dict:
         if langs:
             # Map full names to ISO codes
             lang_map = {
-                "english": "en", "spanish": "es", "french": "fr",
-                "german": "de", "italian": "it", "portuguese": "pt",
-                "chinese": "zh-cn", "japanese": "ja", "korean": "ko",
-                "arabic": "ar", "hindi": "hi", "russian": "ru",
-                "dutch": "nl", "turkish": "tr",
+                "english": "en",
+                "spanish": "es",
+                "french": "fr",
+                "german": "de",
+                "italian": "it",
+                "portuguese": "pt",
+                "chinese": "zh-cn",
+                "japanese": "ja",
+                "korean": "ko",
+                "arabic": "ar",
+                "hindi": "hi",
+                "russian": "ru",
+                "dutch": "nl",
+                "turkish": "tr",
             }
             settings["allowed_languages"] = [
                 lang_map.get(l.lower(), l.lower()) for l in langs
@@ -230,16 +241,12 @@ async def _classify_with_defaults(message: str, start: datetime) -> dict:
     has_block = any(
         not r.passed and r.action == "block" for r in pipeline_result.results
     )
-    has_warn = any(
-        not r.passed and r.action == "warn" for r in pipeline_result.results
-    )
+    has_warn = any(not r.passed and r.action == "warn" for r in pipeline_result.results)
 
     return {
         "safe": pipeline_result.allowed,
         "action": "block" if has_block else ("warn" if has_warn else "pass"),
-        "guardrail_results": [
-            _format_result(r) for r in pipeline_result.results
-        ],
+        "guardrail_results": [_format_result(r) for r in pipeline_result.results],
         "inference_time_ms": round(total_ms, 2),
     }
 
@@ -287,11 +294,16 @@ async def _classify_with_overrides(
                 cfg.guardrails[g.name] = GuardrailConfig(
                     enabled=False,
                     action="block",
-                    settings=cfg.guardrails[g.name].settings if g.name in cfg.guardrails else {},
+                    settings=(
+                        cfg.guardrails[g.name].settings
+                        if g.name in cfg.guardrails
+                        else {}
+                    ),
                 )
 
         # Re-instantiate guardrails that need fresh config (those with __init__ settings)
         from guardrails.registry import _registry, _discover_guardrails
+
         _discover_guardrails()
 
         fresh_guardrails = []
@@ -326,16 +338,12 @@ async def _classify_with_overrides(
     has_block = any(
         not r.passed and r.action == "block" for r in pipeline_result.results
     )
-    has_warn = any(
-        not r.passed and r.action == "warn" for r in pipeline_result.results
-    )
+    has_warn = any(not r.passed and r.action == "warn" for r in pipeline_result.results)
 
     return {
         "safe": pipeline_result.allowed,
         "action": "block" if has_block else ("warn" if has_warn else "pass"),
-        "guardrail_results": [
-            _format_result(r) for r in pipeline_result.results
-        ],
+        "guardrail_results": [_format_result(r) for r in pipeline_result.results],
         "inference_time_ms": round(total_ms, 2),
     }
 

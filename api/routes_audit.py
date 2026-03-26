@@ -13,7 +13,9 @@ router = APIRouter(prefix="/v1/shield", tags=["audit"])
 @router.get("/audit")
 async def query_audit_logs(
     agent_key: Optional[str] = Query(None, description="Filter by agent key"),
-    action: Optional[str] = Query(None, description="Filter by action (pass/block/warn)"),
+    action: Optional[str] = Query(
+        None, description="Filter by action (pass/block/warn)"
+    ),
     since: Optional[str] = Query(None, description="Filter entries since ISO datetime"),
     until: Optional[str] = Query(None, description="Filter entries until ISO datetime"),
     limit: int = Query(100, ge=1, le=1000, description="Max results to return"),

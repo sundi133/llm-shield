@@ -30,9 +30,13 @@ class MCPServerInfo:
 _mcp_registry: dict[str, MCPServerInfo] = {}
 
 
-def register_mcp_server(name: str, url: str, tools: list[str], trust_score: float = 1.0):
+def register_mcp_server(
+    name: str, url: str, tools: list[str], trust_score: float = 1.0
+):
     """Register an MCP server in the in-memory registry."""
-    _mcp_registry[name] = MCPServerInfo(name=name, url=url, tools=tools, trust_score=trust_score)
+    _mcp_registry[name] = MCPServerInfo(
+        name=name, url=url, tools=tools, trust_score=trust_score
+    )
 
 
 def get_mcp_server(name: str) -> Optional[MCPServerInfo]:
@@ -63,7 +67,9 @@ class MCPGuard(BaseGuardrail):
     tier = "fast"
     stage = "input"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         start = datetime.now()
         context = context or {}
 

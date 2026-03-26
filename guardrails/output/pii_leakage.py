@@ -12,19 +12,25 @@ logger = logging.getLogger(__name__)
 
 # Built-in regex patterns for common PII/secrets (no LLM needed)
 _BUILTIN_PATTERNS = {
-    "ssn": re.compile(r'\b\d{3}-\d{2}-\d{4}\b'),
-    "credit_card": re.compile(r'\b(?:\d{4}[- ]?){3}\d{4}\b'),
-    "email": re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),
-    "phone_number": re.compile(r'\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b'),
-    "api_key": re.compile(r'\b(?:sk-|pk-|api[_-]?key[=:\s]+)[A-Za-z0-9_\-]{20,}\b', re.IGNORECASE),
-    "password": re.compile(r'(?:password|passwd|pwd)\s*[:=]\s*\S+', re.IGNORECASE),
-    "aws_key": re.compile(r'\bAKIA[0-9A-Z]{16}\b'),
-    "ip_address": re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b'),
-    "date_of_birth": re.compile(r'\b(?:0[1-9]|1[0-2])[/\-](?:0[1-9]|[12]\d|3[01])[/\-](?:19|20)\d{2}\b'),
-    "passport_number": re.compile(r'\b[A-Z]{1,2}\d{6,9}\b'),
-    "bank_account": re.compile(r'\b\d{8,17}\b'),  # basic routing/account number pattern
+    "ssn": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+    "credit_card": re.compile(r"\b(?:\d{4}[- ]?){3}\d{4}\b"),
+    "email": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"),
+    "phone_number": re.compile(
+        r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"
+    ),
+    "api_key": re.compile(
+        r"\b(?:sk-|pk-|api[_-]?key[=:\s]+)[A-Za-z0-9_\-]{20,}\b", re.IGNORECASE
+    ),
+    "password": re.compile(r"(?:password|passwd|pwd)\s*[:=]\s*\S+", re.IGNORECASE),
+    "aws_key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+    "date_of_birth": re.compile(
+        r"\b(?:0[1-9]|1[0-2])[/\-](?:0[1-9]|[12]\d|3[01])[/\-](?:19|20)\d{2}\b"
+    ),
+    "passport_number": re.compile(r"\b[A-Z]{1,2}\d{6,9}\b"),
+    "bank_account": re.compile(r"\b\d{8,17}\b"),  # basic routing/account number pattern
     "address": re.compile(
-        r'\b\d{1,5}\s+(?:[A-Z][a-z]+\s?){1,4}(?:St|Street|Ave|Avenue|Blvd|Boulevard|Dr|Drive|Ln|Lane|Rd|Road|Ct|Court|Pl|Place|Way)\b',
+        r"\b\d{1,5}\s+(?:[A-Z][a-z]+\s?){1,4}(?:St|Street|Ave|Avenue|Blvd|Boulevard|Dr|Drive|Ln|Lane|Rd|Road|Ct|Court|Pl|Place|Way)\b",
         re.IGNORECASE,
     ),
 }
@@ -83,11 +89,27 @@ class PIILeakageGuardrail(BaseGuardrail):
     def __init__(self):
         settings = self.settings
         # Accept both pii_types (from UI) and entities (legacy)
-        self._pii_types: list[str] = settings.get("pii_types", settings.get("entities", [
-            "SSN", "Credit Card", "Email", "Phone Number", "API Key",
-            "Password", "Address", "Date of Birth", "Passport Number", "Bank Account",
-        ]))
-        self._threshold: float = settings.get("threshold", settings.get("score_threshold", 0.7))
+        self._pii_types: list[str] = settings.get(
+            "pii_types",
+            settings.get(
+                "entities",
+                [
+                    "SSN",
+                    "Credit Card",
+                    "Email",
+                    "Phone Number",
+                    "API Key",
+                    "Password",
+                    "Address",
+                    "Date of Birth",
+                    "Passport Number",
+                    "Bank Account",
+                ],
+            ),
+        )
+        self._threshold: float = settings.get(
+            "threshold", settings.get("score_threshold", 0.7)
+        )
         self._auto_redact: bool = settings.get("auto_redact", False)
         self._mode: str = settings.get("mode", "mask")  # mask, remove, redact
         self._use_presidio: bool = settings.get("use_presidio", True)
@@ -111,26 +133,31 @@ class PIILeakageGuardrail(BaseGuardrail):
             if self._presidio_entities:
                 try:
                     from presidio_analyzer import AnalyzerEngine
+
                     self._analyzer = AnalyzerEngine()
                 except ImportError:
                     logger.warning(
                         "presidio-analyzer not installed; PII leakage guardrail will use regex-only mode."
                     )
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         start = time.perf_counter()
         all_detections = []
 
         # Phase 1: fast regex scan (only active patterns)
         for pattern_name, pattern in self._active_patterns.items():
             for match in pattern.finditer(content):
-                all_detections.append({
-                    "type": pattern_name,
-                    "value_preview": _redact_preview(match.group()),
-                    "start": match.start(),
-                    "end": match.end(),
-                    "source": "regex",
-                })
+                all_detections.append(
+                    {
+                        "type": pattern_name,
+                        "value_preview": _redact_preview(match.group()),
+                        "start": match.start(),
+                        "end": match.end(),
+                        "source": "regex",
+                    }
+                )
 
         # Phase 2: presidio scan (if available and entities selected)
         if self._analyzer is not None and self._presidio_entities:
@@ -146,13 +173,15 @@ class PIILeakageGuardrail(BaseGuardrail):
                         d["start"] == r.start and d["end"] == r.end
                         for d in all_detections
                     ):
-                        all_detections.append({
-                            "type": r.entity_type.lower(),
-                            "score": round(r.score, 3),
-                            "start": r.start,
-                            "end": r.end,
-                            "source": "presidio",
-                        })
+                        all_detections.append(
+                            {
+                                "type": r.entity_type.lower(),
+                                "score": round(r.score, 3),
+                                "start": r.start,
+                                "end": r.end,
+                                "source": "presidio",
+                            }
+                        )
             except Exception as e:
                 logger.warning("Presidio analysis failed: %s", e)
 

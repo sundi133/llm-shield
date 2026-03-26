@@ -32,6 +32,7 @@ class PipelineResult(BaseModel):
 
 class ShieldResponse(BaseModel):
     """Wraps a gateway/LLM response with guardrail information."""
+
     text: Optional[str] = None
     usage: Optional[dict] = None
     inference_time_ms: Optional[float] = None

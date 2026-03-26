@@ -7,7 +7,6 @@ from typing import Optional
 
 import aiosqlite
 
-
 _DB_PATH = os.getenv("AUDIT_DB_PATH", "storage/audit.db")
 
 _CREATE_TABLE_SQL = """
@@ -132,7 +131,9 @@ class AuditLogger:
                 # Parse JSON fields
                 if entry.get("guardrails_triggered"):
                     try:
-                        entry["guardrails_triggered"] = json.loads(entry["guardrails_triggered"])
+                        entry["guardrails_triggered"] = json.loads(
+                            entry["guardrails_triggered"]
+                        )
                     except (json.JSONDecodeError, TypeError):
                         pass
                 if entry.get("metadata"):
@@ -205,7 +206,9 @@ class AuditLogger:
                 "total_requests": total,
                 "block_rate": round(blocked / total, 4) if total > 0 else 0.0,
                 "blocked_count": blocked,
-                "top_guardrails": [{"name": name, "count": count} for name, count in top_guardrails],
+                "top_guardrails": [
+                    {"name": name, "count": count} for name, count in top_guardrails
+                ],
                 "avg_latency_ms": round(avg_latency, 2),
             }
 

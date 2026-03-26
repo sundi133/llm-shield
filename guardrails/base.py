@@ -9,11 +9,13 @@ class BaseGuardrail(ABC):
     """Abstract base class for all guardrails."""
 
     name: str = "base"
-    tier: str = "fast"   # "fast" or "slow"
+    tier: str = "fast"  # "fast" or "slow"
     stage: str = "input"  # "input" or "output"
 
     @abstractmethod
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         """Run the guardrail check on the given content.
 
         Args:

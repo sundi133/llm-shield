@@ -44,7 +44,9 @@ def create_app() -> FastAPI:
     app.include_router(topic_router)
 
     # Serve playground
-    _static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
+    _static_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static"
+    )
 
     @app.get("/playground")
     async def playground():

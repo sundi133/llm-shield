@@ -15,38 +15,61 @@ from core.llm_backend import async_llm_call
 logger = logging.getLogger(__name__)
 
 _URL_PATTERN = re.compile(
-    r'https?://[^\s<>\"\'\)\]\},;]+',
+    r"https?://[^\s<>\"\'\)\]\},;]+",
     re.IGNORECASE,
 )
 
 # Well-known domains — skip HTTP check entirely
 _TRUSTED_DOMAINS = {
-    "google.com", "www.google.com",
-    "github.com", "www.github.com",
-    "stackoverflow.com", "www.stackoverflow.com",
-    "wikipedia.org", "en.wikipedia.org",
-    "youtube.com", "www.youtube.com",
-    "microsoft.com", "www.microsoft.com", "learn.microsoft.com", "docs.microsoft.com",
-    "apple.com", "www.apple.com", "developer.apple.com",
-    "amazon.com", "www.amazon.com", "aws.amazon.com", "docs.aws.amazon.com",
-    "twitter.com", "www.twitter.com", "x.com",
-    "facebook.com", "www.facebook.com",
-    "linkedin.com", "www.linkedin.com",
-    "reddit.com", "www.reddit.com",
+    "google.com",
+    "www.google.com",
+    "github.com",
+    "www.github.com",
+    "stackoverflow.com",
+    "www.stackoverflow.com",
+    "wikipedia.org",
+    "en.wikipedia.org",
+    "youtube.com",
+    "www.youtube.com",
+    "microsoft.com",
+    "www.microsoft.com",
+    "learn.microsoft.com",
+    "docs.microsoft.com",
+    "apple.com",
+    "www.apple.com",
+    "developer.apple.com",
+    "amazon.com",
+    "www.amazon.com",
+    "aws.amazon.com",
+    "docs.aws.amazon.com",
+    "twitter.com",
+    "www.twitter.com",
+    "x.com",
+    "facebook.com",
+    "www.facebook.com",
+    "linkedin.com",
+    "www.linkedin.com",
+    "reddit.com",
+    "www.reddit.com",
     "medium.com",
-    "npmjs.com", "www.npmjs.com",
+    "npmjs.com",
+    "www.npmjs.com",
     "pypi.org",
     "docs.python.org",
-    "developer.mozilla.org", "mdn.io",
-    "w3.org", "www.w3.org",
+    "developer.mozilla.org",
+    "mdn.io",
+    "w3.org",
+    "www.w3.org",
     "mozilla.org",
     "cloudflare.com",
     "gitlab.com",
     "bitbucket.org",
     "huggingface.co",
     "arxiv.org",
-    "openai.com", "platform.openai.com",
-    "anthropic.com", "docs.anthropic.com",
+    "openai.com",
+    "platform.openai.com",
+    "anthropic.com",
+    "docs.anthropic.com",
     "slack.com",
     "notion.so",
     "figma.com",
@@ -54,7 +77,8 @@ _TRUSTED_DOMAINS = {
     "netlify.com",
     "heroku.com",
     "digitalocean.com",
-    "docker.com", "hub.docker.com",
+    "docker.com",
+    "hub.docker.com",
 }
 
 _SYSTEM_PROMPT = (
@@ -107,7 +131,12 @@ async def _http_head_check(url: str, client: httpx.AsyncClient) -> dict:
     except httpx.TimeoutException:
         return {"url": url, "status": None, "reachable": False, "error": "timeout"}
     except httpx.ConnectError:
-        return {"url": url, "status": None, "reachable": False, "error": "connection_failed"}
+        return {
+            "url": url,
+            "status": None,
+            "reachable": False,
+            "error": "connection_failed",
+        }
     except Exception as e:
         return {"url": url, "status": None, "reachable": False, "error": str(e)}
 
@@ -156,7 +185,9 @@ class HallucinatedLinksGuardrail(BaseGuardrail):
     tier = "slow"
     stage = "output"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         start = time.perf_counter()
         threshold = self.settings.get("threshold", 0.75)
         extra_trusted = set(self.settings.get("trusted_domains", []))
@@ -210,8 +241,10 @@ class HallucinatedLinksGuardrail(BaseGuardrail):
 
         # ── Step 3: HTTP HEAD check ──
         http_results = []
-        dead_urls = []       # 404, connection failed, timeout
-        reachable_urls = []  # 2xx/3xx — might still be hallucinated paths on real domains
+        dead_urls = []  # 404, connection failed, timeout
+        reachable_urls = (
+            []
+        )  # 2xx/3xx — might still be hallucinated paths on real domains
         uncertain_urls = []  # couldn't determine
 
         if verify_http:
@@ -256,7 +289,8 @@ class HallucinatedLinksGuardrail(BaseGuardrail):
                 raw = response["choices"][0]["message"]["content"]
                 llm_results_raw = json.loads(raw)
                 llm_hallucinated = [
-                    u for u in llm_results_raw.get("urls", [])
+                    u
+                    for u in llm_results_raw.get("urls", [])
                     if not u.get("likely_real", True)
                 ]
             except Exception as e:
@@ -270,21 +304,25 @@ class HallucinatedLinksGuardrail(BaseGuardrail):
         # Dead URLs (HTTP 404, connection failed, DNS error)
         for hr in dead_urls:
             status_info = f"HTTP {hr['status']}" if hr["status"] else hr["error"]
-            all_hallucinated.append({
-                "url": hr["url"],
-                "likely_real": False,
-                "reason": f"URL unreachable ({status_info})",
-                "source": "http_check",
-            })
+            all_hallucinated.append(
+                {
+                    "url": hr["url"],
+                    "likely_real": False,
+                    "reason": f"URL unreachable ({status_info})",
+                    "source": "http_check",
+                }
+            )
 
         # LLM-flagged URLs
         for lu in llm_hallucinated:
-            all_hallucinated.append({
-                "url": lu["url"],
-                "likely_real": False,
-                "reason": lu.get("reason", "Flagged by LLM verification"),
-                "source": "llm",
-            })
+            all_hallucinated.append(
+                {
+                    "url": lu["url"],
+                    "likely_real": False,
+                    "reason": lu.get("reason", "Flagged by LLM verification"),
+                    "source": "llm",
+                }
+            )
 
         details = {
             "total_urls": len(unique_urls),

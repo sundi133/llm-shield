@@ -93,9 +93,13 @@ async def update_config(body: dict):
         if role_name in _config_module.config.rbac.roles:
             existing_role = _config_module.config.rbac.roles[role_name]
             for field in (
-                "allowed_tools", "denied_tools",
-                "max_tokens_per_request", "rate_limit",
-                "data_clearance", "allowed_data_scopes", "denied_data_scopes",
+                "allowed_tools",
+                "denied_tools",
+                "max_tokens_per_request",
+                "rate_limit",
+                "data_clearance",
+                "allowed_data_scopes",
+                "denied_data_scopes",
             ):
                 if field in role_data:
                     setattr(existing_role, field, role_data[field])
@@ -140,14 +144,11 @@ def _persist_config():
         # Build YAML-serializable dict
         data = {
             "guardrails": {
-                name: gcfg.model_dump()
-                for name, gcfg in cfg.guardrails.items()
+                name: gcfg.model_dump() for name, gcfg in cfg.guardrails.items()
             },
             "rbac": {
                 "roles": {
-                    name: {
-                        k: v for k, v in role.model_dump().items()
-                    }
+                    name: {k: v for k, v in role.model_dump().items()}
                     for name, role in cfg.rbac.roles.items()
                 },
                 "agents": cfg.rbac.agents,
@@ -169,12 +170,14 @@ async def list_all_guardrails():
     guardrails = list_guardrails()
     result = []
     for g in guardrails:
-        result.append({
-            "name": g.name,
-            "tier": g.tier,
-            "stage": g.stage,
-            "enabled": g.enabled,
-            "action": g.configured_action,
-            "class": g.__class__.__name__,
-        })
+        result.append(
+            {
+                "name": g.name,
+                "tier": g.tier,
+                "stage": g.stage,
+                "enabled": g.enabled,
+                "action": g.configured_action,
+                "class": g.__class__.__name__,
+            }
+        )
     return {"guardrails": result}

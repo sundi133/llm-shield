@@ -31,10 +31,12 @@ class CompetitorMentionGuardrail(BaseGuardrail):
         for name in self._competitors:
             # Word-boundary match, case-insensitive
             self._patterns.append(
-                re.compile(r'\b' + re.escape(name) + r'\b', re.IGNORECASE)
+                re.compile(r"\b" + re.escape(name) + r"\b", re.IGNORECASE)
             )
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         start = time.perf_counter()
 
         if not self._competitors:
@@ -51,11 +53,15 @@ class CompetitorMentionGuardrail(BaseGuardrail):
         for pattern, competitor_name in zip(self._patterns, self._competitors):
             found = list(pattern.finditer(content))
             if found:
-                mentions.append({
-                    "competitor": competitor_name,
-                    "count": len(found),
-                    "positions": [{"start": m.start(), "end": m.end()} for m in found],
-                })
+                mentions.append(
+                    {
+                        "competitor": competitor_name,
+                        "count": len(found),
+                        "positions": [
+                            {"start": m.start(), "end": m.end()} for m in found
+                        ],
+                    }
+                )
 
         elapsed = (time.perf_counter() - start) * 1000
 

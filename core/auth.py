@@ -44,7 +44,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not api_key:
             return JSONResponse(
                 status_code=401,
-                content={"error": "Missing API key. Use Authorization: Bearer <key> or X-API-Key header."},
+                content={
+                    "error": "Missing API key. Use Authorization: Bearer <key> or X-API-Key header."
+                },
             )
 
         # Validate key

@@ -28,7 +28,9 @@ class KeywordBlocklistGuardrail(BaseGuardrail):
             self._automaton.make_automaton()
         self._has_keywords = bool(keywords)
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         if not self._has_keywords:
             return GuardrailResult(
                 passed=True,

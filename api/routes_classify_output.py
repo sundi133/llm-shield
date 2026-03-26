@@ -20,7 +20,7 @@ _NAME_MAP = {
     "hallucinated-weblink-detection": "hallucinated_links",
     "tone-enforcement": "tone_enforcement",
     "tone_enforcement": "tone_enforcement",
-"bias-detection": "bias_detection",
+    "bias-detection": "bias_detection",
     "bias_detection": "bias_detection",
     "pii-leakage": "pii_leakage",
     "pii_leakage": "pii_leakage",
@@ -172,16 +172,12 @@ async def _classify_with_defaults(output: str, start: datetime) -> dict:
     has_block = any(
         not r.passed and r.action == "block" for r in pipeline_result.results
     )
-    has_warn = any(
-        not r.passed and r.action == "warn" for r in pipeline_result.results
-    )
+    has_warn = any(not r.passed and r.action == "warn" for r in pipeline_result.results)
 
     return {
         "safe": pipeline_result.allowed,
         "action": "block" if has_block else ("warn" if has_warn else "pass"),
-        "guardrail_results": [
-            _format_result(r) for r in pipeline_result.results
-        ],
+        "guardrail_results": [_format_result(r) for r in pipeline_result.results],
         "inference_time_ms": round(total_ms, 2),
     }
 
@@ -226,11 +222,16 @@ async def _classify_with_overrides(
                 cfg.guardrails[g.name] = GuardrailConfig(
                     enabled=False,
                     action="warn",
-                    settings=cfg.guardrails[g.name].settings if g.name in cfg.guardrails else {},
+                    settings=(
+                        cfg.guardrails[g.name].settings
+                        if g.name in cfg.guardrails
+                        else {}
+                    ),
                 )
 
         # Re-instantiate guardrails with fresh config
         from guardrails.registry import _registry, _discover_guardrails
+
         _discover_guardrails()
 
         fresh_guardrails = []
@@ -261,16 +262,12 @@ async def _classify_with_overrides(
     has_block = any(
         not r.passed and r.action == "block" for r in pipeline_result.results
     )
-    has_warn = any(
-        not r.passed and r.action == "warn" for r in pipeline_result.results
-    )
+    has_warn = any(not r.passed and r.action == "warn" for r in pipeline_result.results)
 
     return {
         "safe": pipeline_result.allowed,
         "action": "block" if has_block else ("warn" if has_warn else "pass"),
-        "guardrail_results": [
-            _format_result(r) for r in pipeline_result.results
-        ],
+        "guardrail_results": [_format_result(r) for r in pipeline_result.results],
         "inference_time_ms": round(total_ms, 2),
     }
 

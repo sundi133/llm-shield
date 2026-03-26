@@ -30,7 +30,9 @@ class LanguageDetectionGuardrail(BaseGuardrail):
             )
             self._available = False
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         if not self._available:
             return GuardrailResult(
                 passed=True,
@@ -51,6 +53,7 @@ class LanguageDetectionGuardrail(BaseGuardrail):
 
         try:
             from langdetect import detect
+
             detected_lang = detect(content)
         except Exception as e:
             logger.warning(f"Language detection failed: {e}")

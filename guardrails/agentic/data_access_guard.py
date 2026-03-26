@@ -20,7 +20,9 @@ class DataAccessGuard(BaseGuardrail):
     tier = "fast"
     stage = "input"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         start = datetime.now()
         context = context or {}
 

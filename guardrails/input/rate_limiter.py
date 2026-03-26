@@ -6,7 +6,6 @@ from core.models import GuardrailResult
 from guardrails.base import BaseGuardrail
 from storage.state_store import StateStore
 
-
 # Module-level shared state store so all instances share the same counters.
 _state_store = StateStore()
 
@@ -24,7 +23,9 @@ class RateLimiterGuardrail(BaseGuardrail):
         self._window_seconds: int = settings.get("window_seconds", 60)
         self._store = _state_store
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         context = context or {}
         client_id = context.get("client_id") or context.get("agent_key") or "anonymous"
         rate_key = f"rate_limit:{client_id}"

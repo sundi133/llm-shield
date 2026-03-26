@@ -7,7 +7,6 @@ from unittest.mock import patch
 from config.schema import ShieldConfig, AuthConfig
 from core.auth import _extract_api_key, _validate_key
 
-
 # --- Unit tests for key validation ---
 
 
@@ -69,12 +68,14 @@ def no_auth_config():
 def _make_app(cfg):
     """Create app with a specific config, preventing load_config from overwriting."""
     import config.schema as cs
+
     original = cs.config
     # Set config before app creation so middleware sees it
     cs.config = cfg
     # Prevent load_config from overwriting
     with patch("config.schema.load_config", return_value=cfg):
         from core.app import create_app
+
         app = create_app()
     return app, original
 
@@ -83,6 +84,7 @@ def _make_app(cfg):
 def app_with_auth(auth_config):
     """Create a test app with auth enabled."""
     import config.schema as cs
+
     app, original = _make_app(auth_config)
     yield app
     cs.config = original
@@ -92,6 +94,7 @@ def app_with_auth(auth_config):
 def app_without_auth(no_auth_config):
     """Create a test app with auth disabled."""
     import config.schema as cs
+
     app, original = _make_app(no_auth_config)
     yield app
     cs.config = original
@@ -99,6 +102,7 @@ def app_without_auth(no_auth_config):
 
 def test_public_path_no_key_required(app_with_auth):
     from starlette.testclient import TestClient
+
     client = TestClient(app_with_auth)
     resp = client.get("/health")
     assert resp.status_code == 200
@@ -106,6 +110,7 @@ def test_public_path_no_key_required(app_with_auth):
 
 def test_protected_path_rejected_without_key(app_with_auth):
     from starlette.testclient import TestClient
+
     client = TestClient(app_with_auth)
     resp = client.get("/v1/shield/guardrails")
     assert resp.status_code == 401
@@ -114,6 +119,7 @@ def test_protected_path_rejected_without_key(app_with_auth):
 
 def test_protected_path_rejected_with_wrong_key(app_with_auth):
     from starlette.testclient import TestClient
+
     client = TestClient(app_with_auth)
     resp = client.get(
         "/v1/shield/guardrails",
@@ -125,6 +131,7 @@ def test_protected_path_rejected_with_wrong_key(app_with_auth):
 
 def test_protected_path_allowed_with_bearer(app_with_auth):
     from starlette.testclient import TestClient
+
     client = TestClient(app_with_auth)
     resp = client.get(
         "/v1/shield/guardrails",
@@ -135,6 +142,7 @@ def test_protected_path_allowed_with_bearer(app_with_auth):
 
 def test_protected_path_allowed_with_x_api_key(app_with_auth):
     from starlette.testclient import TestClient
+
     client = TestClient(app_with_auth)
     resp = client.get(
         "/v1/shield/guardrails",
@@ -145,6 +153,7 @@ def test_protected_path_allowed_with_x_api_key(app_with_auth):
 
 def test_classify_requires_auth(app_with_auth):
     from starlette.testclient import TestClient
+
     client = TestClient(app_with_auth)
     resp = client.post("/classify", json={"message": "hello"})
     assert resp.status_code == 401
@@ -153,6 +162,7 @@ def test_classify_requires_auth(app_with_auth):
 def test_classify_with_valid_key(app_with_auth):
     """Classify endpoint works with valid key — auth passes (not 401/403)."""
     from starlette.testclient import TestClient
+
     client = TestClient(app_with_auth)
     resp = client.post(
         "/classify",
@@ -160,13 +170,17 @@ def test_classify_with_valid_key(app_with_auth):
         headers={"Authorization": "Bearer test-key-123"},
     )
     # With no per-request overrides, runs default pipeline (CPU guardrails pass)
-    assert resp.status_code in (200, 500)  # 200 if pipeline runs, 500 only if unexpected error
+    assert resp.status_code in (
+        200,
+        500,
+    )  # 200 if pipeline runs, 500 only if unexpected error
     assert resp.status_code != 401
     assert resp.status_code != 403
 
 
 def test_auth_disabled_allows_all(app_without_auth):
     from starlette.testclient import TestClient
+
     client = TestClient(app_without_auth)
     resp = client.get("/v1/shield/guardrails")
     assert resp.status_code == 200
@@ -175,12 +189,14 @@ def test_auth_disabled_allows_all(app_without_auth):
 def test_auth_enabled_no_keys_configured():
     """Auth enabled but no keys = server error."""
     import config.schema as cs
+
     broken_config = ShieldConfig(
         auth=AuthConfig(enabled=True, api_keys=[]),
     )
     app, original = _make_app(broken_config)
     try:
         from starlette.testclient import TestClient
+
         client = TestClient(app)
         resp = client.get("/v1/shield/guardrails")
         assert resp.status_code == 500

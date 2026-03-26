@@ -10,6 +10,7 @@ from config.schema import GuardrailConfig, ShieldConfig
 def regex_guard(mock_config):
     """Create a RegexPatternGuardrail with mock config."""
     from guardrails.input.regex_pattern import RegexPatternGuardrail
+
     return RegexPatternGuardrail()
 
 
@@ -44,6 +45,7 @@ async def test_pattern_matched_warn():
     )
     with patch("config.schema.config", cfg):
         from guardrails.input.regex_pattern import RegexPatternGuardrail
+
         guard = RegexPatternGuardrail()
         result = await guard.check("My password= secret123")
         assert result.passed  # warn does not block

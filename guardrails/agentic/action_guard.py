@@ -7,7 +7,6 @@ from typing import Optional
 from core.models import GuardrailResult
 from guardrails.base import BaseGuardrail
 
-
 # In-memory per-session action counters: {session_id: {action_type: count}}
 _session_actions: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
@@ -38,7 +37,9 @@ class ActionGuard(BaseGuardrail):
     tier = "fast"
     stage = "input"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
         start = datetime.now()
         context = context or {}
 
