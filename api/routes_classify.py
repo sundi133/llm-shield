@@ -224,6 +224,12 @@ async def classify(body: dict):
     input_overrides = body.get("input")
     context = body.get("context", {})
 
+    # Support conversation_history for multi-turn guardrail awareness
+    if "conversation_history" not in context and "messages" in body:
+        context["conversation_history"] = [
+            msg for msg in body["messages"] if msg.get("role") in ("user", "assistant")
+        ]
+
     # If no per-request guardrail config, run with server defaults
     if not input_overrides:
         return await _classify_with_defaults(message, start)
