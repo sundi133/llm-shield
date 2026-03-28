@@ -214,7 +214,7 @@ _FAST_DECODED_PROMPT = (
 
 _CHARS_PER_TOKEN = 3.5
 _RESERVED_TOKENS = 900
-_DEFAULT_SLOT_CONTEXT = 4096
+_DEFAULT_SLOT_CONTEXT = 4096  # 32768 context / 8 slots
 
 
 def _estimate_tokens(text: str) -> int:
