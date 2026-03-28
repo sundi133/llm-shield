@@ -213,7 +213,7 @@ _FAST_DECODED_PROMPT = (
 # ---------------------------------------------------------------------------
 
 _CHARS_PER_TOKEN = 3.5
-_RESERVED_TOKENS = 900
+_RESERVED_TOKENS = 770  # system prompt (~600) + output (128) + overhead (~42)
 _DEFAULT_SLOT_CONTEXT = 4096  # 32768 context / 8 slots
 
 
@@ -274,7 +274,7 @@ class AdversarialGuardrail(BaseGuardrail):
                 {"role": "system", "content": _FAST_DECODED_PROMPT},
                 {"role": "user", "content": content},
             ],
-            max_tokens=256,
+            max_tokens=128,
             temperature=0,
             response_format=_RESPONSE_SCHEMA,
         )
@@ -349,7 +349,7 @@ class AdversarialGuardrail(BaseGuardrail):
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=256,
+                max_tokens=128,
                 temperature=0,
                 response_format=_RESPONSE_SCHEMA,
             )

@@ -127,7 +127,7 @@ class SafetyCheckGuardrail(BaseGuardrail):
         try:
             detail_response = await async_llm_call(
                 messages=step2_messages,
-                max_tokens=256,
+                max_tokens=128,
                 temperature=0,
                 response_format=_UNSAFE_SCHEMA,
             )
