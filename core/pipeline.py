@@ -40,17 +40,24 @@ async def _run_tier(
     return list(results)
 
 
+def _has_block(results: list[GuardrailResult]) -> bool:
+    """Check if any result is a block action."""
+    return any(not r.passed and r.action == "block" for r in results)
+
+
 async def run_pipeline(
     guardrails: list[BaseGuardrail],
     content: str,
     context: Optional[dict] = None,
 ) -> PipelineResult:
-    """Run the two-tier guardrail pipeline.
+    """Run the three-tier guardrail pipeline with early exit.
 
-    1. Run all fast-tier guardrails in parallel.
+    1. Run all fast-tier guardrails in parallel (CPU-only, <1ms).
     2. If any fast-tier guardrail blocks, return immediately.
-    3. Otherwise, run all slow-tier guardrails in parallel.
-    4. Return the combined PipelineResult.
+    3. Run all medium-tier guardrails in parallel (small LLM, ~100-150ms).
+    4. If any medium-tier guardrail blocks, return immediately.
+    5. Run all slow-tier guardrails in parallel (large LLM, ~500-700ms).
+    6. Return the combined PipelineResult.
     """
     start = datetime.now()
     all_results: list[GuardrailResult] = []
@@ -59,15 +66,14 @@ async def run_pipeline(
     enabled = [g for g in guardrails if g.enabled]
 
     fast_guardrails = [g for g in enabled if g.tier == "fast"]
+    medium_guardrails = [g for g in enabled if g.tier == "medium"]
     slow_guardrails = [g for g in enabled if g.tier == "slow"]
 
-    # Run fast tier
+    # Tier 1: Fast (CPU-only)
     fast_results = await _run_tier(fast_guardrails, content, context)
     all_results.extend(fast_results)
 
-    # Check if any fast-tier guardrail blocked
-    blocked = any(not r.passed and r.action == "block" for r in fast_results)
-    if blocked:
+    if _has_block(fast_results):
         total_ms = (datetime.now() - start).total_seconds() * 1000
         return PipelineResult(
             allowed=False,
@@ -75,12 +81,24 @@ async def run_pipeline(
             total_latency_ms=round(total_ms, 2),
         )
 
-    # Run slow tier
+    # Tier 2: Medium (small LLM — 1.7B)
+    medium_results = await _run_tier(medium_guardrails, content, context)
+    all_results.extend(medium_results)
+
+    if _has_block(medium_results):
+        total_ms = (datetime.now() - start).total_seconds() * 1000
+        return PipelineResult(
+            allowed=False,
+            results=all_results,
+            total_latency_ms=round(total_ms, 2),
+        )
+
+    # Tier 3: Slow (large LLM — 8B)
     slow_results = await _run_tier(slow_guardrails, content, context)
     all_results.extend(slow_results)
 
     # Determine final allowed status
-    allowed = not any(not r.passed and r.action == "block" for r in all_results)
+    allowed = not _has_block(all_results)
     total_ms = (datetime.now() - start).total_seconds() * 1000
 
     return PipelineResult(
