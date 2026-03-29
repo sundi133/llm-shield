@@ -304,14 +304,14 @@ llm_backend:
   #     gpu: 0
   #     guardrails: ["all"]
 
-  Multi-GPU example (uncomment to use):
+  # 3x RTX 4090 — each GPU handles a group of guardrails
   servers:
     - url: "http://127.0.0.1:8000"
       gpu: 0
       guardrails: ["adversarial_detection", "tone_enforcement", "bias_detection"]
     - url: "http://127.0.0.1:8001"
       gpu: 1
-      guardrails: ["topic_restriction", "topic_enforcement", "hallucinated_links"]
+      guardrails: ["topic_restriction", "topic_enforcement", "hallucinated_links", "factual_grounding"]
     - url: "http://127.0.0.1:8002"
       gpu: 2
-      guardrails: ["safety_check", "toxicity", "pii_leakage", "competitor_mention"]
+      guardrails: ["safety_check", "toxicity", "pii_detection", "pii_leakage", "competitor_mention"]
