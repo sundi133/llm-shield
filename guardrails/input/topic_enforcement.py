@@ -6,7 +6,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call_medium as async_llm_call
+from core.llm_backend import async_llm_call
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a strict topic enforcement classifier. Your job is to determine whether "
@@ -71,7 +71,7 @@ class TopicEnforcementGuardrail(BaseGuardrail):
     """
 
     name = "topic_enforcement"
-    tier = "medium"
+    tier = "slow"
     stage = "input"
 
     def _build_system_prompt(self) -> str:

@@ -4,7 +4,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call_medium as async_llm_call
+from core.llm_backend import async_llm_call
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a topic classifier. For every message:\n"
@@ -51,7 +51,7 @@ class TopicRestrictionGuardrail(BaseGuardrail):
     """Enforce topic whitelist/blacklist restrictions using LLM classification."""
 
     name = "topic_restriction"
-    tier = "medium"
+    tier = "slow"
     stage = "input"
 
     def _build_system_prompt(self) -> str:

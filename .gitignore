@@ -6,3 +6,4 @@ storage/audit.db
 *.egg-info/
 dist/
 build/
+test_votal.sh

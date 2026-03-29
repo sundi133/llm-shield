@@ -296,7 +296,5 @@ auth:
 
 llm_backend:
   url: "http://127.0.0.1:8000"
-  medium_url: "http://127.0.0.1:8001"
   model_path: "/models/Qwen3-8B-Q4_K_M.gguf"
-  medium_model_path: "/models/Qwen3-1.7B-Q4_K_M.gguf"
   draft_model_path: "/models/Qwen3-0.6B-Q4_K_M.gguf"
