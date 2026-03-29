@@ -298,20 +298,20 @@ llm_backend:
   model_path: "/models/Qwen3-8B-Q4_K_M.gguf"
   draft_model_path: "/models/Qwen3-0.6B-Q4_K_M.gguf"
 
-  # Single GPU (default) — all guardrails share one server
-  # servers:
-  #   - url: "http://127.0.0.1:8000"
-  #     gpu: 0
-  #     guardrails: ["all"]
-
-  # 3x RTX 4090
+  # Single GPU (default)
   servers:
     - url: "http://127.0.0.1:8000"
       gpu: 0
-      guardrails: ["adversarial_detection", "tone_enforcement", "bias_detection"]
-    - url: "http://127.0.0.1:8001"
-      gpu: 1
-      guardrails: ["topic_restriction", "topic_enforcement", "hallucinated_links", "factual_grounding"]
-    - url: "http://127.0.0.1:8002"
-      gpu: 2
-      guardrails: ["safety_check", "toxicity", "pii_detection", "pii_leakage", "competitor_mention"]
+      guardrails: ["all"]
+
+  # Multi-GPU (uncomment for 3x GPUs):
+  # servers:
+  #   - url: "http://127.0.0.1:8000"
+  #     gpu: 0
+  #     guardrails: ["adversarial_detection", "tone_enforcement", "bias_detection"]
+  #   - url: "http://127.0.0.1:8001"
+  #     gpu: 1
+  #     guardrails: ["topic_restriction", "topic_enforcement", "hallucinated_links", "factual_grounding"]
+  #   - url: "http://127.0.0.1:8002"
+  #     gpu: 2
+  #     guardrails: ["safety_check", "toxicity", "pii_detection", "pii_leakage", "competitor_mention"]
