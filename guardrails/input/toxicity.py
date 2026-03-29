@@ -78,6 +78,7 @@ class ToxicityGuardrail(BaseGuardrail):
                 max_tokens=128,
                 temperature=0,
                 response_format=_RESPONSE_SCHEMA,
+                guardrail_name=self.name,
             )
             if "choices" not in response:
                 error = response.get("error", {}).get("message", str(response))

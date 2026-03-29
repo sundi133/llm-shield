@@ -81,6 +81,7 @@ class SafetyCheckGuardrail(BaseGuardrail):
                 max_tokens=10,
                 temperature=0,
                 response_format=_SAFE_SCHEMA,
+                guardrail_name=self.name,
             )
             raw = safe_response["choices"][0]["message"]["content"]
             is_safe = json.loads(raw).get("safe", False)
@@ -130,6 +131,7 @@ class SafetyCheckGuardrail(BaseGuardrail):
                 max_tokens=128,
                 temperature=0,
                 response_format=_UNSAFE_SCHEMA,
+                guardrail_name=self.name,
             )
             detail_raw = detail_response["choices"][0]["message"]["content"]
             result = json.loads(detail_raw)

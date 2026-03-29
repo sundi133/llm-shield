@@ -155,6 +155,7 @@ class TopicEnforcementGuardrail(BaseGuardrail):
                 max_tokens=128,
                 temperature=0,
                 response_format=_RESPONSE_SCHEMA,
+                guardrail_name=self.name,
             )
             raw = response["choices"][0]["message"]["content"]
             result = json.loads(raw)
