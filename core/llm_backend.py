@@ -118,6 +118,11 @@ def start_server():
     model_path = _get_model_path()
     draft_model_path = _get_draft_model_path()
 
+    # Clear any RunPod-set GPU restriction so all GPUs are visible
+    parent_cuda = os.environ.get("CUDA_VISIBLE_DEVICES", "not set")
+    print(f"Parent CUDA_VISIBLE_DEVICES: {parent_cuda}")
+    print(f"Launching {len(servers)} server(s)...")
+
     for server_cfg in servers:
         url = server_cfg["url"]
         gpu = server_cfg.get("gpu", 0)
@@ -134,12 +139,13 @@ def start_server():
                 _guardrail_server_map[name] = url
 
         # Start llama-server pinned to this GPU
+        # Override CUDA_VISIBLE_DEVICES for this specific process
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
 
         args = _build_server_args(port, model_path, draft_model_path)
         subprocess.Popen(args, env=env)
-        print(f"Started llama-server on port {port} (GPU {gpu}) for {guardrail_names}")
+        print(f"Started llama-server on port {port} (CUDA_VISIBLE_DEVICES={gpu}) for {guardrail_names}")
 
     # Wait for all servers
     for server_cfg in servers:
