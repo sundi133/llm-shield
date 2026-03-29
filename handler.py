@@ -8,23 +8,45 @@ from core.app import create_app
 
 
 def _seed_config():
-    """Copy default config to CONFIG_PATH on first boot if it doesn't exist yet."""
+    """Sync default config to CONFIG_PATH.
+
+    Merges the llm_backend section from the Docker image's default.yaml
+    into the persisted config, preserving any guardrail/RBAC customizations
+    made via the API.
+    """
     config_path = os.getenv("CONFIG_PATH")
     if not config_path:
         return
 
-    if os.path.exists(config_path):
-        return
-
-    # Ensure parent directory exists
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-
     default = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "config", "default.yaml"
     )
-    if os.path.exists(default):
-        shutil.copy2(default, config_path)
-        print(f"Seeded config to {config_path}")
+
+    if not os.path.exists(config_path):
+        # First boot — copy entire default config
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        if os.path.exists(default):
+            shutil.copy2(default, config_path)
+            print(f"Seeded config to {config_path}")
+        return
+
+    # Config exists — update llm_backend section from default
+    # This ensures new server configs deploy without manual edits
+    try:
+        import yaml
+
+        with open(default) as f:
+            default_cfg = yaml.safe_load(f) or {}
+        with open(config_path) as f:
+            persisted_cfg = yaml.safe_load(f) or {}
+
+        if "llm_backend" in default_cfg:
+            persisted_cfg["llm_backend"] = default_cfg["llm_backend"]
+            with open(config_path, "w") as f:
+                yaml.dump(persisted_cfg, f, default_flow_style=False)
+            print(f"Updated llm_backend in {config_path}")
+    except Exception as e:
+        print(f"Config sync failed (non-fatal): {e}")
 
 
 _seed_config()
