@@ -147,6 +147,29 @@ def start_server():
         gpu = server_cfg.get("gpu", 0)
         _wait_for_server(url, f"llama-server (GPU {gpu})")
 
+    # Log routing summary
+    print("\n" + "=" * 60)
+    print("LLM BACKEND — SERVER ROUTING")
+    print("=" * 60)
+    print(f"  Servers started: {len(servers)}")
+    print(f"  Model: {model_path}")
+    print(f"  Draft: {draft_model_path}")
+    print()
+    for server_cfg in servers:
+        url = server_cfg["url"]
+        gpu = server_cfg.get("gpu", 0)
+        names = server_cfg.get("guardrails", ["all"])
+        print(f"  GPU {gpu} → {url}")
+        print(f"    Guardrails: {', '.join(names)}")
+    print()
+    if _guardrail_server_map:
+        print("  Routing map:")
+        for name, url in sorted(_guardrail_server_map.items()):
+            print(f"    {name} → {url}")
+    else:
+        print(f"  All guardrails → {_default_server_url}")
+    print("=" * 60 + "\n")
+
 
 def get_server_url(guardrail_name: Optional[str] = None) -> str:
     """Get the server URL for a specific guardrail.
@@ -220,7 +243,12 @@ async def async_llm_call(
     guardrail_name: Optional[str] = None,
 ) -> dict:
     """Async LLM call routed to the correct server based on guardrail name."""
+    import logging
+
     url = get_server_url(guardrail_name)
+    logging.getLogger("llm_backend").debug(
+        f"[{guardrail_name or 'unknown'}] → {url}"
+    )
     payload = _build_payload(messages, max_tokens, temperature, response_format)
     async with httpx.AsyncClient(timeout=300) as client:
         res = await client.post(

@@ -1,24 +1,56 @@
-"""PII detection guardrail using presidio-analyzer."""
+"""PII detection guardrail using LLM classification."""
 
-import logging
+import json
+import time
 from typing import Optional
 
 from core.models import GuardrailResult
+from core.llm_backend import async_llm_call
 from guardrails.base import BaseGuardrail
 
-logger = logging.getLogger(__name__)
+_SYSTEM_PROMPT = (
+    "You are a PII (Personally Identifiable Information) detector.\n"
+    "Analyze the user message and identify any PII present.\n\n"
+    "PII types to detect: {entities}\n\n"
+    "For each PII found, report the type and the value.\n"
+    "If no PII is found, set has_pii=false and entities=[].\n\n"
+    "IMPORTANT: Policy numbers (e.g., AUTO-338821, HOM-2891034, CLM-558821) "
+    "are NOT PII — they are internal reference numbers.\n"
+    "Only flag actual personal data: SSNs, credit cards, phone numbers, "
+    "email addresses, IP addresses, etc."
+)
+
+_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "has_pii": {"type": "boolean"},
+        "entities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string"},
+                    "value": {"type": "string"},
+                },
+                "required": ["type", "value"],
+            },
+        },
+        "reason": {"type": "string"},
+    },
+    "required": ["has_pii", "entities", "reason"],
+    "additionalProperties": False,
+}
 
 
 class PIIDetectionGuardrail(BaseGuardrail):
-    """Detects personally identifiable information using presidio-analyzer."""
+    """Detects personally identifiable information using LLM classification."""
 
     name = "pii_detection"
-    tier = "fast"
+    tier = "slow"
     stage = "input"
 
-    def __init__(self):
-        settings = self.settings
-        self._entities: list[str] = settings.get(
+    def _get_entities(self) -> list[str]:
+        return self.settings.get(
             "entities",
             [
                 "PHONE_NUMBER",
@@ -28,56 +60,56 @@ class PIIDetectionGuardrail(BaseGuardrail):
                 "IP_ADDRESS",
             ],
         )
-        self._action: str = settings.get("action", "warn")
-        self._score_threshold: float = settings.get("score_threshold", 0.7)
-        self._analyzer = None
-
-        try:
-            from presidio_analyzer import AnalyzerEngine
-
-            self._analyzer = AnalyzerEngine()
-        except ImportError:
-            logger.warning(
-                "presidio-analyzer not installed; PII detection guardrail will pass all content."
-            )
 
     async def check(
         self, content: str, context: Optional[dict] = None
     ) -> GuardrailResult:
-        if self._analyzer is None:
+        start = time.perf_counter()
+        entities = self._get_entities()
+        score_threshold = self.settings.get("score_threshold", 0.7)
+
+        system_prompt = _SYSTEM_PROMPT.format(entities=", ".join(entities))
+
+        try:
+            response = await async_llm_call(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": content},
+                ],
+                max_tokens=128,
+                temperature=0,
+                response_format=_RESPONSE_SCHEMA,
+                guardrail_name=self.name,
+            )
+            if "choices" not in response:
+                error = response.get("error", {}).get("message", str(response))
+                raise ValueError(f"LLM error: {error}")
+            raw = response["choices"][0]["message"]["content"]
+            result = json.loads(raw)
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(
                 passed=True,
                 action="pass",
                 guardrail_name=self.name,
-                message="PII detection unavailable (presidio-analyzer not installed).",
+                message=f"PII detection failed, allowing by default: {e}",
+                latency_ms=elapsed,
             )
 
-        results = self._analyzer.analyze(
-            text=content,
-            entities=self._entities,
-            language="en",
-            score_threshold=self._score_threshold,
-        )
+        has_pii = result.get("has_pii", False)
+        detected = result.get("entities", [])
+        reason = result.get("reason", "")
+        elapsed = (time.perf_counter() - start) * 1000
 
-        if results:
-            detected = []
-            for r in results:
-                detected.append(
-                    {
-                        "entity_type": r.entity_type,
-                        "score": round(r.score, 3),
-                        "start": r.start,
-                        "end": r.end,
-                    }
-                )
-
-            action = self._action
+        if has_pii and detected:
+            detected_types = [e["type"] for e in detected]
             return GuardrailResult(
-                passed=action not in ("block",),
-                action=action,
+                passed=False,
+                action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Detected {len(detected)} PII entity/entities.",
+                message=f"Detected {len(detected)} PII: {', '.join(detected_types)}. {reason}",
                 details={"detected_entities": detected},
+                latency_ms=elapsed,
             )
 
         return GuardrailResult(
@@ -85,4 +117,6 @@ class PIIDetectionGuardrail(BaseGuardrail):
             action="pass",
             guardrail_name=self.name,
             message="No PII detected.",
+            details=result,
+            latency_ms=elapsed,
         )
