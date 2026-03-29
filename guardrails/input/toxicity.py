@@ -6,14 +6,20 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call_medium as async_llm_call
+from core.llm_backend import async_llm_call
 
 _SYSTEM_PROMPT = (
     "You are a toxicity classifier. Analyze the user message for toxic content.\n\n"
     "Toxicity categories: harassment, hate_speech, threat, sexual_content, "
     "self_harm, profanity, insult, discrimination, bullying, intimidation, none\n\n"
     "Rate severity as: none, low, medium, high, critical.\n"
-    "Set toxicity_score from 0.0 (clean) to 1.0 (extremely toxic)."
+    "Set toxicity_score from 0.0 (clean) to 1.0 (extremely toxic).\n\n"
+    "IMPORTANT: Normal questions, greetings, and general conversation are NOT toxic.\n"
+    "Examples of NOT toxic: 'what is your role', 'hello', 'help me with X', "
+    "'how do I do Y', 'what is the weather'. Set is_toxic=false and toxicity_score=0.0 "
+    "for these.\n"
+    "Only flag content that contains ACTUAL harassment, hate speech, threats, "
+    "profanity, insults, or other abusive language directed at someone."
 )
 
 _RESPONSE_SCHEMA = {
@@ -39,7 +45,7 @@ class ToxicityGuardrail(BaseGuardrail):
     """
 
     name = "toxicity"
-    tier = "medium"
+    tier = "slow"
     stage = "input"
 
     async def check(

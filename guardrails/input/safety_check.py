@@ -6,7 +6,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call_medium as async_llm_call
+from core.llm_backend import async_llm_call
 
 _SAFE_SCHEMA = {
     "type": "object",
@@ -38,7 +38,7 @@ class SafetyCheckGuardrail(BaseGuardrail):
     """
 
     name = "safety_check"
-    tier = "medium"
+    tier = "slow"
     stage = "input"
 
     async def check(
