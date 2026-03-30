@@ -90,6 +90,8 @@ def _build_server_args(port: int, model_path: str, draft_model_path: str) -> lis
             "-ub",
             "512",
             "--cont-batching",
+            "--chat-template-kwargs",
+            '{"enable_thinking": false}',
             "--log-disable",
         ]
     )
