@@ -8,8 +8,8 @@ import httpx
 
 import config.schema as _config_module
 
-_DEFAULT_MODEL_PATH = "/models/Qwen3-8B-Q4_K_M.gguf"
-_DEFAULT_DRAFT_MODEL_PATH = "/models/Qwen3-0.6B-Q4_K_M.gguf"
+_DEFAULT_MODEL_PATH = "/models/Qwen3.5-4B-Q4_K_M.gguf"
+_DEFAULT_DRAFT_MODEL_PATH = "/models/Qwen3.5-0.8B-Q4_K_M.gguf"
 
 # Guardrail name → server URL routing map (built at startup)
 _guardrail_server_map: dict[str, str] = {}
