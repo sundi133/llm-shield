@@ -194,11 +194,16 @@ def get_server_url(guardrail_name: Optional[str] = None) -> str:
 
 
 def _ensure_no_think(messages: list) -> list:
-    """Append /no_think to the system message to disable Qwen3 thinking mode."""
+    """Append thinking suppression to the system message.
+
+    Supports both Qwen3 (/no_think) and Qwen3.5 (/set nothink) formats.
+    """
     messages = [dict(m) for m in messages]
     for m in messages:
-        if m.get("role") == "system" and "/no_think" not in m.get("content", ""):
-            m["content"] = m["content"].rstrip() + " /no_think"
+        if m.get("role") == "system":
+            content = m.get("content", "")
+            if "/no_think" not in content and "/set nothink" not in content:
+                m["content"] = content.rstrip() + " /no_think /set nothink"
             break
     return messages
 
