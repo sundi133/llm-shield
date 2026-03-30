@@ -274,7 +274,7 @@ class AdversarialGuardrail(BaseGuardrail):
                 {"role": "system", "content": _FAST_DECODED_PROMPT},
                 {"role": "user", "content": content},
             ],
-            max_tokens=128,
+            max_tokens=256,
             temperature=0,
             response_format=_RESPONSE_SCHEMA,
             guardrail_name=self.name,
@@ -350,7 +350,7 @@ class AdversarialGuardrail(BaseGuardrail):
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=128,
+                max_tokens=256,
                 temperature=0,
                 response_format=_RESPONSE_SCHEMA,
                 guardrail_name=self.name,

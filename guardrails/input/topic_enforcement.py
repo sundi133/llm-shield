@@ -152,7 +152,7 @@ class TopicEnforcementGuardrail(BaseGuardrail):
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=128,
+                max_tokens=256,
                 temperature=0,
                 response_format=_RESPONSE_SCHEMA,
                 guardrail_name=self.name,

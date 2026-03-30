@@ -76,7 +76,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": content},
                 ],
-                max_tokens=128,
+                max_tokens=256,
                 temperature=0,
                 response_format=_RESPONSE_SCHEMA,
                 guardrail_name=self.name,
