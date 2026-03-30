@@ -85,6 +85,11 @@ def _build_server_args(port: int, model_path: str, draft_model_path: str) -> lis
             "q4_0",
             "--cache-type-v",
             "q4_0",
+            "-b",
+            "2048",
+            "-ub",
+            "512",
+            "--cont-batching",
             "--log-disable",
         ]
     )
