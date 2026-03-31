@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Download models
-RUN pip3 install --no-cache-dir huggingface_hub && python3 -c "\
+RUN pip3 install --no-cache-dir --break-system-packages huggingface_hub && python3 -c "\
 from huggingface_hub import hf_hub_download; \
 hf_hub_download(repo_id='votal-ai/Qwen3.5-0.8B-GGUF', filename='Qwen3.5-0.8B-Q4_K_M.gguf', local_dir='/models'); \
 hf_hub_download(repo_id='votal-ai/Qwen3.5-9B-guardrailed-GGUF', filename='Qwen3.5-9B-guardrailed-Q4_K_M.gguf', local_dir='/models'); \                                                                                                          
@@ -25,7 +25,7 @@ print('Models downloaded!')"
 # Install Python deps
 WORKDIR /runpod
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Copy application code
 COPY handler.py .
