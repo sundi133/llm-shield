@@ -271,16 +271,31 @@ async def async_llm_call(
     guardrail_name: Optional[str] = None,
 ) -> dict:
     """Async LLM call routed to the correct server based on guardrail name."""
-    import logging
-
     url = get_server_url(guardrail_name)
-    logging.getLogger("llm_backend").debug(
-        f"[{guardrail_name or 'unknown'}] → {url}"
-    )
+    prep_start = time.perf_counter()
     payload = _build_payload(messages, max_tokens, temperature, response_format)
+    prep_ms = (time.perf_counter() - prep_start) * 1000
+
+    llm_start = time.perf_counter()
     async with httpx.AsyncClient(timeout=300) as client:
         res = await client.post(
             f"{url}/v1/chat/completions",
             json=payload,
         )
-        return res.json()
+        result = res.json()
+    llm_ms = (time.perf_counter() - llm_start) * 1000
+
+    post_start = time.perf_counter()
+    # Inject timing metadata into the response
+    if isinstance(result, dict):
+        result["_timing"] = {
+            "prep_ms": round(prep_ms, 2),
+            "llm_call_ms": round(llm_ms, 2),
+            "guardrail_name": guardrail_name,
+            "server_url": url,
+        }
+    post_ms = (time.perf_counter() - post_start) * 1000
+    if isinstance(result, dict) and "_timing" in result:
+        result["_timing"]["post_ms"] = round(post_ms, 2)
+
+    return result
