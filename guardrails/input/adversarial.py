@@ -183,9 +183,8 @@ _RESPONSE_SCHEMA = {
         "is_adversarial": {"type": "boolean"},
         "attack_type": {"type": "string"},
         "confidence": {"type": "number"},
-        "reason": {"type": "string"},
     },
-    "required": ["is_adversarial", "attack_type", "confidence", "reason"],
+    "required": ["is_adversarial", "attack_type", "confidence"],
     "additionalProperties": False,
 }
 
@@ -202,8 +201,7 @@ _FAST_DECODED_PROMPT = (
     "2. What is the ACTUAL attack type? Pick the most specific:\n"
     "   obfuscation_attack, authorized_user_attack, prompt_injection,\n"
     "   jailbreak, social_engineering, harmful_content, hate_speech,\n"
-    "   toxic_content, rbac_bypass, data_exfiltration, none\n"
-    "3. Explain WHY based on what the message actually says.\n\n"
+    "   toxic_content, rbac_bypass, data_exfiltration, none\n\n"
     "IMPORTANT: Identify the PRIMARY attack, not just the encoding method."
 )
 
@@ -274,7 +272,7 @@ class AdversarialGuardrail(BaseGuardrail):
                 {"role": "system", "content": _FAST_DECODED_PROMPT},
                 {"role": "user", "content": content},
             ],
-            max_tokens=256,
+            max_tokens=64,
             temperature=0,
             response_format=_RESPONSE_SCHEMA,
             guardrail_name=self.name,
@@ -326,8 +324,7 @@ class AdversarialGuardrail(BaseGuardrail):
                 action=self.configured_action,
                 guardrail_name=self.name,
                 message=(
-                    f"Unsafe [{result.get('attack_type', 'obfuscation_attack')}]: "
-                    f"{result.get('reason', 'Harmful content detected')} "
+                    f"Unsafe [{result.get('attack_type', 'obfuscation_attack')}] "
                     f"(confidence: {result.get('confidence', 0):.2f})"
                 ),
                 details={**result, "preprocessing": "content_was_decoded"},
@@ -350,7 +347,7 @@ class AdversarialGuardrail(BaseGuardrail):
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=256,
+                max_tokens=64,
                 temperature=0,
                 response_format=_RESPONSE_SCHEMA,
                 guardrail_name=self.name,
@@ -373,7 +370,6 @@ class AdversarialGuardrail(BaseGuardrail):
         is_adversarial = result.get("is_adversarial", False)
         confidence = result.get("confidence", 0.0)
         attack_type = result.get("attack_type", "none")
-        reason = result.get("reason", "")
         elapsed = (time.perf_counter() - start) * 1000
 
         if is_adversarial and confidence >= confidence_threshold:
@@ -381,7 +377,7 @@ class AdversarialGuardrail(BaseGuardrail):
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Unsafe [{attack_type}]: {reason} (confidence: {confidence:.2f})",
+                message=f"Unsafe [{attack_type}] (confidence: {confidence:.2f})",
                 details=result,
                 latency_ms=elapsed,
             )
