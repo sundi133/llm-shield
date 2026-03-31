@@ -215,6 +215,7 @@ def _build_payload(
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     if response_format:
         payload["response_format"] = {
