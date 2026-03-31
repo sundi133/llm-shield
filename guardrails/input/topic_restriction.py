@@ -40,9 +40,8 @@ _RESPONSE_SCHEMA = {
             },
         },
         "overall_allowed": {"type": "boolean"},
-        "reason": {"type": "string"},
     },
-    "required": ["topics", "overall_allowed", "reason"],
+    "required": ["topics", "overall_allowed"],
     "additionalProperties": False,
 }
 
@@ -103,7 +102,7 @@ class TopicRestrictionGuardrail(BaseGuardrail):
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=256,
+                max_tokens=128,
                 temperature=0,
                 response_format=_RESPONSE_SCHEMA,
                 guardrail_name=self.name,
@@ -122,7 +121,6 @@ class TopicRestrictionGuardrail(BaseGuardrail):
 
         overall_allowed = result.get("overall_allowed", True)
         topics = result.get("topics", [])
-        reason = result.get("reason", "")
         elapsed = (time.perf_counter() - start) * 1000
 
         blocked_topics = [t["topic"] for t in topics if not t.get("is_allowed", True)]
@@ -133,7 +131,7 @@ class TopicRestrictionGuardrail(BaseGuardrail):
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Blocked topic(s): {', '.join(blocked_topics)}. {reason}",
+                message=f"Blocked topic(s): {', '.join(blocked_topics)}",
                 details=result,
                 latency_ms=elapsed,
             )

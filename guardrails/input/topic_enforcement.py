@@ -45,9 +45,8 @@ _RESPONSE_SCHEMA = {
             },
         },
         "overall_allowed": {"type": "boolean"},
-        "reason": {"type": "string"},
     },
-    "required": ["topics", "overall_allowed", "reason"],
+    "required": ["topics", "overall_allowed"],
     "additionalProperties": False,
 }
 
@@ -152,7 +151,7 @@ class TopicEnforcementGuardrail(BaseGuardrail):
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=256,
+                max_tokens=128,
                 temperature=0,
                 response_format=_RESPONSE_SCHEMA,
                 guardrail_name=self.name,
