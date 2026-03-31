@@ -1,8 +1,24 @@
+import json
 import os
+import re
 import subprocess
 import requests
 import time
 from typing import Optional
+
+
+def parse_llm_json(raw: str) -> dict:
+    """Parse JSON from LLM, fixing common model quirks like extra spaces in keys.
+
+    Models sometimes generate keys like 'is_  adversarial' instead of 'is_adversarial'.
+    This function cleans up such malformed keys before parsing.
+    """
+    cleaned = re.sub(
+        r'"([^"]*?)\s{2,}([^"]*?)"(\s*:)',
+        lambda m: f'"{m.group(1)}{m.group(2)}"{m.group(3)}',
+        raw,
+    )
+    return json.loads(cleaned)
 
 import httpx
 

@@ -23,7 +23,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call
+from core.llm_backend import async_llm_call, parse_llm_json
 
 # ---------------------------------------------------------------------------
 # Preprocessing: ONLY decode actually-encoded content
@@ -280,7 +280,7 @@ class AdversarialGuardrail(BaseGuardrail):
         if "choices" not in response:
             return None
         raw = response["choices"][0]["message"]["content"]
-        return json.loads(raw)
+        return parse_llm_json(raw)
 
     async def _fast_decoded_check(
         self, original: str, decoded: str
@@ -356,7 +356,7 @@ class AdversarialGuardrail(BaseGuardrail):
                 error = response.get("error", {}).get("message", str(response))
                 raise ValueError(f"LLM error: {error}")
             raw = response["choices"][0]["message"]["content"]
-            result = json.loads(raw)
+            result = parse_llm_json(raw)
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(

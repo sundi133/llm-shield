@@ -4,7 +4,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call
+from core.llm_backend import async_llm_call, parse_llm_json
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a topic classifier. For every message:\n"
@@ -108,7 +108,7 @@ class TopicRestrictionGuardrail(BaseGuardrail):
                 guardrail_name=self.name,
             )
             raw = response["choices"][0]["message"]["content"]
-            result = json.loads(raw)
+            result = parse_llm_json(raw)
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(

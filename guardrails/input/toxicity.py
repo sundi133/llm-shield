@@ -6,7 +6,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call
+from core.llm_backend import async_llm_call, parse_llm_json
 
 _SYSTEM_PROMPT = (
     "You are a toxicity classifier. Analyze the user message for toxic content.\n\n"
@@ -84,7 +84,7 @@ class ToxicityGuardrail(BaseGuardrail):
                 error = response.get("error", {}).get("message", str(response))
                 raise ValueError(f"LLM error: {error}")
             raw = response["choices"][0]["message"]["content"]
-            result = json.loads(raw)
+            result = parse_llm_json(raw)
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(
