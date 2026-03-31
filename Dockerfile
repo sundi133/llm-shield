@@ -19,8 +19,7 @@ RUN apt-get update && apt-get install -y \
 RUN pip3 install --no-cache-dir huggingface_hub && python3 -c "\
 from huggingface_hub import hf_hub_download; \
 hf_hub_download(repo_id='unsloth/Qwen3.5-0.8B-GGUF', filename='Qwen3.5-0.8B-Q4_K_M.gguf', local_dir='/models'); \
-#hf_hub_download(repo_id='unsloth/Qwen3.5-9B-GGUF',  filename='Qwen3.5-9B-Q4_K_M.gguf',  local_dir='/models'); \
-hf_hub_download(repo_id='votal-ai/Qwen3.5-9B-guardrailed-GGUF', filename='Qwen3.5-9B-guardrailed-Q4_K_M.gguf', local_dir='/models'); \                                                                                                          
+hf_hub_download(repo_id='unsloth/Qwen3.5-9B-GGUF',  filename='Qwen3.5-9B-Q4_K_M.gguf',  local_dir='/models'); \                                                                                                          
 print('Models downloaded!')"
 
 # Install Python deps
