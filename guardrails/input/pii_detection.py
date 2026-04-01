@@ -50,16 +50,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
     stage = "input"
 
     def _get_entities(self) -> list[str]:
-        return self.settings.get(
-            "entities",
-            [
-                "PHONE_NUMBER",
-                "EMAIL_ADDRESS",
-                "CREDIT_CARD",
-                "US_SSN",
-                "IP_ADDRESS",
-            ],
-        )
+        return self.settings.get("entities", [])
 
     async def check(
         self, content: str, context: Optional[dict] = None
