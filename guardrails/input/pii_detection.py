@@ -101,6 +101,12 @@ class PIIDetectionGuardrail(BaseGuardrail):
         reason = result.get("reason", "")
         elapsed = (time.perf_counter() - start) * 1000
 
+        # Filter to only the entity types the caller asked for
+        if detected:
+            entities_upper = {e.upper() for e in entities}
+            detected = [e for e in detected if e.get("type", "").upper() in entities_upper]
+            has_pii = len(detected) > 0
+
         if has_pii and detected:
             detected_types = [e["type"] for e in detected]
             return GuardrailResult(
