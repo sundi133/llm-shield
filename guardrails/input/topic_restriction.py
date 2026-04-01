@@ -8,7 +8,8 @@ from core.llm_backend import async_llm_call, parse_llm_json
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "/no_think\n"
-    "You are a topic classifier. For every message:\n"
+    "You are a topic classifier. Do not think or reason. Just output the JSON result directly.\n"
+    "For every message:\n"
     "1. Identify ALL distinct topics in the message (a message can contain multiple topics)\n"
     "2. For EACH topic, determine if it is allowed based on the rules below\n"
     "3. If ANY topic is not allowed, set overall_allowed to false\n\n"
