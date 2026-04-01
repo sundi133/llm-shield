@@ -102,6 +102,8 @@ def _build_server_args(port: int, model_path: str, draft_model_path: str) -> lis
             "--cache-type-v",
             "q4_0",
             "--log-disable",
+            "--reasoning-format",
+            "none",
         ]
     )
     return args
