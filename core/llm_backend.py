@@ -102,8 +102,6 @@ def _build_server_args(port: int, model_path: str, draft_model_path: str) -> lis
             "--cache-type-v",
             "q4_0",
             "--log-disable",
-            "--chat-template-kwargs",
-            '{"enable_thinking":false}',
         ]
     )
     return args
