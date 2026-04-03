@@ -8,6 +8,7 @@ from config.schema import load_config
 from core.llm_backend import start_server
 from core.auth import AuthMiddleware
 from core.middleware import ShieldMiddleware
+from core.telemetry_middleware import TelemetryMiddleware
 from api.routes_health import router as health_router
 from api.routes_classify import router as classify_router
 from api.routes_gateway import router as gateway_router
@@ -31,9 +32,10 @@ def create_app() -> FastAPI:
     app = FastAPI(title="LLM Shield")
 
     # Middleware order: Starlette runs them bottom-to-top,
-    # so Auth is added second but runs first.
+    # so Auth is added last but runs first.
+    app.add_middleware(TelemetryMiddleware)  # runs last (captures response)
     app.add_middleware(ShieldMiddleware)
-    app.add_middleware(AuthMiddleware)
+    app.add_middleware(AuthMiddleware)       # runs first
 
     # Include routers
     app.include_router(health_router)
@@ -64,7 +66,18 @@ def create_app() -> FastAPI:
     async def startup_event():
         # Initialize audit log database
         await audit_logger.init_db()
+        # Initialize telemetry (ES, Splunk, OTLP, file)
+        import asyncio
+        from core.telemetry import init_telemetry, flush_loop
+        import config.schema as _cfg
+        init_telemetry(_cfg.config.telemetry if _cfg.config else None)
+        asyncio.create_task(flush_loop())
         # Start LLM backend server
         start_server()
+
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        from core.telemetry import shutdown_telemetry
+        await shutdown_telemetry()
 
     return app

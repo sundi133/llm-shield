@@ -637,6 +637,42 @@ auth:
     - /playground
     - /static
 
+telemetry:
+  enabled: true
+  flush_interval_seconds: 5
+
+  # Local JSON file (always-on fallback with rotation)
+  file:
+    enabled: true
+    path: "logs/votal-shield.json"
+    max_size_mb: 100
+    max_files: 10
+
+  # Elasticsearch / Elastic SIEM
+  elasticsearch:
+    enabled: true
+    url: "https://my-elasticsearch-project-a56046.es.us-central1.gcp.elastic.cloud:443"
+    api_key: "Sy1GdlZaMEJzT0VaZGhVeUVKRFI6aFJtN3AzQ3Rod3pfUWNlbW96LXBMdw=="
+    index: "votal-shield-logs"
+    verify_ssl: true
+
+  # Splunk HEC (uncomment to enable)
+  # splunk:
+  #   enabled: true
+  #   url: "https://your-splunk-hec:8088"
+  #   token: "your-hec-token"
+  #   index: "main"
+  #   source: "votal-shield"
+  #   verify_ssl: true
+
+  # OTLP — Datadog, Grafana, Jaeger, any OTEL-compatible collector
+  # otlp:
+  #   enabled: true
+  #   endpoint: "https://your-otel-collector:4318"
+  #   headers:
+  #     DD-API-KEY: "your-datadog-key"
+  #   verify_ssl: true
+
 llm_backend:
   model_path: "/models/Qwen3.5-9B-guardrailed-Q4_K_M.gguf"
   draft_model_path: "/models/Qwen3.5-0.8B-Q4_K_M.gguf"

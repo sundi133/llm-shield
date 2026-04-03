@@ -56,6 +56,7 @@ class ShieldConfig(BaseModel):
     rbac: RBACConfig = Field(default_factory=RBACConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    telemetry: dict = Field(default_factory=dict)
     llm_backend: dict = Field(
         default_factory=lambda: {
             "url": "http://127.0.0.1:8000",
@@ -144,11 +145,15 @@ def load_config(path: Optional[str] = None) -> ShieldConfig:
     if env_auth.lower() in ("true", "1", "yes"):
         auth.enabled = True
 
+    # Parse telemetry section
+    telemetry = raw.get("telemetry", {})
+
     config = ShieldConfig(
         guardrails=guardrails,
         rbac=rbac,
         pipeline=pipeline,
         auth=auth,
+        telemetry=telemetry,
         llm_backend=llm_backend,
     )
     return config
