@@ -11,7 +11,7 @@ from storage.state_store import agentic_state
 class BudgetControlsGuardrail(BaseGuardrail):
     name = "budget_controls"
     tier = "fast"
-    stage = "input"
+    stage = "agentic"
 
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}

@@ -65,7 +65,7 @@ class MCPGuard(BaseGuardrail):
 
     name = "mcp_guard"
     tier = "fast"
-    stage = "input"
+    stage = "agentic"
 
     async def check(
         self, content: str, context: Optional[dict] = None

@@ -10,7 +10,7 @@ from core.models import GuardrailResult
 class ToolCallValidationGuardrail(BaseGuardrail):
     name = "tool_call_validation"
     tier = "fast"
-    stage = "input"
+    stage = "agentic"
 
     _DEFAULT_INJECTION_PATTERNS = [
         (r"['\"];?\s*(DROP|DELETE|ALTER|TRUNCATE)\s", "SQL injection"),

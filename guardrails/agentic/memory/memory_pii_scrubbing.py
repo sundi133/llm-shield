@@ -17,7 +17,7 @@ _DEFAULT_PATTERNS = {
 class MemoryPIIScrrubbingGuardrail(BaseGuardrail):
     name = "memory_pii_scrubbing"
     tier = "fast"
-    stage = "input"
+    stage = "agentic"
 
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}

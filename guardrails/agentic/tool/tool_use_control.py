@@ -11,7 +11,7 @@ from core.rbac import enforcer
 class ToolUseControlGuardrail(BaseGuardrail):
     name = "tool_use_control"
     tier = "fast"
-    stage = "input"
+    stage = "agentic"
 
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}

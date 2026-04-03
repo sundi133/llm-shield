@@ -11,7 +11,7 @@ from core.rbac import enforcer
 class ScopeBoundariesGuardrail(BaseGuardrail):
     name = "scope_boundaries"
     tier = "fast"
-    stage = "input"
+    stage = "agentic"
 
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}

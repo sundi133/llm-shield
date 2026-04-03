@@ -13,7 +13,7 @@ _RISK_LEVELS = {"read": 0, "write": 1, "delete": 2, "admin": 3}
 class ActionClassificationGuardrail(BaseGuardrail):
     name = "action_classification"
     tier = "fast"
-    stage = "input"
+    stage = "agentic"
 
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}

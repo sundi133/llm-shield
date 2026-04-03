@@ -33,7 +33,7 @@ _CSV_FIELDS = ["is_injection", "attack_type", "confidence"]
 class MemoryInjectionDetectionGuardrail(BaseGuardrail):
     name = "memory_injection_detection"
     tier = "slow"
-    stage = "input"
+    stage = "agentic"
 
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}

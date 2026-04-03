@@ -39,7 +39,7 @@ _CSV_FIELDS = ["is_unsafe", "category", "confidence"]
 class ChainOfThoughtMonitoringGuardrail(BaseGuardrail):
     name = "chain_of_thought_monitoring"
     tier = "slow"
-    stage = "input"
+    stage = "agentic"
 
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}

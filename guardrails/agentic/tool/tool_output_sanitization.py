@@ -16,7 +16,7 @@ _DEFAULT_PATTERNS = [
 class ToolOutputSanitizationGuardrail(BaseGuardrail):
     name = "tool_output_sanitization"
     tier = "fast"
-    stage = "output"
+    stage = "agentic"
 
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}

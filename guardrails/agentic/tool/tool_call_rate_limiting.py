@@ -10,7 +10,7 @@ from storage.state_store import agentic_state
 class ToolCallRateLimitingGuardrail(BaseGuardrail):
     name = "tool_call_rate_limiting"
     tier = "fast"
-    stage = "input"
+    stage = "agentic"
 
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}
