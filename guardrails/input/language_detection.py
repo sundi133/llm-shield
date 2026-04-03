@@ -5,24 +5,16 @@ import logging
 from typing import Optional
 
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call, parse_llm_json
+from core.llm_backend import async_llm_call
 from guardrails.base import BaseGuardrail
 
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "Detect the language of the user message. "
-    "Respond with the ISO 639-1 code (e.g. en, fr, ar, zh, es, de, hi, ja, ko, pt, ru)."
+    "Respond with ONLY the ISO 639-1 code (e.g. en, fr, ar, zh, es, de, hi, ja, ko, pt, ru). "
+    "Nothing else."
 )
-
-_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "language": {"type": "string"},
-    },
-    "required": ["language"],
-    "additionalProperties": False,
-}
 
 
 class LanguageDetectionGuardrail(BaseGuardrail):
@@ -44,16 +36,14 @@ class LanguageDetectionGuardrail(BaseGuardrail):
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": content},
                 ],
-                max_tokens=32,
+                max_tokens=5,
                 temperature=0,
-                response_format=_RESPONSE_SCHEMA,
                 guardrail_name=self.name,
             )
             if "choices" not in response:
                 raise ValueError(str(response))
             raw = response["choices"][0]["message"]["content"]
-            result = parse_llm_json(raw)
-            detected = result.get("language", "unknown").lower().strip()
+            detected = raw.strip().lower().strip('"').strip("'")[:5]
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             logger.warning(f"Language detection LLM call failed: {e}")

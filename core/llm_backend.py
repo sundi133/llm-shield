@@ -20,6 +20,39 @@ def parse_llm_json(raw: str) -> dict:
     )
     return json.loads(cleaned)
 
+
+def parse_csv_response(raw: str, fields: list[str]) -> dict:
+    """Parse a CSV line from LLM into a dict keyed by field names.
+
+    Handles common quirks: extra whitespace, quoted values, header echo.
+    Fields are cast to bool/float where possible.
+    """
+    line = raw.strip()
+    # If the model echoed the header, take the second line
+    if "\n" in line:
+        line = line.split("\n")[-1].strip()
+    # Strip surrounding quotes if model wrapped the whole line
+    if line.startswith('"') and line.endswith('"'):
+        line = line[1:-1]
+
+    parts = [p.strip().strip('"').strip("'") for p in line.split(",")]
+
+    result: dict = {}
+    for i, name in enumerate(fields):
+        val = parts[i].strip() if i < len(parts) else ""
+        # Cast booleans
+        if val.lower() in ("true", "yes"):
+            result[name] = True
+        elif val.lower() in ("false", "no"):
+            result[name] = False
+        else:
+            # Try float
+            try:
+                result[name] = float(val)
+            except (ValueError, TypeError):
+                result[name] = val
+    return result
+
 import httpx
 
 import config.schema as _config_module

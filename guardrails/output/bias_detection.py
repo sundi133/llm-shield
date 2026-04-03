@@ -1,42 +1,21 @@
-import json
 import time
 from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call
+from core.llm_backend import async_llm_call, parse_csv_response
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a bias detection specialist. Analyze the given text for any biased language, "
     "stereotypes, or unfair generalizations. Focus on the following bias categories: {categories}.\n\n"
     "Sensitivity threshold: {threshold} (0=lenient, 1=strict). At higher thresholds, flag even subtle "
     "or borderline bias. At lower thresholds, only flag clear and obvious bias.\n\n"
-    "Identify specific instances of bias, classify the type, assess severity (low, medium, high), "
-    "and provide an overall bias_score from 0.0 (no bias) to 1.0 (extreme bias)."
+    "Respond with ONLY one CSV line: biased,bias_score,bias_type,severity\n"
+    "Example: true,0.78,gender,high\n"
+    "Example: false,0.1,none,none"
 )
 
-_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "biased": {"type": "boolean"},
-        "bias_score": {"type": "number"},
-        "instances": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string"},
-                    "bias_type": {"type": "string"},
-                    "severity": {"type": "string"},
-                },
-                "required": ["text", "bias_type", "severity"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    "required": ["biased", "bias_score", "instances"],
-    "additionalProperties": False,
-}
+_CSV_FIELDS = ["biased", "bias_score", "bias_type", "severity"]
 
 
 class BiasDetectionGuardrail(BaseGuardrail):
@@ -64,7 +43,6 @@ class BiasDetectionGuardrail(BaseGuardrail):
         categories = self.settings.get("categories", default_categories)
         categories_str = ", ".join(categories)
         threshold = self.settings.get("threshold", 0.60)
-        auto_regenerate = self.settings.get("auto_regenerate", False)
 
         system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
             categories=categories_str,
@@ -79,13 +57,12 @@ class BiasDetectionGuardrail(BaseGuardrail):
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=512,
+                max_tokens=20,
                 temperature=0,
-                response_format=_RESPONSE_SCHEMA,
                 guardrail_name=self.name,
             )
             raw = response["choices"][0]["message"]["content"]
-            result = json.loads(raw)
+            result = parse_csv_response(raw, _CSV_FIELDS)
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(
@@ -98,29 +75,16 @@ class BiasDetectionGuardrail(BaseGuardrail):
 
         biased = result.get("biased", False)
         bias_score = result.get("bias_score", 0.0)
-        instances = result.get("instances", [])
+        bias_type = result.get("bias_type", "none")
+        severity = result.get("severity", "none")
         elapsed = (time.perf_counter() - start) * 1000
 
-        result["threshold"] = threshold
-        result["auto_regenerate"] = auto_regenerate
-
-        # Flag if biased AND score meets threshold
-        if biased and bias_score >= threshold and instances:
-            types = set(i.get("bias_type", "unknown") for i in instances)
-            max_severity = "low"
-            for inst in instances:
-                sev = inst.get("severity", "low")
-                if sev == "high":
-                    max_severity = "high"
-                    break
-                if sev == "medium":
-                    max_severity = "medium"
-
+        if biased and bias_score >= threshold:
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Bias detected (score: {bias_score:.2f}, {max_severity} severity): {', '.join(types)} bias in {len(instances)} instance(s)",
+                message=f"Bias detected (score: {bias_score:.2f}, {severity} severity): {bias_type} bias",
                 details=result,
                 latency_ms=elapsed,
             )

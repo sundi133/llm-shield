@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import re
 import time
@@ -83,32 +82,13 @@ _TRUSTED_DOMAINS = {
 
 _SYSTEM_PROMPT = (
     "You are a URL verification specialist. Given a list of URLs found in an AI-generated response, "
-    "determine whether each URL is likely real (points to a well-known, existing domain and plausible path) "
-    "or likely hallucinated/fabricated. Consider domain reputation, path structure, and common patterns "
-    "of hallucinated URLs. Some URLs have already been checked via HTTP and returned errors — factor "
-    "that into your assessment."
+    "determine whether each URL is likely real or likely hallucinated/fabricated. Consider domain "
+    "reputation, path structure, and common patterns of hallucinated URLs.\n\n"
+    "Respond with one CSV line PER URL: url,likely_real,reason\n"
+    "Example:\n"
+    "https://example.com/real-page,true,well-known domain\n"
+    "https://fake-site.io/made-up,false,domain does not exist"
 )
-
-_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "urls": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string"},
-                    "likely_real": {"type": "boolean"},
-                    "reason": {"type": "string"},
-                },
-                "required": ["url", "likely_real", "reason"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    "required": ["urls"],
-    "additionalProperties": False,
-}
 
 _HEAD_TIMEOUT = 3.0  # seconds per URL
 _MAX_CONCURRENT_CHECKS = 10
@@ -282,17 +262,27 @@ class HallucinatedLinksGuardrail(BaseGuardrail):
             try:
                 response = await async_llm_call(
                     messages=messages,
-                    max_tokens=512,
+                    max_tokens=100,
                     temperature=0,
-                    response_format=_RESPONSE_SCHEMA,
                     guardrail_name=self.name,
                 )
-                raw = response["choices"][0]["message"]["content"]
-                llm_results_raw = json.loads(raw)
+                raw = response["choices"][0]["message"]["content"].strip()
+                # Parse multi-line CSV: url,likely_real,reason per line
+                parsed_urls = []
+                for line in raw.split("\n"):
+                    line = line.strip()
+                    if not line or not line.startswith("http"):
+                        continue
+                    parts = line.split(",", 2)
+                    if len(parts) >= 2:
+                        parsed_urls.append({
+                            "url": parts[0].strip(),
+                            "likely_real": parts[1].strip().lower() in ("true", "yes"),
+                            "reason": parts[2].strip() if len(parts) > 2 else "",
+                        })
+                llm_results_raw = {"urls": parsed_urls}
                 llm_hallucinated = [
-                    u
-                    for u in llm_results_raw.get("urls", [])
-                    if not u.get("likely_real", True)
+                    u for u in parsed_urls if not u.get("likely_real", True)
                 ]
             except Exception as e:
                 logger.warning("LLM call failed for URL verification: %s", e)

@@ -1,12 +1,11 @@
 """Input toxicity classifier — detects toxic, abusive, and hateful content using LLM."""
 
-import json
 import time
 from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call, parse_llm_json
+from core.llm_backend import async_llm_call, parse_csv_response
 
 _SYSTEM_PROMPT = (
     "You are a toxicity classifier. Analyze the user message for toxic content.\n\n"
@@ -19,21 +18,13 @@ _SYSTEM_PROMPT = (
     "'how do I do Y', 'what is the weather'. Set is_toxic=false and toxicity_score=0.0 "
     "for these.\n"
     "Only flag content that contains ACTUAL harassment, hate speech, threats, "
-    "profanity, insults, or other abusive language directed at someone."
+    "profanity, insults, or other abusive language directed at someone.\n\n"
+    "Respond with ONLY one CSV line: is_toxic,toxicity_score,category,severity\n"
+    "Example: true,0.85,hate_speech,high\n"
+    "Example: false,0.0,none,none"
 )
 
-_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "is_toxic": {"type": "boolean"},
-        "toxicity_score": {"type": "number"},
-        "category": {"type": "string"},
-        "severity": {"type": "string"},
-        "reason": {"type": "string"},
-    },
-    "required": ["is_toxic", "toxicity_score", "category", "severity", "reason"],
-    "additionalProperties": False,
-}
+_CSV_FIELDS = ["is_toxic", "toxicity_score", "category", "severity"]
 
 
 class ToxicityGuardrail(BaseGuardrail):
@@ -75,16 +66,15 @@ class ToxicityGuardrail(BaseGuardrail):
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=256,
+                max_tokens=20,
                 temperature=0,
-                response_format=_RESPONSE_SCHEMA,
                 guardrail_name=self.name,
             )
             if "choices" not in response:
                 error = response.get("error", {}).get("message", str(response))
                 raise ValueError(f"LLM error: {error}")
             raw = response["choices"][0]["message"]["content"]
-            result = parse_llm_json(raw)
+            result = parse_csv_response(raw, _CSV_FIELDS)
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(
@@ -99,7 +89,6 @@ class ToxicityGuardrail(BaseGuardrail):
         score = result.get("toxicity_score", 0.0)
         category = result.get("category", "none")
         severity = result.get("severity", "none")
-        reason = result.get("reason", "")
         elapsed = (time.perf_counter() - start) * 1000
 
         # Filter by specific categories if configured
@@ -112,7 +101,7 @@ class ToxicityGuardrail(BaseGuardrail):
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Toxic content [{category}] ({severity}): {reason} (score: {score:.2f})",
+                message=f"Toxic content [{category}] ({severity}) (score: {score:.2f})",
                 details=result,
                 latency_ms=elapsed,
             )

@@ -1,45 +1,25 @@
 """PII detection guardrail using LLM classification."""
 
-import json
 import time
 from typing import Optional
 
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call, parse_llm_json
+from core.llm_backend import async_llm_call
 from guardrails.base import BaseGuardrail
 
 _SYSTEM_PROMPT = (
     "You are a PII (Personally Identifiable Information) detector.\n"
     "Analyze the user message and identify any PII present.\n\n"
     "PII types to detect: {entities}\n\n"
-    "For each PII found, report the type and the value.\n"
-    "If no PII is found, set has_pii=false and entities=[].\n\n"
     "IMPORTANT: Policy numbers (e.g., AUTO-338821, HOM-2891034, CLM-558821) "
     "are NOT PII — they are internal reference numbers.\n"
     "Only flag actual personal data: SSNs, credit cards, phone numbers, "
-    "email addresses, IP addresses, etc."
+    "email addresses, IP addresses, etc.\n\n"
+    "Respond with ONLY one CSV line: has_pii,entity_list\n"
+    "entity_list is semicolon-separated type:value pairs, or empty if no PII.\n"
+    "Example: true,ssn:123-45-6789;email:john@example.com\n"
+    "Example: false,"
 )
-
-_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "has_pii": {"type": "boolean"},
-        "entities": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {"type": "string"},
-                    "value": {"type": "string"},
-                },
-                "required": ["type", "value"],
-            },
-        },
-        "reason": {"type": "string"},
-    },
-    "required": ["has_pii", "entities", "reason"],
-    "additionalProperties": False,
-}
 
 
 class PIIDetectionGuardrail(BaseGuardrail):
@@ -57,7 +37,6 @@ class PIIDetectionGuardrail(BaseGuardrail):
     ) -> GuardrailResult:
         start = time.perf_counter()
         entities = self._get_entities()
-        score_threshold = self.settings.get("score_threshold", 0.7)
 
         system_prompt = _SYSTEM_PROMPT.format(entities=", ".join(entities))
 
@@ -67,16 +46,27 @@ class PIIDetectionGuardrail(BaseGuardrail):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": content},
                 ],
-                max_tokens=256,
+                max_tokens=60,
                 temperature=0,
-                response_format=_RESPONSE_SCHEMA,
                 guardrail_name=self.name,
             )
             if "choices" not in response:
                 error = response.get("error", {}).get("message", str(response))
                 raise ValueError(f"LLM error: {error}")
-            raw = response["choices"][0]["message"]["content"]
-            result = parse_llm_json(raw)
+            raw = response["choices"][0]["message"]["content"].strip()
+
+            # Parse CSV: has_pii,entity_list
+            parts = raw.split(",", 1)
+            has_pii = parts[0].strip().lower() in ("true", "yes")
+            entity_str = parts[1].strip() if len(parts) > 1 else ""
+
+            detected = []
+            if entity_str:
+                for pair in entity_str.split(";"):
+                    pair = pair.strip()
+                    if ":" in pair:
+                        etype, evalue = pair.split(":", 1)
+                        detected.append({"type": etype.strip(), "value": evalue.strip()})
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(
@@ -87,9 +77,6 @@ class PIIDetectionGuardrail(BaseGuardrail):
                 latency_ms=elapsed,
             )
 
-        has_pii = result.get("has_pii", False)
-        detected = result.get("entities", [])
-        reason = result.get("reason", "")
         elapsed = (time.perf_counter() - start) * 1000
 
         # Filter to only the entity types the caller asked for
@@ -104,7 +91,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Detected {len(detected)} PII: {', '.join(detected_types)}. {reason}",
+                message=f"Detected {len(detected)} PII: {', '.join(detected_types)}",
                 details={"detected_entities": detected},
                 latency_ms=elapsed,
             )
@@ -114,6 +101,6 @@ class PIIDetectionGuardrail(BaseGuardrail):
             action="pass",
             guardrail_name=self.name,
             message="No PII detected.",
-            details=result,
+            details={"has_pii": False, "entities": []},
             latency_ms=elapsed,
         )

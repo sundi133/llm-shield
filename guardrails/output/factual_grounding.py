@@ -1,38 +1,33 @@
-import json
 import time
 from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call
+from core.llm_backend import async_llm_call, parse_csv_response
 
 _SYSTEM_PROMPT = (
     "You are a factual accuracy analyst. Examine the given text and identify any claims that appear "
     "unsupported, unverifiable, or potentially fabricated. Focus on factual assertions, statistics, "
     "dates, names, and specific claims. Determine whether the overall content is well-grounded in "
-    "verifiable facts."
+    "verifiable facts.\n\n"
+    "Respond with ONLY one CSV line: grounded,confidence,unsupported_claim\n"
+    "unsupported_claim is a brief description of the main issue or empty if grounded.\n"
+    "Example: true,0.95,\n"
+    "Example: false,0.82,claims unemployment rate is 2% with no source"
 )
 
 _SYSTEM_PROMPT_CITATIONS = (
     "You are a factual accuracy analyst. Examine the given text and identify any claims that appear "
     "unsupported, unverifiable, or potentially fabricated. Focus on factual assertions, statistics, "
     "dates, names, and specific claims. Also check whether claims are backed by citations or references. "
-    "Flag any factual claims that lack proper citations."
+    "Flag any factual claims that lack proper citations.\n\n"
+    "Respond with ONLY one CSV line: grounded,confidence,unsupported_claim\n"
+    "unsupported_claim is a brief description of the main issue or empty if grounded.\n"
+    "Example: true,0.95,\n"
+    "Example: false,0.80,statistic lacks citation"
 )
 
-_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "grounded": {"type": "boolean"},
-        "unsupported_claims": {
-            "type": "array",
-            "items": {"type": "string"},
-        },
-        "confidence": {"type": "number"},
-    },
-    "required": ["grounded", "unsupported_claims", "confidence"],
-    "additionalProperties": False,
-}
+_CSV_FIELDS = ["grounded", "confidence", "unsupported_claim"]
 
 
 class FactualGroundingGuardrail(BaseGuardrail):
@@ -60,13 +55,12 @@ class FactualGroundingGuardrail(BaseGuardrail):
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=512,
+                max_tokens=40,
                 temperature=0,
-                response_format=_RESPONSE_SCHEMA,
                 guardrail_name=self.name,
             )
             raw = response["choices"][0]["message"]["content"]
-            result = json.loads(raw)
+            result = parse_csv_response(raw, _CSV_FIELDS)
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(
@@ -78,20 +72,16 @@ class FactualGroundingGuardrail(BaseGuardrail):
             )
 
         grounded = result.get("grounded", True)
-        unsupported = result.get("unsupported_claims", [])
         confidence = result.get("confidence", 1.0)
+        unsupported_claim = result.get("unsupported_claim", "")
         elapsed = (time.perf_counter() - start) * 1000
 
-        if not grounded and unsupported:
-            claims_summary = "; ".join(unsupported[:3])
-            suffix = (
-                f" (and {len(unsupported) - 3} more)" if len(unsupported) > 3 else ""
-            )
+        if not grounded and unsupported_claim:
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Unsupported claims detected (confidence: {confidence:.2f}): {claims_summary}{suffix}",
+                message=f"Unsupported claims detected (confidence: {confidence:.2f}): {unsupported_claim}",
                 details=result,
                 latency_ms=elapsed,
             )
