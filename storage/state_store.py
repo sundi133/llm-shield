@@ -52,3 +52,26 @@ class StateStore:
             self._windows[key] = [t for t in timestamps if t > cutoff]
             self._windows[key].append(now)
             return len(self._windows[key])
+
+    def delete(self, key: str) -> bool:
+        """Delete a key. Returns True if it existed."""
+        with self._lock:
+            existed = key in self._data
+            self._data.pop(key, None)
+            self._expiry.pop(key, None)
+            self._windows.pop(key, None)
+            return existed
+
+    def keys(self, prefix: str = "") -> list[str]:
+        """Return all keys matching the prefix."""
+        with self._lock:
+            now = time.monotonic()
+            return [
+                k for k in self._data
+                if k.startswith(prefix)
+                and (k not in self._expiry or self._expiry[k] > now)
+            ]
+
+
+# Shared singleton for agentic guardrails
+agentic_state = StateStore()
