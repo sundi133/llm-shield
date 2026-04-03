@@ -222,6 +222,349 @@ guardrails:
         - delete_account
         - bulk_export
 
+  # --- Agentic: Tool Control ---
+  tool_allowlist:
+    enabled: true
+    action: block
+    settings:
+      strict_mode: true
+      per_role:
+        customer-support:
+          - search_knowledge_base
+          - get_customer_info
+          - get_policy_details
+        internal-analyst:
+          - search_*
+          - execute_sql
+          - generate_report
+        admin:
+          - "*"
+      per_agent: {}
+
+  tool_use_control:
+    enabled: true
+    action: block
+    settings:
+      rules:
+        - tool: execute_sql
+          conditions:
+            allowed_roles:
+              - internal-analyst
+              - admin
+        - tool: delete_records
+          conditions:
+            allowed_roles:
+              - admin
+            require_workflow: true
+      default_policy: allow
+
+  tool_call_rate_limiting:
+    enabled: true
+    action: block
+    settings:
+      global_limit: 100
+      window_seconds: 60
+      per_tool_limits:
+        execute_sql: 10
+        delete_records: 5
+      per_session_limits:
+        global: 50
+
+  tool_call_validation:
+    enabled: true
+    action: block
+    settings:
+      schemas:
+        execute_sql:
+          type: object
+          required:
+            - query
+          properties:
+            query:
+              type: string
+              maxLength: 2000
+            limit:
+              type: integer
+              minimum: 1
+              maximum: 1000
+      injection_patterns:
+        - pattern: "'; DROP TABLE"
+          description: SQL injection
+        - pattern: '\.\./\.\.'
+          description: Path traversal
+
+  tool_output_sanitization:
+    enabled: true
+    action: warn
+    settings:
+      redaction_patterns:
+        - pattern: '\b\d{3}-\d{2}-\d{4}\b'
+          replacement: "[SSN_REDACTED]"
+        - pattern: '(?:api[_-]?key|token|secret)\s*[:=]\s*\S+'
+          replacement: "[KEY_REDACTED]"
+      max_output_length: 50000
+      per_tool_rules:
+        execute_sql:
+          redact_columns:
+            - ssn
+            - password_hash
+            - credit_card
+
+  sensitive_action_confirmation:
+    enabled: true
+    action: block
+    settings:
+      require_confirmation:
+        - delete_account
+        - bulk_export
+        - modify_permissions
+        - purge_data
+      confirmation_ttl_seconds: 300
+
+  # --- Agentic: Action & Scope ---
+  action_classification:
+    enabled: true
+    action: block
+    settings:
+      classification_rules:
+        read:
+          - "get_*"
+          - "list_*"
+          - "search_*"
+          - "read_*"
+          - "fetch_*"
+        write:
+          - "create_*"
+          - "update_*"
+          - "set_*"
+          - "modify_*"
+        delete:
+          - "delete_*"
+          - "remove_*"
+          - "purge_*"
+        admin:
+          - modify_permissions
+          - create_user
+          - change_role
+          - execute_sql
+      max_risk_per_role:
+        customer-support: 0
+        internal-analyst: 1
+        admin: 3
+
+  scope_boundaries:
+    enabled: true
+    action: block
+    settings:
+      per_role:
+        customer-support:
+          allowed_namespaces:
+            - customer_service
+          allowed_resources:
+            database:
+              - "customers.*"
+              - "orders.*"
+              - "policies.*"
+            api:
+              - "crm/*"
+          denied_resources:
+            database:
+              - "*.password_hash"
+              - "employees.*"
+        internal-analyst:
+          allowed_namespaces:
+            - customer_service
+            - analytics
+          allowed_resources:
+            database:
+              - "*"
+            api:
+              - "*"
+          denied_resources:
+            database:
+              - "employees.salary"
+        admin:
+          allowed_namespaces:
+            - "*"
+          allowed_resources:
+            database:
+              - "*"
+            api:
+              - "*"
+
+  loop_detection:
+    enabled: true
+    action: block
+    settings:
+      history_length: 20
+      repeat_threshold: 3
+      cycle_max_length: 5
+      max_consecutive_errors: 5
+      cooldown_seconds: 30
+
+  budget_controls:
+    enabled: true
+    action: block
+    settings:
+      per_agent:
+        default:
+          max_tokens_hourly: 100000
+          max_tokens_daily: 1000000
+          max_cost_daily_usd: 10.00
+          max_api_calls_hourly: 500
+          warning_threshold_pct: 80
+        customer-support:
+          max_tokens_hourly: 50000
+          max_cost_daily_usd: 5.00
+          max_api_calls_hourly: 200
+          warning_threshold_pct: 80
+      per_session:
+        max_tokens: 50000
+        max_api_calls: 100
+
+  delegation_control:
+    enabled: true
+    action: block
+    settings:
+      max_depth: 5
+      allow_circular: false
+      prevent_privilege_escalation: true
+      allowed_delegations:
+        customer-support:
+          - customer-support
+        internal-analyst:
+          - customer-support
+          - internal-analyst
+        admin:
+          - "*"
+
+  # --- Agentic: Memory ---
+  memory_guardrails:
+    enabled: true
+    action: block
+    settings:
+      max_value_size_bytes: 65536
+      max_key_length: 256
+      allowed_key_pattern: "^[a-zA-Z0-9_:./-]+$"
+      max_writes_per_session: 1000
+      max_reads_per_session: 5000
+      valid_memory_types:
+        - short_term
+        - long_term
+        - shared
+
+  memory_pii_scrubbing:
+    enabled: true
+    action: warn
+    settings:
+      scrub_mode: true
+      redaction_marker: "[PII_REDACTED]"
+      patterns:
+        ssn: '\b\d{3}-\d{2}-\d{4}\b'
+        credit_card: '\b(?:\d{4}[- ]?){3}\d{4}\b'
+        email: '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        phone: '\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b'
+      use_llm_detection: false
+      exempt_memory_keys:
+        - system_config
+        - agent_metadata
+
+  memory_injection_detection:
+    enabled: true
+    action: block
+    settings:
+      fast_patterns:
+        - "ignore previous"
+        - "ignore all previous"
+        - "disregard.*instructions"
+        - "you are now"
+        - "new instructions:"
+        - "system:"
+      confidence_threshold: 0.7
+      trust_own_agent: true
+      always_use_llm: false
+
+  memory_retention_policies:
+    enabled: true
+    action: block
+    settings:
+      default_ttl_seconds: 86400
+      per_type_ttl:
+        short_term: 3600
+        long_term: 604800
+        shared: 86400
+      per_classification_ttl:
+        public: 604800
+        internal: 86400
+        confidential: 3600
+        restricted: 1800
+      enforce_on_read: true
+
+  memory_access_control:
+    enabled: true
+    action: block
+    settings:
+      per_role:
+        customer-support:
+          allowed_namespaces:
+            - customer_context
+            - faq
+          denied_namespaces:
+            - admin
+            - analytics
+          operations:
+            - read
+            - write
+          allowed_key_patterns:
+            - "customer:*"
+            - "session:*"
+        internal-analyst:
+          allowed_namespaces:
+            - "*"
+          denied_namespaces:
+            - admin
+          operations:
+            - read
+            - write
+            - delete
+        admin:
+          allowed_namespaces:
+            - "*"
+          operations:
+            - read
+            - write
+            - delete
+
+  # --- Agentic: Monitoring ---
+  chain_of_thought_monitoring:
+    enabled: true
+    action: block
+    settings:
+      fast_patterns:
+        - "bypass.*security"
+        - "ignore.*restriction"
+        - "hide.*from.*user"
+        - "pretend.*to.*be"
+        - "unauthorized.*access"
+        - "without.*permission"
+        - "circumvent"
+        - "exfiltrate"
+        - "deceive.*the.*user"
+      confidence_threshold: 0.7
+      always_use_llm: false
+
+  context_window_guardrails:
+    enabled: true
+    action: warn
+    settings:
+      max_context_usage_pct: 90
+      max_single_message_pct: 50
+      max_turns: 100
+      detect_repetition: true
+      repetition_threshold: 0.8
+      verify_system_prompt: true
+      max_tokens_per_turn_growth: 2.0
+
 rbac:
   roles:
     customer-support:
