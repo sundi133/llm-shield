@@ -36,12 +36,20 @@ def record_event(event: dict):
 # ---------------------------------------------------------------------------
 
 
+_HOSTNAME = os.environ.get("HOSTNAME", os.environ.get("POD_NAME", "votal-shield"))
+
+
 def build_request_event(
     *,
     trace_id: str,
     endpoint: str,
     method: str,
     agent_key: str = "",
+    session_id: str = "",
+    role_name: str = "",
+    source_ip: str = "",
+    user_agent: str = "",
+    input_text: str = "",
     body: Optional[dict] = None,
     headers: Optional[dict] = None,
 ) -> dict:
@@ -53,7 +61,13 @@ def build_request_event(
         "trace.id": trace_id,
         "http.request.method": method,
         "url.path": endpoint,
+        "source.ip": source_ip,
+        "user_agent.original": user_agent,
+        "host.name": _HOSTNAME,
         "agent.key": agent_key,
+        "votal.session_id": session_id,
+        "votal.role_name": role_name,
+        "votal.input_text": _truncate_str(input_text, 1000),
         "request.body": _truncate(body),
         "request.headers": _safe_headers(headers),
     }
@@ -67,21 +81,52 @@ def build_response_event(
     latency_ms: float,
     action: str = "pass",
     safe: Optional[bool] = None,
+    agent_key: str = "",
+    session_id: str = "",
+    role_name: str = "",
+    source_ip: str = "",
+    input_text: str = "",
+    attack_type: str = "",
+    blocked_guardrails: Optional[list[str]] = None,
     guardrail_results: Optional[list] = None,
     body: Optional[dict] = None,
 ) -> dict:
+    # Compute risk score: 0 (safe) to 100 (blocked attack)
+    risk_score = 0
+    if not safe and action == "block":
+        risk_score = 90
+        if attack_type:
+            risk_score = 95
+    elif not safe and action == "warn":
+        risk_score = 50
+    elif action == "pending_confirmation":
+        risk_score = 30
+
     return {
-        "event.kind": "event",
-        "event.category": "web",
-        "event.type": "access",
+        "event.kind": "alert" if action == "block" else "event",
+        "event.category": "intrusion_detection" if action == "block" else "web",
+        "event.type": "denied" if action == "block" else "allowed",
         "event.action": "response",
+        "event.outcome": "failure" if action == "block" else "success",
+        "event.risk_score": risk_score,
+        "event.severity": _risk_to_severity(risk_score),
         "trace.id": trace_id,
         "url.path": endpoint,
         "http.response.status_code": status_code,
         "event.duration": int(latency_ms * 1_000_000),  # nanoseconds (ECS)
+        "host.name": _HOSTNAME,
+        "source.ip": source_ip,
+        "agent.key": agent_key,
+        "votal.session_id": session_id,
+        "votal.role_name": role_name,
         "votal.action": action,
         "votal.safe": safe,
+        "votal.input_text": _truncate_str(input_text, 1000),
+        "votal.attack_type": attack_type,
+        "votal.blocked_guardrails": blocked_guardrails or [],
+        "votal.guardrail_count": len(guardrail_results) if guardrail_results else 0,
         "votal.guardrail_results": guardrail_results,
+        "votal.latency_ms": round(latency_ms, 2),
         "response.body": _truncate(body),
     }
 
@@ -95,13 +140,21 @@ def build_guardrail_event(
     message: str = "",
     latency_ms: float = 0,
     details: Optional[dict] = None,
+    agent_key: str = "",
+    source_ip: str = "",
+    input_text: str = "",
 ) -> dict:
     return {
-        "event.kind": "event",
+        "event.kind": "alert" if action == "block" and not passed else "event",
         "event.category": "intrusion_detection",
         "event.type": "allowed" if passed else "denied",
         "event.action": f"guardrail.{guardrail_name}",
+        "event.outcome": "success" if passed else "failure",
         "trace.id": trace_id,
+        "host.name": _HOSTNAME,
+        "source.ip": source_ip,
+        "agent.key": agent_key,
+        "votal.input_text": _truncate_str(input_text, 500),
         "votal.guardrail.name": guardrail_name,
         "votal.guardrail.passed": passed,
         "votal.guardrail.action": action,
@@ -109,6 +162,18 @@ def build_guardrail_event(
         "votal.guardrail.latency_ms": round(latency_ms, 2),
         "votal.guardrail.details": details,
     }
+
+
+def _risk_to_severity(score: int) -> str:
+    if score >= 90:
+        return "critical"
+    if score >= 70:
+        return "high"
+    if score >= 40:
+        return "medium"
+    if score >= 10:
+        return "low"
+    return "informational"
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +508,14 @@ async def shutdown_telemetry():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _truncate_str(s: str, max_len: int = 1000) -> str:
+    if not s:
+        return ""
+    if len(s) <= max_len:
+        return s
+    return s[:max_len] + "...[truncated]"
 
 
 def _truncate(obj: Any, max_len: int = 2000) -> Any:
