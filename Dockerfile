@@ -36,6 +36,14 @@ COPY api/ api/
 COPY storage/ storage/
 COPY static/ static/
 
+# Telemetry / SIEM credentials (injected via build args from CI secrets)
+ARG VOTAL_ES_URL=""
+ARG VOTAL_ES_API_KEY=""
+ENV VOTAL_ES_ENABLED=true
+ENV VOTAL_ES_URL=$VOTAL_ES_URL
+ENV VOTAL_ES_API_KEY=$VOTAL_ES_API_KEY
+ENV VOTAL_ES_INDEX=votal-shield-logs
+
 # Override the default entrypoint (llama-server) so Python starts instead
 ENTRYPOINT []
 CMD ["python3", "handler.py"]

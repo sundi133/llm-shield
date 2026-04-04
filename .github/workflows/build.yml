@@ -28,6 +28,9 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          build-args: |
+            VOTAL_ES_URL=${{ secrets.VOTAL_ES_URL }}
+            VOTAL_ES_API_KEY=${{ secrets.VOTAL_ES_API_KEY }}
           tags: |
             ${{ env.DOCKERHUB_USER }}/llm-shield:v2
             ${{ env.DOCKERHUB_USER }}/llm-shield:latest
