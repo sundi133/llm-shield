@@ -649,10 +649,12 @@ telemetry:
   #   max_files: 10
 
   # Elasticsearch / Elastic SIEM
+  # Set via env vars: VOTAL_ES_URL, VOTAL_ES_API_KEY
+  # Or hardcode here (not recommended for production)
   elasticsearch:
     enabled: true
-    url: "https://my-elasticsearch-project-a56046.es.us-central1.gcp.elastic.cloud:443"
-    api_key: "Sy1GdlZaMEJzT0VaZGhVeUVKRFI6aFJtN3AzQ3Rod3pfUWNlbW96LXBMdw=="
+    url: ""
+    api_key: ""
     index: "votal-shield-logs"
     verify_ssl: true
 

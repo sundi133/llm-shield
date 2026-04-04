@@ -431,38 +431,46 @@ def init_telemetry(config: Optional[dict] = None):
             max_files=file_cfg.get("max_files", 10),
         ))
 
-    # Elasticsearch
+    # Elasticsearch — env vars override yaml
     es_cfg = config.get("elasticsearch", {})
-    if es_cfg.get("enabled", False):
+    es_url = os.environ.get("VOTAL_ES_URL", es_cfg.get("url", ""))
+    es_key = os.environ.get("VOTAL_ES_API_KEY", es_cfg.get("api_key", ""))
+    es_enabled = os.environ.get("VOTAL_ES_ENABLED", str(es_cfg.get("enabled", False))).lower() in ("true", "1", "yes")
+    if es_enabled and es_url and es_key:
         _exporters.append(ElasticsearchExporter(
-            url=es_cfg["url"],
-            api_key=es_cfg["api_key"],
-            index=es_cfg.get("index", "votal-shield-logs"),
+            url=es_url,
+            api_key=es_key,
+            index=os.environ.get("VOTAL_ES_INDEX", es_cfg.get("index", "votal-shield-logs")),
             verify_ssl=es_cfg.get("verify_ssl", True),
         ))
-        logger.info(f"ES exporter: {es_cfg['url']}")
+        logger.info(f"ES exporter: {es_url}")
 
-    # Splunk HEC
+    # Splunk HEC — env vars override yaml
     splunk_cfg = config.get("splunk", {})
-    if splunk_cfg.get("enabled", False):
+    splunk_url = os.environ.get("VOTAL_SPLUNK_URL", splunk_cfg.get("url", ""))
+    splunk_token = os.environ.get("VOTAL_SPLUNK_TOKEN", splunk_cfg.get("token", ""))
+    splunk_enabled = os.environ.get("VOTAL_SPLUNK_ENABLED", str(splunk_cfg.get("enabled", False))).lower() in ("true", "1", "yes")
+    if splunk_enabled and splunk_url and splunk_token:
         _exporters.append(SplunkHECExporter(
-            url=splunk_cfg["url"],
-            token=splunk_cfg["token"],
-            index=splunk_cfg.get("index", "main"),
+            url=splunk_url,
+            token=splunk_token,
+            index=os.environ.get("VOTAL_SPLUNK_INDEX", splunk_cfg.get("index", "main")),
             source=splunk_cfg.get("source", "votal-shield"),
             verify_ssl=splunk_cfg.get("verify_ssl", True),
         ))
-        logger.info(f"Splunk exporter: {splunk_cfg['url']}")
+        logger.info(f"Splunk exporter: {splunk_url}")
 
-    # OTLP (Datadog, Grafana, Jaeger, any OTEL collector)
+    # OTLP — env vars override yaml
     otlp_cfg = config.get("otlp", {})
-    if otlp_cfg.get("enabled", False):
+    otlp_endpoint = os.environ.get("VOTAL_OTLP_ENDPOINT", otlp_cfg.get("endpoint", ""))
+    otlp_enabled = os.environ.get("VOTAL_OTLP_ENABLED", str(otlp_cfg.get("enabled", False))).lower() in ("true", "1", "yes")
+    if otlp_enabled and otlp_endpoint:
         _exporters.append(OTLPExporter(
-            endpoint=otlp_cfg["endpoint"],
+            endpoint=otlp_endpoint,
             headers=otlp_cfg.get("headers", {}),
             verify_ssl=otlp_cfg.get("verify_ssl", True),
         ))
-        logger.info(f"OTLP exporter: {otlp_cfg['endpoint']}")
+        logger.info(f"OTLP exporter: {otlp_endpoint}")
 
     logger.info(f"Telemetry enabled: {len(_exporters)} exporter(s), flush every {_flush_interval}s")
 
