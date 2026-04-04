@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 import config.schema as _config_module
 from config.schema import GuardrailConfig
@@ -195,7 +195,7 @@ UNSAFE_SCHEMA = {
 
 
 @router.post("/classify")
-async def classify(body: dict):
+async def classify(request: Request, body: dict):
     """Classify a message through all specified guardrails in a single call.
 
     Accepts two formats:
@@ -213,8 +213,11 @@ async def classify(body: dict):
          }
        }
 
-    When "input" is provided, only the specified guardrails run with the given settings.
-    When "input" is omitted, falls back to the server's default config.
+    When a tenant is identified via API key, the tenant's server-side guardrail
+    config is used (platform-enforced, tenant cannot override).
+    When "input" is provided and no tenant config exists, the specified guardrails
+    run with the given settings.
+    When neither is present, falls back to the server's default config.
     """
     message = body.get("message")
     if not message:
@@ -229,6 +232,20 @@ async def classify(body: dict):
         context["conversation_history"] = [
             msg for msg in body["messages"] if msg.get("role") in ("user", "assistant")
         ]
+
+    # Check for tenant-specific guardrail config (server-side, platform-enforced)
+    tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
+
+    if tenant_config and "input_guardrails" in tenant_config:
+        # Use tenant's server-side guardrail config (tenant cannot override)
+        tenant_input = {}
+        for name, gcfg in tenant_config["input_guardrails"].items():
+            tenant_input[name] = {
+                "enabled": gcfg.get("enabled", True),
+                "action": gcfg.get("action", "block"),
+                **gcfg.get("settings", {}),
+            }
+        return await _classify_with_overrides(message, tenant_input, context, start)
 
     # If no per-request guardrail config, run with server defaults
     if not input_overrides:

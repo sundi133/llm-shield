@@ -10,5 +10,6 @@ tiktoken
 langdetect
 textblob
 aiosqlite
+redis
 pytest
 pytest-asyncio

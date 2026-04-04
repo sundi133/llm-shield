@@ -1,0 +1,285 @@
+"""Per-tenant configuration store backed by Redis.
+
+Stores tenant guardrail policies, API keys, and RBAC configs in Redis.
+Falls back to in-memory dict when Redis is unavailable (dev/testing).
+
+Redis keys:
+    tenant:{tenant_id}     → JSON tenant config
+    apikey:{sha256_hash}   → tenant_id
+    tenants:index          → SET of all tenant IDs
+"""
+
+import hashlib
+import json
+import logging
+import os
+import time
+from typing import Optional
+
+logger = logging.getLogger("votal.tenant_store")
+
+# In-memory cache with TTL to avoid hitting Redis on every request
+_cache: dict[str, tuple[dict, float]] = {}  # key → (value, expires_at)
+_CACHE_TTL = int(os.environ.get("TENANT_CACHE_TTL", "60"))  # seconds
+
+# Redis connection (lazy init)
+_redis = None
+_redis_available = False
+_fallback_store: dict[str, str] = {}  # in-memory fallback
+
+
+def _get_redis():
+    """Lazy-init Redis connection."""
+    global _redis, _redis_available
+    if _redis is not None:
+        return _redis
+
+    redis_url = os.environ.get("REDIS_URL", "")
+    if not redis_url:
+        logger.info("REDIS_URL not set, using in-memory tenant store")
+        _redis_available = False
+        return None
+
+    try:
+        import redis as redis_lib
+        _redis = redis_lib.Redis.from_url(redis_url, decode_responses=True)
+        _redis.ping()
+        _redis_available = True
+        logger.info(f"Tenant store connected to Redis: {redis_url}")
+        return _redis
+    except Exception as e:
+        logger.warning(f"Redis unavailable ({e}), using in-memory fallback")
+        _redis_available = False
+        return None
+
+
+def _cache_get(key: str) -> Optional[dict]:
+    """Get from in-memory cache if not expired."""
+    if key in _cache:
+        value, expires_at = _cache[key]
+        if time.time() < expires_at:
+            return value
+        del _cache[key]
+    return None
+
+
+def _cache_set(key: str, value: dict):
+    """Set in-memory cache with TTL."""
+    _cache[key] = (value, time.time() + _CACHE_TTL)
+
+
+def _cache_delete(key: str):
+    """Remove from cache."""
+    _cache.pop(key, None)
+
+
+def _hash_key(api_key: str) -> str:
+    """SHA-256 hash an API key for storage."""
+    return hashlib.sha256(api_key.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def create_tenant(tenant_id: str, config: dict, api_keys: list[str] = None) -> dict:
+    """Create a new tenant with guardrail config and API keys.
+
+    Args:
+        tenant_id: Unique tenant identifier (e.g., "acme", "globex")
+        config: Tenant configuration dict containing:
+            - name: Display name
+            - plan: Subscription plan
+            - input_guardrails: Per-guardrail settings for input stage
+            - output_guardrails: Per-guardrail settings for output stage
+            - rbac: Roles and agent mappings
+        api_keys: List of plaintext API keys for this tenant
+
+    Returns:
+        The stored tenant config.
+    """
+    config.setdefault("tenant_id", tenant_id)
+    config_json = json.dumps(config)
+
+    r = _get_redis()
+    if r:
+        r.set(f"tenant:{tenant_id}", config_json)
+        r.sadd("tenants:index", tenant_id)
+        # Map API keys to tenant
+        for key in (api_keys or []):
+            key_hash = _hash_key(key)
+            r.set(f"apikey:{key_hash}", tenant_id)
+    else:
+        _fallback_store[f"tenant:{tenant_id}"] = config_json
+        for key in (api_keys or []):
+            key_hash = _hash_key(key)
+            _fallback_store[f"apikey:{key_hash}"] = tenant_id
+
+    _cache_set(f"tenant:{tenant_id}", config)
+    logger.info(f"Created tenant: {tenant_id}")
+    return config
+
+
+def get_tenant(tenant_id: str) -> Optional[dict]:
+    """Get tenant config by tenant ID."""
+    # Check cache first
+    cached = _cache_get(f"tenant:{tenant_id}")
+    if cached:
+        return cached
+
+    r = _get_redis()
+    if r:
+        data = r.get(f"tenant:{tenant_id}")
+    else:
+        data = _fallback_store.get(f"tenant:{tenant_id}")
+
+    if not data:
+        return None
+
+    config = json.loads(data)
+    _cache_set(f"tenant:{tenant_id}", config)
+    return config
+
+
+def update_tenant(tenant_id: str, updates: dict) -> Optional[dict]:
+    """Update a tenant's config (merge, not replace).
+
+    Args:
+        tenant_id: Tenant to update
+        updates: Fields to merge into existing config
+
+    Returns:
+        Updated config, or None if tenant not found.
+    """
+    config = get_tenant(tenant_id)
+    if config is None:
+        return None
+
+    # Deep merge guardrail configs
+    for section in ("input_guardrails", "output_guardrails", "rbac"):
+        if section in updates and section in config:
+            if isinstance(config[section], dict) and isinstance(updates[section], dict):
+                config[section].update(updates[section])
+                updates.pop(section)
+
+    config.update(updates)
+    config_json = json.dumps(config)
+
+    r = _get_redis()
+    if r:
+        r.set(f"tenant:{tenant_id}", config_json)
+    else:
+        _fallback_store[f"tenant:{tenant_id}"] = config_json
+
+    _cache_set(f"tenant:{tenant_id}", config)
+    _cache_delete(f"tenant:{tenant_id}")
+    logger.info(f"Updated tenant: {tenant_id}")
+    return config
+
+
+def delete_tenant(tenant_id: str) -> bool:
+    """Delete a tenant and all its API key mappings."""
+    r = _get_redis()
+    if r:
+        # Remove API key mappings that point to this tenant
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor, match="apikey:*", count=100)
+            for key in keys:
+                if r.get(key) == tenant_id:
+                    r.delete(key)
+            if cursor == 0:
+                break
+        r.delete(f"tenant:{tenant_id}")
+        r.srem("tenants:index", tenant_id)
+    else:
+        # In-memory cleanup
+        _fallback_store.pop(f"tenant:{tenant_id}", None)
+        to_remove = [k for k, v in _fallback_store.items()
+                     if k.startswith("apikey:") and v == tenant_id]
+        for k in to_remove:
+            del _fallback_store[k]
+
+    _cache_delete(f"tenant:{tenant_id}")
+    logger.info(f"Deleted tenant: {tenant_id}")
+    return True
+
+
+def list_tenants() -> list[dict]:
+    """List all tenants (summary only, no secrets)."""
+    r = _get_redis()
+    if r:
+        tenant_ids = r.smembers("tenants:index")
+    else:
+        tenant_ids = {k.split(":", 1)[1] for k in _fallback_store
+                      if k.startswith("tenant:")}
+
+    tenants = []
+    for tid in sorted(tenant_ids):
+        config = get_tenant(tid)
+        if config:
+            tenants.append({
+                "tenant_id": tid,
+                "name": config.get("name", ""),
+                "plan": config.get("plan", ""),
+                "input_guardrails": list(config.get("input_guardrails", {}).keys()),
+                "output_guardrails": list(config.get("output_guardrails", {}).keys()),
+                "agent_count": len(config.get("rbac", {}).get("agents", {})),
+            })
+    return tenants
+
+
+def resolve_tenant_by_api_key(api_key: str) -> Optional[str]:
+    """Resolve an API key to a tenant ID.
+
+    Args:
+        api_key: Plaintext API key from the request
+
+    Returns:
+        tenant_id if found, None otherwise.
+    """
+    key_hash = _hash_key(api_key)
+    cache_key = f"apikey:{key_hash}"
+
+    # Check cache
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached.get("tenant_id")
+
+    r = _get_redis()
+    if r:
+        tenant_id = r.get(f"apikey:{key_hash}")
+    else:
+        tenant_id = _fallback_store.get(f"apikey:{key_hash}")
+
+    if tenant_id:
+        _cache_set(cache_key, {"tenant_id": tenant_id})
+        return tenant_id
+    return None
+
+
+def add_api_key(tenant_id: str, api_key: str):
+    """Add an API key for a tenant."""
+    key_hash = _hash_key(api_key)
+
+    r = _get_redis()
+    if r:
+        r.set(f"apikey:{key_hash}", tenant_id)
+    else:
+        _fallback_store[f"apikey:{key_hash}"] = tenant_id
+
+    logger.info(f"Added API key for tenant: {tenant_id}")
+
+
+def remove_api_key(api_key: str):
+    """Remove an API key."""
+    key_hash = _hash_key(api_key)
+
+    r = _get_redis()
+    if r:
+        r.delete(f"apikey:{key_hash}")
+    else:
+        _fallback_store.pop(f"apikey:{key_hash}", None)
+
+    _cache_delete(f"apikey:{key_hash}")

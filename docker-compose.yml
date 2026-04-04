@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  llm-shield:
+    build: .
+    ports:
+      - "80:80"
+    environment:
+      - CONFIG_PATH=/data/config.yaml
+      - AUDIT_DB_PATH=/data/audit.db
+      - REDIS_URL=redis://redis:6379/0
+      - VOTAL_ES_ENABLED=${VOTAL_ES_ENABLED:-false}
+      - VOTAL_ES_URL=${VOTAL_ES_URL:-}
+      - VOTAL_ES_API_KEY=${VOTAL_ES_API_KEY:-}
+      - VOTAL_ES_INDEX=${VOTAL_ES_INDEX:-votal-shield-logs}
+      - SHIELD_AUTH_ENABLED=${SHIELD_AUTH_ENABLED:-false}
+    volumes:
+      - shield-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --dir /data
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    ports:
+      - "6379:6379"
+
+volumes:
+  shield-data:
+    driver: local
+  redis-data:
+    driver: local

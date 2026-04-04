@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 import config.schema as _config_module
 from config.schema import GuardrailConfig
@@ -126,7 +126,7 @@ def _translate_settings(guardrail_name: str, raw: dict) -> dict:
 
 
 @router.post("/classify_output")
-async def classify_output(body: dict):
+async def classify_output(request: Request, body: dict):
     """Classify LLM output through output guardrails.
 
     Accepts two formats:
@@ -146,8 +146,11 @@ async def classify_output(body: dict):
          "context": {}
        }
 
-    When "guardrails" is provided, only the specified guardrails run with the given settings.
-    When "guardrails" is omitted, falls back to the server's default output config.
+    When a tenant is identified via API key, the tenant's server-side output
+    guardrail config is used (platform-enforced).
+    When "guardrails" is provided and no tenant config exists, the specified
+    guardrails run with the given settings.
+    When neither is present, falls back to the server's default output config.
     """
     output = body.get("output")
     if not output:
@@ -156,6 +159,19 @@ async def classify_output(body: dict):
     start = datetime.now()
     guardrail_overrides = body.get("guardrails")
     context = body.get("context", {})
+
+    # Check for tenant-specific output guardrail config
+    tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
+
+    if tenant_config and "output_guardrails" in tenant_config:
+        tenant_output = {}
+        for name, gcfg in tenant_config["output_guardrails"].items():
+            tenant_output[name] = {
+                "enabled": gcfg.get("enabled", True),
+                "action": gcfg.get("action", "warn"),
+                **gcfg.get("settings", {}),
+            }
+        return await _classify_with_overrides(output, tenant_output, context, start)
 
     if not guardrail_overrides:
         return await _classify_with_defaults(output, start)
