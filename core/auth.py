@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import os
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -17,17 +18,45 @@ class AuthMiddleware(BaseHTTPMiddleware):
     1. Authorization: Bearer <key>
     2. X-API-Key: <key>
 
+    Admin endpoints (/v1/admin/*) require a separate admin key, provided
+    via X-Admin-Key header and validated against SHIELD_ADMIN_KEY env var.
+
     Public paths (health, docs, playground) are exempted.
     When auth is disabled in config, all requests pass through.
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
         cfg = _config_module.config
+        path = request.url.path
+
+        # Admin routes: always require admin key regardless of auth config
+        if path.startswith("/v1/admin/"):
+            admin_key = os.environ.get("SHIELD_ADMIN_KEY", "")
+            if not admin_key:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": "SHIELD_ADMIN_KEY not configured — admin endpoints disabled"},
+                )
+
+            provided = request.headers.get("X-Admin-Key", "").strip()
+            if not provided:
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": "Missing admin key. Use X-Admin-Key header for /v1/admin/* routes."},
+                )
+
+            if not hmac.compare_digest(provided, admin_key):
+                return JSONResponse(
+                    status_code=403,
+                    content={"error": "Invalid admin key"},
+                )
+
+            return await call_next(request)
+
         if cfg is None or not cfg.auth.enabled:
             return await call_next(request)
 
         # Check if path is public
-        path = request.url.path
         for public in cfg.auth.public_paths:
             if path == public or path.startswith(public + "/"):
                 return await call_next(request)
@@ -49,12 +78,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # Validate key
+        # Validate key against global keys OR tenant keys in Redis
         if not _validate_key(api_key, cfg.auth.api_keys):
-            return JSONResponse(
-                status_code=403,
-                content={"error": "Invalid API key"},
-            )
+            # Fall back to tenant API key resolution
+            try:
+                from storage.tenant_store import resolve_tenant_by_api_key
+                if not resolve_tenant_by_api_key(api_key):
+                    return JSONResponse(
+                        status_code=403,
+                        content={"error": "Invalid API key"},
+                    )
+            except Exception:
+                return JSONResponse(
+                    status_code=403,
+                    content={"error": "Invalid API key"},
+                )
 
         return await call_next(request)
 
