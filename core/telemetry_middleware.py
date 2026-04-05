@@ -43,10 +43,12 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         agent_key = request.headers.get("x-agent-key", "") or bd.get("agent_key", "")
         session_id = bd.get("session_id", "")
         role_name = ""
+        tenant_id = ""
 
-        # Try to get role from request state (set by ShieldMiddleware)
+        # Try to get role and tenant_id from request state (set by ShieldMiddleware)
         try:
             role_name = getattr(request.state, "role_name", "") or ""
+            tenant_id = getattr(request.state, "tenant_id", "") or ""
         except Exception:
             pass
 
@@ -75,6 +77,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
             endpoint=request.url.path,
             method=request.method,
             agent_key=agent_key,
+            tenant_id=tenant_id,
             session_id=session_id,
             role_name=role_name,
             source_ip=source_ip,
@@ -124,6 +127,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
                 latency_ms=gr.get("latency_ms", 0),
                 details=gr.get("details"),
                 agent_key=agent_key,
+                tenant_id=tenant_id,
                 source_ip=source_ip,
                 input_text=input_text if not gr.get("passed") else "",
             ))
@@ -137,6 +141,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
             action=rd.get("action", ""),
             safe=rd.get("safe") if "safe" in rd else rd.get("allowed"),
             agent_key=agent_key,
+            tenant_id=tenant_id,
             session_id=session_id,
             role_name=role_name,
             source_ip=source_ip,

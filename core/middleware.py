@@ -1,30 +1,38 @@
-"""Shield middleware for enriching requests with agent identity and tenant config."""
+"""Shield middleware for enriching requests with agent/tenant context and rate limiting."""
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from core.rbac import enforcer
 from storage.tenant_store import resolve_tenant_by_api_key, get_tenant
+from storage.rate_limiter import check_and_increment
 
 
 class ShieldMiddleware(BaseHTTPMiddleware):
-    """Intercepts requests to /v1/shield/* endpoints.
+    """Intercepts requests to /v1/shield/* and /v1/tenant/* endpoints.
 
-    Extracts agent identity from X-Agent-Key header or api_key query param
-    and adds agent_key, resolved role, and tenant config to request state.
-    Does NOT block — just enriches context.
+    1. Resolves agent identity and RBAC role from headers
+    2. Resolves tenant from API key (via Redis)
+    3. Enforces per-tenant rate limits / quotas
+    4. Attaches context to request.state for downstream handlers
     """
 
+    _SKIP_PATHS = {"/health", "/ping", "/docs", "/redoc", "/openapi.json"}
+
     async def dispatch(self, request: Request, call_next) -> Response:
-        # Only enrich /v1/shield/ requests
-        if request.url.path.startswith("/v1/shield"):
+        path = request.url.path
+
+        # Skip enrichment for non-guarded paths
+        if path in self._SKIP_PATHS or path.startswith("/v1/admin"):
+            return await call_next(request)
+
+        if path.startswith("/v1/shield") or path.startswith("/v1/tenant"):
             # Extract agent key from header or query param
             agent_key = request.headers.get("X-Agent-Key")
             if not agent_key:
                 agent_key = request.query_params.get("api_key")
 
-            # Store on request state
             request.state.agent_key = agent_key
 
             # Resolve role if agent key is present
@@ -43,10 +51,42 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             if api_key:
                 tenant_id = resolve_tenant_by_api_key(api_key)
                 if tenant_id:
-                    request.state.tenant_id = tenant_id
-                    request.state.tenant_config = get_tenant(tenant_id)
+                    tenant_config = get_tenant(tenant_id)
+                    if tenant_config:
+                        request.state.tenant_id = tenant_id
+                        request.state.tenant_config = tenant_config
+
+                        # Per-tenant rate limiting based on quota
+                        quota = tenant_config.get("quota") or {}
+                        max_per_min = quota.get("max_requests_per_minute", 60)
+                        max_per_day = quota.get("max_requests_per_day", 100_000)
+                        max_tokens = quota.get("max_tokens_per_day", 0)
+
+                        allowed, err = check_and_increment(
+                            tenant_id=tenant_id,
+                            max_per_minute=max_per_min,
+                            max_per_day=max_per_day,
+                            max_tokens_per_day=max_tokens,
+                        )
+                        if not allowed:
+                            return JSONResponse(
+                                status_code=429,
+                                content={"error": err, "tenant_id": tenant_id},
+                                headers={"Retry-After": "60"},
+                            )
 
         return await call_next(request)
+
+
+def _extract_api_key(request: Request) -> str | None:
+    """Extract API key from Authorization header or X-API-Key header."""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:].strip()
+    api_key = request.headers.get("X-API-Key")
+    if api_key:
+        return api_key.strip()
+    return None
 
 
 def _extract_api_key(request: Request) -> str | None:

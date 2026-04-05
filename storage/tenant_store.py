@@ -121,11 +121,18 @@ def create_tenant(tenant_id: str, config: dict, api_keys: list[str] = None) -> d
     return config
 
 
-def get_tenant(tenant_id: str) -> Optional[dict]:
-    """Get tenant config by tenant ID."""
+def get_tenant(tenant_id: str, include_deleted: bool = False) -> Optional[dict]:
+    """Get tenant config by tenant ID.
+
+    Args:
+        tenant_id: Tenant identifier
+        include_deleted: If False (default), returns None for soft-deleted tenants
+    """
     # Check cache first
     cached = _cache_get(f"tenant:{tenant_id}")
     if cached:
+        if not include_deleted and cached.get("deleted_at"):
+            return None
         return cached
 
     r = _get_redis()
@@ -139,6 +146,9 @@ def get_tenant(tenant_id: str) -> Optional[dict]:
 
     config = json.loads(data)
     _cache_set(f"tenant:{tenant_id}", config)
+
+    if not include_deleted and config.get("deleted_at"):
+        return None
     return config
 
 
@@ -178,11 +188,48 @@ def update_tenant(tenant_id: str, updates: dict) -> Optional[dict]:
     return config
 
 
-def delete_tenant(tenant_id: str) -> bool:
-    """Delete a tenant and all its API key mappings."""
+def delete_tenant(tenant_id: str, soft: bool = True) -> bool:
+    """Delete a tenant.
+
+    Args:
+        tenant_id: Tenant identifier
+        soft: If True (default), mark as deleted_at; if False, hard delete
+    """
+    if soft:
+        from datetime import datetime, timezone
+        config = get_tenant(tenant_id, include_deleted=True)
+        if config is None:
+            return False
+
+        config["deleted_at"] = datetime.now(timezone.utc).isoformat()
+        config_json = json.dumps(config)
+
+        r = _get_redis()
+        if r:
+            r.set(f"tenant:{tenant_id}", config_json)
+            # Revoke API keys by deleting apikey:* mappings
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor, match="apikey:*", count=100)
+                for key in keys:
+                    if r.get(key) == tenant_id:
+                        r.delete(key)
+                if cursor == 0:
+                    break
+        else:
+            _fallback_store[f"tenant:{tenant_id}"] = config_json
+            to_remove = [k for k, v in _fallback_store.items()
+                         if k.startswith("apikey:") and v == tenant_id]
+            for k in to_remove:
+                del _fallback_store[k]
+
+        _cache_delete(f"tenant:{tenant_id}")
+        logger.info(f"Soft-deleted tenant: {tenant_id}")
+        return True
+
+    # Hard delete
     r = _get_redis()
     if r:
-        # Remove API key mappings that point to this tenant
         cursor = 0
         while True:
             cursor, keys = r.scan(cursor, match="apikey:*", count=100)
@@ -194,7 +241,6 @@ def delete_tenant(tenant_id: str) -> bool:
         r.delete(f"tenant:{tenant_id}")
         r.srem("tenants:index", tenant_id)
     else:
-        # In-memory cleanup
         _fallback_store.pop(f"tenant:{tenant_id}", None)
         to_remove = [k for k, v in _fallback_store.items()
                      if k.startswith("apikey:") and v == tenant_id]
@@ -202,11 +248,11 @@ def delete_tenant(tenant_id: str) -> bool:
             del _fallback_store[k]
 
     _cache_delete(f"tenant:{tenant_id}")
-    logger.info(f"Deleted tenant: {tenant_id}")
+    logger.info(f"Hard-deleted tenant: {tenant_id}")
     return True
 
 
-def list_tenants() -> list[dict]:
+def list_tenants(include_deleted: bool = False) -> list[dict]:
     """List all tenants (summary only, no secrets)."""
     r = _get_redis()
     if r:
@@ -217,7 +263,7 @@ def list_tenants() -> list[dict]:
 
     tenants = []
     for tid in sorted(tenant_ids):
-        config = get_tenant(tid)
+        config = get_tenant(tid, include_deleted=include_deleted)
         if config:
             tenants.append({
                 "tenant_id": tid,
@@ -226,6 +272,7 @@ def list_tenants() -> list[dict]:
                 "input_guardrails": list(config.get("input_guardrails", {}).keys()),
                 "output_guardrails": list(config.get("output_guardrails", {}).keys()),
                 "agent_count": len(config.get("rbac", {}).get("agents", {})),
+                "deleted_at": config.get("deleted_at"),
             })
     return tenants
 

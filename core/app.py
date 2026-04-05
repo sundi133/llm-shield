@@ -21,7 +21,8 @@ from api.routes_classify_output import router as classify_output_router
 from api.routes_tool import router as tool_router
 from api.routes_memory import router as memory_router
 from api.routes_agent import router as agent_router
-from api.routes_tenant import router as tenant_router
+from api.routes_tenant import router as tenant_router, global_router as tenant_audit_router
+from api.routes_tenant_self import router as tenant_self_router
 from storage.audit_log import audit_logger
 
 
@@ -52,6 +53,8 @@ def create_app() -> FastAPI:
     app.include_router(agent_router)
     app.include_router(topic_router)
     app.include_router(tenant_router)
+    app.include_router(tenant_audit_router)
+    app.include_router(tenant_self_router)
 
     # Serve playground
     _static_dir = os.path.join(
