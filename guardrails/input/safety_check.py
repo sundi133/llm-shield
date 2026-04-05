@@ -87,15 +87,27 @@ class SafetyCheckGuardrail(BaseGuardrail):
                 latency_ms=elapsed,
             )
 
-        # Step 2: Get detailed classification
+        # Step 2: Get category classification (enum only — no free-form text)
+        # Keeping output as short enums prevents token truncation mid-response,
+        # same pattern as adversarial_detection.
         step2_messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are a safety classifier. Classify the following message. "
-                    "Consider the full conversation history for context.\n\n"
-                    "Respond with ONLY one CSV line: safe,category,reason\n"
-                    "Example: false,harmful_content,requests weapon instructions"
+                    "You are a safety classifier. Classify the message into one of these categories:\n"
+                    "- harmful_content: weapons, violence, illegal activity\n"
+                    "- hate_speech: slurs, discrimination, targeted harassment\n"
+                    "- self_harm: suicide, self-injury encouragement\n"
+                    "- sexual_content: explicit or inappropriate sexual material\n"
+                    "- privacy_violation: doxxing, sharing PII of others\n"
+                    "- fraud: scams, fraud coaching, deception\n"
+                    "- misinformation: deliberate false information\n"
+                    "- other_unsafe: any other unsafe content\n"
+                    "- safe: content is actually safe (overrides previous classification)\n\n"
+                    "Respond with ONLY one CSV line: safe,category\n"
+                    "where safe is true or false, and category is one of the labels above.\n"
+                    "Example: false,harmful_content\n"
+                    "Example: true,safe"
                 ),
             },
         ]
@@ -113,34 +125,45 @@ class SafetyCheckGuardrail(BaseGuardrail):
         try:
             detail_response = await async_llm_call(
                 messages=step2_messages,
-                max_tokens=30,
+                max_tokens=15,  # plenty for "false,harmful_content"
                 temperature=0,
                 guardrail_name=self.name,
             )
             detail_raw = detail_response["choices"][0]["message"]["content"]
-            result = parse_csv_response(detail_raw, ["safe", "category", "reason"])
+            result = parse_csv_response(detail_raw, ["safe", "category"])
         except Exception:
             elapsed = (time.perf_counter() - start) * 1000
-            # We know it's unsafe from step 1, report that even if step 2 fails
+            # Step 1 already said unsafe — report that even if step 2 fails
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message="Message classified as unsafe (details unavailable)",
-                details={"safe": False},
+                message="Message classified as unsafe",
+                details={"safe": False, "category": "unknown"},
                 latency_ms=elapsed,
             )
 
         elapsed = (time.perf_counter() - start) * 1000
+
+        # Step 2 can override Step 1 if it re-classifies as safe
+        # (handles the case where step 1 false-positived)
+        step2_safe = result.get("safe", False)
+        if step2_safe is True:
+            return GuardrailResult(
+                passed=True,
+                action="pass",
+                guardrail_name=self.name,
+                message="Message is safe",
+                details={"safe": True, "category": "safe"},
+                latency_ms=elapsed,
+            )
+
+        category = result.get("category", "unknown")
         return GuardrailResult(
             passed=False,
             action=self.configured_action,
             guardrail_name=self.name,
-            message=f"Unsafe: {result.get('reason', 'unknown')}",
-            details={
-                "safe": False,
-                "reason": result.get("reason"),
-                "category": result.get("category"),
-            },
+            message=f"Unsafe [{category}]",
+            details={"safe": False, "category": category},
             latency_ms=elapsed,
         )
