@@ -635,6 +635,8 @@ auth:
     - /openapi.json
     - /docs/oauth2-redirect
     - /playground
+    - /admin
+    - /tenant
     - /static
 
 telemetry:

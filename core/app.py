@@ -65,6 +65,14 @@ def create_app() -> FastAPI:
     async def playground():
         return FileResponse(os.path.join(_static_dir, "playground.html"))
 
+    @app.get("/admin")
+    async def admin_portal():
+        return FileResponse(os.path.join(_static_dir, "admin.html"))
+
+    @app.get("/tenant")
+    async def tenant_portal():
+        return FileResponse(os.path.join(_static_dir, "tenant.html"))
+
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
     @app.on_event("startup")

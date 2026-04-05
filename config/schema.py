@@ -46,6 +46,8 @@ class AuthConfig(BaseModel):
             "/openapi.json",
             "/docs/oauth2-redirect",
             "/playground",
+            "/admin",
+            "/tenant",
             "/static",
         ]
     )

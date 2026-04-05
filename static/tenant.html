@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Votal Shield — Tenant Portal</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    min-height: 100vh;
+    padding: 2rem 1rem;
+  }
+  .container { max-width: 1000px; margin: 0 auto; }
+  h1 { color: #58a6ff; margin-bottom: 0.5rem; font-size: 1.8rem; }
+  h2 { color: #c9d1d9; margin: 1.5rem 0 1rem; font-size: 1.2rem; }
+  .subtitle { color: #8b949e; margin-bottom: 2rem; font-size: 0.95rem; }
+  .card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  label { display: block; color: #8b949e; font-size: 0.85rem; margin-bottom: 0.4rem; font-weight: 600; }
+  input[type="text"], input[type="password"], textarea {
+    width: 100%;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #c9d1d9;
+    padding: 0.6rem;
+    font-family: inherit;
+    font-size: 0.9rem;
+  }
+  textarea { min-height: 120px; font-family: "SFMono-Regular", Consolas, monospace; resize: vertical; }
+  input:focus, textarea:focus { outline: none; border-color: #58a6ff; }
+  button {
+    padding: 0.6rem 1.2rem;
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    background: #21262d;
+    color: #c9d1d9;
+  }
+  button:hover { background: #30363d; }
+  .btn-primary { background: #238636; color: #fff; border-color: #238636; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-blue { background: #1f6feb; color: #fff; border-color: #1f6feb; }
+  .btn-blue:hover { background: #388bfd; }
+  .row { display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem; flex-wrap: wrap; }
+  .tabs { display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 1px solid #30363d; }
+  .tab {
+    padding: 0.75rem 1.2rem;
+    cursor: pointer;
+    color: #8b949e;
+    border-bottom: 2px solid transparent;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  pre {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 1rem;
+    overflow-x: auto;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .badge {
+    display: inline-block;
+    padding: 0.3rem 0.8rem;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .badge-enterprise { background: #a371f7; color: #fff; }
+  .badge-pro { background: #1f6feb; color: #fff; }
+  .badge-basic { background: #6e7681; color: #fff; }
+  .badge-pass { background: #238636; color: #fff; }
+  .badge-block { background: #da3633; color: #fff; }
+  .badge-warn { background: #d29922; color: #fff; }
+  .login-container { max-width: 400px; margin: 4rem auto; }
+  .hidden { display: none; }
+  .error { color: #f85149; margin-top: 0.5rem; font-size: 0.85rem; }
+  .success { color: #3fb950; margin-top: 0.5rem; font-size: 0.85rem; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .stat-card {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 1rem;
+  }
+  .stat-value { font-size: 1.8rem; font-weight: 700; color: #58a6ff; }
+  .stat-label { font-size: 0.8rem; color: #8b949e; margin-top: 0.25rem; }
+  .usage-bar {
+    height: 10px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 5px;
+    overflow: hidden;
+    margin-top: 0.5rem;
+  }
+  .usage-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3fb950 0%, #d29922 70%, #f85149 100%);
+    transition: width 0.3s;
+  }
+  .guardrail-list {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+  }
+  .guardrail-chip {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 16px;
+    padding: 0.3rem 0.8rem;
+    font-size: 0.8rem;
+  }
+</style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="login-screen" class="login-container">
+  <div class="card">
+    <h1>Votal Shield</h1>
+    <p class="subtitle">Tenant Self-Service Portal</p>
+    <label>Your Tenant API Key</label>
+    <input type="password" id="api-key-input" placeholder="tenant-key-abc123">
+    <div class="row">
+      <button class="btn-primary" onclick="login()">Sign In</button>
+    </div>
+    <div id="login-error" class="error"></div>
+    <p class="subtitle" style="margin-top: 1.5rem; font-size: 0.8rem;">
+      Need a key? Contact your platform administrator.
+    </p>
+  </div>
+</div>
+
+<!-- Main App -->
+<div id="app" class="container hidden">
+  <div style="display: flex; justify-content: space-between; align-items: center;">
+    <div>
+      <h1>Tenant Portal</h1>
+      <p class="subtitle" id="welcome-msg">Welcome</p>
+    </div>
+    <button onclick="logout()">Sign Out</button>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="overview">Overview</div>
+    <div class="tab" data-tab="policies">My Policies</div>
+    <div class="tab" data-tab="usage">Usage</div>
+    <div class="tab" data-tab="playground">Test Playground</div>
+  </div>
+
+  <!-- Overview Tab -->
+  <div id="tab-overview" class="tab-content active">
+    <div class="card">
+      <h2>Your Account</h2>
+      <div id="tenant-overview">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Policies Tab -->
+  <div id="tab-policies" class="tab-content">
+    <div class="card">
+      <h2>Your Guardrail Policies</h2>
+      <p class="subtitle">These policies are enforced for all requests from your account. To modify them, contact your administrator.</p>
+      <div id="policies-display">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Usage Tab -->
+  <div id="tab-usage" class="tab-content">
+    <div class="card">
+      <h2>Usage vs Quota</h2>
+      <div id="usage-display">Loading...</div>
+      <div class="row">
+        <button onclick="loadUsage()">Refresh</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Playground Tab -->
+  <div id="tab-playground" class="tab-content">
+    <div class="card">
+      <h2>Test Your Guardrails</h2>
+      <p class="subtitle">Send test messages through your configured input guardrails.</p>
+      <label>Agent Key (optional)</label>
+      <input type="text" id="playground-agent-key" placeholder="your-bot-1">
+      <label style="margin-top: 1rem;">Test Message</label>
+      <textarea id="playground-message" placeholder="Enter a message to test..."></textarea>
+      <div class="row">
+        <button class="btn-primary" onclick="testInput()">Test Input</button>
+        <button class="btn-blue" onclick="testOutput()">Test Output</button>
+      </div>
+      <h2>Result</h2>
+      <pre id="playground-result">Send a test to see results</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+let API_KEY = localStorage.getItem('votal_tenant_key') || '';
+let BASE_URL = window.location.origin;
+let TENANT_INFO = null;
+
+function login() {
+  const key = document.getElementById('api-key-input').value.trim();
+  if (!key) {
+    document.getElementById('login-error').textContent = 'Enter your API key';
+    return;
+  }
+  fetch(`${BASE_URL}/v1/tenant/me`, { headers: { 'Authorization': `Bearer ${key}` } })
+    .then(r => {
+      if (r.status === 200) {
+        return r.json().then(d => {
+          API_KEY = key;
+          TENANT_INFO = d;
+          localStorage.setItem('votal_tenant_key', key);
+          showApp();
+        });
+      } else {
+        return r.json().then(d => {
+          document.getElementById('login-error').textContent = d.detail || d.error || 'Invalid key';
+        });
+      }
+    })
+    .catch(e => {
+      document.getElementById('login-error').textContent = 'Connection error: ' + e.message;
+    });
+}
+
+function logout() {
+  localStorage.removeItem('votal_tenant_key');
+  API_KEY = '';
+  TENANT_INFO = null;
+  document.getElementById('login-screen').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+}
+
+function showApp() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('welcome-msg').textContent = `Welcome, ${TENANT_INFO.name || TENANT_INFO.tenant_id}`;
+  renderOverview();
+  renderPolicies();
+  loadUsage();
+}
+
+async function apiCall(path, options = {}) {
+  options.headers = { ...(options.headers || {}), 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' };
+  const r = await fetch(`${BASE_URL}${path}`, options);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || data.error || `HTTP ${r.status}`);
+  return data;
+}
+
+function renderOverview() {
+  if (!TENANT_INFO) return;
+  const t = TENANT_INFO;
+  document.getElementById('tenant-overview').innerHTML = `
+    <div class="grid-2">
+      <div class="stat-card">
+        <div class="stat-label">Tenant ID</div>
+        <div class="stat-value" style="font-size: 1.2rem;">${t.tenant_id}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Plan</div>
+        <div class="stat-value" style="font-size: 1.2rem;">
+          <span class="badge badge-${t.plan}">${t.plan.toUpperCase()}</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Input Guardrails Active</div>
+        <div class="stat-value">${(t.input_guardrails || []).length}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Output Guardrails Active</div>
+        <div class="stat-value">${(t.output_guardrails || []).length}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Registered Agents</div>
+        <div class="stat-value">${(t.agents || []).length}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPolicies() {
+  if (!TENANT_INFO) return;
+  const t = TENANT_INFO;
+  const inputs = t.input_guardrails || [];
+  const outputs = t.output_guardrails || [];
+  const agents = t.agents || [];
+
+  document.getElementById('policies-display').innerHTML = `
+    <h2 style="margin-top: 0;">Input Guardrails (${inputs.length})</h2>
+    <div class="guardrail-list">
+      ${inputs.length ? inputs.map(g => `<span class="guardrail-chip">${g}</span>`).join('') : '<span class="subtitle">None configured</span>'}
+    </div>
+    <h2>Output Guardrails (${outputs.length})</h2>
+    <div class="guardrail-list">
+      ${outputs.length ? outputs.map(g => `<span class="guardrail-chip">${g}</span>`).join('') : '<span class="subtitle">None configured</span>'}
+    </div>
+    <h2>Your Agents (${agents.length})</h2>
+    <div class="guardrail-list">
+      ${agents.length ? agents.map(a => `<span class="guardrail-chip">${a}</span>`).join('') : '<span class="subtitle">None registered</span>'}
+    </div>
+    <h2>Quota</h2>
+    <pre>${JSON.stringify(t.quota || {}, null, 2)}</pre>
+  `;
+}
+
+async function loadUsage() {
+  try {
+    const data = await apiCall('/v1/tenant/me/usage');
+    const u = data.usage || {};
+    const q = data.quota || {};
+    const mPct = data.pct_of_minute_limit || 0;
+    const dPct = data.pct_of_daily_limit || 0;
+
+    document.getElementById('usage-display').innerHTML = `
+      <div class="grid-2" style="margin-bottom: 1rem;">
+        <div class="stat-card">
+          <div class="stat-label">Requests This Minute</div>
+          <div class="stat-value">${u.requests_this_minute || 0}</div>
+          <div class="stat-label">of ${q.max_requests_per_minute || '∞'}</div>
+          <div class="usage-bar"><div class="usage-fill" style="width: ${Math.min(100, mPct)}%"></div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Requests Today</div>
+          <div class="stat-value">${(u.requests_today || 0).toLocaleString()}</div>
+          <div class="stat-label">of ${(q.max_requests_per_day || 0).toLocaleString()}</div>
+          <div class="usage-bar"><div class="usage-fill" style="width: ${Math.min(100, dPct)}%"></div></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Tokens Today</div>
+          <div class="stat-value">${(u.tokens_today || 0).toLocaleString()}</div>
+          <div class="stat-label">of ${(q.max_tokens_per_day || 0).toLocaleString()}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Plan</div>
+          <div class="stat-value" style="font-size: 1.2rem;">
+            <span class="badge badge-${data.plan || 'basic'}">${(data.plan || 'basic').toUpperCase()}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('usage-display').innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+async function testInput() {
+  const message = document.getElementById('playground-message').value.trim();
+  const agentKey = document.getElementById('playground-agent-key').value.trim();
+  if (!message) return;
+
+  const headers = { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' };
+  if (agentKey) headers['X-Agent-Key'] = agentKey;
+
+  try {
+    const r = await fetch(`${BASE_URL}/v1/shield/classify`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ message }),
+    });
+    const data = await r.json();
+    displayResult(data, 'input');
+  } catch (e) {
+    document.getElementById('playground-result').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function testOutput() {
+  const message = document.getElementById('playground-message').value.trim();
+  const agentKey = document.getElementById('playground-agent-key').value.trim();
+  if (!message) return;
+
+  const headers = { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' };
+  if (agentKey) headers['X-Agent-Key'] = agentKey;
+
+  try {
+    const r = await fetch(`${BASE_URL}/v1/shield/classify_output`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ output: message }),
+    });
+    const data = await r.json();
+    displayResult(data, 'output');
+  } catch (e) {
+    document.getElementById('playground-result').textContent = 'Error: ' + e.message;
+  }
+}
+
+function displayResult(data, stage) {
+  const action = data.action || 'unknown';
+  const safe = data.safe;
+  const badge = action === 'block' ? 'badge-block' : action === 'warn' ? 'badge-warn' : 'badge-pass';
+  const summary = `${stage.toUpperCase()} → <span class="badge ${badge}">${action}</span> (safe: ${safe})\n\n`;
+  document.getElementById('playground-result').innerHTML = summary + JSON.stringify(data, null, 2);
+}
+
+// Tab switching
+document.addEventListener('click', (e) => {
+  if (e.target.matches('.tab[data-tab]')) {
+    const tab = e.target.getAttribute('data-tab');
+    document.querySelectorAll('.tabs > .tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    e.target.classList.add('active');
+    document.getElementById(`tab-${tab}`).classList.add('active');
+    if (tab === 'usage') loadUsage();
+  }
+});
+
+// Auto-login
+if (API_KEY) {
+  document.getElementById('api-key-input').value = API_KEY;
+  login();
+}
+</script>
+</body>
+</html>
