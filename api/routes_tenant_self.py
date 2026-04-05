@@ -52,12 +52,14 @@ async def get_my_usage(request: Request):
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     usage = get_usage(tenant_id)
-    quota = config.get("quota", {})
+    quota = config.get("quota") or {}
+    max_min = quota.get("max_requests_per_minute") or 1
+    max_day = quota.get("max_requests_per_day") or 1
     return {
         "tenant_id": tenant_id,
         "plan": config.get("plan"),
         "usage": usage,
         "quota": quota,
-        "pct_of_minute_limit": round(100 * usage["requests_this_minute"] / max(quota.get("max_requests_per_minute", 1), 1), 1),
-        "pct_of_daily_limit": round(100 * usage["requests_today"] / max(quota.get("max_requests_per_day", 1), 1), 1),
+        "pct_of_minute_limit": round(100 * (usage.get("requests_this_minute", 0)) / max_min, 1),
+        "pct_of_daily_limit": round(100 * (usage.get("requests_today", 0)) / max_day, 1),
     }

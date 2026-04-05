@@ -61,6 +61,13 @@ class TenantConfig(BaseModel):
         return defaults.get(plan, defaults["basic"])
 
 
+_PLAN_QUOTA_DEFAULTS = {
+    "basic":      {"max_requests_per_minute": 60,   "max_requests_per_day": 100_000,     "max_tokens_per_day": 10_000_000},
+    "pro":        {"max_requests_per_minute": 300,  "max_requests_per_day": 1_000_000,   "max_tokens_per_day": 100_000_000},
+    "enterprise": {"max_requests_per_minute": 1000, "max_requests_per_day": 10_000_000,  "max_tokens_per_day": 1_000_000_000},
+}
+
+
 class TenantCreateRequest(BaseModel):
     """Request body for POST /v1/admin/tenants."""
     tenant_id: str = Field(..., min_length=1, max_length=64, pattern="^[a-zA-Z0-9_-]+$")
@@ -71,6 +78,14 @@ class TenantCreateRequest(BaseModel):
     output_guardrails: dict[str, GuardrailPolicy] = Field(default_factory=dict)
     rbac: TenantRBAC = Field(default_factory=TenantRBAC)
     quota: Optional[TenantQuota] = None
+
+    @field_validator("quota", mode="before")
+    @classmethod
+    def default_quota_from_plan(cls, v, info):
+        if v is not None:
+            return v
+        plan = info.data.get("plan", "basic")
+        return _PLAN_QUOTA_DEFAULTS.get(plan, _PLAN_QUOTA_DEFAULTS["basic"])
 
 
 class TenantUpdateRequest(BaseModel):
