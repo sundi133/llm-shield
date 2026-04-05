@@ -11,5 +11,6 @@ langdetect
 textblob
 aiosqlite
 redis
+upstash-redis
 pytest
 pytest-asyncio

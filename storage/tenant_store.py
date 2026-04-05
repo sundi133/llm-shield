@@ -29,14 +29,38 @@ _fallback_store: dict[str, str] = {}  # in-memory fallback
 
 
 def _get_redis():
-    """Lazy-init Redis connection."""
+    """Lazy-init Redis connection.
+
+    Priority:
+    1. Upstash REST API (UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN)
+       — preferred for serverless / RunPod
+    2. Standard Redis TCP (REDIS_URL)
+       — for on-prem docker-compose or self-hosted Redis
+    3. In-memory fallback (dev/testing only)
+    """
     global _redis, _redis_available
     if _redis is not None:
         return _redis
 
+    # Try Upstash REST first (serverless-friendly, no persistent TCP)
+    upstash_url = os.environ.get("UPSTASH_REDIS_REST_URL", "")
+    upstash_token = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
+    if upstash_url and upstash_token:
+        try:
+            from upstash_redis import Redis as UpstashRedis
+            _redis = UpstashRedis(url=upstash_url, token=upstash_token)
+            # Sanity check
+            _redis.set("_votal:healthcheck", "ok")
+            _redis_available = True
+            logger.info(f"Tenant store connected to Upstash REST: {upstash_url}")
+            return _redis
+        except Exception as e:
+            logger.warning(f"Upstash REST unavailable ({e}), trying REDIS_URL fallback")
+
+    # Fall back to standard Redis TCP
     redis_url = os.environ.get("REDIS_URL", "")
     if not redis_url:
-        logger.info("REDIS_URL not set, using in-memory tenant store")
+        logger.info("No Redis configured (neither UPSTASH_REDIS_REST_URL nor REDIS_URL), using in-memory tenant store")
         _redis_available = False
         return None
 
@@ -45,7 +69,7 @@ def _get_redis():
         _redis = redis_lib.Redis.from_url(redis_url, decode_responses=True)
         _redis.ping()
         _redis_available = True
-        logger.info(f"Tenant store connected to Redis: {redis_url}")
+        logger.info(f"Tenant store connected to Redis (TCP): {redis_url.split('@')[-1] if '@' in redis_url else redis_url}")
         return _redis
     except Exception as e:
         logger.warning(f"Redis unavailable ({e}), using in-memory fallback")
