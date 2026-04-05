@@ -86,7 +86,7 @@ class TopicRestrictionGuardrail(BaseGuardrail):
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=40,
+                max_tokens=80,  # enough for several topics without truncation
                 temperature=0,
                 guardrail_name=self.name,
             )
@@ -94,7 +94,7 @@ class TopicRestrictionGuardrail(BaseGuardrail):
 
             # Parse CSV: overall_allowed,topic1:allowed,topic2:allowed,...
             parts = [p.strip() for p in raw.split(",")]
-            overall_allowed = parts[0].lower() in ("true", "yes") if parts else True
+            llm_overall = parts[0].lower() in ("true", "yes") if parts else True
 
             topics = []
             for part in parts[1:]:
@@ -119,14 +119,31 @@ class TopicRestrictionGuardrail(BaseGuardrail):
         blocked_topics = [t["topic"] for t in topics if not t.get("is_allowed", True)]
         all_topic_names = [t["topic"] for t in topics]
 
-        result = {"topics": topics, "overall_allowed": overall_allowed}
+        # Derive overall_allowed from the topic list rather than trusting
+        # the LLM's claimed overall flag — small models sometimes produce
+        # contradictory output (all topics allowed but overall=false).
+        # Only fall back to the LLM flag if no topics were parsed at all.
+        if topics:
+            overall_allowed = len(blocked_topics) == 0
+        else:
+            overall_allowed = llm_overall
 
-        if not overall_allowed or blocked_topics:
+        result = {
+            "topics": topics,
+            "overall_allowed": overall_allowed,
+            "llm_overall": llm_overall,
+        }
+
+        if not overall_allowed:
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Blocked topic(s): {', '.join(blocked_topics)}",
+                message=(
+                    f"Blocked topic(s): {', '.join(blocked_topics)}"
+                    if blocked_topics
+                    else "Message topic not in allowed list"
+                ),
                 details=result,
                 latency_ms=elapsed,
             )
@@ -135,7 +152,7 @@ class TopicRestrictionGuardrail(BaseGuardrail):
             passed=True,
             action="pass",
             guardrail_name=self.name,
-            message=f"All topics allowed: {', '.join(all_topic_names)}",
+            message=f"All topics allowed: {', '.join(all_topic_names) or 'none detected'}",
             details=result,
             latency_ms=elapsed,
         )
