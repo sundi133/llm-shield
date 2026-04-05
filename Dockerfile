@@ -36,12 +36,15 @@ COPY api/ api/
 COPY storage/ storage/
 COPY static/ static/
 
-# Telemetry / SIEM credentials (injected via build args from CI secrets)
-ARG VOTAL_ES_URL=""
-ARG VOTAL_ES_API_KEY=""
+# Telemetry / SIEM defaults (non-secret). Credentials must be injected at
+# RUNTIME via RunPod Secrets: https://docs.runpod.io/pods/templates/secrets
+# In your RunPod endpoint env vars, reference them as:
+#   VOTAL_ES_URL={{ RUNPOD_SECRET_VOTAL_ES_URL }}
+#   VOTAL_ES_API_KEY={{ RUNPOD_SECRET_VOTAL_ES_API_KEY }}
+#   REDIS_URL={{ RUNPOD_SECRET_REDIS_URL }}
+#   SHIELD_ADMIN_KEY={{ RUNPOD_SECRET_SHIELD_ADMIN_KEY }}
+# Never bake these into the image — this image may be public.
 ENV VOTAL_ES_ENABLED=true
-ENV VOTAL_ES_URL=$VOTAL_ES_URL
-ENV VOTAL_ES_API_KEY=$VOTAL_ES_API_KEY
 ENV VOTAL_ES_INDEX=votal-shield-logs
 
 # Override the default entrypoint (llama-server) so Python starts instead
