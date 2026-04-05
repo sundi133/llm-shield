@@ -116,21 +116,24 @@ class TopicRestrictionGuardrail(BaseGuardrail):
 
         elapsed = (time.perf_counter() - start) * 1000
 
+        allowed_topics = [t["topic"] for t in topics if t.get("is_allowed", True)]
         blocked_topics = [t["topic"] for t in topics if not t.get("is_allowed", True)]
-        all_topic_names = [t["topic"] for t in topics]
 
-        # Derive overall_allowed from the topic list rather than trusting
-        # the LLM's claimed overall flag — small models sometimes produce
-        # contradictory output (all topics allowed but overall=false).
-        # Only fall back to the LLM flag if no topics were parsed at all.
+        # Derive overall_allowed from the topic list with OR semantics:
+        # a message is allowed if AT LEAST ONE detected topic is in the
+        # allowed list. Only block if every detected topic is disallowed.
+        # This matches real customer support use cases where a single
+        # message can touch multiple subjects.
         if topics:
-            overall_allowed = len(blocked_topics) == 0
+            overall_allowed = len(allowed_topics) > 0
         else:
             overall_allowed = llm_overall
 
         result = {
             "topics": topics,
             "overall_allowed": overall_allowed,
+            "allowed_topics": allowed_topics,
+            "blocked_topics": blocked_topics,
             "llm_overall": llm_overall,
         }
 
@@ -140,7 +143,7 @@ class TopicRestrictionGuardrail(BaseGuardrail):
                 action=self.configured_action,
                 guardrail_name=self.name,
                 message=(
-                    f"Blocked topic(s): {', '.join(blocked_topics)}"
+                    f"All detected topics are not in the allowed list: {', '.join(blocked_topics)}"
                     if blocked_topics
                     else "Message topic not in allowed list"
                 ),
@@ -152,7 +155,11 @@ class TopicRestrictionGuardrail(BaseGuardrail):
             passed=True,
             action="pass",
             guardrail_name=self.name,
-            message=f"All topics allowed: {', '.join(all_topic_names) or 'none detected'}",
+            message=(
+                f"At least one allowed topic matched: {', '.join(allowed_topics)}"
+                if allowed_topics
+                else "No restricted topics detected"
+            ),
             details=result,
             latency_ms=elapsed,
         )
