@@ -43,19 +43,28 @@ def _get_redis():
         return _redis
 
     # Try Upstash REST first (serverless-friendly, no persistent TCP)
-    upstash_url = os.environ.get("UPSTASH_REDIS_REST_URL", "")
-    upstash_token = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
+    upstash_url = os.environ.get("UPSTASH_REDIS_REST_URL", "").strip()
+    upstash_token = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "").strip()
     if upstash_url and upstash_token:
-        try:
-            from upstash_redis import Redis as UpstashRedis
-            _redis = UpstashRedis(url=upstash_url, token=upstash_token)
-            # Sanity check
-            _redis.set("_votal:healthcheck", "ok")
-            _redis_available = True
-            logger.info(f"Tenant store connected to Upstash REST: {upstash_url}")
-            return _redis
-        except Exception as e:
-            logger.warning(f"Upstash REST unavailable ({e}), trying REDIS_URL fallback")
+        # Validate URL protocol — Upstash REST requires https://
+        if not upstash_url.startswith(("http://", "https://")):
+            logger.warning(
+                f"UPSTASH_REDIS_REST_URL has invalid protocol: {upstash_url[:20]}... "
+                "(must start with https://). Skipping Upstash, trying REDIS_URL."
+            )
+        else:
+            try:
+                from upstash_redis import Redis as UpstashRedis
+                client = UpstashRedis(url=upstash_url, token=upstash_token)
+                # Sanity check — must assign to local first, set global only on success
+                client.set("_votal:healthcheck", "ok")
+                _redis = client
+                _redis_available = True
+                logger.info(f"Tenant store connected to Upstash REST: {upstash_url}")
+                return _redis
+            except Exception as e:
+                logger.warning(f"Upstash REST unavailable ({e}), trying REDIS_URL fallback")
+                _redis = None  # ensure we don't cache a broken client
 
     # Fall back to standard Redis TCP
     redis_url = os.environ.get("REDIS_URL", "")
