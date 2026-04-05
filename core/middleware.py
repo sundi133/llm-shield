@@ -79,22 +79,42 @@ class ShieldMiddleware(BaseHTTPMiddleware):
 
 
 def _extract_api_key(request: Request) -> str | None:
-    """Extract API key from Authorization header or X-API-Key header."""
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        return auth_header[7:].strip()
+    """Extract tenant API key from request headers.
+
+    Priority order (prefers X-API-Key to avoid collision with upstream
+    proxies like RunPod which also use Authorization: Bearer):
+      1. X-API-Key header
+      2. X-Tenant-Key header
+      3. Authorization: Bearer <key>
+    """
     api_key = request.headers.get("X-API-Key")
     if api_key:
         return api_key.strip()
+    tenant_key = request.headers.get("X-Tenant-Key")
+    if tenant_key:
+        return tenant_key.strip()
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:].strip()
     return None
 
 
 def _extract_api_key(request: Request) -> str | None:
-    """Extract API key from Authorization header or X-API-Key header."""
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        return auth_header[7:].strip()
+    """Extract tenant API key from request headers.
+
+    Priority order (prefers X-API-Key to avoid collision with upstream
+    proxies like RunPod which also use Authorization: Bearer):
+      1. X-API-Key header
+      2. X-Tenant-Key header
+      3. Authorization: Bearer <key>
+    """
     api_key = request.headers.get("X-API-Key")
     if api_key:
         return api_key.strip()
+    tenant_key = request.headers.get("X-Tenant-Key")
+    if tenant_key:
+        return tenant_key.strip()
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:].strip()
     return None
