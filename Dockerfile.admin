@@ -1,0 +1,46 @@
+# Lightweight admin-only image — no GPU, no models, no llama.cpp.
+# Serves the admin/tenant portals and tenant CRUD APIs. Talks to the
+# same Redis as the production guardrail workers.
+#
+# Build:
+#   docker build -f Dockerfile.admin -t shield-admin .
+#
+# Run:
+#   docker run -p 8080:8080 \
+#     -e UPSTASH_REDIS_REST_URL=https://correct-mongoose-70933.upstash.io \
+#     -e UPSTASH_REDIS_REST_TOKEN=... \
+#     -e SHIELD_ADMIN_KEY=... \
+#     shield-admin
+
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+# Install minimal Python deps
+COPY requirements-admin.txt .
+RUN pip install --no-cache-dir -r requirements-admin.txt
+
+# Copy only the modules needed for admin/tenant UI
+COPY admin_app.py .
+COPY config/__init__.py config/
+COPY config/schema.py config/
+COPY core/__init__.py core/
+COPY core/auth.py core/
+COPY core/middleware.py core/
+COPY core/rbac.py core/
+COPY api/__init__.py api/
+COPY api/routes_tenant.py api/
+COPY api/routes_tenant_self.py api/
+COPY storage/__init__.py storage/
+COPY storage/tenant_store.py storage/
+COPY storage/tenant_models.py storage/
+COPY storage/admin_audit.py storage/
+COPY storage/rate_limiter.py storage/
+COPY static/ static/
+
+EXPOSE 8080
+CMD ["python3", "admin_app.py"]

@@ -1,6 +1,6 @@
-# LLM Shield
+# Votal Shield (LLM Shield)
 
-AI guardrails platform that sits between your application and your LLM. Inspects inputs, enforces policies, scans outputs, and secures agentic tool-calling workflows.
+AI guardrails platform that sits between your application and your LLM. Inspects inputs, enforces policies, scans outputs, secures agentic tool-calling workflows, and provides **multi-tenant isolation** with per-tenant guardrail policies stored in Redis.
 
 Runs on RunPod (GPU) with a built-in Qwen3-8B backend, or proxy to any OpenAI-compatible API.
 
@@ -8,18 +8,72 @@ Runs on RunPod (GPU) with a built-in Qwen3-8B backend, or proxy to any OpenAI-co
 
 - **19 guardrails** across input safety, output quality, and agentic security
 - **Two-tier parallel pipeline** — fast CPU guardrails run first; LLM-based guardrails only run if needed
+- **Multi-tenant** — per-tenant guardrail policies in Redis (Upstash or self-hosted), platform-enforced, with per-tenant rate limiting, quotas, and audit logging
+- **Admin + Tenant portals** — modern dark UI for tenant CRUD, usage dashboards, policy editing, and playground testing
+- **Lightweight admin image** — deploy just the portal + tenant APIs without GPU/models for UI-only workloads
 - **Gateway proxy** — drop-in replacement for `/v1/chat/completions` with guardrails built in
 - **Agentic security** — MCP server validation, per-session action limits, RBAC
-- **API key authentication** with SHA-256 hashed key support
+- **Per-request telemetry** — events tagged with `trace.id`, `agent.key`, `tenant_id` for ES/Splunk/OTLP SIEM integration
+- **API key authentication** — separate admin key + per-tenant keys with SHA-256 hashing
 - **Topic enforcement** — whitelist/blacklist topics with per-request overrides
 - **Output redaction** — automatically redacts PII based on agent clearance level
-- **Audit logging** — every request logged to SQLite with query API and stats dashboard
-- **Runtime config** — toggle guardrails without restarting
-- **Interactive playground** — browser UI at `/playground`
+- **Audit logging** — every admin action logged with actor, IP, before/after snapshots
+- **Runtime config** — toggle guardrails without restarting; tenants can self-serve policy edits via portal
+- **NIST AI RMF / OWASP LLM / ISO 42001 compliance mapping** — see `docs/compliance-mapping.md`
+
+## Architecture
+
+Two deployment modes:
+
+1. **Full Shield** (`Dockerfile`) — GPU worker with llama.cpp + all guardrails + admin portals
+2. **Admin-only** (`Dockerfile.admin`) — Lightweight (~150MB) portal + tenant APIs, talks to the same Redis as production. Runs anywhere (Cloud Run, Fly, Render, laptop).
+
+Both share the same backend APIs and connect to the same Redis for tenant state.
+
+```
+┌─────────────┐   ┌──────────────────┐   ┌─────────────────┐
+│  Tenant App │──▶│  Full Shield     │──▶│  Redis (Upstash │
+│  (your AI)  │   │  (GPU worker)    │   │  or local)      │
+└─────────────┘   └──────────────────┘   └─────────────────┘
+                                                 ▲
+                  ┌──────────────────┐           │
+                  │  Admin Portal    │───────────┘
+                  │  (lightweight,   │  Per-tenant policies,
+                  │   runs anywhere) │  rate limits, audit log
+                  └──────────────────┘
+```
 
 ## Quick Start
 
-### Run Locally (no GPU, CPU guardrails only)
+### Option 1 — Admin Portal Only (no GPU, recommended for UI dev)
+
+Test the tenant management UI without loading the GPU/model stack. Runs anywhere — your laptop, Cloud Run, Fly.io, Render, etc.
+
+```bash
+# Build (small image, ~150MB, no CUDA)
+docker build -f Dockerfile.admin -t shield-admin .
+
+# Run against Upstash Redis
+docker run -p 8081:8080 \
+  -e UPSTASH_REDIS_REST_URL="https://your-db.upstash.io" \
+  -e UPSTASH_REDIS_REST_TOKEN="your-token" \
+  -e SHIELD_ADMIN_KEY="your-admin-key" \
+  shield-admin
+
+# Open the portals
+open http://localhost:8081/admin    # admin portal
+open http://localhost:8081/tenant   # tenant portal
+```
+
+Or with local Redis via Docker Compose:
+```bash
+docker compose -f docker-compose.admin.yml up --build
+open http://localhost:8080/admin
+```
+
+See [docs/api-reference.md](docs/api-reference.md) for all endpoints.
+
+### Option 2 — Full Shield (requires GPU)
 
 ```bash
 pip install -r requirements.txt
@@ -37,11 +91,16 @@ guardrails:
     enabled: false
 ```
 
-### Run with Docker (GPU)
+### Option 3 — Full Shield with Docker (GPU)
 
 ```bash
 docker build -t llm-shield .
 docker run --gpus all -p 8080:80 llm-shield
+```
+
+Or run the full stack (Shield + Redis) via compose:
+```bash
+docker compose up -d
 ```
 
 ### Deploy on RunPod
@@ -58,21 +117,47 @@ curl -X POST "https://YOUR_ENDPOINT.api.runpod.ai/classify" \
 
 ## API Endpoints
 
+### Guardrails (tenant API key via `X-API-Key`)
 | Endpoint | Method | Description |
 |---|---|---|
 | `/classify` | POST | Standalone safety classification |
+| `/classify_output` | POST | Classify LLM output for PII/tone/bias |
 | `/v1/shield/chat/completions` | POST | Gateway: input guards → LLM → output guards |
 | `/v1/shield/topic/check` | POST | Standalone topic enforcement |
 | `/v1/shield/mcp/register` | POST | Register an MCP server |
 | `/v1/shield/mcp/check` | POST | Validate a tool call |
 | `/v1/shield/action/check` | POST | Validate an agent action |
-| `/v1/shield/config` | GET/PUT | View/update config at runtime |
 | `/v1/shield/guardrails` | GET | List all guardrails and status |
-| `/v1/shield/audit` | GET | Query audit logs |
-| `/v1/shield/stats` | GET | Aggregated stats |
-| `/health` | GET | Health check |
-| `/playground` | GET | Interactive testing UI |
-| `/docs` | GET | OpenAPI docs |
+
+### Tenant self-service (tenant API key via `X-API-Key`)
+| Endpoint | Method | Description |
+|---|---|---|
+| `/v1/tenant/me` | GET | View your tenant config (sanitized) |
+| `/v1/tenant/me/usage` | GET | Your current usage vs quota |
+| `/v1/tenant/me/policies` | GET | View your input/output guardrail policies |
+| `/v1/tenant/me/policies` | PUT | Update your policies (self-serve) |
+| `/v1/tenant/me/audit` | GET | Recent changes to your config |
+
+### Admin (admin key via `X-Admin-Key`)
+| Endpoint | Method | Description |
+|---|---|---|
+| `/v1/admin/dashboard` | GET | Platform overview + all tenants |
+| `/v1/admin/tenants` | GET/POST | List or create tenants |
+| `/v1/admin/tenants/{id}` | GET/PUT/DELETE | Manage a tenant |
+| `/v1/admin/tenants/{id}/api-keys` | POST/DELETE | Add/revoke API keys |
+| `/v1/admin/tenants/{id}/usage` | GET | Per-tenant usage |
+| `/v1/admin/tenants/{id}/audit` | GET | Per-tenant admin history |
+| `/v1/admin/audit` | GET | Global admin audit log |
+| `/v1/shield/config` | GET/PUT | Global guardrail config |
+
+### UI
+| Endpoint | Description |
+|---|---|
+| `/admin` | Admin portal — tenant CRUD, dashboard, audit |
+| `/tenant` | Tenant self-service portal — policies, usage, playground |
+| `/playground` | Guardrail testing UI (no auth) |
+| `/health`, `/ping` | Health checks |
+| `/docs` | OpenAPI docs |
 
 ## Usage Examples
 

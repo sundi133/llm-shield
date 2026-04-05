@@ -3,443 +3,661 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Votal Shield — Admin Portal</title>
+<title>Votal Shield — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+  :root {
+    --bg: #0a0a0f;
+    --bg-2: #12121a;
+    --bg-3: #1a1a24;
+    --bg-hover: #1f1f2c;
+    --border: #27272f;
+    --border-strong: #3a3a45;
+    --text: #e4e4e7;
+    --text-dim: #a1a1aa;
+    --text-muted: #71717a;
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --accent-dim: rgba(99, 102, 241, 0.15);
+    --success: #10b981;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --radius: 8px;
+    --radius-sm: 6px;
+    --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+  }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #0d1117;
-    color: #c9d1d9;
-    min-height: 100vh;
-    padding: 2rem 1rem;
-  }
-  .container { max-width: 1200px; margin: 0 auto; }
-  h1 { color: #58a6ff; margin-bottom: 0.5rem; font-size: 1.8rem; }
-  h2 { color: #c9d1d9; margin: 1.5rem 0 1rem; font-size: 1.2rem; }
-  .subtitle { color: #8b949e; margin-bottom: 2rem; font-size: 0.95rem; }
-  .card {
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-  label { display: block; color: #8b949e; font-size: 0.85rem; margin-bottom: 0.4rem; font-weight: 600; }
-  textarea, input[type="text"], input[type="password"], select {
-    width: 100%;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    color: #c9d1d9;
-    padding: 0.6rem;
-    font-family: inherit;
-    font-size: 0.9rem;
-  }
-  textarea {
-    font-family: "SFMono-Regular", Consolas, monospace;
-    min-height: 200px;
-    resize: vertical;
-  }
-  textarea:focus, input:focus, select:focus { outline: none; border-color: #58a6ff; }
-  button {
-    padding: 0.6rem 1.2rem;
-    border-radius: 6px;
-    border: 1px solid #30363d;
-    font-size: 0.9rem;
-    font-weight: 600;
-    cursor: pointer;
-    background: #21262d;
-    color: #c9d1d9;
-  }
-  button:hover { background: #30363d; }
-  .btn-primary { background: #238636; color: #fff; border-color: #238636; }
-  .btn-primary:hover { background: #2ea043; }
-  .btn-danger { background: #da3633; color: #fff; border-color: #da3633; }
-  .btn-danger:hover { background: #f85149; }
-  .btn-blue { background: #1f6feb; color: #fff; border-color: #1f6feb; }
-  .btn-blue:hover { background: #388bfd; }
-  .row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
-  .row > * { flex: 1; min-width: 0; }
-  .row button { flex: 0 0 auto; }
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td {
-    text-align: left;
-    padding: 0.6rem 0.8rem;
-    border-bottom: 1px solid #30363d;
-    font-size: 0.88rem;
-  }
-  th { color: #8b949e; font-weight: 600; background: #0d1117; }
-  tr:hover { background: #1c2128; }
-  .badge {
-    display: inline-block;
-    padding: 0.2rem 0.6rem;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-  .badge-enterprise { background: #a371f7; color: #fff; }
-  .badge-pro { background: #1f6feb; color: #fff; }
-  .badge-basic { background: #6e7681; color: #fff; }
-  .badge-deleted { background: #da3633; color: #fff; }
-  .tabs { display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 1px solid #30363d; }
-  .tab {
-    padding: 0.75rem 1.2rem;
-    cursor: pointer;
-    color: #8b949e;
-    border-bottom: 2px solid transparent;
-    font-weight: 600;
-    font-size: 0.9rem;
-  }
-  .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
-  .tab-content { display: none; }
-  .tab-content.active { display: block; }
-  pre {
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    padding: 1rem;
-    overflow-x: auto;
-    font-family: "SFMono-Regular", Consolas, monospace;
-    font-size: 0.82rem;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 14px;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
     line-height: 1.5;
-    white-space: pre-wrap;
-    max-height: 500px;
+  }
+  code, pre, .mono { font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace; }
+
+  /* ── Layout ────────────────────────────── */
+  .app { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 240px;
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    padding: 1.5rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    height: 100vh;
     overflow-y: auto;
   }
-  .error { color: #f85149; margin-top: 0.5rem; font-size: 0.85rem; }
-  .success { color: #3fb950; margin-top: 0.5rem; font-size: 0.85rem; }
-  .muted { color: #6e7681; font-size: 0.8rem; }
-  .login-container {
-    max-width: 400px;
-    margin: 4rem auto;
+  .main { flex: 1; margin-left: 240px; padding: 2rem 2.5rem; max-width: 1400px; }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1rem;
   }
-  .hidden { display: none; }
-  .toolbar { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .logo-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, var(--accent) 0%, #a855f7 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .logo-text { font-weight: 600; font-size: 15px; }
+  .logo-sub { font-size: 11px; color: var(--text-muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .nav-section { margin: 0.75rem 0; }
+  .nav-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    padding: 0.5rem 0.75rem 0.4rem;
+    font-weight: 600;
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 13.5px;
+    font-weight: 500;
+    transition: background 0.1s, color 0.1s;
+    margin: 1px 0;
+  }
+  .nav-item:hover { background: var(--bg-hover); color: var(--text); }
+  .nav-item.active { background: var(--accent-dim); color: var(--accent-hover); }
+  .nav-icon { width: 16px; height: 16px; flex-shrink: 0; stroke-width: 2; }
+
+  .sidebar-footer {
+    margin-top: auto;
+    padding: 1rem 0.75rem 0;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .sidebar-footer button {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 12.5px;
+    margin-top: 0.5rem;
+  }
+  .sidebar-footer button:hover { background: var(--bg-hover); color: var(--text); }
+
+  /* ── Page header ───────────────────────── */
+  .page-header { margin-bottom: 1.75rem; }
+  .page-title { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
+  .page-desc { color: var(--text-dim); font-size: 13.5px; margin-top: 0.25rem; }
+
+  /* ── Cards ─────────────────────────────── */
+  .card {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .card-title { font-size: 14px; font-weight: 600; margin-bottom: 0.15rem; }
+  .card-subtitle { font-size: 12.5px; color: var(--text-dim); }
+  .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; }
+
+  /* ── Stats grid ────────────────────────── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+  .stat {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+  }
+  .stat-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); font-weight: 600; }
+  .stat-value { font-size: 24px; font-weight: 700; margin-top: 0.25rem; letter-spacing: -0.5px; }
+  .stat-change { font-size: 11.5px; color: var(--text-dim); margin-top: 0.15rem; }
+
+  /* ── Tables ────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: left;
+    padding: 0.65rem 0.9rem;
+    background: var(--bg-3);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    border-bottom: 1px solid var(--border);
+  }
+  thead th:first-child { border-top-left-radius: var(--radius-sm); }
+  thead th:last-child { border-top-right-radius: var(--radius-sm); }
+  tbody td {
+    padding: 0.75rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  tbody tr { transition: background 0.1s; }
+  tbody tr:hover { background: var(--bg-hover); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  .tenant-id { font-weight: 600; color: var(--text); }
+  .tenant-name { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+
+  /* ── Badges ────────────────────────────── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.55rem;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: capitalize;
+    letter-spacing: 0.2px;
+  }
+  .badge-enterprise { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
+  .badge-pro { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
+  .badge-basic { background: rgba(113, 113, 122, 0.2); color: #a1a1aa; }
+  .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+  .badge-warn { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+  .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+  .badge-deleted { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+
+  /* ── Buttons ───────────────────────────── */
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 0.5rem 0.9rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-3);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  button:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button.danger { background: transparent; color: var(--danger); border-color: var(--border); }
+  button.danger:hover { background: rgba(239, 68, 68, 0.1); border-color: var(--danger); }
+  button.ghost { background: transparent; }
+  button.small { padding: 0.3rem 0.7rem; font-size: 12px; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ── Forms ─────────────────────────────── */
+  label { display: block; font-size: 12px; font-weight: 500; color: var(--text-dim); margin-bottom: 0.35rem; }
+  input[type=text], input[type=password], select, textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    padding: 0.55rem 0.75rem;
+    font-family: inherit;
+    font-size: 13px;
+    transition: border-color 0.1s, box-shadow 0.1s;
+  }
+  textarea {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    resize: vertical;
+    min-height: 240px;
+    line-height: 1.6;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  .field { margin-bottom: 1rem; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .toolbar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+  .toolbar input { flex: 1; min-width: 180px; }
+
+  /* ── Usage bar ─────────────────────────── */
   .usage-bar {
-    height: 8px;
-    background: #0d1117;
-    border-radius: 4px;
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
     overflow: hidden;
-    margin-top: 0.25rem;
+    margin-top: 0.4rem;
   }
   .usage-fill {
     height: 100%;
-    background: linear-gradient(90deg, #3fb950 0%, #d29922 70%, #f85149 100%);
-    transition: width 0.3s;
+    background: linear-gradient(90deg, var(--success) 0%, var(--warn) 75%, var(--danger) 100%);
+    transition: width 0.3s ease;
+    border-radius: 3px;
   }
-  .small-btn {
-    padding: 0.3rem 0.6rem;
-    font-size: 0.75rem;
+  .usage-fill.low { background: var(--success); }
+  .usage-fill.med { background: var(--warn); }
+  .usage-fill.high { background: var(--danger); }
+
+  /* ── Login screen ──────────────────────── */
+  .login-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 2rem;
   }
-  .stat-card {
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 6px;
+  .login-card {
+    width: 100%;
+    max-width: 400px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    box-shadow: var(--shadow-lg);
+  }
+  .login-logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+  .login-logo .logo-icon { width: 36px; height: 36px; font-size: 16px; }
+  .login-title { font-size: 18px; font-weight: 600; text-align: center; }
+  .login-desc { font-size: 13px; color: var(--text-dim); text-align: center; margin-top: 0.3rem; margin-bottom: 1.75rem; }
+
+  /* ── Messages ──────────────────────────── */
+  .toast {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.85rem;
+    border-radius: var(--radius-sm);
+    font-size: 12.5px;
+    border: 1px solid transparent;
+  }
+  .toast.error { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); color: #fca5a5; }
+  .toast.success { background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.3); color: #6ee7b7; }
+
+  pre {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
     padding: 1rem;
+    max-height: 500px;
+    overflow: auto;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-dim);
   }
-  .stat-value { font-size: 1.8rem; font-weight: 700; color: #58a6ff; }
-  .stat-label { font-size: 0.8rem; color: #8b949e; margin-top: 0.25rem; }
+
+  .hidden { display: none !important; }
+  .muted { color: var(--text-muted); font-size: 12px; }
+  .empty-state {
+    padding: 3rem 2rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+  .empty-state-title { font-size: 15px; color: var(--text-dim); margin-bottom: 0.5rem; }
+
+  /* ── Modal ─────────────────────────────── */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 2rem;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    width: 100%;
+    max-width: 800px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+  }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-title { font-size: 16px; font-weight: 600; }
+  .modal-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 20px;
+    padding: 0 0.5rem;
+  }
+  .modal-tabs {
+    display: flex;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1rem;
+  }
+  .modal-tab {
+    padding: 0.55rem 0.9rem;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    transition: color 0.1s, border-color 0.1s;
+  }
+  .modal-tab:hover { color: var(--text-dim); }
+  .modal-tab.active { color: var(--accent-hover); border-bottom-color: var(--accent); }
+  .modal-pane { display: none; }
+  .modal-pane.active { display: block; }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .sidebar { position: relative; width: 100%; height: auto; padding: 1rem; }
+    .main { margin-left: 0; padding: 1.5rem; }
+    .app { flex-direction: column; }
+  }
 </style>
 </head>
 <body>
 
 <!-- Login Screen -->
-<div id="login-screen" class="login-container">
-  <div class="card">
-    <h1>Votal Shield Admin</h1>
-    <p class="subtitle">Enter admin key to continue</p>
-    <label>X-Admin-Key</label>
-    <input type="password" id="admin-key-input" placeholder="super-secret-admin-key-xyz">
-    <div class="row" style="margin-top: 1rem;">
-      <button class="btn-primary" onclick="login()">Sign In</button>
+<div id="login-screen" class="login-wrap">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-icon">V</div>
+      <div>
+        <div class="logo-text">Votal Shield</div>
+        <div class="logo-sub">Admin Console</div>
+      </div>
     </div>
-    <div id="login-error" class="error"></div>
+    <div class="login-desc">Enter your admin key to continue</div>
+    <div class="field">
+      <label>Admin Key</label>
+      <input type="password" id="admin-key-input" placeholder="Enter admin key" autofocus>
+    </div>
+    <button class="primary" style="width: 100%;" onclick="login()">Sign In</button>
+    <div id="login-error" class="toast error hidden"></div>
   </div>
 </div>
 
 <!-- Main App -->
-<div id="app" class="container hidden">
-  <div style="display: flex; justify-content: space-between; align-items: center;">
-    <div>
-      <h1>Votal Shield Admin</h1>
-      <p class="subtitle">Multi-tenant guardrail platform</p>
-    </div>
-    <button onclick="logout()">Sign Out</button>
-  </div>
-
-  <div class="tabs">
-    <div class="tab active" data-tab="dashboard">Dashboard</div>
-    <div class="tab" data-tab="tenants">Tenants</div>
-    <div class="tab" data-tab="create">Create Tenant</div>
-    <div class="tab" data-tab="audit">Audit Log</div>
-  </div>
-
-  <!-- Dashboard Tab -->
-  <div id="tab-dashboard" class="tab-content active">
-    <div class="card">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h2 style="margin: 0;">Platform Overview</h2>
-        <button onclick="loadDashboard()">Refresh</button>
+<div id="app" class="app hidden">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">V</div>
+      <div>
+        <div class="logo-text">Votal Shield</div>
+        <div class="logo-sub">Admin</div>
       </div>
-      <div id="dashboard-summary" style="margin-top: 1rem;">Loading...</div>
     </div>
 
-    <div class="card">
-      <h2>Tenant Usage</h2>
-      <p class="subtitle">Sorted by requests today (most active first)</p>
-      <table>
-        <thead>
-          <tr>
-            <th>Tenant</th>
-            <th>Plan</th>
-            <th>Req/Min</th>
-            <th>Req Today</th>
-            <th>Tokens Today</th>
-            <th>Quota Usage</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="dashboard-tenants">
-          <tr><td colspan="7" class="muted">Loading...</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Tenants List Tab -->
-  <div id="tab-tenants" class="tab-content">
-    <div class="card">
-      <div class="toolbar">
-        <button onclick="loadTenants()">Refresh</button>
-        <label style="display: inline-flex; align-items: center; gap: 0.5rem; margin: 0;">
-          <input type="checkbox" id="include-deleted" onchange="loadTenants()" style="width: auto;">
-          <span>Include deleted</span>
-        </label>
+    <div class="nav-section">
+      <div class="nav-label">Platform</div>
+      <div class="nav-item active" data-tab="dashboard">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+        Dashboard
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Tenant ID</th>
-            <th>Name</th>
-            <th>Plan</th>
-            <th>Input Guardrails</th>
-            <th>Output Guardrails</th>
-            <th>Agents</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="tenant-list">
-          <tr><td colspan="7" class="muted">Click Refresh to load tenants</td></tr>
-        </tbody>
-      </table>
+      <div class="nav-item" data-tab="tenants">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+        Tenants
+      </div>
+      <div class="nav-item" data-tab="create">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        New Tenant
+      </div>
     </div>
 
-    <!-- Tenant Detail -->
-    <div id="tenant-detail" class="card hidden">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h2 id="detail-title">Tenant Details</h2>
-        <button onclick="closeDetail()">Close</button>
+    <div class="nav-section">
+      <div class="nav-label">Monitoring</div>
+      <div class="nav-item" data-tab="audit">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        Audit Log
       </div>
+    </div>
 
-      <div class="tabs" style="margin-top: 1rem;">
-        <div class="tab active" data-subtab="config">Config</div>
-        <div class="tab" data-subtab="usage">Usage</div>
-        <div class="tab" data-subtab="keys">API Keys</div>
-        <div class="tab" data-subtab="audit">Audit</div>
+    <div class="sidebar-footer">
+      <div>Signed in as Admin</div>
+      <button onclick="logout()">Sign Out</button>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+
+    <!-- Dashboard -->
+    <div id="tab-dashboard" class="tab-pane">
+      <div class="page-header">
+        <div class="page-title">Dashboard</div>
+        <div class="page-desc">Platform-wide tenant activity and health</div>
       </div>
-
-      <div id="subtab-config" class="tab-content active">
-        <label>Tenant Configuration (JSON)</label>
-        <textarea id="detail-config"></textarea>
-        <div class="row" style="margin-top: 0.75rem;">
-          <button class="btn-primary" onclick="saveTenantConfig()">Save Changes</button>
-          <button class="btn-danger" onclick="deleteTenantPrompt()">Delete (Soft)</button>
-          <button class="btn-danger" onclick="deleteTenantPrompt(true)">Hard Delete</button>
+      <div class="stats-grid" id="dashboard-stats"></div>
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Active Tenants</div>
+            <div class="card-subtitle">Sorted by requests today</div>
+          </div>
+          <button class="small" onclick="loadDashboard()">Refresh</button>
         </div>
-        <div id="detail-msg"></div>
+        <table>
+          <thead>
+            <tr>
+              <th>Tenant</th>
+              <th>Plan</th>
+              <th>Req/Min</th>
+              <th>Req Today</th>
+              <th>Tokens Today</th>
+              <th>Quota</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="dashboard-tenants"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody>
+        </table>
       </div>
+    </div>
 
-      <div id="subtab-usage" class="tab-content">
-        <div id="usage-display">Click Usage tab to load</div>
+    <!-- Tenants -->
+    <div id="tab-tenants" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Tenants</div>
+        <div class="page-desc">Manage tenant accounts and their guardrail policies</div>
       </div>
+      <div class="card">
+        <div class="toolbar">
+          <input type="text" id="tenant-search" placeholder="Search tenants…" oninput="filterTenants()">
+          <label style="display: inline-flex; align-items: center; gap: 0.4rem; margin: 0; font-size: 12.5px;">
+            <input type="checkbox" id="include-deleted" onchange="loadTenants()" style="width: auto; margin: 0;">
+            Include deleted
+          </label>
+          <button class="small" onclick="loadTenants()">Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Tenant</th>
+              <th>Plan</th>
+              <th>Input Policies</th>
+              <th>Output Policies</th>
+              <th>Agents</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tenant-list"><tr><td colspan="6" class="empty-state">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
 
-      <div id="subtab-keys" class="tab-content">
+    <!-- Create Tenant -->
+    <div id="tab-create" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Create Tenant</div>
+        <div class="page-desc">Onboard a new tenant with guardrail policies</div>
+      </div>
+      <div class="card">
+        <div class="grid-2">
+          <div class="field">
+            <label>Tenant ID</label>
+            <input type="text" id="create-tenant-id" placeholder="acme">
+          </div>
+          <div class="field">
+            <label>Display Name</label>
+            <input type="text" id="create-tenant-name" placeholder="Acme Corp">
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Plan</label>
+            <select id="create-tenant-plan">
+              <option value="basic">Basic — 60 req/min</option>
+              <option value="pro">Pro — 300 req/min</option>
+              <option value="enterprise" selected>Enterprise — 1000 req/min</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>API Keys (comma-separated)</label>
+            <input type="text" id="create-api-keys" placeholder="acme-key-abc123">
+          </div>
+        </div>
+        <div class="field">
+          <label>Configuration (JSON)</label>
+          <textarea id="create-config" placeholder="Paste input_guardrails, output_guardrails, rbac as JSON"></textarea>
+        </div>
+        <div class="toolbar">
+          <button class="primary" onclick="createTenant()">Create Tenant</button>
+          <button class="small" onclick="loadTemplate('minimal')">Minimal</button>
+          <button class="small" onclick="loadTemplate('healthcare')">Healthcare</button>
+          <button class="small" onclick="loadTemplate('ecommerce')">E-commerce</button>
+          <button class="small" onclick="loadTemplate('financial')">Financial</button>
+        </div>
+        <div id="create-msg"></div>
+      </div>
+    </div>
+
+    <!-- Audit -->
+    <div id="tab-audit" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Audit Log</div>
+        <div class="page-desc">Administrative actions across all tenants</div>
+      </div>
+      <div class="card">
+        <div class="toolbar">
+          <input type="text" id="audit-filter-tenant" placeholder="Filter by tenant ID">
+          <input type="text" id="audit-filter-action" placeholder="Filter by action">
+          <button class="primary small" onclick="loadGlobalAudit()">Query</button>
+        </div>
+        <pre id="global-audit-log" class="mono">Enter filters and click Query</pre>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Tenant Detail Modal -->
+<div id="tenant-modal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modal-title">Tenant</div>
+        <div class="muted" id="modal-subtitle"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-tabs">
+      <div class="modal-tab active" data-modal-tab="config">Config</div>
+      <div class="modal-tab" data-modal-tab="usage">Usage</div>
+      <div class="modal-tab" data-modal-tab="keys">API Keys</div>
+      <div class="modal-tab" data-modal-tab="audit">Audit</div>
+    </div>
+    <div class="modal-pane active" id="mpane-config">
+      <label>Configuration (JSON)</label>
+      <textarea id="detail-config"></textarea>
+      <div class="toolbar" style="margin-top: 0.75rem;">
+        <button class="primary" onclick="saveTenantConfig()">Save Changes</button>
+        <button class="danger small" onclick="deleteTenantPrompt()">Soft Delete</button>
+        <button class="danger small" onclick="deleteTenantPrompt(true)">Hard Delete</button>
+      </div>
+      <div id="detail-msg"></div>
+    </div>
+    <div class="modal-pane" id="mpane-usage">
+      <div id="usage-display" class="muted">Click to load</div>
+    </div>
+    <div class="modal-pane" id="mpane-keys">
+      <div class="field">
         <label>Add new API key</label>
-        <div class="row">
-          <input type="text" id="new-api-key" placeholder="new-api-key-value">
-          <button class="btn-blue" onclick="addApiKey()">Add</button>
+        <div style="display: flex; gap: 0.5rem;">
+          <input type="text" id="new-api-key" placeholder="new-key-value">
+          <button class="primary small" onclick="addApiKey()">Add</button>
         </div>
-        <label style="margin-top: 1rem;">Remove API key</label>
-        <div class="row">
+      </div>
+      <div class="field">
+        <label>Revoke API key</label>
+        <div style="display: flex; gap: 0.5rem;">
           <input type="text" id="del-api-key" placeholder="key-to-remove">
-          <button class="btn-danger" onclick="removeApiKey()">Remove</button>
+          <button class="danger small" onclick="removeApiKey()">Revoke</button>
         </div>
-        <div id="keys-msg"></div>
       </div>
-
-      <div id="subtab-audit" class="tab-content">
-        <pre id="tenant-audit-log">Loading...</pre>
-      </div>
+      <div id="keys-msg"></div>
     </div>
-  </div>
-
-  <!-- Create Tenant Tab -->
-  <div id="tab-create" class="tab-content">
-    <div class="card">
-      <h2>Create New Tenant</h2>
-      <div class="grid-2">
-        <div>
-          <label>Tenant ID</label>
-          <input type="text" id="create-tenant-id" placeholder="acme">
-        </div>
-        <div>
-          <label>Display Name</label>
-          <input type="text" id="create-tenant-name" placeholder="Acme Corp">
-        </div>
-      </div>
-      <div class="grid-2" style="margin-top: 1rem;">
-        <div>
-          <label>Plan</label>
-          <select id="create-tenant-plan">
-            <option value="basic">Basic</option>
-            <option value="pro">Pro</option>
-            <option value="enterprise" selected>Enterprise</option>
-          </select>
-        </div>
-        <div>
-          <label>API Keys (comma-separated)</label>
-          <input type="text" id="create-api-keys" placeholder="acme-key-abc123">
-        </div>
-      </div>
-      <label style="margin-top: 1rem;">Full Config (JSON) — includes input_guardrails, output_guardrails, rbac</label>
-      <textarea id="create-config"></textarea>
-      <div class="row" style="margin-top: 0.75rem;">
-        <button class="btn-primary" onclick="createTenant()">Create Tenant</button>
-        <button onclick="loadTemplate('minimal')">Minimal Template</button>
-        <button onclick="loadTemplate('healthcare')">Healthcare Template</button>
-        <button onclick="loadTemplate('ecommerce')">E-commerce Template</button>
-        <button onclick="loadTemplate('financial')">Financial Template</button>
-      </div>
-      <div id="create-msg"></div>
-    </div>
-  </div>
-
-  <!-- Audit Tab -->
-  <div id="tab-audit" class="tab-content">
-    <div class="card">
-      <div class="toolbar">
-        <input type="text" id="audit-filter-tenant" placeholder="Filter by tenant_id">
-        <input type="text" id="audit-filter-action" placeholder="Filter by action">
-        <button class="btn-blue" onclick="loadGlobalAudit()">Query</button>
-      </div>
-      <pre id="global-audit-log">Enter filters and click Query</pre>
+    <div class="modal-pane" id="mpane-audit">
+      <pre id="tenant-audit-log" class="mono">Loading…</pre>
     </div>
   </div>
 </div>
 
 <script>
 let ADMIN_KEY = localStorage.getItem('votal_admin_key') || '';
-let BASE_URL = window.location.origin;
+const BASE_URL = window.location.origin;
 let CURRENT_TENANT = null;
-
-function login() {
-  const key = document.getElementById('admin-key-input').value.trim();
-  if (!key) {
-    document.getElementById('login-error').textContent = 'Enter admin key';
-    return;
-  }
-  // Test by calling tenants list
-  fetch(`${BASE_URL}/v1/admin/tenants`, { headers: { 'X-Admin-Key': key } })
-    .then(r => {
-      if (r.status === 200) {
-        ADMIN_KEY = key;
-        localStorage.setItem('votal_admin_key', key);
-        showApp();
-      } else {
-        r.json().then(d => {
-          document.getElementById('login-error').textContent = d.error || 'Invalid admin key';
-        });
-      }
-    })
-    .catch(e => {
-      document.getElementById('login-error').textContent = 'Connection error: ' + e.message;
-    });
-}
-
-function logout() {
-  localStorage.removeItem('votal_admin_key');
-  ADMIN_KEY = '';
-  document.getElementById('login-screen').classList.remove('hidden');
-  document.getElementById('app').classList.add('hidden');
-}
-
-function showApp() {
-  document.getElementById('login-screen').classList.add('hidden');
-  document.getElementById('app').classList.remove('hidden');
-  loadDashboard();
-}
-
-async function loadDashboard() {
-  try {
-    const data = await apiCall('/v1/admin/dashboard');
-    const s = data.summary || {};
-    const tenants = data.tenants || [];
-
-    document.getElementById('dashboard-summary').innerHTML = `
-      <div class="grid-2" style="grid-template-columns: repeat(4, 1fr);">
-        <div class="stat-card">
-          <div class="stat-label">Total Tenants</div>
-          <div class="stat-value">${s.total_tenants || 0}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Requests This Minute</div>
-          <div class="stat-value">${(s.total_requests_this_minute || 0).toLocaleString()}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Requests Today</div>
-          <div class="stat-value">${(s.total_requests_today || 0).toLocaleString()}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Tokens Today</div>
-          <div class="stat-value">${(s.total_tokens_today || 0).toLocaleString()}</div>
-        </div>
-      </div>
-      <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
-        <span class="badge badge-enterprise">Enterprise: ${s.plan_counts?.enterprise || 0}</span>
-        <span class="badge badge-pro">Pro: ${s.plan_counts?.pro || 0}</span>
-        <span class="badge badge-basic">Basic: ${s.plan_counts?.basic || 0}</span>
-      </div>
-    `;
-
-    const tbody = document.getElementById('dashboard-tenants');
-    if (!tenants.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="muted">No tenants yet</td></tr>';
-      return;
-    }
-
-    tbody.innerHTML = tenants.map(t => {
-      const maxPct = Math.max(t.pct_of_minute_limit || 0, t.pct_of_daily_limit || 0, t.pct_of_token_limit || 0);
-      return `
-        <tr>
-          <td><strong>${t.tenant_id}</strong><br><span class="muted">${t.name || ''}</span></td>
-          <td><span class="badge badge-${t.plan}">${t.plan}</span></td>
-          <td>${(t.usage?.requests_this_minute || 0).toLocaleString()}<br><span class="muted">/ ${(t.quota?.max_requests_per_minute || 0).toLocaleString()}</span></td>
-          <td>${(t.usage?.requests_today || 0).toLocaleString()}<br><span class="muted">/ ${(t.quota?.max_requests_per_day || 0).toLocaleString()}</span></td>
-          <td>${(t.usage?.tokens_today || 0).toLocaleString()}<br><span class="muted">/ ${(t.quota?.max_tokens_per_day || 0).toLocaleString()}</span></td>
-          <td style="min-width: 160px;">
-            <div class="muted" style="font-size: 0.75rem;">${maxPct.toFixed(1)}%</div>
-            <div class="usage-bar"><div class="usage-fill" style="width: ${Math.min(100, maxPct)}%"></div></div>
-          </td>
-          <td><button class="small-btn btn-blue" onclick="openTenant('${t.tenant_id}')">Manage</button></td>
-        </tr>
-      `;
-    }).join('');
-  } catch (e) {
-    document.getElementById('dashboard-summary').innerHTML = `<div class="error">${e.message}</div>`;
-    document.getElementById('dashboard-tenants').innerHTML = `<tr><td colspan="7" class="error">${e.message}</td></tr>`;
-  }
-}
+let ALL_TENANTS = [];
 
 async function apiCall(path, options = {}) {
   options.headers = { ...(options.headers || {}), 'X-Admin-Key': ADMIN_KEY, 'Content-Type': 'application/json' };
@@ -449,111 +667,202 @@ async function apiCall(path, options = {}) {
   return data;
 }
 
+function showError(id, msg) {
+  const el = document.getElementById(id);
+  el.className = 'toast error';
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+function showSuccess(id, msg) {
+  const el = document.getElementById(id);
+  el.className = 'toast success';
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+function login() {
+  const key = document.getElementById('admin-key-input').value.trim();
+  if (!key) return showError('login-error', 'Enter admin key');
+  fetch(`${BASE_URL}/v1/admin/tenants`, { headers: { 'X-Admin-Key': key } })
+    .then(r => r.status === 200
+      ? (ADMIN_KEY = key, localStorage.setItem('votal_admin_key', key), showApp())
+      : r.json().then(d => showError('login-error', d.error || d.detail || `HTTP ${r.status}`)))
+    .catch(e => showError('login-error', 'Connection error: ' + e.message));
+}
+
+function logout() {
+  localStorage.removeItem('votal_admin_key');
+  ADMIN_KEY = '';
+  document.getElementById('app').classList.add('hidden');
+  document.getElementById('login-screen').classList.remove('hidden');
+}
+
+function showApp() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  loadDashboard();
+}
+
+// ── Dashboard ─────────────────────────────
+async function loadDashboard() {
+  try {
+    const data = await apiCall('/v1/admin/dashboard');
+    const s = data.summary || {};
+    document.getElementById('dashboard-stats').innerHTML = `
+      <div class="stat"><div class="stat-label">Total Tenants</div><div class="stat-value">${s.total_tenants || 0}</div></div>
+      <div class="stat"><div class="stat-label">Req / Min</div><div class="stat-value">${(s.total_requests_this_minute || 0).toLocaleString()}</div></div>
+      <div class="stat"><div class="stat-label">Req Today</div><div class="stat-value">${(s.total_requests_today || 0).toLocaleString()}</div></div>
+      <div class="stat"><div class="stat-label">Tokens Today</div><div class="stat-value">${formatNumber(s.total_tokens_today || 0)}</div></div>
+    `;
+    const tbody = document.getElementById('dashboard-tenants');
+    const tenants = data.tenants || [];
+    if (!tenants.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-title">No tenants yet</div>Create your first tenant to get started</td></tr>';
+      return;
+    }
+    tbody.innerHTML = tenants.map(t => {
+      const maxPct = Math.max(t.pct_of_minute_limit || 0, t.pct_of_daily_limit || 0, t.pct_of_token_limit || 0);
+      const cls = maxPct < 60 ? 'low' : maxPct < 85 ? 'med' : 'high';
+      return `<tr>
+        <td><div class="tenant-id">${t.tenant_id}</div><div class="tenant-name">${t.name || ''}</div></td>
+        <td><span class="badge badge-${t.plan}">${t.plan}</span></td>
+        <td>${(t.usage?.requests_this_minute || 0).toLocaleString()}<div class="muted">/ ${(t.quota?.max_requests_per_minute || 0).toLocaleString()}</div></td>
+        <td>${(t.usage?.requests_today || 0).toLocaleString()}<div class="muted">/ ${formatNumber(t.quota?.max_requests_per_day || 0)}</div></td>
+        <td>${formatNumber(t.usage?.tokens_today || 0)}<div class="muted">/ ${formatNumber(t.quota?.max_tokens_per_day || 0)}</div></td>
+        <td style="min-width: 140px;">
+          <div class="muted" style="font-size: 11px;">${maxPct.toFixed(1)}%</div>
+          <div class="usage-bar"><div class="usage-fill ${cls}" style="width: ${Math.min(100, maxPct)}%"></div></div>
+        </td>
+        <td><button class="small" onclick="openTenant('${t.tenant_id}')">Manage</button></td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('dashboard-stats').innerHTML = `<div class="toast error">${e.message}</div>`;
+  }
+}
+
+function formatNumber(n) {
+  if (n >= 1e9) return (n/1e9).toFixed(1) + 'B';
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return String(n);
+}
+
+// ── Tenants list ──────────────────────────
 async function loadTenants() {
   const includeDeleted = document.getElementById('include-deleted').checked;
   try {
     const data = await apiCall(`/v1/admin/tenants?include_deleted=${includeDeleted}`);
-    const tbody = document.getElementById('tenant-list');
-    if (!data.tenants || data.tenants.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="muted">No tenants yet. Click Create Tenant to get started.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = data.tenants.map(t => `
-      <tr>
-        <td><strong>${t.tenant_id}</strong> ${t.deleted_at ? '<span class="badge badge-deleted">deleted</span>' : ''}</td>
-        <td>${t.name || '-'}</td>
-        <td><span class="badge badge-${t.plan || 'basic'}">${t.plan || 'basic'}</span></td>
-        <td class="muted">${(t.input_guardrails || []).join(', ') || '—'}</td>
-        <td class="muted">${(t.output_guardrails || []).join(', ') || '—'}</td>
-        <td>${t.agent_count || 0}</td>
-        <td>
-          <button class="small-btn btn-blue" onclick="openTenant('${t.tenant_id}')">Manage</button>
-        </td>
-      </tr>
-    `).join('');
+    ALL_TENANTS = data.tenants || [];
+    renderTenants(ALL_TENANTS);
   } catch (e) {
-    document.getElementById('tenant-list').innerHTML = `<tr><td colspan="7" class="error">${e.message}</td></tr>`;
+    document.getElementById('tenant-list').innerHTML = `<tr><td colspan="6"><div class="toast error">${e.message}</div></td></tr>`;
   }
 }
 
+function filterTenants() {
+  const q = document.getElementById('tenant-search').value.toLowerCase().trim();
+  const filtered = q ? ALL_TENANTS.filter(t =>
+    t.tenant_id.toLowerCase().includes(q) || (t.name || '').toLowerCase().includes(q)
+  ) : ALL_TENANTS;
+  renderTenants(filtered);
+}
+
+function renderTenants(tenants) {
+  const tbody = document.getElementById('tenant-list');
+  if (!tenants.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No tenants match your search</td></tr>';
+    return;
+  }
+  tbody.innerHTML = tenants.map(t => `
+    <tr>
+      <td>
+        <div class="tenant-id">${t.tenant_id} ${t.deleted_at ? '<span class="badge badge-deleted">deleted</span>' : ''}</div>
+        <div class="tenant-name">${t.name || '—'}</div>
+      </td>
+      <td><span class="badge badge-${t.plan || 'basic'}">${t.plan || 'basic'}</span></td>
+      <td class="muted">${(t.input_guardrails || []).slice(0, 3).join(', ')}${(t.input_guardrails || []).length > 3 ? '…' : ''}</td>
+      <td class="muted">${(t.output_guardrails || []).slice(0, 3).join(', ')}${(t.output_guardrails || []).length > 3 ? '…' : ''}</td>
+      <td>${t.agent_count || 0}</td>
+      <td><button class="small" onclick="openTenant('${t.tenant_id}')">Manage</button></td>
+    </tr>
+  `).join('');
+}
+
+// ── Tenant modal ──────────────────────────
 async function openTenant(tid) {
   CURRENT_TENANT = tid;
   try {
     const config = await apiCall(`/v1/admin/tenants/${tid}`);
-    document.getElementById('detail-title').textContent = `Tenant: ${tid}`;
+    document.getElementById('modal-title').textContent = config.name || tid;
+    document.getElementById('modal-subtitle').textContent = tid;
     document.getElementById('detail-config').value = JSON.stringify(config, null, 2);
-    document.getElementById('tenant-detail').classList.remove('hidden');
-    document.getElementById('tenant-detail').scrollIntoView({ behavior: 'smooth' });
-  } catch (e) {
-    alert('Failed to load tenant: ' + e.message);
-  }
+    document.getElementById('tenant-modal').classList.add('active');
+  } catch (e) { alert('Failed to load: ' + e.message); }
 }
 
-function closeDetail() {
-  document.getElementById('tenant-detail').classList.add('hidden');
+function closeModal() {
+  document.getElementById('tenant-modal').classList.remove('active');
   CURRENT_TENANT = null;
 }
 
 async function saveTenantConfig() {
   if (!CURRENT_TENANT) return;
   try {
-    const raw = document.getElementById('detail-config').value;
-    const updates = JSON.parse(raw);
+    const updates = JSON.parse(document.getElementById('detail-config').value);
     delete updates.tenant_id;
     delete updates.deleted_at;
     await apiCall(`/v1/admin/tenants/${CURRENT_TENANT}`, {
-      method: 'PUT',
-      body: JSON.stringify(updates),
+      method: 'PUT', body: JSON.stringify(updates)
     });
-    document.getElementById('detail-msg').innerHTML = '<div class="success">Saved successfully</div>';
+    showSuccess('detail-msg', 'Saved successfully');
     loadTenants();
-  } catch (e) {
-    document.getElementById('detail-msg').innerHTML = `<div class="error">${e.message}</div>`;
-  }
+    loadDashboard();
+  } catch (e) { showError('detail-msg', e.message); }
 }
 
 async function deleteTenantPrompt(hard = false) {
   if (!CURRENT_TENANT) return;
-  const confirmText = hard ? `HARD delete (permanent) tenant "${CURRENT_TENANT}"?` : `Soft delete tenant "${CURRENT_TENANT}"?`;
-  if (!confirm(confirmText)) return;
+  const msg = hard ? `Permanently delete "${CURRENT_TENANT}"? This cannot be undone.` : `Soft delete "${CURRENT_TENANT}"?`;
+  if (!confirm(msg)) return;
   try {
     await apiCall(`/v1/admin/tenants/${CURRENT_TENANT}?hard=${hard}`, { method: 'DELETE' });
-    document.getElementById('detail-msg').innerHTML = '<div class="success">Deleted</div>';
-    closeDetail();
+    closeModal();
     loadTenants();
-  } catch (e) {
-    document.getElementById('detail-msg').innerHTML = `<div class="error">${e.message}</div>`;
-  }
+    loadDashboard();
+  } catch (e) { alert(e.message); }
 }
 
 async function loadUsage() {
   if (!CURRENT_TENANT) return;
   try {
     const data = await apiCall(`/v1/admin/tenants/${CURRENT_TENANT}/usage`);
-    const usage = data.usage || {};
-    const quota = data.quota || {};
-    const mPct = Math.min(100, (usage.requests_this_minute || 0) / (quota.max_requests_per_minute || 1) * 100);
-    const dPct = Math.min(100, (usage.requests_today || 0) / (quota.max_requests_per_day || 1) * 100);
-    const tPct = Math.min(100, (usage.tokens_today || 0) / (quota.max_tokens_per_day || 1) * 100);
-
+    const u = data.usage || {};
+    const q = data.quota || {};
+    const mPct = Math.min(100, 100 * (u.requests_this_minute || 0) / (q.max_requests_per_minute || 1));
+    const dPct = Math.min(100, 100 * (u.requests_today || 0) / (q.max_requests_per_day || 1));
+    const tPct = Math.min(100, 100 * (u.tokens_today || 0) / (q.max_tokens_per_day || 1));
     document.getElementById('usage-display').innerHTML = `
-      <h2>Current Usage</h2>
-      <div style="margin: 1rem 0;">
-        <label>Requests this minute: ${usage.requests_this_minute || 0} / ${quota.max_requests_per_minute || '∞'}</label>
-        <div class="usage-bar"><div class="usage-fill" style="width: ${mPct}%"></div></div>
-      </div>
-      <div style="margin: 1rem 0;">
-        <label>Requests today: ${usage.requests_today || 0} / ${quota.max_requests_per_day || '∞'}</label>
-        <div class="usage-bar"><div class="usage-fill" style="width: ${dPct}%"></div></div>
-      </div>
-      <div style="margin: 1rem 0;">
-        <label>Tokens today: ${usage.tokens_today || 0} / ${quota.max_tokens_per_day || '∞'}</label>
-        <div class="usage-bar"><div class="usage-fill" style="width: ${tPct}%"></div></div>
+      <div class="stats-grid" style="grid-template-columns: 1fr; gap: 0.75rem;">
+        <div class="stat">
+          <div class="stat-label">Requests / Minute</div>
+          <div class="stat-value">${(u.requests_this_minute || 0).toLocaleString()} <span class="muted" style="font-size: 14px;">/ ${(q.max_requests_per_minute || 0).toLocaleString()}</span></div>
+          <div class="usage-bar"><div class="usage-fill" style="width: ${mPct}%"></div></div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Requests Today</div>
+          <div class="stat-value">${(u.requests_today || 0).toLocaleString()} <span class="muted" style="font-size: 14px;">/ ${(q.max_requests_per_day || 0).toLocaleString()}</span></div>
+          <div class="usage-bar"><div class="usage-fill" style="width: ${dPct}%"></div></div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Tokens Today</div>
+          <div class="stat-value">${formatNumber(u.tokens_today || 0)} <span class="muted" style="font-size: 14px;">/ ${formatNumber(q.max_tokens_per_day || 0)}</span></div>
+          <div class="usage-bar"><div class="usage-fill" style="width: ${tPct}%"></div></div>
+        </div>
       </div>
     `;
-  } catch (e) {
-    document.getElementById('usage-display').innerHTML = `<div class="error">${e.message}</div>`;
-  }
+  } catch (e) { document.getElementById('usage-display').innerHTML = `<div class="toast error">${e.message}</div>`; }
 }
 
 async function addApiKey() {
@@ -561,14 +870,11 @@ async function addApiKey() {
   if (!key || !CURRENT_TENANT) return;
   try {
     await apiCall(`/v1/admin/tenants/${CURRENT_TENANT}/api-keys`, {
-      method: 'POST',
-      body: JSON.stringify({ api_key: key }),
+      method: 'POST', body: JSON.stringify({ api_key: key })
     });
-    document.getElementById('keys-msg').innerHTML = `<div class="success">Added key</div>`;
+    showSuccess('keys-msg', 'Key added');
     document.getElementById('new-api-key').value = '';
-  } catch (e) {
-    document.getElementById('keys-msg').innerHTML = `<div class="error">${e.message}</div>`;
-  }
+  } catch (e) { showError('keys-msg', e.message); }
 }
 
 async function removeApiKey() {
@@ -576,14 +882,11 @@ async function removeApiKey() {
   if (!key || !CURRENT_TENANT) return;
   try {
     await apiCall(`/v1/admin/tenants/${CURRENT_TENANT}/api-keys`, {
-      method: 'DELETE',
-      body: JSON.stringify({ api_key: key }),
+      method: 'DELETE', body: JSON.stringify({ api_key: key })
     });
-    document.getElementById('keys-msg').innerHTML = `<div class="success">Removed key</div>`;
+    showSuccess('keys-msg', 'Key revoked');
     document.getElementById('del-api-key').value = '';
-  } catch (e) {
-    document.getElementById('keys-msg').innerHTML = `<div class="error">${e.message}</div>`;
-  }
+  } catch (e) { showError('keys-msg', e.message); }
 }
 
 async function loadTenantAudit() {
@@ -591,9 +894,7 @@ async function loadTenantAudit() {
   try {
     const data = await apiCall(`/v1/admin/tenants/${CURRENT_TENANT}/audit?limit=50`);
     document.getElementById('tenant-audit-log').textContent = JSON.stringify(data.entries || [], null, 2);
-  } catch (e) {
-    document.getElementById('tenant-audit-log').textContent = 'Error: ' + e.message;
-  }
+  } catch (e) { document.getElementById('tenant-audit-log').textContent = 'Error: ' + e.message; }
 }
 
 async function loadGlobalAudit() {
@@ -606,9 +907,7 @@ async function loadGlobalAudit() {
   try {
     const data = await apiCall(`/v1/admin/audit?${params}`);
     document.getElementById('global-audit-log').textContent = JSON.stringify(data.entries || [], null, 2);
-  } catch (e) {
-    document.getElementById('global-audit-log').textContent = 'Error: ' + e.message;
-  }
+  } catch (e) { document.getElementById('global-audit-log').textContent = 'Error: ' + e.message; }
 }
 
 async function createTenant() {
@@ -618,100 +917,71 @@ async function createTenant() {
   const keys = document.getElementById('create-api-keys').value.split(',').map(k => k.trim()).filter(Boolean);
   const configRaw = document.getElementById('create-config').value.trim();
 
-  if (!tid) {
-    document.getElementById('create-msg').innerHTML = '<div class="error">Tenant ID required</div>';
-    return;
-  }
-
-  let extraConfig = {};
+  if (!tid) return showError('create-msg', 'Tenant ID required');
+  let extra = {};
   if (configRaw) {
-    try {
-      extraConfig = JSON.parse(configRaw);
-    } catch (e) {
-      document.getElementById('create-msg').innerHTML = '<div class="error">Invalid JSON in config</div>';
-      return;
-    }
+    try { extra = JSON.parse(configRaw); } catch (e) { return showError('create-msg', 'Invalid JSON'); }
   }
-
   const body = {
-    tenant_id: tid,
-    name,
-    plan,
-    api_keys: keys,
-    input_guardrails: extraConfig.input_guardrails || {},
-    output_guardrails: extraConfig.output_guardrails || {},
-    rbac: extraConfig.rbac || { roles: {}, agents: {} },
+    tenant_id: tid, name, plan, api_keys: keys,
+    input_guardrails: extra.input_guardrails || {},
+    output_guardrails: extra.output_guardrails || {},
+    rbac: extra.rbac || { roles: {}, agents: {} },
   };
-
   try {
     await apiCall('/v1/admin/tenants', { method: 'POST', body: JSON.stringify(body) });
-    document.getElementById('create-msg').innerHTML = '<div class="success">Tenant created</div>';
+    showSuccess('create-msg', 'Tenant created');
     document.getElementById('create-tenant-id').value = '';
     document.getElementById('create-tenant-name').value = '';
     document.getElementById('create-api-keys').value = '';
     document.getElementById('create-config').value = '';
-    loadTenants();
-    // Switch to tenants tab
     document.querySelector('[data-tab="tenants"]').click();
-  } catch (e) {
-    document.getElementById('create-msg').innerHTML = `<div class="error">${e.message}</div>`;
-  }
+    loadTenants();
+  } catch (e) { showError('create-msg', e.message); }
 }
 
 const TEMPLATES = {
   minimal: {
-    input_guardrails: {
-      keyword_blocklist: { enabled: true, action: "block", settings: { keywords: ["bomb", "hack"], case_insensitive: true } }
-    },
-    output_guardrails: {},
-    rbac: { roles: {}, agents: {} }
+    input_guardrails: { keyword_blocklist: { enabled: true, action: "block", settings: { keywords: ["bomb","hack"], case_insensitive: true } } },
+    output_guardrails: {}, rbac: { roles: {}, agents: {} }
   },
   healthcare: {
     input_guardrails: {
-      pii_detection: { enabled: true, action: "block", settings: { entities: ["US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"], score_threshold: 0.5 } },
+      pii_detection: { enabled: true, action: "block", settings: { entities: ["US_SSN","PHONE_NUMBER","EMAIL_ADDRESS"], score_threshold: 0.5 } },
       adversarial_detection: { enabled: true, action: "block", settings: { confidence_threshold: 0.6 } },
       safety_check: { enabled: true, action: "block", settings: {} }
     },
     output_guardrails: {
-      pii_leakage: { enabled: true, action: "block", settings: { pii_types: ["SSN", "Date of Birth"], auto_redact: true } },
-      bias_detection: { enabled: true, action: "warn", settings: { categories: ["Gender", "Racial", "Age"], threshold: 0.5 } }
+      pii_leakage: { enabled: true, action: "block", settings: { pii_types: ["SSN","Date of Birth"], auto_redact: true } },
+      bias_detection: { enabled: true, action: "warn", settings: { categories: ["Gender","Racial","Age"], threshold: 0.5 } }
     },
-    rbac: {
-      roles: { "support": { allowed_tools: ["search_kb"], max_tokens_per_request: 2048, rate_limit: "60/min", data_clearance: "confidential" } },
-      agents: { "support-bot-1": "support" }
-    }
+    rbac: { roles: { "support": { allowed_tools: ["search_kb"], max_tokens_per_request: 2048, rate_limit: "60/min", data_clearance: "confidential" } }, agents: { "support-bot-1": "support" } }
   },
   ecommerce: {
     input_guardrails: {
       sentiment: { enabled: true, action: "warn", settings: { min_polarity: -0.8 } },
-      topic_restriction: { enabled: true, action: "block", settings: { blocked_topics: ["legal_threats", "violence"] } },
+      topic_restriction: { enabled: true, action: "block", settings: { blocked_topics: ["legal_threats","violence"] } },
       toxicity: { enabled: true, action: "warn", settings: { threshold: 0.7 } }
     },
     output_guardrails: {
-      competitor_mention: { enabled: true, action: "block", settings: { competitors: ["Amazon", "eBay"] } },
+      competitor_mention: { enabled: true, action: "block", settings: { competitors: ["Amazon","eBay"] } },
       tone_enforcement: { enabled: true, action: "warn", settings: { brand_voice_description: "Friendly and enthusiastic" } }
     },
-    rbac: {
-      roles: { "cs": { max_tokens_per_request: 2048, rate_limit: "120/min", data_clearance: "public" } },
-      agents: { "cs-bot-1": "cs" }
-    }
+    rbac: { roles: { "cs": { max_tokens_per_request: 2048, rate_limit: "120/min", data_clearance: "public" } }, agents: { "cs-bot-1": "cs" } }
   },
   financial: {
     input_guardrails: {
-      pii_detection: { enabled: true, action: "block", settings: { entities: ["US_SSN", "CREDIT_CARD"], score_threshold: 0.5 } },
+      pii_detection: { enabled: true, action: "block", settings: { entities: ["US_SSN","CREDIT_CARD"], score_threshold: 0.5 } },
       adversarial_detection: { enabled: true, action: "block", settings: { confidence_threshold: 0.5 } },
-      keyword_blocklist: { enabled: true, action: "block", settings: { keywords: ["bypass", "override"], case_insensitive: true } },
+      keyword_blocklist: { enabled: true, action: "block", settings: { keywords: ["bypass","override"], case_insensitive: true } },
       safety_check: { enabled: true, action: "block", settings: {} }
     },
     output_guardrails: {
-      pii_leakage: { enabled: true, action: "block", settings: { pii_types: ["SSN", "Credit Card", "Bank Account"], auto_redact: true, use_presidio: true } },
+      pii_leakage: { enabled: true, action: "block", settings: { pii_types: ["SSN","Credit Card","Bank Account"], auto_redact: true, use_presidio: true } },
       role_redaction: { enabled: true, action: "block", settings: { pii_clearance_required: "restricted" } },
-      bias_detection: { enabled: true, action: "block", settings: { categories: ["Gender", "Racial", "Socioeconomic"], threshold: 0.4 } }
+      bias_detection: { enabled: true, action: "block", settings: { categories: ["Gender","Racial","Socioeconomic"], threshold: 0.4 } }
     },
-    rbac: {
-      roles: { "advisor": { max_tokens_per_request: 4096, rate_limit: "60/min", data_clearance: "restricted" } },
-      agents: { "advisor-bot-1": "advisor" }
-    }
+    rbac: { roles: { "advisor": { max_tokens_per_request: 4096, rate_limit: "60/min", data_clearance: "restricted" } }, agents: { "advisor-bot-1": "advisor" } }
   }
 };
 
@@ -719,29 +989,39 @@ function loadTemplate(name) {
   document.getElementById('create-config').value = JSON.stringify(TEMPLATES[name], null, 2);
 }
 
-// Tab switching
+// ── Tab + modal switching ─────────────────
 document.addEventListener('click', (e) => {
-  if (e.target.matches('.tab[data-tab]')) {
-    const tab = e.target.getAttribute('data-tab');
-    document.querySelectorAll('.tabs > .tab[data-tab]').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('#app > .tab-content').forEach(t => t.classList.remove('active'));
-    e.target.classList.add('active');
-    document.getElementById(`tab-${tab}`).classList.add('active');
+  if (e.target.closest('.nav-item[data-tab]')) {
+    const el = e.target.closest('.nav-item[data-tab]');
+    const tab = el.getAttribute('data-tab');
+    document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
+    el.classList.add('active');
+    document.getElementById(`tab-${tab}`).classList.remove('hidden');
     if (tab === 'dashboard') loadDashboard();
     if (tab === 'tenants') loadTenants();
   }
-  if (e.target.matches('.tab[data-subtab]')) {
-    const sub = e.target.getAttribute('data-subtab');
-    e.target.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('#tenant-detail > .tab-content').forEach(t => t.classList.remove('active'));
+  if (e.target.matches('.modal-tab[data-modal-tab]')) {
+    const tab = e.target.getAttribute('data-modal-tab');
+    document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.modal-pane').forEach(p => p.classList.remove('active'));
     e.target.classList.add('active');
-    document.getElementById(`subtab-${sub}`).classList.add('active');
-    if (sub === 'usage') loadUsage();
-    if (sub === 'audit') loadTenantAudit();
+    document.getElementById(`mpane-${tab}`).classList.add('active');
+    if (tab === 'usage') loadUsage();
+    if (tab === 'audit') loadTenantAudit();
   }
 });
 
-// Auto-login if key in localStorage
+// Close modal on overlay click or ESC
+document.getElementById('tenant-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'tenant-modal') closeModal();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+// Enter on login
+document.getElementById('admin-key-input').addEventListener('keypress', (e) => { if (e.key === 'Enter') login(); });
+
+// Auto-login
 if (ADMIN_KEY) {
   document.getElementById('admin-key-input').value = ADMIN_KEY;
   login();

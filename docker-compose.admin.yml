@@ -1,0 +1,43 @@
+# Lightweight admin-only stack for local development.
+#
+# Runs the admin/tenant portals + local Redis. No GPU, no models.
+# Useful for testing tenant CRUD UI without booting the full guardrail stack.
+#
+# Usage:
+#   docker compose -f docker-compose.admin.yml up -d
+#   open http://localhost:8080/admin
+#
+# To use Upstash instead of local Redis, comment out the redis service
+# and set UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN in .env.
+
+services:
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin
+    ports:
+      - "8080:8080"
+    environment:
+      - SHIELD_ADMIN_KEY=${SHIELD_ADMIN_KEY:-local-dev-admin-key}
+      # Local Redis (comment out if using Upstash):
+      - REDIS_URL=redis://redis:6379/0
+      # Upstash Redis (uncomment and set in .env if using):
+      # - UPSTASH_REDIS_REST_URL=${UPSTASH_REDIS_REST_URL}
+      # - UPSTASH_REDIS_REST_TOKEN=${UPSTASH_REDIS_REST_TOKEN}
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --dir /data
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis-data:

@@ -4,327 +4,626 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Votal Shield — Tenant Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+  :root {
+    --bg: #0a0a0f;
+    --bg-2: #12121a;
+    --bg-3: #1a1a24;
+    --bg-hover: #1f1f2c;
+    --border: #27272f;
+    --border-strong: #3a3a45;
+    --text: #e4e4e7;
+    --text-dim: #a1a1aa;
+    --text-muted: #71717a;
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --accent-dim: rgba(99, 102, 241, 0.15);
+    --success: #10b981;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --radius: 8px;
+    --radius-sm: 6px;
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+  }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #0d1117;
-    color: #c9d1d9;
-    min-height: 100vh;
-    padding: 2rem 1rem;
-  }
-  .container { max-width: 1000px; margin: 0 auto; }
-  h1 { color: #58a6ff; margin-bottom: 0.5rem; font-size: 1.8rem; }
-  h2 { color: #c9d1d9; margin: 1.5rem 0 1rem; font-size: 1.2rem; }
-  .subtitle { color: #8b949e; margin-bottom: 2rem; font-size: 0.95rem; }
-  .card {
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-  label { display: block; color: #8b949e; font-size: 0.85rem; margin-bottom: 0.4rem; font-weight: 600; }
-  input[type="text"], input[type="password"], textarea {
-    width: 100%;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    color: #c9d1d9;
-    padding: 0.6rem;
-    font-family: inherit;
-    font-size: 0.9rem;
-  }
-  textarea { min-height: 120px; font-family: "SFMono-Regular", Consolas, monospace; resize: vertical; }
-  input:focus, textarea:focus { outline: none; border-color: #58a6ff; }
-  button {
-    padding: 0.6rem 1.2rem;
-    border-radius: 6px;
-    border: 1px solid #30363d;
-    font-size: 0.9rem;
-    font-weight: 600;
-    cursor: pointer;
-    background: #21262d;
-    color: #c9d1d9;
-  }
-  button:hover { background: #30363d; }
-  .btn-primary { background: #238636; color: #fff; border-color: #238636; }
-  .btn-primary:hover { background: #2ea043; }
-  .btn-blue { background: #1f6feb; color: #fff; border-color: #1f6feb; }
-  .btn-blue:hover { background: #388bfd; }
-  .row { display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem; flex-wrap: wrap; }
-  .tabs { display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 1px solid #30363d; }
-  .tab {
-    padding: 0.75rem 1.2rem;
-    cursor: pointer;
-    color: #8b949e;
-    border-bottom: 2px solid transparent;
-    font-weight: 600;
-    font-size: 0.9rem;
-  }
-  .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
-  .tab-content { display: none; }
-  .tab-content.active { display: block; }
-  pre {
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    padding: 1rem;
-    overflow-x: auto;
-    font-family: "SFMono-Regular", Consolas, monospace;
-    font-size: 0.82rem;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 14px;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
     line-height: 1.5;
-    white-space: pre-wrap;
   }
-  .badge {
-    display: inline-block;
-    padding: 0.3rem 0.8rem;
-    border-radius: 12px;
-    font-size: 0.8rem;
-    font-weight: 600;
-  }
-  .badge-enterprise { background: #a371f7; color: #fff; }
-  .badge-pro { background: #1f6feb; color: #fff; }
-  .badge-basic { background: #6e7681; color: #fff; }
-  .badge-pass { background: #238636; color: #fff; }
-  .badge-block { background: #da3633; color: #fff; }
-  .badge-warn { background: #d29922; color: #fff; }
-  .login-container { max-width: 400px; margin: 4rem auto; }
-  .hidden { display: none; }
-  .error { color: #f85149; margin-top: 0.5rem; font-size: 0.85rem; }
-  .success { color: #3fb950; margin-top: 0.5rem; font-size: 0.85rem; }
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-  .stat-card {
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    padding: 1rem;
-  }
-  .stat-value { font-size: 1.8rem; font-weight: 700; color: #58a6ff; }
-  .stat-label { font-size: 0.8rem; color: #8b949e; margin-top: 0.25rem; }
-  .usage-bar {
-    height: 10px;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 5px;
-    overflow: hidden;
-    margin-top: 0.5rem;
-  }
-  .usage-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #3fb950 0%, #d29922 70%, #f85149 100%);
-    transition: width 0.3s;
-  }
-  .guardrail-list {
+  code, pre, .mono { font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace; }
+
+  .app { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 240px;
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    padding: 1.5rem 0.75rem;
     display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin-top: 0.5rem;
+    flex-direction: column;
+    position: fixed;
+    height: 100vh;
+    overflow-y: auto;
   }
-  .guardrail-chip {
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 16px;
-    padding: 0.3rem 0.8rem;
-    font-size: 0.8rem;
+  .main { flex: 1; margin-left: 240px; padding: 2rem 2.5rem; max-width: 1200px; }
+
+  .logo { display: flex; align-items: center; gap: 0.6rem; padding: 0 0.75rem 1.5rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
+  .logo-icon { width: 30px; height: 30px; border-radius: var(--radius-sm); background: linear-gradient(135deg, var(--accent) 0%, #a855f7 100%); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 14px; }
+  .logo-text { font-weight: 600; font-size: 15px; }
+  .logo-sub { font-size: 11px; color: var(--text-muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .nav-section { margin: 0.75rem 0; }
+  .nav-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); padding: 0.5rem 0.75rem 0.4rem; font-weight: 600; }
+  .nav-item { display: flex; align-items: center; gap: 0.65rem; padding: 0.55rem 0.75rem; border-radius: var(--radius-sm); color: var(--text-dim); cursor: pointer; font-size: 13.5px; font-weight: 500; transition: background 0.1s, color 0.1s; margin: 1px 0; }
+  .nav-item:hover { background: var(--bg-hover); color: var(--text); }
+  .nav-item.active { background: var(--accent-dim); color: var(--accent-hover); }
+  .nav-icon { width: 16px; height: 16px; flex-shrink: 0; stroke-width: 2; }
+
+  .sidebar-footer { margin-top: auto; padding: 1rem 0.75rem 0; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
+  .sidebar-footer .tenant-info { margin-bottom: 0.5rem; }
+  .sidebar-footer .tenant-info .name { color: var(--text); font-weight: 600; font-size: 13px; }
+  .sidebar-footer button { width: 100%; text-align: left; background: transparent; border: 1px solid var(--border); color: var(--text-dim); padding: 0.5rem 0.75rem; border-radius: var(--radius-sm); cursor: pointer; font-size: 12.5px; margin-top: 0.5rem; }
+  .sidebar-footer button:hover { background: var(--bg-hover); color: var(--text); }
+
+  .page-header { margin-bottom: 1.75rem; }
+  .page-title { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
+  .page-desc { color: var(--text-dim); font-size: 13.5px; margin-top: 0.25rem; }
+
+  .card { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+  .card-title { font-size: 14px; font-weight: 600; margin-bottom: 0.15rem; }
+  .card-subtitle { font-size: 12.5px; color: var(--text-dim); }
+  .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; }
+
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
+  .stat { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; }
+  .stat-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); font-weight: 600; }
+  .stat-value { font-size: 24px; font-weight: 700; margin-top: 0.25rem; letter-spacing: -0.5px; }
+
+  .badge { display: inline-flex; align-items: center; padding: 0.2rem 0.55rem; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: capitalize; }
+  .badge-enterprise { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
+  .badge-pro { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
+  .badge-basic { background: rgba(113, 113, 122, 0.2); color: #a1a1aa; }
+  .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+  .badge-warn { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+  .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+
+  button { font-family: inherit; font-size: 13px; font-weight: 500; padding: 0.5rem 0.9rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-3); color: var(--text); cursor: pointer; transition: all 0.1s; }
+  button:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button.danger { background: transparent; color: var(--danger); border-color: var(--border); }
+  button.danger:hover { background: rgba(239, 68, 68, 0.1); border-color: var(--danger); }
+  button.small { padding: 0.3rem 0.7rem; font-size: 12px; }
+
+  label { display: block; font-size: 12px; font-weight: 500; color: var(--text-dim); margin-bottom: 0.35rem; }
+  input[type=text], input[type=password], textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    color: var(--text); padding: 0.55rem 0.75rem; font-family: inherit; font-size: 13px;
+    transition: border-color 0.1s, box-shadow 0.1s;
+  }
+  textarea { font-family: 'JetBrains Mono', monospace; font-size: 12px; resize: vertical; min-height: 220px; line-height: 1.6; }
+  input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .field { margin-bottom: 1rem; }
+
+  .usage-bar { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; margin-top: 0.5rem; }
+  .usage-fill { height: 100%; background: linear-gradient(90deg, var(--success) 0%, var(--warn) 75%, var(--danger) 100%); transition: width 0.3s ease; border-radius: 3px; }
+
+  /* Policy grid */
+  .policy-grid { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
+  .policy-card {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 1rem 1.25rem;
+    transition: border-color 0.1s;
+  }
+  .policy-card:hover { border-color: var(--border-strong); }
+  .policy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+  .policy-name { font-weight: 600; font-size: 13.5px; }
+  .policy-actions { display: flex; gap: 0.5rem; align-items: center; }
+  .policy-settings { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--text-dim); background: var(--bg); padding: 0.5rem 0.75rem; border-radius: 4px; margin-top: 0.35rem; white-space: pre-wrap; word-break: break-word; }
+
+  .switch { position: relative; display: inline-block; width: 34px; height: 18px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--bg-hover); border: 1px solid var(--border); border-radius: 10px; transition: .2s; }
+  .slider:before { position: absolute; content: ""; height: 12px; width: 12px; left: 2px; bottom: 2px; background-color: var(--text-dim); border-radius: 50%; transition: .2s; }
+  .switch input:checked + .slider { background-color: var(--accent); border-color: var(--accent); }
+  .switch input:checked + .slider:before { transform: translateX(16px); background: #fff; }
+
+  .toast { margin-top: 0.75rem; padding: 0.6rem 0.85rem; border-radius: var(--radius-sm); font-size: 12.5px; border: 1px solid transparent; }
+  .toast.error { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); color: #fca5a5; }
+  .toast.success { background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.3); color: #6ee7b7; }
+  pre { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1rem; max-height: 500px; overflow: auto; font-size: 12px; line-height: 1.6; color: var(--text-dim); }
+  .hidden { display: none !important; }
+  .muted { color: var(--text-muted); font-size: 12px; }
+
+  /* Login */
+  .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 2rem; }
+  .login-card { width: 100%; max-width: 400px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; box-shadow: var(--shadow-lg); }
+  .login-logo { display: flex; align-items: center; justify-content: center; gap: 0.75rem; margin-bottom: 1.5rem; }
+  .login-logo .logo-icon { width: 36px; height: 36px; font-size: 16px; }
+  .login-title { font-size: 18px; font-weight: 600; text-align: center; }
+  .login-desc { font-size: 13px; color: var(--text-dim); text-align: center; margin-top: 0.3rem; margin-bottom: 1.75rem; }
+
+  .chip-list { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.35rem; }
+  .chip { background: var(--bg); border: 1px solid var(--border); color: var(--text-dim); padding: 0.25rem 0.65rem; border-radius: 12px; font-size: 11.5px; font-weight: 500; }
+
+  .edit-mode-banner { background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); color: #fbbf24; padding: 0.6rem 0.9rem; border-radius: var(--radius-sm); font-size: 12.5px; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; }
+
+  @media (max-width: 900px) {
+    .sidebar { position: relative; width: 100%; height: auto; }
+    .main { margin-left: 0; padding: 1.5rem; }
+    .app { flex-direction: column; }
   }
 </style>
 </head>
 <body>
 
 <!-- Login Screen -->
-<div id="login-screen" class="login-container">
-  <div class="card">
-    <h1>Votal Shield</h1>
-    <p class="subtitle">Tenant Self-Service Portal</p>
-    <label>Your Tenant API Key</label>
-    <input type="password" id="api-key-input" placeholder="tenant-key-abc123">
-    <div class="row">
-      <button class="btn-primary" onclick="login()">Sign In</button>
+<div id="login-screen" class="login-wrap">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-icon">V</div>
+      <div>
+        <div class="logo-text">Votal Shield</div>
+        <div class="logo-sub">Tenant Portal</div>
+      </div>
     </div>
-    <div id="login-error" class="error"></div>
-    <p class="subtitle" style="margin-top: 1.5rem; font-size: 0.8rem;">
-      Need a key? Contact your platform administrator.
-    </p>
+    <div class="login-desc">Sign in with your tenant API key</div>
+    <div class="field">
+      <label>API Key</label>
+      <input type="password" id="api-key-input" placeholder="Enter your API key" autofocus>
+    </div>
+    <button class="primary" style="width: 100%;" onclick="login()">Sign In</button>
+    <div id="login-error" class="toast error hidden"></div>
+    <div class="muted" style="text-align: center; margin-top: 1.25rem;">Need a key? Contact your administrator</div>
   </div>
 </div>
 
 <!-- Main App -->
-<div id="app" class="container hidden">
-  <div style="display: flex; justify-content: space-between; align-items: center;">
-    <div>
-      <h1>Tenant Portal</h1>
-      <p class="subtitle" id="welcome-msg">Welcome</p>
-    </div>
-    <button onclick="logout()">Sign Out</button>
-  </div>
-
-  <div class="tabs">
-    <div class="tab active" data-tab="overview">Overview</div>
-    <div class="tab" data-tab="policies">My Policies</div>
-    <div class="tab" data-tab="usage">Usage</div>
-    <div class="tab" data-tab="playground">Test Playground</div>
-  </div>
-
-  <!-- Overview Tab -->
-  <div id="tab-overview" class="tab-content active">
-    <div class="card">
-      <h2>Your Account</h2>
-      <div id="tenant-overview">Loading...</div>
-    </div>
-  </div>
-
-  <!-- Policies Tab -->
-  <div id="tab-policies" class="tab-content">
-    <div class="card">
-      <h2>Your Guardrail Policies</h2>
-      <p class="subtitle">These policies are enforced for all requests from your account. To modify them, contact your administrator.</p>
-      <div id="policies-display">Loading...</div>
-    </div>
-  </div>
-
-  <!-- Usage Tab -->
-  <div id="tab-usage" class="tab-content">
-    <div class="card">
-      <h2>Usage vs Quota</h2>
-      <div id="usage-display">Loading...</div>
-      <div class="row">
-        <button onclick="loadUsage()">Refresh</button>
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">V</div>
+      <div>
+        <div class="logo-text">Votal Shield</div>
+        <div class="logo-sub">Tenant</div>
       </div>
     </div>
-  </div>
-
-  <!-- Playground Tab -->
-  <div id="tab-playground" class="tab-content">
-    <div class="card">
-      <h2>Test Your Guardrails</h2>
-      <p class="subtitle">Send test messages through your configured input guardrails.</p>
-      <label>Agent Key (optional)</label>
-      <input type="text" id="playground-agent-key" placeholder="your-bot-1">
-      <label style="margin-top: 1rem;">Test Message</label>
-      <textarea id="playground-message" placeholder="Enter a message to test..."></textarea>
-      <div class="row">
-        <button class="btn-primary" onclick="testInput()">Test Input</button>
-        <button class="btn-blue" onclick="testOutput()">Test Output</button>
+    <div class="nav-section">
+      <div class="nav-label">Workspace</div>
+      <div class="nav-item active" data-tab="overview">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+        Overview
       </div>
-      <h2>Result</h2>
-      <pre id="playground-result">Send a test to see results</pre>
+      <div class="nav-item" data-tab="policies">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        Policies
+      </div>
+      <div class="nav-item" data-tab="usage">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+        Usage
+      </div>
+      <div class="nav-item" data-tab="playground">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        Playground
+      </div>
+      <div class="nav-item" data-tab="activity">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        Activity
+      </div>
     </div>
+    <div class="sidebar-footer">
+      <div class="tenant-info">
+        <div class="name" id="sidebar-tenant-name">—</div>
+        <div id="sidebar-tenant-plan">—</div>
+      </div>
+      <button onclick="logout()">Sign Out</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- Overview -->
+    <div id="tab-overview" class="tab-pane">
+      <div class="page-header">
+        <div class="page-title" id="welcome-title">Overview</div>
+        <div class="page-desc">Your account summary and quick stats</div>
+      </div>
+      <div class="stats-grid" id="overview-stats"></div>
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Active Guardrails</div>
+            <div class="card-subtitle">Policies currently protecting your workloads</div>
+          </div>
+        </div>
+        <div id="overview-policies"></div>
+      </div>
+    </div>
+
+    <!-- Policies -->
+    <div id="tab-policies" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Policies</div>
+        <div class="page-desc">Manage your input and output guardrail policies</div>
+      </div>
+
+      <div id="edit-banner" class="edit-mode-banner hidden">
+        <span>You have unsaved changes</span>
+        <div style="display: flex; gap: 0.5rem;">
+          <button class="small" onclick="discardPolicyChanges()">Discard</button>
+          <button class="primary small" onclick="savePolicies()">Save Changes</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Input Guardrails</div>
+            <div class="card-subtitle">Applied to incoming user prompts</div>
+          </div>
+          <button class="small" onclick="openAddPolicy('input')">+ Add Policy</button>
+        </div>
+        <div id="input-policies" class="policy-grid"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Output Guardrails</div>
+            <div class="card-subtitle">Applied to LLM responses before returning to users</div>
+          </div>
+          <button class="small" onclick="openAddPolicy('output')">+ Add Policy</button>
+        </div>
+        <div id="output-policies" class="policy-grid"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Advanced — Raw JSON</div>
+            <div class="card-subtitle">For power users: edit the full policy config directly</div>
+          </div>
+        </div>
+        <textarea id="policies-json"></textarea>
+        <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem;">
+          <button class="primary small" onclick="savePoliciesFromJSON()">Save from JSON</button>
+          <button class="small" onclick="loadPolicies()">Reset</button>
+        </div>
+        <div id="policies-msg"></div>
+      </div>
+    </div>
+
+    <!-- Usage -->
+    <div id="tab-usage" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Usage</div>
+        <div class="page-desc">Quota consumption over time</div>
+      </div>
+      <div id="usage-display"></div>
+      <button class="small" onclick="loadUsage()">Refresh</button>
+    </div>
+
+    <!-- Playground -->
+    <div id="tab-playground" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Playground</div>
+        <div class="page-desc">Test your guardrails with live requests</div>
+      </div>
+      <div class="card">
+        <div class="field">
+          <label>Agent Key (optional)</label>
+          <input type="text" id="playground-agent-key" placeholder="your-bot-1">
+        </div>
+        <div class="field">
+          <label>Message</label>
+          <textarea id="playground-message" style="min-height: 100px;" placeholder="Enter text to test…"></textarea>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <button class="primary" onclick="testInput()">Test as Input</button>
+          <button onclick="testOutput()">Test as Output</button>
+        </div>
+      </div>
+      <div class="card" id="playground-result-card" style="display: none;">
+        <div class="card-title">Result</div>
+        <pre id="playground-result" class="mono"></pre>
+      </div>
+    </div>
+
+    <!-- Activity -->
+    <div id="tab-activity" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Activity</div>
+        <div class="page-desc">Recent changes to your tenant configuration</div>
+      </div>
+      <div class="card">
+        <pre id="activity-log" class="mono">Loading…</pre>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Add Policy Modal -->
+<div id="add-policy-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 2rem;">
+  <div style="background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; max-width: 600px; width: 100%; box-shadow: var(--shadow-lg);">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);">
+      <div style="font-size: 16px; font-weight: 600;" id="add-policy-title">Add Policy</div>
+      <button onclick="closeAddPolicy()" style="background: transparent; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">&times;</button>
+    </div>
+    <div class="field">
+      <label>Guardrail</label>
+      <select id="add-policy-name" style="width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); padding: 0.55rem 0.75rem; font-family: inherit; font-size: 13px;">
+        <option value="">Select a guardrail…</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Action</label>
+      <select id="add-policy-action" style="width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); padding: 0.55rem 0.75rem; font-family: inherit; font-size: 13px;">
+        <option value="block">Block</option>
+        <option value="warn">Warn</option>
+        <option value="log">Log</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Settings (JSON)</label>
+      <textarea id="add-policy-settings" style="min-height: 140px;">{}</textarea>
+    </div>
+    <button class="primary" onclick="confirmAddPolicy()">Add Policy</button>
   </div>
 </div>
 
 <script>
 let API_KEY = localStorage.getItem('votal_tenant_key') || '';
-let BASE_URL = window.location.origin;
+const BASE_URL = window.location.origin;
 let TENANT_INFO = null;
+let POLICIES = { input_guardrails: {}, output_guardrails: {} };
+let POLICIES_DIRTY = false;
+let ADD_POLICY_STAGE = 'input';
 
-function login() {
-  const key = document.getElementById('api-key-input').value.trim();
-  if (!key) {
-    document.getElementById('login-error').textContent = 'Enter your API key';
-    return;
-  }
-  fetch(`${BASE_URL}/v1/tenant/me`, { headers: { 'Authorization': `Bearer ${key}` } })
-    .then(r => {
-      if (r.status === 200) {
-        return r.json().then(d => {
-          API_KEY = key;
-          TENANT_INFO = d;
-          localStorage.setItem('votal_tenant_key', key);
-          showApp();
-        });
-      } else {
-        return r.json().then(d => {
-          document.getElementById('login-error').textContent = d.detail || d.error || 'Invalid key';
-        });
-      }
-    })
-    .catch(e => {
-      document.getElementById('login-error').textContent = 'Connection error: ' + e.message;
-    });
-}
-
-function logout() {
-  localStorage.removeItem('votal_tenant_key');
-  API_KEY = '';
-  TENANT_INFO = null;
-  document.getElementById('login-screen').classList.remove('hidden');
-  document.getElementById('app').classList.add('hidden');
-}
-
-function showApp() {
-  document.getElementById('login-screen').classList.add('hidden');
-  document.getElementById('app').classList.remove('hidden');
-  document.getElementById('welcome-msg').textContent = `Welcome, ${TENANT_INFO.name || TENANT_INFO.tenant_id}`;
-  renderOverview();
-  renderPolicies();
-  loadUsage();
-}
+const INPUT_GUARDRAILS = [
+  'keyword_blocklist', 'length_limit', 'regex_pattern', 'pii_detection',
+  'language_detection', 'sentiment', 'rate_limiter', 'system_prompt_leak',
+  'toxicity', 'safety_check', 'adversarial_detection', 'topic_restriction', 'topic_enforcement'
+];
+const OUTPUT_GUARDRAILS = [
+  'pii_leakage', 'tone_enforcement', 'bias_detection', 'competitor_mention',
+  'hallucinated_links', 'role_redaction'
+];
 
 async function apiCall(path, options = {}) {
-  options.headers = { ...(options.headers || {}), 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' };
+  options.headers = { ...(options.headers || {}), 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
   const r = await fetch(`${BASE_URL}${path}`, options);
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.detail || data.error || `HTTP ${r.status}`);
   return data;
 }
 
+function showError(id, msg) {
+  const el = document.getElementById(id);
+  el.className = 'toast error';
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+function showSuccess(id, msg) {
+  const el = document.getElementById(id);
+  el.className = 'toast success';
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+function login() {
+  const key = document.getElementById('api-key-input').value.trim();
+  if (!key) return showError('login-error', 'Enter your API key');
+  fetch(`${BASE_URL}/v1/tenant/me`, { headers: { 'X-API-Key': key } })
+    .then(r => r.status === 200
+      ? r.json().then(d => { API_KEY = key; TENANT_INFO = d; localStorage.setItem('votal_tenant_key', key); showApp(); })
+      : r.json().then(d => showError('login-error', d.detail || d.error || 'Invalid key')))
+    .catch(e => showError('login-error', 'Connection error: ' + e.message));
+}
+
+function logout() {
+  localStorage.removeItem('votal_tenant_key');
+  API_KEY = '';
+  TENANT_INFO = null;
+  document.getElementById('app').classList.add('hidden');
+  document.getElementById('login-screen').classList.remove('hidden');
+}
+
+function showApp() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('welcome-title').textContent = `Welcome, ${TENANT_INFO.name || TENANT_INFO.tenant_id}`;
+  document.getElementById('sidebar-tenant-name').textContent = TENANT_INFO.name || TENANT_INFO.tenant_id;
+  document.getElementById('sidebar-tenant-plan').innerHTML = `<span class="badge badge-${TENANT_INFO.plan}">${TENANT_INFO.plan}</span>`;
+  renderOverview();
+  loadUsage();
+  loadPolicies();
+}
+
+// ── Overview ──────────────────────────────
 function renderOverview() {
-  if (!TENANT_INFO) return;
   const t = TENANT_INFO;
-  document.getElementById('tenant-overview').innerHTML = `
-    <div class="grid-2">
-      <div class="stat-card">
-        <div class="stat-label">Tenant ID</div>
-        <div class="stat-value" style="font-size: 1.2rem;">${t.tenant_id}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Plan</div>
-        <div class="stat-value" style="font-size: 1.2rem;">
-          <span class="badge badge-${t.plan}">${t.plan.toUpperCase()}</span>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Input Guardrails Active</div>
-        <div class="stat-value">${(t.input_guardrails || []).length}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Output Guardrails Active</div>
-        <div class="stat-value">${(t.output_guardrails || []).length}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Registered Agents</div>
-        <div class="stat-value">${(t.agents || []).length}</div>
-      </div>
-    </div>
+  document.getElementById('overview-stats').innerHTML = `
+    <div class="stat"><div class="stat-label">Tenant ID</div><div class="stat-value" style="font-size: 18px;">${t.tenant_id}</div></div>
+    <div class="stat"><div class="stat-label">Plan</div><div class="stat-value" style="font-size: 18px;"><span class="badge badge-${t.plan}">${t.plan.toUpperCase()}</span></div></div>
+    <div class="stat"><div class="stat-label">Input Policies</div><div class="stat-value">${(t.input_guardrails || []).length}</div></div>
+    <div class="stat"><div class="stat-label">Output Policies</div><div class="stat-value">${(t.output_guardrails || []).length}</div></div>
+    <div class="stat"><div class="stat-label">Agents</div><div class="stat-value">${(t.agents || []).length}</div></div>
   `;
+  const all = [...(t.input_guardrails || []).map(g => ({ name: g, stage: 'input' })),
+               ...(t.output_guardrails || []).map(g => ({ name: g, stage: 'output' }))];
+  document.getElementById('overview-policies').innerHTML = all.length ? `
+    <div class="chip-list">
+      ${all.map(g => `<span class="chip">${g.name} <span class="muted" style="margin-left: 4px;">· ${g.stage}</span></span>`).join('')}
+    </div>
+  ` : '<div class="muted">No guardrails configured</div>';
+}
+
+// ── Policies CRUD ─────────────────────────
+async function loadPolicies() {
+  try {
+    const data = await apiCall('/v1/tenant/me/policies');
+    POLICIES = { input_guardrails: data.input_guardrails || {}, output_guardrails: data.output_guardrails || {} };
+    POLICIES_DIRTY = false;
+    document.getElementById('edit-banner').classList.add('hidden');
+    renderPolicies();
+    document.getElementById('policies-json').value = JSON.stringify(POLICIES, null, 2);
+  } catch (e) {
+    showError('policies-msg', e.message);
+  }
 }
 
 function renderPolicies() {
-  if (!TENANT_INFO) return;
-  const t = TENANT_INFO;
-  const inputs = t.input_guardrails || [];
-  const outputs = t.output_guardrails || [];
-  const agents = t.agents || [];
-
-  document.getElementById('policies-display').innerHTML = `
-    <h2 style="margin-top: 0;">Input Guardrails (${inputs.length})</h2>
-    <div class="guardrail-list">
-      ${inputs.length ? inputs.map(g => `<span class="guardrail-chip">${g}</span>`).join('') : '<span class="subtitle">None configured</span>'}
-    </div>
-    <h2>Output Guardrails (${outputs.length})</h2>
-    <div class="guardrail-list">
-      ${outputs.length ? outputs.map(g => `<span class="guardrail-chip">${g}</span>`).join('') : '<span class="subtitle">None configured</span>'}
-    </div>
-    <h2>Your Agents (${agents.length})</h2>
-    <div class="guardrail-list">
-      ${agents.length ? agents.map(a => `<span class="guardrail-chip">${a}</span>`).join('') : '<span class="subtitle">None registered</span>'}
-    </div>
-    <h2>Quota</h2>
-    <pre>${JSON.stringify(t.quota || {}, null, 2)}</pre>
-  `;
+  renderPolicyStage('input');
+  renderPolicyStage('output');
 }
 
+function renderPolicyStage(stage) {
+  const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
+  const container = document.getElementById(stage + '-policies');
+  const policies = POLICIES[key] || {};
+  const names = Object.keys(policies);
+  if (!names.length) {
+    container.innerHTML = `<div class="muted" style="padding: 1rem; text-align: center;">No ${stage} policies configured</div>`;
+    return;
+  }
+  container.innerHTML = names.map(name => {
+    const p = policies[name];
+    const settings = p.settings && Object.keys(p.settings).length ? JSON.stringify(p.settings, null, 2) : null;
+    const action = p.action || 'block';
+    const actionBadge = action === 'block' ? 'badge-danger' : action === 'warn' ? 'badge-warn' : 'badge-success';
+    return `
+      <div class="policy-card">
+        <div class="policy-header">
+          <div>
+            <div class="policy-name">${name}</div>
+            <div class="muted" style="margin-top: 2px;">${p.enabled ? 'Enabled' : 'Disabled'} · <span class="badge ${actionBadge}">${action}</span></div>
+          </div>
+          <div class="policy-actions">
+            <label class="switch">
+              <input type="checkbox" ${p.enabled ? 'checked' : ''} onchange="togglePolicy('${stage}','${name}',this.checked)">
+              <span class="slider"></span>
+            </label>
+            <button class="small" onclick="editPolicy('${stage}','${name}')">Edit</button>
+            <button class="danger small" onclick="deletePolicy('${stage}','${name}')">Remove</button>
+          </div>
+        </div>
+        ${settings ? `<div class="policy-settings">${settings}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function markDirty() {
+  POLICIES_DIRTY = true;
+  document.getElementById('edit-banner').classList.remove('hidden');
+  document.getElementById('policies-json').value = JSON.stringify(POLICIES, null, 2);
+}
+
+function togglePolicy(stage, name, enabled) {
+  const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
+  POLICIES[key][name].enabled = enabled;
+  markDirty();
+  renderPolicyStage(stage);
+}
+
+function editPolicy(stage, name) {
+  const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
+  const p = POLICIES[key][name];
+  ADD_POLICY_STAGE = stage;
+  document.getElementById('add-policy-title').textContent = `Edit ${name}`;
+  const sel = document.getElementById('add-policy-name');
+  sel.innerHTML = `<option value="${name}" selected>${name}</option>`;
+  sel.disabled = true;
+  document.getElementById('add-policy-action').value = p.action || 'block';
+  document.getElementById('add-policy-settings').value = JSON.stringify(p.settings || {}, null, 2);
+  document.getElementById('add-policy-modal').classList.remove('hidden');
+}
+
+function deletePolicy(stage, name) {
+  if (!confirm(`Remove ${name}?`)) return;
+  const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
+  delete POLICIES[key][name];
+  markDirty();
+  renderPolicyStage(stage);
+}
+
+function openAddPolicy(stage) {
+  ADD_POLICY_STAGE = stage;
+  document.getElementById('add-policy-title').textContent = `Add ${stage === 'input' ? 'Input' : 'Output'} Policy`;
+  const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
+  const existing = new Set(Object.keys(POLICIES[key] || {}));
+  const available = (stage === 'input' ? INPUT_GUARDRAILS : OUTPUT_GUARDRAILS).filter(g => !existing.has(g));
+  const sel = document.getElementById('add-policy-name');
+  sel.innerHTML = '<option value="">Select a guardrail…</option>' + available.map(g => `<option value="${g}">${g}</option>`).join('');
+  sel.disabled = false;
+  document.getElementById('add-policy-action').value = 'block';
+  document.getElementById('add-policy-settings').value = '{}';
+  document.getElementById('add-policy-modal').classList.remove('hidden');
+}
+
+function closeAddPolicy() {
+  document.getElementById('add-policy-modal').classList.add('hidden');
+}
+
+function confirmAddPolicy() {
+  const name = document.getElementById('add-policy-name').value;
+  const action = document.getElementById('add-policy-action').value;
+  let settings = {};
+  try { settings = JSON.parse(document.getElementById('add-policy-settings').value || '{}'); }
+  catch (e) { return alert('Invalid JSON in settings'); }
+  if (!name) return alert('Select a guardrail');
+  const key = ADD_POLICY_STAGE === 'input' ? 'input_guardrails' : 'output_guardrails';
+  POLICIES[key][name] = { enabled: true, action, settings };
+  markDirty();
+  renderPolicyStage(ADD_POLICY_STAGE);
+  closeAddPolicy();
+}
+
+async function savePolicies() {
+  try {
+    await apiCall('/v1/tenant/me/policies', {
+      method: 'PUT',
+      body: JSON.stringify({
+        input_guardrails: POLICIES.input_guardrails,
+        output_guardrails: POLICIES.output_guardrails,
+      }),
+    });
+    showSuccess('policies-msg', 'Policies saved');
+    POLICIES_DIRTY = false;
+    document.getElementById('edit-banner').classList.add('hidden');
+    // Refresh tenant info to reflect changes
+    const info = await apiCall('/v1/tenant/me');
+    TENANT_INFO = info;
+    renderOverview();
+  } catch (e) {
+    showError('policies-msg', e.message);
+  }
+}
+
+async function savePoliciesFromJSON() {
+  try {
+    POLICIES = JSON.parse(document.getElementById('policies-json').value);
+    await savePolicies();
+    renderPolicies();
+  } catch (e) {
+    showError('policies-msg', 'Invalid JSON: ' + e.message);
+  }
+}
+
+function discardPolicyChanges() {
+  loadPolicies();
+}
+
+// ── Usage ─────────────────────────────────
 async function loadUsage() {
   try {
     const data = await apiCall('/v1/tenant/me/usage');
@@ -332,102 +631,100 @@ async function loadUsage() {
     const q = data.quota || {};
     const mPct = data.pct_of_minute_limit || 0;
     const dPct = data.pct_of_daily_limit || 0;
+    const tMax = q.max_tokens_per_day || 1;
+    const tPct = Math.min(100, 100 * (u.tokens_today || 0) / tMax);
 
     document.getElementById('usage-display').innerHTML = `
-      <div class="grid-2" style="margin-bottom: 1rem;">
-        <div class="stat-card">
-          <div class="stat-label">Requests This Minute</div>
-          <div class="stat-value">${u.requests_this_minute || 0}</div>
-          <div class="stat-label">of ${q.max_requests_per_minute || '∞'}</div>
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-label">Requests / Minute</div>
+          <div class="stat-value">${(u.requests_this_minute || 0).toLocaleString()}</div>
+          <div class="muted">of ${(q.max_requests_per_minute || 0).toLocaleString()}</div>
           <div class="usage-bar"><div class="usage-fill" style="width: ${Math.min(100, mPct)}%"></div></div>
         </div>
-        <div class="stat-card">
+        <div class="stat">
           <div class="stat-label">Requests Today</div>
           <div class="stat-value">${(u.requests_today || 0).toLocaleString()}</div>
-          <div class="stat-label">of ${(q.max_requests_per_day || 0).toLocaleString()}</div>
+          <div class="muted">of ${(q.max_requests_per_day || 0).toLocaleString()}</div>
           <div class="usage-bar"><div class="usage-fill" style="width: ${Math.min(100, dPct)}%"></div></div>
         </div>
-        <div class="stat-card">
+        <div class="stat">
           <div class="stat-label">Tokens Today</div>
           <div class="stat-value">${(u.tokens_today || 0).toLocaleString()}</div>
-          <div class="stat-label">of ${(q.max_tokens_per_day || 0).toLocaleString()}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Plan</div>
-          <div class="stat-value" style="font-size: 1.2rem;">
-            <span class="badge badge-${data.plan || 'basic'}">${(data.plan || 'basic').toUpperCase()}</span>
-          </div>
+          <div class="muted">of ${(q.max_tokens_per_day || 0).toLocaleString()}</div>
+          <div class="usage-bar"><div class="usage-fill" style="width: ${tPct}%"></div></div>
         </div>
       </div>
     `;
   } catch (e) {
-    document.getElementById('usage-display').innerHTML = `<div class="error">${e.message}</div>`;
+    document.getElementById('usage-display').innerHTML = `<div class="toast error">${e.message}</div>`;
   }
 }
 
+// ── Playground ────────────────────────────
 async function testInput() {
-  const message = document.getElementById('playground-message').value.trim();
-  const agentKey = document.getElementById('playground-agent-key').value.trim();
-  if (!message) return;
-
-  const headers = { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' };
-  if (agentKey) headers['X-Agent-Key'] = agentKey;
-
+  const msg = document.getElementById('playground-message').value.trim();
+  const agent = document.getElementById('playground-agent-key').value.trim();
+  if (!msg) return;
+  const headers = { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
+  if (agent) headers['X-Agent-Key'] = agent;
   try {
-    const r = await fetch(`${BASE_URL}/v1/shield/classify`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ message }),
-    });
+    const r = await fetch(`${BASE_URL}/classify`, { method: 'POST', headers, body: JSON.stringify({ message: msg }) });
     const data = await r.json();
-    displayResult(data, 'input');
-  } catch (e) {
-    document.getElementById('playground-result').textContent = 'Error: ' + e.message;
-  }
+    displayResult(data);
+  } catch (e) { displayResult({ error: e.message }); }
 }
-
 async function testOutput() {
-  const message = document.getElementById('playground-message').value.trim();
-  const agentKey = document.getElementById('playground-agent-key').value.trim();
-  if (!message) return;
-
-  const headers = { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' };
-  if (agentKey) headers['X-Agent-Key'] = agentKey;
-
+  const msg = document.getElementById('playground-message').value.trim();
+  const agent = document.getElementById('playground-agent-key').value.trim();
+  if (!msg) return;
+  const headers = { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
+  if (agent) headers['X-Agent-Key'] = agent;
   try {
-    const r = await fetch(`${BASE_URL}/v1/shield/classify_output`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ output: message }),
-    });
+    const r = await fetch(`${BASE_URL}/classify_output`, { method: 'POST', headers, body: JSON.stringify({ output: msg }) });
     const data = await r.json();
-    displayResult(data, 'output');
+    displayResult(data);
+  } catch (e) { displayResult({ error: e.message }); }
+}
+function displayResult(data) {
+  document.getElementById('playground-result-card').style.display = 'block';
+  document.getElementById('playground-result').textContent = JSON.stringify(data, null, 2);
+}
+
+// ── Activity ──────────────────────────────
+async function loadActivity() {
+  try {
+    const data = await apiCall('/v1/tenant/me/audit?limit=50');
+    const entries = data.entries || [];
+    if (!entries.length) {
+      document.getElementById('activity-log').textContent = 'No recent activity';
+      return;
+    }
+    document.getElementById('activity-log').textContent = entries.map(e =>
+      `${(e.timestamp || '').slice(0,19)}  ${(e.action || '').padEnd(30)}  ${e.actor || ''}`
+    ).join('\n');
   } catch (e) {
-    document.getElementById('playground-result').textContent = 'Error: ' + e.message;
+    document.getElementById('activity-log').textContent = 'Error: ' + e.message;
   }
 }
 
-function displayResult(data, stage) {
-  const action = data.action || 'unknown';
-  const safe = data.safe;
-  const badge = action === 'block' ? 'badge-block' : action === 'warn' ? 'badge-warn' : 'badge-pass';
-  const summary = `${stage.toUpperCase()} → <span class="badge ${badge}">${action}</span> (safe: ${safe})\n\n`;
-  document.getElementById('playground-result').innerHTML = summary + JSON.stringify(data, null, 2);
-}
-
-// Tab switching
+// ── Nav ───────────────────────────────────
 document.addEventListener('click', (e) => {
-  if (e.target.matches('.tab[data-tab]')) {
-    const tab = e.target.getAttribute('data-tab');
-    document.querySelectorAll('.tabs > .tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-    e.target.classList.add('active');
-    document.getElementById(`tab-${tab}`).classList.add('active');
+  if (e.target.closest('.nav-item[data-tab]')) {
+    const el = e.target.closest('.nav-item[data-tab]');
+    const tab = el.getAttribute('data-tab');
+    document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
+    el.classList.add('active');
+    document.getElementById(`tab-${tab}`).classList.remove('hidden');
     if (tab === 'usage') loadUsage();
+    if (tab === 'activity') loadActivity();
+    if (tab === 'policies') loadPolicies();
   }
 });
 
-// Auto-login
+document.getElementById('api-key-input').addEventListener('keypress', (e) => { if (e.key === 'Enter') login(); });
+
 if (API_KEY) {
   document.getElementById('api-key-input').value = API_KEY;
   login();
