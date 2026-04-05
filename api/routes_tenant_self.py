@@ -136,3 +136,181 @@ async def get_my_audit_log(request: Request, limit: int = 50):
     from storage.admin_audit import query_admin_audit
     entries = query_admin_audit(tenant_id=tenant_id, limit=limit)
     return {"tenant_id": tenant_id, "entries": entries}
+
+
+# ───────────────────────────────────────────────────────────────────
+# Tenant-managed API keys
+#
+# Tenants can create and revoke their own keys. The plaintext key is
+# shown ONLY once at creation time — we only store the SHA-256 hash,
+# so neither we nor the tenant can recover a lost key; they must
+# create a new one.
+# ───────────────────────────────────────────────────────────────────
+
+
+def _new_key(tenant_id: str) -> str:
+    """Generate a new random API key with a tenant-prefixed format."""
+    import secrets
+    return f"{tenant_id}_{secrets.token_urlsafe(32)}"
+
+
+def _key_preview(api_key: str) -> str:
+    """Show first 8 and last 4 chars of a key for display."""
+    if len(api_key) < 16:
+        return "****"
+    return f"{api_key[:8]}...{api_key[-4:]}"
+
+
+@router.get("/me/api-keys")
+async def list_my_api_keys(request: Request):
+    """List hashed API keys mapped to the current tenant.
+
+    Returns only hash prefixes — the plaintext keys are never stored.
+    """
+    tenant_id = _require_tenant(request)
+    from storage.tenant_store import _get_redis, _fallback_store
+
+    r = _get_redis()
+    results = []
+    if r:
+        cursor = 0
+        while True:
+            try:
+                cursor, keys = r.scan(cursor, match="apikey:*", count=100)
+            except Exception:
+                break
+            for key in keys:
+                try:
+                    if r.get(key) == tenant_id:
+                        hash_part = key.split(":", 1)[1] if ":" in key else key
+                        results.append({
+                            "hash_prefix": hash_part[:12] + "...",
+                            "created": None,  # not tracked per-key currently
+                        })
+                except Exception:
+                    continue
+            if cursor == 0:
+                break
+    else:
+        for k, v in _fallback_store.items():
+            if k.startswith("apikey:") and v == tenant_id:
+                hash_part = k.split(":", 1)[1]
+                results.append({
+                    "hash_prefix": hash_part[:12] + "...",
+                    "created": None,
+                })
+
+    return {"tenant_id": tenant_id, "api_keys": results, "count": len(results)}
+
+
+@router.post("/me/api-keys")
+async def create_my_api_key(request: Request, body: dict = None):
+    """Create a new API key for the current tenant.
+
+    The plaintext key is returned ONLY in this response. Store it
+    immediately — it cannot be recovered later.
+
+    Optional body: {"custom_key": "my-custom-value"} to provide your
+    own key value instead of generating one (discouraged — less secure).
+    """
+    tenant_id = _require_tenant(request)
+    existing = get_tenant(tenant_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Limit keys per tenant to prevent abuse
+    from storage.tenant_store import add_api_key, _get_redis, _fallback_store
+    r = _get_redis()
+    existing_count = 0
+    if r:
+        try:
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor, match="apikey:*", count=100)
+                for k in keys:
+                    if r.get(k) == tenant_id:
+                        existing_count += 1
+                if cursor == 0:
+                    break
+        except Exception:
+            pass
+    else:
+        existing_count = sum(
+            1 for k, v in _fallback_store.items()
+            if k.startswith("apikey:") and v == tenant_id
+        )
+
+    if existing_count >= 10:
+        raise HTTPException(
+            status_code=429,
+            detail="API key limit reached (max 10 per tenant). Revoke unused keys first.",
+        )
+
+    # Generate or accept a custom key
+    custom_key = (body or {}).get("custom_key") if body else None
+    api_key = custom_key.strip() if custom_key else _new_key(tenant_id)
+
+    if len(api_key) < 16:
+        raise HTTPException(status_code=400, detail="API key must be at least 16 characters")
+
+    add_api_key(tenant_id, api_key)
+
+    log_admin_action(
+        action="tenant_create_api_key",
+        actor=f"tenant:{tenant_id}",
+        tenant_id=tenant_id,
+        source_ip=request.client.host if request.client else "",
+        metadata={"key_preview": _key_preview(api_key)},
+    )
+
+    return {
+        "status": "created",
+        "tenant_id": tenant_id,
+        "api_key": api_key,  # shown ONCE
+        "preview": _key_preview(api_key),
+        "warning": "Store this key immediately — it cannot be retrieved later.",
+    }
+
+
+@router.delete("/me/api-keys")
+async def revoke_my_api_key(request: Request, body: dict):
+    """Revoke an API key owned by the current tenant.
+
+    Body: {"api_key": "plaintext-key-to-revoke"}
+
+    The caller must supply the plaintext key (not the hash) so we
+    can compute the hash and verify it maps to this tenant.
+    """
+    tenant_id = _require_tenant(request)
+    api_key = (body or {}).get("api_key", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="'api_key' is required")
+
+    # Verify the key belongs to this tenant before revoking
+    from storage.tenant_store import resolve_tenant_by_api_key, remove_api_key
+    owner = resolve_tenant_by_api_key(api_key)
+    if owner != tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail="API key does not belong to this tenant or is invalid",
+        )
+
+    # Prevent self-lockout: don't let a tenant revoke the key they're using
+    caller_key = request.headers.get("X-API-Key", "") or ""
+    if caller_key and caller_key.strip() == api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot revoke the API key you are currently using. Create a new key first, switch to it, then revoke this one.",
+        )
+
+    remove_api_key(api_key)
+
+    log_admin_action(
+        action="tenant_revoke_api_key",
+        actor=f"tenant:{tenant_id}",
+        tenant_id=tenant_id,
+        source_ip=request.client.host if request.client else "",
+        metadata={"key_preview": _key_preview(api_key)},
+    )
+
+    return {"status": "revoked", "tenant_id": tenant_id, "preview": _key_preview(api_key)}
