@@ -19,6 +19,8 @@ class ShieldMiddleware(BaseHTTPMiddleware):
     """
 
     _SKIP_PATHS = {"/health", "/ping", "/docs", "/redoc", "/openapi.json"}
+    _GUARDED_PREFIXES = ("/v1/shield", "/v1/tenant")
+    _GUARDED_EXACT = {"/classify", "/classify_output"}
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
@@ -27,7 +29,11 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         if path in self._SKIP_PATHS or path.startswith("/v1/admin"):
             return await call_next(request)
 
-        if path.startswith("/v1/shield") or path.startswith("/v1/tenant"):
+        is_guarded = (
+            any(path.startswith(p) for p in self._GUARDED_PREFIXES)
+            or path in self._GUARDED_EXACT
+        )
+        if is_guarded:
             # Extract agent key from header or query param
             agent_key = request.headers.get("X-Agent-Key")
             if not agent_key:
