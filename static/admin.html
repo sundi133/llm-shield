@@ -132,6 +132,14 @@
     padding: 0.3rem 0.6rem;
     font-size: 0.75rem;
   }
+  .stat-card {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 1rem;
+  }
+  .stat-value { font-size: 1.8rem; font-weight: 700; color: #58a6ff; }
+  .stat-label { font-size: 0.8rem; color: #8b949e; margin-top: 0.25rem; }
 </style>
 </head>
 <body>
@@ -161,13 +169,46 @@
   </div>
 
   <div class="tabs">
-    <div class="tab active" data-tab="tenants">Tenants</div>
+    <div class="tab active" data-tab="dashboard">Dashboard</div>
+    <div class="tab" data-tab="tenants">Tenants</div>
     <div class="tab" data-tab="create">Create Tenant</div>
     <div class="tab" data-tab="audit">Audit Log</div>
   </div>
 
+  <!-- Dashboard Tab -->
+  <div id="tab-dashboard" class="tab-content active">
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="margin: 0;">Platform Overview</h2>
+        <button onclick="loadDashboard()">Refresh</button>
+      </div>
+      <div id="dashboard-summary" style="margin-top: 1rem;">Loading...</div>
+    </div>
+
+    <div class="card">
+      <h2>Tenant Usage</h2>
+      <p class="subtitle">Sorted by requests today (most active first)</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Tenant</th>
+            <th>Plan</th>
+            <th>Req/Min</th>
+            <th>Req Today</th>
+            <th>Tokens Today</th>
+            <th>Quota Usage</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="dashboard-tenants">
+          <tr><td colspan="7" class="muted">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Tenants List Tab -->
-  <div id="tab-tenants" class="tab-content active">
+  <div id="tab-tenants" class="tab-content">
     <div class="card">
       <div class="toolbar">
         <button onclick="loadTenants()">Refresh</button>
@@ -336,7 +377,68 @@ function logout() {
 function showApp() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
-  loadTenants();
+  loadDashboard();
+}
+
+async function loadDashboard() {
+  try {
+    const data = await apiCall('/v1/admin/dashboard');
+    const s = data.summary || {};
+    const tenants = data.tenants || [];
+
+    document.getElementById('dashboard-summary').innerHTML = `
+      <div class="grid-2" style="grid-template-columns: repeat(4, 1fr);">
+        <div class="stat-card">
+          <div class="stat-label">Total Tenants</div>
+          <div class="stat-value">${s.total_tenants || 0}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Requests This Minute</div>
+          <div class="stat-value">${(s.total_requests_this_minute || 0).toLocaleString()}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Requests Today</div>
+          <div class="stat-value">${(s.total_requests_today || 0).toLocaleString()}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Tokens Today</div>
+          <div class="stat-value">${(s.total_tokens_today || 0).toLocaleString()}</div>
+        </div>
+      </div>
+      <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+        <span class="badge badge-enterprise">Enterprise: ${s.plan_counts?.enterprise || 0}</span>
+        <span class="badge badge-pro">Pro: ${s.plan_counts?.pro || 0}</span>
+        <span class="badge badge-basic">Basic: ${s.plan_counts?.basic || 0}</span>
+      </div>
+    `;
+
+    const tbody = document.getElementById('dashboard-tenants');
+    if (!tenants.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted">No tenants yet</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = tenants.map(t => {
+      const maxPct = Math.max(t.pct_of_minute_limit || 0, t.pct_of_daily_limit || 0, t.pct_of_token_limit || 0);
+      return `
+        <tr>
+          <td><strong>${t.tenant_id}</strong><br><span class="muted">${t.name || ''}</span></td>
+          <td><span class="badge badge-${t.plan}">${t.plan}</span></td>
+          <td>${(t.usage?.requests_this_minute || 0).toLocaleString()}<br><span class="muted">/ ${(t.quota?.max_requests_per_minute || 0).toLocaleString()}</span></td>
+          <td>${(t.usage?.requests_today || 0).toLocaleString()}<br><span class="muted">/ ${(t.quota?.max_requests_per_day || 0).toLocaleString()}</span></td>
+          <td>${(t.usage?.tokens_today || 0).toLocaleString()}<br><span class="muted">/ ${(t.quota?.max_tokens_per_day || 0).toLocaleString()}</span></td>
+          <td style="min-width: 160px;">
+            <div class="muted" style="font-size: 0.75rem;">${maxPct.toFixed(1)}%</div>
+            <div class="usage-bar"><div class="usage-fill" style="width: ${Math.min(100, maxPct)}%"></div></div>
+          </td>
+          <td><button class="small-btn btn-blue" onclick="openTenant('${t.tenant_id}')">Manage</button></td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {
+    document.getElementById('dashboard-summary').innerHTML = `<div class="error">${e.message}</div>`;
+    document.getElementById('dashboard-tenants').innerHTML = `<tr><td colspan="7" class="error">${e.message}</td></tr>`;
+  }
 }
 
 async function apiCall(path, options = {}) {
@@ -625,6 +727,8 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll('#app > .tab-content').forEach(t => t.classList.remove('active'));
     e.target.classList.add('active');
     document.getElementById(`tab-${tab}`).classList.add('active');
+    if (tab === 'dashboard') loadDashboard();
+    if (tab === 'tenants') loadTenants();
   }
   if (e.target.matches('.tab[data-subtab]')) {
     const sub = e.target.getAttribute('data-subtab');

@@ -211,3 +211,72 @@ async def get_global_audit_log(
         offset=offset,
     )
     return {"entries": entries, "count": len(entries)}
+
+
+@global_router.get("/dashboard")
+async def get_admin_dashboard():
+    """Aggregate dashboard — all tenants with usage and quota info in one call."""
+    tenants = list_tenants(include_deleted=False)
+
+    rows = []
+    total_requests_today = 0
+    total_tokens_today = 0
+    total_requests_this_minute = 0
+    plan_counts = {"basic": 0, "pro": 0, "enterprise": 0}
+
+    for t_summary in tenants:
+        tid = t_summary["tenant_id"]
+        config = get_tenant(tid)
+        if not config:
+            continue
+
+        usage = get_usage(tid)
+        quota = config.get("quota") or {}
+
+        req_today = usage.get("requests_today", 0)
+        tok_today = usage.get("tokens_today", 0)
+        req_min = usage.get("requests_this_minute", 0)
+
+        total_requests_today += req_today
+        total_tokens_today += tok_today
+        total_requests_this_minute += req_min
+
+        plan = config.get("plan", "basic")
+        if plan in plan_counts:
+            plan_counts[plan] += 1
+
+        max_min = quota.get("max_requests_per_minute", 0) or 1
+        max_day = quota.get("max_requests_per_day", 0) or 1
+        max_tok = quota.get("max_tokens_per_day", 0) or 1
+
+        rows.append({
+            "tenant_id": tid,
+            "name": config.get("name", ""),
+            "plan": plan,
+            "input_guardrail_count": len(config.get("input_guardrails", {})),
+            "output_guardrail_count": len(config.get("output_guardrails", {})),
+            "agent_count": len(config.get("rbac", {}).get("agents", {})),
+            "usage": {
+                "requests_this_minute": req_min,
+                "requests_today": req_today,
+                "tokens_today": tok_today,
+            },
+            "quota": quota,
+            "pct_of_minute_limit": round(100 * req_min / max_min, 1),
+            "pct_of_daily_limit": round(100 * req_today / max_day, 1),
+            "pct_of_token_limit": round(100 * tok_today / max_tok, 1) if max_tok > 0 else 0,
+        })
+
+    # Sort by requests today (most active first)
+    rows.sort(key=lambda r: r["usage"]["requests_today"], reverse=True)
+
+    return {
+        "summary": {
+            "total_tenants": len(rows),
+            "total_requests_today": total_requests_today,
+            "total_tokens_today": total_tokens_today,
+            "total_requests_this_minute": total_requests_this_minute,
+            "plan_counts": plan_counts,
+        },
+        "tenants": rows,
+    }
