@@ -374,7 +374,7 @@ votal_guardrails:
   │  1. Merge LoRA into base model        │
   │  2. Quantize to GGUF Q4_K_M           │
   │  3. Push to HuggingFace               │
-  │     votal-ai/vai-9b-guardrailed-v2    │
+  │     votal-ai/vai-9b-guardrailed-v3    │
   │  4. Update Dockerfile                 │
   │  5. Docker build + push               │
   │  6. RunPod auto-deploys               │

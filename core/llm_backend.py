@@ -208,7 +208,7 @@ def start_server():
     print("=" * 60)
     print(f"  Servers started: {len(servers)}")
     print(f"  Model: {model_path}")
-    print(f"    Repo: votal-ai/Qwen3.5-9B-guardrailed-v2-GGUF")
+    print(f"    Repo: votal-ai/Qwen3.5-9B-guardrailed-v3-GGUF")
     print(f"  Draft: {draft_model_path}")
     print(f"    Repo: votal-ai/Qwen3.5-0.8B-GGUF")
     print()
