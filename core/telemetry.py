@@ -428,9 +428,9 @@ def init_telemetry(config: Optional[dict] = None):
 
     _flush_interval = config.get("flush_interval_seconds", 5.0)
 
-    # Always add file exporter as fallback
+    # File exporter — only if explicitly enabled in config
     file_cfg = config.get("file", {})
-    if file_cfg.get("enabled", True):
+    if file_cfg.get("enabled", False):
         _exporters.append(FileExporter(
             path=file_cfg.get("path", "logs/votal-shield.json"),
             max_size_mb=file_cfg.get("max_size_mb", 100),
