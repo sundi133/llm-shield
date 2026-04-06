@@ -653,12 +653,12 @@ telemetry:
   # Elasticsearch / Elastic SIEM
   # Set via env vars: VOTAL_ES_URL, VOTAL_ES_API_KEY
   # Or hardcode here (not recommended for production)
-  elasticsearch:
-    enabled: true
-    url: ""
-    api_key: ""
-    index: "votal-shield-logs"
-    verify_ssl: true
+  # elasticsearch:
+  #   enabled: true
+  #   url: ""
+  #   api_key: ""
+  #   index: "votal-shield-logs"
+  #   verify_ssl: true
 
   # Splunk HEC (uncomment to enable)
   # splunk:
