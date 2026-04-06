@@ -1,21 +1,286 @@
 # Agentic AI Guardrails — Developer Integration Guide
 
-Votal AI provides 17 agentic guardrails that protect AI agents at runtime. These guardrails are **separate from input/output guardrails** — they are invoked explicitly by your agent framework before and after each agent action.
+Votal Shield provides guardrails that protect AI agents at every stage of execution: input validation, tool call control, output sanitization, memory safety, and budget enforcement. These work with **any agentic framework** — LangChain, CrewAI, OpenAI Agents SDK, AutoGen, Semantic Kernel, or your own custom agents.
 
 ---
 
 ## Table of Contents
 
-1. [Architecture Overview](#architecture-overview)
-2. [API Endpoints](#api-endpoints)
-3. [LangChain Integration](#langchain-integration)
-4. [CrewAI Integration](#crewai-integration)
-5. [Custom Agent Integration](#custom-agent-integration)
-6. [Tool Control](#tool-control)
-7. [Memory Safety](#memory-safety)
-8. [Agent Scope & Budget](#agent-scope--budget)
-9. [Monitoring](#monitoring)
-10. [Configuration Reference](#configuration-reference)
+1. [End-to-End Guardrail Flow](#end-to-end-guardrail-flow)
+2. [Quick Start — Framework-Agnostic Python Client](#quick-start)
+3. [Authentication and Multi-Tenancy](#authentication)
+4. [API Endpoints](#api-endpoints)
+5. [LangChain Integration](#langchain-integration)
+6. [CrewAI Integration](#crewai-integration)
+7. [OpenAI Agents SDK Integration](#openai-agents-sdk-integration)
+8. [Custom Agent Integration](#custom-agent-integration)
+9. [Tool Control](#tool-control)
+10. [Memory Safety](#memory-safety)
+11. [Agent Scope & Budget](#agent-scope--budget)
+12. [Monitoring](#monitoring)
+13. [Configuration Reference](#configuration-reference)
+
+---
+
+## End-to-End Guardrail Flow
+
+Every agentic request should pass through **5 checkpoints**. Your framework calls each one at the right moment:
+
+```
+User prompt
+    │
+    ▼
+┌─────────────────┐
+│ POST /classify  │ ← Input guardrails: adversarial detection, PII,
+│                 │   topic restriction, safety check, keyword blocklist
+└────────┬────────┘
+         │ action=pass → continue
+         │ action=block → return error to user
+         ▼
+┌─────────────────┐
+│ LLM decides to  │ ← Your LLM (GPT-4, Claude, Llama, etc.)
+│ call a tool     │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────────┐
+│ POST /tool/check    │ ← Pre-execution: RBAC allowlist, schema validation,
+│                     │   rate limiting, sensitive action confirmation
+└────────┬────────────┘
+         │ allowed=true → execute tool
+         │ allowed=false → return blocked message to LLM
+         │ action=pending_confirmation → ask human to approve
+         ▼
+┌─────────────────┐
+│ Execute tool    │ ← Your actual tool (DB query, API call, file read)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────────┐
+│ POST /tool/output   │ ← Post-execution: sanitize PII, secrets, API keys
+│                     │   from tool response before returning to LLM
+└────────┬────────────┘
+         │ sanitized output → feed back to LLM
+         ▼
+┌─────────────────┐
+│ LLM generates   │ ← LLM uses sanitized tool output to compose response
+│ final response  │
+└────────┬────────┘
+         │
+         ▼
+┌──────────────────────┐
+│ POST /classify_output│ ← Output guardrails: PII leakage, tone enforcement,
+│                      │   bias detection, competitor mentions, hallucination
+└────────┬─────────────┘
+         │ action=pass → return to user
+         │ action=block → redact or regenerate
+         ▼
+    Return to user
+```
+
+**Key principle**: Your agent framework calls Shield **before** each action and **after** each tool output. Shield returns `action: pass/block/warn` — your framework decides what to do.
+
+### What Happens Without Each Checkpoint
+
+| Checkpoint Skipped | Risk |
+|---|---|
+| No `/classify` | Prompt injection reaches LLM, adversarial attacks succeed |
+| No `/tool/check` | Agent calls tools it shouldn't, no RBAC, no rate limiting |
+| No `/tool/output` | PII from database leaks into LLM context window |
+| No `/classify_output` | LLM response contains PII, bias, wrong tone, hallucinated links |
+
+---
+
+## Quick Start
+
+### Framework-Agnostic Python Client
+
+This client works with **any framework**. Wrap it around your agent loop:
+
+```python
+import requests
+
+
+class VotalShield:
+    """Universal Votal Shield client for any agentic framework.
+
+    Usage:
+        shield = VotalShield(
+            base_url="https://your-shield-endpoint.com",
+            tenant_key="your-tenant-api-key",
+            agent_key="your-agent-id",
+        )
+
+        # 1. Guard user input
+        shield.guard_input("user message")
+
+        # 2. Guard tool call before execution
+        shield.guard_tool("tool_name", {"arg": "value"})
+
+        # 3. Sanitize tool output
+        clean = shield.sanitize_tool_output("tool_name", raw_output)
+
+        # 4. Guard LLM response before returning to user
+        shield.guard_output("LLM response text")
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        tenant_key: str,
+        agent_key: str = "",
+        session_id: str = "",
+        runpod_token: str = "",  # only needed on RunPod
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.headers = {"X-API-Key": tenant_key, "Content-Type": "application/json"}
+        if agent_key:
+            self.headers["X-Agent-Key"] = agent_key
+        if runpod_token:
+            self.headers["Authorization"] = f"Bearer {runpod_token}"
+        self.agent_key = agent_key
+        self.session_id = session_id
+
+    def _post(self, path, payload):
+        r = requests.post(f"{self.base_url}{path}", headers=self.headers, json=payload)
+        return r.json()
+
+    def guard_input(self, message: str) -> dict:
+        """Check user input. Raises if blocked."""
+        result = self._post("/classify", {"message": message})
+        if result.get("action") == "block":
+            raise PermissionError(f"Input blocked: {result.get('guardrail_results', [])}")
+        return result
+
+    def guard_tool(self, tool_name: str, tool_args: dict = None) -> dict:
+        """Validate tool call before execution. Raises if blocked."""
+        result = self._post("/v1/shield/tool/check", {
+            "agent_key": self.agent_key,
+            "session_id": self.session_id,
+            "tool_name": tool_name,
+            "tool_args": tool_args or {},
+        })
+        if not result.get("allowed"):
+            if result.get("action") == "pending_confirmation":
+                raise PermissionError(f"Requires human confirmation: {result}")
+            raise PermissionError(f"Tool blocked: {result}")
+        return result
+
+    def sanitize_tool_output(self, tool_name: str, output: str) -> str:
+        """Sanitize PII/secrets from tool response."""
+        result = self._post("/v1/shield/tool/output", {
+            "tool_name": tool_name,
+            "output": output,
+            "agent_key": self.agent_key,
+        })
+        return result.get("sanitized_output", output)
+
+    def guard_output(self, output: str) -> dict:
+        """Check LLM response before returning to user. Raises if blocked."""
+        result = self._post("/classify_output", {"output": output})
+        if result.get("action") == "block":
+            raise PermissionError(f"Output blocked: {result.get('guardrail_results', [])}")
+        return result
+
+    def check_agent(self, action: str, resource: str = "") -> dict:
+        """Check agent action against RBAC, scope, budget."""
+        return self._post("/v1/shield/agent/check", {
+            "agent_key": self.agent_key,
+            "session_id": self.session_id,
+            "action": action,
+            "resource": resource,
+        })
+
+    def check_memory(self, operation: str, key: str, value: str = "") -> dict:
+        """Validate memory read/write."""
+        return self._post("/v1/shield/memory/check", {
+            "agent_key": self.agent_key,
+            "operation": operation,
+            "key": key,
+            "value": value,
+        })
+```
+
+### Usage in Any Agent Loop
+
+```python
+shield = VotalShield(
+    base_url="https://your-endpoint.com",
+    tenant_key="your-tenant-api-key",
+    agent_key="support-bot-1",
+    session_id="session-42",
+)
+
+# Your agent loop
+user_message = "What's the patient's medical history?"
+
+# Step 1: Guard input
+shield.guard_input(user_message)
+
+# Step 2: LLM decides to call a tool
+tool_name = "search_records"
+tool_args = {"query": user_message}
+
+# Step 3: Guard tool call
+shield.guard_tool(tool_name, tool_args)
+
+# Step 4: Execute tool (your code)
+raw_result = database.query("SELECT * FROM patients WHERE ...")
+
+# Step 5: Sanitize tool output
+clean_result = shield.sanitize_tool_output(tool_name, raw_result)
+
+# Step 6: LLM generates response using clean_result
+llm_response = llm.generate(f"Based on: {clean_result}, answer: {user_message}")
+
+# Step 7: Guard output
+shield.guard_output(llm_response)
+
+# Step 8: Return to user
+print(llm_response)
+```
+
+---
+
+## Authentication
+
+### Headers
+
+| Header | Required | Purpose |
+|---|---|---|
+| `X-API-Key` | Always | Identifies your tenant; loads your guardrail policies from Redis |
+| `X-Agent-Key` | Recommended | Identifies which agent is making the call (for RBAC, telemetry, budget) |
+| `Authorization: Bearer rpa_...` | RunPod only | RunPod gateway auth; not needed for on-prem deployments |
+
+### Stateless Mode (No Tenant)
+
+If you don't pass `X-API-Key`, Shield runs in stateless mode — no tenant policies loaded. You can either:
+
+1. **Use server defaults** from `config/default.yaml`:
+   ```bash
+   curl -X POST $URL/classify -d '{"message": "test"}'
+   ```
+
+2. **Send per-request config** (client controls which guardrails run):
+   ```bash
+   curl -X POST $URL/classify -d '{
+     "message": "test",
+     "input": {
+       "keyword-blocklist": {"enabled": true, "action": "block", "blocklist": ["bomb"]}
+     }
+   }'
+   ```
+
+### Multi-Tenant Mode
+
+Pass `X-API-Key` → Shield loads your tenant's guardrails from Redis. Per-request `input` overrides are **ignored** (platform-enforced):
+
+```bash
+curl -X POST $URL/classify \
+  -H "X-API-Key: your-tenant-key" \
+  -H "X-Agent-Key: your-bot-1" \
+  -d '{"message": "test"}'
+```
 
 ---
 
@@ -410,6 +675,170 @@ check_delegation("researcher-bot", "writer-bot", "sess_123")
 
 crew = Crew(agents=[researcher, writer], tasks=[...])
 result = crew.kickoff()
+```
+
+---
+
+## OpenAI Agents SDK Integration
+
+Wrap tool calls with Shield checkpoints using the function calling pattern:
+
+```python
+from openai import OpenAI
+import json
+
+client = OpenAI()
+shield = VotalShield(
+    base_url="https://your-endpoint.com",
+    tenant_key="your-tenant-key",
+    agent_key="openai-agent-1",
+    session_id="session-42",
+)
+
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "search_records",
+        "description": "Search patient records",
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+    },
+}]
+
+
+def execute_tool(name: str, args: dict) -> str:
+    """Execute a tool with full guardrail coverage."""
+    # Pre-check
+    shield.guard_tool(name, args)
+
+    # Execute (your actual logic)
+    raw_output = f"Patient record for {args.get('query', '?')}..."
+
+    # Sanitize output
+    return shield.sanitize_tool_output(name, raw_output)
+
+
+def run_agent(user_message: str) -> str:
+    # 1. Guard input
+    shield.guard_input(user_message)
+
+    messages = [{"role": "user", "content": user_message}]
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        tools=tools,
+    )
+
+    choice = response.choices[0]
+
+    # 2. Handle tool calls
+    if choice.finish_reason == "tool_calls":
+        messages.append(choice.message)
+        for tc in choice.message.tool_calls:
+            name = tc.function.name
+            args = json.loads(tc.function.arguments)
+
+            try:
+                result = execute_tool(name, args)
+            except PermissionError as e:
+                result = str(e)
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result,
+            })
+
+        # Get final response with sanitized tool output
+        final = client.chat.completions.create(
+            model="gpt-4o", messages=messages
+        )
+        final_text = final.choices[0].message.content
+    else:
+        final_text = choice.message.content
+
+    # 3. Guard output
+    shield.guard_output(final_text)
+    return final_text
+```
+
+---
+
+## AutoGen / Semantic Kernel / Other Frameworks
+
+The `VotalShield` client (from [Quick Start](#quick-start)) works with any framework. The pattern is always the same:
+
+```python
+shield = VotalShield(base_url=..., tenant_key=..., agent_key=...)
+
+# Before user message reaches LLM:
+shield.guard_input(user_message)
+
+# Before tool execution:
+shield.guard_tool(tool_name, tool_args)
+
+# After tool execution, before feeding result to LLM:
+clean = shield.sanitize_tool_output(tool_name, raw_output)
+
+# Before returning LLM response to user:
+shield.guard_output(llm_response)
+```
+
+### AutoGen Example
+
+```python
+from autogen import AssistantAgent, UserProxyAgent
+
+shield = VotalShield(base_url=..., tenant_key=..., agent_key="autogen-agent")
+
+def guarded_tool_executor(tool_name, tool_args):
+    shield.guard_tool(tool_name, tool_args)
+    raw = original_tool_function(**tool_args)
+    return shield.sanitize_tool_output(tool_name, str(raw))
+
+assistant = AssistantAgent("assistant", llm_config={...})
+user_proxy = UserProxyAgent(
+    "user",
+    function_map={"search_records": guarded_tool_executor},
+)
+
+# Guard input before starting
+shield.guard_input("What's the patient's history?")
+
+user_proxy.initiate_chat(assistant, message="What's the patient's history?")
+
+# Guard final output
+shield.guard_output(assistant.last_message()["content"])
+```
+
+### Semantic Kernel Example
+
+```python
+import semantic_kernel as sk
+from semantic_kernel.functions import kernel_function
+
+shield = VotalShield(base_url=..., tenant_key=..., agent_key="sk-agent")
+
+class GuardedPlugin:
+    @kernel_function(name="search_records", description="Search patient records")
+    def search_records(self, query: str) -> str:
+        shield.guard_tool("search_records", {"query": query})
+        raw = database.query(query)
+        return shield.sanitize_tool_output("search_records", str(raw))
+
+kernel = sk.Kernel()
+kernel.add_plugin(GuardedPlugin(), "medical")
+
+# Guard input
+shield.guard_input(user_message)
+
+result = await kernel.invoke_prompt(user_message)
+
+# Guard output
+shield.guard_output(str(result))
 ```
 
 ---
