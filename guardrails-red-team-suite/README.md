@@ -44,7 +44,7 @@ Prompt variants include direct attacks, base64 obfuscation, few-shot poisoning, 
 Open any `.sh` file and set the two variables at the top:
 
 ```bash
-BASE_URL="https://your-endpoint/classify"
+BASE_URL="https://your-endpoint/guardrails/input"
 TOKEN="your-api-token"
 ```
 

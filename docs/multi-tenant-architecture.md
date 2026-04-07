@@ -114,7 +114,7 @@ Each tenant's agents authenticate and identify themselves:
 import requests
 
 # Tenant A's support bot
-resp = requests.post("https://shield.example.com/v1/shield/classify", 
+resp = requests.post("https://shield.example.com/guardrails/input", 
     json={
         "input": "How do I reset my password?",
         "agent_key": "acme-support-bot-1",
@@ -130,7 +130,7 @@ resp = requests.post("https://shield.example.com/v1/shield/classify",
 
 ```python
 # Tenant B's admin agent
-resp = requests.post("https://shield.example.com/v1/shield/classify",
+resp = requests.post("https://shield.example.com/guardrails/input",
     json={
         "input": "Delete all inactive accounts",
         "agent_key": "globex-admin-agent",
@@ -304,7 +304,7 @@ class VotalTenantCallback(BaseCallbackHandler):
 
     def on_llm_start(self, serialized, prompts, **kwargs):
         for prompt in prompts:
-            resp = requests.post(f"{self.shield_url}/v1/shield/classify", 
+            resp = requests.post(f"{self.shield_url}/guardrails/input", 
                 json={
                     "input": prompt,
                     "agent_key": self.agent_key,
@@ -319,7 +319,7 @@ class VotalTenantCallback(BaseCallbackHandler):
     def on_llm_end(self, response, **kwargs):
         for gen in response.generations:
             for g in gen:
-                resp = requests.post(f"{self.shield_url}/v1/shield/classify/output",
+                resp = requests.post(f"{self.shield_url}/guardrails/input/output",
                     json={
                         "output": g.text,
                         "agent_key": self.agent_key,
@@ -366,7 +366,7 @@ SHIELD_URL = "https://shield.example.com"
 
 # ─── Tenant A: Healthcare company ───
 # Strict PII detection, adversarial detection, no toxicity needed
-resp = requests.post(f"{SHIELD_URL}/classify", 
+resp = requests.post(f"{SHIELD_URL}/guardrails/input", 
     json={
         "message": "Patient John Smith, SSN 123-45-6789, needs refill",
         "agent_key": "healthco-support-bot",
@@ -403,7 +403,7 @@ resp = requests.post(f"{SHIELD_URL}/classify",
 
 # ─── Tenant B: E-commerce company ───
 # Topic restriction, sentiment analysis, relaxed PII
-resp = requests.post(f"{SHIELD_URL}/classify",
+resp = requests.post(f"{SHIELD_URL}/guardrails/input",
     json={
         "message": "I hate your product, give me a refund or I'll sue",
         "agent_key": "shopify-cs-agent",
@@ -440,7 +440,7 @@ resp = requests.post(f"{SHIELD_URL}/classify",
 
 # ─── Tenant C: Financial services ───
 # Maximum security: all guardrails, strict thresholds
-resp = requests.post(f"{SHIELD_URL}/classify",
+resp = requests.post(f"{SHIELD_URL}/guardrails/input",
     json={
         "message": "Transfer $50,000 to account 9876543210",
         "agent_key": "finserv-agent",
@@ -489,7 +489,7 @@ Each tenant configures which output guardrails to apply to LLM responses:
 
 ```python
 # ─── Tenant A: Healthcare — strict PII redaction, no bias ───
-resp = requests.post(f"{SHIELD_URL}/classify_output",
+resp = requests.post(f"{SHIELD_URL}/guardrails/input_output",
     json={
         "output": "The patient John Smith (DOB: 03/15/1985) should take 200mg...",
         "agent_key": "healthco-support-bot",
@@ -524,7 +524,7 @@ resp = requests.post(f"{SHIELD_URL}/classify_output",
 )
 
 # ─── Tenant B: E-commerce — competitor filtering, friendly tone ───
-resp = requests.post(f"{SHIELD_URL}/classify_output",
+resp = requests.post(f"{SHIELD_URL}/guardrails/input_output",
     json={
         "output": "Unlike Amazon, our shipping is faster and cheaper...",
         "agent_key": "shopify-cs-agent",
@@ -559,7 +559,7 @@ resp = requests.post(f"{SHIELD_URL}/classify_output",
 )
 
 # ─── Tenant C: Financial services — maximum output guardrails ───
-resp = requests.post(f"{SHIELD_URL}/classify_output",
+resp = requests.post(f"{SHIELD_URL}/guardrails/input_output",
     json={
         "output": "Your account balance is $52,340. Card ending 4242...",
         "agent_key": "finserv-agent",
@@ -646,7 +646,7 @@ class VotalTenantGuardrailCallback(BaseCallbackHandler):
     def on_llm_start(self, serialized, prompts, **kwargs):
         for prompt in prompts:
             resp = requests.post(
-                f"{self.shield_url}/classify",
+                f"{self.shield_url}/guardrails/input",
                 json={
                     "message": prompt,
                     "agent_key": self.agent_key,
@@ -663,7 +663,7 @@ class VotalTenantGuardrailCallback(BaseCallbackHandler):
         for gen in response.generations:
             for g in gen:
                 resp = requests.post(
-                    f"{self.shield_url}/classify_output",
+                    f"{self.shield_url}/guardrails/input_output",
                     json={
                         "output": g.text,
                         "agent_key": self.agent_key,
@@ -881,7 +881,7 @@ Tenant's dev team integrates using:
 curl -s https://shield.example.com/health
 
 # Send a guardrail check
-curl -X POST https://shield.example.com/v1/shield/classify \
+curl -X POST https://shield.example.com/guardrails/input \
   -H "Authorization: Bearer <tenant-api-key>" \
   -H "X-Agent-Key: acme-support-bot-1" \
   -H "Content-Type: application/json" \

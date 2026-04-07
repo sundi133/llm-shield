@@ -91,11 +91,11 @@
 │  │      - votal_guardrails                               │ │
 │  │                                                       │ │
 │  │  Pre-call hook:                                       │ │
-│  │    POST /classify → Votal AI Guardrails               │ │
+│  │    POST /guardrails/input → Votal AI Guardrails       │ │
 │  │    If blocked → return 403, never reach LLM           │ │
 │  │                                                       │ │
 │  │  Post-call hook:                                      │ │
-│  │    POST /classify_output → Votal AI Guardrails        │ │
+│  │    POST /guardrails/output → Votal AI Guardrails      │ │
 │  │    If blocked → redact/block response                 │ │
 │  └──────────────────────────────────────────────────────┘ │
 │                                                            │
@@ -110,10 +110,10 @@
 ┌───────────────────────────────────────────────────────────┐
 │              VOTAL AI GUARDRAILS API                       │
 │                                                            │
-│  Input:   POST /classify                                   │
+│  Input:   POST /guardrails/input                           │
 │           POST /v1/shield/chat/completions                 │
 │                                                            │
-│  Output:  POST /classify_output                            │
+│  Output:  POST /guardrails/output                          │
 │                                                            │
 │  Config:  GET/PUT /v1/shield/config                        │
 │  Audit:   GET /v1/shield/audit                             │
@@ -134,7 +134,7 @@ litellm_settings:
     - votal_guardrails
 
 votal_guardrails:
-  api_url: "https://your-votal-endpoint/classify"
+  api_url: "https://your-votal-endpoint/guardrails/input"
   api_key: "your-votal-key"
   input_guardrails:
     topic-restriction:

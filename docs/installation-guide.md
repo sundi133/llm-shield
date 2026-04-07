@@ -512,13 +512,13 @@ guard_models:
     timeout: 300
 
 api_endpoints:
-  - path: "/classify"
+  - path: "/guardrails/input"
     method: "POST"
     guard_model: "input_safety"
     cache_enabled: true
     cache_ttl: 300
     
-  - path: "/classify_output"
+  - path: "/guardrails/output"
     method: "POST"
     guard_model: "output_safety"
     cache_enabled: true
@@ -587,7 +587,7 @@ guardrails:
       default_on: true
       config:
         server_url: "http://10.0.1.200:9000"
-        endpoint: "/classify"
+        endpoint: "/guardrails/input"
         timeout: 250
         cache_enabled: true
         
@@ -598,7 +598,7 @@ guardrails:
       default_on: true
       config:
         server_url: "http://10.0.1.200:9000"
-        endpoint: "/classify_output"
+        endpoint: "/guardrails/output"
         timeout: 250
         cache_enabled: true
 
@@ -1323,7 +1323,7 @@ sudo docker logs guardrail-server
 sudo docker-compose -f /opt/llm-shield/docker-compose.guardrail.yml restart
 
 # Test guardrail endpoints directly
-curl -X POST http://localhost:9000/classify \
+curl -X POST http://localhost:9000/guardrails/input \
   -H "Content-Type: application/json" \
   -d '{"text": "test input"}'
 ```

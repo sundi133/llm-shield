@@ -288,12 +288,12 @@ When `upstream_url` is set, Shield forwards the full request body to `{upstream_
 
 ## Integration Pattern 2: Standalone Safety Check
 
-Use `/classify` when you handle your own LLM calls but want a pre-check or post-check.
+Use `/guardrails/input` when you handle your own LLM calls but want a pre-check or post-check.
 
 ### Endpoint
 
 ```
-POST /classify
+POST /guardrails/input
 ```
 
 ### Request
@@ -338,7 +338,7 @@ SHIELD_KEY = "shld_live_abc123"
 def safe_chat(user_message: str) -> str:
     # Step 1: Check with Shield
     check = requests.post(
-        f"{SHIELD_URL}/classify",
+        f"{SHIELD_URL}/guardrails/input",
         headers={"Authorization": f"Bearer {SHIELD_KEY}"},
         json={"message": user_message},
     ).json()
@@ -1076,7 +1076,7 @@ This gives you all CPU-only guardrails (keyword blocklist, PII, regex, rate limi
 | `/health` | GET | No | Health check |
 | `/ping` | GET | No | Liveness probe |
 | `/playground` | GET | No | Interactive testing UI |
-| `/classify` | POST | Yes | Standalone safety classification |
+| `/guardrails/input` | POST | Yes | Standalone safety classification |
 | `/v1/shield/chat/completions` | POST | Yes | Gateway: input guards → LLM → output guards |
 | `/v1/shield/config` | GET | Yes | View current config |
 | `/v1/shield/config` | PUT | Yes | Update guardrails at runtime |

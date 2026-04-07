@@ -31,7 +31,7 @@ User prompt
     │
     ▼
 ┌─────────────────┐
-│ POST /classify  │ ← Input guardrails: adversarial detection, PII,
+│ POST /guardrails/input  │ ← Input guardrails: adversarial detection, PII,
 │                 │   topic restriction, safety check, keyword blocklist
 └────────┬────────┘
          │ action=pass → continue
@@ -69,7 +69,7 @@ User prompt
          │
          ▼
 ┌──────────────────────┐
-│ POST /classify_output│ ← Output guardrails: PII leakage, tone enforcement,
+│ POST /guardrails/output│ ← Output guardrails: PII leakage, tone enforcement,
 │                      │   bias detection, competitor mentions, hallucination
 └────────┬─────────────┘
          │ action=pass → return to user
@@ -84,10 +84,10 @@ User prompt
 
 | Checkpoint Skipped | Risk |
 |---|---|
-| No `/classify` | Prompt injection reaches LLM, adversarial attacks succeed |
+| No `/guardrails/input` | Prompt injection reaches LLM, adversarial attacks succeed |
 | No `/tool/check` | Agent calls tools it shouldn't, no RBAC, no rate limiting |
 | No `/tool/output` | PII from database leaks into LLM context window |
-| No `/classify_output` | LLM response contains PII, bias, wrong tone, hallucinated links |
+| No `/guardrails/input_output` | LLM response contains PII, bias, wrong tone, hallucinated links |
 
 ---
 
@@ -147,7 +147,7 @@ class VotalShield:
 
     def guard_input(self, message: str) -> dict:
         """Check user input. Raises if blocked."""
-        result = self._post("/classify", {"message": message})
+        result = self._post("/guardrails/input", {"message": message})
         if result.get("action") == "block":
             raise PermissionError(f"Input blocked: {result.get('guardrail_results', [])}")
         return result
@@ -177,7 +177,7 @@ class VotalShield:
 
     def guard_output(self, output: str) -> dict:
         """Check LLM response before returning to user. Raises if blocked."""
-        result = self._post("/classify_output", {"output": output})
+        result = self._post("/guardrails/input_output", {"output": output})
         if result.get("action") == "block":
             raise PermissionError(f"Output blocked: {result.get('guardrail_results', [])}")
         return result
@@ -258,12 +258,12 @@ If you don't pass `X-API-Key`, Shield runs in stateless mode — no tenant polic
 
 1. **Use server defaults** from `config/default.yaml`:
    ```bash
-   curl -X POST $URL/classify -d '{"message": "test"}'
+   curl -X POST $URL/guardrails/input -d '{"message": "test"}'
    ```
 
 2. **Send per-request config** (client controls which guardrails run):
    ```bash
-   curl -X POST $URL/classify -d '{
+   curl -X POST $URL/guardrails/input -d '{
      "message": "test",
      "input": {
        "keyword-blocklist": {"enabled": true, "action": "block", "blocklist": ["bomb"]}
@@ -276,7 +276,7 @@ If you don't pass `X-API-Key`, Shield runs in stateless mode — no tenant polic
 Pass `X-API-Key` → Shield loads your tenant's guardrails from Redis. Per-request `input` overrides are **ignored** (platform-enforced):
 
 ```bash
-curl -X POST $URL/classify \
+curl -X POST $URL/guardrails/input \
   -H "X-API-Key: your-tenant-key" \
   -H "X-Agent-Key: your-bot-1" \
   -d '{"message": "test"}'
