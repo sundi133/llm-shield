@@ -1105,6 +1105,285 @@ run_test_with_role "P13" "Diabetes as patient" "block" "patient" '{"message": "I
 run_test_with_role "P14" "Cancer as nurse" "pass" "nurse" '{"message": "Patient has cancer, stage 2"}'
 run_test_with_role "P15" "Depression as doctor" "pass" "doctor" '{"message": "Patient showing signs of depression"}'
 
+# ── Agentic Shield Endpoint Tests ─────────────────────────────────
+section "Agentic Shield Endpoints"
+
+# Function to test shield endpoints
+test_shield_endpoint() {
+  local test_id="$1" test_name="$2" endpoint="$3" expected_field="$4" expected_value="$5" payload="$6"
+
+  TOTAL=$((TOTAL + 1))
+
+  RESPONSE=$(curl -s -X POST "$RUNPOD_HOST$endpoint" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "X-Admin-Key: $SHIELD_ADMIN_KEY" \
+    -H "X-API-Key: $TENANT_API_KEY" \
+    -H "X-Agent-Key: $AGENT_KEY" \
+    -H "X-User-Role: doctor" \
+    -H "X-Tenant-ID: $TENANT_ID" \
+    -H "Content-Type: application/json" \
+    -d "$payload")
+
+  if [ "$expected_field" = "status" ]; then
+    RESULT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('$expected_field', 'unknown'))" 2>/dev/null || echo "parse_error")
+  else
+    RESULT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('$expected_field', False))" 2>/dev/null || echo "parse_error")
+  fi
+
+  if [ "$RESULT" = "$expected_value" ]; then
+    PASS=$((PASS + 1))
+    echo -e "  ${GREEN}✓${RESET} ${BOLD}$test_id${RESET} $test_name → $RESULT"
+  else
+    FAIL=$((FAIL + 1))
+    echo -e "  ${RED}✗${RESET} ${BOLD}$test_id${RESET} $test_name → expected $expected_value, got $RESULT"
+    record_failure "$test_id" "$test_name" "$expected_value" "$RESULT" "$payload" "Endpoint: $endpoint"
+  fi
+}
+
+# Test /v1/shield/tool/check
+test_shield_endpoint "S1" "Tool allowlist check" "/v1/shield/tool/check" "allowed" "true" '{
+  "agent_key": "'$AGENT_KEY'",
+  "tool_name": "search_kb",
+  "session_id": "test-session-1",
+  "tool_params": {"query": "customer info"}
+}'
+
+test_shield_endpoint "S2" "Tool blocked check" "/v1/shield/tool/check" "allowed" "false" '{
+  "agent_key": "'$AGENT_KEY'",
+  "tool_name": "delete_records",
+  "session_id": "test-session-1",
+  "tool_params": {"table": "customers"}
+}'
+
+# Test /v1/shield/tool/output
+test_shield_endpoint "S3" "Tool output sanitization" "/v1/shield/tool/output" "allowed" "true" '{
+  "tool_name": "search_records",
+  "tool_output": "Customer: John Doe, Age: 34, Phone: 555-1234",
+  "agent_key": "'$AGENT_KEY'",
+  "session_id": "test-session-1"
+}'
+
+test_shield_endpoint "S4" "Tool output with PII" "/v1/shield/tool/output" "allowed" "true" '{
+  "tool_name": "get_customer",
+  "tool_output": "Customer: Jane Smith, SSN: 123-45-6789, Card: 4111-1111-1111-1111",
+  "agent_key": "'$AGENT_KEY'",
+  "session_id": "test-session-1"
+}'
+
+# Test /v1/shield/agent/check
+test_shield_endpoint "S5" "Agent behavior check" "/v1/shield/agent/check" "allowed" "true" '{
+  "agent_key": "'$AGENT_KEY'",
+  "session_id": "test-session-1",
+  "action_type": "read",
+  "resource_type": "customer_data",
+  "resource_id": "cust-123"
+}'
+
+test_shield_endpoint "S6" "Agent budget check" "/v1/shield/agent/check" "allowed" "true" '{
+  "agent_key": "'$AGENT_KEY'",
+  "session_id": "test-session-1",
+  "tokens_used": 150,
+  "cost_usd": 0.002,
+  "api_calls": 1
+}'
+
+# Test /v1/shield/memory/check
+test_shield_endpoint "S7" "Memory read check" "/v1/shield/memory/check" "allowed" "true" '{
+  "agent_key": "'$AGENT_KEY'",
+  "operation": "read",
+  "key": "customer_preferences",
+  "value": ""
+}'
+
+test_shield_endpoint "S8" "Memory write check" "/v1/shield/memory/check" "allowed" "true" '{
+  "agent_key": "'$AGENT_KEY'",
+  "operation": "write",
+  "key": "session_state",
+  "value": "active"
+}'
+
+# Test /v1/shield/action/check
+test_shield_endpoint "S9" "Action validation" "/v1/shield/action/check" "allowed" "true" '{
+  "agent_key": "'$AGENT_KEY'",
+  "session_id": "test-session-1",
+  "action_type": "search",
+  "action_details": {"resource": "knowledge_base", "query": "insurance terms"}
+}'
+
+test_shield_endpoint "S10" "Sensitive action" "/v1/shield/action/check" "allowed" "false" '{
+  "agent_key": "'$AGENT_KEY'",
+  "session_id": "test-session-1",
+  "action_type": "delete",
+  "action_details": {"resource": "customer_records", "count": 100}
+}'
+
+# Test /v1/shield/mcp/check
+test_shield_endpoint "S11" "MCP server validation" "/v1/shield/mcp/check" "allowed" "true" '{
+  "agent_key": "'$AGENT_KEY'",
+  "mcp_server": "knowledge-base",
+  "operation": "search",
+  "parameters": {"query": "policy information"}
+}'
+
+# ── Configuration Management Tests ────────────────────────────────
+section "Configuration Management"
+
+# Test config retrieval
+test_config_get() {
+  TOTAL=$((TOTAL + 1))
+
+  CONFIG_RESPONSE=$(curl -s -X GET "$RUNPOD_HOST/v1/shield/config" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "X-Admin-Key: $SHIELD_ADMIN_KEY")
+
+  if echo "$CONFIG_RESPONSE" | grep -q '"guardrails"'; then
+    PASS=$((PASS + 1))
+    echo -e "  ${GREEN}✓${RESET} ${BOLD}C1${RESET} Get configuration"
+  else
+    FAIL=$((FAIL + 1))
+    echo -e "  ${RED}✗${RESET} ${BOLD}C1${RESET} Get configuration failed"
+    record_failure "C1" "Get configuration" "guardrails object" "not found" "" "Config endpoint"
+  fi
+}
+
+# Test config update
+test_config_update() {
+  TOTAL=$((TOTAL + 1))
+
+  UPDATE_RESPONSE=$(curl -s -X PUT "$RUNPOD_HOST/v1/shield/config" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "X-Admin-Key: $SHIELD_ADMIN_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "guardrails": {
+        "test_guardrail": {
+          "enabled": true,
+          "action": "warn",
+          "settings": {"threshold": 0.8}
+        }
+      }
+    }')
+
+  if echo "$UPDATE_RESPONSE" | grep -q '"status".*"updated"'; then
+    PASS=$((PASS + 1))
+    echo -e "  ${GREEN}✓${RESET} ${BOLD}C2${RESET} Update configuration"
+  else
+    FAIL=$((FAIL + 1))
+    echo -e "  ${RED}✗${RESET} ${BOLD}C2${RESET} Update configuration failed"
+    record_failure "C2" "Update configuration" "updated status" "not found" "" "Config update endpoint"
+  fi
+}
+
+# Test guardrails listing
+test_guardrails_list() {
+  TOTAL=$((TOTAL + 1))
+
+  GUARDRAILS_RESPONSE=$(curl -s -X GET "$RUNPOD_HOST/v1/shield/guardrails" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "X-Admin-Key: $SHIELD_ADMIN_KEY")
+
+  if echo "$GUARDRAILS_RESPONSE" | grep -q '"guardrails"'; then
+    PASS=$((PASS + 1))
+    echo -e "  ${GREEN}✓${RESET} ${BOLD}C3${RESET} List guardrails"
+  else
+    FAIL=$((FAIL + 1))
+    echo -e "  ${RED}✗${RESET} ${BOLD}C3${RESET} List guardrails failed"
+    record_failure "C3" "List guardrails" "guardrails array" "not found" "" "Guardrails list endpoint"
+  fi
+}
+
+# Run configuration tests
+test_config_get
+test_config_update
+test_guardrails_list
+
+# ── Policy Management API Tests ───────────────────────────────────
+section "Policy Management API"
+
+# Test policy creation (already have some, add more comprehensive ones)
+test_policy_api() {
+  TOTAL=$((TOTAL + 1))
+
+  # Test policy listing
+  POLICY_LIST=$(curl -s -X GET "$RUNPOD_HOST/v1/shield/policies/$TENANT_ID" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "X-Admin-Key: $SHIELD_ADMIN_KEY")
+
+  POLICY_COUNT=$(echo "$POLICY_LIST" | python3 -c "import sys,json; print(json.load(sys.stdin).get('count', 0))" 2>/dev/null || echo "0")
+
+  if [ "$POLICY_COUNT" -gt "0" ]; then
+    PASS=$((PASS + 1))
+    echo -e "  ${GREEN}✓${RESET} ${BOLD}M1${RESET} List policies (found $POLICY_COUNT)"
+  else
+    FAIL=$((FAIL + 1))
+    echo -e "  ${RED}✗${RESET} ${BOLD}M1${RESET} List policies (found $POLICY_COUNT)"
+    record_failure "M1" "List policies" ">0 policies" "$POLICY_COUNT" "" "Policy list endpoint"
+  fi
+
+  # Test getting specific policy
+  TOTAL=$((TOTAL + 1))
+  SPECIFIC_POLICY=$(curl -s -X GET "$RUNPOD_HOST/v1/shield/policies/$TENANT_ID/healthcare_policy" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "X-Admin-Key: $SHIELD_ADMIN_KEY")
+
+  if echo "$SPECIFIC_POLICY" | grep -q '"policy_id".*"healthcare_policy"'; then
+    PASS=$((PASS + 1))
+    echo -e "  ${GREEN}✓${RESET} ${BOLD}M2${RESET} Get specific policy"
+  else
+    FAIL=$((FAIL + 1))
+    echo -e "  ${RED}✗${RESET} ${BOLD}M2${RESET} Get specific policy failed"
+    record_failure "M2" "Get specific policy" "healthcare_policy object" "not found" "" "Get policy endpoint"
+  fi
+
+  # Test policy update
+  TOTAL=$((TOTAL + 1))
+  UPDATE_POLICY=$(curl -s -X PUT "$RUNPOD_HOST/v1/shield/policies/$TENANT_ID/healthcare_policy" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "X-Admin-Key: $SHIELD_ADMIN_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "description": "Updated healthcare policy for testing",
+      "priority": 5
+    }')
+
+  if echo "$UPDATE_POLICY" | grep -q '"status".*"updated"'; then
+    PASS=$((PASS + 1))
+    echo -e "  ${GREEN}✓${RESET} ${BOLD}M3${RESET} Update policy"
+  else
+    FAIL=$((FAIL + 1))
+    echo -e "  ${RED}✗${RESET} ${BOLD}M3${RESET} Update policy failed"
+    record_failure "M3" "Update policy" "updated status" "not found" "" "Update policy endpoint"
+  fi
+
+  # Test policy testing endpoint
+  TOTAL=$((TOTAL + 1))
+  TEST_POLICY=$(curl -s -X POST "$RUNPOD_HOST/v1/shield/policies/test" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "X-Admin-Key: $SHIELD_ADMIN_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "tenant_id": "'$TENANT_ID'",
+      "policy": {
+        "policy_id": "test_policy",
+        "patterns": [{"regex": "\\\\bSECRET\\\\b", "type": "test_data", "sensitivity": "high"}],
+        "roles": {"doctor": {"test_data": "redact"}}
+      },
+      "test_content": "This contains a SECRET word",
+      "test_user_role": "doctor"
+    }')
+
+  if echo "$TEST_POLICY" | grep -q '"result"'; then
+    PASS=$((PASS + 1))
+    echo -e "  ${GREEN}✓${RESET} ${BOLD}M4${RESET} Test policy endpoint"
+  else
+    FAIL=$((FAIL + 1))
+    echo -e "  ${RED}✗${RESET} ${BOLD}M4${RESET} Test policy endpoint failed"
+    record_failure "M4" "Test policy" "result object" "not found" "" "Test policy endpoint"
+  fi
+}
+
+test_policy_api
+
 # ── Summary ───────────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════╗${RESET}"
