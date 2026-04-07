@@ -1,0 +1,56 @@
+{
+  "description": "Test-friendly configuration with relaxed security for validation",
+  "guardrails": {
+    "regex_pattern": {
+      "enabled": true,
+      "action": "warn",
+      "settings": {
+        "patterns": [
+          {
+            "pattern": "\\b\\d{3}-\\d{2}-\\d{4}\\b",
+            "description": "SSN pattern",
+            "action": "warn"
+          }
+        ]
+      }
+    },
+    "sentiment": {
+      "enabled": true,
+      "action": "warn",
+      "settings": {
+        "min_polarity": -0.6
+      }
+    },
+    "pii_leakage": {
+      "enabled": true,
+      "action": "warn",
+      "settings": {
+        "pii_types": ["SSN", "Credit Card", "Email", "Phone Number"],
+        "threshold": 0.8,
+        "auto_redact": false
+      }
+    },
+    "adversarial_detection": {
+      "enabled": true,
+      "action": "block",
+      "settings": {
+        "confidence_threshold": 0.98
+      }
+    },
+    "safety_check": {
+      "enabled": true,
+      "action": "block",
+      "settings": {
+        "confidence_threshold": 0.95
+      }
+    },
+    "topic_restriction": {
+      "enabled": true,
+      "action": "block",
+      "settings": {
+        "blocked_topics": ["weapons", "violence", "illegal_hacking"],
+        "confidence_threshold": 0.9
+      }
+    }
+  }
+}

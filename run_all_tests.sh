@@ -19,6 +19,7 @@ RESET='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASIC_TEST="$SCRIPT_DIR/test_basic_guardrails.sh"
 AGENTIC_TEST="$SCRIPT_DIR/test_agentic_guardrails.sh"
+SECURITY_TEST="$SCRIPT_DIR/test_security_focused.sh"
 
 echo_header() {
     echo -e "${CYAN}${BOLD}"
@@ -45,6 +46,11 @@ check_requirements() {
         exit 1
     fi
 
+    if [ ! -f "$SECURITY_TEST" ]; then
+        echo -e "${RED}Error: Security test script not found at $SECURITY_TEST${RESET}"
+        exit 1
+    fi
+
     # Check if scripts are executable
     if [ ! -x "$BASIC_TEST" ]; then
         echo -e "${YELLOW}Making basic test script executable...${RESET}"
@@ -54,6 +60,11 @@ check_requirements() {
     if [ ! -x "$AGENTIC_TEST" ]; then
         echo -e "${YELLOW}Making agentic test script executable...${RESET}"
         chmod +x "$AGENTIC_TEST"
+    fi
+
+    if [ ! -x "$SECURITY_TEST" ]; then
+        echo -e "${YELLOW}Making security test script executable...${RESET}"
+        chmod +x "$SECURITY_TEST"
     fi
 
     # Check required environment variables
@@ -104,6 +115,7 @@ echo_header
 # Parse command line options
 RUN_BASIC=true
 RUN_AGENTIC=true
+RUN_SECURITY=false
 STOP_ON_FAILURE=false
 
 while [[ $# -gt 0 ]]; do
@@ -116,6 +128,12 @@ while [[ $# -gt 0 ]]; do
             RUN_BASIC=false
             shift
             ;;
+        --security-focused)
+            RUN_BASIC=false
+            RUN_AGENTIC=false
+            RUN_SECURITY=true
+            shift
+            ;;
         --stop-on-failure)
             STOP_ON_FAILURE=true
             shift
@@ -126,6 +144,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --basic-only        Run only basic guardrail tests"
             echo "  --agentic-only      Run only agentic guardrail tests"
+            echo "  --security-focused  Run security-focused tests with realistic expectations"
             echo "  --stop-on-failure   Stop execution if any test suite fails"
             echo "  -h, --help          Show this help message"
             echo ""
@@ -134,7 +153,7 @@ while [[ $# -gt 0 ]]; do
             echo "  SHIELD_ADMIN_KEY    LLM Shield admin key"
             echo ""
             echo "Optional Environment Variables:"
-            echo "  RUNPOD_HOST         RunPod endpoint (default: https://kk5losqxwr2ui7.api.runpod.ai)"
+            echo "  RUNPOD_HOST         RunPod endpoint (default: from .env file)"
             echo ""
             exit 0
             ;;
@@ -180,6 +199,21 @@ if [ "$RUN_AGENTIC" = true ]; then
         OVERALL_SUCCESS=false
         if [ "$STOP_ON_FAILURE" = true ]; then
             echo -e "${RED}Stopping due to agentic test failure (--stop-on-failure enabled)${RESET}"
+            exit 1
+        fi
+    fi
+    echo ""
+fi
+
+# Run security-focused tests
+if [ "$RUN_SECURITY" = true ]; then
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if run_test_suite "Security-Focused Tests" "$SECURITY_TEST" "$GREEN"; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        OVERALL_SUCCESS=false
+        if [ "$STOP_ON_FAILURE" = true ]; then
+            echo -e "${RED}Stopping due to security test failure (--stop-on-failure enabled)${RESET}"
             exit 1
         fi
     fi
