@@ -95,9 +95,13 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                 blocked_items.append({
                     "data_type": data_type,
                     "match": match_info["text"],
-                    "sensitivity": match_info["sensitivity"]
+                    "sensitivity": match_info["sensitivity"],
+                    "policy_id": policy.get("policy_id", "unknown"),
+                    "policy_name": policy.get("name", "Unknown Policy"),
+                    "user_role": user_role,
+                    "required_permission": "allow"
                 })
-                findings.append(f"{data_type} (blocked)")
+                findings.append(f"{data_type} (blocked by {policy.get('policy_id', 'unknown')})")
                 final_action = "block"
 
             elif action == "redact":
@@ -112,9 +116,13 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                     "data_type": data_type,
                     "original": match_info["text"],
                     "redacted_as": replacement,
-                    "sensitivity": match_info["sensitivity"]
+                    "sensitivity": match_info["sensitivity"],
+                    "policy_id": policy.get("policy_id", "unknown"),
+                    "policy_name": policy.get("name", "Unknown Policy"),
+                    "user_role": user_role,
+                    "applied_action": action
                 })
-                findings.append(f"{data_type} (redacted)")
+                findings.append(f"{data_type} (redacted by {policy.get('policy_id', 'unknown')})")
 
                 if final_action == "allow":
                     final_action = "redact"
@@ -250,7 +258,14 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                     "sanitized_output": "[CONTENT BLOCKED DUE TO DATA POLICY]",
                     "truncated": truncated,
                     "tenant_id": tenant_id,
-                    "user_role": user_role
+                    "user_role": user_role,
+                    "violated_policies": list(set([item.get("policy_id") for item in all_blocked_items])),
+                    "policy_summary": {
+                        policy_id: {
+                            "policy_name": next((item.get("policy_name") for item in all_blocked_items if item.get("policy_id") == policy_id), "Unknown"),
+                            "violations": [item.get("data_type") for item in all_blocked_items if item.get("policy_id") == policy_id]
+                        } for policy_id in set([item.get("policy_id") for item in all_blocked_items])
+                    }
                 }
             )
 

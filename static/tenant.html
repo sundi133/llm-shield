@@ -669,7 +669,7 @@ async function testInput() {
   const headers = { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
   if (agent) headers['X-Agent-Key'] = agent;
   try {
-    const r = await fetch(`${BASE_URL}/classify`, { method: 'POST', headers, body: JSON.stringify({ message: msg }) });
+    const r = await fetch(`${BASE_URL}/guardrails/input`, { method: 'POST', headers, body: JSON.stringify({ message: msg }) });
     const data = await r.json();
     displayResult(data);
   } catch (e) { displayResult({ error: e.message }); }
@@ -681,7 +681,7 @@ async function testOutput() {
   const headers = { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
   if (agent) headers['X-Agent-Key'] = agent;
   try {
-    const r = await fetch(`${BASE_URL}/classify_output`, { method: 'POST', headers, body: JSON.stringify({ output: msg }) });
+    const r = await fetch(`${BASE_URL}/guardrails/output`, { method: 'POST', headers, body: JSON.stringify({ output: msg }) });
     const data = await r.json();
     displayResult(data);
   } catch (e) { displayResult({ error: e.message }); }

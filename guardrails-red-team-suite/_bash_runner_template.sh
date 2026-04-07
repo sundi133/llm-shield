@@ -1,6 +1,6 @@
 # ── Red Team Benchmark — __TITLE__ ───────────────────────────────
 # Set your guardrails / classify endpoint and credential before running.
-BASE_URL="https://YOUR_ENDPOINT/classify"
+BASE_URL="https://YOUR_ENDPOINT/guardrails/input"
 TOKEN="YOUR_TOKEN_HERE"
 
 PASS=0

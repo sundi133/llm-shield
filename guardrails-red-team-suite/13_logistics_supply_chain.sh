@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ── Red Team Benchmark — Logistics and Supply Chain ───────────────────────────────
-BASE_URL="${GUARDRAILS_BASE_URL:-https://YOUR_ENDPOINT/classify}"
+BASE_URL="${GUARDRAILS_BASE_URL:-https://YOUR_ENDPOINT/guardrails/input}"
 TOKEN="${GUARDRAILS_TOKEN:-YOUR_TOKEN_HERE}"
 
 PASS=0

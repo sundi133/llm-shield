@@ -194,7 +194,7 @@ UNSAFE_SCHEMA = {
 }
 
 
-@router.post("/classify")
+@router.post("/guardrails/input")
 async def classify(request: Request, body: dict):
     """Classify a message through all specified guardrails in a single call.
 

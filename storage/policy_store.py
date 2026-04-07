@@ -1,11 +1,17 @@
-"""Policy store backed by Redis for tenant-specific data protection policies.
+"""Policy store backed by Redis for tenant-specific policies.
 
-Stores custom data protection policies, patterns, and role-based access rules.
+Stores:
+- Data protection policies (PII patterns, role-based access)
+- Agent/tool policies (tool registration, role-based tool access, data sanitization)
+- Tool call validation rules and LLM validation settings
+
 Uses the same Redis/fallback pattern as tenant_store.
 
 Redis keys:
     policy:{tenant_id}:{policy_id}    → JSON policy config
     policies:{tenant_id}             → SET of policy IDs for tenant
+    agents:{tenant_id}               → JSON agent registry config
+    tool_policies:{tenant_id}        → JSON tool-specific policies
 """
 
 import json
@@ -311,4 +317,192 @@ def test_policy_against_content(policy_config: dict, content: str, user_role: st
         "policy_decisions": policy_decisions,
         "blocked_items": blocked_items,
         "redacted_items": redacted_items
+    }
+
+
+# ============================================================================
+# Agent and Tool Policy Management
+# ============================================================================
+
+def register_agent(tenant_id: str, agent_config: dict) -> dict:
+    """Register an agent with its available tools and role-based access.
+
+    Args:
+        tenant_id: Tenant identifier
+        agent_config: Agent configuration dict containing:
+            - agent_id: Unique agent identifier
+            - name: Display name
+            - description: Agent description
+            - tools: List of tool names this agent can use
+            - role_permissions: Dict mapping roles to allowed tools
+
+    Returns:
+        The stored agent config.
+    """
+    agent_config.setdefault("created_at", int(time.time()))
+    agent_config.setdefault("updated_at", int(time.time()))
+
+    agents_key = f"agents:{tenant_id}"
+
+    r = _get_redis()
+    if r:
+        # Get existing agents or create new dict
+        existing = r.get(agents_key)
+        agents = json.loads(existing) if existing else {}
+
+        # Add/update agent
+        agents[agent_config["agent_id"]] = agent_config
+
+        # Store back
+        r.set(agents_key, json.dumps(agents))
+    else:
+        existing = _fallback_store.get(agents_key)
+        agents = json.loads(existing) if existing else {}
+        agents[agent_config["agent_id"]] = agent_config
+        _fallback_store[agents_key] = json.dumps(agents)
+
+    logger.info(f"Registered agent {agent_config['agent_id']} for tenant {tenant_id}")
+    return agent_config
+
+
+def get_agent_registry(tenant_id: str) -> dict:
+    """Get all registered agents for a tenant."""
+    agents_key = f"agents:{tenant_id}"
+
+    r = _get_redis()
+    if r:
+        data = r.get(agents_key)
+    else:
+        data = _fallback_store.get(agents_key)
+
+    return json.loads(data) if data else {}
+
+
+def set_tool_policies(tenant_id: str, tool_policies: dict) -> dict:
+    """Set tool-specific policies for data sanitization and LLM validation.
+
+    Args:
+        tenant_id: Tenant identifier
+        tool_policies: Dict mapping tool names to policy configs:
+            {
+                "patient_lookup": {
+                    "data_sanitization": {
+                        "redact_ssn": True,
+                        "mask_phone": True,
+                        "patterns": [...]
+                    },
+                    "llm_validation": {
+                        "enabled": True,
+                        "prompt": "Validate if this request is appropriate for {user_role}",
+                        "confidence_threshold": 0.7
+                    },
+                    "role_restrictions": {
+                        "admin": "allow",
+                        "member": "allow",
+                        "patient": "block"
+                    }
+                }
+            }
+
+    Returns:
+        The stored tool policies.
+    """
+    tool_policies["updated_at"] = int(time.time())
+
+    policies_key = f"tool_policies:{tenant_id}"
+
+    r = _get_redis()
+    if r:
+        r.set(policies_key, json.dumps(tool_policies))
+    else:
+        _fallback_store[policies_key] = json.dumps(tool_policies)
+
+    logger.info(f"Updated tool policies for tenant {tenant_id}")
+    return tool_policies
+
+
+def get_tool_policies(tenant_id: str) -> dict:
+    """Get all tool-specific policies for a tenant."""
+    policies_key = f"tool_policies:{tenant_id}"
+
+    r = _get_redis()
+    if r:
+        data = r.get(policies_key)
+    else:
+        data = _fallback_store.get(policies_key)
+
+    return json.loads(data) if data else {}
+
+
+def check_tool_authorization(tenant_id: str, agent_id: str, tool_name: str, user_role: str) -> dict:
+    """Check if a user role is authorized to use a specific tool via an agent.
+
+    Args:
+        tenant_id: Tenant identifier
+        agent_id: Agent identifier
+        tool_name: Tool name
+        user_role: User's role (admin, member, patient, etc.)
+
+    Returns:
+        {
+            "allowed": bool,
+            "reason": str,
+            "agent_config": dict,
+            "tool_policy": dict
+        }
+    """
+    # Get agent registry
+    agents = get_agent_registry(tenant_id)
+    if agent_id not in agents:
+        return {
+            "allowed": False,
+            "reason": f"Agent {agent_id} not registered for tenant {tenant_id}",
+            "agent_config": None,
+            "tool_policy": None
+        }
+
+    agent_config = agents[agent_id]
+
+    # Check if agent has access to this tool
+    if tool_name not in agent_config.get("tools", []):
+        return {
+            "allowed": False,
+            "reason": f"Tool {tool_name} not available for agent {agent_id}",
+            "agent_config": agent_config,
+            "tool_policy": None
+        }
+
+    # Check role-based permissions for agent
+    role_permissions = agent_config.get("role_permissions", {})
+    allowed_tools = role_permissions.get(user_role, [])
+
+    if tool_name not in allowed_tools:
+        return {
+            "allowed": False,
+            "reason": f"Role {user_role} not authorized for tool {tool_name}",
+            "agent_config": agent_config,
+            "tool_policy": None
+        }
+
+    # Get tool-specific policies
+    tool_policies = get_tool_policies(tenant_id)
+    tool_policy = tool_policies.get(tool_name, {})
+
+    # Check tool-level role restrictions
+    role_restrictions = tool_policy.get("role_restrictions", {})
+    tool_action = role_restrictions.get(user_role, "allow")
+
+    if tool_action == "block":
+        return {
+            "allowed": False,
+            "reason": f"Tool policy blocks {user_role} from using {tool_name}",
+            "agent_config": agent_config,
+            "tool_policy": tool_policy
+        }
+
+    return {
+        "allowed": True,
+        "reason": "Authorized",
+        "agent_config": agent_config,
+        "tool_policy": tool_policy
     }

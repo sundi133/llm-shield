@@ -222,7 +222,7 @@
     setLoading(true);
     const start = performance.now();
     try {
-      const resp = await fetch("/classify", {
+      const resp = await fetch("/guardrails/input", {
         method: "POST",
         headers: buildHeaders(),
         body: JSON.stringify({ message: message }),

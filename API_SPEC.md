@@ -4,8 +4,8 @@
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/classify` | POST | Run input guardrails on a message |
-| `/classify_output` | POST | Run output guardrails on LLM response |
+| `/guardrails/input` | POST | Run input guardrails on a message |
+| `/guardrails/output` | POST | Run output guardrails on LLM response |
 | `/v1/shield/chat/completions` | POST | Full proxy: input guardrails → LLM → output guardrails |
 | `/v1/shield/topic/check` | POST | Standalone topic classification |
 | `/v1/shield/config` | GET | Retrieve current config |
@@ -18,7 +18,7 @@
 
 ---
 
-## POST `/classify` — Input Guardrails
+## POST `/guardrails/input` — Input Guardrails
 
 Checks a user message against input guardrails before it reaches your LLM.
 
@@ -112,7 +112,7 @@ Checks a user message against input guardrails before it reaches your LLM.
 
 ---
 
-## POST `/classify_output` — Output Guardrails
+## POST `/guardrails/output` — Output Guardrails
 
 Checks LLM-generated text against output guardrails before returning to the user.
 
@@ -167,7 +167,7 @@ Checks LLM-generated text against output guardrails before returning to the user
 
 ### Response
 
-Same format as `/classify`.
+Same format as `/guardrails/input`.
 
 ---
 

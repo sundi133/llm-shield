@@ -1,6 +1,6 @@
 """Tool checking routes — pre-execution validation, output sanitization, confirmation."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -86,13 +86,22 @@ async def check_tool(body: ToolCheckRequest):
 
 
 @router.post("/output")
-async def check_tool_output(body: ToolOutputRequest):
+async def check_tool_output(body: ToolOutputRequest, request: Request):
     guard = ToolOutputSanitizationGuardrail()
+
+    # Extract tenant and user context from headers for policy enforcement
+    tenant_id = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
+    user_role = request.headers.get("X-User-Role") or request.headers.get("x-user-role", "user")
+
     context = {
         "tool_name": body.tool_name,
         "tool_output": body.tool_output,
         "agent_key": body.agent_key,
         "session_id": body.session_id,
+        "tenant_id": tenant_id,
+        "user_role": user_role,
+        "X-Tenant-ID": tenant_id,  # Alternative format for backward compatibility
+        "X-User-Role": user_role,
     }
     r = await guard.check(body.tool_output, context)
     sanitized = (r.details or {}).get("sanitized_output", body.tool_output)

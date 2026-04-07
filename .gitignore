@@ -7,3 +7,18 @@ storage/audit.db
 dist/
 build/
 test_votal.sh
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Claude settings with potentially sensitive data
+.claude/
+.claude/**
+
+# Backup and temporary files
+*.bak
+*.tmp
+*.swp
+.DS_Store

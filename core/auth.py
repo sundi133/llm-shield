@@ -135,3 +135,26 @@ def _validate_key(provided: str, valid_keys: list[str]) -> bool:
                 return True
 
     return False
+
+
+def get_tenant_from_request(request: Request) -> str:
+    """Extract tenant ID from request state (set by AuthMiddleware).
+
+    This is a FastAPI dependency function for use with Depends().
+    """
+    from fastapi import HTTPException
+
+    if not hasattr(request, "state") or not hasattr(request.state, "tenant_id"):
+        raise HTTPException(
+            status_code=401,
+            detail="No valid tenant API key provided. Use X-API-Key header."
+        )
+
+    tenant_id = request.state.tenant_id
+    if not tenant_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid tenant context. Please check your API key."
+        )
+
+    return tenant_id

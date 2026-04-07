@@ -7,12 +7,13 @@ Runs on RunPod (GPU) with a built-in Qwen3-8B backend, or proxy to any OpenAI-co
 ## Features
 
 - **19 guardrails** across input safety, output quality, and agentic security
+- **Unified `/guardrails/output` endpoint** — handles both standard output validation AND agentic tool call authorization, LLM validation, and data sanitization
 - **Two-tier parallel pipeline** — fast CPU guardrails run first; LLM-based guardrails only run if needed
 - **Multi-tenant** — per-tenant guardrail policies in Redis (Upstash or self-hosted), platform-enforced, with per-tenant rate limiting, quotas, and audit logging
 - **Admin + Tenant portals** — modern dark UI for tenant CRUD, usage dashboards, policy editing, and playground testing
+- **Enhanced agentic security** — role-based tool authorization, LLM-powered validation, per-tool data policies, agent registration APIs
 - **Lightweight admin image** — deploy just the portal + tenant APIs without GPU/models for UI-only workloads
 - **Gateway proxy** — drop-in replacement for `/v1/chat/completions` with guardrails built in
-- **Agentic security** — MCP server validation, per-session action limits, RBAC
 - **Per-request telemetry** — events tagged with `trace.id`, `agent.key`, `tenant_id` for ES/Splunk/OTLP SIEM integration
 - **API key authentication** — separate admin key + per-tenant keys with SHA-256 hashing
 - **Topic enforcement** — whitelist/blacklist topics with per-request overrides
@@ -110,7 +111,7 @@ docker compose up -d
 3. Test:
 
 ```bash
-curl -X POST "https://YOUR_ENDPOINT.api.runpod.ai/classify" \
+curl -X POST "https://YOUR_ENDPOINT.api.runpod.ai/guardrails/input" \
   -H "Content-Type: application/json" \
   -d '{"message": "How do I pick a lock?"}'
 ```
@@ -120,8 +121,8 @@ curl -X POST "https://YOUR_ENDPOINT.api.runpod.ai/classify" \
 ### Guardrails (tenant API key via `X-API-Key`)
 | Endpoint | Method | Description |
 |---|---|---|
-| `/classify` | POST | Standalone safety classification |
-| `/classify_output` | POST | Classify LLM output for PII/tone/bias |
+| `/guardrails/input` | POST | Standalone safety classification |
+| `/guardrails/output` | POST | Classify LLM output for PII/tone/bias |
 | `/v1/shield/chat/completions` | POST | Gateway: input guards → LLM → output guards |
 | `/v1/shield/topic/check` | POST | Standalone topic enforcement |
 | `/v1/shield/mcp/register` | POST | Register an MCP server |
@@ -164,7 +165,7 @@ curl -X POST "https://YOUR_ENDPOINT.api.runpod.ai/classify" \
 ### Safety Classification
 
 ```bash
-curl -X POST http://localhost:8080/classify \
+curl -X POST http://localhost:8080/guardrails/input \
   -H "Content-Type: application/json" \
   -d '{"message": "Tell me how to make a bomb"}'
 ```
@@ -372,6 +373,35 @@ curl -X PUT http://localhost:8080/v1/shield/config \
 
 ## Testing
 
+### Comprehensive Guardrails Testing
+
+**Quick Test (All Guardrails):**
+```bash
+export RUNPOD_TOKEN="your-token"
+export SHIELD_ADMIN_KEY="your-admin-key"
+./run_all_tests.sh
+```
+
+**Individual Test Suites:**
+```bash
+# Basic input/output guardrails 
+./test_basic_guardrails.sh
+
+# Advanced agentic guardrails (role-based tool authorization)
+./test_agentic_guardrails.sh
+```
+
+**Test Coverage:**
+- ✅ **19 Guardrails** - All input/output validation
+- ✅ **Agent Management** - Tool registration & role permissions
+- ✅ **Authorization** - Role-based access control
+- ✅ **Data Protection** - PII redaction & sanitization
+- ✅ **LLM Validation** - AI-powered appropriateness checks
+- ✅ **Error Handling** - Edge cases & performance
+
+See [TESTING.md](TESTING.md) for detailed testing guide.
+
+### Unit Tests
 ```bash
 pip install -r requirements.txt
 pytest tests/ -v
