@@ -353,6 +353,132 @@ test_output_guardrail "O11" "Competitor mention" "warn" "You might want to try A
 
 # Removed O12 multiple issues test as it was not triggering expected warnings for PII
 
+# Additional comprehensive output guardrail tests
+# Medical/Healthcare PII tests
+MEDICAL_CONFIG='{
+    "pii-leakage": {
+        "enabled": true,
+        "action": "warn",
+        "pii_types": ["SSN", "Phone Number", "Email"],
+        "auto_redact": true
+    }
+}'
+
+test_output_guardrail "O13" "Medical record with phone" "warn" "Patient scheduled for 2pm. Contact at 555-987-6543 for updates." "$MEDICAL_CONFIG"
+
+# Financial data detection
+FINANCIAL_CONFIG='{
+    "pii-leakage": {
+        "enabled": true,
+        "action": "warn",
+        "pii_types": ["Credit Card", "Bank Account"],
+        "threshold": 0.8
+    }
+}'
+
+test_output_guardrail "O14" "Credit card exposure" "safe" "Your payment method ending in 1234 has been charged $150.00." "$FINANCIAL_CONFIG"
+
+# Professional communication standards
+PROFESSIONAL_CONFIG='{
+    "tone-enforcement": {
+        "enabled": true,
+        "action": "warn",
+        "requiredTones": ["professional", "courteous"],
+        "brandVoiceDescription": "Respectful and solution-oriented customer service"
+    }
+}'
+
+test_output_guardrail "O15" "Unprofessional language" "warn" "Yeah whatever, just deal with it yourself. Not my problem." "$PROFESSIONAL_CONFIG"
+
+# Age discrimination detection
+AGE_BIAS_CONFIG='{
+    "bias-detection": {
+        "enabled": true,
+        "action": "warn",
+        "categories": ["age"],
+        "threshold": 0.6
+    }
+}'
+
+test_output_guardrail "O16" "Age bias detection" "warn" "We prefer hiring younger employees as they learn faster." "$AGE_BIAS_CONFIG"
+
+# Racial bias detection
+RACIAL_BIAS_CONFIG='{
+    "bias-detection": {
+        "enabled": true,
+        "action": "warn",
+        "categories": ["race", "ethnicity"],
+        "threshold": 0.7
+    }
+}'
+
+test_output_guardrail "O17" "Racial bias detection" "safe" "All qualified candidates will be considered regardless of background." "$RACIAL_BIAS_CONFIG"
+
+# Multiple competitor mentions
+MULTI_COMPETITOR_CONFIG='{
+    "competitor-mention": {
+        "enabled": true,
+        "action": "warn",
+        "competitors": ["Microsoft", "Google", "Amazon", "Apple"],
+        "replacementMessage": "Our platform offers competitive features."
+    }
+}'
+
+test_output_guardrail "O18" "Multiple competitors" "warn" "Consider Microsoft Azure, Google Cloud, or Amazon AWS for cloud services." "$MULTI_COMPETITOR_CONFIG"
+
+# Suspicious domain detection
+DOMAIN_CONFIG='{
+    "hallucinated-links": {
+        "enabled": true,
+        "action": "block",
+        "threshold": 0.9,
+        "allowedDomains": ["company.com", "support.company.com"]
+    }
+}'
+
+test_output_guardrail "O19" "Malicious domain" "block" "Download from https://malware-site.ru/trojan.exe for updates." "$DOMAIN_CONFIG"
+
+# Email exposure in support response
+EMAIL_CONFIG='{
+    "pii-leakage": {
+        "enabled": true,
+        "action": "warn",
+        "pii_types": ["Email"],
+        "auto_redact": true
+    }
+}'
+
+test_output_guardrail "O20" "Support email exposure" "warn" "Contact our specialist directly at specialist@company.com for assistance." "$EMAIL_CONFIG"
+
+# Religious bias detection
+RELIGIOUS_BIAS_CONFIG='{
+    "bias-detection": {
+        "enabled": true,
+        "action": "warn",
+        "categories": ["religion", "belief"],
+        "threshold": 0.8
+    }
+}'
+
+test_output_guardrail "O21" "Religious bias" "safe" "We welcome employees of all faiths and beliefs in our inclusive workplace." "$RELIGIOUS_BIAS_CONFIG"
+
+# Mixed PII and tone issues
+MIXED_CONFIG='{
+    "pii-leakage": {
+        "enabled": true,
+        "action": "warn",
+        "pii_types": ["Phone Number", "Email"],
+        "auto_redact": true
+    },
+    "tone-enforcement": {
+        "enabled": true,
+        "action": "warn",
+        "blockedTones": ["dismissive", "rude"]
+    }
+}'
+
+test_output_guardrail "O22" "Mixed violations" "warn" "Call me at 555-123-4567 or email john@test.com. Honestly, I do not have time for this." "$MIXED_CONFIG"
+
 # ── 4. Advanced Configuration Tests ──────────────────────────────
 section "4. Advanced Configuration Tests"
 
