@@ -1,10 +1,16 @@
-"""Sanitize tool outputs — PII scrubbing, secret detection, length truncation."""
+"""Sanitize tool outputs — PII scrubbing, secret detection, length truncation.
+
+Enhanced with tenant-specific policy support from Redis storage.
+"""
 
 import re
-from typing import Optional
+import logging
+from typing import Optional, List, Dict
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
+
+logger = logging.getLogger("votal.tool_output_sanitization")
 
 _DEFAULT_PATTERNS = [
     (r"\b\d{3}-\d{2}-\d{4}\b", "[SSN_REDACTED]", "SSN"),
@@ -18,15 +24,117 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
     tier = "fast"
     stage = "agentic"
 
-    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
-        ctx = context or {}
-        tool_output = ctx.get("tool_output", content)
-        tool_name = ctx.get("tool_name", "")
+    def _load_tenant_policies(self, tenant_id: str) -> List[Dict]:
+        """Load tenant-specific data protection policies."""
+        if not tenant_id:
+            return []
 
-        redacted = tool_output
+        try:
+            from storage.policy_store import get_tenant_policies
+            policies = get_tenant_policies(tenant_id, include_deleted=False)
+            # Only return enabled policies, sorted by priority
+            enabled_policies = [p for p in policies if p.get("enabled", True)]
+            enabled_policies.sort(key=lambda p: p.get("priority", 100))
+            return enabled_policies
+        except Exception as e:
+            logger.warning(f"Failed to load policies for tenant {tenant_id}: {e}")
+            return []
+
+    def _apply_policy_patterns(self, content: str, policies: List[Dict], user_role: str) -> Dict:
+        """Apply tenant policy patterns with role-based access control."""
+        redacted_content = content
+        findings = []
+        blocked_items = []
+        redacted_items = []
+        final_action = "allow"
+
+        # Collect all pattern matches first
+        all_matches = []
+
+        for policy in policies:
+            for pattern_def in policy.get("patterns", []):
+                regex = pattern_def.get("regex")
+                data_type = pattern_def.get("type")
+                sensitivity = pattern_def.get("sensitivity", "medium")
+                replacement = pattern_def.get("replacement", f"[{data_type.upper()}_REDACTED]")
+
+                if not regex:
+                    continue
+
+                try:
+                    matches = list(re.finditer(regex, content, re.IGNORECASE))
+                    for match in matches:
+                        all_matches.append({
+                            "match": match,
+                            "data_type": data_type,
+                            "sensitivity": sensitivity,
+                            "replacement": replacement,
+                            "policy": policy,
+                            "start": match.start(),
+                            "end": match.end(),
+                            "text": match.group()
+                        })
+                except re.error as e:
+                    logger.warning(f"Invalid regex pattern '{regex}': {e}")
+                    continue
+
+        # Sort matches by position (reverse order to maintain positions during replacement)
+        all_matches.sort(key=lambda m: m["start"], reverse=True)
+
+        # Apply role-based access control
+        for match_info in all_matches:
+            policy = match_info["policy"]
+            data_type = match_info["data_type"]
+
+            # Get role permissions for this data type
+            roles = policy.get("roles", {})
+            user_perms = roles.get(user_role, {})
+            action = user_perms.get(data_type, "block")  # Default to block
+
+            if action == "block":
+                blocked_items.append({
+                    "data_type": data_type,
+                    "match": match_info["text"],
+                    "sensitivity": match_info["sensitivity"]
+                })
+                findings.append(f"{data_type} (blocked)")
+                final_action = "block"
+
+            elif action == "redact":
+                # Replace the match with redaction placeholder
+                start = match_info["start"]
+                end = match_info["end"]
+                replacement = match_info["replacement"]
+
+                redacted_content = redacted_content[:start] + replacement + redacted_content[end:]
+
+                redacted_items.append({
+                    "data_type": data_type,
+                    "original": match_info["text"],
+                    "redacted_as": replacement,
+                    "sensitivity": match_info["sensitivity"]
+                })
+                findings.append(f"{data_type} (redacted)")
+
+                if final_action == "allow":
+                    final_action = "redact"
+
+            # "allow" action = no change needed
+
+        return {
+            "final_action": final_action,
+            "processed_content": redacted_content if final_action != "block" else "[CONTENT BLOCKED DUE TO DATA POLICY]",
+            "findings": findings,
+            "blocked_items": blocked_items,
+            "redacted_items": redacted_items
+        }
+
+    def _apply_legacy_patterns(self, content: str) -> Dict:
+        """Apply legacy hardcoded patterns as fallback."""
+        redacted = content
         findings = []
 
-        # Apply configured patterns
+        # Apply configured patterns from settings
         for entry in self.settings.get("redaction_patterns", []):
             pattern = entry.get("pattern", "")
             replacement = entry.get("replacement", "[REDACTED]")
@@ -40,7 +148,19 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                 findings.append(desc)
                 redacted = re.sub(pattern, replacement, redacted, flags=re.IGNORECASE)
 
-        # Per-tool column redaction (for structured outputs)
+        return {
+            "final_action": "redact" if findings else "allow",
+            "processed_content": redacted,
+            "findings": findings,
+            "blocked_items": [],
+            "redacted_items": [{"data_type": f, "original": "[pattern match]", "redacted_as": "[REDACTED]"} for f in findings]
+        }
+
+    def _apply_per_tool_rules(self, content: str, tool_name: str) -> Dict:
+        """Apply per-tool column redaction rules."""
+        redacted = content
+        findings = []
+
         per_tool = self.settings.get("per_tool_rules", {}).get(tool_name, {})
         for col in per_tool.get("redact_columns", []):
             pattern = rf'(?i)"{col}"\s*:\s*"[^"]*"'
@@ -48,19 +168,121 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                 findings.append(f"column:{col}")
                 redacted = re.sub(pattern, f'"{col}": "[REDACTED]"', redacted)
 
-        # Length truncation
+        return {
+            "final_action": "redact" if findings else "allow",
+            "processed_content": redacted,
+            "findings": findings
+        }
+
+    async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+        ctx = context or {}
+        tool_output = ctx.get("tool_output", content)
+        tool_name = ctx.get("tool_name", "")
+
+        # Extract tenant and user context
+        tenant_id = ctx.get("tenant_id") or ctx.get("X-Tenant-ID")
+        user_role = ctx.get("user_role") or ctx.get("X-User-Role", "user")
+        agent_key = ctx.get("agent_key")
+
+        logger.debug(f"Checking tool output: tenant={tenant_id}, role={user_role}, tool={tool_name}")
+
+        # Start with original content
+        processed_content = tool_output
+        all_findings = []
+        all_blocked_items = []
+        all_redacted_items = []
+        final_action = "allow"
+
+        # 1. Apply tenant-specific policies (highest priority)
+        if tenant_id:
+            policies = self._load_tenant_policies(tenant_id)
+            if policies:
+                logger.debug(f"Applying {len(policies)} tenant policies for {tenant_id}")
+                policy_result = self._apply_policy_patterns(processed_content, policies, user_role)
+                processed_content = policy_result["processed_content"]
+                all_findings.extend(policy_result["findings"])
+                all_blocked_items.extend(policy_result["blocked_items"])
+                all_redacted_items.extend(policy_result["redacted_items"])
+
+                if policy_result["final_action"] in ("block", "redact"):
+                    final_action = policy_result["final_action"]
+
+        # 2. Apply legacy patterns if no policies blocked content
+        if final_action != "block":
+            legacy_result = self._apply_legacy_patterns(processed_content)
+            if legacy_result["final_action"] == "redact":
+                processed_content = legacy_result["processed_content"]
+                all_findings.extend(legacy_result["findings"])
+                all_redacted_items.extend(legacy_result["redacted_items"])
+
+                if final_action == "allow":
+                    final_action = "redact"
+
+        # 3. Apply per-tool rules if content still allowed
+        if final_action != "block" and tool_name:
+            tool_result = self._apply_per_tool_rules(processed_content, tool_name)
+            if tool_result["final_action"] == "redact":
+                processed_content = tool_result["processed_content"]
+                all_findings.extend(tool_result["findings"])
+
+                if final_action == "allow":
+                    final_action = "redact"
+
+        # 4. Apply length truncation
         max_len = self.settings.get("max_output_length", 0)
         truncated = False
-        if max_len and len(redacted) > max_len:
-            redacted = redacted[:max_len] + "... [TRUNCATED]"
+        if max_len and len(processed_content) > max_len:
+            processed_content = processed_content[:max_len] + "... [TRUNCATED]"
             truncated = True
+            all_findings.append("content_truncated")
 
-        if findings:
+        # Build result
+        if final_action == "block":
             return GuardrailResult(
-                passed=False, action=self.configured_action, guardrail_name=self.name,
-                message=f"Sensitive data found in tool output: {', '.join(findings)}",
-                details={"findings": findings, "sanitized_output": redacted, "truncated": truncated})
+                passed=False,
+                action="block",
+                guardrail_name=self.name,
+                message=f"Content blocked due to data policy violations: {', '.join(all_findings)}",
+                details={
+                    "findings": all_findings,
+                    "blocked_items": all_blocked_items,
+                    "redacted_items": all_redacted_items,
+                    "sanitized_output": "[CONTENT BLOCKED DUE TO DATA POLICY]",
+                    "truncated": truncated,
+                    "tenant_id": tenant_id,
+                    "user_role": user_role
+                }
+            )
 
-        return GuardrailResult(passed=True, action="pass", guardrail_name=self.name,
-                               message="Tool output clean",
-                               details={"sanitized_output": redacted, "truncated": truncated})
+        elif all_findings:
+            return GuardrailResult(
+                passed=False,
+                action=self.configured_action,
+                guardrail_name=self.name,
+                message=f"Sensitive data found in tool output: {', '.join(all_findings)}",
+                details={
+                    "findings": all_findings,
+                    "blocked_items": all_blocked_items,
+                    "redacted_items": all_redacted_items,
+                    "sanitized_output": processed_content,
+                    "truncated": truncated,
+                    "tenant_id": tenant_id,
+                    "user_role": user_role
+                }
+            )
+
+        return GuardrailResult(
+            passed=True,
+            action="pass",
+            guardrail_name=self.name,
+            message="Tool output clean",
+            details={
+                "findings": [],
+                "blocked_items": [],
+                "redacted_items": [],
+                "sanitized_output": processed_content,
+                "truncated": truncated,
+                "tenant_id": tenant_id,
+                "user_role": user_role
+            }
+        )

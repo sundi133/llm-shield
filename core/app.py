@@ -23,6 +23,7 @@ from api.routes_memory import router as memory_router
 from api.routes_agent import router as agent_router
 from api.routes_tenant import router as tenant_router, global_router as tenant_audit_router
 from api.routes_tenant_self import router as tenant_self_router
+from api.routes_policy import router as policy_router
 from storage.audit_log import audit_logger
 
 
@@ -55,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(tenant_router)
     app.include_router(tenant_audit_router)
     app.include_router(tenant_self_router)
+    app.include_router(policy_router)
 
     # Serve playground
     _static_dir = os.path.join(
