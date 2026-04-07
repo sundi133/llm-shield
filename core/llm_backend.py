@@ -129,11 +129,12 @@ def _build_server_args(port: int, model_path: str, draft_model_path: str) -> lis
             "--port",
             str(port),
             "-np",
-            "8",
+            "4",
             "--cache-type-k",
-            "q4_0",
+            "q8_0",
             "--cache-type-v",
-            "q4_0",
+            "q8_0",
+            "-cb",
             "--log-disable",
         ]
     )
