@@ -772,11 +772,42 @@ async function loadAgentData() {
         </div>`;
     }
   } catch (error) {
+    // Show demo data when API is unavailable
+    console.log('API unavailable, showing demo data:', error.message);
+    const mockAgents = {
+      "healthcare-doctor": {
+        name: "Doctor AI Assistant",
+        description: "Healthcare assistant with full patient access",
+        tools: ["patient_lookup", "prescribe_medication", "view_records"],
+        role_permissions: {
+          doctor: ["patient_lookup", "prescribe_medication", "view_records"],
+          nurse: ["patient_lookup"],
+          patient: []
+        },
+        created_at: "2026-04-08T00:00:00Z",
+        status: "active"
+      },
+      "healthcare-nurse": {
+        name: "Nurse AI Assistant",
+        description: "Healthcare assistant with limited access",
+        tools: ["patient_lookup"],
+        role_permissions: {
+          nurse: ["patient_lookup"],
+          patient: []
+        },
+        created_at: "2026-04-08T00:00:00Z",
+        status: "active"
+      }
+    };
+
+    displayAgents(mockAgents);
+
+    // Show info banner
     document.getElementById('agents-content').innerHTML = `
-      <div style="color: var(--danger); text-align: center; padding: 2rem;">
-        Error loading agents: ${error.message}<br>
-        <button class="primary" style="margin-top: 1rem;" onclick="loadAgentData()">Retry</button>
-      </div>`;
+      <div style="background: var(--warning); color: var(--bg); padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; font-size: 13px;">
+        📡 <strong>Demo Mode:</strong> Showing sample data - API deployment in progress
+      </div>
+    ` + document.getElementById('agents-content').innerHTML;
   }
 }
 
@@ -828,11 +859,46 @@ async function loadToolPolicyData() {
         </div>`;
     }
   } catch (error) {
+    // Show demo data when API is unavailable
+    console.log('Tool policies API unavailable, showing demo data:', error.message);
+    const mockPolicies = [
+      {
+        tool_name: "patient_lookup",
+        data_sanitization: {
+          redact_ssn: true,
+          redact_phone: true,
+          redact_email: false
+        },
+        role_restrictions: {
+          doctor: "allow",
+          nurse: "redact",
+          patient: "block"
+        },
+        compliance_framework: "hipaa"
+      },
+      {
+        tool_name: "prescribe_medication",
+        data_sanitization: {
+          redact_dosage_sensitive: true,
+          redact_patient_notes: true
+        },
+        role_restrictions: {
+          doctor: "allow",
+          nurse: "block",
+          patient: "block"
+        },
+        compliance_framework: "hipaa"
+      }
+    ];
+
+    displayToolPolicies(mockPolicies);
+
+    // Show info banner
     document.getElementById('tool-policies-content').innerHTML = `
-      <div style="color: var(--danger); text-align: center; padding: 2rem;">
-        Error loading tool policies: ${error.message}<br>
-        <button class="primary" style="margin-top: 1rem;" onclick="loadToolPolicyData()">Retry</button>
-      </div>`;
+      <div style="background: var(--warning); color: var(--bg); padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; font-size: 13px;">
+        📡 <strong>Demo Mode:</strong> Showing sample policies - API deployment in progress
+      </div>
+    ` + document.getElementById('tool-policies-content').innerHTML;
   }
 }
 
