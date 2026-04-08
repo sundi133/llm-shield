@@ -432,7 +432,7 @@
 
 <script>
 let API_KEY = localStorage.getItem('votal_tenant_key') || '';
-const BASE_URL = 'https://kk5losqxwr2ui7.api.runpod.ai';
+const BASE_URL = window.location.origin;
 let TENANT_INFO = null;
 let POLICIES = { input_guardrails: {}, output_guardrails: {} };
 let POLICIES_DIRTY = false;

@@ -1,95 +1,61 @@
-"""Agents Registry API - Simple agent management endpoints."""
+"""Agents Registry API - Direct Redis access for tenant data."""
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from core.auth import get_tenant_from_request
-from storage.tenant_store import get_tenant
+from storage.tenant_store import get_tenant, resolve_tenant_by_api_key
+import redis
+import json
+import os
 
 router = APIRouter(prefix="/v1/agents", tags=["agents-registry"])
 
+# Direct Redis connection
+redis_client = redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"))
 
-def get_tenant_from_request_or_default(request: Request) -> str:
-    """Get tenant ID from request or return default for testing."""
-    try:
-        # Try normal tenant authentication first
-        return get_tenant_from_request(request)
-    except HTTPException:
-        # For testing, return a default tenant ID
-        api_key = request.headers.get("X-API-Key", "")
-        if api_key.startswith("sk-test-"):
-            # Return test tenant for test API keys
-            return "test-tenant-001"
-        # Re-raise the original exception for non-test keys
-        raise
+def get_tenant_from_api_key(request: Request) -> str:
+    """Get tenant ID directly from API key without complex auth."""
+    api_key = request.headers.get("X-API-Key", "").strip()
+
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Missing X-API-Key header")
+
+    # For test keys, return test tenant
+    if api_key.startswith("sk-test-"):
+        return "test-tenant-001"
+
+    # Direct Redis lookup for real tenant keys
+    tenant_id = resolve_tenant_by_api_key(api_key)
+    if not tenant_id:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    return tenant_id
 
 
 @router.get("/registry")
-async def get_agents_registry(request: Request, tenant_id: str = Depends(get_tenant_from_request_or_default)):
-    """Get all registered agents and their configurations for the tenant."""
+async def get_agents_registry(request: Request):
+    """Get all registered agents directly from Redis for the tenant."""
     try:
-        # Get tenant information
-        tenant_info = get_tenant(tenant_id)
-        if not tenant_info:
-            raise HTTPException(status_code=404, detail=f"Tenant {tenant_id} not found")
+        tenant_id = get_tenant_from_api_key(request)
 
-        # Get tenant-specific agents (in real implementation, this would come from database)
-        # For now, create realistic test data based on tenant industry
-        industry = tenant_info.get("industry", "general")
+        # Direct Redis lookup for agents
+        agents_key = f"tenant:{tenant_id}:agents"
 
-        if industry == "healthcare":
-            agents = [
-                {
-                    "agent_id": "healthcare-doctor",
-                    "name": "Doctor AI Assistant",
-                    "description": "Healthcare assistant with full patient access",
-                    "tools": ["patient_lookup", "prescribe_medication", "view_records"],
-                    "role_permissions": {
-                        "doctor": ["patient_lookup", "prescribe_medication", "view_records"],
-                        "nurse": ["patient_lookup"],
-                        "patient": []
-                    },
-                    "created_at": "2026-04-08T00:00:00Z",
-                    "status": "active",
-                    "tenant_id": tenant_id
-                },
-                {
-                    "agent_id": "healthcare-nurse",
-                    "name": "Nurse AI Assistant",
-                    "description": "Healthcare assistant with limited access",
-                    "tools": ["patient_lookup"],
-                    "role_permissions": {
-                        "nurse": ["patient_lookup"],
-                        "patient": []
-                    },
-                    "created_at": "2026-04-08T00:00:00Z",
-                    "status": "active",
-                    "tenant_id": tenant_id
-                }
-            ]
-        else:
-            # Generic agents for other industries
-            agents = [
-                {
-                    "agent_id": "general-assistant",
-                    "name": "General AI Assistant",
-                    "description": "General purpose assistant",
-                    "tools": ["search", "analyze"],
-                    "role_permissions": {
-                        "user": ["search", "analyze"],
-                        "admin": ["search", "analyze"]
-                    },
-                    "created_at": "2026-04-08T00:00:00Z",
-                    "status": "active",
-                    "tenant_id": tenant_id
-                }
-            ]
+        try:
+            agents_data = redis_client.get(agents_key)
+            if agents_data:
+                agents = json.loads(agents_data)
+            else:
+                agents = {}
+        except Exception as e:
+            print(f"Redis error: {e}")
+            agents = {}
 
         return {
             "success": True,
             "agents": agents,
             "total": len(agents),
             "tenant_id": tenant_id,
-            "tenant_name": tenant_info.get("name", "Unknown"),
-            "industry": industry
+            "source": "redis_direct"
         }
 
     except HTTPException:
@@ -99,95 +65,122 @@ async def get_agents_registry(request: Request, tenant_id: str = Depends(get_ten
 
 
 @router.get("/tools/policies")
-async def get_tool_policies(request: Request, tenant_id: str = Depends(get_tenant_from_request_or_default)):
-    """Get tool policies for the tenant."""
+async def get_tool_policies(request: Request):
+    """Get tool policies directly from Redis for the tenant."""
     try:
-        # Get tenant information
-        tenant_info = get_tenant(tenant_id)
-        if not tenant_info:
-            raise HTTPException(status_code=404, detail=f"Tenant {tenant_id} not found")
+        tenant_id = get_tenant_from_api_key(request)
 
-        # Get tenant-specific policies based on compliance frameworks
-        industry = tenant_info.get("industry", "general")
-        compliance_frameworks = tenant_info.get("compliance_frameworks", [])
+        # Direct Redis lookup for tool policies
+        policies_key = f"tenant:{tenant_id}:policies"
 
-        if industry == "healthcare" and "hipaa" in compliance_frameworks:
-            policies = [
-                {
-                    "tool_name": "patient_lookup",
-                    "data_sanitization": {
-                        "redact_ssn": True,
-                        "redact_phone": True,
-                        "redact_email": False,
-                        "redact_medical_ids": True
-                    },
-                    "role_restrictions": {
-                        "doctor": "allow",
-                        "nurse": "redact",
-                        "patient": "block"
-                    },
-                    "compliance_framework": "hipaa",
-                    "tenant_id": tenant_id
-                },
-                {
-                    "tool_name": "prescribe_medication",
-                    "data_sanitization": {
-                        "redact_dosage_sensitive": True,
-                        "redact_patient_notes": True,
-                        "redact_drug_interactions": False
-                    },
-                    "role_restrictions": {
-                        "doctor": "allow",
-                        "nurse": "block",
-                        "patient": "block"
-                    },
-                    "compliance_framework": "hipaa",
-                    "tenant_id": tenant_id
-                },
-                {
-                    "tool_name": "view_records",
-                    "data_sanitization": {
-                        "redact_ssn": True,
-                        "redact_insurance_ids": True,
-                        "redact_financial_info": True
-                    },
-                    "role_restrictions": {
-                        "doctor": "allow",
-                        "nurse": "redact",
-                        "patient": "allow"
-                    },
-                    "compliance_framework": "hipaa",
-                    "tenant_id": tenant_id
-                }
-            ]
-        else:
-            # Generic policies for other industries
-            policies = [
-                {
-                    "tool_name": "search",
-                    "data_sanitization": {
-                        "redact_personal_info": True
-                    },
-                    "role_restrictions": {
-                        "user": "allow",
-                        "admin": "allow"
-                    },
-                    "compliance_framework": None,
-                    "tenant_id": tenant_id
-                }
-            ]
+        try:
+            policies_data = redis_client.get(policies_key)
+            if policies_data:
+                # Parse as array format for frontend compatibility
+                policies = json.loads(policies_data)
+                # Convert to array if it's an object
+                if isinstance(policies, dict):
+                    policies = list(policies.values())
+            else:
+                policies = []
+        except Exception as e:
+            print(f"Redis error: {e}")
+            policies = []
 
         return {
             "success": True,
             "tool_policies": policies,
             "total": len(policies),
             "tenant_id": tenant_id,
-            "tenant_name": tenant_info.get("name", "Unknown"),
-            "industry": industry,
-            "compliance_frameworks": compliance_frameworks
+            "source": "redis_direct"
         }
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load tool policies: {str(e)}")
+
+
+@router.post("/seed-test-data")
+async def seed_test_data():
+    """Seed test tenant with sample agents and policies data."""
+    try:
+        tenant_id = "test-tenant-001"
+
+        # Sample healthcare agents
+        agents = {
+            "healthcare-doctor": {
+                "agent_id": "healthcare-doctor",
+                "name": "Healthcare Doctor Assistant",
+                "description": "AI assistant for doctors with full medical access",
+                "tools": ["patient_lookup", "diagnosis_update", "prescribe_medication", "view_records"],
+                "role_permissions": {
+                    "doctor": ["patient_lookup", "diagnosis_update", "prescribe_medication", "view_records"],
+                    "nurse": ["patient_lookup"],
+                    "admin": ["patient_lookup"],
+                    "patient": []
+                },
+                "created_at": 1775632429,
+                "updated_at": 1775632429
+            },
+            "healthcare-nurse": {
+                "agent_id": "healthcare-nurse",
+                "name": "Healthcare Nurse Assistant",
+                "description": "AI assistant for nurses with limited medical access",
+                "tools": ["patient_lookup", "schedule_appointment", "update_vitals", "view_basic_records"],
+                "role_permissions": {
+                    "nurse": ["patient_lookup", "schedule_appointment", "update_vitals", "view_basic_records"],
+                    "doctor": ["patient_lookup", "schedule_appointment"],
+                    "admin": ["patient_lookup"],
+                    "patient": []
+                },
+                "created_at": 1775632479,
+                "updated_at": 1775632479
+            }
+        }
+
+        # Sample tool policies
+        policies = [
+            {
+                "tool_name": "patient_lookup",
+                "data_sanitization": {
+                    "redact_ssn": True,
+                    "redact_phone": True,
+                    "redact_email": False,
+                    "redact_medical_ids": True
+                },
+                "role_restrictions": {
+                    "doctor": "allow",
+                    "nurse": "redact",
+                    "patient": "block"
+                },
+                "compliance_framework": "hipaa"
+            },
+            {
+                "tool_name": "prescribe_medication",
+                "data_sanitization": {
+                    "redact_dosage_sensitive": True,
+                    "redact_patient_notes": True
+                },
+                "role_restrictions": {
+                    "doctor": "allow",
+                    "nurse": "block",
+                    "patient": "block"
+                },
+                "compliance_framework": "hipaa"
+            }
+        ]
+
+        # Store in Redis
+        redis_client.set(f"tenant:{tenant_id}:agents", json.dumps(agents))
+        redis_client.set(f"tenant:{tenant_id}:policies", json.dumps(policies))
+
+        return {
+            "success": True,
+            "message": f"Test data seeded for tenant {tenant_id}",
+            "agents_count": len(agents),
+            "policies_count": len(policies)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to seed test data: {str(e)}")
