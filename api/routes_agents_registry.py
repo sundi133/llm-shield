@@ -2,15 +2,11 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from core.auth import get_tenant_from_request
-from storage.tenant_store import get_tenant, resolve_tenant_by_api_key
-import redis
+from storage.tenant_store import get_tenant, resolve_tenant_by_api_key, _get_redis
 import json
 import os
 
 router = APIRouter(prefix="/v1/agents", tags=["agents-registry"])
-
-# Direct Redis connection
-redis_client = redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"))
 
 def get_tenant_from_api_key(request: Request) -> str:
     """Get tenant ID directly from API key without complex auth."""
@@ -30,6 +26,20 @@ def get_tenant_from_api_key(request: Request) -> str:
 
     return tenant_id
 
+def get_redis_data(key: str):
+    """Get data from Redis using the same connection as tenant_store."""
+    redis_client = _get_redis()
+    if redis_client:
+        try:
+            data = redis_client.get(key)
+            if data:
+                if isinstance(data, str):
+                    return json.loads(data)
+                return data
+        except Exception as e:
+            print(f"Redis error getting {key}: {e}")
+    return None
+
 
 @router.get("/registry")
 async def get_agents_registry(request: Request):
@@ -37,17 +47,11 @@ async def get_agents_registry(request: Request):
     try:
         tenant_id = get_tenant_from_api_key(request)
 
-        # Direct Redis lookup for agents
+        # Direct Redis lookup for agents using tenant_store connection
         agents_key = f"tenant:{tenant_id}:agents"
+        agents = get_redis_data(agents_key)
 
-        try:
-            agents_data = redis_client.get(agents_key)
-            if agents_data:
-                agents = json.loads(agents_data)
-            else:
-                agents = {}
-        except Exception as e:
-            print(f"Redis error: {e}")
+        if agents is None:
             agents = {}
 
         return {
@@ -70,21 +74,14 @@ async def get_tool_policies(request: Request):
     try:
         tenant_id = get_tenant_from_api_key(request)
 
-        # Direct Redis lookup for tool policies
+        # Direct Redis lookup for tool policies using tenant_store connection
         policies_key = f"tenant:{tenant_id}:policies"
+        policies_data = get_redis_data(policies_key)
 
-        try:
-            policies_data = redis_client.get(policies_key)
-            if policies_data:
-                # Parse as array format for frontend compatibility
-                policies = json.loads(policies_data)
-                # Convert to array if it's an object
-                if isinstance(policies, dict):
-                    policies = list(policies.values())
-            else:
-                policies = []
-        except Exception as e:
-            print(f"Redis error: {e}")
+        if policies_data:
+            # Parse as array format for frontend compatibility
+            policies = policies_data if isinstance(policies_data, list) else list(policies_data.values()) if isinstance(policies_data, dict) else []
+        else:
             policies = []
 
         return {
@@ -171,9 +168,13 @@ async def seed_test_data():
             }
         ]
 
-        # Store in Redis
-        redis_client.set(f"tenant:{tenant_id}:agents", json.dumps(agents))
-        redis_client.set(f"tenant:{tenant_id}:policies", json.dumps(policies))
+        # Store in Redis using proper connection
+        redis_client = _get_redis()
+        if redis_client:
+            redis_client.set(f"tenant:{tenant_id}:agents", json.dumps(agents))
+            redis_client.set(f"tenant:{tenant_id}:policies", json.dumps(policies))
+        else:
+            raise Exception("Redis connection not available")
 
         return {
             "success": True,

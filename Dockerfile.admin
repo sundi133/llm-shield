@@ -35,6 +35,7 @@ COPY core/rbac.py core/
 COPY api/__init__.py api/
 COPY api/routes_tenant.py api/
 COPY api/routes_tenant_self.py api/
+COPY api/routes_agents_registry.py api/
 COPY storage/__init__.py storage/
 COPY storage/tenant_store.py storage/
 COPY storage/tenant_models.py storage/
