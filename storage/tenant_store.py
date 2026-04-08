@@ -221,6 +221,39 @@ def update_tenant(tenant_id: str, updates: dict) -> Optional[dict]:
     return config
 
 
+def set_tenant_policies(
+    tenant_id: str,
+    input_guardrails: dict = None,
+    output_guardrails: dict = None,
+) -> Optional[dict]:
+    """Replace guardrail policy sections entirely (full replace, not merge).
+
+    Unlike update_tenant which merges dicts, this replaces the entire
+    input_guardrails / output_guardrails section so that removed
+    guardrails are actually deleted from the config.
+    """
+    config = get_tenant(tenant_id)
+    if config is None:
+        return None
+
+    if input_guardrails is not None:
+        config["input_guardrails"] = input_guardrails
+    if output_guardrails is not None:
+        config["output_guardrails"] = output_guardrails
+
+    config_json = json.dumps(config)
+
+    r = _get_redis()
+    if r:
+        r.set(f"tenant:{tenant_id}", config_json)
+    else:
+        _fallback_store[f"tenant:{tenant_id}"] = config_json
+
+    _cache_delete(f"tenant:{tenant_id}")
+    logger.info(f"Replaced policies for tenant: {tenant_id}")
+    return config
+
+
 def delete_tenant(tenant_id: str, soft: bool = True) -> bool:
     """Delete a tenant.
 

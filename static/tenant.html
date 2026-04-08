@@ -157,10 +157,39 @@
 
   .edit-mode-banner { background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); color: #fbbf24; padding: 0.6rem 0.9rem; border-radius: var(--radius-sm); font-size: 12.5px; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; }
 
+  .guardrail-row {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.85rem 1rem; background: var(--bg-3);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    transition: border-color 0.1s;
+  }
+  .guardrail-row:hover { border-color: var(--border-strong); }
+  .guardrail-icon {
+    width: 36px; height: 36px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0;
+  }
+  .guardrail-info { flex: 1; min-width: 0; }
+  .guardrail-info .gr-name { font-weight: 600; font-size: 13.5px; display: flex; align-items: center; gap: 0.5rem; }
+  .guardrail-info .gr-desc { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+  .guardrail-controls { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; }
+  .guardrail-controls select {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text); padding: 0.3rem 0.5rem; font-size: 11px; font-family: inherit;
+    cursor: pointer;
+  }
+  .guardrail-controls select:focus { outline: none; border-color: var(--accent); }
+  .gr-setting-chip { font-size: 10px; font-weight: 600; color: var(--text-dim); letter-spacing: 0.3px; }
+  .gr-setting-chip .mono { font-family: 'JetBrains Mono', monospace; }
+  .gr-arrow { cursor: pointer; color: var(--text-muted); font-size: 18px; padding: 0 0.15rem; transition: color 0.1s; }
+  .gr-arrow:hover { color: var(--text); }
+
   @media (max-width: 900px) {
     .sidebar { position: relative; width: 100%; height: auto; }
     .main { margin-left: 0; padding: 1.5rem; }
     .app { flex-direction: column; }
+    .guardrail-row { flex-wrap: wrap; }
+    .guardrail-controls { width: 100%; justify-content: flex-end; margin-top: 0.5rem; }
   }
 </style>
 </head>
@@ -222,13 +251,13 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
         Usage
       </div>
-      <div class="nav-item" data-tab="playground">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-        Playground
-      </div>
       <div class="nav-item" data-tab="activity">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         Activity
+      </div>
+      <div class="nav-item" data-tab="apis">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+        APIs &amp; SDKs
       </div>
     </div>
     <div class="sidebar-footer">
@@ -259,6 +288,27 @@
       </div>
     </div>
 
+    
+    <!-- Tool Policies -->
+    <div id="tab-tool-policies" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Tool Policies</div>
+        <div class="page-desc">Data control plane for agent tool calls — sanitization, role restrictions, and LLM validation</div>
+        <div class="page-actions" style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+          <button class="small" onclick="loadToolPolicyData()">Refresh</button>
+          <button class="primary" onclick="showAddToolPolicyModal()">+ Add Tool Policy</button>
+        </div>
+      </div>
+      <div id="tp-save-banner" class="edit-mode-banner hidden">
+        <span>You have unsaved tool policy changes</span>
+        <div style="display:flex;gap:0.5rem;">
+          <button class="small" onclick="loadToolPolicyData()">Discard</button>
+          <button class="primary small" onclick="saveAllToolPolicies()">Save Changes</button>
+        </div>
+      </div>
+      <div id="tool-policies-content">Loading tool policies...</div>
+    </div>
+
     <!-- Agents -->
     <div id="tab-agents" class="tab-pane hidden">
       <div class="page-header">
@@ -279,27 +329,8 @@
       </div>
     </div>
 
-    <!-- Tool Policies -->
-    <div id="tab-tool-policies" class="tab-pane hidden">
-      <div class="page-header">
-        <div class="page-title">Tool Policies</div>
-        <div class="page-desc">Configure data sanitization and role restrictions for tools</div>
-        <div class="page-actions">
-          <button class="primary" onclick="loadToolPolicyData()">Refresh</button>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Data Protection Policies</div>
-            <div class="card-subtitle">Role-based access control and data sanitization</div>
-          </div>
-        </div>
-        <div id="tool-policies-content">Loading tool policies...</div>
-      </div>
-    </div>
 
-    <!-- Policies -->
+    <!-- Tool Policies -->
     <div id="tab-policies" class="tab-pane hidden">
       <div class="page-header">
         <div class="page-title">Policies</div>
@@ -317,10 +348,10 @@
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">Input Guardrails</div>
+            <div class="card-title">Input Guardrails <span id="input-guardrails-count" class="muted" style="font-weight:400;"></span></div>
             <div class="card-subtitle">Applied to incoming user prompts</div>
           </div>
-          <button class="small" onclick="openAddPolicy('input')">+ Add Policy</button>
+          <button class="small" onclick="openAddPolicy('input')">+ Add Guardrail</button>
         </div>
         <div id="input-policies" class="policy-grid"></div>
       </div>
@@ -328,27 +359,29 @@
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">Output Guardrails</div>
+            <div class="card-title">Output Guardrails <span id="output-guardrails-count" class="muted" style="font-weight:400;"></span></div>
             <div class="card-subtitle">Applied to LLM responses before returning to users</div>
           </div>
-          <button class="small" onclick="openAddPolicy('output')">+ Add Policy</button>
+          <button class="small" onclick="openAddPolicy('output')">+ Add Guardrail</button>
         </div>
         <div id="output-policies" class="policy-grid"></div>
       </div>
 
       <div class="card">
-        <div class="card-header">
+        <div class="card-header" style="cursor: pointer;" onclick="document.getElementById('raw-json-body').classList.toggle('hidden'); this.querySelector('.toggle-arrow').textContent = document.getElementById('raw-json-body').classList.contains('hidden') ? '▸' : '▾';">
           <div>
-            <div class="card-title">Advanced — Raw JSON</div>
+            <div class="card-title"><span class="toggle-arrow" style="margin-right: 0.4rem;">▸</span>Advanced — Raw JSON</div>
             <div class="card-subtitle">For power users: edit the full policy config directly</div>
           </div>
         </div>
-        <textarea id="policies-json"></textarea>
-        <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem;">
-          <button class="primary small" onclick="savePoliciesFromJSON()">Save from JSON</button>
-          <button class="small" onclick="loadPolicies()">Reset</button>
+        <div id="raw-json-body" class="hidden">
+          <textarea id="policies-json"></textarea>
+          <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem;">
+            <button class="primary small" onclick="savePoliciesFromJSON()">Save from JSON</button>
+            <button class="small" onclick="loadPolicies()">Reset</button>
+          </div>
+          <div id="policies-msg"></div>
         </div>
-        <div id="policies-msg"></div>
       </div>
     </div>
 
@@ -362,32 +395,6 @@
       <button class="small" onclick="loadUsage()">Refresh</button>
     </div>
 
-    <!-- Playground -->
-    <div id="tab-playground" class="tab-pane hidden">
-      <div class="page-header">
-        <div class="page-title">Playground</div>
-        <div class="page-desc">Test your guardrails with live requests</div>
-      </div>
-      <div class="card">
-        <div class="field">
-          <label>Agent Key (optional)</label>
-          <input type="text" id="playground-agent-key" placeholder="your-bot-1">
-        </div>
-        <div class="field">
-          <label>Message</label>
-          <textarea id="playground-message" style="min-height: 100px;" placeholder="Enter text to test…"></textarea>
-        </div>
-        <div style="display: flex; gap: 0.5rem;">
-          <button class="primary" onclick="testInput()">Test as Input</button>
-          <button onclick="testOutput()">Test as Output</button>
-        </div>
-      </div>
-      <div class="card" id="playground-result-card" style="display: none;">
-        <div class="card-title">Result</div>
-        <pre id="playground-result" class="mono"></pre>
-      </div>
-    </div>
-
     <!-- Activity -->
     <div id="tab-activity" class="tab-pane hidden">
       <div class="page-header">
@@ -396,6 +403,98 @@
       </div>
       <div class="card">
         <pre id="activity-log" class="mono">Loading…</pre>
+      </div>
+    </div>
+
+    <!-- APIs & SDKs -->
+    <div id="tab-apis" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">APIs &amp; SDKs</div>
+        <div class="page-desc">Integrate Votal Shield into your applications. All endpoints require <code>X-API-Key</code> header.</div>
+      </div>
+
+      <div style="margin-bottom:1rem;padding:0.75rem 1rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:var(--radius);display:flex;align-items:center;gap:0.75rem;">
+        <span style="font-size:14px;">🔑</span>
+        <div>
+          <div style="font-size:12px;font-weight:600;">Base URL &amp; Auth</div>
+          <code id="api-base-url" style="font-size:12px;color:var(--accent-hover);"></code>
+          <span class="muted" style="font-size:11px;margin-left:0.75rem;">Header: <code>X-API-Key: &lt;your-key&gt;</code></span>
+        </div>
+      </div>
+
+      <!-- Sub-tabs -->
+      <div style="display:flex;gap:0.25rem;margin-bottom:1.25rem;border-bottom:1px solid var(--border);padding-bottom:0;">
+        <button class="api-sub-tab active" data-api-tab="quick-start" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">Quick Start</button>
+        <button class="api-sub-tab" data-api-tab="python-sdk" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">Python</button>
+        <button class="api-sub-tab" data-api-tab="js-sdk" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">JavaScript</button>
+        <button class="api-sub-tab" data-api-tab="curl-examples" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">cURL</button>
+        <button class="api-sub-tab" data-api-tab="api-reference" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">API Reference</button>
+      </div>
+
+      <!-- Quick Start -->
+      <div id="api-tab-quick-start" class="api-tab-content">
+        <div class="card" style="margin-bottom:1rem;">
+          <div class="card-header"><div><div class="card-title">1. Get Your API Key</div><div class="card-subtitle">Create an API key from the admin portal or via API</div></div></div>
+          <div style="padding:0 1.25rem 1.25rem;">
+            <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
+              <code style="flex:1;display:block;padding:0.5rem 0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:12px;word-break:break-all;" id="qs-api-key">—</code>
+              <button class="small" onclick="document.getElementById('qs-api-key').textContent=API_KEY||'(log in first)';showToast('Key shown','success')">Show</button>
+            </div>
+            <div class="muted" style="font-size:11px;">Use this key in the <code>X-API-Key</code> header for all requests.</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:1rem;">
+          <div class="card-header"><div><div class="card-title">2. Integration Flow</div><div class="card-subtitle">Typical integration architecture</div></div></div>
+          <div style="padding:0 1.25rem 1.25rem;">
+            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+              <div style="display:flex;align-items:center;gap:0.75rem;">
+                <span style="width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">1</span>
+                <div><strong style="font-size:13px;">Register Agents</strong><div class="muted" style="font-size:11px;">Define agents with tools and role-based permissions</div></div>
+                <code class="muted" style="font-size:10px;margin-left:auto;">POST /v1/agents/registry</code>
+              </div>
+              <div style="display:flex;align-items:center;gap:0.75rem;">
+                <span style="width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">2</span>
+                <div><strong style="font-size:13px;">Configure Guardrails</strong><div class="muted" style="font-size:11px;">Set input/output guardrail policies (adversarial, toxicity, PII, etc.)</div></div>
+                <code class="muted" style="font-size:10px;margin-left:auto;">PUT /v1/tenant/me/policies</code>
+              </div>
+              <div style="display:flex;align-items:center;gap:0.75rem;">
+                <span style="width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">3</span>
+                <div><strong style="font-size:13px;">Set Tool Policies</strong><div class="muted" style="font-size:11px;">Data sanitization patterns, role restrictions, LLM validation per tool</div></div>
+                <code class="muted" style="font-size:10px;margin-left:auto;">PUT /v1/agents/tools/policies</code>
+              </div>
+              <div style="display:flex;align-items:center;gap:0.75rem;">
+                <span style="width:28px;height:28px;border-radius:50%;background:var(--success);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">4</span>
+                <div><strong style="font-size:13px;">Run Guardrails (Runtime)</strong><div class="muted" style="font-size:11px;">Classify input/output, check tools, authorize actions, or proxy via gateway</div></div>
+                <code class="muted" style="font-size:10px;margin-left:auto;">POST /guardrails/input · /output</code>
+              </div>
+              <div style="display:flex;align-items:center;gap:0.75rem;">
+                <span style="width:28px;height:28px;border-radius:50%;background:var(--success);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">5</span>
+                <div><strong style="font-size:13px;">Monitor &amp; Audit</strong><div class="muted" style="font-size:11px;">Track usage, review audit logs, monitor guardrail decisions</div></div>
+                <code class="muted" style="font-size:10px;margin-left:auto;">GET /v1/tenant/me/usage · /audit</code>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:1rem;">
+          <div class="card-header"><div><div class="card-title">3. All Available Endpoints</div><div class="card-subtitle">Complete endpoint map organized by category</div></div></div>
+          <div style="padding:0 1.25rem 1.25rem;" id="qs-endpoint-map"></div>
+        </div>
+      </div>
+
+      <!-- Python SDK -->
+      <div id="api-tab-python-sdk" class="api-tab-content hidden"></div>
+
+      <!-- JavaScript SDK -->
+      <div id="api-tab-js-sdk" class="api-tab-content hidden"></div>
+
+      <!-- cURL Examples -->
+      <div id="api-tab-curl-examples" class="api-tab-content hidden"></div>
+
+      <!-- API Reference -->
+      <div id="api-tab-api-reference" class="api-tab-content hidden">
+        <div id="api-docs-content"></div>
       </div>
     </div>
   </main>
@@ -430,6 +529,92 @@
   </div>
 </div>
 
+<!-- Agent Modal (Add/Edit) -->
+<div id="agent-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 2rem;">
+  <div style="background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; max-width: 700px; width: 100%; box-shadow: var(--shadow-lg); max-height: 90vh; overflow-y: auto;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);">
+      <div style="font-size: 16px; font-weight: 600;" id="agent-modal-title">Add Agent</div>
+      <button onclick="closeAgentModal()" style="background: transparent; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">&times;</button>
+    </div>
+    <div class="field">
+      <label>Agent ID <span class="muted">(cannot change after creation)</span></label>
+      <input type="text" id="agent-modal-id" placeholder="e.g. healthcare-doctor">
+    </div>
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="agent-modal-name" placeholder="e.g. Doctor AI Assistant">
+    </div>
+    <div class="field">
+      <label>Description</label>
+      <input type="text" id="agent-modal-desc" placeholder="Brief description of the agent">
+    </div>
+    <div class="field">
+      <label>Tools <span class="muted">(comma-separated)</span></label>
+      <input type="text" id="agent-modal-tools" placeholder="e.g. patient_lookup, prescribe_medication, view_records" oninput="updateRoleCheckboxes()">
+    </div>
+    <div class="field">
+      <label>Role Permissions</label>
+      <div id="agent-modal-roles"></div>
+      <button class="small" onclick="addRoleRow()" style="margin-top: 0.5rem;">+ Add Role</button>
+    </div>
+    <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
+      <button onclick="closeAgentModal()">Cancel</button>
+      <button class="primary" onclick="saveAgentFromModal()">Save Agent</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tool Policy Modal -->
+<div id="tool-policy-modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);z-index:100;display:flex;align-items:center;justify-content:center;padding:2rem;">
+  <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:1.5rem;max-width:750px;width:100%;box-shadow:var(--shadow-lg);max-height:90vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;padding-bottom:1rem;border-bottom:1px solid var(--border);">
+      <div style="font-size:16px;font-weight:600;" id="tp-modal-title">Add Tool Policy</div>
+      <button onclick="closeToolPolicyModal()" style="background:transparent;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">&times;</button>
+    </div>
+    <div class="field">
+      <label>Tool Name</label>
+      <select id="tp-modal-name"><option value="">Select a tool...</option></select>
+    </div>
+    <div class="field">
+      <label>Role Restrictions</label>
+      <div id="tp-modal-roles"></div>
+      <button class="small" onclick="addTPRoleRow()" style="margin-top:0.5rem;">+ Add Role</button>
+      <div id="tp-roles-empty" class="muted" style="font-size:11px;margin-top:0.4rem;display:none;">No roles found. Register agents with role permissions first.</div>
+    </div>
+    <div class="field">
+      <label>Data Sanitization — Patterns <span class="muted">(JSON array)</span></label>
+      <textarea id="tp-modal-patterns" style="min-height:140px;">[]</textarea>
+      <details style="margin-top:0.5rem;">
+        <summary style="font-size:11px;color:var(--text-muted);cursor:pointer;user-select:none;">Show example pattern format</summary>
+        <pre id="tp-pattern-example" style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.75rem;margin-top:0.4rem;overflow-x:auto;color:var(--text-dim);white-space:pre-wrap;"></pre>
+      </details>
+    </div>
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:0.5rem;">
+        LLM Validation
+        <label class="switch" style="margin-left:auto;">
+          <input type="checkbox" id="tp-modal-llm-enabled" onchange="document.getElementById('tp-llm-fields').classList.toggle('hidden',!this.checked)">
+          <span class="slider"></span>
+        </label>
+      </label>
+      <div id="tp-llm-fields" class="hidden" style="margin-top:0.75rem;">
+        <div class="field">
+          <label>Prompt Template</label>
+          <textarea id="tp-modal-llm-prompt" style="min-height:60px;font-size:12px;" placeholder="Validate if {user_role} can use {tool_name}: {tool_input}"></textarea>
+        </div>
+        <div class="field">
+          <label>Confidence Threshold</label>
+          <input type="text" id="tp-modal-llm-threshold" value="0.8" style="width:100px;">
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem;">
+      <button onclick="closeToolPolicyModal()">Cancel</button>
+      <button class="primary" onclick="saveToolPolicyFromModal()">Save Tool Policy</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let API_KEY = localStorage.getItem('votal_tenant_key') || '';
 const BASE_URL = window.location.origin;
@@ -439,14 +624,36 @@ let POLICIES_DIRTY = false;
 let ADD_POLICY_STAGE = 'input';
 
 const INPUT_GUARDRAILS = [
-  'keyword_blocklist', 'length_limit', 'regex_pattern', 'pii_detection',
-  'language_detection', 'sentiment', 'rate_limiter', 'system_prompt_leak',
-  'toxicity', 'safety_check', 'adversarial_detection', 'topic_restriction', 'topic_enforcement'
+  'adversarial_detection', 'keyword_blocklist', 'topic_restriction',
+  'language_detection', 'adversarial_rate_limiting', 'system_prompt_leak',
+  'toxicity', 'regex_pattern'
 ];
 const OUTPUT_GUARDRAILS = [
-  'pii_leakage', 'tone_enforcement', 'bias_detection', 'competitor_mention',
-  'hallucinated_links', 'role_redaction'
+  'hallucinated_links', 'tone_enforcement', 'bias_detection',
+  'pii_leakage', 'competitor_mention'
 ];
+const GUARDRAIL_META = {
+  adversarial_detection:     { label: 'Adversarial Prompt Detection',      desc: 'Detect jailbreaks, prompt injections, and adversarial patterns in real-time',       icon: '🛡', color: '#6366f1' },
+  keyword_blocklist:         { label: 'Keyword Blocklist',                 desc: 'Block or flag messages containing specific keywords or phrases',                    icon: '📋', color: '#8b5cf6' },
+  topic_restriction:         { label: 'Topic Restriction',                 desc: 'Whitelist allowed conversation topics to keep AI focused',                          icon: '🎯', color: '#10b981' },
+  language_detection:        { label: 'Language Detection',                desc: 'Detect and restrict input to supported languages',                                  icon: '🌐', color: '#3b82f6' },
+  adversarial_rate_limiting: { label: 'Continuous Adversarial Rate Limiting', desc: 'Rate limit sustained adversarial prompting patterns',                           icon: '⏱', color: '#6b7280' },
+  system_prompt_leak:        { label: 'System Prompt Leak',                desc: 'Detect attempts to extract or reveal the system prompt',                            icon: '🔒', color: '#f59e0b' },
+  toxicity:                  { label: 'Toxicity',                          desc: 'Classify input for toxicity, hate speech, harassment, and self-harm',               icon: '⚠', color: '#ef4444' },
+  regex_pattern:             { label: 'Custom Regex',                      desc: 'Block or flag inputs matching custom regex patterns',                               icon: '✏', color: '#eab308' },
+  hallucinated_links:        { label: 'Hallucinated Weblink Detection',    desc: 'Detect fake or non-existent URLs in model outputs',                                 icon: '🔍', color: '#6366f1' },
+  tone_enforcement:          { label: 'Tone Enforcement',                  desc: 'Enforce brand voice and block sarcastic, aggressive, or off-brand tone',            icon: '🎤', color: '#10b981' },
+  bias_detection:            { label: 'Bias Detection',                    desc: 'Detect and mitigate gender, racial, age, and political bias',                       icon: '⚖', color: '#eab308' },
+  pii_leakage:               { label: 'PII Leakage Detection',            desc: 'Detect and redact sensitive data like SSNs, credit cards, and API keys in outputs',  icon: '🔐', color: '#3b82f6' },
+  competitor_mention:        { label: 'Competitor Mention Filter',         desc: 'Prevent AI from recommending or mentioning competitor brands and products',          icon: '🚫', color: '#ef4444' },
+  length_limit:              { label: 'Length Limit',                      desc: 'Limit input message length',                                                        icon: '📏', color: '#6b7280' },
+  pii_detection:             { label: 'PII Detection',                    desc: 'Detect personally identifiable information in inputs',                               icon: '🔐', color: '#3b82f6' },
+  sentiment:                 { label: 'Sentiment Analysis',                desc: 'Analyze sentiment of input messages',                                                icon: '😊', color: '#10b981' },
+  rate_limiter:              { label: 'Rate Limiter',                      desc: 'Limit request rates per user or session',                                            icon: '⏱', color: '#6b7280' },
+  safety_check:              { label: 'Safety Check',                      desc: 'General safety classification of inputs',                                            icon: '✅', color: '#10b981' },
+  topic_enforcement:         { label: 'Topic Enforcement',                 desc: 'Enforce allowed conversation topics',                                                icon: '🎯', color: '#10b981' },
+  role_redaction:            { label: 'Role Redaction',                    desc: 'Redact role-specific sensitive information',                                          icon: '✂', color: '#f59e0b' },
+};
 
 async function apiCall(path, options = {}) {
   options.headers = { ...(options.headers || {}), 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
@@ -519,16 +726,44 @@ function renderOverview() {
 }
 
 // ── Policies CRUD ─────────────────────────
+const DEFAULT_POLICIES = {
+  input_guardrails: {
+    adversarial_detection:     { enabled: true,  action: 'block', settings: { threshold: 0.80 } },
+    keyword_blocklist:         { enabled: true,  action: 'block', settings: { keywords: ['confidential', 'secret'] } },
+    topic_restriction:         { enabled: true,  action: 'block', settings: {} },
+    language_detection:        { enabled: true,  action: 'block', settings: { allowed_languages: ['en'] } },
+    adversarial_rate_limiting: { enabled: false, action: 'block', settings: {} },
+    system_prompt_leak:        { enabled: true,  action: 'block', settings: { threshold: 0.80 } },
+    toxicity:                  { enabled: true,  action: 'block', settings: { threshold: 0.80 } },
+    regex_pattern:             { enabled: true,  action: 'block', settings: { patterns: ['\\b\\d{3}-\\d{2}-\\d{4}\\b', '\\b\\d{16}\\b', 'password\\s*[:=]', 'api[_-]?key\\s*[:=]', 'bearer\\s+[A-Za-z0-9\\-._~+/]+=*', 'sk-[A-Za-z0-9]{20,}'] } },
+  },
+  output_guardrails: {
+    hallucinated_links: { enabled: true, action: 'block', settings: {} },
+    tone_enforcement:   { enabled: true, action: 'block', settings: {} },
+    bias_detection:     { enabled: true, action: 'block', settings: { threshold: 0.60 } },
+    pii_leakage:        { enabled: true, action: 'block', settings: {} },
+    competitor_mention:  { enabled: true, action: 'block', settings: {} },
+  },
+};
+
 async function loadPolicies() {
   try {
     const data = await apiCall('/v1/tenant/me/policies');
-    POLICIES = { input_guardrails: data.input_guardrails || {}, output_guardrails: data.output_guardrails || {} };
+    const apiInput = data.input_guardrails || {};
+    const apiOutput = data.output_guardrails || {};
+    const hasData = Object.keys(apiInput).length > 0 || Object.keys(apiOutput).length > 0;
+    POLICIES = hasData
+      ? { input_guardrails: apiInput, output_guardrails: apiOutput }
+      : JSON.parse(JSON.stringify(DEFAULT_POLICIES));
     POLICIES_DIRTY = false;
     document.getElementById('edit-banner').classList.add('hidden');
     renderPolicies();
     document.getElementById('policies-json').value = JSON.stringify(POLICIES, null, 2);
   } catch (e) {
-    showError('policies-msg', e.message);
+    POLICIES = JSON.parse(JSON.stringify(DEFAULT_POLICIES));
+    POLICIES_DIRTY = false;
+    renderPolicies();
+    document.getElementById('policies-json').value = JSON.stringify(POLICIES, null, 2);
   }
 }
 
@@ -542,35 +777,75 @@ function renderPolicyStage(stage) {
   const container = document.getElementById(stage + '-policies');
   const policies = POLICIES[key] || {};
   const names = Object.keys(policies);
+
+  const enabledCount = names.filter(n => policies[n].enabled !== false).length;
+  const countEl = document.getElementById(`${stage}-guardrails-count`);
+  if (countEl) countEl.textContent = `${enabledCount}/${names.length}`;
+
   if (!names.length) {
-    container.innerHTML = `<div class="muted" style="padding: 1rem; text-align: center;">No ${stage} policies configured</div>`;
+    container.innerHTML = `<div class="muted" style="padding: 1.5rem; text-align: center;">No ${stage} guardrails configured</div>`;
     return;
   }
+
   container.innerHTML = names.map(name => {
     const p = policies[name];
-    const settings = p.settings && Object.keys(p.settings).length ? JSON.stringify(p.settings, null, 2) : null;
+    const meta = GUARDRAIL_META[name] || {};
+    const label = meta.label || name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const desc = meta.desc || '';
+    const icon = meta.icon || '🔒';
+    const color = meta.color || '#6366f1';
     const action = p.action || 'block';
-    const actionBadge = action === 'block' ? 'badge-danger' : action === 'warn' ? 'badge-warn' : 'badge-success';
+    const isEnabled = p.enabled !== false;
+    const summary = getSettingsSummary(name, p.settings);
+
     return `
-      <div class="policy-card">
-        <div class="policy-header">
-          <div>
-            <div class="policy-name">${name}</div>
-            <div class="muted" style="margin-top: 2px;">${p.enabled ? 'Enabled' : 'Disabled'} · <span class="badge ${actionBadge}">${action}</span></div>
+      <div class="guardrail-row" style="opacity: ${isEnabled ? 1 : 0.5};">
+        <div class="guardrail-icon" style="background: ${color}20; color: ${color};">${icon}</div>
+        <div class="guardrail-info">
+          <div class="gr-name">
+            ${label}
+            <span class="badge ${isEnabled ? 'badge-success' : ''}" style="${isEnabled ? '' : 'background:rgba(113,113,122,0.2);color:#a1a1aa;'}">${isEnabled ? 'Active' : 'Inactive'}</span>
           </div>
-          <div class="policy-actions">
-            <label class="switch">
-              <input type="checkbox" ${p.enabled ? 'checked' : ''} onchange="togglePolicy('${stage}','${name}',this.checked)">
-              <span class="slider"></span>
-            </label>
-            <button class="small" onclick="editPolicy('${stage}','${name}')">Edit</button>
-            <button class="danger small" onclick="deletePolicy('${stage}','${name}')">Remove</button>
-          </div>
+          ${desc ? `<div class="gr-desc">${desc}</div>` : ''}
         </div>
-        ${settings ? `<div class="policy-settings">${settings}</div>` : ''}
+        <div class="guardrail-controls">
+          <span style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:0.3px;">ACTION</span>
+          <select onchange="changeAction('${stage}','${name}',this.value)">
+            <option value="block" ${action==='block'?'selected':''}>Block</option>
+            <option value="warn" ${action==='warn'?'selected':''}>Warn</option>
+            <option value="log" ${action==='log'?'selected':''}>Log</option>
+          </select>
+          ${summary || ''}
+          <label class="switch">
+            <input type="checkbox" ${isEnabled?'checked':''} onchange="togglePolicy('${stage}','${name}',this.checked)">
+            <span class="slider"></span>
+          </label>
+          <span class="gr-arrow" onclick="editPolicy('${stage}','${name}')">›</span>
+        </div>
       </div>
     `;
   }).join('');
+}
+
+function getSettingsSummary(name, settings) {
+  if (!settings || !Object.keys(settings).length) return '';
+  if (settings.threshold !== undefined)
+    return `<span class="gr-setting-chip">THRESHOLD <span class="mono">${Number(settings.threshold).toFixed(2)}</span></span>`;
+  if (settings.confidence_threshold !== undefined)
+    return `<span class="gr-setting-chip">THRESHOLD <span class="mono">${Number(settings.confidence_threshold).toFixed(2)}</span></span>`;
+  if (settings.keywords && Array.isArray(settings.keywords))
+    return `<span class="gr-setting-chip">KEYWORDS <span class="mono">${settings.keywords.length}</span></span>`;
+  if (settings.patterns && Array.isArray(settings.patterns))
+    return `<span class="gr-setting-chip">PATTERNS <span class="mono">${settings.patterns.length}</span></span>`;
+  if (settings.allowed_languages && Array.isArray(settings.allowed_languages))
+    return `<span class="gr-setting-chip">LANGUAGES <span class="mono">${settings.allowed_languages.length}</span></span>`;
+  return '';
+}
+
+function changeAction(stage, name, action) {
+  const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
+  POLICIES[key][name].action = action;
+  markDirty();
 }
 
 function markDirty() {
@@ -589,10 +864,12 @@ function togglePolicy(stage, name, enabled) {
 function editPolicy(stage, name) {
   const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
   const p = POLICIES[key][name];
+  const meta = GUARDRAIL_META[name] || {};
+  const label = meta.label || name;
   ADD_POLICY_STAGE = stage;
-  document.getElementById('add-policy-title').textContent = `Edit ${name}`;
+  document.getElementById('add-policy-title').textContent = `Edit — ${label}`;
   const sel = document.getElementById('add-policy-name');
-  sel.innerHTML = `<option value="${name}" selected>${name}</option>`;
+  sel.innerHTML = `<option value="${name}" selected>${label}</option>`;
   sel.disabled = true;
   document.getElementById('add-policy-action').value = p.action || 'block';
   document.getElementById('add-policy-settings').value = JSON.stringify(p.settings || {}, null, 2);
@@ -609,12 +886,15 @@ function deletePolicy(stage, name) {
 
 function openAddPolicy(stage) {
   ADD_POLICY_STAGE = stage;
-  document.getElementById('add-policy-title').textContent = `Add ${stage === 'input' ? 'Input' : 'Output'} Policy`;
+  document.getElementById('add-policy-title').textContent = `Add ${stage === 'input' ? 'Input' : 'Output'} Guardrail`;
   const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
   const existing = new Set(Object.keys(POLICIES[key] || {}));
   const available = (stage === 'input' ? INPUT_GUARDRAILS : OUTPUT_GUARDRAILS).filter(g => !existing.has(g));
   const sel = document.getElementById('add-policy-name');
-  sel.innerHTML = '<option value="">Select a guardrail…</option>' + available.map(g => `<option value="${g}">${g}</option>`).join('');
+  sel.innerHTML = '<option value="">Select a guardrail…</option>' + available.map(g => {
+    const meta = GUARDRAIL_META[g] || {};
+    return `<option value="${g}">${meta.label || g}</option>`;
+  }).join('');
   sel.disabled = false;
   document.getElementById('add-policy-action').value = 'block';
   document.getElementById('add-policy-settings').value = '{}';
@@ -710,36 +990,6 @@ async function loadUsage() {
   } catch (e) {
     document.getElementById('usage-display').innerHTML = `<div class="toast error">${e.message}</div>`;
   }
-}
-
-// ── Playground ────────────────────────────
-async function testInput() {
-  const msg = document.getElementById('playground-message').value.trim();
-  const agent = document.getElementById('playground-agent-key').value.trim();
-  if (!msg) return;
-  const headers = { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
-  if (agent) headers['X-Agent-Key'] = agent;
-  try {
-    const r = await fetch(`${BASE_URL}/guardrails/input`, { method: 'POST', headers, body: JSON.stringify({ message: msg }) });
-    const data = await r.json();
-    displayResult(data);
-  } catch (e) { displayResult({ error: e.message }); }
-}
-async function testOutput() {
-  const msg = document.getElementById('playground-message').value.trim();
-  const agent = document.getElementById('playground-agent-key').value.trim();
-  if (!msg) return;
-  const headers = { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
-  if (agent) headers['X-Agent-Key'] = agent;
-  try {
-    const r = await fetch(`${BASE_URL}/guardrails/output`, { method: 'POST', headers, body: JSON.stringify({ output: msg }) });
-    const data = await r.json();
-    displayResult(data);
-  } catch (e) { displayResult({ error: e.message }); }
-}
-function displayResult(data) {
-  document.getElementById('playground-result-card').style.display = 'block';
-  document.getElementById('playground-result').textContent = JSON.stringify(data, null, 2);
 }
 
 // ── Activity ──────────────────────────────
@@ -889,6 +1139,7 @@ function createAgentCard(agentId, agent) {
 function createPermissionsMatrix(agent) {
   const tools = agent.tools || [];
   const rolePermissions = agent.role_permissions || {};
+  const roles = Object.keys(rolePermissions);
 
   if (tools.length === 0) {
     return '<div style="font-size: 12px; color: var(--text-muted); padding: 1rem; text-align: center; background: var(--bg-3); border-radius: 6px;">No tools configured</div>';
@@ -897,33 +1148,26 @@ function createPermissionsMatrix(agent) {
   let matrix = '<div class="permissions-matrix" style="overflow-x: auto;">';
   matrix += '<table style="width: 100%; font-size: 11px; border-collapse: separate; border-spacing: 2px;">';
 
-  // Header row with tools
-  matrix += '<thead><tr><th style="text-align: left; padding: 0.5rem; font-weight: 600; color: var(--text-dim);">Role</th>';
-  tools.forEach(tool => {
-    matrix += `<th style="text-align: center; padding: 0.5rem; font-weight: 500; color: var(--text-dim); writing-mode: vertical-lr; text-orientation: mixed; min-width: 40px;">${tool.replace(/_/g, ' ')}</th>`;
+  // Header: Tool column + one column per role
+  matrix += '<thead><tr><th style="text-align: left; padding: 0.5rem; font-weight: 600; color: var(--text-dim);">Tool</th>';
+  roles.forEach(role => {
+    matrix += `<th style="text-align: center; padding: 0.5rem; font-weight: 500; color: var(--text-dim); min-width: 60px;">${role}</th>`;
   });
   matrix += '</tr></thead>';
 
-  // Body rows for each role
+  // One row per tool
   matrix += '<tbody>';
-  const roles = Object.keys(rolePermissions);
-
   if (roles.length === 0) {
-    matrix += `<tr><td colspan="${tools.length + 1}" style="text-align: center; padding: 1rem; color: var(--text-muted);">No role permissions configured</td></tr>`;
+    matrix += `<tr><td colspan="1" style="text-align: center; padding: 1rem; color: var(--text-muted);">No role permissions configured</td></tr>`;
   } else {
-    roles.forEach(role => {
-      const allowedTools = rolePermissions[role] || [];
-      matrix += `<tr><td style="padding: 0.5rem; font-weight: 500;">${role}</td>`;
-
-      tools.forEach(tool => {
-        const hasAccess = allowedTools.includes(tool);
+    tools.forEach(tool => {
+      matrix += `<tr><td style="padding: 0.5rem; font-weight: 500; white-space: nowrap;">${tool.replace(/_/g, ' ')}</td>`;
+      roles.forEach(role => {
+        const hasAccess = (rolePermissions[role] || []).includes(tool);
         const cellStyle = hasAccess
           ? 'background: rgba(16, 185, 129, 0.1); color: #10b981;'
           : 'background: rgba(239, 68, 68, 0.1); color: #ef4444;';
-
-        matrix += `<td style="text-align: center; padding: 0.5rem; ${cellStyle} border-radius: 4px;">`;
-        matrix += hasAccess ? '✓' : '✗';
-        matrix += '</td>';
+        matrix += `<td style="text-align: center; padding: 0.5rem; ${cellStyle} border-radius: 4px;">${hasAccess ? '✓' : '✗'}</td>`;
       });
       matrix += '</tr>';
     });
@@ -946,22 +1190,152 @@ async function toggleAgent(agentId, enabled) {
   }
 }
 
-function editAgent(agentId) {
-  showToast('Edit agent functionality coming soon', 'info');
-  // TODO: Open edit modal with agent details
-}
+let EDITING_AGENT_ID = null;
 
-function deleteAgent(agentId) {
-  if (confirm(`Are you sure you want to delete agent "${agentId}"? This action cannot be undone.`)) {
-    // TODO: Implement API call to delete agent
-    console.log(`Deleting agent: ${agentId}`);
-    showToast(`Agent ${agentId} scheduled for deletion`, 'warning');
+async function editAgent(agentId) {
+  try {
+    const response = await apiCall('/v1/agents/registry');
+    if (!response.success || !response.agents[agentId]) {
+      showToast('Agent not found', 'error');
+      return;
+    }
+    const agent = response.agents[agentId];
+    EDITING_AGENT_ID = agentId;
+    document.getElementById('agent-modal-title').textContent = `Edit Agent: ${agentId}`;
+    document.getElementById('agent-modal-id').value = agentId;
+    document.getElementById('agent-modal-id').disabled = true;
+    document.getElementById('agent-modal-name').value = agent.name || '';
+    document.getElementById('agent-modal-desc').value = agent.description || '';
+    document.getElementById('agent-modal-tools').value = (agent.tools || []).join(', ');
+    document.getElementById('agent-modal-roles').innerHTML = '';
+    const perms = agent.role_permissions || {};
+    Object.entries(perms).forEach(([role, tools]) => addRoleRow(role, tools));
+    document.getElementById('agent-modal').classList.remove('hidden');
+  } catch (e) {
+    showToast('Failed to load agent: ' + e.message, 'error');
   }
 }
 
 function showAddAgentModal() {
-  showToast('Add agent functionality coming soon', 'info');
-  // TODO: Open add agent modal
+  EDITING_AGENT_ID = null;
+  document.getElementById('agent-modal-title').textContent = 'Add Agent';
+  document.getElementById('agent-modal-id').value = '';
+  document.getElementById('agent-modal-id').disabled = false;
+  document.getElementById('agent-modal-name').value = '';
+  document.getElementById('agent-modal-desc').value = '';
+  document.getElementById('agent-modal-tools').value = '';
+  document.getElementById('agent-modal-roles').innerHTML = '';
+  document.getElementById('agent-modal').classList.remove('hidden');
+}
+
+function closeAgentModal() {
+  document.getElementById('agent-modal').classList.add('hidden');
+}
+
+function getToolsFromInput() {
+  return document.getElementById('agent-modal-tools').value.split(',').map(t => t.trim()).filter(Boolean);
+}
+
+function updateRoleCheckboxes() {
+  const tools = getToolsFromInput();
+  document.querySelectorAll('#agent-modal-roles .role-row').forEach(row => {
+    const checked = new Set();
+    row.querySelectorAll('.role-checkboxes input[type=checkbox]:checked').forEach(cb => checked.add(cb.value));
+    row.querySelector('.role-checkboxes').innerHTML = tools.map(t =>
+      `<label style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:0.75rem;font-size:12px;color:var(--text);cursor:pointer;">
+        <input type="checkbox" value="${t}" ${checked.has(t) ? 'checked' : ''}> ${t.replace(/_/g, ' ')}
+      </label>`
+    ).join('');
+  });
+}
+
+function addRoleRow(roleName, allowedTools) {
+  roleName = roleName || '';
+  allowedTools = allowedTools || [];
+  const tools = getToolsFromInput();
+  const allowed = new Set(allowedTools);
+  const container = document.getElementById('agent-modal-roles');
+  const row = document.createElement('div');
+  row.className = 'role-row';
+  row.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.5rem;align-items:flex-start;padding:0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:0.5rem;';
+  row.innerHTML = `
+    <div style="flex:0 0 120px;">
+      <input type="text" class="role-name-input" value="${roleName}" placeholder="Role name" style="width:100%;font-size:12px;padding:0.4rem 0.6rem;">
+    </div>
+    <div class="role-checkboxes" style="flex:1;display:flex;flex-wrap:wrap;gap:0.25rem 0;align-items:center;">
+      ${tools.map(t =>
+        `<label style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:0.75rem;font-size:12px;color:var(--text);cursor:pointer;">
+          <input type="checkbox" value="${t}" ${allowed.has(t) ? 'checked' : ''}> ${t.replace(/_/g, ' ')}
+        </label>`
+      ).join('')}
+    </div>
+    <button class="danger small" onclick="this.closest('.role-row').remove()" style="flex-shrink:0;">&times;</button>
+  `;
+  container.appendChild(row);
+}
+
+function getRolePermissionsFromUI() {
+  const perms = {};
+  document.querySelectorAll('#agent-modal-roles .role-row').forEach(row => {
+    const name = row.querySelector('.role-name-input').value.trim();
+    if (!name) return;
+    const checked = [];
+    row.querySelectorAll('.role-checkboxes input[type=checkbox]:checked').forEach(cb => checked.push(cb.value));
+    perms[name] = checked;
+  });
+  return perms;
+}
+
+async function saveAgentFromModal() {
+  const agentId = EDITING_AGENT_ID || document.getElementById('agent-modal-id').value.trim();
+  const name = document.getElementById('agent-modal-name').value.trim();
+  const description = document.getElementById('agent-modal-desc').value.trim();
+  const tools = getToolsFromInput();
+  const rolePermissions = getRolePermissionsFromUI();
+
+  if (!agentId) return showToast('Agent ID is required', 'error');
+  if (!name) return showToast('Agent name is required', 'error');
+
+  const agentData = { agent_id: agentId, name, description, tools, role_permissions: rolePermissions, status: 'active' };
+
+  try {
+    const method = EDITING_AGENT_ID ? 'PUT' : 'POST';
+    const url = EDITING_AGENT_ID ? `/v1/agents/registry/${agentId}` : '/v1/agents/registry';
+    const response = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+      body: JSON.stringify(agentData),
+    });
+    const result = await response.json();
+    if (response.ok && result.success) {
+      showToast(`Agent "${name}" ${EDITING_AGENT_ID ? 'updated' : 'created'} successfully`, 'success');
+      closeAgentModal();
+      loadAgentData();
+    } else {
+      showToast(result.detail || 'Failed to save agent', 'error');
+    }
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'error');
+  }
+}
+
+async function deleteAgent(agentId) {
+  if (!confirm(`Are you sure you want to delete agent "${agentId}"? This action cannot be undone.`)) return;
+  try {
+    const response = await fetch(`/v1/agents/registry/${agentId}`, {
+      method: 'DELETE',
+      headers: { 'X-API-Key': API_KEY },
+    });
+    const result = await response.json();
+    if (response.ok && result.success) {
+      showToast(`Agent "${agentId}" deleted successfully`, 'success');
+      loadAgentData();
+    } else {
+      showToast(result.detail || 'Failed to delete agent', 'error');
+    }
+  } catch (e) {
+    showToast('Network error while deleting agent', 'error');
+  }
 }
 
 function showToast(message, type = 'info') {
@@ -1033,121 +1407,1805 @@ style.textContent = `
   .permissions-matrix table tbody tr:hover {
     background: rgba(255, 255, 255, 0.05);
   }
+
+  .api-sub-tab.active {
+    color: var(--accent) !important;
+    border-bottom-color: var(--accent) !important;
+  }
+  .api-sub-tab:hover { color: var(--text) !important; }
+
+  .sdk-code-block {
+    position: relative;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 1rem;
+  }
+  .sdk-code-block .code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+  .sdk-code-block pre {
+    padding: 0.75rem;
+    margin: 0;
+    font-size: 12px;
+    overflow-x: auto;
+    white-space: pre;
+    line-height: 1.6;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .sdk-section { margin-bottom: 1.5rem; }
+  .sdk-section-title {
+    font-size: 14px; font-weight: 600; margin-bottom: 0.25rem;
+  }
+  .sdk-section-desc {
+    font-size: 12px; color: var(--text-dim); margin-bottom: 0.75rem;
+  }
+  .ep-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .ep-table th { text-align: left; padding: 0.4rem 0.5rem; color: var(--text-muted); font-size: 11px; font-weight: 600; border-bottom: 1px solid var(--border); }
+  .ep-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid rgba(39,39,47,0.5); }
+  .ep-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .method-badge { display:inline-block;padding:0.1rem 0.4rem;border-radius:3px;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#fff; }
 `;
 document.head.appendChild(style);
 
 // ── Tool Policies ─────────────────────────
+let TOOL_POLICIES = {};
+let TOOL_POLICIES_DIRTY = false;
+let EDITING_TOOL_POLICY = null;
+let REGISTERED_AGENT_TOOLS = [];
+let REGISTERED_AGENT_ROLES = [];
+
 async function loadToolPolicyData() {
+  REGISTERED_AGENT_TOOLS = [];
+  REGISTERED_AGENT_ROLES = [];
+  try {
+    const agentsRes = await apiCall('/v1/agents/registry');
+    if (agentsRes && agentsRes.success && agentsRes.agents) {
+      const toolSet = new Set();
+      const roleSet = new Set();
+      Object.values(agentsRes.agents).forEach(agent => {
+        (agent.tools || []).forEach(t => toolSet.add(t));
+        Object.keys(agent.role_permissions || {}).forEach(r => roleSet.add(r));
+      });
+      REGISTERED_AGENT_TOOLS = [...toolSet].sort();
+      REGISTERED_AGENT_ROLES = [...roleSet].sort();
+    }
+  } catch (e) { /* no agents available */ }
+
+  if (!REGISTERED_AGENT_TOOLS.length) {
+    TOOL_POLICIES = {};
+    TOOL_POLICIES_DIRTY = false;
+    document.getElementById('tp-save-banner').classList.add('hidden');
+    document.getElementById('tool-policies-content').innerHTML = `
+      <div style="text-align:center;padding:3rem;">
+        <div style="font-size:15px;margin-bottom:0.5rem;">No tools registered by agents</div>
+        <div class="muted" style="margin-bottom:1.25rem;">Register agents with tools in the Agents tab first, then configure data policies for their tools here.</div>
+        <button class="primary small" onclick="document.querySelector('.nav-item[data-tab=agents]').click()">Go to Agents</button>
+      </div>`;
+    return;
+  }
+
+  // 2. Fetch existing tool policies from Redis
   try {
     const response = await apiCall('/v1/agents/tools/policies');
-    if (response && response.success && response.tool_policies) {
-      displayToolPolicies(response.tool_policies);
+    if (response && response.success && response.tool_policies && Object.keys(response.tool_policies).length > 0) {
+      TOOL_POLICIES = response.tool_policies;
     } else {
-      document.getElementById('tool-policies-content').innerHTML = `
-        <div style="color: var(--text-muted); text-align: center; padding: 2rem;">
-          No tool policies configured.<br>
-          <button class="primary" style="margin-top: 1rem;" onclick="window.open('/static/enhanced-admin-portal.html', '_blank')">
-            Open Admin Portal to Configure Policies
-          </button>
-        </div>`;
+      TOOL_POLICIES = {};
     }
-  } catch (error) {
-    // Show demo data when API is unavailable
-    console.log('Tool policies API unavailable, showing demo data:', error.message);
-    const mockPolicies = [
-      {
-        tool_name: "patient_lookup",
-        data_sanitization: {
-          redact_ssn: true,
-          redact_phone: true,
-          redact_email: false
-        },
-        role_restrictions: {
-          doctor: "allow",
-          nurse: "redact",
-          patient: "block"
-        },
-        compliance_framework: "hipaa"
-      },
-      {
-        tool_name: "prescribe_medication",
-        data_sanitization: {
-          redact_dosage_sensitive: true,
-          redact_patient_notes: true
-        },
-        role_restrictions: {
-          doctor: "allow",
-          nurse: "block",
-          patient: "block"
-        },
-        compliance_framework: "hipaa"
-      }
-    ];
+  } catch (e) {
+    TOOL_POLICIES = {};
+  }
 
-    displayToolPolicies(mockPolicies);
+  TOOL_POLICIES_DIRTY = false;
+  document.getElementById('tp-save-banner').classList.add('hidden');
+  displayToolPolicies();
+}
 
-    // Show info banner
-    document.getElementById('tool-policies-content').innerHTML = `
-      <div style="background: var(--warning); color: var(--bg); padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; font-size: 13px;">
-        📡 <strong>Demo Mode:</strong> Showing sample policies - API deployment in progress
+function displayToolPolicies() {
+  const container = document.getElementById('tool-policies-content');
+  const configuredTools = Object.keys(TOOL_POLICIES).filter(k => k !== 'updated_at' && REGISTERED_AGENT_TOOLS.includes(k));
+  const unconfiguredTools = REGISTERED_AGENT_TOOLS.filter(t => !TOOL_POLICIES[t]);
+
+  if (!REGISTERED_AGENT_TOOLS.length) {
+    container.innerHTML = '<div class="muted" style="padding:2rem;text-align:center;">No tools registered by agents.</div>';
+    return;
+  }
+
+  const tools = configuredTools;
+
+  let html = '<div class="policy-grid">';
+
+  if (!tools.length && !unconfiguredTools.length) {
+    container.innerHTML = '<div class="muted" style="padding:2rem;text-align:center;">No tool policies configured.</div>';
+    return;
+  }
+
+  html += tools.map(toolName => {
+    const p = TOOL_POLICIES[toolName];
+    const roles = p.role_restrictions || {};
+    const patterns = (p.data_sanitization && p.data_sanitization.patterns) || [];
+    const hasLLM = p.llm_validation && p.llm_validation.enabled;
+    const flags = [];
+    if (p.data_sanitization) {
+      if (p.data_sanitization.redact_ssn) flags.push('SSN');
+      if (p.data_sanitization.mask_phone) flags.push('Phone');
+    }
+
+    return `
+      <div class="policy-card" style="margin-bottom:0.75rem;">
+        <div class="policy-header">
+          <div style="display:flex;align-items:center;gap:0.5rem;">
+            <span style="font-size:16px;">🔧</span>
+            <div>
+              <div class="policy-name" style="font-size:14px;font-weight:600;">${toolName.replace(/_/g, ' ')}</div>
+              <code style="font-size:10px;color:var(--text-muted);background:var(--bg);padding:0.15rem 0.4rem;border-radius:3px;">${toolName}</code>
+            </div>
+          </div>
+          <div style="display:flex;gap:0.5rem;">
+            <button class="small" onclick="editToolPolicy('${toolName}')">Edit</button>
+            <button class="danger small" onclick="removeToolPolicy('${toolName}')">Delete</button>
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:1rem;margin-top:0.75rem;">
+          <div style="flex:1;min-width:180px;">
+            <div style="font-size:11px;color:var(--text-muted);font-weight:600;margin-bottom:0.4rem;">ROLE RESTRICTIONS</div>
+            <div style="display:flex;flex-wrap:wrap;gap:0.3rem;">
+              ${Object.entries(roles).map(([role, action]) => {
+                const c = action === 'allow' ? '#10b981' : action === 'block' ? '#ef4444' : '#f59e0b';
+                return `<span style="display:inline-block;padding:0.2rem 0.45rem;background:${c}20;color:${c};border-radius:4px;font-size:10px;font-weight:600;">${role}: ${action}</span>`;
+              }).join('')}
+              ${!Object.keys(roles).length ? '<span class="muted" style="font-size:11px;">None</span>' : ''}
+            </div>
+          </div>
+          <div style="flex:1;min-width:140px;">
+            <div style="font-size:11px;color:var(--text-muted);font-weight:600;margin-bottom:0.4rem;">DATA SANITIZATION</div>
+            <div style="font-size:11px;color:var(--text-dim);">
+              ${patterns.length ? `${patterns.length} pattern${patterns.length > 1 ? 's' : ''}` : ''}
+              ${flags.length ? (patterns.length ? ' · ' : '') + flags.join(', ') : ''}
+              ${!patterns.length && !flags.length ? 'None' : ''}
+            </div>
+          </div>
+          <div style="min-width:100px;">
+            <div style="font-size:11px;color:var(--text-muted);font-weight:600;margin-bottom:0.4rem;">LLM VALIDATION</div>
+            <span style="font-size:11px;padding:0.2rem 0.45rem;border-radius:4px;font-weight:600;${hasLLM ? 'background:rgba(16,185,129,0.15);color:#10b981;' : 'background:rgba(113,113,122,0.15);color:#a1a1aa;'}">${hasLLM ? '✓ Enabled' : 'Off'}</span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  // Show unconfigured agent tools
+  if (unconfiguredTools.length) {
+    html += `<div style="margin-top:1rem;padding:1rem;background:var(--bg-3);border:1px dashed var(--border);border-radius:var(--radius-sm);">
+      <div style="font-size:12px;color:var(--text-muted);font-weight:600;margin-bottom:0.5rem;">TOOLS WITHOUT POLICIES</div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.4rem;">
+        ${unconfiguredTools.map(t => `<button class="small" onclick="showAddToolPolicyModalFor('${t}')" style="font-size:11px;">+ ${t.replace(/_/g, ' ')}</button>`).join('')}
       </div>
-    ` + document.getElementById('tool-policies-content').innerHTML;
+    </div>`;
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+function showAddToolPolicyModalFor(toolName) {
+  showAddToolPolicyModal();
+  const nameEl = document.getElementById('tp-modal-name');
+  nameEl.value = toolName;
+}
+
+const EXAMPLE_PATTERNS_JSON = `[
+  {
+    "regex": "\\\\b\\\\d{3}-\\\\d{2}-\\\\d{4}\\\\b",
+    "replacement": "[SSN_REDACTED]",
+    "description": "Social Security Numbers"
+  },
+  {
+    "regex": "\\\\b\\\\d{3}[-.\\\\s]?\\\\d{3}[-.\\\\s]?\\\\d{4}\\\\b",
+    "replacement": "[PHONE_REDACTED]",
+    "description": "Phone Numbers"
+  },
+  {
+    "regex": "\\\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\\\.[A-Z|a-z]{2,}\\\\b",
+    "replacement": "[EMAIL_REDACTED]",
+    "description": "Email Addresses"
+  }
+]`;
+
+function populatePatternExample() {
+  const el = document.getElementById('tp-pattern-example');
+  if (el) el.textContent = EXAMPLE_PATTERNS_JSON;
+}
+
+function showAddToolPolicyModal() {
+  if (!REGISTERED_AGENT_TOOLS.length) return showToast('Register agents with tools first', 'error');
+  const available = REGISTERED_AGENT_TOOLS.filter(t => !TOOL_POLICIES[t]);
+  if (!available.length) return showToast('All agent tools already have policies', 'error');
+  EDITING_TOOL_POLICY = null;
+  document.getElementById('tp-modal-title').textContent = 'Add Tool Policy';
+  const nameEl = document.getElementById('tp-modal-name');
+  nameEl.innerHTML = '<option value="">Select a tool...</option>' + available.map(t => `<option value="${t}">${t.replace(/_/g, ' ')} (${t})</option>`).join('');
+  nameEl.value = '';
+  nameEl.disabled = false;
+
+  // Pre-populate all tenant roles with default "block"
+  document.getElementById('tp-modal-roles').innerHTML = '';
+  const emptyMsg = document.getElementById('tp-roles-empty');
+  if (REGISTERED_AGENT_ROLES.length) {
+    emptyMsg.style.display = 'none';
+    REGISTERED_AGENT_ROLES.forEach(role => addTPRoleRow(role, 'block'));
+  } else {
+    emptyMsg.style.display = '';
+  }
+
+  document.getElementById('tp-modal-patterns').value = '[]';
+  populatePatternExample();
+  document.getElementById('tp-modal-llm-enabled').checked = false;
+  document.getElementById('tp-llm-fields').classList.add('hidden');
+  document.getElementById('tp-modal-llm-prompt').value = '';
+  document.getElementById('tp-modal-llm-threshold').value = '0.8';
+  document.getElementById('tool-policy-modal').classList.remove('hidden');
+}
+
+function editToolPolicy(toolName) {
+  const p = TOOL_POLICIES[toolName];
+  if (!p) return;
+  EDITING_TOOL_POLICY = toolName;
+  document.getElementById('tp-modal-title').textContent = `Edit — ${toolName}`;
+  const nameEl = document.getElementById('tp-modal-name');
+  nameEl.innerHTML = `<option value="${toolName}">${toolName.replace(/_/g, ' ')} (${toolName})</option>`;
+  nameEl.value = toolName;
+  nameEl.disabled = true;
+
+  document.getElementById('tp-modal-roles').innerHTML = '';
+  const existingRoles = p.role_restrictions || {};
+  const configuredRoleNames = new Set(Object.keys(existingRoles));
+  // Show existing role restrictions first
+  Object.entries(existingRoles).forEach(([role, action]) => addTPRoleRow(role, action));
+  // Add any tenant roles not yet configured (default block)
+  REGISTERED_AGENT_ROLES.filter(r => !configuredRoleNames.has(r)).forEach(r => addTPRoleRow(r, 'block'));
+  document.getElementById('tp-roles-empty').style.display = 'none';
+
+  const patterns = (p.data_sanitization && p.data_sanitization.patterns) || [];
+  document.getElementById('tp-modal-patterns').value = JSON.stringify(patterns, null, 2);
+  populatePatternExample();
+  const llm = p.llm_validation || {};
+  document.getElementById('tp-modal-llm-enabled').checked = !!llm.enabled;
+  document.getElementById('tp-llm-fields').classList.toggle('hidden', !llm.enabled);
+  document.getElementById('tp-modal-llm-prompt').value = llm.prompt || '';
+  document.getElementById('tp-modal-llm-threshold').value = llm.confidence_threshold || 0.8;
+  document.getElementById('tool-policy-modal').classList.remove('hidden');
+}
+
+function closeToolPolicyModal() {
+  document.getElementById('tool-policy-modal').classList.add('hidden');
+}
+
+function addTPRoleRow(roleName, action) {
+  roleName = roleName || '';
+  action = action || 'block';
+  const container = document.getElementById('tp-modal-roles');
+
+  const alreadyUsed = new Set();
+  container.querySelectorAll('.tp-role-name').forEach(sel => {
+    if (sel.value) alreadyUsed.add(sel.value);
+  });
+
+  const availableRoles = REGISTERED_AGENT_ROLES.filter(r => !alreadyUsed.has(r) || r === roleName);
+  if (!availableRoles.length && !roleName) {
+    showToast('All available roles already added', 'error');
+    return;
+  }
+
+  const row = document.createElement('div');
+  row.className = 'tp-role-row';
+  row.style.cssText = 'display:flex;gap:0.5rem;align-items:center;margin-bottom:0.4rem;';
+
+  const roleOpts = availableRoles.map(r =>
+    `<option value="${r}" ${r === roleName ? 'selected' : ''}>${r}</option>`
+  ).join('');
+
+  row.innerHTML = `
+    <select class="tp-role-name" style="flex:1;font-size:12px;padding:0.4rem 0.6rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);">
+      ${roleName ? '' : '<option value="">Select role...</option>'}${roleOpts}
+    </select>
+    <select class="tp-role-action" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:0.4rem 0.5rem;font-size:12px;">
+      <option value="allow" ${action==='allow'?'selected':''}>allow</option>
+      <option value="redact" ${action==='redact'?'selected':''}>redact</option>
+      <option value="block" ${action==='block'?'selected':''}>block</option>
+    </select>
+    <button class="danger small" onclick="this.closest('.tp-role-row').remove()" style="padding:0.3rem 0.5rem;">&times;</button>
+  `;
+  container.appendChild(row);
+}
+
+function saveToolPolicyFromModal() {
+  const toolName = EDITING_TOOL_POLICY || document.getElementById('tp-modal-name').value.trim();
+  if (!toolName) return showToast('Tool name is required', 'error');
+  if (!REGISTERED_AGENT_TOOLS.includes(toolName)) return showToast('Tool "' + toolName + '" is not registered by any agent', 'error');
+
+  const roleRestrictions = {};
+  document.querySelectorAll('#tp-modal-roles .tp-role-row').forEach(row => {
+    const name = row.querySelector('.tp-role-name').value.trim();
+    const action = row.querySelector('.tp-role-action').value;
+    if (name) roleRestrictions[name] = action;
+  });
+
+  let patterns = [];
+  try { patterns = JSON.parse(document.getElementById('tp-modal-patterns').value || '[]'); }
+  catch (e) { return showToast('Invalid JSON in patterns', 'error'); }
+
+  const existing = TOOL_POLICIES[toolName] || {};
+  const policy = {
+    data_sanitization: { ...(existing.data_sanitization || {}), patterns },
+    role_restrictions: roleRestrictions,
+  };
+
+  const llmEnabled = document.getElementById('tp-modal-llm-enabled').checked;
+  if (llmEnabled) {
+    policy.llm_validation = {
+      enabled: true,
+      prompt: document.getElementById('tp-modal-llm-prompt').value,
+      confidence_threshold: parseFloat(document.getElementById('tp-modal-llm-threshold').value) || 0.8,
+    };
+  }
+
+  TOOL_POLICIES[toolName] = policy;
+  TOOL_POLICIES_DIRTY = true;
+  document.getElementById('tp-save-banner').classList.remove('hidden');
+  closeToolPolicyModal();
+  displayToolPolicies();
+  showToast(`Tool policy "${toolName}" ${EDITING_TOOL_POLICY ? 'updated' : 'added'}`, 'success');
+}
+
+function removeToolPolicy(toolName) {
+  if (!confirm(`Delete tool policy "${toolName}"?`)) return;
+  delete TOOL_POLICIES[toolName];
+  TOOL_POLICIES_DIRTY = true;
+  document.getElementById('tp-save-banner').classList.remove('hidden');
+  displayToolPolicies();
+  showToast(`Tool policy "${toolName}" removed`, 'success');
+}
+
+async function saveAllToolPolicies() {
+  try {
+    const response = await fetch('/v1/agents/tools/policies', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+      body: JSON.stringify(TOOL_POLICIES),
+    });
+    const result = await response.json();
+    if (response.ok && result.success) {
+      TOOL_POLICIES_DIRTY = false;
+      document.getElementById('tp-save-banner').classList.add('hidden');
+      showToast('Tool policies saved to Redis', 'success');
+    } else {
+      showToast(result.detail || 'Failed to save', 'error');
+    }
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'error');
   }
 }
 
-function displayToolPolicies(toolPolicies) {
-  let html = '<div class="policy-grid">';
+// ── API Reference ─────────────────────────
+const API_ENDPOINTS = [
+  {
+    section: 'Input / Output Guardrails',
+    desc: 'Manage tenant guardrail policies. Full replace on PUT — deletions are reflected.',
+    endpoints: [
+      {
+        method: 'GET', path: '/v1/tenant/me/policies',
+        desc: 'Get current input and output guardrail policies',
+        example_response: {
+          tenant_id: '<your-tenant-id>',
+          input_guardrails: {
+            adversarial_detection: { enabled: true, action: 'block', settings: { threshold: 0.8 } },
+            keyword_blocklist: { enabled: true, action: 'block', settings: { keywords: ['hack','exploit'] } }
+          },
+          output_guardrails: {
+            pii_leakage: { enabled: true, action: 'block', settings: {} }
+          }
+        }
+      },
+      {
+        method: 'PUT', path: '/v1/tenant/me/policies',
+        desc: 'Replace input and/or output guardrail policies (full replace, not merge)',
+        example_body: {
+          input_guardrails: {
+            adversarial_detection: { enabled: true, action: 'block', settings: { threshold: 0.8 } },
+            keyword_blocklist: { enabled: true, action: 'block', settings: { keywords: ['hack','exploit'] } },
+            toxicity: { enabled: true, action: 'block', settings: { threshold: 0.8 } },
+            language_detection: { enabled: true, action: 'block', settings: { allowed_languages: ['en'] } },
+            system_prompt_leak: { enabled: true, action: 'block', settings: { threshold: 0.8 } },
+            topic_restriction: { enabled: true, action: 'block', settings: {} },
+            custom_regex: { enabled: true, action: 'block', settings: {} },
+            continuous_adversarial: { enabled: false, action: 'log', settings: {} }
+          },
+          output_guardrails: {
+            hallucinated_links: { enabled: true, action: 'block', settings: {} },
+            tone_enforcement: { enabled: true, action: 'block', settings: {} },
+            bias_detection: { enabled: true, action: 'block', settings: { threshold: 0.6 } },
+            pii_leakage: { enabled: true, action: 'block', settings: {} },
+            competitor_mention: { enabled: true, action: 'block', settings: {} }
+          }
+        },
+        example_response: { status: 'updated', tenant_id: '<your-tenant-id>', input_guardrails: '...', output_guardrails: '...' }
+      }
+    ]
+  },
+  {
+    section: 'Agent Registry',
+    desc: 'Register and manage AI agents with tool permissions per role.',
+    endpoints: [
+      {
+        method: 'GET', path: '/v1/agents/registry',
+        desc: 'List all registered agents',
+        example_response: {
+          success: true,
+          agents: {
+            'healthcare-doctor': {
+              agent_id: 'healthcare-doctor',
+              name: 'Doctor Assistant',
+              description: 'AI assistant for doctors',
+              tools: ['patient_lookup','prescribe_medication','diagnosis_update'],
+              role_permissions: {
+                doctor: ['patient_lookup','prescribe_medication','diagnosis_update'],
+                nurse: ['patient_lookup'],
+                admin: ['patient_lookup'],
+                patient: []
+              }
+            }
+          },
+          total: 1
+        }
+      },
+      {
+        method: 'POST', path: '/v1/agents/registry',
+        desc: 'Register a new agent',
+        example_body: {
+          agent_id: 'my-agent',
+          name: 'My Agent',
+          description: 'Custom AI agent',
+          tools: ['web_search','document_lookup'],
+          role_permissions: {
+            admin: ['web_search','document_lookup'],
+            user: ['web_search'],
+            viewer: []
+          }
+        },
+        example_response: { success: true, message: 'Agent my-agent created successfully', agent: '...' }
+      },
+      {
+        method: 'PUT', path: '/v1/agents/registry/{agent_id}',
+        desc: 'Update an existing agent',
+        example_body: {
+          name: 'Updated Name',
+          tools: ['web_search','document_lookup','email_send'],
+          role_permissions: {
+            admin: ['web_search','document_lookup','email_send'],
+            user: ['web_search']
+          }
+        },
+        example_response: { success: true, message: 'Agent updated successfully' }
+      },
+      {
+        method: 'DELETE', path: '/v1/agents/registry/{agent_id}',
+        desc: 'Delete an agent',
+        example_response: { success: true, message: 'Agent deleted successfully' }
+      }
+    ]
+  },
+  {
+    section: 'Tool Policies',
+    desc: 'Data sanitization, role-based access, and LLM validation for agent tools.',
+    endpoints: [
+      {
+        method: 'GET', path: '/v1/agents/tools/policies',
+        desc: 'Get all tool policies',
+        example_response: {
+          success: true,
+          tool_policies: {
+            patient_lookup: {
+              data_sanitization: { redact_ssn: true, mask_phone: true, patterns: [
+                { regex: '\\b\\d{3}-\\d{2}-\\d{4}\\b', replacement: '[SSN_REDACTED]', description: 'Social Security Numbers' },
+                { regex: '\\b\\d{3}[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b', replacement: '[PHONE_REDACTED]', description: 'Phone Numbers' },
+                { regex: '\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b', replacement: '[EMAIL_REDACTED]', description: 'Email Addresses' },
+                { regex: '\\b\\d+\\s+[A-Za-z\\s]+(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr)\\b', replacement: '[ADDRESS_REDACTED]', description: 'Street Addresses' }
+              ]},
+              role_restrictions: { doctor: 'allow', nurse: 'redact', admin: 'redact', patient: 'block' }
+            },
+            prescribe_medication: {
+              data_sanitization: { patterns: [
+                { regex: '\\b\\d{3}-\\d{2}-\\d{4}\\b', replacement: '[SSN_REDACTED]', description: 'SSN in prescriptions' },
+                { regex: '\\b(DEA|DEA#|DEA Number)\\s*:?\\s*[A-Z]{2}\\d{7}\\b', replacement: '[DEA_NUMBER_REDACTED]', description: 'DEA Numbers' }
+              ]},
+              llm_validation: { enabled: true, prompt: 'Validate if {user_role} can safely prescribe this medication: {tool_input}. Consider medical appropriateness and role permissions.', confidence_threshold: 0.8 },
+              role_restrictions: { doctor: 'allow', nurse: 'block', admin: 'block', patient: 'block' }
+            },
+            billing_access: {
+              data_sanitization: { patterns: [
+                { regex: '\\$[0-9,]+\\.?[0-9]*', replacement: '[AMOUNT_REDACTED]', description: 'Dollar Amounts' },
+                { regex: '\\b[0-9]{4}[\\s-]?[0-9]{4}[\\s-]?[0-9]{4}[\\s-]?[0-9]{4}\\b', replacement: '[CARD_****_****_****_XXXX]', description: 'Credit Card Numbers' },
+                { regex: '\\b\\d{3}-\\d{2}-\\d{4}\\b', replacement: '[SSN_REDACTED]', description: 'SSN in billing' }
+              ]},
+              role_restrictions: { admin: 'allow', doctor: 'redact', nurse: 'block', patient: 'block' }
+            },
+            web_search: {
+              data_sanitization: { patterns: [] }
+            }
+          }
+        }
+      },
+      {
+        method: 'PUT', path: '/v1/agents/tools/policies',
+        desc: 'Replace all tool policies (full replace)',
+        example_body: {
+          patient_lookup: {
+            data_sanitization: { redact_ssn: true, mask_phone: true, patterns: [
+              { regex: '\\b\\d{3}-\\d{2}-\\d{4}\\b', replacement: '[SSN_REDACTED]', description: 'Social Security Numbers' },
+              { regex: '\\b\\d{3}[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b', replacement: '[PHONE_REDACTED]', description: 'Phone Numbers' },
+              { regex: '\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b', replacement: '[EMAIL_REDACTED]', description: 'Email Addresses' },
+              { regex: '\\b\\d+\\s+[A-Za-z\\s]+(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr)\\b', replacement: '[ADDRESS_REDACTED]', description: 'Street Addresses' }
+            ]},
+            role_restrictions: { doctor: 'allow', nurse: 'redact', admin: 'redact', patient: 'block' }
+          },
+          prescribe_medication: {
+            data_sanitization: { patterns: [
+              { regex: '\\b\\d{3}-\\d{2}-\\d{4}\\b', replacement: '[SSN_REDACTED]', description: 'SSN in prescriptions' },
+              { regex: '\\b(DEA|DEA#|DEA Number)\\s*:?\\s*[A-Z]{2}\\d{7}\\b', replacement: '[DEA_NUMBER_REDACTED]', description: 'DEA Numbers' }
+            ]},
+            llm_validation: { enabled: true, prompt: 'Validate if {user_role} can safely prescribe this medication: {tool_input}. Consider medical appropriateness and role permissions.', confidence_threshold: 0.8 },
+            role_restrictions: { doctor: 'allow', nurse: 'block', admin: 'block', patient: 'block' }
+          },
+          billing_access: {
+            data_sanitization: { patterns: [
+              { regex: '\\$[0-9,]+\\.?[0-9]*', replacement: '[AMOUNT_REDACTED]', description: 'Dollar Amounts' },
+              { regex: '\\b[0-9]{4}[\\s-]?[0-9]{4}[\\s-]?[0-9]{4}[\\s-]?[0-9]{4}\\b', replacement: '[CARD_****_****_****_XXXX]', description: 'Credit Card Numbers' },
+              { regex: '\\b\\d{3}-\\d{2}-\\d{4}\\b', replacement: '[SSN_REDACTED]', description: 'SSN in billing' }
+            ]},
+            role_restrictions: { admin: 'allow', doctor: 'redact', nurse: 'block', patient: 'block' }
+          },
+          web_search: { data_sanitization: { patterns: [] } }
+        },
+        example_response: { success: true, message: 'Tool policies saved' }
+      },
+      {
+        method: 'DELETE', path: '/v1/agents/tools/policies/{tool_name}',
+        desc: 'Delete a single tool policy',
+        example_response: { success: true, message: "Tool policy 'patient_lookup' deleted" }
+      }
+    ]
+  },
+  {
+    section: 'Classify (Runtime)',
+    desc: 'Run guardrails against input or output text in real-time.',
+    endpoints: [
+      {
+        method: 'POST', path: '/v1/classify',
+        desc: 'Run input guardrails on user text',
+        example_body: {
+          text: 'How do I hack into a system?',
+          guardrails: { adversarial_detection: { threshold: 0.8 }, keyword_blocklist: { keywords: ['hack'] } },
+          agent_id: 'healthcare-doctor',
+          user_role: 'nurse'
+        },
+        example_response: {
+          decision: 'block',
+          results: { adversarial_detection: { passed: false, confidence: 0.95, action: 'block', message: 'Adversarial prompt detected' } },
+          blocked_by: ['adversarial_detection']
+        }
+      },
+      {
+        method: 'POST', path: '/v1/classify-output',
+        desc: 'Run output guardrails on LLM-generated text',
+        example_body: {
+          text: 'The patient SSN is 123-45-6789 and their credit card is 4111-1111-1111-1111.',
+          guardrails: { pii_leakage: {}, hallucinated_links: {} },
+          agent_id: 'healthcare-doctor',
+          user_role: 'nurse'
+        },
+        example_response: {
+          decision: 'block',
+          results: { pii_leakage: { passed: false, action: 'block', message: 'PII detected in output' } }
+        }
+      }
+    ]
+  },
+  {
+    section: 'Usage & Audit',
+    desc: 'Monitor quota consumption and review configuration changes.',
+    endpoints: [
+      {
+        method: 'GET', path: '/v1/tenant/me',
+        desc: 'Get tenant overview (plan, agents, active guardrails)',
+        example_response: { tenant_id: '...', name: 'My Company', plan: 'enterprise', input_guardrails: ['adversarial_detection','toxicity'], output_guardrails: ['pii_leakage'], quota: { max_requests_per_minute: 100, max_requests_per_day: 10000 } }
+      },
+      {
+        method: 'GET', path: '/v1/tenant/me/usage',
+        desc: 'Get current usage against quota limits',
+        example_response: { tenant_id: '...', plan: 'enterprise', usage: { requests_this_minute: 12, requests_today: 450 }, quota: { max_requests_per_minute: 100, max_requests_per_day: 10000 }, pct_of_minute_limit: 12.0, pct_of_daily_limit: 4.5 }
+      },
+      {
+        method: 'GET', path: '/v1/tenant/me/audit',
+        desc: 'Get recent audit log entries for your tenant',
+        example_response: { tenant_id: '...', entries: [{ action: 'tenant_self_update_policies', actor: 'tenant:...', timestamp: '2026-04-08T12:00:00Z' }] }
+      }
+    ]
+  },
+  {
+    section: 'API Keys',
+    desc: 'Self-service API key management. Max 10 keys per tenant.',
+    endpoints: [
+      {
+        method: 'GET', path: '/v1/tenant/me/api-keys',
+        desc: 'List API key hashes (plaintext never stored)',
+        example_response: { tenant_id: '...', api_keys: [{ hash_prefix: 'a1b2c3d4e5f6...', created: null }], count: 1 }
+      },
+      {
+        method: 'POST', path: '/v1/tenant/me/api-keys',
+        desc: 'Create a new API key (shown ONCE — store it immediately)',
+        example_response: { status: 'created', api_key: 'tenant-xxx_abc123...', preview: 'tenant-x...3xyz', warning: 'Store this key immediately — it cannot be retrieved later.' }
+      },
+      {
+        method: 'DELETE', path: '/v1/tenant/me/api-keys',
+        desc: 'Revoke an API key',
+        example_body: { api_key: 'plaintext-key-to-revoke' },
+        example_response: { status: 'revoked', preview: 'tenant-x...3xyz' }
+      }
+    ]
+  }
+];
 
-  // Handle both array and object formats
-  const policies = Array.isArray(toolPolicies) ? toolPolicies : Object.entries(toolPolicies).map(([name, policy]) => ({...policy, tool_name: name}));
+// ── SDK Code Blocks ──────────────────────
+function codeBlock(title, code, lang) {
+  const id = 'cb-' + Math.random().toString(36).slice(2,9);
+  return `<div class="sdk-code-block"><div class="code-header"><span>${title}</span><button class="small" onclick="navigator.clipboard.writeText(document.getElementById('${id}').textContent);showToast('Copied','success')" style="font-size:10px;padding:0.2rem 0.5rem;">Copy</button></div><pre id="${id}" class="mono">${escapeHtml(code)}</pre></div>`;
+}
+function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-  policies.forEach((policy) => {
-    const toolName = policy.tool_name || 'Unknown Tool';
-    html += `<div class="policy-card" style="margin-bottom: 1rem;">`;
-    html += `<div class="policy-header">`;
-    html += `<div class="policy-name" style="font-size: 14px; font-weight: 600;">${toolName}</div>`;
-    html += `</div>`;
+function switchApiTab(btn) {
+  document.querySelectorAll('.api-sub-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.api-tab-content').forEach(c => c.classList.add('hidden'));
+  btn.classList.add('active');
+  const tab = btn.getAttribute('data-api-tab');
+  document.getElementById('api-tab-' + tab).classList.remove('hidden');
+  if (tab === 'api-reference' && !document.getElementById('api-docs-content').innerHTML) renderAPIDocs();
+  if (tab === 'python-sdk' && !document.getElementById('api-tab-python-sdk').innerHTML) renderPythonSDK();
+  if (tab === 'js-sdk' && !document.getElementById('api-tab-js-sdk').innerHTML) renderJsSDK();
+  if (tab === 'curl-examples' && !document.getElementById('api-tab-curl-examples').innerHTML) renderCurlExamples();
+}
 
-    // Role restrictions
-    if (policy.role_restrictions) {
-      html += `<div style="margin-bottom: 1rem;">`;
-      html += `<div style="font-size: 12px; color: var(--text-dim); margin-bottom: 0.5rem; font-weight: 500;">Role Restrictions:</div>`;
-      Object.entries(policy.role_restrictions).forEach(([role, action]) => {
-        const badgeStyle = action === 'allow' ? 'background: rgba(16, 185, 129, 0.2); color: #10b981;' :
-                          action === 'block' ? 'background: rgba(239, 68, 68, 0.2); color: #ef4444;' :
-                          'background: rgba(245, 158, 11, 0.2); color: #f59e0b;';
-        html += `<span style="display: inline-block; padding: 0.25rem 0.5rem; ${badgeStyle} border-radius: 4px; font-size: 11px; margin-right: 0.5rem; margin-bottom: 0.25rem; font-weight: 500;">${role}: ${action}</span>`;
-      });
-      html += `</div>`;
+function renderAllApiTabs() {
+  document.getElementById('api-base-url').textContent = window.location.origin;
+  renderEndpointMap();
+}
+
+// ── Endpoint Map (Quick Start) ───────────
+const ENDPOINT_MAP = [
+  { cat: 'Configuration — Guardrail Policies', color: '#f59e0b', where: 'admin', endpoints: [
+    { m: 'GET', p: '/v1/tenant/me/policies', d: 'Get input/output guardrail policies' },
+    { m: 'PUT', p: '/v1/tenant/me/policies', d: 'Replace guardrail policies (full replace)' },
+  ]},
+  { cat: 'Configuration — Agent Registry', color: '#f59e0b', where: 'admin', endpoints: [
+    { m: 'GET', p: '/v1/agents/registry', d: 'List all agents' },
+    { m: 'POST', p: '/v1/agents/registry', d: 'Register a new agent' },
+    { m: 'PUT', p: '/v1/agents/registry/{agent_id}', d: 'Update agent' },
+    { m: 'DELETE', p: '/v1/agents/registry/{agent_id}', d: 'Delete agent' },
+    { m: 'GET', p: '/v1/agents/roles', d: 'List tenant + common role names' },
+  ]},
+  { cat: 'Configuration — Tool Policies', color: '#f59e0b', where: 'admin', endpoints: [
+    { m: 'GET', p: '/v1/agents/tools/policies', d: 'Get all tool policies' },
+    { m: 'PUT', p: '/v1/agents/tools/policies', d: 'Replace all tool policies' },
+    { m: 'GET', p: '/v1/agents/tools/policies/{tool_name}', d: 'Get single tool policy' },
+    { m: 'DELETE', p: '/v1/agents/tools/policies/{tool_name}', d: 'Delete tool policy' },
+  ]},
+  { cat: 'Configuration — Data Policies', color: '#f59e0b', where: 'admin', endpoints: [
+    { m: 'POST', p: '/v1/data-policies/tools/{tool_name}/policy', d: 'Create/update tool data policy' },
+    { m: 'GET', p: '/v1/data-policies/tools/{tool_name}/policy', d: 'Get tool data policy' },
+    { m: 'GET', p: '/v1/data-policies/compliance/frameworks', d: 'List compliance frameworks (HIPAA, PCI-DSS, GDPR)' },
+    { m: 'POST', p: '/v1/data-policies/validate', d: 'Validate data against policies' },
+  ]},
+  { cat: 'Configuration — Shield Policies', color: '#f59e0b', where: 'admin', endpoints: [
+    { m: 'GET', p: '/v1/shield/policies/{tenant_id}', d: 'List data-protection policies for tenant' },
+    { m: 'POST', p: '/v1/shield/policies/{tenant_id}', d: 'Create policy' },
+    { m: 'GET', p: '/v1/shield/policies/{tenant_id}/{policy_id}', d: 'Get one policy' },
+    { m: 'PUT', p: '/v1/shield/policies/{tenant_id}/{policy_id}', d: 'Update policy' },
+    { m: 'DELETE', p: '/v1/shield/policies/{tenant_id}/{policy_id}', d: 'Delete policy' },
+    { m: 'POST', p: '/v1/shield/policies/test', d: 'Test policy against sample content' },
+    { m: 'POST', p: '/v1/shield/policies/{tenant_id}/bulk', d: 'Bulk create policies' },
+  ]},
+  { cat: 'Monitoring — Usage & Audit', color: '#06b6d4', where: 'admin', endpoints: [
+    { m: 'GET', p: '/v1/tenant/me', d: 'Tenant overview (plan, agents, guardrails)' },
+    { m: 'GET', p: '/v1/tenant/me/usage', d: 'Usage vs quota' },
+    { m: 'GET', p: '/v1/tenant/me/audit', d: 'Tenant audit log' },
+    { m: 'GET', p: '/v1/shield/audit', d: 'Query guardrail audit logs (filters, pagination)' },
+    { m: 'GET', p: '/v1/shield/stats', d: 'Aggregated stats (block rate, counts)' },
+  ]},
+  { cat: 'API Keys', color: '#06b6d4', where: 'admin', endpoints: [
+    { m: 'GET', p: '/v1/tenant/me/api-keys', d: 'List key hashes' },
+    { m: 'POST', p: '/v1/tenant/me/api-keys', d: 'Create new key (shown once)' },
+    { m: 'DELETE', p: '/v1/tenant/me/api-keys', d: 'Revoke a key' },
+  ]},
+  { cat: 'Admin — Tenant Management', color: '#06b6d4', where: 'admin', endpoints: [
+    { m: 'GET', p: '/v1/admin/tenants', d: 'List all tenants' },
+    { m: 'POST', p: '/v1/admin/tenants', d: 'Create tenant' },
+    { m: 'GET', p: '/v1/admin/tenants/{tenant_id}', d: 'Get tenant config' },
+    { m: 'PUT', p: '/v1/admin/tenants/{tenant_id}', d: 'Update tenant config' },
+    { m: 'DELETE', p: '/v1/admin/tenants/{tenant_id}', d: 'Delete tenant' },
+    { m: 'GET', p: '/v1/admin/dashboard', d: 'Admin dashboard (all tenants)' },
+    { m: 'GET', p: '/v1/admin/audit', d: 'Global admin audit log' },
+  ]},
+  { cat: 'Runtime — Guardrails (production server)', color: '#10b981', where: 'runtime', endpoints: [
+    { m: 'POST', p: '/guardrails/input', d: 'Run input guardrails on user text' },
+    { m: 'POST', p: '/guardrails/output', d: 'Run output guardrails on LLM output' },
+    { m: 'POST', p: '/v1/shield/chat/completions', d: 'Full proxy: input guardrails → LLM → output guardrails' },
+  ]},
+  { cat: 'Runtime — Tool & Agent Guards (production server)', color: '#6366f1', where: 'runtime', endpoints: [
+    { m: 'POST', p: '/v1/shield/tool/check', d: 'Pre-execution tool call validation' },
+    { m: 'POST', p: '/v1/shield/tool/output', d: 'Sanitize/moderate tool output' },
+    { m: 'POST', p: '/v1/shield/tool/confirm', d: 'Confirm sensitive tool action' },
+    { m: 'POST', p: '/v1/shield/agent/check', d: 'Agent-scope guards (loops, budget, delegation)' },
+    { m: 'POST', p: '/v1/shield/action/check', d: 'Evaluate agent action (allow/deny)' },
+    { m: 'POST', p: '/v1/agents/authorize', d: 'Check tool authorization for role + agent' },
+  ]},
+  { cat: 'Runtime — Memory, Topic, MCP (production server)', color: '#8b5cf6', where: 'runtime', endpoints: [
+    { m: 'POST', p: '/v1/shield/memory/check', d: 'Memory read/write guards (PII, injection)' },
+    { m: 'POST', p: '/v1/shield/topic/check', d: 'Topic enforcement check' },
+    { m: 'POST', p: '/v1/shield/mcp/register', d: 'Register MCP server' },
+    { m: 'POST', p: '/v1/shield/mcp/check', d: 'Pre-execution MCP tool call check' },
+  ]},
+];
+
+const MC = { GET: '#10b981', POST: '#6366f1', PUT: '#f59e0b', DELETE: '#ef4444' };
+function badge(m) { return `<span class="method-badge" style="background:${MC[m]||'#888'}">${m}</span>`; }
+
+function renderEndpointMap() {
+  const adminEps = ENDPOINT_MAP.filter(c => c.where === 'admin');
+  const runtimeEps = ENDPOINT_MAP.filter(c => c.where === 'runtime');
+
+  const renderCat = (cat) => `
+    <div style="margin-bottom:1rem;">
+      <div style="font-size:12px;font-weight:600;color:${cat.color};margin-bottom:0.4rem;">${cat.cat}</div>
+      <table class="ep-table">
+        <tbody>${cat.endpoints.map(ep => `<tr><td style="width:55px;">${badge(ep.m)}</td><td style="width:40%;"><code style="font-size:11px;">${ep.p}</code></td><td class="muted">${ep.d}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+
+  document.getElementById('qs-endpoint-map').innerHTML = `
+    <div style="padding:0.5rem 0.75rem;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:var(--radius-sm);margin-bottom:1rem;font-size:12px;">
+      <strong style="color:#10b981;">Admin Portal APIs</strong>
+      <span class="muted" style="margin-left:0.5rem;">Available here — use for configuration, CRUD, and monitoring</span>
+    </div>
+    ${adminEps.map(renderCat).join('')}
+    <div style="padding:0.5rem 0.75rem;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);border-radius:var(--radius-sm);margin-bottom:1rem;margin-top:1.5rem;font-size:12px;">
+      <strong style="color:#818cf8;">Runtime APIs</strong>
+      <span class="muted" style="margin-left:0.5rem;">Available on the production Shield server (RunPod) — used by LiteLLM, proxies, and app backends</span>
+    </div>
+    ${runtimeEps.map(renderCat).join('')}
+  `;
+}
+
+// ── Python SDK ───────────────────────────
+function renderPythonSDK() {
+  const B = window.location.origin;
+  const c = document.getElementById('api-tab-python-sdk');
+  c.innerHTML = `
+  <div class="card" style="margin-bottom:1rem;"><div class="card-header"><div><div class="card-title">Python Setup</div><div class="card-subtitle">Install dependencies and configure the client</div></div></div>
+  <div style="padding:0 1.25rem 1.25rem;">
+    ${codeBlock('Install', 'pip install requests', 'bash')}
+    ${codeBlock('Client Setup — shield_client.py', `import requests
+
+BASE_URL = "${B}"
+API_KEY = "your-api-key-here"
+
+HEADERS = {
+    "X-API-Key": API_KEY,
+    "Content-Type": "application/json",
+}
+
+def shield_request(method, path, json=None):
+    """Make authenticated request to Votal Shield."""
+    resp = requests.request(method, f"{B}{'{path}'}", headers=HEADERS, json=json)
+    resp.raise_for_status()
+    return resp.json()`, 'python')}
+  </div></div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">1. Register an Agent</div>
+    <div class="sdk-section-desc">Define agents with tools and role-based permissions</div>
+    ${codeBlock('POST /v1/agents/registry', `agent = shield_request("POST", "/v1/agents/registry", json={
+    "agent_id": "healthcare-doctor",
+    "name": "Doctor Assistant",
+    "description": "AI assistant for doctors with full medical access",
+    "tools": ["patient_lookup", "prescribe_medication", "diagnosis_update", "view_records"],
+    "role_permissions": {
+        "doctor": ["patient_lookup", "prescribe_medication", "diagnosis_update", "view_records"],
+        "nurse": ["patient_lookup", "view_records"],
+        "admin": ["patient_lookup"],
+        "patient": []
     }
+})
+print(f"Agent created: {agent['agent']['agent_id']}")`, 'python')}
+  </div>
 
-    // Data sanitization summary
-    if (policy.data_sanitization) {
-      html += `<div style="margin-bottom: 1rem;">`;
-      html += `<div style="font-size: 12px; color: var(--text-dim); margin-bottom: 0.5rem; font-weight: 500;">Data Protection:</div>`;
-      const patterns = policy.data_sanitization.patterns || [];
-      const features = [];
-      if (policy.data_sanitization.redact_ssn) features.push('SSN Redaction');
-      if (policy.data_sanitization.mask_phone) features.push('Phone Masking');
-      if (patterns.length) features.push(`${patterns.length} Custom Patterns`);
-      html += `<div style="font-size: 11px; color: var(--text-muted);">${features.length ? features.join(', ') : 'None configured'}</div>`;
-      html += `</div>`;
+  <div class="sdk-section">
+    <div class="sdk-section-title">2a. Read Current Guardrail Policies</div>
+    <div class="sdk-section-desc">Fetch existing input and output guardrail configs before making changes</div>
+    ${codeBlock('GET /v1/tenant/me/policies', `current = shield_request("GET", "/v1/tenant/me/policies")
+print("Input guardrails:", list(current["input_guardrails"].keys()))
+print("Output guardrails:", list(current["output_guardrails"].keys()))
+
+# Each guardrail has: enabled (bool), action (block/warn/log), settings (dict)
+for name, cfg in current["input_guardrails"].items():
+    print(f"  {name}: enabled={cfg['enabled']} action={cfg['action']} settings={cfg.get('settings', {})}")`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">2b. Set All Guardrail Policies (Full Replace)</div>
+    <div class="sdk-section-desc">Replace all input and output guardrails at once — this is a full replace, not a merge. Any guardrail not included will be removed.</div>
+    ${codeBlock('PUT /v1/tenant/me/policies — full config', `policies = shield_request("PUT", "/v1/tenant/me/policies", json={
+    "input_guardrails": {
+        "adversarial_detection": {"enabled": True, "action": "block", "settings": {"threshold": 0.8}},
+        "keyword_blocklist": {"enabled": True, "action": "block", "settings": {"keywords": ["hack", "exploit", "jailbreak"]}},
+        "toxicity": {"enabled": True, "action": "block", "settings": {"threshold": 0.8}},
+        "language_detection": {"enabled": True, "action": "block", "settings": {"allowed_languages": ["en"]}},
+        "system_prompt_leak": {"enabled": True, "action": "block", "settings": {"threshold": 0.8}},
+        "topic_restriction": {"enabled": True, "action": "block", "settings": {}},
+        "custom_regex": {"enabled": True, "action": "block", "settings": {}},
+        "continuous_adversarial": {"enabled": False, "action": "log", "settings": {}},
+    },
+    "output_guardrails": {
+        "hallucinated_links": {"enabled": True, "action": "block", "settings": {}},
+        "tone_enforcement": {"enabled": True, "action": "block", "settings": {}},
+        "bias_detection": {"enabled": True, "action": "block", "settings": {"threshold": 0.6}},
+        "pii_leakage": {"enabled": True, "action": "block", "settings": {}},
+        "competitor_mention": {"enabled": True, "action": "block", "settings": {}},
     }
+})
+print(f"Policies updated: {policies['status']}")`, 'python')}
+  </div>
 
-    // LLM validation
-    if (policy.llm_validation && policy.llm_validation.enabled) {
-      html += `<div style="margin-bottom: 1rem;">`;
-      html += `<div style="font-size: 12px; color: var(--text-dim); margin-bottom: 0.5rem; font-weight: 500;">LLM Validation:</div>`;
-      html += `<div style="font-size: 11px; color: var(--text-muted);">✓ Enabled (threshold: ${policy.llm_validation.confidence_threshold || 0.8})</div>`;
-      html += `</div>`;
+  <div class="sdk-section">
+    <div class="sdk-section-title">2c. Add a Single Guardrail to Existing Config</div>
+    <div class="sdk-section-desc">Read current policies, add a new guardrail, then save back. Works for both input and output guardrails.</div>
+    ${codeBlock('Read → Add → Save', `# Step 1: Read current policies
+current = shield_request("GET", "/v1/tenant/me/policies")
+input_grs = current["input_guardrails"]
+output_grs = current["output_guardrails"]
+
+# Step 2: Add a new input guardrail
+input_grs["custom_regex"] = {
+    "enabled": True,
+    "action": "block",
+    "settings": {
+        "patterns": ["\\\\b(SSN|social security)\\\\b"],
+        "case_sensitive": False,
     }
+}
 
-    html += `</div>`;
+# Step 3: Add a new output guardrail
+output_grs["competitor_mention"] = {
+    "enabled": True,
+    "action": "warn",
+    "settings": {
+        "competitors": ["CompetitorA", "CompetitorB"],
+    }
+}
+
+# Step 4: Save back (full replace — include all existing + new)
+shield_request("PUT", "/v1/tenant/me/policies", json={
+    "input_guardrails": input_grs,
+    "output_guardrails": output_grs,
+})
+print("Guardrail added successfully")`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">2d. Update / Toggle / Remove a Guardrail</div>
+    <div class="sdk-section-desc">Modify settings, change action, disable, or remove individual guardrails</div>
+    ${codeBlock('Update, Disable, Remove examples', `current = shield_request("GET", "/v1/tenant/me/policies")
+input_grs = current["input_guardrails"]
+output_grs = current["output_guardrails"]
+
+# ── Update: Change threshold for adversarial detection ──
+if "adversarial_detection" in input_grs:
+    input_grs["adversarial_detection"]["settings"]["threshold"] = 0.9
+
+# ── Update: Change action from "block" to "warn" ──
+if "toxicity" in input_grs:
+    input_grs["toxicity"]["action"] = "warn"
+
+# ── Disable: Keep config but stop enforcing ──
+if "continuous_adversarial" in input_grs:
+    input_grs["continuous_adversarial"]["enabled"] = False
+
+# ── Remove: Delete a guardrail entirely ──
+input_grs.pop("custom_regex", None)
+output_grs.pop("tone_enforcement", None)
+
+# ── Add keywords to blocklist ──
+if "keyword_blocklist" in input_grs:
+    kw = input_grs["keyword_blocklist"]["settings"].get("keywords", [])
+    kw.extend(["phishing", "ransomware"])
+    input_grs["keyword_blocklist"]["settings"]["keywords"] = list(set(kw))
+
+# Save all changes
+shield_request("PUT", "/v1/tenant/me/policies", json={
+    "input_guardrails": input_grs,
+    "output_guardrails": output_grs,
+})
+print("Guardrails updated")`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">2e. Available Guardrails Reference</div>
+    <div class="sdk-section-desc">All input and output guardrail keys and their configurable settings</div>
+    ${codeBlock('Guardrail Reference', `# ═══ INPUT GUARDRAILS ═══
+# Each guardrail: {"enabled": bool, "action": "block"|"warn"|"log", "settings": {...}}
+#
+# adversarial_detection    — Detect jailbreaks and prompt injections
+#   settings: {"threshold": 0.0-1.0}
+#
+# keyword_blocklist        — Block messages with specific keywords
+#   settings: {"keywords": ["word1", "word2"]}
+#
+# toxicity                 — Detect hate speech, harassment, self-harm
+#   settings: {"threshold": 0.0-1.0}
+#
+# language_detection       — Restrict to supported languages
+#   settings: {"allowed_languages": ["en", "es", "fr"]}
+#
+# system_prompt_leak       — Detect attempts to extract system prompt
+#   settings: {"threshold": 0.0-1.0}
+#
+# topic_restriction        — Whitelist allowed conversation topics
+#   settings: {"allowed_topics": ["healthcare", "billing"]}
+#
+# custom_regex             — Block inputs matching custom regex patterns
+#   settings: {"patterns": ["regex1", "regex2"]}
+#
+# continuous_adversarial   — Rate limit sustained adversarial attempts
+#   settings: {}
+#
+# ═══ OUTPUT GUARDRAILS ═══
+#
+# hallucinated_links       — Detect fake/non-existent URLs
+#   settings: {}
+#
+# tone_enforcement         — Enforce brand voice, block sarcasm
+#   settings: {}
+#
+# bias_detection           — Detect gender, racial, age, political bias
+#   settings: {"threshold": 0.0-1.0}
+#
+# pii_leakage              — Detect/redact SSNs, credit cards, API keys
+#   settings: {}
+#
+# competitor_mention       — Prevent mentioning competitor brands
+#   settings: {"competitors": ["CompanyA", "CompanyB"]}`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">3. Set Tool Policies</div>
+    <div class="sdk-section-desc">Data sanitization, role restrictions, and LLM validation per tool</div>
+    ${codeBlock('PUT /v1/agents/tools/policies', `tool_policies = shield_request("PUT", "/v1/agents/tools/policies", json={
+    "patient_lookup": {
+        "data_sanitization": {
+            "redact_ssn": True, "mask_phone": True,
+            "patterns": [
+                {"regex": r"\\b\\d{3}-\\d{2}-\\d{4}\\b", "replacement": "[SSN_REDACTED]", "description": "Social Security Numbers"},
+                {"regex": r"\\b\\d{3}[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b", "replacement": "[PHONE_REDACTED]", "description": "Phone Numbers"},
+                {"regex": r"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b", "replacement": "[EMAIL_REDACTED]", "description": "Email Addresses"},
+            ]
+        },
+        "role_restrictions": {"doctor": "allow", "nurse": "redact", "admin": "redact", "patient": "block"},
+    },
+    "prescribe_medication": {
+        "data_sanitization": {
+            "patterns": [
+                {"regex": r"\\b\\d{3}-\\d{2}-\\d{4}\\b", "replacement": "[SSN_REDACTED]", "description": "SSN in prescriptions"},
+                {"regex": r"\\b(DEA|DEA#|DEA Number)\\s*:?\\s*[A-Z]{2}\\d{7}\\b", "replacement": "[DEA_NUMBER_REDACTED]", "description": "DEA Numbers"},
+            ]
+        },
+        "llm_validation": {
+            "enabled": True,
+            "prompt": "Validate if {user_role} can safely prescribe this medication: {tool_input}. Consider medical appropriateness and role permissions.",
+            "confidence_threshold": 0.8,
+        },
+        "role_restrictions": {"doctor": "allow", "nurse": "block", "admin": "block", "patient": "block"},
+    },
+    "billing_access": {
+        "data_sanitization": {
+            "patterns": [
+                {"regex": r"\\$[0-9,]+\\.?[0-9]*", "replacement": "[AMOUNT_REDACTED]", "description": "Dollar Amounts"},
+                {"regex": r"\\b[0-9]{4}[\\s-]?[0-9]{4}[\\s-]?[0-9]{4}[\\s-]?[0-9]{4}\\b", "replacement": "[CARD_REDACTED]", "description": "Credit Card Numbers"},
+            ]
+        },
+        "role_restrictions": {"admin": "allow", "doctor": "redact", "nurse": "block", "patient": "block"},
+    },
+    "web_search": {"data_sanitization": {"patterns": []}},
+})
+print(f"Tool policies saved: {tool_policies['message']}")`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">4. Run Input Guardrails (Runtime)</div>
+    <div class="sdk-section-desc">Classify user input before sending to LLM</div>
+    ${codeBlock('POST /guardrails/input', `result = shield_request("POST", "/guardrails/input", json={
+    "text": "How do I hack into the hospital system?",
+    "guardrails": {
+        "adversarial_detection": {"threshold": 0.8},
+        "keyword_blocklist": {"keywords": ["hack", "exploit"]},
+        "toxicity": {"threshold": 0.8},
+    },
+    "agent_id": "healthcare-doctor",
+    "user_role": "nurse",
+})
+
+if result.get("decision") == "block":
+    print(f"BLOCKED by: {result.get('blocked_by')}")
+else:
+    print("Input OK — send to LLM")`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">5. Run Output Guardrails (Runtime)</div>
+    <div class="sdk-section-desc">Classify LLM output before showing to user</div>
+    ${codeBlock('POST /guardrails/output', `result = shield_request("POST", "/guardrails/output", json={
+    "text": "The patient SSN is 123-45-6789 and their credit card is 4111-1111-1111-1111.",
+    "guardrails": {
+        "pii_leakage": {},
+        "hallucinated_links": {},
+        "bias_detection": {"threshold": 0.6},
+        "tone_enforcement": {},
+    },
+    "agent_id": "healthcare-doctor",
+    "user_role": "nurse",
+})
+
+if result.get("decision") == "block":
+    print(f"Output BLOCKED: {result.get('blocked_by')}")
+else:
+    print("Output OK — show to user")`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">6. Chat Completions Gateway (Full Proxy)</div>
+    <div class="sdk-section-desc">Input guardrails → LLM call → Output guardrails in a single request</div>
+    ${codeBlock('POST /v1/shield/chat/completions', `result = shield_request("POST", "/v1/shield/chat/completions", json={
+    "model": "gpt-4",
+    "messages": [
+        {"role": "system", "content": "You are a helpful medical assistant."},
+        {"role": "user", "content": "What medication should I prescribe for high blood pressure?"},
+    ],
+    "shield": {
+        "agent_id": "healthcare-doctor",
+        "user_role": "doctor",
+    }
+})
+print(result["choices"][0]["message"]["content"])`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">7. Check Tool Authorization</div>
+    <div class="sdk-section-desc">Verify if a role is allowed to use a specific tool before execution</div>
+    ${codeBlock('POST /v1/agents/authorize', `auth = shield_request("POST", "/v1/agents/authorize", json={
+    "agent_id": "healthcare-doctor",
+    "user_role": "nurse",
+    "tool_name": "prescribe_medication",
+})
+
+if auth.get("authorized"):
+    print("Tool call authorized")
+else:
+    print(f"Denied: {auth.get('reason')}")`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">8. Tool Call Guards</div>
+    <div class="sdk-section-desc">Pre-execution validation and output sanitization for tool calls</div>
+    ${codeBlock('POST /v1/shield/tool/check + /v1/shield/tool/output', `# Pre-execution check
+pre_check = shield_request("POST", "/v1/shield/tool/check", json={
+    "tool_name": "patient_lookup",
+    "tool_input": {"patient_id": "P-12345", "query": "medical history"},
+    "agent_id": "healthcare-doctor",
+    "user_role": "nurse",
+})
+
+if pre_check.get("allowed"):
+    # Execute tool, then sanitize output
+    tool_result = "Patient John Doe, SSN 123-45-6789, Phone 555-123-4567"
+
+    sanitized = shield_request("POST", "/v1/shield/tool/output", json={
+        "tool_name": "patient_lookup",
+        "tool_output": tool_result,
+        "agent_id": "healthcare-doctor",
+        "user_role": "nurse",
+    })
+    print(f"Sanitized: {sanitized.get('sanitized_output')}")
+else:
+    print(f"Tool blocked: {pre_check.get('reason')}")`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">9. Agent-Scope Guards</div>
+    <div class="sdk-section-desc">Check agent loops, budget, delegation, and chain-of-thought</div>
+    ${codeBlock('POST /v1/shield/agent/check', `agent_check = shield_request("POST", "/v1/shield/agent/check", json={
+    "agent_id": "healthcare-doctor",
+    "user_role": "doctor",
+    "session_id": "sess-abc-123",
+    "action": "prescribe_medication",
+    "context": {
+        "step_count": 5,
+        "total_cost_usd": 0.12,
+    }
+})
+
+if agent_check.get("allowed"):
+    print("Agent action permitted")
+else:
+    print(f"Agent blocked: {agent_check.get('violations')}")`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">10. Memory Guards</div>
+    <div class="sdk-section-desc">Check memory read/write operations for PII, injection, and retention compliance</div>
+    ${codeBlock('POST /v1/shield/memory/check', `mem_check = shield_request("POST", "/v1/shield/memory/check", json={
+    "operation": "write",
+    "agent_id": "healthcare-doctor",
+    "user_role": "nurse",
+    "memory_key": "patient_notes",
+    "content": "Patient mentioned SSN 123-45-6789 during intake.",
+})
+
+if not mem_check.get("allowed"):
+    print(f"Memory write blocked: {mem_check.get('reason')}")`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">11. Monitor Usage & Audit</div>
+    <div class="sdk-section-desc">Track quota consumption and review guardrail decisions</div>
+    ${codeBlock('GET /v1/tenant/me/usage + /audit + /v1/shield/stats', `# Usage
+usage = shield_request("GET", "/v1/tenant/me/usage")
+print(f"Minute: {usage['pct_of_minute_limit']}% | Daily: {usage['pct_of_daily_limit']}%")
+
+# Audit log
+audit = shield_request("GET", "/v1/tenant/me/audit")
+for entry in audit["entries"][:5]:
+    print(f"  {entry['action']} by {entry['actor']}")
+
+# Shield stats
+stats = shield_request("GET", "/v1/shield/stats")
+print(f"Block rate: {stats.get('block_rate', 'N/A')}")`, 'python')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">Full Integration Example</div>
+    <div class="sdk-section-desc">Complete flow: input guard → authorize tool → execute → sanitize output → output guard</div>
+    ${codeBlock('Complete Pipeline', `def safe_agent_call(user_message, agent_id, user_role, tool_name=None, tool_input=None):
+    """Full Shield integration: input → tool auth → tool check → output."""
+
+    # Step 1: Input guardrails
+    input_check = shield_request("POST", "/guardrails/input", json={
+        "text": user_message,
+        "guardrails": {"adversarial_detection": {"threshold": 0.8}, "toxicity": {"threshold": 0.8}},
+        "agent_id": agent_id,
+        "user_role": user_role,
+    })
+    if input_check.get("decision") == "block":
+        return {"blocked": True, "stage": "input", "reason": input_check.get("blocked_by")}
+
+    # Step 2: Tool authorization (if tool call)
+    if tool_name:
+        auth = shield_request("POST", "/v1/agents/authorize", json={
+            "agent_id": agent_id, "user_role": user_role, "tool_name": tool_name,
+        })
+        if not auth.get("authorized"):
+            return {"blocked": True, "stage": "tool_auth", "reason": auth.get("reason")}
+
+        # Step 3: Tool pre-check
+        tool_check = shield_request("POST", "/v1/shield/tool/check", json={
+            "tool_name": tool_name, "tool_input": tool_input,
+            "agent_id": agent_id, "user_role": user_role,
+        })
+        if not tool_check.get("allowed"):
+            return {"blocked": True, "stage": "tool_check", "reason": tool_check.get("reason")}
+
+    # Step 4: Call LLM (your code)
+    llm_response = call_your_llm(user_message)
+
+    # Step 5: Output guardrails
+    output_check = shield_request("POST", "/guardrails/output", json={
+        "text": llm_response,
+        "guardrails": {"pii_leakage": {}, "bias_detection": {"threshold": 0.6}},
+        "agent_id": agent_id,
+        "user_role": user_role,
+    })
+    if output_check.get("decision") == "block":
+        return {"blocked": True, "stage": "output", "reason": output_check.get("blocked_by")}
+
+    return {"blocked": False, "response": llm_response}`, 'python')}
+  </div>`;
+}
+
+// ── JavaScript SDK ───────────────────────
+function renderJsSDK() {
+  const B = window.location.origin;
+  const c = document.getElementById('api-tab-js-sdk');
+  c.innerHTML = `
+  <div class="card" style="margin-bottom:1rem;"><div class="card-header"><div><div class="card-title">JavaScript / Node.js Setup</div><div class="card-subtitle">Works with fetch (Node 18+) or any HTTP client</div></div></div>
+  <div style="padding:0 1.25rem 1.25rem;">
+    ${codeBlock('Client Setup — shieldClient.js', `const BASE_URL = "${B}";
+const API_KEY = "your-api-key-here";
+
+async function shieldRequest(method, path, body = null) {
+  const resp = await fetch(\`\${BASE_URL}\${path}\`, {
+    method,
+    headers: {
+      "X-API-Key": API_KEY,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!resp.ok) throw new Error(\`Shield API error: \${resp.status} \${resp.statusText}\`);
+  return resp.json();
+}
+
+export { shieldRequest };`, 'javascript')}
+  </div></div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">1. Register an Agent</div>
+    ${codeBlock('POST /v1/agents/registry', `const agent = await shieldRequest("POST", "/v1/agents/registry", {
+  agent_id: "healthcare-doctor",
+  name: "Doctor Assistant",
+  description: "AI assistant for doctors with full medical access",
+  tools: ["patient_lookup", "prescribe_medication", "diagnosis_update"],
+  role_permissions: {
+    doctor: ["patient_lookup", "prescribe_medication", "diagnosis_update"],
+    nurse: ["patient_lookup"],
+    admin: ["patient_lookup"],
+    patient: [],
+  },
+});
+console.log("Agent created:", agent.agent.agent_id);`, 'javascript')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">2a. Read Current Guardrail Policies</div>
+    ${codeBlock('GET /v1/tenant/me/policies', `const current = await shieldRequest("GET", "/v1/tenant/me/policies");
+console.log("Input guardrails:", Object.keys(current.input_guardrails));
+console.log("Output guardrails:", Object.keys(current.output_guardrails));
+
+// Each guardrail: { enabled: bool, action: "block"|"warn"|"log", settings: {...} }
+for (const [name, cfg] of Object.entries(current.input_guardrails)) {
+  console.log(\`  \${name}: enabled=\${cfg.enabled} action=\${cfg.action}\`);
+}`, 'javascript')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">2b. Set All Guardrail Policies (Full Replace)</div>
+    <div class="sdk-section-desc">Any guardrail not included will be removed</div>
+    ${codeBlock('PUT /v1/tenant/me/policies', `await shieldRequest("PUT", "/v1/tenant/me/policies", {
+  input_guardrails: {
+    adversarial_detection: { enabled: true, action: "block", settings: { threshold: 0.8 } },
+    keyword_blocklist: { enabled: true, action: "block", settings: { keywords: ["hack", "exploit"] } },
+    toxicity: { enabled: true, action: "block", settings: { threshold: 0.8 } },
+    language_detection: { enabled: true, action: "block", settings: { allowed_languages: ["en"] } },
+    system_prompt_leak: { enabled: true, action: "block", settings: { threshold: 0.8 } },
+    topic_restriction: { enabled: true, action: "block", settings: {} },
+    custom_regex: { enabled: true, action: "block", settings: {} },
+    continuous_adversarial: { enabled: false, action: "log", settings: {} },
+  },
+  output_guardrails: {
+    hallucinated_links: { enabled: true, action: "block", settings: {} },
+    tone_enforcement: { enabled: true, action: "block", settings: {} },
+    bias_detection: { enabled: true, action: "block", settings: { threshold: 0.6 } },
+    pii_leakage: { enabled: true, action: "block", settings: {} },
+    competitor_mention: { enabled: true, action: "block", settings: {} },
+  },
+});`, 'javascript')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">2c. Add / Update / Remove Individual Guardrails</div>
+    <div class="sdk-section-desc">Read-modify-write pattern: fetch existing config, make changes, save back</div>
+    ${codeBlock('Read → Modify → Save', `// Step 1: Read current config
+const current = await shieldRequest("GET", "/v1/tenant/me/policies");
+const inputGr = current.input_guardrails;
+const outputGr = current.output_guardrails;
+
+// ── ADD a new input guardrail ──
+inputGr.custom_regex = {
+  enabled: true, action: "block",
+  settings: { patterns: ["\\\\b(SSN|social security)\\\\b"] },
+};
+
+// ── UPDATE: change threshold ──
+if (inputGr.adversarial_detection) {
+  inputGr.adversarial_detection.settings.threshold = 0.9;
+}
+
+// ── UPDATE: change action from block to warn ──
+if (inputGr.toxicity) {
+  inputGr.toxicity.action = "warn";
+}
+
+// ── DISABLE: keep config but stop enforcing ──
+if (inputGr.continuous_adversarial) {
+  inputGr.continuous_adversarial.enabled = false;
+}
+
+// ── REMOVE a guardrail entirely ──
+delete outputGr.tone_enforcement;
+
+// ── ADD keywords to blocklist ──
+if (inputGr.keyword_blocklist) {
+  const kw = new Set(inputGr.keyword_blocklist.settings.keywords || []);
+  kw.add("phishing"); kw.add("ransomware");
+  inputGr.keyword_blocklist.settings.keywords = [...kw];
+}
+
+// Step 2: Save (full replace with all changes)
+await shieldRequest("PUT", "/v1/tenant/me/policies", {
+  input_guardrails: inputGr,
+  output_guardrails: outputGr,
+});
+console.log("Guardrails updated");`, 'javascript')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">3. Set Tool Policies</div>
+    ${codeBlock('PUT /v1/agents/tools/policies', `await shieldRequest("PUT", "/v1/agents/tools/policies", {
+  patient_lookup: {
+    data_sanitization: {
+      redact_ssn: true, mask_phone: true,
+      patterns: [
+        { regex: "\\\\b\\\\d{3}-\\\\d{2}-\\\\d{4}\\\\b", replacement: "[SSN_REDACTED]", description: "SSN" },
+        { regex: "\\\\b\\\\d{3}[-.\\\\s]?\\\\d{3}[-.\\\\s]?\\\\d{4}\\\\b", replacement: "[PHONE_REDACTED]", description: "Phone" },
+      ],
+    },
+    role_restrictions: { doctor: "allow", nurse: "redact", admin: "redact", patient: "block" },
+  },
+  prescribe_medication: {
+    data_sanitization: {
+      patterns: [
+        { regex: "\\\\b\\\\d{3}-\\\\d{2}-\\\\d{4}\\\\b", replacement: "[SSN_REDACTED]", description: "SSN" },
+        { regex: "\\\\b(DEA|DEA#|DEA Number)\\\\s*:?\\\\s*[A-Z]{2}\\\\d{7}\\\\b", replacement: "[DEA_REDACTED]", description: "DEA Numbers" },
+      ],
+    },
+    llm_validation: {
+      enabled: true,
+      prompt: "Validate if {user_role} can safely prescribe this medication: {tool_input}.",
+      confidence_threshold: 0.8,
+    },
+    role_restrictions: { doctor: "allow", nurse: "block", admin: "block", patient: "block" },
+  },
+});`, 'javascript')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">4. Run Input Guardrails</div>
+    ${codeBlock('POST /guardrails/input', `const inputResult = await shieldRequest("POST", "/guardrails/input", {
+  text: "How do I hack into the hospital system?",
+  guardrails: {
+    adversarial_detection: { threshold: 0.8 },
+    keyword_blocklist: { keywords: ["hack"] },
+    toxicity: { threshold: 0.8 },
+  },
+  agent_id: "healthcare-doctor",
+  user_role: "nurse",
+});
+
+if (inputResult.decision === "block") {
+  console.log("BLOCKED by:", inputResult.blocked_by);
+} else {
+  console.log("Input OK — send to LLM");
+}`, 'javascript')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">5. Run Output Guardrails</div>
+    ${codeBlock('POST /guardrails/output', `const outputResult = await shieldRequest("POST", "/guardrails/output", {
+  text: llmResponse,
+  guardrails: { pii_leakage: {}, hallucinated_links: {}, bias_detection: { threshold: 0.6 } },
+  agent_id: "healthcare-doctor",
+  user_role: "nurse",
+});
+
+if (outputResult.decision === "block") {
+  console.log("Output BLOCKED:", outputResult.blocked_by);
+}`, 'javascript')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">6. Tool Authorization + Guards</div>
+    ${codeBlock('POST /v1/agents/authorize + /v1/shield/tool/check + /output', `// Authorize
+const auth = await shieldRequest("POST", "/v1/agents/authorize", {
+  agent_id: "healthcare-doctor", user_role: "nurse", tool_name: "prescribe_medication",
+});
+
+if (!auth.authorized) {
+  console.log("Denied:", auth.reason);
+} else {
+  // Pre-check
+  const preCheck = await shieldRequest("POST", "/v1/shield/tool/check", {
+    tool_name: "prescribe_medication",
+    tool_input: { medication: "Lisinopril 10mg", patient_id: "P-12345" },
+    agent_id: "healthcare-doctor", user_role: "nurse",
   });
 
-  html += '</div>';
+  if (preCheck.allowed) {
+    const toolResult = await executeToolCall("prescribe_medication", { ... });
 
-  document.getElementById('tool-policies-content').innerHTML = html;
+    // Sanitize output
+    const sanitized = await shieldRequest("POST", "/v1/shield/tool/output", {
+      tool_name: "prescribe_medication",
+      tool_output: toolResult,
+      agent_id: "healthcare-doctor", user_role: "nurse",
+    });
+    console.log("Sanitized:", sanitized.sanitized_output);
+  }
+}`, 'javascript')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">7. Chat Gateway (Full Proxy)</div>
+    ${codeBlock('POST /v1/shield/chat/completions', `const chat = await shieldRequest("POST", "/v1/shield/chat/completions", {
+  model: "gpt-4",
+  messages: [
+    { role: "system", content: "You are a helpful medical assistant." },
+    { role: "user", content: "What are the side effects of Metformin?" },
+  ],
+  shield: { agent_id: "healthcare-doctor", user_role: "doctor" },
+});
+console.log(chat.choices[0].message.content);`, 'javascript')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">8. Agent Guards + Memory + Topic</div>
+    ${codeBlock('Agent, Memory, Topic checks', `// Agent scope check
+const agentCheck = await shieldRequest("POST", "/v1/shield/agent/check", {
+  agent_id: "healthcare-doctor", user_role: "doctor", session_id: "sess-123",
+  action: "prescribe_medication", context: { step_count: 5, total_cost_usd: 0.12 },
+});
+
+// Memory guard
+const memCheck = await shieldRequest("POST", "/v1/shield/memory/check", {
+  operation: "write", agent_id: "healthcare-doctor", user_role: "nurse",
+  memory_key: "patient_notes", content: "Patient SSN: 123-45-6789",
+});
+
+// Topic enforcement
+const topicCheck = await shieldRequest("POST", "/v1/shield/topic/check", {
+  text: "Tell me about cryptocurrency investments",
+  allowed_topics: ["healthcare", "medical", "pharmacy"],
+  agent_id: "healthcare-doctor",
+});`, 'javascript')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">9. MCP Server Registration</div>
+    ${codeBlock('MCP integration', `// Register MCP server
+await shieldRequest("POST", "/v1/shield/mcp/register", {
+  name: "medical-records-mcp", url: "https://mcp.hospital.internal",
+  tools: ["get_patient", "update_chart", "lab_results"], trust_score: 0.9,
+});
+
+// Check MCP tool call
+const mcpCheck = await shieldRequest("POST", "/v1/shield/mcp/check", {
+  server_name: "medical-records-mcp", tool_name: "get_patient",
+  tool_input: { patient_id: "P-12345" }, user_role: "nurse",
+});`, 'javascript')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">10. Monitoring</div>
+    ${codeBlock('Usage, Audit, Stats', `const usage = await shieldRequest("GET", "/v1/tenant/me/usage");
+console.log(\`Minute: \${usage.pct_of_minute_limit}% | Daily: \${usage.pct_of_daily_limit}%\`);
+
+const audit = await shieldRequest("GET", "/v1/tenant/me/audit");
+audit.entries.slice(0, 5).forEach(e => console.log(\`  \${e.action} by \${e.actor}\`));
+
+const stats = await shieldRequest("GET", "/v1/shield/stats");
+console.log("Block rate:", stats.block_rate);`, 'javascript')}
+  </div>`;
+}
+
+// ── cURL Examples ────────────────────────
+function renderCurlExamples() {
+  const B = window.location.origin;
+  const c = document.getElementById('api-tab-curl-examples');
+  c.innerHTML = `
+  <div class="card" style="margin-bottom:1rem;"><div class="card-header"><div><div class="card-title">cURL Examples</div><div class="card-subtitle">Copy-paste ready commands. Set <code>export API_KEY="your-key"</code> first.</div></div></div>
+  <div style="padding:0 1.25rem 1.25rem;">
+    ${codeBlock('Setup', `export API_KEY="your-api-key-here"
+export BASE="${B}"`, 'bash')}
+  </div></div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">Register Agent</div>
+    ${codeBlock('POST /v1/agents/registry', `curl -s -X POST "$BASE/v1/agents/registry" \\
+  -H "X-API-Key: $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "agent_id": "healthcare-doctor",
+    "name": "Doctor Assistant",
+    "tools": ["patient_lookup", "prescribe_medication", "diagnosis_update"],
+    "role_permissions": {
+      "doctor": ["patient_lookup", "prescribe_medication", "diagnosis_update"],
+      "nurse": ["patient_lookup"],
+      "patient": []
+    }
+  }' | jq .`, 'bash')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">Set Guardrail Policies</div>
+    ${codeBlock('PUT /v1/tenant/me/policies', `curl -s -X PUT "$BASE/v1/tenant/me/policies" \\
+  -H "X-API-Key: $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "input_guardrails": {
+      "adversarial_detection": {"enabled": true, "action": "block", "settings": {"threshold": 0.8}},
+      "keyword_blocklist": {"enabled": true, "action": "block", "settings": {"keywords": ["hack","exploit"]}},
+      "toxicity": {"enabled": true, "action": "block", "settings": {"threshold": 0.8}},
+      "system_prompt_leak": {"enabled": true, "action": "block", "settings": {"threshold": 0.8}}
+    },
+    "output_guardrails": {
+      "pii_leakage": {"enabled": true, "action": "block", "settings": {}},
+      "bias_detection": {"enabled": true, "action": "block", "settings": {"threshold": 0.6}},
+      "hallucinated_links": {"enabled": true, "action": "block", "settings": {}}
+    }
+  }' | jq .`, 'bash')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">Set Tool Policies</div>
+    ${codeBlock('PUT /v1/agents/tools/policies', `curl -s -X PUT "$BASE/v1/agents/tools/policies" \\
+  -H "X-API-Key: $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "patient_lookup": {
+      "data_sanitization": {"redact_ssn": true, "mask_phone": true, "patterns": [
+        {"regex": "\\\\b\\\\d{3}-\\\\d{2}-\\\\d{4}\\\\b", "replacement": "[SSN_REDACTED]", "description": "SSN"}
+      ]},
+      "role_restrictions": {"doctor": "allow", "nurse": "redact", "patient": "block"}
+    },
+    "prescribe_medication": {
+      "data_sanitization": {"patterns": [
+        {"regex": "\\\\b(DEA|DEA#)\\\\s*:?\\\\s*[A-Z]{2}\\\\d{7}\\\\b", "replacement": "[DEA_REDACTED]", "description": "DEA Numbers"}
+      ]},
+      "llm_validation": {"enabled": true, "prompt": "Validate if {user_role} can prescribe: {tool_input}", "confidence_threshold": 0.8},
+      "role_restrictions": {"doctor": "allow", "nurse": "block", "patient": "block"}
+    }
+  }' | jq .`, 'bash')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">Run Input Guardrails</div>
+    ${codeBlock('POST /guardrails/input', `curl -s -X POST "$BASE/guardrails/input" \\
+  -H "X-API-Key: $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "text": "How do I hack into the system?",
+    "guardrails": {"adversarial_detection": {"threshold": 0.8}, "toxicity": {"threshold": 0.8}},
+    "agent_id": "healthcare-doctor",
+    "user_role": "nurse"
+  }' | jq .`, 'bash')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">Run Output Guardrails</div>
+    ${codeBlock('POST /guardrails/output', `curl -s -X POST "$BASE/guardrails/output" \\
+  -H "X-API-Key: $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "text": "Patient SSN is 123-45-6789",
+    "guardrails": {"pii_leakage": {}, "bias_detection": {"threshold": 0.6}},
+    "agent_id": "healthcare-doctor",
+    "user_role": "nurse"
+  }' | jq .`, 'bash')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">Chat Gateway (Full Proxy)</div>
+    ${codeBlock('POST /v1/shield/chat/completions', `curl -s -X POST "$BASE/v1/shield/chat/completions" \\
+  -H "X-API-Key: $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "gpt-4",
+    "messages": [
+      {"role": "system", "content": "You are a helpful medical assistant."},
+      {"role": "user", "content": "What are common side effects of Metformin?"}
+    ],
+    "shield": {"agent_id": "healthcare-doctor", "user_role": "doctor"}
+  }' | jq .`, 'bash')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">Authorize Tool + Tool Guards</div>
+    ${codeBlock('Authorization + Tool check + Output sanitization', `# Authorize
+curl -s -X POST "$BASE/v1/agents/authorize" \\
+  -H "X-API-Key: $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"agent_id":"healthcare-doctor","user_role":"nurse","tool_name":"prescribe_medication"}' | jq .
+
+# Pre-execution check
+curl -s -X POST "$BASE/v1/shield/tool/check" \\
+  -H "X-API-Key: $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"tool_name":"patient_lookup","tool_input":{"patient_id":"P-12345"},"agent_id":"healthcare-doctor","user_role":"nurse"}' | jq .
+
+# Output sanitization
+curl -s -X POST "$BASE/v1/shield/tool/output" \\
+  -H "X-API-Key: $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"tool_name":"patient_lookup","tool_output":"SSN: 123-45-6789, Phone: 555-1234","agent_id":"healthcare-doctor","user_role":"nurse"}' | jq .`, 'bash')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">Agent + Memory + Topic + MCP + Action Guards</div>
+    ${codeBlock('All remaining guards', `# Agent scope check
+curl -s -X POST "$BASE/v1/shield/agent/check" \\
+  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \\
+  -d '{"agent_id":"healthcare-doctor","user_role":"doctor","session_id":"s1","action":"prescribe","context":{"step_count":5}}' | jq .
+
+# Memory guard
+curl -s -X POST "$BASE/v1/shield/memory/check" \\
+  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \\
+  -d '{"operation":"write","agent_id":"healthcare-doctor","user_role":"nurse","memory_key":"notes","content":"SSN 123-45-6789"}' | jq .
+
+# Topic enforcement
+curl -s -X POST "$BASE/v1/shield/topic/check" \\
+  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \\
+  -d '{"text":"Tell me about crypto","allowed_topics":["healthcare"],"agent_id":"healthcare-doctor"}' | jq .
+
+# Action guard
+curl -s -X POST "$BASE/v1/shield/action/check" \\
+  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \\
+  -d '{"action":"delete_record","agent_id":"healthcare-doctor","user_role":"nurse","resource":"patient:P-123"}' | jq .
+
+# MCP register + check
+curl -s -X POST "$BASE/v1/shield/mcp/register" \\
+  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \\
+  -d '{"name":"medical-mcp","url":"https://mcp.hospital.internal","tools":["get_patient"],"trust_score":0.9}' | jq .
+
+curl -s -X POST "$BASE/v1/shield/mcp/check" \\
+  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \\
+  -d '{"server_name":"medical-mcp","tool_name":"get_patient","tool_input":{"id":"P-123"},"user_role":"nurse"}' | jq .`, 'bash')}
+  </div>
+
+  <div class="sdk-section">
+    <div class="sdk-section-title">Monitoring & Read Operations</div>
+    ${codeBlock('GET endpoints', `# Tenant overview
+curl -s "$BASE/v1/tenant/me" -H "X-API-Key: $API_KEY" | jq .
+
+# Usage
+curl -s "$BASE/v1/tenant/me/usage" -H "X-API-Key: $API_KEY" | jq .
+
+# Audit log
+curl -s "$BASE/v1/tenant/me/audit?limit=10" -H "X-API-Key: $API_KEY" | jq .
+
+# List agents
+curl -s "$BASE/v1/agents/registry" -H "X-API-Key: $API_KEY" | jq .
+
+# Get tool policies
+curl -s "$BASE/v1/agents/tools/policies" -H "X-API-Key: $API_KEY" | jq .
+
+# Get guardrail policies
+curl -s "$BASE/v1/tenant/me/policies" -H "X-API-Key: $API_KEY" | jq .
+
+# Shield audit logs
+curl -s "$BASE/v1/shield/audit" -H "X-API-Key: $API_KEY" | jq .
+
+# Shield stats
+curl -s "$BASE/v1/shield/stats" -H "X-API-Key: $API_KEY" | jq .
+
+# List guardrails
+curl -s "$BASE/v1/shield/guardrails" -H "X-API-Key: $API_KEY" | jq .
+
+# List API keys
+curl -s "$BASE/v1/tenant/me/api-keys" -H "X-API-Key: $API_KEY" | jq .
+
+# List MCP servers
+curl -s "$BASE/v1/shield/mcp/servers" -H "X-API-Key: $API_KEY" | jq .`, 'bash')}
+  </div>`;
+}
+
+// ── API Reference (existing) ─────────────
+function renderAPIDocs() {
+  const container = document.getElementById('api-docs-content');
+  const methodColors = MC;
+
+  container.innerHTML = API_ENDPOINTS.map(section => `
+    <div class="card" style="margin-bottom:1rem;">
+      <div class="card-header" style="padding-bottom:0.75rem;">
+        <div>
+          <div class="card-title">${section.section}</div>
+          <div class="card-subtitle">${section.desc}</div>
+        </div>
+      </div>
+      ${section.endpoints.map(ep => {
+        const mc = methodColors[ep.method] || 'var(--text)';
+        const curlCmd = buildCurl(ep);
+        const id = (ep.method + ep.path).replace(/[^a-z0-9]/gi, '-');
+        return `
+        <div style="border-top:1px solid var(--border);padding:1rem 1.25rem;" id="ep-${id}">
+          <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem;">
+            <span class="method-badge" style="background:${mc};">${ep.method}</span>
+            <code style="font-size:13px;color:var(--text);">${ep.path}</code>
+          </div>
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:0.75rem;">${ep.desc}</div>
+          <div style="display:flex;gap:0.4rem;margin-bottom:0.5rem;">
+            <button class="small" onclick="toggleApiDetail('${id}','curl')" style="font-size:11px;">cURL</button>
+            ${ep.example_body ? `<button class="small" onclick="toggleApiDetail('${id}','body')" style="font-size:11px;">Request Body</button>` : ''}
+            <button class="small" onclick="toggleApiDetail('${id}','resp')" style="font-size:11px;">Response</button>
+            <button class="small" onclick="copyApiSnippet('${id}')" style="font-size:11px;margin-left:auto;">Copy cURL</button>
+          </div>
+          <div id="detail-${id}" class="hidden">
+            <pre id="pre-${id}" class="mono" style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.75rem;overflow-x:auto;white-space:pre-wrap;max-height:320px;overflow-y:auto;"></pre>
+          </div>
+          <input type="hidden" id="curl-${id}" value="${escapeAttr(curlCmd)}">
+        </div>`;
+      }).join('')}
+    </div>
+  `).join('');
+}
+
+function buildCurl(ep) {
+  const base = window.location.origin;
+  let cmd = `curl -s`;
+  if (ep.method !== 'GET') cmd += ` -X ${ep.method}`;
+  cmd += ` "$BASE${ep.path}"`;
+  cmd += ` \\\n  -H "X-API-Key: $API_KEY"`;
+  if (ep.example_body) {
+    cmd += ` \\\n  -H "Content-Type: application/json"`;
+    cmd += ` \\\n  -d '${JSON.stringify(ep.example_body, null, 2)}'`;
+  }
+  return cmd;
+}
+
+function escapeAttr(str) {
+  return str.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function toggleApiDetail(id, view) {
+  const wrapper = document.getElementById('detail-' + id);
+  const pre = document.getElementById('pre-' + id);
+  const ep = findEndpoint(id);
+  if (!ep) return;
+
+  wrapper.classList.remove('hidden');
+  if (view === 'curl') {
+    pre.textContent = document.getElementById('curl-' + id).value;
+  } else if (view === 'body' && ep.example_body) {
+    pre.textContent = JSON.stringify(ep.example_body, null, 2);
+  } else if (view === 'resp') {
+    pre.textContent = JSON.stringify(ep.example_response, null, 2);
+  }
+}
+
+function findEndpoint(id) {
+  for (const s of API_ENDPOINTS) {
+    for (const ep of s.endpoints) {
+      if ((ep.method + ep.path).replace(/[^a-z0-9]/gi, '-') === id) return ep;
+    }
+  }
+  return null;
+}
+
+function copyApiSnippet(id) {
+  const text = document.getElementById('curl-' + id).value;
+  navigator.clipboard.writeText(text).then(() => showToast('cURL copied', 'success'));
 }
 
 // ── Nav ───────────────────────────────────
@@ -1164,6 +3222,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'usage') loadUsage();
     if (tab === 'activity') loadActivity();
     if (tab === 'policies') loadPolicies();
+    if (tab === 'apis') renderAllApiTabs();
   }
 });
 

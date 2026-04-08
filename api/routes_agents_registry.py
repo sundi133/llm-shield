@@ -73,29 +73,140 @@ async def get_tool_policies(request: Request):
     """Get tool policies directly from Redis for the tenant."""
     try:
         tenant_id = get_tenant_from_api_key(request)
-
-        # Direct Redis lookup for tool policies using correct production key format
         policies_key = f"policies:{tenant_id}"
         policies_data = get_redis_data(policies_key)
 
         if policies_data:
-            # Parse as array format for frontend compatibility
-            policies = policies_data if isinstance(policies_data, list) else list(policies_data.values()) if isinstance(policies_data, dict) else []
+            if isinstance(policies_data, list):
+                policies = {p.get("tool_name", f"tool_{i}"): p for i, p in enumerate(policies_data)}
+            elif isinstance(policies_data, dict):
+                policies = policies_data
+            else:
+                policies = {}
         else:
-            policies = []
+            policies = {}
 
         return {
             "success": True,
             "tool_policies": policies,
             "total": len(policies),
             "tenant_id": tenant_id,
-            "source": "redis_direct"
         }
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load tool policies: {str(e)}")
+
+
+@router.get("/tools/policies/{tool_name}")
+async def get_single_tool_policy(tool_name: str, request: Request):
+    """Get a single tool policy by name."""
+    try:
+        tenant_id = get_tenant_from_api_key(request)
+        policies_key = f"policies:{tenant_id}"
+        policies = get_redis_data(policies_key) or {}
+
+        if isinstance(policies, list):
+            policies = {p.get("tool_name", f"tool_{i}"): p for i, p in enumerate(policies)}
+
+        if tool_name not in policies:
+            raise HTTPException(status_code=404, detail=f"Tool policy '{tool_name}' not found")
+
+        return {
+            "success": True,
+            "tool_name": tool_name,
+            "policy": policies[tool_name],
+            "tenant_id": tenant_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get tool policy: {str(e)}")
+
+
+@router.get("/roles")
+async def get_available_roles(request: Request):
+    """Get all roles defined across registered agents for this tenant."""
+    try:
+        tenant_id = get_tenant_from_api_key(request)
+        agents_key = f"agents:{tenant_id}"
+        agents = get_redis_data(agents_key) or {}
+
+        role_set = set()
+        for agent in agents.values():
+            if isinstance(agent, dict):
+                for role in (agent.get("role_permissions") or {}).keys():
+                    role_set.add(role)
+
+        common_roles = ["admin", "user", "viewer", "editor", "operator",
+                        "doctor", "nurse", "patient", "manager", "analyst"]
+
+        return {
+            "success": True,
+            "tenant_roles": sorted(role_set),
+            "common_roles": common_roles,
+            "tenant_id": tenant_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get roles: {str(e)}")
+
+
+@router.put("/tools/policies")
+async def save_all_tool_policies(request: Request):
+    """Replace all tool policies for the tenant."""
+    try:
+        tenant_id = get_tenant_from_api_key(request)
+        body = await request.json()
+
+        policies_key = f"policies:{tenant_id}"
+        import time as _time
+        body["updated_at"] = int(_time.time())
+
+        redis_client = _get_redis()
+        if redis_client:
+            redis_client.set(policies_key, json.dumps(body))
+        else:
+            raise Exception("Redis connection not available")
+
+        return {"success": True, "message": "Tool policies saved"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save tool policies: {str(e)}")
+
+
+@router.delete("/tools/policies/{tool_name}")
+async def delete_tool_policy(tool_name: str, request: Request):
+    """Delete a single tool policy."""
+    try:
+        tenant_id = get_tenant_from_api_key(request)
+        policies_key = f"policies:{tenant_id}"
+        policies = get_redis_data(policies_key) or {}
+
+        if isinstance(policies, list):
+            policies = {p.get("tool_name", f"tool_{i}"): p for i, p in enumerate(policies)}
+
+        if tool_name not in policies:
+            raise HTTPException(status_code=404, detail="Tool policy not found")
+
+        del policies[tool_name]
+
+        redis_client = _get_redis()
+        if redis_client:
+            redis_client.set(policies_key, json.dumps(policies))
+        else:
+            raise Exception("Redis connection not available")
+
+        return {"success": True, "message": f"Tool policy '{tool_name}' deleted"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete tool policy: {str(e)}")
 
 
 @router.post("/seed-test-data")
@@ -185,6 +296,129 @@ async def seed_test_data():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to seed test data: {str(e)}")
+
+
+@router.post("/registry")
+async def create_agent(request: Request):
+    """Create a new agent."""
+    try:
+        tenant_id = get_tenant_from_api_key(request)
+        body = await request.json()
+
+        agent_id = body.get("agent_id")
+        if not agent_id:
+            raise HTTPException(status_code=400, detail="agent_id is required")
+
+        agents_key = f"agents:{tenant_id}"
+        agents = get_redis_data(agents_key) or {}
+
+        if agent_id in agents:
+            raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists")
+
+        import time as _time
+        now = int(_time.time())
+        agents[agent_id] = {
+            "agent_id": agent_id,
+            "name": body.get("name", agent_id),
+            "description": body.get("description", ""),
+            "tools": body.get("tools", []),
+            "role_permissions": body.get("role_permissions", {}),
+            "status": body.get("status", "active"),
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        redis_client = _get_redis()
+        if redis_client:
+            redis_client.set(agents_key, json.dumps(agents))
+        else:
+            raise Exception("Redis connection not available")
+
+        return {
+            "success": True,
+            "message": f"Agent {agent_id} created successfully",
+            "agent": agents[agent_id],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create agent: {str(e)}")
+
+
+@router.put("/registry/{agent_id}")
+async def update_agent(agent_id: str, agent_data: dict, request: Request):
+    """Update an existing agent."""
+    try:
+        tenant_id = get_tenant_from_api_key(request)
+
+        # Get existing agents
+        agents_key = f"agents:{tenant_id}"
+        agents = get_redis_data(agents_key) or {}
+
+        if agent_id not in agents:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Update agent data
+        agents[agent_id] = {
+            **agents[agent_id],
+            **agent_data,
+            "agent_id": agent_id,  # Ensure agent_id is preserved
+            "updated_at": int(__import__('time').time())
+        }
+
+        # Save to Redis
+        redis_client = _get_redis()
+        if redis_client:
+            redis_client.set(agents_key, json.dumps(agents))
+        else:
+            raise Exception("Redis connection not available")
+
+        return {
+            "success": True,
+            "message": f"Agent {agent_id} updated successfully",
+            "agent": agents[agent_id]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update agent: {str(e)}")
+
+
+@router.delete("/registry/{agent_id}")
+async def delete_agent(agent_id: str, request: Request):
+    """Delete an agent."""
+    try:
+        tenant_id = get_tenant_from_api_key(request)
+
+        # Get existing agents
+        agents_key = f"agents:{tenant_id}"
+        agents = get_redis_data(agents_key) or {}
+
+        if agent_id not in agents:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Remove agent
+        deleted_agent = agents.pop(agent_id)
+
+        # Save to Redis
+        redis_client = _get_redis()
+        if redis_client:
+            redis_client.set(agents_key, json.dumps(agents))
+        else:
+            raise Exception("Redis connection not available")
+
+        return {
+            "success": True,
+            "message": f"Agent {agent_id} deleted successfully",
+            "deleted_agent": deleted_agent
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete agent: {str(e)}")
 
 
 @router.get("/debug/redis-keys")

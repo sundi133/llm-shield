@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from storage.tenant_store import get_tenant, update_tenant
+from storage.tenant_store import get_tenant, update_tenant, set_tenant_policies
 from storage.tenant_models import GuardrailPolicy
 from storage.rate_limiter import get_usage
 from storage.admin_audit import log_admin_action
@@ -107,7 +107,12 @@ async def update_my_policies(request: Request, body: TenantSelfUpdateRequest):
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    config = update_tenant(tenant_id, updates)
+    # Full replace (not merge) so removed guardrails are actually deleted
+    config = set_tenant_policies(
+        tenant_id,
+        input_guardrails=updates.get("input_guardrails"),
+        output_guardrails=updates.get("output_guardrails"),
+    )
 
     log_admin_action(
         action="tenant_self_update_policies",
