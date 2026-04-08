@@ -203,9 +203,17 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
         Overview
       </div>
+      <div class="nav-item" data-tab="agents">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+        Agents
+      </div>
       <div class="nav-item" data-tab="policies">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
         Policies
+      </div>
+      <div class="nav-item" data-tab="tool-policies">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        Tool Policies
       </div>
       <div class="nav-item" data-tab="usage">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
@@ -245,6 +253,46 @@
           </div>
         </div>
         <div id="overview-policies"></div>
+      </div>
+    </div>
+
+    <!-- Agents -->
+    <div id="tab-agents" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Agents Registry</div>
+        <div class="page-desc">Manage your AI agents and their role permissions</div>
+        <div class="page-actions">
+          <button class="primary" onclick="loadAgentData()">Refresh</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Registered Agents</div>
+            <div class="card-subtitle">AI agents configured for your tenant</div>
+          </div>
+        </div>
+        <div id="agents-content">Loading agents...</div>
+      </div>
+    </div>
+
+    <!-- Tool Policies -->
+    <div id="tab-tool-policies" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Tool Policies</div>
+        <div class="page-desc">Configure data sanitization and role restrictions for tools</div>
+        <div class="page-actions">
+          <button class="primary" onclick="loadToolPolicyData()">Refresh</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Data Protection Policies</div>
+            <div class="card-subtitle">Role-based access control and data sanitization</div>
+          </div>
+        </div>
+        <div id="tool-policies-content">Loading tool policies...</div>
       </div>
     </div>
 
@@ -708,6 +756,145 @@ async function loadActivity() {
   }
 }
 
+// ── Agents ────────────────────────────────
+async function loadAgentData() {
+  try {
+    const response = await apiCall('/v1/agents/registry');
+    if (response && response.success && response.agents) {
+      displayAgents(response.agents);
+    } else {
+      document.getElementById('agents-content').innerHTML = `
+        <div style="color: var(--text-muted); text-align: center; padding: 2rem;">
+          No agents found. <br>
+          <button class="primary" style="margin-top: 1rem;" onclick="window.open('/static/enhanced-admin-portal.html', '_blank')">
+            Open Admin Portal to Create Agents
+          </button>
+        </div>`;
+    }
+  } catch (error) {
+    document.getElementById('agents-content').innerHTML = `
+      <div style="color: var(--danger); text-align: center; padding: 2rem;">
+        Error loading agents: ${error.message}<br>
+        <button class="primary" style="margin-top: 1rem;" onclick="loadAgentData()">Retry</button>
+      </div>`;
+  }
+}
+
+function displayAgents(agents) {
+  let html = '<div style="overflow-x: auto;"><table style="width: 100%; border-collapse: collapse; font-size: 13px;">';
+  html += '<thead><tr style="border-bottom: 1px solid var(--border); background: var(--bg-3);"><th style="text-align: left; padding: 0.75rem; font-weight: 600;">Agent ID</th><th style="text-align: left; padding: 0.75rem; font-weight: 600;">Name</th><th style="text-align: left; padding: 0.75rem; font-weight: 600;">Tools</th><th style="text-align: left; padding: 0.75rem; font-weight: 600;">Roles</th></tr></thead>';
+  html += '<tbody>';
+
+  Object.entries(agents).forEach(([agentId, agent]) => {
+    const tools = agent.tools ? agent.tools.slice(0, 2).join(', ') + (agent.tools.length > 2 ? '...' : '') : 'None';
+    const roles = agent.role_permissions ? Object.keys(agent.role_permissions).slice(0, 2).join(', ') + (Object.keys(agent.role_permissions).length > 2 ? '...' : '') : 'None';
+
+    html += `
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 0.75rem;"><code style="background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 12px;">${agentId}</code></td>
+        <td style="padding: 0.75rem;">${agent.name || 'Unnamed'}</td>
+        <td style="padding: 0.75rem; font-size: 12px; color: var(--text-dim);">${tools}</td>
+        <td style="padding: 0.75rem; font-size: 12px; color: var(--text-dim);">${roles}</td>
+      </tr>
+    `;
+  });
+
+  html += '</tbody></table></div>';
+  html += `
+    <div style="margin-top: 1.5rem; text-align: center; padding: 1rem; background: var(--bg-3); border-radius: var(--radius-sm);">
+      <p style="margin-bottom: 1rem; color: var(--text-dim); font-size: 13px;">For advanced agent management and configuration</p>
+      <button class="primary" onclick="window.open('/static/enhanced-admin-portal.html', '_blank')">
+        Open Full Admin Portal
+      </button>
+    </div>
+  `;
+
+  document.getElementById('agents-content').innerHTML = html;
+}
+
+// ── Tool Policies ─────────────────────────
+async function loadToolPolicyData() {
+  try {
+    const response = await apiCall('/v1/agents/tools/policies');
+    if (response && response.success && response.tool_policies) {
+      displayToolPolicies(response.tool_policies);
+    } else {
+      document.getElementById('tool-policies-content').innerHTML = `
+        <div style="color: var(--text-muted); text-align: center; padding: 2rem;">
+          No tool policies configured.<br>
+          <button class="primary" style="margin-top: 1rem;" onclick="window.open('/static/enhanced-admin-portal.html', '_blank')">
+            Open Admin Portal to Configure Policies
+          </button>
+        </div>`;
+    }
+  } catch (error) {
+    document.getElementById('tool-policies-content').innerHTML = `
+      <div style="color: var(--danger); text-align: center; padding: 2rem;">
+        Error loading tool policies: ${error.message}<br>
+        <button class="primary" style="margin-top: 1rem;" onclick="loadToolPolicyData()">Retry</button>
+      </div>`;
+  }
+}
+
+function displayToolPolicies(toolPolicies) {
+  let html = '<div class="policy-grid">';
+
+  Object.entries(toolPolicies).forEach(([toolName, policy]) => {
+    html += `<div class="policy-card" style="margin-bottom: 1rem;">`;
+    html += `<div class="policy-header">`;
+    html += `<div class="policy-name" style="font-size: 14px; font-weight: 600;">${toolName}</div>`;
+    html += `</div>`;
+
+    // Role restrictions
+    if (policy.role_restrictions) {
+      html += `<div style="margin-bottom: 1rem;">`;
+      html += `<div style="font-size: 12px; color: var(--text-dim); margin-bottom: 0.5rem; font-weight: 500;">Role Restrictions:</div>`;
+      Object.entries(policy.role_restrictions).forEach(([role, action]) => {
+        const badgeStyle = action === 'allow' ? 'background: rgba(16, 185, 129, 0.2); color: #10b981;' :
+                          action === 'block' ? 'background: rgba(239, 68, 68, 0.2); color: #ef4444;' :
+                          'background: rgba(245, 158, 11, 0.2); color: #f59e0b;';
+        html += `<span style="display: inline-block; padding: 0.25rem 0.5rem; ${badgeStyle} border-radius: 4px; font-size: 11px; margin-right: 0.5rem; margin-bottom: 0.25rem; font-weight: 500;">${role}: ${action}</span>`;
+      });
+      html += `</div>`;
+    }
+
+    // Data sanitization summary
+    if (policy.data_sanitization) {
+      html += `<div style="margin-bottom: 1rem;">`;
+      html += `<div style="font-size: 12px; color: var(--text-dim); margin-bottom: 0.5rem; font-weight: 500;">Data Protection:</div>`;
+      const patterns = policy.data_sanitization.patterns || [];
+      const features = [];
+      if (policy.data_sanitization.redact_ssn) features.push('SSN Redaction');
+      if (policy.data_sanitization.mask_phone) features.push('Phone Masking');
+      if (patterns.length) features.push(`${patterns.length} Custom Patterns`);
+      html += `<div style="font-size: 11px; color: var(--text-muted);">${features.length ? features.join(', ') : 'None configured'}</div>`;
+      html += `</div>`;
+    }
+
+    // LLM validation
+    if (policy.llm_validation && policy.llm_validation.enabled) {
+      html += `<div style="margin-bottom: 1rem;">`;
+      html += `<div style="font-size: 12px; color: var(--text-dim); margin-bottom: 0.5rem; font-weight: 500;">LLM Validation:</div>`;
+      html += `<div style="font-size: 11px; color: var(--text-muted);">✓ Enabled (threshold: ${policy.llm_validation.confidence_threshold || 0.8})</div>`;
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+  });
+
+  html += '</div>';
+  html += `
+    <div style="margin-top: 1.5rem; text-align: center; padding: 1rem; background: var(--bg-3); border-radius: var(--radius-sm);">
+      <p style="margin-bottom: 1rem; color: var(--text-dim); font-size: 13px;">For advanced policy configuration and data sanitization</p>
+      <button class="primary" onclick="window.open('/static/enhanced-admin-portal.html', '_blank')">
+        Manage Tool Policies in Admin Portal
+      </button>
+    </div>
+  `;
+
+  document.getElementById('tool-policies-content').innerHTML = html;
+}
+
 // ── Nav ───────────────────────────────────
 document.addEventListener('click', (e) => {
   if (e.target.closest('.nav-item[data-tab]')) {
@@ -717,6 +904,8 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
     el.classList.add('active');
     document.getElementById(`tab-${tab}`).classList.remove('hidden');
+    if (tab === 'agents') loadAgentData();
+    if (tab === 'tool-policies') loadToolPolicyData();
     if (tab === 'usage') loadUsage();
     if (tab === 'activity') loadActivity();
     if (tab === 'policies') loadPolicies();
