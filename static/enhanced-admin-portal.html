@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Shield - Enhanced Admin Portal</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --bg-2: #12121a;
+    --bg-3: #1a1a24;
+    --bg-hover: #1f1f2c;
+    --border: #27272f;
+    --border-strong: #3a3a45;
+    --text: #e4e4e7;
+    --text-dim: #a1a1aa;
+    --text-muted: #71717a;
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --success: #10b981;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --radius: 8px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+
+  .app { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 260px;
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    padding: 1.5rem 1rem;
+  }
+  .main { flex: 1; padding: 2rem; overflow-y: auto; }
+
+  .nav-section { margin-bottom: 2rem; }
+  .nav-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    margin-bottom: 0.25rem;
+    color: var(--text-dim);
+    transition: all 0.2s;
+  }
+  .nav-item:hover { background: var(--bg-hover); color: var(--text); }
+  .nav-item.active { background: var(--accent); color: white; }
+  .nav-icon { margin-right: 0.75rem; }
+
+  .section { display: none; }
+  .section.active { display: block; }
+
+  .header {
+    display: flex;
+    justify-content: between;
+    align-items: center;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .header h1 { font-size: 24px; font-weight: 600; }
+
+  .card {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+  .card-title { font-size: 16px; font-weight: 600; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    border: none;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-secondary { background: var(--bg-3); color: var(--text); border: 1px solid var(--border); }
+  .btn-danger { background: var(--danger); color: white; }
+
+  .form-group { margin-bottom: 1.5rem; }
+  .form-label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .form-input {
+    width: 100%;
+    padding: 0.75rem;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 14px;
+  }
+  .form-input:focus { outline: none; border-color: var(--accent); }
+
+  .table { width: 100%; border-collapse: collapse; }
+  .table th, .table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .table th {
+    background: var(--bg-3);
+    font-weight: 600;
+    color: var(--text-dim);
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+
+  .status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .status-active { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+  .status-blocked { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+  .status-redact { background: rgba(245, 158, 11, 0.2); color: var(--warn); }
+
+  .json-editor {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    min-height: 300px;
+    color: var(--text);
+  }
+
+  .grid { display: grid; gap: 1.5rem; }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+  .metric-card {
+    background: var(--bg-3);
+    padding: 1.5rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+  .metric-value { font-size: 24px; font-weight: 700; color: var(--accent); }
+  .metric-label { color: var(--text-muted); font-size: 12px; margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <!-- Enhanced Sidebar with All Policy Sections -->
+    <div class="sidebar">
+      <div class="nav-section">
+        <div class="nav-title">Overview</div>
+        <div class="nav-item active" data-tab="dashboard">
+          <span class="nav-icon">📊</span>
+          Dashboard
+        </div>
+        <div class="nav-item" data-tab="tenants">
+          <span class="nav-icon">🏢</span>
+          Tenants
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-title">Agent Management</div>
+        <div class="nav-item" data-tab="agents">
+          <span class="nav-icon">🤖</span>
+          Agents Registry
+        </div>
+        <div class="nav-item" data-tab="agent-create">
+          <span class="nav-icon">➕</span>
+          Create Agent
+        </div>
+        <div class="nav-item" data-tab="roles">
+          <span class="nav-icon">👥</span>
+          Roles & Permissions
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-title">Data Protection</div>
+        <div class="nav-item" data-tab="tool-policies">
+          <span class="nav-icon">🔧</span>
+          Tool Policies
+        </div>
+        <div class="nav-item" data-tab="data-sanitization">
+          <span class="nav-icon">🛡️</span>
+          Data Sanitization
+        </div>
+        <div class="nav-item" data-tab="llm-validation">
+          <span class="nav-icon">🧠</span>
+          LLM Validation
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-title">Guardrails</div>
+        <div class="nav-item" data-tab="input-guardrails">
+          <span class="nav-icon">📥</span>
+          Input Guardrails
+        </div>
+        <div class="nav-item" data-tab="output-guardrails">
+          <span class="nav-icon">📤</span>
+          Output Guardrails
+        </div>
+        <div class="nav-item" data-tab="guardrail-test">
+          <span class="nav-icon">🧪</span>
+          Test Guardrails
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-title">Monitoring</div>
+        <div class="nav-item" data-tab="audit">
+          <span class="nav-icon">📋</span>
+          Audit Log
+        </div>
+        <div class="nav-item" data-tab="analytics">
+          <span class="nav-icon">📈</span>
+          Analytics
+        </div>
+        <div class="nav-item" data-tab="alerts">
+          <span class="nav-icon">🚨</span>
+          Alerts
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="main">
+      <!-- Dashboard Section -->
+      <div id="dashboard" class="section active">
+        <div class="header">
+          <h1>Admin Dashboard</h1>
+          <button class="btn btn-primary">Refresh All</button>
+        </div>
+
+        <div class="grid grid-3">
+          <div class="metric-card">
+            <div class="metric-value" id="total-tenants">-</div>
+            <div class="metric-label">Total Tenants</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-value" id="total-agents">-</div>
+            <div class="metric-label">Active Agents</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-value" id="total-policies">-</div>
+            <div class="metric-label">Tool Policies</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">System Status</div>
+          </div>
+          <div id="system-status">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Agents Registry Section -->
+      <div id="agents" class="section">
+        <div class="header">
+          <h1>Agents Registry</h1>
+          <button class="btn btn-primary" onclick="loadAgents()">Refresh</button>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Registered Agents</div>
+            <button class="btn btn-secondary" onclick="showCreateAgent()">+ New Agent</button>
+          </div>
+          <div id="agents-table">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Tool Policies Section -->
+      <div id="tool-policies" class="section">
+        <div class="header">
+          <h1>Tool Policies</h1>
+          <button class="btn btn-primary" onclick="loadToolPolicies()">Refresh</button>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Data Sanitization & Role Restrictions</div>
+            <button class="btn btn-secondary" onclick="showCreatePolicy()">+ New Policy</button>
+          </div>
+          <div id="tool-policies-content">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Guardrails Test Section -->
+      <div id="guardrail-test" class="section">
+        <div class="header">
+          <h1>Test Guardrails</h1>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Live Test Interface</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">User Role</label>
+              <select class="form-input" id="test-role">
+                <option value="doctor">Doctor</option>
+                <option value="nurse">Nurse</option>
+                <option value="admin">Admin</option>
+                <option value="patient">Patient</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Agent ID</label>
+              <select class="form-input" id="test-agent">
+                <option value="healthcare-doctor">Healthcare Doctor</option>
+                <option value="healthcare-nurse">Healthcare Nurse</option>
+                <option value="healthcare-admin">Healthcare Admin</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Test Output</label>
+              <textarea class="form-input" id="test-output" rows="6" placeholder="Patient: John Doe, SSN: 123-45-6789, Phone: 555-1234..."></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="testGuardrails()">Test Protection</button>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Test Results</div>
+            </div>
+            <div id="test-results">
+              <p style="color: var(--text-muted);">Run a test to see results...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// Global configuration - Set these via environment or login
+const API_CONFIG = {
+  BASE_URL: window.location.origin || 'https://your-endpoint.ai',
+  API_KEY: localStorage.getItem('llm_shield_api_key') || prompt('Enter your API Key:'),
+  RUNPOD_TOKEN: localStorage.getItem('llm_shield_runpod_token') || prompt('Enter your RunPod Token:')
+};
+
+// Store credentials securely in localStorage for session
+if (API_CONFIG.API_KEY && API_CONFIG.API_KEY !== 'null') {
+  localStorage.setItem('llm_shield_api_key', API_CONFIG.API_KEY);
+}
+if (API_CONFIG.RUNPOD_TOKEN && API_CONFIG.RUNPOD_TOKEN !== 'null') {
+  localStorage.setItem('llm_shield_runpod_token', API_CONFIG.RUNPOD_TOKEN);
+}
+
+// Utility function for API calls
+async function apiCall(endpoint, options = {}) {
+  const headers = {
+    'Authorization': `Bearer ${API_CONFIG.RUNPOD_TOKEN}`,
+    'X-API-Key': API_CONFIG.API_KEY,
+    'Content-Type': 'application/json',
+    ...options.headers
+  };
+
+  try {
+    const response = await fetch(`${API_CONFIG.BASE_URL}${endpoint}`, {
+      ...options,
+      headers
+    });
+    return await response.json();
+  } catch (error) {
+    console.error('API call failed:', error);
+    return { error: error.message };
+  }
+}
+
+// Navigation handling
+document.addEventListener('DOMContentLoaded', function() {
+  const navItems = document.querySelectorAll('.nav-item');
+  const sections = document.querySelectorAll('.section');
+
+  navItems.forEach(item => {
+    item.addEventListener('click', function() {
+      const tabName = this.dataset.tab;
+
+      // Update active nav item
+      navItems.forEach(nav => nav.classList.remove('active'));
+      this.classList.add('active');
+
+      // Update active section
+      sections.forEach(section => section.classList.remove('active'));
+      document.getElementById(tabName).classList.add('active');
+
+      // Load section data
+      loadSectionData(tabName);
+    });
+  });
+
+  // Load initial dashboard
+  loadDashboard();
+});
+
+// Dashboard functions
+async function loadDashboard() {
+  try {
+    const [tenantData, agentsData, toolPolicies] = await Promise.all([
+      apiCall('/v1/tenant/me'),
+      apiCall('/v1/agents/registry'),
+      apiCall('/v1/agents/tools/policies')
+    ]);
+
+    // Update metrics
+    document.getElementById('total-tenants').textContent = '1'; // Current tenant
+    document.getElementById('total-agents').textContent =
+      agentsData.agents ? Object.keys(agentsData.agents).length : '0';
+    document.getElementById('total-policies').textContent =
+      toolPolicies.tool_policies ? Object.keys(toolPolicies.tool_policies).length : '0';
+
+    // Update system status
+    const statusHtml = `
+      <div class="grid grid-2">
+        <div>
+          <strong>Tenant:</strong> ${tenantData.name || 'Unknown'} (${tenantData.plan || 'Basic'})
+        </div>
+        <div>
+          <strong>Guardrails:</strong> ${tenantData.input_guardrails?.length || 0} input, ${tenantData.output_guardrails?.length || 0} output
+        </div>
+      </div>
+    `;
+    document.getElementById('system-status').innerHTML = statusHtml;
+
+  } catch (error) {
+    console.error('Failed to load dashboard:', error);
+  }
+}
+
+// Agents management functions
+async function loadAgents() {
+  const data = await apiCall('/v1/agents/registry');
+
+  if (data.success && data.agents) {
+    let html = '<table class="table"><thead><tr><th>Agent ID</th><th>Name</th><th>Tools</th><th>Roles</th><th>Actions</th></tr></thead><tbody>';
+
+    Object.entries(data.agents).forEach(([agentId, agent]) => {
+      const tools = agent.tools.join(', ');
+      const roles = Object.keys(agent.role_permissions).join(', ');
+
+      html += `
+        <tr>
+          <td><code>${agentId}</code></td>
+          <td>${agent.name}</td>
+          <td>${tools}</td>
+          <td>${roles}</td>
+          <td>
+            <button class="btn btn-secondary" onclick="editAgent('${agentId}')">Edit</button>
+            <button class="btn btn-danger" onclick="deleteAgent('${agentId}')">Delete</button>
+          </td>
+        </tr>
+      `;
+    });
+
+    html += '</tbody></table>';
+    document.getElementById('agents-table').innerHTML = html;
+  } else {
+    document.getElementById('agents-table').innerHTML = '<p>No agents found or error loading.</p>';
+  }
+}
+
+// Tool policies management
+async function loadToolPolicies() {
+  const data = await apiCall('/v1/agents/tools/policies');
+
+  if (data.success && data.tool_policies) {
+    let html = '<table class="table"><thead><tr><th>Tool</th><th>Data Sanitization</th><th>Role Restrictions</th><th>LLM Validation</th><th>Actions</th></tr></thead><tbody>';
+
+    Object.entries(data.tool_policies).forEach(([toolName, policy]) => {
+      const sanitization = policy.data_sanitization ? 'Enabled' : 'Disabled';
+      const validation = policy.llm_validation?.enabled ? 'Enabled' : 'Disabled';
+
+      let roleRestrictionsHtml = '';
+      if (policy.role_restrictions) {
+        Object.entries(policy.role_restrictions).forEach(([role, action]) => {
+          const badgeClass = action === 'allow' ? 'status-active' :
+                           action === 'block' ? 'status-blocked' : 'status-redact';
+          roleRestrictionsHtml += `<span class="status-badge ${badgeClass}">${role}: ${action}</span> `;
+        });
+      }
+
+      html += `
+        <tr>
+          <td><code>${toolName}</code></td>
+          <td>${sanitization}</td>
+          <td>${roleRestrictionsHtml}</td>
+          <td>${validation}</td>
+          <td>
+            <button class="btn btn-secondary" onclick="editPolicy('${toolName}')">Edit</button>
+          </td>
+        </tr>
+      `;
+    });
+
+    html += '</tbody></table>';
+    document.getElementById('tool-policies-content').innerHTML = html;
+  } else {
+    document.getElementById('tool-policies-content').innerHTML = '<p>No tool policies found.</p>';
+  }
+}
+
+// Test guardrails function
+async function testGuardrails() {
+  const role = document.getElementById('test-role').value;
+  const agentId = document.getElementById('test-agent').value;
+  const output = document.getElementById('test-output').value;
+
+  if (!output.trim()) {
+    alert('Please enter test output');
+    return;
+  }
+
+  const testData = {
+    output: output,
+    context: {
+      tool_name: 'patient_lookup',
+      tool_input: { patient_id: 'test-123' }
+    }
+  };
+
+  const headers = {
+    'X-User-Role': role,
+    'X-Agent-ID': agentId
+  };
+
+  const result = await apiCall('/guardrails/output', {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify(testData)
+  });
+
+  // Display results
+  let resultHtml = '<div class="json-editor">';
+  if (result.safe !== undefined) {
+    resultHtml += `<strong>Status:</strong> ${result.safe ? '✅ Safe' : '❌ Blocked'}<br><br>`;
+    resultHtml += `<strong>Action:</strong> ${result.action}<br><br>`;
+
+    if (result.guardrail_results) {
+      resultHtml += '<strong>Guardrail Results:</strong><br>';
+      result.guardrail_results.forEach(gr => {
+        const status = gr.passed ? '✅' : '❌';
+        resultHtml += `${status} ${gr.guardrail}: ${gr.message}<br>`;
+      });
+    }
+
+    resultHtml += '<br><strong>Full Response:</strong><br>';
+    resultHtml += JSON.stringify(result, null, 2);
+  } else {
+    resultHtml += JSON.stringify(result, null, 2);
+  }
+  resultHtml += '</div>';
+
+  document.getElementById('test-results').innerHTML = resultHtml;
+}
+
+// Section data loading dispatcher
+function loadSectionData(tabName) {
+  switch(tabName) {
+    case 'dashboard':
+      loadDashboard();
+      break;
+    case 'agents':
+      loadAgents();
+      break;
+    case 'tool-policies':
+      loadToolPolicies();
+      break;
+    case 'guardrail-test':
+      // Test section is interactive, no initial load needed
+      break;
+  }
+}
+
+// Placeholder functions for actions
+function editAgent(agentId) {
+  alert(`Edit agent: ${agentId} (Implementation needed)`);
+}
+
+function deleteAgent(agentId) {
+  if (confirm(`Delete agent ${agentId}?`)) {
+    alert(`Delete agent: ${agentId} (Implementation needed)`);
+  }
+}
+
+function editPolicy(toolName) {
+  alert(`Edit policy for: ${toolName} (Implementation needed)`);
+}
+
+function showCreateAgent() {
+  alert('Create new agent modal (Implementation needed)');
+}
+
+function showCreatePolicy() {
+  alert('Create new policy modal (Implementation needed)');
+}
+</script>
+</body>
+</html>
