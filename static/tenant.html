@@ -235,13 +235,13 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
         Overview
       </div>
+      <div class="nav-item" data-tab="policies">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        Guardrail Policies
+      </div>
       <div class="nav-item" data-tab="agents">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
         Agents
-      </div>
-      <div class="nav-item" data-tab="policies">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-        Policies
       </div>
       <div class="nav-item" data-tab="tool-policies">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
@@ -1520,18 +1520,42 @@ function displayToolPolicies() {
     return;
   }
 
-  const tools = configuredTools;
+  const allTools = [...configuredTools, ...unconfiguredTools];
 
-  let html = '<div class="policy-grid">';
-
-  if (!tools.length && !unconfiguredTools.length) {
-    container.innerHTML = '<div class="muted" style="padding:2rem;text-align:center;">No tool policies configured.</div>';
+  if (!allTools.length) {
+    container.innerHTML = '<div class="muted" style="padding:2rem;text-align:center;">No tools registered by agents.</div>';
     return;
   }
 
-  html += tools.map(toolName => {
-    const p = TOOL_POLICIES[toolName];
-    const roles = p.role_restrictions || {};
+  // Collect all unique roles across all tool policies
+  const allRoles = new Set();
+  configuredTools.forEach(t => {
+    Object.keys((TOOL_POLICIES[t] || {}).role_restrictions || {}).forEach(r => allRoles.add(r));
+  });
+  REGISTERED_AGENT_ROLES.forEach(r => allRoles.add(r));
+  const roles = [...allRoles].sort();
+
+  const roleColor = (a) => a === 'allow' ? '#10b981' : a === 'block' ? '#ef4444' : a === 'redact' ? '#f59e0b' : '#71717a';
+
+  let html = `
+  <div class="card" style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border);">
+          <th style="text-align:left;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;white-space:nowrap;min-width:160px;">Tool</th>
+          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">Status</th>
+          ${roles.map(r => `<th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;white-space:nowrap;">${r}</th>`).join('')}
+          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">Patterns</th>
+          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">LLM</th>
+          <th style="text-align:right;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+  allTools.forEach(toolName => {
+    const isConfigured = configuredTools.includes(toolName);
+    const p = TOOL_POLICIES[toolName] || {};
+    const toolRoles = p.role_restrictions || {};
     const patterns = (p.data_sanitization && p.data_sanitization.patterns) || [];
     const hasLLM = p.llm_validation && p.llm_validation.enabled;
     const flags = [];
@@ -1539,60 +1563,50 @@ function displayToolPolicies() {
       if (p.data_sanitization.redact_ssn) flags.push('SSN');
       if (p.data_sanitization.mask_phone) flags.push('Phone');
     }
+    const patternSummary = patterns.length ? `${patterns.length}` : '';
+    const flagSummary = flags.length ? flags.join(', ') : '';
+    const sanitizationText = [patternSummary && `${patternSummary} pattern${patterns.length > 1 ? 's' : ''}`, flagSummary].filter(Boolean).join(' · ') || '—';
 
-    return `
-      <div class="policy-card" style="margin-bottom:0.75rem;">
-        <div class="policy-header">
-          <div style="display:flex;align-items:center;gap:0.5rem;">
-            <span style="font-size:16px;">🔧</span>
-            <div>
-              <div class="policy-name" style="font-size:14px;font-weight:600;">${toolName.replace(/_/g, ' ')}</div>
-              <code style="font-size:10px;color:var(--text-muted);background:var(--bg);padding:0.15rem 0.4rem;border-radius:3px;">${toolName}</code>
-            </div>
-          </div>
-          <div style="display:flex;gap:0.5rem;">
-            <button class="small" onclick="editToolPolicy('${toolName}')">Edit</button>
-            <button class="danger small" onclick="removeToolPolicy('${toolName}')">Delete</button>
-          </div>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:1rem;margin-top:0.75rem;">
-          <div style="flex:1;min-width:180px;">
-            <div style="font-size:11px;color:var(--text-muted);font-weight:600;margin-bottom:0.4rem;">ROLE RESTRICTIONS</div>
-            <div style="display:flex;flex-wrap:wrap;gap:0.3rem;">
-              ${Object.entries(roles).map(([role, action]) => {
-                const c = action === 'allow' ? '#10b981' : action === 'block' ? '#ef4444' : '#f59e0b';
-                return `<span style="display:inline-block;padding:0.2rem 0.45rem;background:${c}20;color:${c};border-radius:4px;font-size:10px;font-weight:600;">${role}: ${action}</span>`;
-              }).join('')}
-              ${!Object.keys(roles).length ? '<span class="muted" style="font-size:11px;">None</span>' : ''}
-            </div>
-          </div>
-          <div style="flex:1;min-width:140px;">
-            <div style="font-size:11px;color:var(--text-muted);font-weight:600;margin-bottom:0.4rem;">DATA SANITIZATION</div>
-            <div style="font-size:11px;color:var(--text-dim);">
-              ${patterns.length ? `${patterns.length} pattern${patterns.length > 1 ? 's' : ''}` : ''}
-              ${flags.length ? (patterns.length ? ' · ' : '') + flags.join(', ') : ''}
-              ${!patterns.length && !flags.length ? 'None' : ''}
-            </div>
-          </div>
-          <div style="min-width:100px;">
-            <div style="font-size:11px;color:var(--text-muted);font-weight:600;margin-bottom:0.4rem;">LLM VALIDATION</div>
-            <span style="font-size:11px;padding:0.2rem 0.45rem;border-radius:4px;font-weight:600;${hasLLM ? 'background:rgba(16,185,129,0.15);color:#10b981;' : 'background:rgba(113,113,122,0.15);color:#a1a1aa;'}">${hasLLM ? '✓ Enabled' : 'Off'}</span>
-          </div>
-        </div>
-      </div>`;
-  }).join('');
+    html += `
+        <tr style="border-bottom:1px solid var(--border);${!isConfigured ? 'opacity:0.6;' : ''}" ${isConfigured ? '' : 'title="No policy configured"'}>
+          <td style="padding:0.55rem 0.75rem;">
+            <div style="font-weight:600;font-size:12px;">${toolName.replace(/_/g, ' ')}</div>
+            <code style="font-size:10px;color:var(--text-muted);">${toolName}</code>
+          </td>
+          <td style="text-align:center;padding:0.55rem 0.5rem;">
+            <span style="display:inline-block;padding:0.15rem 0.45rem;border-radius:4px;font-size:10px;font-weight:600;${isConfigured ? 'background:rgba(16,185,129,0.12);color:#10b981;' : 'background:rgba(113,113,122,0.12);color:#a1a1aa;'}">${isConfigured ? 'Active' : 'None'}</span>
+          </td>
+          ${roles.map(r => {
+            const action = toolRoles[r];
+            if (!isConfigured || !action) return `<td style="text-align:center;padding:0.55rem 0.5rem;color:var(--text-muted);font-size:11px;">—</td>`;
+            const c = roleColor(action);
+            return `<td style="text-align:center;padding:0.55rem 0.5rem;"><span style="display:inline-block;padding:0.15rem 0.4rem;background:${c}18;color:${c};border-radius:4px;font-size:10px;font-weight:600;">${action}</span></td>`;
+          }).join('')}
+          <td style="text-align:center;padding:0.55rem 0.5rem;font-size:11px;color:var(--text-dim);">${isConfigured ? sanitizationText : '—'}</td>
+          <td style="text-align:center;padding:0.55rem 0.5rem;">
+            ${isConfigured ? `<span style="font-size:10px;padding:0.15rem 0.4rem;border-radius:4px;font-weight:600;${hasLLM ? 'background:rgba(16,185,129,0.12);color:#10b981;' : 'background:rgba(113,113,122,0.12);color:#a1a1aa;'}">${hasLLM ? 'On' : 'Off'}</span>` : '<span style="color:var(--text-muted);font-size:11px;">—</span>'}
+          </td>
+          <td style="text-align:right;padding:0.55rem 0.75rem;white-space:nowrap;">
+            ${isConfigured
+              ? `<button class="small" onclick="editToolPolicy('${toolName}')" style="font-size:10px;padding:0.2rem 0.5rem;">Edit</button>
+                 <button class="danger small" onclick="removeToolPolicy('${toolName}')" style="font-size:10px;padding:0.2rem 0.5rem;margin-left:0.25rem;">Delete</button>`
+              : `<button class="primary small" onclick="showAddToolPolicyModalFor('${toolName}')" style="font-size:10px;padding:0.2rem 0.5rem;">+ Add Policy</button>`
+            }
+          </td>
+        </tr>`;
+  });
 
-  // Show unconfigured agent tools
-  if (unconfiguredTools.length) {
-    html += `<div style="margin-top:1rem;padding:1rem;background:var(--bg-3);border:1px dashed var(--border);border-radius:var(--radius-sm);">
-      <div style="font-size:12px;color:var(--text-muted);font-weight:600;margin-bottom:0.5rem;">TOOLS WITHOUT POLICIES</div>
-      <div style="display:flex;flex-wrap:wrap;gap:0.4rem;">
-        ${unconfiguredTools.map(t => `<button class="small" onclick="showAddToolPolicyModalFor('${t}')" style="font-size:11px;">+ ${t.replace(/_/g, ' ')}</button>`).join('')}
-      </div>
-    </div>`;
-  }
+  html += `
+      </tbody>
+    </table>
+  </div>
+  <div style="margin-top:0.75rem;display:flex;gap:1rem;font-size:11px;color:var(--text-muted);">
+    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#10b981;margin-right:4px;"></span>allow</span>
+    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#f59e0b;margin-right:4px;"></span>redact</span>
+    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#ef4444;margin-right:4px;"></span>block</span>
+    <span style="margin-left:auto;">${configuredTools.length}/${allTools.length} tools with policies</span>
+  </div>`;
 
-  html += '</div>';
   container.innerHTML = html;
 }
 

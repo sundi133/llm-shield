@@ -37,11 +37,15 @@ COPY api/routes_tenant.py api/
 COPY api/routes_tenant_self.py api/
 COPY api/routes_agents_registry.py api/
 COPY api/routes_data_policies.py api/
+COPY api/routes_audit.py api/
+COPY api/routes_policy.py api/
 COPY storage/__init__.py storage/
 COPY storage/tenant_store.py storage/
 COPY storage/tenant_models.py storage/
 COPY storage/admin_audit.py storage/
 COPY storage/rate_limiter.py storage/
+COPY storage/policy_store.py storage/
+COPY storage/audit_log.py storage/
 COPY static/ static/
 
 EXPOSE 8080
