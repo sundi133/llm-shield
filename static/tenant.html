@@ -831,14 +831,6 @@ function displayAgents(agents) {
   });
 
   html += '</tbody></table></div>';
-  html += `
-    <div style="margin-top: 1.5rem; text-align: center; padding: 1rem; background: var(--bg-3); border-radius: var(--radius-sm);">
-      <p style="margin-bottom: 1rem; color: var(--text-dim); font-size: 13px;">For advanced agent management and configuration</p>
-      <button class="primary" onclick="window.open('/static/enhanced-admin-portal.html', '_blank')">
-        Open Full Admin Portal
-      </button>
-    </div>
-  `;
 
   document.getElementById('agents-content').innerHTML = html;
 }
@@ -905,7 +897,11 @@ async function loadToolPolicyData() {
 function displayToolPolicies(toolPolicies) {
   let html = '<div class="policy-grid">';
 
-  Object.entries(toolPolicies).forEach(([toolName, policy]) => {
+  // Handle both array and object formats
+  const policies = Array.isArray(toolPolicies) ? toolPolicies : Object.entries(toolPolicies).map(([name, policy]) => ({...policy, tool_name: name}));
+
+  policies.forEach((policy) => {
+    const toolName = policy.tool_name || 'Unknown Tool';
     html += `<div class="policy-card" style="margin-bottom: 1rem;">`;
     html += `<div class="policy-header">`;
     html += `<div class="policy-name" style="font-size: 14px; font-weight: 600;">${toolName}</div>`;
@@ -949,14 +945,6 @@ function displayToolPolicies(toolPolicies) {
   });
 
   html += '</div>';
-  html += `
-    <div style="margin-top: 1.5rem; text-align: center; padding: 1rem; background: var(--bg-3); border-radius: var(--radius-sm);">
-      <p style="margin-bottom: 1rem; color: var(--text-dim); font-size: 13px;">For advanced policy configuration and data sanitization</p>
-      <button class="primary" onclick="window.open('/static/enhanced-admin-portal.html', '_blank')">
-        Manage Tool Policies in Admin Portal
-      </button>
-    </div>
-  `;
 
   document.getElementById('tool-policies-content').innerHTML = html;
 }
