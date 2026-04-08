@@ -815,28 +815,226 @@ async function loadAgentData() {
 }
 
 function displayAgents(agents) {
-  let html = '<div style="overflow-x: auto;"><table style="width: 100%; border-collapse: collapse; font-size: 13px;">';
-  html += '<thead><tr style="border-bottom: 1px solid var(--border); background: var(--bg-3);"><th style="text-align: left; padding: 0.75rem; font-weight: 600;">Agent ID</th><th style="text-align: left; padding: 0.75rem; font-weight: 600;">Name</th><th style="text-align: left; padding: 0.75rem; font-weight: 600;">Tools</th><th style="text-align: left; padding: 0.75rem; font-weight: 600;">Roles</th></tr></thead>';
-  html += '<tbody>';
+  let html = '<div class="agents-container" style="gap: 1.5rem;">';
 
-  Object.entries(agents).forEach(([agentId, agent]) => {
-    const tools = agent.tools ? agent.tools.join(', ') : 'None';
-    const roles = agent.role_permissions ? Object.keys(agent.role_permissions).join(', ') : 'None';
+  // Add agent button
+  html += `
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+      <div style="font-size: 14px; font-weight: 600; color: var(--text);">${Object.keys(agents).length} Agent(s) Registered</div>
+      <button class="primary" onclick="showAddAgentModal()" style="font-size: 12px; padding: 0.5rem 1rem;">
+        + Add Agent
+      </button>
+    </div>
+  `;
 
+  if (Object.keys(agents).length === 0) {
     html += `
-      <tr style="border-bottom: 1px solid var(--border);">
-        <td style="padding: 0.75rem;"><code style="background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 12px;">${agentId}</code></td>
-        <td style="padding: 0.75rem;">${agent.name || 'Unnamed'}</td>
-        <td style="padding: 0.75rem; font-size: 12px; color: var(--text-dim);">${tools}</td>
-        <td style="padding: 0.75rem; font-size: 12px; color: var(--text-dim);">${roles}</td>
-      </tr>
+      <div style="text-align: center; padding: 3rem; background: var(--bg-2); border-radius: 8px;">
+        <div style="font-size: 16px; margin-bottom: 0.5rem;">No Agents Registered</div>
+        <div style="font-size: 13px; color: var(--text-dim); margin-bottom: 1.5rem;">Create your first AI agent to get started</div>
+        <button class="primary" onclick="showAddAgentModal()">+ Create Agent</button>
+      </div>
     `;
-  });
+  } else {
+    Object.entries(agents).forEach(([agentId, agent]) => {
+      html += createAgentCard(agentId, agent);
+    });
+  }
 
-  html += '</tbody></table></div>';
-
+  html += '</div>';
   document.getElementById('agents-content').innerHTML = html;
 }
+
+function createAgentCard(agentId, agent) {
+  const isEnabled = agent.status !== 'disabled';
+
+  return `
+    <div class="agent-card" style="background: var(--bg-2); border-radius: 8px; border: 1px solid var(--border); overflow: hidden;">
+      <!-- Agent Header -->
+      <div style="padding: 1rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: flex-start;">
+        <div style="flex: 1;">
+          <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+            <div style="font-weight: 600; font-size: 15px;">${agent.name || agentId}</div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span class="status-badge ${isEnabled ? 'enabled' : 'disabled'}" style="font-size: 11px; padding: 0.25rem 0.5rem; border-radius: 12px; font-weight: 500;">
+                ${isEnabled ? '● Active' : '○ Disabled'}
+              </span>
+              <label class="toggle" style="position: relative; display: inline-block; width: 44px; height: 24px;">
+                <input type="checkbox" ${isEnabled ? 'checked' : ''} onchange="toggleAgent('${agentId}', this.checked)" style="opacity: 0; width: 0; height: 0;">
+                <span class="slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: ${isEnabled ? '#10b981' : '#6b7280'}; transition: .4s; border-radius: 24px;"></span>
+                <span class="slider-dot" style="position: absolute; content: ''; height: 18px; width: 18px; left: ${isEnabled ? '23px' : '3px'}; bottom: 3px; background: white; transition: .4s; border-radius: 50%;"></span>
+              </label>
+            </div>
+          </div>
+          <div style="font-size: 12px; color: var(--text-dim); margin-bottom: 0.5rem;">${agent.description || 'No description'}</div>
+          <div style="font-size: 11px; color: var(--text-muted);">
+            <code style="background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 4px;">${agentId}</code>
+          </div>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <button onclick="editAgent('${agentId}')" class="secondary" style="font-size: 11px; padding: 0.4rem 0.75rem;">Edit</button>
+          <button onclick="deleteAgent('${agentId}')" class="danger" style="font-size: 11px; padding: 0.4rem 0.75rem; background: var(--danger); color: white; border: none;">Delete</button>
+        </div>
+      </div>
+
+      <!-- Role-Tool Permissions Matrix -->
+      <div style="padding: 1rem;">
+        <div style="font-size: 12px; font-weight: 600; margin-bottom: 0.75rem; color: var(--text-dim);">Role → Tool Permissions</div>
+        ${createPermissionsMatrix(agent)}
+      </div>
+    </div>
+  `;
+}
+
+function createPermissionsMatrix(agent) {
+  const tools = agent.tools || [];
+  const rolePermissions = agent.role_permissions || {};
+
+  if (tools.length === 0) {
+    return '<div style="font-size: 12px; color: var(--text-muted); padding: 1rem; text-align: center; background: var(--bg-3); border-radius: 6px;">No tools configured</div>';
+  }
+
+  let matrix = '<div class="permissions-matrix" style="overflow-x: auto;">';
+  matrix += '<table style="width: 100%; font-size: 11px; border-collapse: separate; border-spacing: 2px;">';
+
+  // Header row with tools
+  matrix += '<thead><tr><th style="text-align: left; padding: 0.5rem; font-weight: 600; color: var(--text-dim);">Role</th>';
+  tools.forEach(tool => {
+    matrix += `<th style="text-align: center; padding: 0.5rem; font-weight: 500; color: var(--text-dim); writing-mode: vertical-lr; text-orientation: mixed; min-width: 40px;">${tool.replace(/_/g, ' ')}</th>`;
+  });
+  matrix += '</tr></thead>';
+
+  // Body rows for each role
+  matrix += '<tbody>';
+  const roles = Object.keys(rolePermissions);
+
+  if (roles.length === 0) {
+    matrix += `<tr><td colspan="${tools.length + 1}" style="text-align: center; padding: 1rem; color: var(--text-muted);">No role permissions configured</td></tr>`;
+  } else {
+    roles.forEach(role => {
+      const allowedTools = rolePermissions[role] || [];
+      matrix += `<tr><td style="padding: 0.5rem; font-weight: 500;">${role}</td>`;
+
+      tools.forEach(tool => {
+        const hasAccess = allowedTools.includes(tool);
+        const cellStyle = hasAccess
+          ? 'background: rgba(16, 185, 129, 0.1); color: #10b981;'
+          : 'background: rgba(239, 68, 68, 0.1); color: #ef4444;';
+
+        matrix += `<td style="text-align: center; padding: 0.5rem; ${cellStyle} border-radius: 4px;">`;
+        matrix += hasAccess ? '✓' : '✗';
+        matrix += '</td>';
+      });
+      matrix += '</tr>';
+    });
+  }
+
+  matrix += '</tbody></table></div>';
+  return matrix;
+}
+
+// Agent Management Functions
+async function toggleAgent(agentId, enabled) {
+  try {
+    const status = enabled ? 'active' : 'disabled';
+    // TODO: Implement API call to toggle agent status
+    console.log(`${enabled ? 'Enabling' : 'Disabling'} agent: ${agentId}`);
+    showToast(`Agent ${agentId} ${enabled ? 'enabled' : 'disabled'}`, 'success');
+  } catch (error) {
+    console.error('Failed to toggle agent:', error);
+    showToast('Failed to update agent status', 'error');
+  }
+}
+
+function editAgent(agentId) {
+  showToast('Edit agent functionality coming soon', 'info');
+  // TODO: Open edit modal with agent details
+}
+
+function deleteAgent(agentId) {
+  if (confirm(`Are you sure you want to delete agent "${agentId}"? This action cannot be undone.`)) {
+    // TODO: Implement API call to delete agent
+    console.log(`Deleting agent: ${agentId}`);
+    showToast(`Agent ${agentId} scheduled for deletion`, 'warning');
+  }
+}
+
+function showAddAgentModal() {
+  showToast('Add agent functionality coming soon', 'info');
+  // TODO: Open add agent modal
+}
+
+function showToast(message, type = 'info') {
+  const toastColors = {
+    info: 'background: var(--accent); color: white;',
+    success: 'background: var(--success); color: white;',
+    warning: 'background: var(--warning); color: var(--bg);',
+    error: 'background: var(--danger); color: white;'
+  };
+
+  const toast = document.createElement('div');
+  toast.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 12px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    z-index: 1000;
+    ${toastColors[type]}
+    animation: slideIn 0.3s ease;
+  `;
+  toast.textContent = message;
+
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    toast.style.animation = 'slideOut 0.3s ease';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+// Add CSS for animations
+const style = document.createElement('style');
+style.textContent = `
+  @keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  @keyframes slideOut {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(100%); opacity: 0; }
+  }
+
+  .status-badge.enabled {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+  }
+
+  .status-badge.disabled {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+  }
+
+  .toggle input:checked + .slider {
+    background: #10b981;
+  }
+
+  .toggle input:checked + .slider .slider-dot {
+    transform: translateX(19px);
+  }
+
+  .permissions-matrix table th,
+  .permissions-matrix table td {
+    border: none;
+  }
+
+  .permissions-matrix table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+`;
+document.head.appendChild(style);
 
 // ── Tool Policies ─────────────────────────
 async function loadToolPolicyData() {
