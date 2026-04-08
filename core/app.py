@@ -26,6 +26,7 @@ from api.routes_tenant_self import router as tenant_self_router
 from api.routes_policy import router as policy_router
 from api.routes_agent_policy import router as agent_policy_router
 from api.routes_data_policies import router as data_policies_router
+from api.routes_agents_registry import router as agents_registry_router
 from storage.audit_log import audit_logger
 
 
@@ -61,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(policy_router)
     app.include_router(agent_policy_router)
     app.include_router(data_policies_router)
+    app.include_router(agents_registry_router)
 
     # Serve playground
     _static_dir = os.path.join(
