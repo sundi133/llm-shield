@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.routes_tenant import router as tenant_router, global_router as tenant_audit_router
 from api.routes_tenant_self import router as tenant_self_router
+from api.routes_agents_registry import router as agents_registry_router
 from core.auth import AuthMiddleware
 from core.middleware import ShieldMiddleware
 
@@ -50,6 +51,7 @@ def create_admin_app() -> FastAPI:
     app.include_router(tenant_router)        # /v1/admin/tenants/*
     app.include_router(tenant_audit_router)  # /v1/admin/audit, /v1/admin/dashboard
     app.include_router(tenant_self_router)   # /v1/tenant/*
+    app.include_router(agents_registry_router)  # /v1/agents/*
 
     # Static files
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
