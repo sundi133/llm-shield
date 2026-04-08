@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  # Redis for data storage
+  redis:
+    image: redis:7-alpine
+    container_name: llm-shield-redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # LLM Shield API (Development - No GPU needed)
+  llm-shield-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: llm-shield-app-dev
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SHIELD_ADMIN_KEY=admin123
+      - SHIELD_AUTH_ENABLED=true
+      - PYTHONPATH=/app
+      - ENVIRONMENT=development
+    volumes:
+      # Mount source code for live editing
+      - .:/app
+      - /app/__pycache__
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: python handler.py
+
+volumes:
+  redis_dev_data:
