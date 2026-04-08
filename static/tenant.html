@@ -820,8 +820,8 @@ function displayAgents(agents) {
   html += '<tbody>';
 
   Object.entries(agents).forEach(([agentId, agent]) => {
-    const tools = agent.tools ? agent.tools.slice(0, 2).join(', ') + (agent.tools.length > 2 ? '...' : '') : 'None';
-    const roles = agent.role_permissions ? Object.keys(agent.role_permissions).slice(0, 2).join(', ') + (Object.keys(agent.role_permissions).length > 2 ? '...' : '') : 'None';
+    const tools = agent.tools ? agent.tools.join(', ') : 'None';
+    const roles = agent.role_permissions ? Object.keys(agent.role_permissions).join(', ') : 'None';
 
     html += `
       <tr style="border-bottom: 1px solid var(--border);">
