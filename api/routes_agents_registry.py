@@ -47,8 +47,8 @@ async def get_agents_registry(request: Request):
     try:
         tenant_id = get_tenant_from_api_key(request)
 
-        # Direct Redis lookup for agents using tenant_store connection
-        agents_key = f"tenant:{tenant_id}:agents"
+        # Direct Redis lookup for agents using correct production key format
+        agents_key = f"agents:{tenant_id}"
         agents = get_redis_data(agents_key)
 
         if agents is None:
@@ -74,8 +74,8 @@ async def get_tool_policies(request: Request):
     try:
         tenant_id = get_tenant_from_api_key(request)
 
-        # Direct Redis lookup for tool policies using tenant_store connection
-        policies_key = f"tenant:{tenant_id}:policies"
+        # Direct Redis lookup for tool policies using correct production key format
+        policies_key = f"policies:{tenant_id}"
         policies_data = get_redis_data(policies_key)
 
         if policies_data:
@@ -168,11 +168,11 @@ async def seed_test_data():
             }
         ]
 
-        # Store in Redis using proper connection
+        # Store in Redis using proper connection and correct key format
         redis_client = _get_redis()
         if redis_client:
-            redis_client.set(f"tenant:{tenant_id}:agents", json.dumps(agents))
-            redis_client.set(f"tenant:{tenant_id}:policies", json.dumps(policies))
+            redis_client.set(f"agents:{tenant_id}", json.dumps(agents))
+            redis_client.set(f"policies:{tenant_id}", json.dumps(policies))
         else:
             raise Exception("Redis connection not available")
 
@@ -185,3 +185,49 @@ async def seed_test_data():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to seed test data: {str(e)}")
+
+
+@router.get("/debug/redis-keys")
+async def debug_redis_keys():
+    """Debug endpoint to see what Redis keys exist."""
+    try:
+        redis_client = _get_redis()
+        if redis_client:
+            # Try to get keys (this might not work with Upstash REST, but let's try)
+            try:
+                keys = redis_client.keys("*")
+                return {
+                    "success": True,
+                    "keys": keys[:50],  # Limit to first 50 keys
+                    "total_keys": len(keys) if isinstance(keys, list) else "unknown"
+                }
+            except Exception as e:
+                # If keys() doesn't work, try some common patterns
+                test_keys = [
+                    "tenant:tenant-20260407220546-28f6bb:agents",
+                    "tenant:tenant-20260407222125-7e526f:agents",
+                    "tenant-20260407220546-28f6bb:agents",
+                    "tenant-20260407222125-7e526f:agents",
+                    "agents:tenant-20260407220546-28f6bb",
+                    "agents:tenant-20260407222125-7e526f"
+                ]
+
+                found_keys = {}
+                for key in test_keys:
+                    try:
+                        value = redis_client.get(key)
+                        if value:
+                            found_keys[key] = "EXISTS"
+                    except:
+                        found_keys[key] = "ERROR"
+
+                return {
+                    "success": True,
+                    "message": "keys() not supported, tried common patterns",
+                    "tested_keys": found_keys,
+                    "error": str(e)
+                }
+        else:
+            return {"success": False, "error": "No Redis connection"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
