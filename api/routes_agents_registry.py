@@ -255,7 +255,31 @@ async def seed_test_data():
                     "redact_ssn": True,
                     "redact_phone": True,
                     "redact_email": False,
-                    "redact_medical_ids": True
+                    "redact_medical_ids": True,
+                    "patterns": [
+                        {
+                            "name": "SSN Pattern",
+                            "pattern": r"\b\d{3}-\d{2}-\d{4}\b",
+                            "replacement": "[REDACTED-SSN]",
+                            "enabled": True
+                        },
+                        {
+                            "name": "Phone Pattern",
+                            "pattern": r"\b\d{3}-\d{3}-\d{4}\b",
+                            "replacement": "[REDACTED-PHONE]",
+                            "enabled": True
+                        }
+                    ]
+                },
+                "llm_validation": {
+                    "enabled": True,
+                    "severity": "high",
+                    "scan_types": ["pii", "phi", "secrets"],
+                    "custom_rules": [
+                        "Remove any patient identifiers including names, addresses, or ID numbers",
+                        "Redact sensitive medical information that could identify individuals"
+                    ],
+                    "model": "sanitization-model-v1"
                 },
                 "role_restrictions": {
                     "doctor": "allow",
@@ -268,7 +292,25 @@ async def seed_test_data():
                 "tool_name": "prescribe_medication",
                 "data_sanitization": {
                     "redact_dosage_sensitive": True,
-                    "redact_patient_notes": True
+                    "redact_patient_notes": True,
+                    "patterns": [
+                        {
+                            "name": "Dosage Sensitive",
+                            "pattern": r"(\d+)\s*(mg|ml|mcg|units?)",
+                            "replacement": "[DOSAGE-REDACTED]",
+                            "enabled": True
+                        }
+                    ]
+                },
+                "llm_validation": {
+                    "enabled": True,
+                    "severity": "critical",
+                    "scan_types": ["pii", "phi", "dosage", "prescriptions"],
+                    "custom_rules": [
+                        "Remove specific dosage amounts and prescription details",
+                        "Protect patient-specific medication information"
+                    ],
+                    "model": "sanitization-model-v1"
                 },
                 "role_restrictions": {
                     "doctor": "allow",

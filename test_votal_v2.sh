@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ── Votal AI Guardrails — Full Test Suite ─────────────────────────
-BASE_URL="https://3kvk0vfgk96k2g.api.runpod.ai/guardrails/input"
+BASE_URL="https://kk5losqxwr2ui7.api.runpod.ai/guardrails/input"
 TOKEN="${RUNPOD_TOKEN:-}"
 
 # Check required environment variables

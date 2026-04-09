@@ -599,12 +599,52 @@
       </label>
       <div id="tp-llm-fields" class="hidden" style="margin-top:0.75rem;">
         <div class="field">
-          <label>Prompt Template</label>
-          <textarea id="tp-modal-llm-prompt" style="min-height:60px;font-size:12px;" placeholder="Validate if {user_role} can use {tool_name}: {tool_input}"></textarea>
+          <label>Severity Level</label>
+          <select id="tp-modal-llm-severity" style="width:150px;">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Scan Types <span class="muted">(What to scan for)</span></label>
+          <div id="tp-modal-scan-types" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.5rem;">
+            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
+              <input type="checkbox" value="pii"> PII (Personal Info)
+            </label>
+            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
+              <input type="checkbox" value="phi"> PHI (Health Info)
+            </label>
+            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
+              <input type="checkbox" value="secrets"> Secrets
+            </label>
+            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
+              <input type="checkbox" value="dosage"> Dosage/Medication
+            </label>
+            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
+              <input type="checkbox" value="prescriptions"> Prescriptions
+            </label>
+            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
+              <input type="checkbox" value="financial"> Financial Data
+            </label>
+          </div>
+        </div>
+        <div class="field">
+          <label>Custom Sanitization Rules <span class="muted">(One rule per line)</span></label>
+          <textarea id="tp-modal-llm-rules" style="min-height:80px;font-size:12px;" placeholder="Remove any patient identifiers including names, addresses, or ID numbers&#10;Redact sensitive medical information that could identify individuals"></textarea>
+        </div>
+        <div class="field">
+          <label>LLM Model</label>
+          <select id="tp-modal-llm-model" style="width:200px;">
+            <option value="sanitization-model-v1">Sanitization Model v1</option>
+            <option value="sanitization-model-v2">Sanitization Model v2</option>
+            <option value="custom-model">Custom Model</option>
+          </select>
         </div>
         <div class="field">
           <label>Confidence Threshold</label>
-          <input type="text" id="tp-modal-llm-threshold" value="0.8" style="width:100px;">
+          <input type="text" id="tp-modal-llm-threshold" value="0.8" style="width:100px;" placeholder="0.8">
         </div>
       </div>
     </div>
@@ -1664,8 +1704,17 @@ function showAddToolPolicyModal() {
   populatePatternExample();
   document.getElementById('tp-modal-llm-enabled').checked = false;
   document.getElementById('tp-llm-fields').classList.add('hidden');
-  document.getElementById('tp-modal-llm-prompt').value = '';
+
+  // Reset new LLM fields
+  document.getElementById('tp-modal-llm-severity').value = 'medium';
+  document.getElementById('tp-modal-llm-model').value = 'sanitization-model-v1';
   document.getElementById('tp-modal-llm-threshold').value = '0.8';
+  document.getElementById('tp-modal-llm-rules').value = '';
+
+  // Reset scan type checkboxes
+  document.querySelectorAll('#tp-modal-scan-types input[type="checkbox"]').forEach(cb => {
+    cb.checked = false;
+  });
   document.getElementById('tool-policy-modal').classList.remove('hidden');
 }
 
@@ -1694,8 +1743,21 @@ function editToolPolicy(toolName) {
   const llm = p.llm_validation || {};
   document.getElementById('tp-modal-llm-enabled').checked = !!llm.enabled;
   document.getElementById('tp-llm-fields').classList.toggle('hidden', !llm.enabled);
-  document.getElementById('tp-modal-llm-prompt').value = llm.prompt || '';
+
+  // Populate new LLM fields
+  document.getElementById('tp-modal-llm-severity').value = llm.severity || 'medium';
+  document.getElementById('tp-modal-llm-model').value = llm.model || 'sanitization-model-v1';
   document.getElementById('tp-modal-llm-threshold').value = llm.confidence_threshold || 0.8;
+
+  // Populate scan types checkboxes
+  const scanTypes = llm.scan_types || [];
+  document.querySelectorAll('#tp-modal-scan-types input[type="checkbox"]').forEach(cb => {
+    cb.checked = scanTypes.includes(cb.value);
+  });
+
+  // Populate custom rules
+  const customRules = llm.custom_rules || [];
+  document.getElementById('tp-modal-llm-rules').value = customRules.join('\n');
   document.getElementById('tool-policy-modal').classList.remove('hidden');
 }
 
@@ -1765,9 +1827,22 @@ function saveToolPolicyFromModal() {
 
   const llmEnabled = document.getElementById('tp-modal-llm-enabled').checked;
   if (llmEnabled) {
+    // Collect scan types
+    const scanTypes = [];
+    document.querySelectorAll('#tp-modal-scan-types input[type="checkbox"]:checked').forEach(cb => {
+      scanTypes.push(cb.value);
+    });
+
+    // Collect custom rules
+    const rulesText = document.getElementById('tp-modal-llm-rules').value.trim();
+    const customRules = rulesText ? rulesText.split('\n').map(r => r.trim()).filter(r => r.length > 0) : [];
+
     policy.llm_validation = {
       enabled: true,
-      prompt: document.getElementById('tp-modal-llm-prompt').value,
+      severity: document.getElementById('tp-modal-llm-severity').value,
+      scan_types: scanTypes,
+      custom_rules: customRules,
+      model: document.getElementById('tp-modal-llm-model').value,
       confidence_threshold: parseFloat(document.getElementById('tp-modal-llm-threshold').value) || 0.8,
     };
   }
