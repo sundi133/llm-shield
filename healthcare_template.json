@@ -1,0 +1,46 @@
+{
+  "input_guardrails": {
+    "adversarial_detection": {
+      "enabled": true,
+      "action": "block",
+      "settings": { "threshold": 0.8 }
+    },
+    "keyword_blocklist": {
+      "enabled": true,
+      "action": "block",
+      "settings": { "keywords": ["hack", "exploit", "jailbreak", "ignore instructions"] }
+    },
+    "toxicity": {
+      "enabled": true,
+      "action": "block",
+      "settings": { "threshold": 0.8 }
+    },
+    "language_detection": {
+      "enabled": true,
+      "action": "block",
+      "settings": { "allowed_languages": ["en"] }
+    },
+    "system_prompt_leak": {
+      "enabled": true,
+      "action": "block",
+      "settings": { "threshold": 0.8 }
+    },
+    "topic_restriction": {
+      "enabled": true,
+      "action": "block",
+      "settings": { "allowed_topics": ["healthcare", "medical", "pharmacy", "appointments", "billing"] }
+    },
+    "regex_pattern": { "enabled": true, "action": "block", "settings": {} }
+  },
+  "output_guardrails": {
+    "hallucinated_links": { "enabled": true, "action": "block", "settings": {} },
+    "tone_enforcement": { "enabled": true, "action": "block", "settings": {} },
+    "bias_detection": {
+      "enabled": true,
+      "action": "block",
+      "settings": { "threshold": 0.6 }
+    },
+    "pii_leakage": { "enabled": true, "action": "block", "settings": {} },
+    "competitor_mention": { "enabled": true, "action": "block", "settings": {} }
+  }
+}
