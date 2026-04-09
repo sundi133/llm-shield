@@ -5,30 +5,6 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 
-KNOWN_GUARDRAIL_NAMES = {
-    "adversarial_detection",
-    "keyword_blocklist",
-    "topic_restriction",
-    "topic_enforcement",
-    "language_detection",
-    "system_prompt_leak",
-    "toxicity",
-    "regex_pattern",
-    "pii_detection",
-    "length_limit",
-    "rate_limiter",
-    "safety_check",
-    "sentiment",
-    "hallucinated_links",
-    "tone_enforcement",
-    "bias_detection",
-    "pii_leakage",
-    "competitor_mention",
-    "role_redaction",
-    "factual_grounding",
-}
-
-
 class GuardrailPolicy(BaseModel):
     """A single guardrail configuration for a tenant."""
     enabled: bool = True

@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from storage.tenant_store import get_tenant, update_tenant, set_tenant_policies, _get_redis
-from storage.tenant_models import GuardrailPolicy, KNOWN_GUARDRAIL_NAMES
+from storage.tenant_models import GuardrailPolicy
 from storage.rate_limiter import get_usage
 from storage.admin_audit import log_admin_action
 
@@ -116,16 +116,6 @@ async def update_my_policies(request: Request, body: TenantSelfUpdateRequest):
     updates = body.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
-
-    for section in ("input_guardrails", "output_guardrails"):
-        guardrails = updates.get(section, {})
-        unknown = set(guardrails.keys()) - KNOWN_GUARDRAIL_NAMES
-        if unknown:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Unknown guardrail(s) in {section}: {', '.join(sorted(unknown))}. "
-                       f"Valid names: {', '.join(sorted(KNOWN_GUARDRAIL_NAMES))}",
-            )
 
     # Full replace (not merge) so removed guardrails are actually deleted
     config = set_tenant_policies(
