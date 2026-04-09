@@ -1,11 +1,10 @@
 """Agents Registry API - Direct Redis access for tenant data."""
 
 import re
-from fastapi import APIRouter, Depends, HTTPException, Request
-from core.auth import get_tenant_from_request
-from storage.tenant_store import get_tenant, resolve_tenant_by_api_key, _get_redis
 import json
-import os
+
+from fastapi import APIRouter, HTTPException, Request
+from storage.tenant_store import resolve_tenant_by_api_key, _get_redis
 
 router = APIRouter(prefix="/v1/agents", tags=["agents-registry"])
 
@@ -29,17 +28,12 @@ def _sanitize_string(value: str) -> str:
     return _HTML_TAG_RE.sub("", value)
 
 def get_tenant_from_api_key(request: Request) -> str:
-    """Get tenant ID directly from API key without complex auth."""
+    """Get tenant ID directly from API key via Redis lookup."""
     api_key = request.headers.get("X-API-Key", "").strip()
 
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
 
-    # For test keys, return test tenant
-    if api_key.startswith("sk-test-"):
-        return "test-tenant-001"
-
-    # Direct Redis lookup for real tenant keys
     tenant_id = resolve_tenant_by_api_key(api_key)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="Invalid API key")
@@ -79,7 +73,6 @@ async def get_agents_registry(request: Request):
             "agents": agents,
             "total": len(agents),
             "tenant_id": tenant_id,
-            "source": "redis_direct"
         }
 
     except HTTPException:
@@ -238,7 +231,6 @@ async def seed_test_data():
     try:
         tenant_id = "test-tenant-001"
 
-        # Sample healthcare agents
         agents = {
             "healthcare-doctor": {
                 "agent_id": "healthcare-doctor",
@@ -270,7 +262,6 @@ async def seed_test_data():
             }
         }
 
-        # Sample tool policies
         policies = [
             {
                 "tool_name": "patient_lookup",
@@ -302,7 +293,6 @@ async def seed_test_data():
             }
         ]
 
-        # Store in Redis using proper connection and correct key format
         redis_client = _get_redis()
         if redis_client:
             redis_client.set(f"agents:{tenant_id}", json.dumps(agents))
@@ -448,48 +438,3 @@ async def delete_agent(agent_id: str, request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete agent: {str(e)}")
 
-
-@router.get("/debug/redis-keys")
-async def debug_redis_keys():
-    """Debug endpoint to see what Redis keys exist."""
-    try:
-        redis_client = _get_redis()
-        if redis_client:
-            # Try to get keys (this might not work with Upstash REST, but let's try)
-            try:
-                keys = redis_client.keys("*")
-                return {
-                    "success": True,
-                    "keys": keys[:50],  # Limit to first 50 keys
-                    "total_keys": len(keys) if isinstance(keys, list) else "unknown"
-                }
-            except Exception as e:
-                # If keys() doesn't work, try some common patterns
-                test_keys = [
-                    "tenant:tenant-20260407220546-28f6bb:agents",
-                    "tenant:tenant-20260407222125-7e526f:agents",
-                    "tenant-20260407220546-28f6bb:agents",
-                    "tenant-20260407222125-7e526f:agents",
-                    "agents:tenant-20260407220546-28f6bb",
-                    "agents:tenant-20260407222125-7e526f"
-                ]
-
-                found_keys = {}
-                for key in test_keys:
-                    try:
-                        value = redis_client.get(key)
-                        if value:
-                            found_keys[key] = "EXISTS"
-                    except:
-                        found_keys[key] = "ERROR"
-
-                return {
-                    "success": True,
-                    "message": "keys() not supported, tried common patterns",
-                    "tested_keys": found_keys,
-                    "error": str(e)
-                }
-        else:
-            return {"success": False, "error": "No Redis connection"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
