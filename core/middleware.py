@@ -20,7 +20,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
 
     _SKIP_PATHS = {"/health", "/ping", "/docs", "/redoc", "/openapi.json"}
     _GUARDED_PREFIXES = ("/v1/shield", "/v1/tenant", "/v1/agents")
-    _GUARDED_EXACT = {"/classify", "/classify_output"}
+    _GUARDED_EXACT = {"/classify", "/classify_output", "/guardrails/input", "/guardrails/output"}
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
