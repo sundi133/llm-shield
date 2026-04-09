@@ -1,5 +1,6 @@
 """Agents Registry API - Direct Redis access for tenant data."""
 
+import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 from core.auth import get_tenant_from_request
 from storage.tenant_store import get_tenant, resolve_tenant_by_api_key, _get_redis
@@ -7,6 +8,25 @@ import json
 import os
 
 router = APIRouter(prefix="/v1/agents", tags=["agents-registry"])
+
+_VALID_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _validate_agent_id(agent_id: str) -> None:
+    """Reject agent IDs that contain path-traversal or special characters."""
+    if not agent_id or not _VALID_ID_RE.match(agent_id):
+        raise HTTPException(
+            status_code=400,
+            detail="agent_id must be 1-128 characters, alphanumeric, hyphens, or underscores only",
+        )
+
+
+def _sanitize_string(value: str) -> str:
+    """Strip HTML/JS tags from user-provided strings to prevent stored XSS."""
+    if not isinstance(value, str):
+        return value
+    return _HTML_TAG_RE.sub("", value)
 
 def get_tenant_from_api_key(request: Request) -> str:
     """Get tenant ID directly from API key without complex auth."""
@@ -161,6 +181,9 @@ async def save_all_tool_policies(request: Request):
         tenant_id = get_tenant_from_api_key(request)
         body = await request.json()
 
+        if "policies" in body and isinstance(body["policies"], dict) and len(body) <= 2:
+            body = body["policies"]
+
         policies_key = f"policies:{tenant_id}"
         import time as _time
         body["updated_at"] = int(_time.time())
@@ -305,9 +328,10 @@ async def create_agent(request: Request):
         tenant_id = get_tenant_from_api_key(request)
         body = await request.json()
 
-        agent_id = body.get("agent_id")
+        agent_id = body.get("agent_id", "").strip()
         if not agent_id:
             raise HTTPException(status_code=400, detail="agent_id is required")
+        _validate_agent_id(agent_id)
 
         agents_key = f"agents:{tenant_id}"
         agents = get_redis_data(agents_key) or {}
@@ -319,8 +343,8 @@ async def create_agent(request: Request):
         now = int(_time.time())
         agents[agent_id] = {
             "agent_id": agent_id,
-            "name": body.get("name", agent_id),
-            "description": body.get("description", ""),
+            "name": _sanitize_string(body.get("name", agent_id)),
+            "description": _sanitize_string(body.get("description", "")),
             "tools": body.get("tools", []),
             "role_permissions": body.get("role_permissions", {}),
             "status": body.get("status", "active"),
@@ -359,11 +383,15 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
         if agent_id not in agents:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        # Update agent data
+        if "name" in agent_data:
+            agent_data["name"] = _sanitize_string(agent_data["name"])
+        if "description" in agent_data:
+            agent_data["description"] = _sanitize_string(agent_data["description"])
+
         agents[agent_id] = {
             **agents[agent_id],
             **agent_data,
-            "agent_id": agent_id,  # Ensure agent_id is preserved
+            "agent_id": agent_id,
             "updated_at": int(__import__('time').time())
         }
 

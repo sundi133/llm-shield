@@ -5,11 +5,44 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+KNOWN_GUARDRAIL_NAMES = {
+    "adversarial_detection",
+    "keyword_blocklist",
+    "topic_restriction",
+    "topic_enforcement",
+    "language_detection",
+    "system_prompt_leak",
+    "toxicity",
+    "regex_pattern",
+    "pii_detection",
+    "length_limit",
+    "rate_limiter",
+    "safety_check",
+    "sentiment",
+    "hallucinated_links",
+    "tone_enforcement",
+    "bias_detection",
+    "pii_leakage",
+    "competitor_mention",
+    "role_redaction",
+    "factual_grounding",
+}
+
+
 class GuardrailPolicy(BaseModel):
     """A single guardrail configuration for a tenant."""
     enabled: bool = True
     action: str = Field(default="block", pattern="^(block|warn|log|pass)$")
     settings: dict = Field(default_factory=dict)
+
+    @field_validator("settings")
+    @classmethod
+    def validate_threshold_range(cls, v):
+        if "threshold" in v:
+            t = v["threshold"]
+            if isinstance(t, (int, float)) and (t < 0.0 or t > 1.0):
+                raise ValueError("threshold must be between 0.0 and 1.0")
+        return v
 
 
 class TenantRBACRole(BaseModel):
