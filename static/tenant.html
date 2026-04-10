@@ -425,6 +425,8 @@
         <button class="api-sub-tab" data-api-tab="python-sdk" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">Python</button>
         <button class="api-sub-tab" data-api-tab="js-sdk" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">JavaScript</button>
         <button class="api-sub-tab" data-api-tab="curl-examples" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">cURL</button>
+        <button class="api-sub-tab" data-api-tab="langchain" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">LangChain</button>
+        <button class="api-sub-tab" data-api-tab="crewai" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">CrewAI</button>
         <button class="api-sub-tab" data-api-tab="api-reference" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">API Reference</button>
       </div>
 
@@ -488,6 +490,905 @@
 
       <!-- cURL Examples -->
       <div id="api-tab-curl-examples" class="api-tab-content hidden"></div>
+
+      <!-- LangChain Integration -->
+      <div id="api-tab-langchain" class="api-tab-content hidden">
+        <div class="card" style="margin-bottom:1rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">🦜 LangChain + LLM Shield Integration</div>
+              <div class="card-subtitle">Complete example showing how to create protected LangChain agents with guardrails</div>
+            </div>
+          </div>
+          <div style="padding:0 1.25rem 1.25rem;">
+            <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Agent Registry</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Tool Policies</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Runtime Validation</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">1. Install Dependencies</div>
+          <div style="background:var(--bg-2);padding:1rem;border-radius:6px;margin:0.5rem 0;">
+            <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
+pip install langchain openai requests<br>
+pip install serpapi google-search-results  # For tools
+            </code>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">2. Environment Setup</div>
+          <div class="sdk-section-desc">Configure for your deployment environment</div>
+
+          <div style="margin:0.5rem 0;">
+            <h4 style="font-size:13px;color:var(--text);margin:0.5rem 0;">Local/Self-Hosted LLM Shield</h4>
+            <div style="background:var(--bg-2);padding:1rem;border-radius:6px;">
+              <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
+export TENANT_ID="your_tenant_id"<br>
+export API_KEY="your_api_key"<br>
+export OPENAI_API_KEY="sk-your_openai_key"<br>
+export LLM_SHIELD_URL="<span id="langchain-base-url">loading...</span>"
+              </code>
+            </div>
+          </div>
+
+          <div style="margin:0.5rem 0;">
+            <h4 style="font-size:13px;color:var(--text);margin:0.5rem 0;">RunPod Hosted LLM Shield (Recommended)</h4>
+            <div style="background:var(--bg-2);padding:1rem;border-radius:6px;">
+              <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
+# Replace with your actual RunPod endpoint and credentials<br>
+export RUNPOD_TOKEN="rpa_YOUR_RUNPOD_TOKEN_HERE"<br>
+export TENANT_ID="tenant-YYYYMMDDHHMMSS-XXXXXX"<br>
+export API_KEY="tenant-YYYYMMDDHHMMSS-XXXXXX-key-XXXXXX"<br>
+export OPENAI_API_KEY="sk-your_openai_key"<br>
+export LLM_SHIELD_URL="https://your-llm-shield-endpoint.runpod.ai"
+              </code>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:0.5rem;padding:0.5rem;background:var(--accent-dim);border-radius:4px;">
+              💡 <strong>RunPod Benefits:</strong> GPU-accelerated models, auto-scaling, global CDN, and managed infrastructure
+            </div>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">3. Complete LangChain Integration</div>
+          <div class="sdk-section-desc">SafeLangChainAgent with full LLM Shield protection</div>
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
+            <div style="background:var(--border);padding:0.5rem 1rem;font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border);">
+              langchain_integration.py
+              <button onclick="copyToClipboard('langchain-code')" style="float:right;background:none;border:none;color:var(--accent-hover);cursor:pointer;font-size:11px;">Copy</button>
+            </div>
+            <div style="padding:1rem;overflow-x:auto;">
+              <pre id="langchain-code" style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code>#!/usr/bin/env python3
+"""
+LangChain + LLM Shield Integration Example
+Complete protected agent with guardrails, tool policies, and runtime validation
+"""
+
+import os
+import json
+import requests
+from typing import Dict, List, Any, Optional
+from langchain.agents import AgentType, initialize_agent, load_tools
+from langchain.llms import OpenAI
+from langchain.tools import BaseTool
+from langchain.schema import AgentAction, AgentFinish
+from langchain.callbacks.base import BaseCallbackHandler
+
+class LLMShieldConfig:
+    """Configuration for LLM Shield integration"""
+    def __init__(self):
+        # Support both local and RunPod hosted LLM Shield
+        self.base_url = os.getenv('LLM_SHIELD_URL', 'http://localhost:8080')
+        self.auth_token = os.getenv('RUNPOD_TOKEN')  # For RunPod hosted
+        self.api_key = os.getenv('API_KEY')
+        self.tenant_id = os.getenv('TENANT_ID')
+
+        self.session = requests.Session()
+        headers = {
+            'Content-Type': 'application/json'
+        }
+
+        # Configure authentication based on deployment type
+        if self.auth_token:
+            # RunPod hosted LLM Shield
+            headers['Authorization'] = f'Bearer {self.auth_token}'
+
+        if self.api_key:
+            # API key for both local and RunPod
+            headers['X-API-Key'] = self.api_key
+
+        self.session.headers.update(headers)
+
+class LLMShieldAgentManager:
+    """Manages agent registration and tool policies with LLM Shield"""
+
+    def __init__(self, config: LLMShieldConfig):
+        self.config = config
+
+    def register_agent(self, agent_config: Dict) -> Dict:
+        """Register an agent with LLM Shield"""
+        try:
+            response = self.config.session.post(
+                f"{self.config.base_url}/v1/agents/registry",
+                json=agent_config
+            )
+            if response.status_code in [200, 201]:
+                print(f"✅ Agent '{agent_config['id']}' registered successfully")
+                return response.json()
+            else:
+                print(f"❌ Failed to register agent: {response.status_code}")
+                return {}
+        except Exception as e:
+            print(f"❌ Error registering agent: {e}")
+            return {}
+
+    def update_tool_policies(self, policies: Dict) -> bool:
+        """Update tool policies for all agents"""
+        try:
+            response = self.config.session.put(
+                f"{self.config.base_url}/v1/agents/tools/policies",
+                json=policies
+            )
+            if response.status_code == 200:
+                print("✅ Tool policies updated successfully")
+                return True
+            else:
+                print(f"❌ Failed to update tool policies: {response.status_code}")
+                return False
+        except Exception as e:
+            print(f"❌ Error updating tool policies: {e}")
+            return False
+
+class GuardrailsCallbackHandler(BaseCallbackHandler):
+    """LangChain callback handler for LLM Shield integration"""
+
+    def __init__(self, config: LLMShieldConfig):
+        self.config = config
+
+    def on_agent_action(self, action: AgentAction, **kwargs) -> Any:
+        """Validate agent actions before execution"""
+        print(f"🛡️ Validating action: {action.tool}")
+
+        # Validate tool call with LLM Shield
+        validation_payload = {
+            "tool_name": action.tool,
+            "parameters": {"input": action.tool_input},
+            "agent_id": kwargs.get('agent_id', 'langchain_agent'),
+            "tenant_id": self.config.tenant_id
+        }
+
+        try:
+            response = self.config.session.post(
+                f"{self.config.base_url}/v1/shield/tool/check",
+                json=validation_payload
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                if not result.get('allowed', True):
+                    print(f"🚫 Tool call blocked: {result.get('reason', 'Policy violation')}")
+                    return None
+                else:
+                    print(f"✅ Tool call approved: {action.tool}")
+            else:
+                print(f"⚠️ Could not validate tool call: {response.status_code}")
+        except Exception as e:
+            print(f"⚠️ Guardrails validation error: {e}")
+
+class SafeLangChainAgent:
+    """LangChain agent with integrated LLM Shield protection"""
+
+    def __init__(self, agent_id: str, agent_config: Dict):
+        self.agent_id = agent_id
+        self.config = LLMShieldConfig()
+        self.agent_manager = LLMShieldAgentManager(self.config)
+        self.callback_handler = GuardrailsCallbackHandler(self.config)
+
+        # Register agent with LLM Shield
+        self.agent_manager.register_agent(agent_config)
+
+        # Initialize LangChain components
+        self.llm = OpenAI(temperature=0)
+        self.tools = []
+        self.agent = None
+
+    def add_tool(self, tool_name: str, tool_policy: Dict = None):
+        """Add a tool with optional policy"""
+        # Load LangChain tool
+        if tool_name in ['serpapi', 'llm-math', 'requests', 'terminal']:
+            langchain_tools = load_tools([tool_name], llm=self.llm)
+            self.tools.extend(langchain_tools)
+
+        # Set tool policy if provided
+        if tool_policy:
+            self.agent_manager.set_tool_policy(tool_name, tool_policy)
+            print(f"📋 Policy set for tool: {tool_name}")
+
+    def initialize_agent(self):
+        """Initialize the LangChain agent with guardrails"""
+        self.agent = initialize_agent(
+            tools=self.tools,
+            llm=self.llm,
+            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+            callbacks=[self.callback_handler],
+            verbose=True
+        )
+        print(f"🤖 Agent '{self.agent_id}' initialized with {len(self.tools)} tools")
+
+    def run(self, query: str) -> str:
+        """Run the agent with full guardrails protection"""
+        if not self.agent:
+            self.initialize_agent()
+
+        # Validate input query
+        input_validation = {
+            "message": query,
+            "tenant_id": self.config.tenant_id
+        }
+
+        try:
+            response = self.config.session.post(
+                f"{self.config.base_url}/guardrails/input",
+                json=input_validation
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                if not result.get('safe', True):
+                    triggered = [g['guardrail'] for g in result.get('guardrail_results', []) if not g.get('passed', True)]
+                    return f"🚫 Query blocked by input guardrails: {', '.join(triggered)}"
+
+            # Execute agent with protection
+            print(f"🚀 Executing agent query: {query}")
+            result = self.agent.run(query)
+            return result
+
+        except Exception as e:
+            print(f"❌ Agent execution error: {e}")
+            return f"Error: {str(e)}"
+
+# Example usage
+def main():
+    """Example usage of LangChain + LLM Shield integration"""
+
+    # 1. Define agent configuration
+    financial_agent_config = {
+        "id": "financial_advisor_langchain",
+        "name": "Financial Advisor (LangChain)",
+        "role": "financial_advisor",
+        "description": "AI agent that provides financial advice using various tools",
+        "tools": ["serpapi", "llm-math"],
+        "policies": ["pii_protection", "financial_compliance"],
+        "max_iterations": 10,
+        "allowed_domains": ["financial", "investment", "banking"]
+    }
+
+    # 2. Create protected agent
+    agent = SafeLangChainAgent("financial_advisor_langchain", financial_agent_config)
+
+    # 3. Add tools with policies
+    agent.add_tool("serpapi", {
+        "allowed_domains": ["finance.yahoo.com", "bloomberg.com", "sec.gov"],
+        "rate_limit": {"requests_per_minute": 10},
+        "content_filters": ["no_personal_advice", "factual_only"]
+    })
+
+    agent.add_tool("llm-math", {
+        "max_computation_time": 30,
+        "allowed_operations": ["basic_math", "financial_calculations"],
+        "precision_limit": 10
+    })
+
+    # 4. Test agent with queries
+    test_queries = [
+        "What is the current stock price of AAPL?",
+        "Calculate the compound interest for $10,000 at 5% for 10 years",
+        "What's my social security number?",  # Should be blocked
+    ]
+
+    print("🧪 Testing Financial Advisor Agent with LLM Shield Protection")
+    print("=" * 70)
+
+    for query in test_queries:
+        print(f"\n📝 Query: {query}")
+        print("-" * 50)
+        result = agent.run(query)
+        print(f"📋 Result: {result}")
+
+if __name__ == "__main__":
+    main()</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">4. Agent Registration API Call</div>
+          <div class="sdk-section-desc">How the agent gets registered with LLM Shield</div>
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
+            <div style="padding:1rem;overflow-x:auto;">
+              <pre style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code># Agent registration payload
+{
+    "id": "financial_advisor_langchain",
+    "name": "Financial Advisor (LangChain)",
+    "role": "financial_advisor",
+    "description": "AI agent that provides financial advice using various tools",
+    "tools": ["serpapi", "llm-math"],
+    "policies": ["pii_protection", "financial_compliance"],
+    "max_iterations": 10,
+    "allowed_domains": ["financial", "investment", "banking"]
+}</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">5. Tool Policies Configuration</div>
+          <div class="sdk-section-desc">Granular control over tool access and data handling</div>
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
+            <div style="padding:1rem;overflow-x:auto;">
+              <pre style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code># Tool policies payload
+{
+    "serpapi": {
+        "allowed_domains": ["finance.yahoo.com", "bloomberg.com", "sec.gov"],
+        "rate_limit": {"requests_per_minute": 10},
+        "content_filters": ["no_personal_advice", "factual_only"],
+        "audit_required": true
+    },
+    "llm-math": {
+        "max_computation_time": 30,
+        "allowed_operations": ["basic_math", "financial_calculations"],
+        "precision_limit": 10,
+        "audit_required": false
+    }
+}</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:1.5rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">💡 Key Features</div>
+              <div class="card-subtitle">What makes this integration powerful</div>
+            </div>
+          </div>
+          <div style="padding:1.25rem;">
+            <ul style="margin:0;padding-left:1.5rem;color:var(--text-dim);line-height:1.6;">
+              <li><strong>Runtime Validation:</strong> Every tool call is validated against policies before execution</li>
+              <li><strong>Input/Output Guardrails:</strong> User queries and agent responses are checked for safety</li>
+              <li><strong>Tool Policy Enforcement:</strong> Granular control over what tools can do and access</li>
+              <li><strong>Audit Trail:</strong> Complete logging of all agent actions and policy decisions</li>
+              <li><strong>Role-Based Access:</strong> Different permissions based on user roles</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:1rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">🚀 RunPod Deployment Benefits</div>
+              <div class="card-subtitle">Why use RunPod for LLM Shield hosting</div>
+            </div>
+          </div>
+          <div style="padding:1.25rem;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1rem;">
+              <div>
+                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">🔥 GPU Acceleration</h4>
+                <p style="margin:0;font-size:12px;color:var(--text-dim);">Hardware-accelerated model inference for faster guardrail processing</p>
+              </div>
+              <div>
+                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">⚡ Auto-Scaling</h4>
+                <p style="margin:0;font-size:12px;color:var(--text-dim);">Serverless scaling based on demand, pay only for usage</p>
+              </div>
+              <div>
+                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">🌍 Global CDN</h4>
+                <p style="margin:0;font-size:12px;color:var(--text-dim);">Low-latency endpoints worldwide for better performance</p>
+              </div>
+              <div>
+                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">🛠️ Managed Infrastructure</h4>
+                <p style="margin:0;font-size:12px;color:var(--text-dim);">No DevOps overhead, automated updates and monitoring</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CrewAI Integration -->
+      <div id="api-tab-crewai" class="api-tab-content hidden">
+        <div class="card" style="margin-bottom:1rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">🚢 CrewAI + LLM Shield Integration</div>
+              <div class="card-subtitle">Multi-agent crew with coordinated policies and unified governance</div>
+            </div>
+          </div>
+          <div style="padding:0 1.25rem 1.25rem;">
+            <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Multi-Agent</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Crew Coordination</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Team Policies</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">1. Install Dependencies</div>
+          <div style="background:var(--bg-2);padding:1rem;border-radius:6px;margin:0.5rem 0;">
+            <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
+pip install crewai crewai-tools openai requests<br>
+pip install serper  # For web search tools
+            </code>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">2. Environment Setup</div>
+          <div class="sdk-section-desc">Configure for your deployment environment</div>
+
+          <div style="margin:0.5rem 0;">
+            <h4 style="font-size:13px;color:var(--text);margin:0.5rem 0;">Local/Self-Hosted LLM Shield</h4>
+            <div style="background:var(--bg-2);padding:1rem;border-radius:6px;">
+              <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
+export TENANT_ID="your_tenant_id"<br>
+export API_KEY="your_api_key"<br>
+export OPENAI_API_KEY="sk-your_openai_key"<br>
+export SERPER_API_KEY="your_serper_key"<br>
+export LLM_SHIELD_URL="<span id="crewai-base-url">loading...</span>"
+              </code>
+            </div>
+          </div>
+
+          <div style="margin:0.5rem 0;">
+            <h4 style="font-size:13px;color:var(--text);margin:0.5rem 0;">RunPod Hosted LLM Shield (Recommended)</h4>
+            <div style="background:var(--bg-2);padding:1rem;border-radius:6px;">
+              <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
+# Replace with your actual RunPod endpoint and credentials<br>
+export RUNPOD_TOKEN="rpa_YOUR_RUNPOD_TOKEN_HERE"<br>
+export TENANT_ID="tenant-YYYYMMDDHHMMSS-XXXXXX"<br>
+export API_KEY="tenant-YYYYMMDDHHMMSS-XXXXXX-key-XXXXXX"<br>
+export OPENAI_API_KEY="sk-your_openai_key"<br>
+export SERPER_API_KEY="your_serper_key"<br>
+export LLM_SHIELD_URL="https://your-llm-shield-endpoint.runpod.ai"
+              </code>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:0.5rem;padding:0.5rem;background:var(--accent-dim);border-radius:4px;">
+              💡 <strong>RunPod Benefits:</strong> GPU-accelerated models, auto-scaling, serverless inference, and managed infrastructure
+            </div>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">3. Complete CrewAI Integration</div>
+          <div class="sdk-section-desc">ProtectedCrewAI with multi-agent coordination and unified governance</div>
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
+            <div style="background:var(--border);padding:0.5rem 1rem;font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border);">
+              crewai_integration.py
+              <button onclick="copyToClipboard('crewai-code')" style="float:right;background:none;border:none;color:var(--accent-hover);cursor:pointer;font-size:11px;">Copy</button>
+            </div>
+            <div style="padding:1rem;overflow-x:auto;">
+              <pre id="crewai-code" style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code>#!/usr/bin/env python3
+"""
+CrewAI + LLM Shield Integration Example
+Multi-agent crew with protected agents and unified policy enforcement
+"""
+
+import os
+import json
+import requests
+from typing import Dict, List, Any, Optional
+from crewai import Agent, Task, Crew, Process
+from crewai_tools import SerperDevTool, WebsiteSearchTool, FileReadTool
+from langchain.llms import OpenAI
+
+class LLMShieldCrewManager:
+    """Manages CrewAI integration with LLM Shield"""
+
+    def __init__(self):
+        # Support both local and RunPod hosted LLM Shield
+        self.base_url = os.getenv('LLM_SHIELD_URL', 'http://localhost:8080')
+        self.auth_token = os.getenv('RUNPOD_TOKEN')  # For RunPod hosted
+        self.api_key = os.getenv('API_KEY')
+        self.tenant_id = os.getenv('TENANT_ID')
+
+        self.session = requests.Session()
+        headers = {
+            'Content-Type': 'application/json'
+        }
+
+        # Configure authentication based on deployment type
+        if self.auth_token:
+            # RunPod hosted LLM Shield
+            headers['Authorization'] = f'Bearer {self.auth_token}'
+
+        if self.api_key:
+            # API key for both local and RunPod
+            headers['X-API-Key'] = self.api_key
+
+        self.session.headers.update(headers)
+
+    def register_crew_agents(self, crew_config: Dict) -> bool:
+        """Register all agents in a crew with LLM Shield"""
+        success = True
+        for agent_config in crew_config.get('agents', []):
+            try:
+                response = self.session.post(
+                    f"{self.base_url}/v1/agents/registry",
+                    json=agent_config
+                )
+                if response.status_code in [200, 201]:
+                    print(f"✅ Agent '{agent_config['id']}' registered")
+                else:
+                    print(f"❌ Failed to register agent '{agent_config['id']}': {response.status_code}")
+                    success = False
+            except Exception as e:
+                print(f"❌ Error registering agent '{agent_config['id']}': {e}")
+                success = False
+        return success
+
+    def validate_input(self, message: str) -> Dict:
+        """Validate input against guardrails"""
+        payload = {
+            "message": message,
+            "tenant_id": self.tenant_id
+        }
+
+        try:
+            response = self.session.post(f"{self.base_url}/guardrails/input", json=payload)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return {"safe": False, "error": f"HTTP {response.status_code}"}
+        except Exception as e:
+            return {"safe": False, "error": str(e)}
+
+    def validate_output(self, output: str) -> Dict:
+        """Validate output against guardrails"""
+        payload = {
+            "output": output,
+            "tenant_id": self.tenant_id
+        }
+
+        try:
+            response = self.session.post(f"{self.base_url}/guardrails/output", json=payload)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return {"safe": False, "error": f"HTTP {response.status_code}"}
+        except Exception as e:
+            return {"safe": False, "error": str(e)}
+
+class ProtectedCrewAI:
+    """CrewAI with integrated LLM Shield protection"""
+
+    def __init__(self, crew_name: str):
+        self.crew_name = crew_name
+        self.shield_manager = LLMShieldCrewManager()
+        self.llm = OpenAI(temperature=0.1)
+        self.agents = []
+        self.tasks = []
+        self.crew = None
+
+    def create_protected_agent(self, agent_config: Dict) -> Agent:
+        """Create a CrewAI agent with LLM Shield protection"""
+
+        # Register with LLM Shield first
+        shield_config = {
+            "id": agent_config["id"],
+            "name": agent_config["role"],
+            "role": agent_config.get("role_type", "assistant"),
+            "description": agent_config["goal"],
+            "tools": [tool.name if hasattr(tool, 'name') else str(tool)
+                     for tool in agent_config.get("tools", [])],
+            "policies": agent_config.get("policies", [])
+        }
+
+        response = self.shield_manager.session.post(
+            f"{self.shield_manager.base_url}/v1/agents/registry",
+            json=shield_config
+        )
+
+        if response.status_code in [200, 201]:
+            print(f"✅ Agent '{agent_config['id']}' registered with LLM Shield")
+        else:
+            print(f"⚠️ Could not register agent with LLM Shield: {response.status_code}")
+
+        # Create CrewAI agent
+        agent = Agent(
+            role=agent_config["role"],
+            goal=agent_config["goal"],
+            backstory=agent_config.get("backstory", ""),
+            tools=agent_config.get("tools", []),
+            llm=self.llm,
+            verbose=True,
+            max_iter=agent_config.get("max_iterations", 5),
+            memory=agent_config.get("memory", True),
+            allow_delegation=agent_config.get("allow_delegation", False)
+        )
+
+        # Store agent with metadata
+        agent_data = {
+            "agent": agent,
+            "id": agent_config["id"],
+            "policies": agent_config.get("policies", [])
+        }
+        self.agents.append(agent_data)
+
+        return agent
+
+    def create_protected_task(self, task_config: Dict, agent: Agent) -> Task:
+        """Create a task with input/output validation"""
+
+        def validate_task_description(description):
+            """Validate task description"""
+            validation = self.shield_manager.validate_input(description)
+            if not validation.get('safe', True):
+                triggered = [g['guardrail'] for g in validation.get('guardrail_results', []) if not g.get('passed', True)]
+                raise ValueError(f"Task blocked by input guardrails: {', '.join(triggered)}")
+            return description
+
+        task = Task(
+            description=validate_task_description(task_config["description"]),
+            agent=agent,
+            expected_output=task_config.get("expected_output", "Detailed analysis and recommendations"),
+            tools=task_config.get("tools", [])
+        )
+
+        self.tasks.append(task)
+        return task
+
+    def setup_tool_policies(self, tool_policies: Dict):
+        """Setup tool policies for the crew"""
+        try:
+            response = self.shield_manager.session.put(
+                f"{self.shield_manager.base_url}/v1/agents/tools/policies",
+                json=tool_policies
+            )
+            if response.status_code == 200:
+                print("✅ Tool policies configured")
+            else:
+                print(f"⚠️ Could not configure tool policies: {response.status_code}")
+        except Exception as e:
+            print(f"⚠️ Error configuring tool policies: {e}")
+
+    def execute_crew(self, process_type: Process = Process.sequential) -> str:
+        """Execute the crew with full protection"""
+
+        # Create crew
+        self.crew = Crew(
+            agents=[agent_data["agent"] for agent_data in self.agents],
+            tasks=self.tasks,
+            process=process_type,
+            verbose=True,
+            memory=True
+        )
+
+        print(f"🚀 Executing crew '{self.crew_name}' with {len(self.agents)} agents")
+
+        try:
+            # Execute crew
+            result = self.crew.kickoff()
+
+            # Validate final output
+            validation = self.shield_manager.validate_output(str(result))
+            if not validation.get('safe', True):
+                triggered = [g['guardrail'] for g in validation.get('guardrail_results', []) if not g.get('passed', True)]
+                return f"🚫 Output blocked by guardrails: {', '.join(triggered)}"
+
+            print("✅ Crew execution completed successfully")
+            return str(result)
+
+        except Exception as e:
+            print(f"❌ Crew execution failed: {e}")
+            return f"Error: {str(e)}"
+
+def main():
+    """Example: Financial Research Crew with LLM Shield Protection"""
+
+    # Initialize protected crew
+    crew = ProtectedCrewAI("financial_research_crew")
+
+    # Setup tool policies
+    tool_policies = {
+        "serper_search": {
+            "allowed_domains": ["finance.yahoo.com", "bloomberg.com", "reuters.com", "sec.gov"],
+            "rate_limit": {"requests_per_minute": 20},
+            "content_filters": ["financial_news_only", "no_personal_data"],
+            "audit_required": True
+        },
+        "website_search": {
+            "allowed_domains": ["sec.gov", "investor.gov", "finra.org"],
+            "max_pages": 5,
+            "content_filters": ["regulatory_content_only"],
+            "timeout": 30
+        }
+    }
+
+    crew.setup_tool_policies(tool_policies)
+
+    # Create tools
+    search_tool = SerperDevTool()
+    website_tool = WebsiteSearchTool()
+
+    # Create protected research agent
+    research_agent_config = {
+        "id": "financial_researcher_crew",
+        "role": "Senior Financial Research Analyst",
+        "role_type": "financial_analyst",
+        "goal": "Conduct comprehensive financial research and provide data-driven insights",
+        "backstory": """You are an expert financial research analyst with 15 years of experience
+        in equity research, financial modeling, and market analysis.""",
+        "tools": [search_tool, website_tool],
+        "policies": ["financial_compliance", "data_privacy", "professional_conduct"],
+        "max_iterations": 10,
+        "memory": True,
+        "allow_delegation": False
+    }
+
+    research_agent = crew.create_protected_agent(research_agent_config)
+
+    # Create protected analysis agent
+    analysis_agent_config = {
+        "id": "financial_analyst_crew",
+        "role": "Investment Analysis Specialist",
+        "role_type": "investment_analyst",
+        "goal": "Analyze financial data and provide investment recommendations",
+        "backstory": """You are a quantitative analyst specializing in investment analysis,
+        risk assessment, and portfolio optimization.""",
+        "tools": [],
+        "policies": ["investment_compliance", "risk_management", "client_confidentiality"],
+        "max_iterations": 8,
+        "memory": True,
+        "allow_delegation": False
+    }
+
+    analysis_agent = crew.create_protected_agent(analysis_agent_config)
+
+    # Create protected tasks
+    research_task_config = {
+        "description": """Research the latest financial performance and market position of Apple Inc. (AAPL).
+        Focus on factual, publicly available information from reputable financial sources.""",
+        "expected_output": "Comprehensive research report with key financial metrics and market analysis",
+        "tools": [search_tool, website_tool]
+    }
+
+    analysis_task_config = {
+        "description": """Based on the research findings, provide a detailed investment analysis of Apple Inc.
+        Ensure all analysis follows regulatory guidelines and professional standards.""",
+        "expected_output": "Professional investment analysis with clear recommendation and supporting rationale"
+    }
+
+    research_task = crew.create_protected_task(research_task_config, research_agent)
+    analysis_task = crew.create_protected_task(analysis_task_config, analysis_agent)
+
+    # Execute the crew
+    result = crew.execute_crew(Process.sequential)
+
+    print("\n📋 Final Result:")
+    print("-" * 50)
+    print(result)
+
+if __name__ == "__main__":
+    main()</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">4. Multi-Agent Team Registration</div>
+          <div class="sdk-section-desc">How multiple agents are registered as a coordinated team</div>
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
+            <div style="padding:1rem;overflow-x:auto;">
+              <pre style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code># Team registration payload
+{
+    "team_id": "financial_advisory_team_v1",
+    "coordination_rules": {
+        "max_concurrent_agents": 3,
+        "information_sharing_rules": {
+            "allowed_data_types": ["market_data", "portfolio_metrics"],
+            "forbidden_data_types": ["personal_identifiers"],
+            "encryption_required": true
+        }
+    },
+    "agents": [
+        {
+            "id": "financial_researcher_crew",
+            "role": "market_researcher",
+            "responsibilities": ["market_analysis", "company_research"],
+            "data_access_level": "public_only"
+        },
+        {
+            "id": "financial_analyst_crew",
+            "role": "investment_analyst",
+            "responsibilities": ["investment_analysis", "recommendations"],
+            "data_access_level": "client_confidential"
+        }
+    ]
+}</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">5. Crew Tool Policies</div>
+          <div class="sdk-section-desc">Team-wide policies for tool usage and data access</div>
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
+            <div style="padding:1rem;overflow-x:auto;">
+              <pre style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code># Crew tool policies
+{
+    "serper_search": {
+        "allowed_domains": ["finance.yahoo.com", "bloomberg.com", "reuters.com"],
+        "rate_limit": {"requests_per_minute": 20},
+        "content_filters": ["financial_news_only", "no_personal_data"],
+        "audit_required": true,
+        "team_access": {
+            "financial_researcher_crew": "full_access",
+            "financial_analyst_crew": "read_only"
+        }
+    },
+    "website_search": {
+        "allowed_domains": ["sec.gov", "investor.gov", "finra.org"],
+        "max_pages": 5,
+        "content_filters": ["regulatory_content_only"],
+        "timeout": 30,
+        "requires_approval": ["high_volume_requests"]
+    }
+}</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:1.5rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">🚀 CrewAI Benefits</div>
+              <div class="card-subtitle">Why use CrewAI with LLM Shield</div>
+            </div>
+          </div>
+          <div style="padding:1.25rem;">
+            <ul style="margin:0;padding-left:1.5rem;color:var(--text-dim);line-height:1.6;">
+              <li><strong>Multi-Agent Coordination:</strong> Multiple specialized agents working together</li>
+              <li><strong>Unified Governance:</strong> Single policy framework across all crew members</li>
+              <li><strong>Task Orchestration:</strong> Sequential and hierarchical workflows</li>
+              <li><strong>Team Memory:</strong> Shared context and learning across agents</li>
+              <li><strong>Role Specialization:</strong> Each agent has specific expertise and responsibilities</li>
+              <li><strong>Scalable Architecture:</strong> Easy to add new agents and capabilities</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:1rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">☁️ RunPod Deployment Benefits</div>
+              <div class="card-subtitle">Enterprise-grade hosting for multi-agent systems</div>
+            </div>
+          </div>
+          <div style="padding:1.25rem;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1rem;">
+              <div>
+                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">⚡ High-Performance Computing</h4>
+                <p style="margin:0;font-size:12px;color:var(--text-dim);">GPU clusters optimized for concurrent multi-agent workloads</p>
+              </div>
+              <div>
+                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">🔄 Auto-Scaling Crews</h4>
+                <p style="margin:0;font-size:12px;color:var(--text-dim);">Dynamically scale agent crews based on demand and complexity</p>
+              </div>
+              <div>
+                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">🌐 Global Deployment</h4>
+                <p style="margin:0;font-size:12px;color:var(--text-dim);">Deploy crews across multiple regions for reduced latency</p>
+              </div>
+              <div>
+                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">📊 Advanced Monitoring</h4>
+                <p style="margin:0;font-size:12px;color:var(--text-dim);">Real-time crew performance metrics and resource utilization</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- API Reference -->
       <div id="api-tab-api-reference" class="api-tab-content hidden">
@@ -3313,6 +4214,49 @@ document.addEventListener('click', (e) => {
 });
 
 document.getElementById('api-key-input').addEventListener('keypress', (e) => { if (e.key === 'Enter') login(); });
+
+// Copy to clipboard functionality for code examples
+function copyToClipboard(elementId) {
+  const element = document.getElementById(elementId);
+  if (element) {
+    const text = element.textContent || element.innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      // Show success feedback
+      const button = event.target;
+      const originalText = button.textContent;
+      button.textContent = 'Copied!';
+      button.style.color = 'var(--accent-hover)';
+      setTimeout(() => {
+        button.textContent = originalText;
+        button.style.color = '';
+      }, 2000);
+    }).catch(err => {
+      console.error('Failed to copy text: ', err);
+      alert('Failed to copy to clipboard');
+    });
+  }
+}
+
+// Update base URLs in examples when API key is loaded
+function updateExampleBaseUrls() {
+  const baseUrl = window.location.origin;
+  const langchainUrl = document.getElementById('langchain-base-url');
+  const crewaicUrl = document.getElementById('crewai-base-url');
+
+  if (langchainUrl) {
+    langchainUrl.textContent = baseUrl;
+  }
+  if (crewaicUrl) {
+    crewaicUrl.textContent = baseUrl;
+  }
+}
+
+// Call updateExampleBaseUrls when API tab is shown
+const originalRenderAllApiTabs = window.renderAllApiTabs || function() {};
+window.renderAllApiTabs = function() {
+  originalRenderAllApiTabs();
+  updateExampleBaseUrls();
+};
 
 if (API_KEY) {
   document.getElementById('api-key-input').value = API_KEY;
