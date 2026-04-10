@@ -159,7 +159,7 @@ def start_server():
           guardrails: ["topic_restriction", "topic_enforcement"]
         - url: "http://127.0.0.1:8002"
           gpu: 2
-          guardrails: ["safety_check", "toxicity"]
+          guardrails: ["toxicity"]
     """
     global _guardrail_server_map, _default_server_url
 

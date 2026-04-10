@@ -76,11 +76,6 @@ guardrails:
       threshold: 0.7
 
   # --- Slow-tier input guardrails (LLM-based) ---
-  safety_check:
-    enabled: true
-    action: block
-    settings: {}
-
   adversarial_detection:
     enabled: true
     action: block
@@ -697,4 +692,4 @@ llm_backend:
   #     guardrails: ["topic_restriction", "topic_enforcement", "hallucinated_links", "factual_grounding"]
   #   - url: "http://127.0.0.1:8002"
   #     gpu: 2
-  #     guardrails: ["safety_check", "toxicity", "pii_detection", "pii_leakage", "competitor_mention"]
+  #     guardrails: ["toxicity", "pii_detection", "pii_leakage", "competitor_mention"]
