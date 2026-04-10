@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from storage.tenant_store import get_tenant, update_tenant, set_tenant_policies
+from storage.tenant_store import get_tenant, update_tenant, set_tenant_policies, _get_redis
 from storage.tenant_models import GuardrailPolicy
 from storage.rate_limiter import get_usage
 from storage.admin_audit import log_admin_action
@@ -43,7 +43,17 @@ async def get_my_tenant(request: Request):
     if not config:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    # Return sanitized view (no internal fields)
+    agents_from_registry = []
+    try:
+        import json as _json
+        r = _get_redis()
+        if r:
+            raw = r.get(f"agents:{tenant_id}")
+            if raw:
+                agents_from_registry = list(_json.loads(raw).keys())
+    except Exception:
+        pass
+
     return {
         "tenant_id": config.get("tenant_id"),
         "name": config.get("name"),
@@ -51,7 +61,7 @@ async def get_my_tenant(request: Request):
         "input_guardrails": list(config.get("input_guardrails", {}).keys()),
         "output_guardrails": list(config.get("output_guardrails", {}).keys()),
         "quota": config.get("quota"),
-        "agents": list(config.get("rbac", {}).get("agents", {}).keys()),
+        "agents": agents_from_registry,
     }
 
 

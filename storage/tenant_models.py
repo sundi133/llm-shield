@@ -11,6 +11,15 @@ class GuardrailPolicy(BaseModel):
     action: str = Field(default="block", pattern="^(block|warn|log|pass)$")
     settings: dict = Field(default_factory=dict)
 
+    @field_validator("settings")
+    @classmethod
+    def validate_threshold_range(cls, v):
+        if "threshold" in v:
+            t = v["threshold"]
+            if isinstance(t, (int, float)) and (t < 0.0 or t > 1.0):
+                raise ValueError("threshold must be between 0.0 and 1.0")
+        return v
+
 
 class TenantRBACRole(BaseModel):
     """RBAC role definition for a tenant."""

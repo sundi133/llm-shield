@@ -1,25 +1,39 @@
 """Agents Registry API - Direct Redis access for tenant data."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from core.auth import get_tenant_from_request
-from storage.tenant_store import get_tenant, resolve_tenant_by_api_key, _get_redis
+import re
 import json
-import os
+
+from fastapi import APIRouter, HTTPException, Request
+from storage.tenant_store import resolve_tenant_by_api_key, _get_redis
 
 router = APIRouter(prefix="/v1/agents", tags=["agents-registry"])
 
+_VALID_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _validate_agent_id(agent_id: str) -> None:
+    """Reject agent IDs that contain path-traversal or special characters."""
+    if not agent_id or not _VALID_ID_RE.match(agent_id):
+        raise HTTPException(
+            status_code=400,
+            detail="agent_id must be 1-128 characters, alphanumeric, hyphens, or underscores only",
+        )
+
+
+def _sanitize_string(value: str) -> str:
+    """Strip HTML/JS tags from user-provided strings to prevent stored XSS."""
+    if not isinstance(value, str):
+        return value
+    return _HTML_TAG_RE.sub("", value)
+
 def get_tenant_from_api_key(request: Request) -> str:
-    """Get tenant ID directly from API key without complex auth."""
+    """Get tenant ID directly from API key via Redis lookup."""
     api_key = request.headers.get("X-API-Key", "").strip()
 
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
 
-    # For test keys, return test tenant
-    if api_key.startswith("sk-test-"):
-        return "test-tenant-001"
-
-    # Direct Redis lookup for real tenant keys
     tenant_id = resolve_tenant_by_api_key(api_key)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="Invalid API key")
@@ -59,7 +73,6 @@ async def get_agents_registry(request: Request):
             "agents": agents,
             "total": len(agents),
             "tenant_id": tenant_id,
-            "source": "redis_direct"
         }
 
     except HTTPException:
@@ -161,6 +174,9 @@ async def save_all_tool_policies(request: Request):
         tenant_id = get_tenant_from_api_key(request)
         body = await request.json()
 
+        if "policies" in body and isinstance(body["policies"], dict) and len(body) <= 2:
+            body = body["policies"]
+
         policies_key = f"policies:{tenant_id}"
         import time as _time
         body["updated_at"] = int(_time.time())
@@ -215,7 +231,6 @@ async def seed_test_data():
     try:
         tenant_id = "test-tenant-001"
 
-        # Sample healthcare agents
         agents = {
             "healthcare-doctor": {
                 "agent_id": "healthcare-doctor",
@@ -247,7 +262,6 @@ async def seed_test_data():
             }
         }
 
-        # Sample tool policies
         policies = [
             {
                 "tool_name": "patient_lookup",
@@ -321,7 +335,6 @@ async def seed_test_data():
             }
         ]
 
-        # Store in Redis using proper connection and correct key format
         redis_client = _get_redis()
         if redis_client:
             redis_client.set(f"agents:{tenant_id}", json.dumps(agents))
@@ -347,9 +360,10 @@ async def create_agent(request: Request):
         tenant_id = get_tenant_from_api_key(request)
         body = await request.json()
 
-        agent_id = body.get("agent_id")
+        agent_id = body.get("agent_id", "").strip()
         if not agent_id:
             raise HTTPException(status_code=400, detail="agent_id is required")
+        _validate_agent_id(agent_id)
 
         agents_key = f"agents:{tenant_id}"
         agents = get_redis_data(agents_key) or {}
@@ -361,8 +375,8 @@ async def create_agent(request: Request):
         now = int(_time.time())
         agents[agent_id] = {
             "agent_id": agent_id,
-            "name": body.get("name", agent_id),
-            "description": body.get("description", ""),
+            "name": _sanitize_string(body.get("name", agent_id)),
+            "description": _sanitize_string(body.get("description", "")),
             "tools": body.get("tools", []),
             "role_permissions": body.get("role_permissions", {}),
             "status": body.get("status", "active"),
@@ -401,11 +415,15 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
         if agent_id not in agents:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        # Update agent data
+        if "name" in agent_data:
+            agent_data["name"] = _sanitize_string(agent_data["name"])
+        if "description" in agent_data:
+            agent_data["description"] = _sanitize_string(agent_data["description"])
+
         agents[agent_id] = {
             **agents[agent_id],
             **agent_data,
-            "agent_id": agent_id,  # Ensure agent_id is preserved
+            "agent_id": agent_id,
             "updated_at": int(__import__('time').time())
         }
 
@@ -462,48 +480,3 @@ async def delete_agent(agent_id: str, request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete agent: {str(e)}")
 
-
-@router.get("/debug/redis-keys")
-async def debug_redis_keys():
-    """Debug endpoint to see what Redis keys exist."""
-    try:
-        redis_client = _get_redis()
-        if redis_client:
-            # Try to get keys (this might not work with Upstash REST, but let's try)
-            try:
-                keys = redis_client.keys("*")
-                return {
-                    "success": True,
-                    "keys": keys[:50],  # Limit to first 50 keys
-                    "total_keys": len(keys) if isinstance(keys, list) else "unknown"
-                }
-            except Exception as e:
-                # If keys() doesn't work, try some common patterns
-                test_keys = [
-                    "tenant:tenant-20260407220546-28f6bb:agents",
-                    "tenant:tenant-20260407222125-7e526f:agents",
-                    "tenant-20260407220546-28f6bb:agents",
-                    "tenant-20260407222125-7e526f:agents",
-                    "agents:tenant-20260407220546-28f6bb",
-                    "agents:tenant-20260407222125-7e526f"
-                ]
-
-                found_keys = {}
-                for key in test_keys:
-                    try:
-                        value = redis_client.get(key)
-                        if value:
-                            found_keys[key] = "EXISTS"
-                    except:
-                        found_keys[key] = "ERROR"
-
-                return {
-                    "success": True,
-                    "message": "keys() not supported, tried common patterns",
-                    "tested_keys": found_keys,
-                    "error": str(e)
-                }
-        else:
-            return {"success": False, "error": "No Redis connection"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
