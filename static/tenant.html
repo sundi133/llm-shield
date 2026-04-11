@@ -1407,7 +1407,7 @@ if __name__ == "__main__":
     </div>
     <div class="field">
       <label>Guardrail</label>
-      <select id="add-policy-name" style="width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); padding: 0.55rem 0.75rem; font-family: inherit; font-size: 13px;">
+      <select id="add-policy-name" onchange="onGuardrailSelect(this.value)" style="width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); padding: 0.55rem 0.75rem; font-family: inherit; font-size: 13px;">
         <option value="">Select a guardrail…</option>
       </select>
     </div>
@@ -1422,6 +1422,13 @@ if __name__ == "__main__":
     <div class="field">
       <label>Settings (JSON)</label>
       <textarea id="add-policy-settings" style="min-height: 140px;">{}</textarea>
+      <div id="add-policy-settings-hint" style="display:none;margin-top:0.5rem;padding:0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;">
+          <span style="font-size:11px;font-weight:600;color:var(--text-muted);">EXAMPLE SETTINGS</span>
+          <button class="small" onclick="useExampleSettings()" style="font-size:10px;padding:0.15rem 0.5rem;">Use this example</button>
+        </div>
+        <pre id="add-policy-example-json" style="font-size:11px;margin:0;padding:0;background:none;border:none;color:var(--text-dim);white-space:pre-wrap;max-height:200px;overflow-y:auto;"></pre>
+      </div>
     </div>
     <button class="primary" onclick="confirmAddPolicy()">Add Policy</button>
   </div>
@@ -1593,6 +1600,277 @@ const GUARDRAIL_META = {
   role_redaction:            { label: 'Role Redaction',                    desc: 'Redact role-specific sensitive information',                                          icon: '✂', color: '#f59e0b' },
 };
 
+const GUARDRAIL_SETTINGS_EXAMPLES = {
+  pii_detection: {
+    _desc: "Detect PII in user inputs — SSNs, emails, phone numbers, credit cards, addresses",
+    example: {
+      entity_types: ["ssn", "email", "phone", "credit_card", "address", "date_of_birth", "passport", "driver_license"],
+      confidence_threshold: 0.85,
+      redaction_char: "*",
+      allow_partial_redact: true,
+      custom_patterns: [
+        { name: "medical_record_number", regex: "\\b(MRN|mrn)[:\\s]*\\d{6,10}\\b", description: "Hospital MRN" },
+        { name: "insurance_id", regex: "\\b[A-Z]{3}\\d{9}\\b", description: "Insurance policy number" }
+      ],
+      role_overrides: {
+        admin: { action: "log", entity_types: ["ssn", "credit_card"] },
+        doctor: { action: "warn", entity_types: ["ssn"] },
+        patient: { action: "block", entity_types: ["ssn", "email", "phone", "credit_card"] }
+      }
+    }
+  },
+  pii_leakage: {
+    _desc: "Detect PII leaking in LLM output — redact or block before showing to user",
+    example: {
+      entity_types: ["ssn", "email", "phone", "credit_card", "address", "api_key", "password"],
+      compliance_framework: "hipaa",
+      redact_output: true,
+      replacement_format: "[{TYPE}_REDACTED]",
+      role_based_access: {
+        admin: { ssn: "allow", credit_card: "redact", api_key: "block" },
+        doctor: { ssn: "redact", credit_card: "block", email: "allow" },
+        nurse: { ssn: "block", credit_card: "block", email: "redact" },
+        patient: { ssn: "block", credit_card: "block", email: "block" }
+      }
+    }
+  },
+  adversarial_detection: {
+    _desc: "Detect jailbreaks, prompt injections, and adversarial manipulation patterns",
+    example: {
+      threshold: 0.80,
+      detect_categories: ["jailbreak", "prompt_injection", "role_play_attack", "encoding_bypass"],
+      allow_system_prompt_override: false
+    }
+  },
+  keyword_blocklist: {
+    _desc: "Block or flag messages containing specific keywords or phrases",
+    example: {
+      keywords: ["hack", "exploit", "jailbreak", "ignore previous instructions", "bypass security"],
+      case_sensitive: false,
+      whole_word_only: true
+    }
+  },
+  topic_restriction: {
+    _desc: "Only allow conversations about approved topics",
+    example: {
+      allowed_topics: ["patient_inquiry", "appointment_scheduling", "medical_information", "prescription_status", "insurance_verification", "billing", "general_health_education"],
+      block_message: "I can only help with healthcare-related topics."
+    }
+  },
+  language_detection: {
+    _desc: "Restrict input to supported languages only",
+    example: {
+      allowed_languages: ["en", "es", "fr"],
+      confidence_threshold: 0.9,
+      block_message: "This service is only available in English, Spanish, and French."
+    }
+  },
+  system_prompt_leak: {
+    _desc: "Detect attempts to extract or reveal the system prompt",
+    example: {
+      threshold: 0.80,
+      detect_patterns: ["repeat above", "system prompt", "initial instructions", "ignore above"]
+    }
+  },
+  toxicity: {
+    _desc: "Classify input for toxicity, hate speech, harassment, and self-harm",
+    example: {
+      threshold: 0.80,
+      categories: ["hate_speech", "harassment", "self_harm", "sexual_content", "violence", "profanity"],
+      per_category_thresholds: {
+        hate_speech: 0.7,
+        self_harm: 0.5
+      }
+    }
+  },
+  regex_pattern: {
+    _desc: "Block or flag inputs matching custom regex patterns (SSNs, API keys, etc.)",
+    example: {
+      patterns: [
+        "\\b\\d{3}-\\d{2}-\\d{4}\\b",
+        "\\b\\d{16}\\b",
+        "password\\s*[:=]",
+        "api[_-]?key\\s*[:=]",
+        "bearer\\s+[A-Za-z0-9\\-._~+/]+=*",
+        "sk-[A-Za-z0-9]{20,}"
+      ],
+      case_sensitive: false
+    }
+  },
+  adversarial_rate_limiting: {
+    _desc: "Rate limit sustained adversarial prompting from a single session",
+    example: {
+      max_adversarial_per_minute: 3,
+      cooldown_minutes: 5,
+      escalation: "block_session"
+    }
+  },
+  hallucinated_links: {
+    _desc: "Detect and block fake or non-existent URLs in LLM outputs",
+    example: {
+      verify_domains: true,
+      allowed_domains: ["wikipedia.org", "nih.gov", "cdc.gov", "mayoclinic.org"],
+      block_unknown_urls: true
+    }
+  },
+  tone_enforcement: {
+    _desc: "Enforce professional, on-brand tone in LLM responses",
+    example: {
+      required_tone: "professional",
+      block_tones: ["sarcastic", "aggressive", "dismissive", "overly_casual"],
+      brand_guidelines: "Always be empathetic, clear, and helpful. Use formal but warm language."
+    }
+  },
+  bias_detection: {
+    _desc: "Detect gender, racial, age, and political bias in outputs",
+    example: {
+      threshold: 0.60,
+      bias_categories: ["gender", "race", "age", "religion", "political", "disability"],
+      action_on_detect: "warn"
+    }
+  },
+  competitor_mention: {
+    _desc: "Prevent the LLM from recommending or mentioning competitor products",
+    example: {
+      competitors: ["CompetitorA", "CompetitorB", "CompetitorC"],
+      also_block_urls: true,
+      replacement: "our platform"
+    }
+  },
+  safety_check: {
+    _desc: "General safety classification of inputs",
+    example: {
+      threshold: 0.80,
+      categories: ["harmful_content", "illegal_activity", "medical_advice_disclaimer"]
+    }
+  },
+  length_limit: {
+    _desc: "Limit the length of user input messages",
+    example: {
+      max_characters: 4000,
+      max_tokens: 1024,
+      block_message: "Message exceeds maximum allowed length."
+    }
+  },
+  rate_limiter: {
+    _desc: "Rate limit requests per user or session",
+    example: {
+      max_per_minute: 10,
+      max_per_hour: 100,
+      by: "user_id"
+    }
+  },
+  sentiment: {
+    _desc: "Analyze input sentiment and flag extreme negative messages",
+    example: {
+      block_negative_threshold: -0.8,
+      warn_negative_threshold: -0.5
+    }
+  },
+  topic_enforcement: {
+    _desc: "Enforce that conversations stay within allowed topics",
+    example: {
+      allowed_topics: ["healthcare", "billing", "appointments", "insurance"],
+      strict_mode: true,
+      block_message: "This topic is outside the scope of this assistant."
+    }
+  },
+  role_redaction: {
+    _desc: "Automatically redact sensitive fields based on user role",
+    example: {
+      rules: {
+        nurse: { redact_fields: ["ssn", "credit_card", "home_address"], replacement: "[REDACTED]" },
+        patient: { redact_fields: ["ssn", "credit_card", "home_address", "diagnosis_code"], replacement: "[RESTRICTED]" },
+        admin: { redact_fields: [], replacement: "" }
+      }
+    }
+  },
+};
+
+function onGuardrailSelect(guardrailName) {
+  const hintEl = document.getElementById('add-policy-settings-hint');
+  const examplePre = document.getElementById('add-policy-example-json');
+  const settingsArea = document.getElementById('add-policy-settings');
+
+  if (!guardrailName || !GUARDRAIL_SETTINGS_EXAMPLES[guardrailName]) {
+    hintEl.style.display = 'none';
+    return;
+  }
+
+  const ex = GUARDRAIL_SETTINGS_EXAMPLES[guardrailName];
+  hintEl.style.display = '';
+  examplePre.textContent = (ex._desc ? '// ' + ex._desc + '\n' : '') + JSON.stringify(ex.example, null, 2);
+
+  if (settingsArea.value.trim() === '{}' || settingsArea.value.trim() === '') {
+    settingsArea.value = JSON.stringify(ex.example, null, 2);
+  }
+}
+
+function useExampleSettings() {
+  const guardrailName = document.getElementById('add-policy-name').value;
+  const ex = GUARDRAIL_SETTINGS_EXAMPLES[guardrailName];
+  if (ex) {
+    document.getElementById('add-policy-settings').value = JSON.stringify(ex.example, null, 2);
+  }
+}
+
+function toggleGrDetail(rowId, view) {
+  const el = document.getElementById(rowId);
+  if (!el) return;
+
+  const parts = rowId.replace('gr-detail-', '').split('-');
+  const stage = parts[0];
+  const name = parts.slice(1).join('-');
+  const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
+
+  if (!el.classList.contains('hidden') && el.getAttribute('data-view') === view) {
+    el.classList.add('hidden');
+    return;
+  }
+
+  el.setAttribute('data-view', view);
+  el.classList.remove('hidden');
+
+  if (view === 'current') {
+    const p = POLICIES[key] && POLICIES[key][name];
+    const settings = (p && p.settings) || {};
+    el.innerHTML = `
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.75rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;">
+          <span style="font-size:11px;font-weight:600;color:var(--accent-hover);">CURRENT SETTINGS</span>
+          <button class="small" onclick="editPolicy('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;">Edit</button>
+        </div>
+        <pre style="font-size:11px;margin:0;padding:0;background:none;border:none;color:var(--text-dim);white-space:pre-wrap;max-height:250px;overflow-y:auto;">${escapeHtml(JSON.stringify(settings, null, 2))}</pre>
+      </div>`;
+  } else if (view === 'example') {
+    const ex = GUARDRAIL_SETTINGS_EXAMPLES[name];
+    if (!ex) { el.classList.add('hidden'); return; }
+    el.innerHTML = `
+      <div style="background:var(--bg);border:1px solid rgba(99,102,241,0.25);border-radius:6px;padding:0.75rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;">
+          <span style="font-size:11px;font-weight:600;color:var(--accent-hover);">EXAMPLE SETTINGS</span>
+          <div style="display:flex;gap:0.35rem;">
+            <button class="small" onclick="applyExampleToGuardrail('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;background:var(--accent);color:#fff;border-color:var(--accent);">Apply this example</button>
+            <button class="small" onclick="navigator.clipboard.writeText(JSON.stringify(GUARDRAIL_SETTINGS_EXAMPLES['${name}'].example,null,2));showToast('Copied','success')" style="font-size:10px;padding:0.15rem 0.5rem;">Copy</button>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:0.5rem;">${ex._desc || ''}</div>
+        <pre style="font-size:11px;margin:0;padding:0;background:none;border:none;color:var(--text-dim);white-space:pre-wrap;max-height:300px;overflow-y:auto;">${escapeHtml(JSON.stringify(ex.example, null, 2))}</pre>
+      </div>`;
+  }
+}
+
+function applyExampleToGuardrail(stage, name) {
+  const ex = GUARDRAIL_SETTINGS_EXAMPLES[name];
+  if (!ex) return;
+  const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
+  if (!POLICIES[key][name]) POLICIES[key][name] = { enabled: true, action: 'block' };
+  POLICIES[key][name].settings = JSON.parse(JSON.stringify(ex.example));
+  markDirty();
+  renderPolicyStage(stage);
+  showToast(`Example settings applied to ${name}`, 'success');
+}
+
 async function apiCall(path, options = {}) {
   options.headers = { ...(options.headers || {}), 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
   const r = await fetch(`${BASE_URL}${path}`, options);
@@ -1735,9 +2013,12 @@ function renderPolicyStage(stage) {
     const action = p.action || 'block';
     const isEnabled = p.enabled !== false;
     const summary = getSettingsSummary(name, p.settings);
+    const hasSettings = p.settings && Object.keys(p.settings).length > 0;
+    const ex = GUARDRAIL_SETTINGS_EXAMPLES[name];
+    const rowId = `gr-detail-${stage}-${name}`;
 
     return `
-      <div class="guardrail-row" style="opacity: ${isEnabled ? 1 : 0.5};">
+      <div class="guardrail-row" style="opacity: ${isEnabled ? 1 : 0.5}; flex-wrap:wrap;">
         <div class="guardrail-icon" style="background: ${color}20; color: ${color};">${icon}</div>
         <div class="guardrail-info">
           <div class="gr-name">
@@ -1745,6 +2026,11 @@ function renderPolicyStage(stage) {
             <span class="badge ${isEnabled ? 'badge-success' : ''}" style="${isEnabled ? '' : 'background:rgba(113,113,122,0.2);color:#a1a1aa;'}">${isEnabled ? 'Active' : 'Inactive'}</span>
           </div>
           ${desc ? `<div class="gr-desc">${desc}</div>` : ''}
+          <div style="display:flex;gap:0.4rem;margin-top:0.35rem;">
+            ${hasSettings ? `<button class="small" onclick="toggleGrDetail('${rowId}','current')" style="font-size:10px;padding:0.15rem 0.5rem;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.25);color:var(--accent-hover);">Current Settings</button>` : ''}
+            ${ex ? `<button class="small" onclick="toggleGrDetail('${rowId}','example')" style="font-size:10px;padding:0.15rem 0.5rem;">Example JSON</button>` : ''}
+            <button class="small" onclick="deletePolicy('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;color:var(--danger);border-color:rgba(239,68,68,0.25);">Remove</button>
+          </div>
         </div>
         <div class="guardrail-controls">
           <span style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:0.3px;">ACTION</span>
@@ -1760,6 +2046,7 @@ function renderPolicyStage(stage) {
           </label>
           <span class="gr-arrow" onclick="editPolicy('${stage}','${name}')">›</span>
         </div>
+        <div id="${rowId}" class="hidden" style="width:100%;margin-top:0.5rem;"></div>
       </div>
     `;
   }).join('');
@@ -1811,6 +2098,7 @@ function editPolicy(stage, name) {
   sel.disabled = true;
   document.getElementById('add-policy-action').value = p.action || 'block';
   document.getElementById('add-policy-settings').value = JSON.stringify(p.settings || {}, null, 2);
+  onGuardrailSelect(name);
   document.getElementById('add-policy-modal').classList.remove('hidden');
 }
 
@@ -1836,6 +2124,7 @@ function openAddPolicy(stage) {
   sel.disabled = false;
   document.getElementById('add-policy-action').value = 'block';
   document.getElementById('add-policy-settings').value = '{}';
+  document.getElementById('add-policy-settings-hint').style.display = 'none';
   document.getElementById('add-policy-modal').classList.remove('hidden');
 }
 

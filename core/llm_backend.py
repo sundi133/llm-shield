@@ -57,6 +57,68 @@ import httpx
 
 import config.schema as _config_module
 
+# Shared clients for connection pooling and reuse
+_shared_client: Optional[httpx.AsyncClient] = None
+_shared_session: Optional[requests.Session] = None
+
+
+def _get_shared_client() -> httpx.AsyncClient:
+    """Get or create the shared AsyncClient for connection reuse."""
+    global _shared_client
+    if _shared_client is None:
+        # Try to enable HTTP/2 if available, fallback to HTTP/1.1
+        try:
+            _shared_client = httpx.AsyncClient(
+                timeout=300,
+                limits=httpx.Limits(
+                    max_keepalive_connections=50,   # 50 warm connections
+                    max_connections=200,            # 200 total for 100 req/sec + bursts
+                    keepalive_expiry=60.0,          # 60 second keepalive
+                ),
+                http2=True,  # Enable HTTP/2 for better performance
+            )
+        except ImportError:
+            # Fallback to HTTP/1.1 if h2 package not available
+            _shared_client = httpx.AsyncClient(
+                timeout=300,
+                limits=httpx.Limits(
+                    max_keepalive_connections=50,
+                    max_connections=200,
+                    keepalive_expiry=60.0,
+                ),
+            )
+    return _shared_client
+
+
+def _get_shared_session() -> requests.Session:
+    """Get or create the shared requests Session for connection reuse."""
+    global _shared_session
+    if _shared_session is None:
+        _shared_session = requests.Session()
+        # Configure connection pooling for high volume (100 req/sec)
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=20,            # 20 connection pools per host
+            pool_maxsize=150,               # 150 connections per pool
+            max_retries=0,                  # No auto-retry (guardrails handle failures)
+            pool_block=False,               # Don't block when pool is full
+        )
+        _shared_session.mount("http://", adapter)
+        _shared_session.mount("https://", adapter)
+    return _shared_session
+
+
+async def _close_shared_clients():
+    """Close both shared clients on shutdown."""
+    global _shared_client, _shared_session
+
+    if _shared_client is not None:
+        await _shared_client.aclose()
+        _shared_client = None
+
+    if _shared_session is not None:
+        _shared_session.close()
+        _shared_session = None
+
 _DEFAULT_MODEL_PATH = "/models/Qwen3.5-9B-guardrailed-Q4_K_M.gguf"
 _DEFAULT_DRAFT_MODEL_PATH = "/models/Qwen3.5-0.8B-Q4_K_M.gguf"
 
@@ -290,7 +352,8 @@ def llm_call(
     """Synchronous LLM call routed to the correct server."""
     url = get_server_url(guardrail_name)
     payload = _build_payload(messages, max_tokens, temperature, response_format)
-    res = requests.post(
+    session = _get_shared_session()
+    res = session.post(
         f"{url}/v1/chat/completions",
         json=payload,
         timeout=300,
@@ -312,12 +375,12 @@ async def async_llm_call(
     prep_ms = (time.perf_counter() - prep_start) * 1000
 
     llm_start = time.perf_counter()
-    async with httpx.AsyncClient(timeout=300) as client:
-        res = await client.post(
-            f"{url}/v1/chat/completions",
-            json=payload,
-        )
-        result = res.json()
+    client = _get_shared_client()
+    res = await client.post(
+        f"{url}/v1/chat/completions",
+        json=payload,
+    )
+    result = res.json()
     llm_ms = (time.perf_counter() - llm_start) * 1000
 
     post_start = time.perf_counter()

@@ -99,6 +99,8 @@ def create_app() -> FastAPI:
     @app.on_event("shutdown")
     async def shutdown_event():
         from core.telemetry import shutdown_telemetry
+        from core.llm_backend import _close_shared_clients
         await shutdown_telemetry()
+        await _close_shared_clients()
 
     return app
