@@ -1,5 +1,7 @@
 """Shield middleware for enriching requests with agent/tenant context and rate limiting."""
 
+import time
+from typing import Optional
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -7,6 +9,37 @@ from starlette.responses import JSONResponse, Response
 from core.rbac import enforcer
 from storage.tenant_store import resolve_tenant_by_api_key, get_tenant
 from storage.rate_limiter import check_and_increment
+
+# In-memory cache for tenant lookups to reduce Redis hits
+_tenant_cache: dict[str, tuple[Optional[str], Optional[dict], float]] = {}
+_CACHE_TTL_SECONDS = 60  # Cache tenant data for 1 minute
+
+
+def _get_cached_tenant(api_key: str) -> tuple[Optional[str], Optional[dict]]:
+    """Get tenant data from cache or fetch from Redis if expired."""
+    now = time.time()
+
+    # Check cache first
+    if api_key in _tenant_cache:
+        tenant_id, tenant_config, cache_time = _tenant_cache[api_key]
+        if now - cache_time < _CACHE_TTL_SECONDS:
+            return tenant_id, tenant_config
+
+    # Cache miss or expired - fetch from Redis
+    tenant_id = resolve_tenant_by_api_key(api_key)
+    tenant_config = None
+    if tenant_id:
+        tenant_config = get_tenant(tenant_id)
+
+    # Cache the result
+    _tenant_cache[api_key] = (tenant_id, tenant_config, now)
+
+    # Cleanup old entries periodically (simple approach)
+    if len(_tenant_cache) > 1000:  # Prevent unbounded growth
+        cutoff = now - _CACHE_TTL_SECONDS * 2
+        _tenant_cache.clear()  # Simple cleanup - could be more sophisticated
+
+    return tenant_id, tenant_config
 
 
 class ShieldMiddleware(BaseHTTPMiddleware):
@@ -50,36 +83,34 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                 request.state.role = None
                 request.state.role_name = None
 
-            # Resolve tenant from API key
+            # Resolve tenant from API key with caching
             request.state.tenant_id = None
             request.state.tenant_config = None
             api_key = _extract_api_key(request)
             if api_key:
-                tenant_id = resolve_tenant_by_api_key(api_key)
-                if tenant_id:
-                    tenant_config = get_tenant(tenant_id)
-                    if tenant_config:
-                        request.state.tenant_id = tenant_id
-                        request.state.tenant_config = tenant_config
+                tenant_id, tenant_config = _get_cached_tenant(api_key)
+                if tenant_id and tenant_config:
+                    request.state.tenant_id = tenant_id
+                    request.state.tenant_config = tenant_config
 
-                        # Per-tenant rate limiting based on quota
-                        quota = tenant_config.get("quota") or {}
-                        max_per_min = quota.get("max_requests_per_minute", 60)
-                        max_per_day = quota.get("max_requests_per_day", 100_000)
-                        max_tokens = quota.get("max_tokens_per_day", 0)
+                    # Per-tenant rate limiting based on quota
+                    quota = tenant_config.get("quota") or {}
+                    max_per_min = quota.get("max_requests_per_minute", 60)
+                    max_per_day = quota.get("max_requests_per_day", 100_000)
+                    max_tokens = quota.get("max_tokens_per_day", 0)
 
-                        allowed, err = check_and_increment(
-                            tenant_id=tenant_id,
-                            max_per_minute=max_per_min,
-                            max_per_day=max_per_day,
-                            max_tokens_per_day=max_tokens,
+                    allowed, err = check_and_increment(
+                        tenant_id=tenant_id,
+                        max_per_minute=max_per_min,
+                        max_per_day=max_per_day,
+                        max_tokens_per_day=max_tokens,
+                    )
+                    if not allowed:
+                        return JSONResponse(
+                            status_code=429,
+                            content={"error": err, "tenant_id": tenant_id},
+                            headers={"Retry-After": "60"},
                         )
-                        if not allowed:
-                            return JSONResponse(
-                                status_code=429,
-                                content={"error": err, "tenant_id": tenant_id},
-                                headers={"Retry-After": "60"},
-                            )
 
         return await call_next(request)
 

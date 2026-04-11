@@ -30,6 +30,10 @@ class BaseGuardrail(ABC):
     @property
     def enabled(self) -> bool:
         """Check if this guardrail is enabled in the loaded config."""
+        # Check for temporary config first
+        if hasattr(self, '_temp_config'):
+            return self._temp_config.get("enabled", True)
+
         if _config_module.config is None:
             return True
         guardrail_cfg = _config_module.config.guardrails.get(self.name)
@@ -40,6 +44,10 @@ class BaseGuardrail(ABC):
     @property
     def configured_action(self) -> str:
         """Get the configured action for this guardrail (block/warn/log/pass)."""
+        # Check for temporary config first
+        if hasattr(self, '_temp_config'):
+            return self._temp_config.get("action", "block")
+
         if _config_module.config is None:
             return "block"
         guardrail_cfg = _config_module.config.guardrails.get(self.name)
@@ -50,6 +58,10 @@ class BaseGuardrail(ABC):
     @property
     def settings(self) -> dict:
         """Get the guardrail-specific settings from config."""
+        # Check for temporary config first
+        if hasattr(self, '_temp_config'):
+            return self._temp_config.get("settings", {})
+
         if _config_module.config is None:
             return {}
         guardrail_cfg = _config_module.config.guardrails.get(self.name)

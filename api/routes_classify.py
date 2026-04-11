@@ -283,77 +283,38 @@ async def _classify_with_overrides(
     if cfg is None:
         raise HTTPException(status_code=500, detail="Config not loaded")
 
-    # Save original guardrail configs to restore after
-    originals: dict[str, Optional[GuardrailConfig]] = {}
+    # Streamlined approach: create temporary config-aware guardrails without global state mutation
+    from guardrails.registry import create_configured_instance, get_guardrail
 
-    try:
-        # Apply overrides
-        for request_key, request_cfg in input_overrides.items():
-            guardrail_name = _NAME_MAP.get(request_key, request_key.replace("-", "_"))
-            enabled = request_cfg.get("enabled", True)
-            action = request_cfg.get("action", "block")
-            settings = _translate_settings(guardrail_name, request_cfg)
+    # Build temporary config overrides
+    temp_configs = {}
+    for request_key, request_cfg in input_overrides.items():
+        guardrail_name = _NAME_MAP.get(request_key, request_key.replace("-", "_"))
+        enabled = request_cfg.get("enabled", True)
+        if enabled:
+            temp_configs[guardrail_name] = {
+                "enabled": enabled,
+                "action": request_cfg.get("action", "block"),
+                "settings": _translate_settings(guardrail_name, request_cfg),
+            }
 
-            # Save original
-            originals[guardrail_name] = cfg.guardrails.get(guardrail_name)
-
-            # Set override
-            cfg.guardrails[guardrail_name] = GuardrailConfig(
-                enabled=enabled,
-                action=action,
-                settings=settings,
-            )
-
-        # Disable guardrails NOT in the request (only run what was specified)
-        all_input_guardrails = get_by_stage("input")
-        requested_names = {
-            _NAME_MAP.get(k, k.replace("-", "_")) for k in input_overrides
-        }
-        for g in all_input_guardrails:
-            if g.name not in requested_names and g.name not in originals:
-                originals[g.name] = cfg.guardrails.get(g.name)
-                cfg.guardrails[g.name] = GuardrailConfig(
-                    enabled=False,
-                    action="block",
-                    settings=(
-                        cfg.guardrails[g.name].settings
-                        if g.name in cfg.guardrails
-                        else {}
-                    ),
-                )
-
-        # Re-instantiate guardrails that need fresh config (those with __init__ settings)
-        from guardrails.registry import _registry, _discover_guardrails
-
-        _discover_guardrails()
-
-        fresh_guardrails = []
-        for request_key in input_overrides:
-            guardrail_name = _NAME_MAP.get(request_key, request_key.replace("-", "_"))
-            request_cfg = input_overrides[request_key]
-            if not request_cfg.get("enabled", True):
-                continue
-
-            # Get the guardrail class and create a fresh instance with new settings
-            existing = _registry.get(guardrail_name)
+    # Create guardrails with temporary configs (no global state changes)
+    fresh_guardrails = []
+    for guardrail_name, temp_config in temp_configs.items():
+        # Create fresh instance
+        fresh = create_configured_instance(guardrail_name)
+        if fresh:
+            # Apply temporary config directly to instance
+            fresh._temp_config = temp_config
+            fresh_guardrails.append(fresh)
+        else:
+            # Fallback to existing instance
+            existing = get_guardrail(guardrail_name)
             if existing:
-                try:
-                    fresh = existing.__class__()
-                    fresh_guardrails.append(fresh)
-                except Exception:
-                    # If re-instantiation fails (missing optional dep), use existing
-                    fresh_guardrails.append(existing)
+                fresh_guardrails.append(existing)
 
-        # Run pipeline on fresh instances
-        pipeline_result = await run_pipeline(fresh_guardrails, message, context)
-
-    finally:
-        # Restore original config
-        for guardrail_name, original in originals.items():
-            if original is None:
-                cfg.guardrails.pop(guardrail_name, None)
-            else:
-                cfg.guardrails[guardrail_name] = original
+    # Run pipeline with temporary instances
+    pipeline_result = await run_pipeline(fresh_guardrails, message, context)
 
     total_ms = (datetime.now() - start).total_seconds() * 1000
     has_block = any(

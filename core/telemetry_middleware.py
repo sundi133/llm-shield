@@ -1,5 +1,6 @@
 """FastAPI middleware that records all inbound/outbound traffic to telemetry."""
 
+import asyncio
 import json
 import time
 import uuid
@@ -15,67 +16,17 @@ from core.telemetry import (
 )
 
 
-class TelemetryMiddleware(BaseHTTPMiddleware):
-    """Capture every request and response as telemetry events."""
-
-    _SKIP_PATHS = {"/health", "/ping", "/docs", "/redoc", "/openapi.json"}
-
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path in self._SKIP_PATHS:
-            return await call_next(request)
-
-        trace_id = request.headers.get("x-trace-id", uuid.uuid4().hex[:16])
-        start = time.perf_counter()
-
-        # Extract client info
-        source_ip = request.client.host if request.client else ""
-        user_agent = request.headers.get("user-agent", "")
-
-        # Read request body
-        body_bytes = await request.body()
-        body_dict = None
-        try:
-            body_dict = json.loads(body_bytes) if body_bytes else None
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            pass
-
-        bd = body_dict or {}
-        agent_key = request.headers.get("x-agent-key", "") or bd.get("agent_key", "")
-        session_id = bd.get("session_id", "")
-        role_name = ""
-        tenant_id = ""
-
-        # Try to get role and tenant_id from request state (set by ShieldMiddleware)
-        try:
-            role_name = getattr(request.state, "role_name", "") or ""
-            tenant_id = getattr(request.state, "tenant_id", "") or ""
-        except Exception:
-            pass
-
-        # Extract input text from various request formats
-        input_text = (
-            bd.get("message", "")
-            or bd.get("input_text", "")
-            or bd.get("output", "")
-            or bd.get("chain_of_thought", "")
-            or bd.get("memory_value", "")
-            or bd.get("tool_output", "")
-            or ""
-        )
-        # For chat completions, get last user message
-        if not input_text and "messages" in bd:
-            msgs = bd["messages"]
-            if isinstance(msgs, list):
-                for m in reversed(msgs):
-                    if isinstance(m, dict) and m.get("role") == "user":
-                        input_text = m.get("content", "")
-                        break
-
-        # Record inbound request
+async def _record_request_async(
+    trace_id: str, endpoint: str, method: str, agent_key: str, tenant_id: str,
+    session_id: str, role_name: str, source_ip: str, user_agent: str,
+    input_text: str, body: dict, headers: dict
+):
+    """Record request telemetry asynchronously."""
+    try:
         record_event(build_request_event(
             trace_id=trace_id,
-            endpoint=request.url.path,
-            method=request.method,
+            endpoint=endpoint,
+            method=method,
             agent_key=agent_key,
             tenant_id=tenant_id,
             session_id=session_id,
@@ -83,25 +34,21 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
             source_ip=source_ip,
             user_agent=user_agent,
             input_text=input_text,
-            body=body_dict,
-            headers=dict(request.headers),
+            body=body,
+            headers=headers,
         ))
+    except Exception:
+        # Don't let telemetry errors affect the main request
+        pass
 
-        # Execute the request
-        response = await call_next(request)
-        latency_ms = (time.perf_counter() - start) * 1000
 
-        # Read response body
-        response_body = b""
-        async for chunk in response.body_iterator:
-            response_body += chunk if isinstance(chunk, bytes) else chunk.encode()
-
-        response_dict = None
-        try:
-            response_dict = json.loads(response_body) if response_body else None
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            pass
-
+async def _process_response_telemetry_async(
+    trace_id: str, endpoint: str, status_code: int, latency_ms: float,
+    response_dict: dict, agent_key: str, tenant_id: str, session_id: str,
+    role_name: str, source_ip: str, input_text: str
+):
+    """Process response telemetry asynchronously."""
+    try:
         rd = response_dict or {}
         guardrail_results = rd.get("guardrail_results", [])
 
@@ -135,8 +82,8 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         # Record response event
         record_event(build_response_event(
             trace_id=trace_id,
-            endpoint=request.url.path,
-            status_code=response.status_code,
+            endpoint=endpoint,
+            status_code=status_code,
             latency_ms=latency_ms,
             action=rd.get("action", ""),
             safe=rd.get("safe") if "safe" in rd else rd.get("allowed"),
@@ -151,15 +98,105 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
             guardrail_results=guardrail_results,
             body=response_dict,
         ))
+    except Exception:
+        # Don't let telemetry errors affect the main request
+        pass
 
-        # Add trace headers to response
-        headers = dict(response.headers)
-        headers["x-trace-id"] = trace_id
-        headers["x-latency-ms"] = str(round(latency_ms, 2))
 
+class TelemetryMiddleware(BaseHTTPMiddleware):
+    """Capture every request and response as telemetry events."""
+
+    _SKIP_PATHS = {"/health", "/ping", "/docs", "/redoc", "/openapi.json"}
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path in self._SKIP_PATHS:
+            return await call_next(request)
+
+        trace_id = request.headers.get("x-trace-id", uuid.uuid4().hex[:16])
+        start = time.perf_counter()
+
+        # Extract client info
+        source_ip = request.client.host if request.client else ""
+        user_agent = request.headers.get("user-agent", "")
+
+        # Efficiently parse request body once
+        body_dict = None
+        input_text = ""
+        try:
+            body_bytes = await request.body()
+            if body_bytes:
+                body_dict = json.loads(body_bytes)
+                # Extract input text efficiently in one pass
+                bd = body_dict
+                input_text = (
+                    bd.get("message", "")
+                    or bd.get("input_text", "")
+                    or bd.get("output", "")
+                    or bd.get("chain_of_thought", "")
+                    or bd.get("memory_value", "")
+                    or bd.get("tool_output", "")
+                    or ""
+                )
+                # For chat completions, get last user message
+                if not input_text and "messages" in bd:
+                    msgs = bd["messages"]
+                    if isinstance(msgs, list):
+                        for m in reversed(msgs):
+                            if isinstance(m, dict) and m.get("role") == "user":
+                                input_text = m.get("content", "")
+                                break
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            body_dict = {}
+
+        bd = body_dict or {}
+        agent_key = request.headers.get("x-agent-key", "") or bd.get("agent_key", "")
+        session_id = bd.get("session_id", "")
+
+        # Get role and tenant_id from request state (set by ShieldMiddleware)
+        role_name = getattr(request.state, "role_name", "") or ""
+        tenant_id = getattr(request.state, "tenant_id", "") or ""
+
+        # Record inbound request asynchronously (non-blocking)
+        asyncio.create_task(
+            _record_request_async(
+                trace_id, request.url.path, request.method, agent_key, tenant_id,
+                session_id, role_name, source_ip, user_agent, input_text,
+                body_dict, dict(request.headers)
+            )
+        )
+
+        # Execute the request
+        response = await call_next(request)
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        # Efficiently read and parse response body
+        response_body = b""
+        response_dict = None
+        try:
+            async for chunk in response.body_iterator:
+                response_body += chunk if isinstance(chunk, bytes) else chunk.encode()
+            if response_body:
+                response_dict = json.loads(response_body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            response_dict = {}
+
+        # Process telemetry asynchronously to not block response
+        asyncio.create_task(
+            _process_response_telemetry_async(
+                trace_id, request.url.path, response.status_code, latency_ms,
+                response_dict, agent_key, tenant_id, session_id, role_name,
+                source_ip, input_text
+            )
+        )
+
+        # Add trace headers to response efficiently
+        response.headers["x-trace-id"] = trace_id
+        response.headers["x-latency-ms"] = str(round(latency_ms, 2))
+
+        # Return response with updated body
         return Response(
             content=response_body,
             status_code=response.status_code,
-            headers=headers,
+            headers=response.headers,
             media_type=response.media_type,
         )

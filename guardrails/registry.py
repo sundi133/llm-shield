@@ -6,6 +6,7 @@ from typing import Optional
 from guardrails.base import BaseGuardrail
 
 _registry: dict[str, BaseGuardrail] = {}
+_guardrail_classes: dict[str, type[BaseGuardrail]] = {}
 _discovered = False
 
 
@@ -47,6 +48,7 @@ def _discover_guardrails():
                 ):
                     instance = obj()
                     _registry[instance.name] = instance
+                    _guardrail_classes[instance.name] = obj
 
     _discovered = True
 
@@ -94,3 +96,21 @@ def get_grouped() -> dict[str, dict[str, list[BaseGuardrail]]]:
         stage = guardrail.stage if guardrail.stage in grouped[tier] else "input"
         grouped[tier][stage].append(guardrail)
     return grouped
+
+
+def create_configured_instance(name: str) -> Optional[BaseGuardrail]:
+    """Create a fresh guardrail instance for use with temporary config overrides.
+
+    This is more efficient than re-discovering all guardrails - it just creates
+    a new instance of the specific guardrail class we need.
+    """
+    _discover_guardrails()
+    guardrail_class = _guardrail_classes.get(name)
+    if guardrail_class is None:
+        return None
+
+    try:
+        return guardrail_class()
+    except Exception:
+        # If instantiation fails, fall back to the singleton
+        return _registry.get(name)
