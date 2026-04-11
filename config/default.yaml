@@ -60,7 +60,7 @@ guardrails:
     enabled: true
     action: block
     settings:
-      max_requests: 100
+      max_requests: 10000000
       window_seconds: 60
 
   system_prompt_leak:
