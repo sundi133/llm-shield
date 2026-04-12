@@ -32,16 +32,21 @@ class ToolAllowlistGuardrail(BaseGuardrail):
                                    message=f"Tool '{tool_name}' not in allowlist for agent '{agent_key}'")
 
         # Check per-role allowlist
-        role = enforcer.resolve_role(agent_key)
-        role_name = role.name if role else "unknown"
+        # First try to get role from request context (X-User-Role header)
+        user_role = ctx.get("user_role") or ctx.get("X-User-Role")
+        if not user_role:
+            # Fallback: try to resolve role from agent_key (for backward compatibility)
+            role = enforcer.resolve_role(agent_key)
+            user_role = role.name if role else "unknown"
+
         per_role = self.settings.get("per_role", {})
-        if role_name in per_role:
-            allowed = per_role[role_name]
+        if user_role in per_role:
+            allowed = per_role[user_role]
             if self._matches(tool_name, allowed):
                 return GuardrailResult(passed=True, action="pass", guardrail_name=self.name,
-                                       message=f"Tool '{tool_name}' allowed for role '{role_name}'")
+                                       message=f"Tool '{tool_name}' allowed for role '{user_role}'")
             return GuardrailResult(passed=False, action=self.configured_action, guardrail_name=self.name,
-                                   message=f"Tool '{tool_name}' not in allowlist for role '{role_name}'")
+                                   message=f"Tool '{tool_name}' not in allowlist for role '{user_role}'")
 
         # No allowlist configured — strict mode denies, otherwise allows
         if self.settings.get("strict_mode", True):
