@@ -5,11 +5,7 @@ RUN apt-get update && apt-get install -y \
     curl wget git \
     && rm -rf /var/lib/apt/lists/*
 
-# Pre-download the model to cache (vLLM will use this)
-RUN python3 -c "\
-from huggingface_hub import snapshot_download; \
-snapshot_download(repo_id='votal-ai/vai35-4B'); \
-print('Model votal-ai/vai35-4B downloaded!')"
+# Model will be downloaded automatically by vLLM on first start
 
 # Install Python deps for the application
 WORKDIR /runpod
