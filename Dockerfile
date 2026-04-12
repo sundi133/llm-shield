@@ -1,15 +1,22 @@
-FROM nvidia/cuda:11.8-devel-ubuntu22.04
+FROM ghcr.io/ggml-org/llama.cpp:server-cuda
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV LD_LIBRARY_PATH=/app/lib:/app:$LD_LIBRARY_PATH
 
-# Install system dependencies
+# Find and register all shared libraries from the llama.cpp image
+RUN find / -name "libmtmd.so*" -o -name "libllama.so*" -o -name "libggml*.so*" 2>/dev/null | head -20 \
+    && find / -name "libmtmd.so*" 2>/dev/null -exec cp {} /usr/local/lib/ \; \
+    && find / -name "libllama.so*" 2>/dev/null -exec cp -P {} /usr/local/lib/ \; \
+    && find / -name "libggml*.so*" 2>/dev/null -exec cp -P {} /usr/local/lib/ \; \
+    && ldconfig
+
+# Install python3 + pip and additional tools needed for vLLM
 RUN apt-get update && apt-get install -y \
     python3 python3-pip python3-venv \
-    curl wget git \
-    ninja-build \
+    curl wget git ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
-# Set up cache directories for performance
+# Set up vLLM environment and cache directories
 ENV VENV=/opt/vllm-venv
 ENV CACHE=/workspace/.cache
 RUN mkdir -p $CACHE/{pip,huggingface,vllm,inductor,flashinfer,triton}
@@ -23,29 +30,33 @@ ENV TORCHINDUCTOR_CACHE_DIR=$CACHE/inductor
 ENV FLASHINFER_CACHE_DIR=$CACHE/flashinfer
 ENV TRITON_CACHE_DIR=$CACHE/triton
 
-# Create vLLM virtual environment
-RUN python3 -m venv $VENV
+# Copy and run vLLM installation script
+COPY install_vllm.sh /tmp/
+RUN chmod +x /tmp/install_vllm.sh
 
-# Install vLLM
-RUN $VENV/bin/pip install --upgrade pip && \
+# Create vLLM virtual environment and install vLLM
+RUN python3 -m venv $VENV && \
+    $VENV/bin/pip install --upgrade pip && \
     $VENV/bin/pip install vllm --cache-dir $CACHE/pip
 
-# Pre-compile .pyc files for faster startup
-RUN $VENV/bin/python3 -m compileall $VENV/lib/python3.*/site-packages/ -q 2>/dev/null || true
-
-# Set up PATH for vLLM
-ENV PATH="$VENV/bin:$PATH"
-
-# Pre-download the model to cache
+# Pre-download the vLLM model
 RUN $VENV/bin/python3 -c "\
 from huggingface_hub import snapshot_download; \
 snapshot_download(repo_id='votal-ai/vai35-4B', cache_dir='$CACHE/huggingface'); \
 print('Model votal-ai/vai35-4B downloaded!')"
 
-# Install application Python dependencies
+# Download original models (keeping for compatibility)
+RUN pip3 install --no-cache-dir --break-system-packages huggingface_hub && python3 -c "\
+from huggingface_hub import hf_hub_download; \
+hf_hub_download(repo_id='votal-ai/Qwen3.5-9B-guardrailed-v3-GGUF', filename='Qwen3.5-9B-guardrailed-Q4_K_M.gguf', local_dir='/models'); \
+hf_hub_download(repo_id='votal-ai/Qwen3.5-0.8B-GGUF', filename='Qwen3.5-0.8B-Q4_K_M.gguf', local_dir='/models'); \
+print('Models downloaded!')"
+
+# Install Python deps
 WORKDIR /runpod
 COPY requirements.txt .
-RUN $VENV/bin/pip install -r requirements.txt --cache-dir $CACHE/pip
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt && \
+    $VENV/bin/pip install -r requirements.txt --cache-dir $CACHE/pip
 
 # Copy application code
 COPY handler.py .
@@ -72,15 +83,11 @@ ENV MODEL_NAME=votal-ai/vai35-4B
 ENV VLLM_HOST=0.0.0.0
 ENV VLLM_PORT=8000
 
-# LLM backend configuration for compatibility
-ENV LLM_BACKEND_TYPE=vllm
-ENV LLM_BACKEND_URL=http://127.0.0.1:8000
-
 # Expose ports for both vLLM server and main application
 EXPOSE 8000 80
 
-# Create startup script that runs both vLLM and the Python app
-RUN cat > /start-services.sh << 'EOF'
+# Create startup script for vLLM + app
+RUN cat > /start-vllm-services.sh << 'EOF'
 #!/bin/bash
 set -e
 source $VENV/bin/activate
@@ -133,8 +140,8 @@ trap cleanup EXIT
 exec python3 handler.py
 EOF
 
-RUN chmod +x /start-services.sh
+RUN chmod +x /start-vllm-services.sh
 
-# Start both services
+# Override the default entrypoint (llama-server) so our services start instead
 ENTRYPOINT []
-CMD ["/start-services.sh"]
+CMD ["/start-vllm-services.sh"]
