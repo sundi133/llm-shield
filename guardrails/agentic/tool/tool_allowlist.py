@@ -40,14 +40,6 @@ class ToolAllowlistGuardrail(BaseGuardrail):
             user_role = role.name if role else "unknown"
 
         per_role = self.settings.get("per_role", {})
-        # DEBUG: Only for failing cases
-        if agent_key in ["regular-nurse", "any-agent"]:
-            print(f"ROLE_DEBUG: agent_key={agent_key}, user_role={user_role}")
-            print(f"ROLE_DEBUG: per_role keys={list(per_role.keys())}")
-            print(f"ROLE_DEBUG: user_role in per_role = {user_role in per_role}")
-            if user_role in per_role:
-                print(f"ROLE_DEBUG: per_role[{user_role}] = {per_role[user_role]}")
-
         if user_role in per_role:
             allowed = per_role[user_role]
             if self._matches(tool_name, allowed):
