@@ -34,12 +34,17 @@ class ToolAllowlistGuardrail(BaseGuardrail):
         # Check per-role allowlist
         # First try to get role from request context (X-User-Role header)
         user_role = ctx.get("user_role") or ctx.get("X-User-Role")
+        print(f"DEBUG: Context keys: {list(ctx.keys())}")
+        print(f"DEBUG: user_role from context: {user_role}")
         if not user_role:
             # Fallback: try to resolve role from agent_key (for backward compatibility)
             role = enforcer.resolve_role(agent_key)
             user_role = role.name if role else "unknown"
+            print(f"DEBUG: user_role from enforcer.resolve_role: {user_role}")
 
         per_role = self.settings.get("per_role", {})
+        print(f"DEBUG: per_role config: {per_role}")
+        print(f"DEBUG: checking if '{user_role}' in per_role: {user_role in per_role}")
         if user_role in per_role:
             allowed = per_role[user_role]
             if self._matches(tool_name, allowed):
