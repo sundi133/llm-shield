@@ -673,10 +673,11 @@ telemetry:
   #   verify_ssl: true
 
 llm_backend:
-  model_path: "/models/Qwen3.5-9B-guardrailed-Q4_K_M.gguf"
-  draft_model_path: "/models/Qwen3.5-0.8B-Q4_K_M.gguf"
+  # vLLM configuration - model loaded from HuggingFace
+  model_name: "votal-ai/vai35-4B"
+  backend_type: "vllm"
 
-  # Single GPU (default)
+  # Single GPU (default) - vLLM server
   servers:
     - url: "http://127.0.0.1:8000"
       gpu: 0
