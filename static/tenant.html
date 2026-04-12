@@ -327,11 +327,16 @@
     </div>
 
 
-    <!-- Tool Policies -->
+    <!-- I/O Guardrails -->
     <div id="tab-policies" class="tab-pane hidden">
       <div class="page-header">
-        <div class="page-title">Policies</div>
-        <div class="page-desc">Manage your input and output guardrail policies</div>
+        <div class="page-title">I/O Guardrails</div>
+        <div class="page-desc">Manage your input and output guardrail policies — each guardrail shows its live configuration JSON</div>
+        <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+          <button class="small" onclick="loadPolicies()">Refresh</button>
+          <button class="small" onclick="copyFullPoliciesJSON()">Copy Full Config</button>
+          <button class="primary small" onclick="savePolicies()">Save Changes</button>
+        </div>
       </div>
 
       <div id="edit-banner" class="edit-mode-banner hidden">
@@ -339,6 +344,20 @@
         <div style="display: flex; gap: 0.5rem;">
           <button class="small" onclick="discardPolicyChanges()">Discard</button>
           <button class="primary small" onclick="savePolicies()">Save Changes</button>
+        </div>
+      </div>
+
+      <!-- Full JSON Preview -->
+      <div class="card" style="margin-bottom:1rem;">
+        <div class="card-header" style="cursor:pointer;" onclick="document.getElementById('full-json-preview').classList.toggle('hidden');this.querySelector('.toggle-arrow').textContent=document.getElementById('full-json-preview').classList.contains('hidden')?'▸':'▾';">
+          <div>
+            <div class="card-title"><span class="toggle-arrow" style="margin-right:0.4rem;">▾</span>Full Policy JSON</div>
+            <div class="card-subtitle">Complete <code>input_guardrails</code> + <code>output_guardrails</code> config — click to collapse</div>
+          </div>
+          <button class="small" onclick="event.stopPropagation();copyFullPoliciesJSON()" style="font-size:11px;">Copy</button>
+        </div>
+        <div id="full-json-preview">
+          <pre id="full-json-pre" style="font-size:11.5px;max-height:400px;overflow-y:auto;line-height:1.5;color:var(--text-dim);"></pre>
         </div>
       </div>
 
@@ -1604,28 +1623,18 @@ const GUARDRAIL_SETTINGS_EXAMPLES = {
   pii_detection: {
     _desc: "Detect PII in user inputs — SSNs, emails, phone numbers, credit cards, addresses",
     example: {
-      entity_types: ["ssn", "email", "phone", "credit_card", "address", "date_of_birth", "passport", "driver_license"],
-      confidence_threshold: 0.85,
-      redaction_char: "*",
-      allow_partial_redact: true,
-      custom_patterns: [
-        { name: "medical_record_number", regex: "\\b(MRN|mrn)[:\\s]*\\d{6,10}\\b", description: "Hospital MRN" },
-        { name: "insurance_id", regex: "\\b[A-Z]{3}\\d{9}\\b", description: "Insurance policy number" }
-      ],
-      role_overrides: {
-        admin: { action: "log", entity_types: ["ssn", "credit_card"] },
-        doctor: { action: "warn", entity_types: ["ssn"] },
-        patient: { action: "block", entity_types: ["ssn", "email", "phone", "credit_card"] }
-      }
+      entities: ["PHONE_NUMBER", "EMAIL_ADDRESS", "CREDIT_CARD", "US_SSN", "IP_ADDRESS", "PERSON_NAME", "PHYSICAL_ADDRESS"],
+      score_threshold: 0.7
     }
   },
   pii_leakage: {
     _desc: "Detect PII leaking in LLM output — redact or block before showing to user",
     example: {
-      entity_types: ["ssn", "email", "phone", "credit_card", "address", "api_key", "password"],
+      pii_types: ["SSN", "EMAIL", "PHONE", "CREDIT_CARD", "ADDRESS", "API_KEY", "PASSWORD"],
       compliance_framework: "hipaa",
-      redact_output: true,
-      replacement_format: "[{TYPE}_REDACTED]",
+      threshold: 0.7,
+      mode: "redact",
+      use_presidio: false,
       role_based_access: {
         admin: { ssn: "allow", credit_card: "redact", api_key: "block" },
         doctor: { ssn: "redact", credit_card: "block", email: "allow" },
@@ -1945,13 +1954,12 @@ function renderOverview() {
 const DEFAULT_POLICIES = {
   input_guardrails: {
     adversarial_detection:     { enabled: true,  action: 'block', settings: { threshold: 0.80 } },
-    keyword_blocklist:         { enabled: true,  action: 'block', settings: { keywords: ['confidential', 'secret'] } },
-    topic_restriction:         { enabled: true,  action: 'block', settings: {} },
-    language_detection:        { enabled: true,  action: 'block', settings: { allowed_languages: ['en'] } },
-    adversarial_rate_limiting: { enabled: false, action: 'block', settings: {} },
-    system_prompt_leak:        { enabled: true,  action: 'block', settings: { threshold: 0.80 } },
+    keyword_blocklist:         { enabled: true,  action: 'block', settings: { keywords: ['hack', 'exploit', 'jailbreak', 'ignore instructions'] } },
     toxicity:                  { enabled: true,  action: 'block', settings: { threshold: 0.80 } },
-    regex_pattern:             { enabled: true,  action: 'block', settings: { patterns: ['\\b\\d{3}-\\d{2}-\\d{4}\\b', '\\b\\d{16}\\b', 'password\\s*[:=]', 'api[_-]?key\\s*[:=]', 'bearer\\s+[A-Za-z0-9\\-._~+/]+=*', 'sk-[A-Za-z0-9]{20,}'] } },
+    language_detection:        { enabled: true,  action: 'block', settings: { allowed_languages: ['en'] } },
+    system_prompt_leak:        { enabled: true,  action: 'block', settings: { threshold: 0.80 } },
+    topic_restriction:         { enabled: true,  action: 'block', settings: { allowed_topics: ['healthcare', 'medical', 'pharmacy', 'appointments', 'billing'] } },
+    regex_pattern:             { enabled: true,  action: 'block', settings: {} },
   },
   output_guardrails: {
     hallucinated_links: { enabled: true, action: 'block', settings: {} },
@@ -1986,6 +1994,16 @@ async function loadPolicies() {
 function renderPolicies() {
   renderPolicyStage('input');
   renderPolicyStage('output');
+  updateFullJsonPreview();
+}
+
+function updateFullJsonPreview() {
+  const pre = document.getElementById('full-json-pre');
+  if (pre) pre.textContent = JSON.stringify(POLICIES, null, 2);
+}
+
+function copyFullPoliciesJSON() {
+  navigator.clipboard.writeText(JSON.stringify(POLICIES, null, 2)).then(() => showToast('Full config copied', 'success'));
 }
 
 function renderPolicyStage(stage) {
@@ -2017,6 +2035,8 @@ function renderPolicyStage(stage) {
     const ex = GUARDRAIL_SETTINGS_EXAMPLES[name];
     const rowId = `gr-detail-${stage}-${name}`;
 
+    const settingsJson = JSON.stringify({ [name]: { enabled: isEnabled, action, settings: p.settings || {} } }, null, 2);
+
     return `
       <div class="guardrail-row" style="opacity: ${isEnabled ? 1 : 0.5}; flex-wrap:wrap;">
         <div class="guardrail-icon" style="background: ${color}20; color: ${color};">${icon}</div>
@@ -2027,8 +2047,8 @@ function renderPolicyStage(stage) {
           </div>
           ${desc ? `<div class="gr-desc">${desc}</div>` : ''}
           <div style="display:flex;gap:0.4rem;margin-top:0.35rem;">
-            ${hasSettings ? `<button class="small" onclick="toggleGrDetail('${rowId}','current')" style="font-size:10px;padding:0.15rem 0.5rem;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.25);color:var(--accent-hover);">Current Settings</button>` : ''}
-            ${ex ? `<button class="small" onclick="toggleGrDetail('${rowId}','example')" style="font-size:10px;padding:0.15rem 0.5rem;">Example JSON</button>` : ''}
+            ${ex ? `<button class="small" onclick="toggleGrDetail('${rowId}','example')" style="font-size:10px;padding:0.15rem 0.5rem;">Full Example</button>` : ''}
+            <button class="small" onclick="editPolicy('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.25);color:var(--accent-hover);">Edit Settings</button>
             <button class="small" onclick="deletePolicy('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;color:var(--danger);border-color:rgba(239,68,68,0.25);">Remove</button>
           </div>
         </div>
@@ -2045,6 +2065,15 @@ function renderPolicyStage(stage) {
             <span class="slider"></span>
           </label>
           <span class="gr-arrow" onclick="editPolicy('${stage}','${name}')">›</span>
+        </div>
+        <div style="width:100%;margin-top:0.5rem;">
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.6rem 0.75rem;position:relative;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
+              <span style="font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.4px;">Configuration</span>
+              <button class="small" onclick="copyGrConfig('${stage}','${name}')" style="font-size:9px;padding:0.1rem 0.4rem;">Copy</button>
+            </div>
+            <pre style="font-size:11px;margin:0;padding:0;background:none;border:none;color:var(--text-dim);white-space:pre-wrap;max-height:160px;overflow-y:auto;line-height:1.5;">${escapeHtml(settingsJson)}</pre>
+          </div>
         </div>
         <div id="${rowId}" class="hidden" style="width:100%;margin-top:0.5rem;"></div>
       </div>
@@ -2064,7 +2093,17 @@ function getSettingsSummary(name, settings) {
     return `<span class="gr-setting-chip">PATTERNS <span class="mono">${settings.patterns.length}</span></span>`;
   if (settings.allowed_languages && Array.isArray(settings.allowed_languages))
     return `<span class="gr-setting-chip">LANGUAGES <span class="mono">${settings.allowed_languages.length}</span></span>`;
+  if (settings.allowed_topics && Array.isArray(settings.allowed_topics))
+    return `<span class="gr-setting-chip">TOPICS <span class="mono">${settings.allowed_topics.length}</span></span>`;
   return '';
+}
+
+function copyGrConfig(stage, name) {
+  const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
+  const p = POLICIES[key][name];
+  if (!p) return;
+  const obj = { [name]: { enabled: p.enabled !== false, action: p.action || 'block', settings: p.settings || {} } };
+  navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).then(() => showToast('Copied', 'success'));
 }
 
 function changeAction(stage, name, action) {
@@ -2077,6 +2116,7 @@ function markDirty() {
   POLICIES_DIRTY = true;
   document.getElementById('edit-banner').classList.remove('hidden');
   document.getElementById('policies-json').value = JSON.stringify(POLICIES, null, 2);
+  updateFullJsonPreview();
 }
 
 function togglePolicy(stage, name, enabled) {
@@ -2139,6 +2179,14 @@ function confirmAddPolicy() {
   try { settings = JSON.parse(document.getElementById('add-policy-settings').value || '{}'); }
   catch (e) { return alert('Invalid JSON in settings'); }
   if (!name) return alert('Select a guardrail');
+
+  // Guard against users pasting a full policy object (with enabled/action/settings keys)
+  // into the settings textarea — unwrap to just the inner settings.
+  if (settings.settings && typeof settings.settings === 'object'
+      && ('enabled' in settings || 'action' in settings)) {
+    settings = settings.settings;
+  }
+
   const key = ADD_POLICY_STAGE === 'input' ? 'input_guardrails' : 'output_guardrails';
   POLICIES[key][name] = { enabled: true, action, settings };
   markDirty();

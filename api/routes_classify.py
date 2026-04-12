@@ -1,17 +1,14 @@
 """Classify endpoint — runs all specified guardrails in a single call."""
 
-import json
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
-import config.schema as _config_module
-from config.schema import GuardrailConfig
-from core.models import GuardrailResult
-from core.llm_backend import llm_call
+from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
-from guardrails.registry import get_by_stage
+from guardrails.base import _request_configs
+from guardrails.registry import get_by_stage, get_guardrail
 
 router = APIRouter()
 
@@ -235,41 +232,74 @@ async def classify(request: Request, body: dict):
     tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
 
     if tenant_config and "input_guardrails" in tenant_config:
-        # Use tenant's server-side guardrail config (tenant cannot override)
-        tenant_input = {}
-        for name, gcfg in tenant_config["input_guardrails"].items():
-            tenant_input[name] = {
-                "enabled": gcfg.get("enabled", True),
-                "action": gcfg.get("action", "block"),
-                **gcfg.get("settings", {}),
-            }
-        return await _classify_with_overrides(message, tenant_input, context, start)
+        # Fast path: tenant config from Redis is already in canonical format.
+        # Skips _NAME_MAP lookup and _translate_settings — no format conversion needed.
+        return await _classify_tenant(message, tenant_config["input_guardrails"], context, start)
 
     # If no per-request guardrail config, run with server defaults
     if not input_overrides:
         return await _classify_with_defaults(message, start)
 
-    # Apply per-request overrides and run pipeline
+    # Apply per-request overrides (external callers may use kebab-case names)
     return await _classify_with_overrides(message, input_overrides, context, start)
 
 
-async def _classify_with_defaults(message: str, start: datetime) -> dict:
-    """Run the full input pipeline using server-default guardrail config."""
-    input_guardrails = get_by_stage("input")
-    pipeline_result = await run_pipeline(input_guardrails, message)
-
+def _build_response(pipeline_result: PipelineResult, start: datetime) -> dict:
+    """Build the standard API response from a PipelineResult."""
     total_ms = (datetime.now() - start).total_seconds() * 1000
     has_block = any(
         not r.passed and r.action == "block" for r in pipeline_result.results
     )
     has_warn = any(not r.passed and r.action == "warn" for r in pipeline_result.results)
-
     return {
         "safe": pipeline_result.allowed,
         "action": "block" if has_block else ("warn" if has_warn else "pass"),
         "guardrail_results": [_format_result(r) for r in pipeline_result.results],
         "inference_time_ms": round(total_ms, 2),
     }
+
+
+async def _classify_with_defaults(message: str, start: datetime) -> dict:
+    """Run the full input pipeline using server-default guardrail config."""
+    input_guardrails = get_by_stage("input")
+    pipeline_result = await run_pipeline(input_guardrails, message)
+    return _build_response(pipeline_result, start)
+
+
+async def _classify_tenant(
+    message: str,
+    tenant_guardrails: dict,
+    context: dict,
+    start: datetime,
+) -> dict:
+    """Fast path for tenant-configured guardrails.
+
+    Reuses singleton guardrail instances from the registry and passes
+    per-request config through a contextvar — zero object allocations.
+    Tenant config is already in canonical format so _NAME_MAP and
+    _translate_settings are skipped entirely.
+    """
+    configs: dict[str, dict] = {}
+    singletons = []
+    for name, gcfg in tenant_guardrails.items():
+        if not gcfg.get("enabled", True):
+            continue
+        configs[name] = {
+            "enabled": True,
+            "action": gcfg.get("action", "block"),
+            "settings": gcfg.get("settings", {}),
+        }
+        g = get_guardrail(name)
+        if g:
+            singletons.append(g)
+
+    token = _request_configs.set(configs)
+    try:
+        pipeline_result = await run_pipeline(singletons, message, context)
+    finally:
+        _request_configs.reset(token)
+
+    return _build_response(pipeline_result, start)
 
 
 async def _classify_with_overrides(
@@ -278,56 +308,34 @@ async def _classify_with_overrides(
     context: dict,
     start: datetime,
 ) -> dict:
-    """Run guardrails with per-request config overrides."""
-    cfg = _config_module.config
-    if cfg is None:
-        raise HTTPException(status_code=500, detail="Config not loaded")
+    """Run guardrails with per-request config overrides.
 
-    # Streamlined approach: create temporary config-aware guardrails without global state mutation
-    from guardrails.registry import create_configured_instance, get_guardrail
-
-    # Build temporary config overrides
-    temp_configs = {}
+    External callers may use kebab-case names (keyword-blocklist) and
+    non-canonical settings keys (blocklist instead of keywords), so
+    _NAME_MAP and _translate_settings are applied here.
+    """
+    configs: dict[str, dict] = {}
+    singletons = []
     for request_key, request_cfg in input_overrides.items():
         guardrail_name = _NAME_MAP.get(request_key, request_key.replace("-", "_"))
-        enabled = request_cfg.get("enabled", True)
-        if enabled:
-            temp_configs[guardrail_name] = {
-                "enabled": enabled,
-                "action": request_cfg.get("action", "block"),
-                "settings": _translate_settings(guardrail_name, request_cfg),
-            }
+        if not request_cfg.get("enabled", True):
+            continue
+        configs[guardrail_name] = {
+            "enabled": True,
+            "action": request_cfg.get("action", "block"),
+            "settings": _translate_settings(guardrail_name, request_cfg),
+        }
+        g = get_guardrail(guardrail_name)
+        if g:
+            singletons.append(g)
 
-    # Create guardrails with temporary configs (no global state changes)
-    fresh_guardrails = []
-    for guardrail_name, temp_config in temp_configs.items():
-        # Create fresh instance
-        fresh = create_configured_instance(guardrail_name)
-        if fresh:
-            # Apply temporary config directly to instance
-            fresh._temp_config = temp_config
-            fresh_guardrails.append(fresh)
-        else:
-            # Fallback to existing instance
-            existing = get_guardrail(guardrail_name)
-            if existing:
-                fresh_guardrails.append(existing)
+    token = _request_configs.set(configs)
+    try:
+        pipeline_result = await run_pipeline(singletons, message, context)
+    finally:
+        _request_configs.reset(token)
 
-    # Run pipeline with temporary instances
-    pipeline_result = await run_pipeline(fresh_guardrails, message, context)
-
-    total_ms = (datetime.now() - start).total_seconds() * 1000
-    has_block = any(
-        not r.passed and r.action == "block" for r in pipeline_result.results
-    )
-    has_warn = any(not r.passed and r.action == "warn" for r in pipeline_result.results)
-
-    return {
-        "safe": pipeline_result.allowed,
-        "action": "block" if has_block else ("warn" if has_warn else "pass"),
-        "guardrail_results": [_format_result(r) for r in pipeline_result.results],
-        "inference_time_ms": round(total_ms, 2),
-    }
+    return _build_response(pipeline_result, start)
 
 
 def _format_result(r: GuardrailResult) -> dict:

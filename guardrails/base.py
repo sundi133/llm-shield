@@ -1,8 +1,16 @@
+import contextvars
 from abc import ABC, abstractmethod
 from typing import Optional
 
 from core.models import GuardrailResult
 import config.schema as _config_module
+
+# Per-request guardrail configs keyed by guardrail name.
+# Set once per request in routes_classify, read by BaseGuardrail properties.
+# Uses contextvars so concurrent async requests each see their own value.
+_request_configs: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "_request_configs", default=None
+)
 
 
 class BaseGuardrail(ABC):
@@ -27,10 +35,20 @@ class BaseGuardrail(ABC):
         """
         ...
 
+    def _get_request_config(self) -> Optional[dict]:
+        """Look up per-request config for this guardrail from the contextvar."""
+        configs = _request_configs.get()
+        if configs is not None:
+            return configs.get(self.name)
+        return None
+
     @property
     def enabled(self) -> bool:
         """Check if this guardrail is enabled in the loaded config."""
-        # Check for temporary config first
+        req_cfg = self._get_request_config()
+        if req_cfg is not None:
+            return req_cfg.get("enabled", True)
+
         if hasattr(self, '_temp_config'):
             return self._temp_config.get("enabled", True)
 
@@ -44,7 +62,10 @@ class BaseGuardrail(ABC):
     @property
     def configured_action(self) -> str:
         """Get the configured action for this guardrail (block/warn/log/pass)."""
-        # Check for temporary config first
+        req_cfg = self._get_request_config()
+        if req_cfg is not None:
+            return req_cfg.get("action", "block")
+
         if hasattr(self, '_temp_config'):
             return self._temp_config.get("action", "block")
 
@@ -58,7 +79,10 @@ class BaseGuardrail(ABC):
     @property
     def settings(self) -> dict:
         """Get the guardrail-specific settings from config."""
-        # Check for temporary config first
+        req_cfg = self._get_request_config()
+        if req_cfg is not None:
+            return req_cfg.get("settings", {})
+
         if hasattr(self, '_temp_config'):
             return self._temp_config.get("settings", {})
 

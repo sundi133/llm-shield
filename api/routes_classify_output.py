@@ -5,11 +5,10 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
-import config.schema as _config_module
-from config.schema import GuardrailConfig
-from core.models import GuardrailResult
+from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
-from guardrails.registry import get_by_stage
+from guardrails.base import _request_configs
+from guardrails.registry import get_by_stage, get_guardrail
 from storage.policy_store import check_tool_authorization, get_tool_policies
 from core.llm_backend import llm_call
 
@@ -223,14 +222,7 @@ async def classify_output(request: Request, body: dict):
     tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
 
     if tenant_config and "output_guardrails" in tenant_config:
-        tenant_output = {}
-        for name, gcfg in tenant_config["output_guardrails"].items():
-            tenant_output[name] = {
-                "enabled": gcfg.get("enabled", True),
-                "action": gcfg.get("action", "warn"),
-                **gcfg.get("settings", {}),
-            }
-        return await _classify_with_overrides(output, tenant_output, enhanced_context, start)
+        return await _classify_tenant(output, tenant_config["output_guardrails"], enhanced_context, start)
 
     if not guardrail_overrides:
         return await _classify_with_defaults(output, enhanced_context, start)
@@ -238,23 +230,60 @@ async def classify_output(request: Request, body: dict):
     return await _classify_with_overrides(output, guardrail_overrides, enhanced_context, start)
 
 
-async def _classify_with_defaults(output: str, context: dict, start: datetime) -> dict:
-    """Run the full output pipeline using server-default guardrail config."""
-    output_guardrails = get_by_stage("output")
-    pipeline_result = await run_pipeline(output_guardrails, output, context)
-
+def _build_response(pipeline_result: PipelineResult, start: datetime) -> dict:
+    """Build the standard API response from a PipelineResult."""
     total_ms = (datetime.now() - start).total_seconds() * 1000
     has_block = any(
         not r.passed and r.action == "block" for r in pipeline_result.results
     )
     has_warn = any(not r.passed and r.action == "warn" for r in pipeline_result.results)
-
     return {
         "safe": pipeline_result.allowed,
         "action": "block" if has_block else ("warn" if has_warn else "pass"),
         "guardrail_results": [_format_result(r) for r in pipeline_result.results],
         "inference_time_ms": round(total_ms, 2),
     }
+
+
+async def _classify_with_defaults(output: str, context: dict, start: datetime) -> dict:
+    """Run the full output pipeline using server-default guardrail config."""
+    output_guardrails = get_by_stage("output")
+    pipeline_result = await run_pipeline(output_guardrails, output, context)
+    return _build_response(pipeline_result, start)
+
+
+async def _classify_tenant(
+    output: str,
+    tenant_guardrails: dict,
+    context: dict,
+    start: datetime,
+) -> dict:
+    """Fast path for tenant-configured output guardrails.
+
+    Reuses singleton guardrail instances from the registry and passes
+    per-request config through a contextvar — zero object allocations.
+    """
+    configs: dict[str, dict] = {}
+    singletons = []
+    for name, gcfg in tenant_guardrails.items():
+        if not gcfg.get("enabled", True):
+            continue
+        configs[name] = {
+            "enabled": True,
+            "action": gcfg.get("action", "warn"),
+            "settings": gcfg.get("settings", {}),
+        }
+        g = get_guardrail(name)
+        if g:
+            singletons.append(g)
+
+    token = _request_configs.set(configs)
+    try:
+        pipeline_result = await run_pipeline(singletons, output, context)
+    finally:
+        _request_configs.reset(token)
+
+    return _build_response(pipeline_result, start)
 
 
 async def _classify_with_overrides(
@@ -263,88 +292,33 @@ async def _classify_with_overrides(
     context: dict,
     start: datetime,
 ) -> dict:
-    """Run output guardrails with per-request config overrides."""
-    cfg = _config_module.config
-    if cfg is None:
-        raise HTTPException(status_code=500, detail="Config not loaded")
+    """Run output guardrails with per-request config overrides.
 
-    originals: dict[str, Optional[GuardrailConfig]] = {}
-
-    try:
-        # Apply overrides
-        for request_key, request_cfg in guardrail_overrides.items():
-            guardrail_name = _NAME_MAP.get(request_key, request_key.replace("-", "_"))
-            enabled = request_cfg.get("enabled", True)
-            action = request_cfg.get("action", "warn")
-            settings = _translate_settings(guardrail_name, request_cfg)
-
-            originals[guardrail_name] = cfg.guardrails.get(guardrail_name)
-
-            cfg.guardrails[guardrail_name] = GuardrailConfig(
-                enabled=enabled,
-                action=action,
-                settings=settings,
-            )
-
-        # Disable output guardrails NOT in the request
-        all_output_guardrails = get_by_stage("output")
-        requested_names = {
-            _NAME_MAP.get(k, k.replace("-", "_")) for k in guardrail_overrides
+    Uses contextvar to pass per-request config to singleton guardrails,
+    avoiding global config mutation and fresh object creation.
+    """
+    configs: dict[str, dict] = {}
+    singletons = []
+    for request_key, request_cfg in guardrail_overrides.items():
+        guardrail_name = _NAME_MAP.get(request_key, request_key.replace("-", "_"))
+        if not request_cfg.get("enabled", True):
+            continue
+        configs[guardrail_name] = {
+            "enabled": True,
+            "action": request_cfg.get("action", "warn"),
+            "settings": _translate_settings(guardrail_name, request_cfg),
         }
-        for g in all_output_guardrails:
-            if g.name not in requested_names and g.name not in originals:
-                originals[g.name] = cfg.guardrails.get(g.name)
-                cfg.guardrails[g.name] = GuardrailConfig(
-                    enabled=False,
-                    action="warn",
-                    settings=(
-                        cfg.guardrails[g.name].settings
-                        if g.name in cfg.guardrails
-                        else {}
-                    ),
-                )
+        g = get_guardrail(guardrail_name)
+        if g:
+            singletons.append(g)
 
-        # Re-instantiate guardrails with fresh config
-        from guardrails.registry import _registry, _discover_guardrails
-
-        _discover_guardrails()
-
-        fresh_guardrails = []
-        for request_key in guardrail_overrides:
-            guardrail_name = _NAME_MAP.get(request_key, request_key.replace("-", "_"))
-            request_cfg = guardrail_overrides[request_key]
-            if not request_cfg.get("enabled", True):
-                continue
-
-            existing = _registry.get(guardrail_name)
-            if existing:
-                try:
-                    fresh = existing.__class__()
-                    fresh_guardrails.append(fresh)
-                except Exception:
-                    fresh_guardrails.append(existing)
-
-        pipeline_result = await run_pipeline(fresh_guardrails, output, context)
-
+    token = _request_configs.set(configs)
+    try:
+        pipeline_result = await run_pipeline(singletons, output, context)
     finally:
-        for guardrail_name, original in originals.items():
-            if original is None:
-                cfg.guardrails.pop(guardrail_name, None)
-            else:
-                cfg.guardrails[guardrail_name] = original
+        _request_configs.reset(token)
 
-    total_ms = (datetime.now() - start).total_seconds() * 1000
-    has_block = any(
-        not r.passed and r.action == "block" for r in pipeline_result.results
-    )
-    has_warn = any(not r.passed and r.action == "warn" for r in pipeline_result.results)
-
-    return {
-        "safe": pipeline_result.allowed,
-        "action": "block" if has_block else ("warn" if has_warn else "pass"),
-        "guardrail_results": [_format_result(r) for r in pipeline_result.results],
-        "inference_time_ms": round(total_ms, 2),
-    }
+    return _build_response(pipeline_result, start)
 
 
 async def _validate_tool_authorization(

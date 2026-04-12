@@ -7,6 +7,11 @@ from core.models import GuardrailResult
 from core.llm_backend import async_llm_call
 from guardrails.base import BaseGuardrail
 
+_DEFAULT_ENTITIES = [
+    "PHONE_NUMBER", "EMAIL_ADDRESS", "CREDIT_CARD",
+    "US_SSN", "IP_ADDRESS", "PERSON_NAME", "PHYSICAL_ADDRESS",
+]
+
 _SYSTEM_PROMPT = (
     "You are a PII (Personally Identifiable Information) detector.\n"
     "Analyze the user message and identify any PII present.\n\n"
@@ -30,7 +35,9 @@ class PIIDetectionGuardrail(BaseGuardrail):
     stage = "input"
 
     def _get_entities(self) -> list[str]:
-        return self.settings.get("entities", [])
+        s = self.settings
+        entities = s.get("entities") or s.get("entity_types") or s.get("pii_types") or []
+        return entities if entities else _DEFAULT_ENTITIES
 
     async def check(
         self, content: str, context: Optional[dict] = None
@@ -79,10 +86,20 @@ class PIIDetectionGuardrail(BaseGuardrail):
 
         elapsed = (time.perf_counter() - start) * 1000
 
-        # Filter to only the entity types the caller asked for
-        if detected:
-            entities_upper = {e.upper() for e in entities}
-            detected = [e for e in detected if e.get("type", "").upper() in entities_upper]
+        # Filter to only the entity types the caller asked for.
+        # Build a loose match set so LLM labels like "email" match "EMAIL_ADDRESS".
+        if detected and entities:
+            loose = set()
+            for e in entities:
+                upper = e.upper()
+                loose.add(upper)
+                for part in upper.split("_"):
+                    if len(part) > 2:
+                        loose.add(part)
+            detected = [
+                e for e in detected
+                if e.get("type", "").upper() in loose
+            ]
             has_pii = len(detected) > 0
 
         if has_pii and detected:
