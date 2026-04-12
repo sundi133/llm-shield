@@ -1,9 +1,11 @@
+import asyncio
 import time
 from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
+from core.text_utils import estimate_tokens, chunk_text
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a bias detection specialist. Analyze the given text for any biased language, "
@@ -16,6 +18,8 @@ _SYSTEM_PROMPT_TEMPLATE = (
 )
 
 _CSV_FIELDS = ["biased", "bias_score", "bias_type", "severity"]
+_RESERVED_TOKENS = 300
+_DEFAULT_SLOT_CONTEXT = 4096
 
 
 class BiasDetectionGuardrail(BaseGuardrail):
@@ -25,35 +29,16 @@ class BiasDetectionGuardrail(BaseGuardrail):
     tier = "slow"
     stage = "output"
 
-    async def check(
-        self, content: str, context: Optional[dict] = None
+    async def _check_single(
+        self, content: str, system_prompt: str, threshold: float
     ) -> GuardrailResult:
-        start = time.perf_counter()
-
-        default_categories = [
-            "gender",
-            "racial",
-            "age",
-            "political",
-            "religious",
-            "disability",
-            "socioeconomic",
-            "sexual orientation",
-        ]
-        categories = self.settings.get("categories", default_categories)
-        categories_str = ", ".join(categories)
-        threshold = self.settings.get("threshold", 0.60)
-
-        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
-            categories=categories_str,
-            threshold=threshold,
-        )
-
+        """Run bias detection on a single piece of content."""
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Analyze this response for bias: {content}"},
         ]
 
+        start = time.perf_counter()
         try:
             response = await async_llm_call(
                 messages=messages,
@@ -95,5 +80,51 @@ class BiasDetectionGuardrail(BaseGuardrail):
             guardrail_name=self.name,
             message="No bias detected in output",
             details=result,
+            latency_ms=elapsed,
+        )
+
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
+        start = time.perf_counter()
+
+        default_categories = [
+            "gender", "racial", "age", "political",
+            "religious", "disability", "socioeconomic", "sexual orientation",
+        ]
+        categories = self.settings.get("categories", default_categories)
+        threshold = self.settings.get("threshold", 0.60)
+
+        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
+            categories=", ".join(categories),
+            threshold=threshold,
+        )
+
+        slot_context = self.settings.get("slot_context_tokens", _DEFAULT_SLOT_CONTEXT)
+        content_budget = slot_context - _RESERVED_TOKENS
+        content_tokens = estimate_tokens(content)
+
+        if content_tokens <= content_budget:
+            result = await self._check_single(content, system_prompt, threshold)
+            result.latency_ms = (time.perf_counter() - start) * 1000
+            return result
+
+        chunks = chunk_text(content, content_budget)
+        tasks = [self._check_single(c, system_prompt, threshold) for c in chunks]
+        results = await asyncio.gather(*tasks)
+
+        for r in results:
+            if not r.passed:
+                r.latency_ms = (time.perf_counter() - start) * 1000
+                r.message = f"[chunked {len(chunks)} parts] {r.message}"
+                return r
+
+        elapsed = (time.perf_counter() - start) * 1000
+        return GuardrailResult(
+            passed=True,
+            action="pass",
+            guardrail_name=self.name,
+            message=f"No bias detected (checked {len(chunks)} chunks)",
+            details={"chunks_checked": len(chunks)},
             latency_ms=elapsed,
         )

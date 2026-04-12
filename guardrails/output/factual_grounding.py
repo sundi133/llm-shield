@@ -1,9 +1,11 @@
+import asyncio
 import time
 from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
+from core.text_utils import estimate_tokens, chunk_text
 
 _SYSTEM_PROMPT = (
     "You are a factual accuracy analyst. Examine the given text and identify any claims that appear "
@@ -28,6 +30,8 @@ _SYSTEM_PROMPT_CITATIONS = (
 )
 
 _CSV_FIELDS = ["grounded", "confidence", "unsupported_claim"]
+_RESERVED_TOKENS = 350
+_DEFAULT_SLOT_CONTEXT = 4096
 
 
 class FactualGroundingGuardrail(BaseGuardrail):
@@ -37,21 +41,16 @@ class FactualGroundingGuardrail(BaseGuardrail):
     tier = "slow"
     stage = "output"
 
-    async def check(
-        self, content: str, context: Optional[dict] = None
+    async def _check_single(
+        self, content: str, system_prompt: str
     ) -> GuardrailResult:
-        start = time.perf_counter()
-
-        require_citations = self.settings.get("require_citations", False)
-        system_prompt = (
-            _SYSTEM_PROMPT_CITATIONS if require_citations else _SYSTEM_PROMPT
-        )
-
+        """Run factual grounding check on a single piece of content."""
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Verify factual grounding in this response: {content}"},
         ]
 
+        start = time.perf_counter()
         try:
             response = await async_llm_call(
                 messages=messages,
@@ -92,5 +91,44 @@ class FactualGroundingGuardrail(BaseGuardrail):
             guardrail_name=self.name,
             message="Output appears factually grounded",
             details=result,
+            latency_ms=elapsed,
+        )
+
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
+        start = time.perf_counter()
+
+        require_citations = self.settings.get("require_citations", False)
+        system_prompt = (
+            _SYSTEM_PROMPT_CITATIONS if require_citations else _SYSTEM_PROMPT
+        )
+
+        slot_context = self.settings.get("slot_context_tokens", _DEFAULT_SLOT_CONTEXT)
+        content_budget = slot_context - _RESERVED_TOKENS
+        content_tokens = estimate_tokens(content)
+
+        if content_tokens <= content_budget:
+            result = await self._check_single(content, system_prompt)
+            result.latency_ms = (time.perf_counter() - start) * 1000
+            return result
+
+        chunks = chunk_text(content, content_budget)
+        tasks = [self._check_single(c, system_prompt) for c in chunks]
+        results = await asyncio.gather(*tasks)
+
+        for r in results:
+            if not r.passed:
+                r.latency_ms = (time.perf_counter() - start) * 1000
+                r.message = f"[chunked {len(chunks)} parts] {r.message}"
+                return r
+
+        elapsed = (time.perf_counter() - start) * 1000
+        return GuardrailResult(
+            passed=True,
+            action="pass",
+            guardrail_name=self.name,
+            message=f"Factually grounded (checked {len(chunks)} chunks)",
+            details={"chunks_checked": len(chunks)},
             latency_ms=elapsed,
         )

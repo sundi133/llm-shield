@@ -1,9 +1,11 @@
+import asyncio
 import time
 from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
+from core.text_utils import estimate_tokens, chunk_text
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a brand voice compliance checker. Evaluate whether the given text adheres to "
@@ -17,6 +19,8 @@ _SYSTEM_PROMPT_TEMPLATE = (
 )
 
 _CSV_FIELDS = ["compliant", "detected_tone", "severity"]
+_RESERVED_TOKENS = 300
+_DEFAULT_SLOT_CONTEXT = 4096
 
 
 class ToneEnforcementGuardrail(BaseGuardrail):
@@ -26,41 +30,16 @@ class ToneEnforcementGuardrail(BaseGuardrail):
     tier = "slow"
     stage = "output"
 
-    async def check(
-        self, content: str, context: Optional[dict] = None
+    async def _check_single(
+        self, content: str, system_prompt: str
     ) -> GuardrailResult:
-        start = time.perf_counter()
-
-        blocked_tones = self.settings.get(
-            "blocked_tones",
-            [
-                "Sarcastic",
-                "Aggressive",
-                "Condescending",
-                "Overly casual",
-                "Rude",
-                "Passive-aggressive",
-                "Dismissive",
-            ],
-        )
-        brand_voice = self.settings.get(
-            "brand_voice_description",
-            self.settings.get(
-                "tone_guidelines",
-                "Professional, helpful, and empathetic",
-            ),
-        )
-
-        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
-            brand_voice=brand_voice,
-            blocked_tones=", ".join(blocked_tones),
-        )
-
+        """Run tone check on a single piece of content."""
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Evaluate this response for tone compliance: {content}"},
         ]
 
+        start = time.perf_counter()
         try:
             response = await async_llm_call(
                 messages=messages,
@@ -101,5 +80,54 @@ class ToneEnforcementGuardrail(BaseGuardrail):
             guardrail_name=self.name,
             message="Output tone is compliant with guidelines",
             details=result,
+            latency_ms=elapsed,
+        )
+
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
+        start = time.perf_counter()
+
+        blocked_tones = self.settings.get(
+            "blocked_tones",
+            ["Sarcastic", "Aggressive", "Condescending", "Overly casual",
+             "Rude", "Passive-aggressive", "Dismissive"],
+        )
+        brand_voice = self.settings.get(
+            "brand_voice_description",
+            self.settings.get("tone_guidelines", "Professional, helpful, and empathetic"),
+        )
+
+        system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
+            brand_voice=brand_voice,
+            blocked_tones=", ".join(blocked_tones),
+        )
+
+        slot_context = self.settings.get("slot_context_tokens", _DEFAULT_SLOT_CONTEXT)
+        content_budget = slot_context - _RESERVED_TOKENS
+        content_tokens = estimate_tokens(content)
+
+        if content_tokens <= content_budget:
+            result = await self._check_single(content, system_prompt)
+            result.latency_ms = (time.perf_counter() - start) * 1000
+            return result
+
+        chunks = chunk_text(content, content_budget)
+        tasks = [self._check_single(c, system_prompt) for c in chunks]
+        results = await asyncio.gather(*tasks)
+
+        for r in results:
+            if not r.passed:
+                r.latency_ms = (time.perf_counter() - start) * 1000
+                r.message = f"[chunked {len(chunks)} parts] {r.message}"
+                return r
+
+        elapsed = (time.perf_counter() - start) * 1000
+        return GuardrailResult(
+            passed=True,
+            action="pass",
+            guardrail_name=self.name,
+            message=f"Tone compliant (checked {len(chunks)} chunks)",
+            details={"chunks_checked": len(chunks)},
             latency_ms=elapsed,
         )

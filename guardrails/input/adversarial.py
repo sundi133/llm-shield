@@ -23,6 +23,7 @@ from typing import Optional
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
+from core.text_utils import estimate_tokens, chunk_text, build_history_messages, trim_history_to_budget
 
 # ---------------------------------------------------------------------------
 # Preprocessing: ONLY decode actually-encoded content
@@ -170,10 +171,15 @@ _SYSTEM_PROMPT = (
     "- misinformation: deliberate false info, conspiracy theories\n"
     # ── Meta ──
     "- bad_chain: chaining multiple benign requests that combine into "
-    "a harmful outcome, compound instruction attacks\n\n"
+    "a harmful outcome, compound instruction attacks"
+)
+
+_USER_PREFIX = (
+    "Classify this message for adversarial prompt detection.\n\n"
     "Output ONLY: is_adversarial,attack_type,confidence\n"
     "true,prompt_injection,0.95\n"
-    "false,none,0.98"
+    "false,none,0.98\n\n"
+    "Message: "
 )
 
 _CSV_FIELDS = ["is_adversarial", "attack_type", "confidence"]
@@ -191,9 +197,14 @@ _FAST_DECODED_PROMPT = (
     "payload_splitting, encoding_attack, social_engineering, context_switch, "
     "authorized_user, data_exfiltration, harmful_content, self_harm, "
     "sexual_content, privacy_violation, misinformation, bad_chain, none\n\n"
-    "IMPORTANT: Identify the PRIMARY attack, not just the encoding method.\n\n"
+    "IMPORTANT: Identify the PRIMARY attack, not just the encoding method."
+)
+
+_FAST_USER_PREFIX = (
+    "Classify this decoded message for adversarial content.\n\n"
     "Output ONLY: is_adversarial,attack_type,confidence\n"
-    "true,encoding_attack,0.92"
+    "true,encoding_attack,0.92\n\n"
+    "Message: "
 )
 
 
@@ -201,47 +212,8 @@ _FAST_DECODED_PROMPT = (
 # Token budget helpers
 # ---------------------------------------------------------------------------
 
-_CHARS_PER_TOKEN = 3.5
 _RESERVED_TOKENS = 770  # system prompt (~600) + output (128) + overhead (~42)
-_DEFAULT_SLOT_CONTEXT = 4096  # 32768 context / 8 slots
-
-
-def _estimate_tokens(text: str) -> int:
-    """Quick token count estimate without a tokenizer."""
-    return int(len(text) / _CHARS_PER_TOKEN)
-
-
-def _chunk_text(text: str, max_tokens: int) -> list[str]:
-    """Split text into overlapping chunks that fit within max_tokens."""
-    max_chars = int(max_tokens * _CHARS_PER_TOKEN)
-    overlap_chars = max(100, max_chars // 10)
-
-    if len(text) <= max_chars:
-        return [text]
-
-    chunks = []
-    pos = 0
-    while pos < len(text):
-        end = pos + max_chars
-        if end >= len(text):
-            chunks.append(text[pos:])
-            break
-
-        split_at = end
-        for sep in (". ", ".\n", "! ", "? ", "\n\n", "\n"):
-            last_sep = text.rfind(sep, pos + max_chars // 2, end)
-            if last_sep != -1:
-                split_at = last_sep + len(sep)
-                break
-        else:
-            last_space = text.rfind(" ", pos + max_chars // 2, end)
-            if last_space != -1:
-                split_at = last_space + 1
-
-        chunks.append(text[pos:split_at])
-        pos = max(split_at - overlap_chars, pos + 1)
-
-    return chunks
+_DEFAULT_SLOT_CONTEXT = 4096  # 8196 max-model-len / 2 (conservative)
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +233,7 @@ class AdversarialGuardrail(BaseGuardrail):
         response = await async_llm_call(
             messages=[
                 {"role": "system", "content": _FAST_DECODED_PROMPT},
-                {"role": "user", "content": f"Classify this message for adversarial prompt detection: {content}"},
+                {"role": "user", "content": f"{_FAST_USER_PREFIX}{content}"},
             ],
             max_tokens=20,
             temperature=0,
@@ -284,14 +256,12 @@ class AdversarialGuardrail(BaseGuardrail):
         # Budget for fast check: slot context - prompt (~250 tokens) - output (256)
         slot_context = self.settings.get("slot_context_tokens", _DEFAULT_SLOT_CONTEXT)
         fast_budget = slot_context - 500
-        decoded_tokens = _estimate_tokens(decoded)
+        decoded_tokens = estimate_tokens(decoded)
 
         if decoded_tokens <= fast_budget:
-            # Fits in one call
             result = await self._fast_decoded_check_single(decoded)
         else:
-            # Chunk and check in parallel
-            chunks = _chunk_text(decoded, fast_budget)
+            chunks = chunk_text(decoded, fast_budget)
             tasks = [self._fast_decoded_check_single(chunk) for chunk in chunks]
             results = await asyncio.gather(*tasks)
             # Use the first adversarial result found
@@ -331,7 +301,7 @@ class AdversarialGuardrail(BaseGuardrail):
         """Run the adversarial classifier on a single piece of content."""
         messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
         messages.extend(history_messages)
-        messages.append({"role": "user", "content": f"Classify this message for adversarial prompt detection: {content}"})
+        messages.append({"role": "user", "content": f"{_USER_PREFIX}{content}"})
 
         start = time.perf_counter()
         try:
@@ -399,30 +369,18 @@ class AdversarialGuardrail(BaseGuardrail):
             except Exception:
                 pass  # Fall through to full check
 
-        # Build conversation history
-        history_messages: list[dict] = []
-        conversation_history = (context or {}).get("conversation_history", [])
-        if conversation_history:
-            prior_turns = conversation_history[:-1][-6:]
-            for turn in prior_turns:
-                history_messages.append(
-                    {
-                        "role": turn.get("role", "user"),
-                        "content": turn.get("content", ""),
-                    }
-                )
+        # Build conversation history for multi-turn awareness
+        history_messages = build_history_messages(context, max_turns=6)
 
-        # Token budget management
+        # Token budget management (vLLM max-model-len = 8196)
         slot_context = self.settings.get("slot_context_tokens", _DEFAULT_SLOT_CONTEXT)
         available_tokens = slot_context - _RESERVED_TOKENS
 
-        history_tokens = sum(_estimate_tokens(m["content"]) for m in history_messages)
-        while history_messages and history_tokens > available_tokens // 3:
-            removed = history_messages.pop(0)
-            history_tokens -= _estimate_tokens(removed["content"])
-
+        history_messages, history_tokens = trim_history_to_budget(
+            history_messages, available_tokens
+        )
         content_budget = available_tokens - history_tokens
-        content_tokens = _estimate_tokens(processed_content)
+        content_tokens = estimate_tokens(processed_content)
 
         # Single call if content fits (most common path)
         if content_tokens <= content_budget:
@@ -433,7 +391,7 @@ class AdversarialGuardrail(BaseGuardrail):
             return result
 
         # Chunk and check in parallel for large inputs
-        chunks = _chunk_text(processed_content, content_budget)
+        chunks = chunk_text(processed_content, content_budget)
         tasks = [
             self._check_single(chunk, history_messages, confidence_threshold)
             for chunk in chunks
