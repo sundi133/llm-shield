@@ -261,7 +261,7 @@ class AdversarialGuardrail(BaseGuardrail):
         response = await async_llm_call(
             messages=[
                 {"role": "system", "content": _FAST_DECODED_PROMPT},
-                {"role": "user", "content": content},
+                {"role": "user", "content": f"Classify this message for adversarial prompt detection: {content}"},
             ],
             max_tokens=20,
             temperature=0,
@@ -331,7 +331,7 @@ class AdversarialGuardrail(BaseGuardrail):
         """Run the adversarial classifier on a single piece of content."""
         messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
         messages.extend(history_messages)
-        messages.append({"role": "user", "content": content})
+        messages.append({"role": "user", "content": f"Classify this message for adversarial prompt detection: {content}"})
 
         start = time.perf_counter()
         try:

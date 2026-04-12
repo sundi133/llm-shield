@@ -256,7 +256,7 @@ class HallucinatedLinksGuardrail(BaseGuardrail):
 
             messages = [
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
+                {"role": "user", "content": f"Check this response for hallucinated links: {user_msg}"},
             ]
 
             try:

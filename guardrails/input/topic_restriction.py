@@ -80,7 +80,7 @@ class TopicRestrictionGuardrail(BaseGuardrail):
                     }
                 )
 
-        messages.append({"role": "user", "content": content})
+        messages.append({"role": "user", "content": f"Classify this message for topic relevance: {content}"})
 
         try:
             response = await async_llm_call(

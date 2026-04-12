@@ -51,7 +51,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
             response = await async_llm_call(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": content},
+                    {"role": "user", "content": f"Detect personally identifiable information in this message: {content}"},
                 ],
                 max_tokens=60,
                 temperature=0,

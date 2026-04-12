@@ -51,7 +51,7 @@ class BiasDetectionGuardrail(BaseGuardrail):
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": content},
+            {"role": "user", "content": f"Analyze this response for bias: {content}"},
         ]
 
         try:

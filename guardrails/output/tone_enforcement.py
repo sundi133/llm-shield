@@ -58,7 +58,7 @@ class ToneEnforcementGuardrail(BaseGuardrail):
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": content},
+            {"role": "user", "content": f"Evaluate this response for tone compliance: {content}"},
         ]
 
         try:

@@ -49,7 +49,7 @@ class FactualGroundingGuardrail(BaseGuardrail):
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": content},
+            {"role": "user", "content": f"Verify factual grounding in this response: {content}"},
         ]
 
         try:
