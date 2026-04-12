@@ -40,6 +40,7 @@ ENV VOTAL_ES_INDEX=votal-shield-logs
 ENV MODEL_NAME=votal-ai/vai35-4B
 ENV VLLM_HOST=0.0.0.0
 ENV VLLM_PORT=8000
+ENV LLM_BACKEND_TYPE=vllm
 
 # Expose ports for both vLLM server and main application
 EXPOSE 8000 80

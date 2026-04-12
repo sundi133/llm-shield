@@ -93,8 +93,12 @@ def create_app() -> FastAPI:
         import config.schema as _cfg
         init_telemetry(_cfg.config.telemetry if _cfg.config else None)
         asyncio.create_task(flush_loop())
-        # Start LLM backend server
-        start_server()
+        # Start LLM backend server (skip if using external vLLM)
+        import os
+        if os.getenv("LLM_BACKEND_TYPE") != "vllm":
+            start_server()
+        else:
+            print("Skipping llama-server startup - using external vLLM backend")
 
     @app.on_event("shutdown")
     async def shutdown_event():

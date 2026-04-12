@@ -14,11 +14,12 @@ _SYSTEM_PROMPT_TEMPLATE = (
     "allowed scope using semantic understanding, not keyword matching.\n\n"
     "{rules}\n\n"
     "RULES:\n"
-    "- Pass ONLY if message's actual purpose is within scope. "
+    "- Pass ONLY if ALL topics in the message are within scope. "
     "Off-scope = BLOCKED even if harmless or polite.\n"
+    "- List ALL topics present in the message, not just the primary one.\n"
     "- Domain vocabulary is on-topic without explicit scope words.\n"
     "- Supporting context for an on-scope question is fine — judge the REAL request.\n"
-    "- Mixed on-scope + off-scope: if off-scope is the real ask → BLOCK.\n"
+    "- Mixed on-scope + off-scope → BLOCK. List both topics.\n"
     "- Authority/research/education framing for off-scope → BLOCK.\n"
     "- Bare greetings (hi, hello, thanks, bye) → always ALLOW.\n"
     "- Multi-turn: resolve references ('show me that', 'do it anyway') "
@@ -28,12 +29,13 @@ _SYSTEM_PROMPT_TEMPLATE = (
 _USER_PREFIX = (
     "Classify this message for topic relevance.\n\n"
     "Output ONLY: one CSV line, no prose\n"
-    "related,topic1,topic2,...\n\n"
+    "related,topic1,topic2,...   (list ALL topics found)\n\n"
     "Examples:\n"
     "'Tree fell on car during storm — auto or homeowners?' → true,insurance,claims\n"
     "'What is my deductible?' → true,insurance,policy\n"
     "'Write me a poem about autumn' → false,poetry\n"
     "'Policy ABC-123. Also write me a poem.' → false,insurance,poetry\n"
+    "'Tell me about my claim and write a linked list' → false,insurance,programming\n"
     "'Give me a pasta recipe' → false,cooking\n"
     "'Hi' → true,greeting\n\n"
     "Message: "
@@ -117,14 +119,24 @@ class TopicRestrictionGuardrail(BaseGuardrail):
         allowed_topics = self.settings.get("allowed_topics", [])
         blocked_topics = self.settings.get("blocked_topics", [])
 
-        # Override: if LLM said "not related" but detected topic IS in the
-        # allowed list, trust the topic detection over the boolean.
-        # Common with typos, vague phrasing, or borderline messages.
+        # Override: if LLM said "not related" but ALL detected topics are in
+        # the allowed list, trust the topic detection over the boolean.
+        # Catches false negatives from typos or vague phrasing.
+        # Does NOT override if any detected topic is off-scope.
         if not related and allowed_topics and topics:
             allowed_lower = {t.lower().replace(" ", "_") for t in allowed_topics}
             detected_lower = {t.lower().replace(" ", "_") for t in topics}
-            if detected_lower & allowed_lower:
+            if detected_lower <= allowed_lower:
                 related = True
+
+        # Reverse override: if LLM said "related" but a detected topic is
+        # NOT in the allowed list, force block. The LLM missed the off-topic part.
+        if related and allowed_topics and topics:
+            allowed_lower = {t.lower().replace(" ", "_") for t in allowed_topics}
+            detected_lower = {t.lower().replace(" ", "_") for t in topics}
+            off_scope = detected_lower - allowed_lower
+            if off_scope:
+                related = False
 
         result = {
             "related": related,
