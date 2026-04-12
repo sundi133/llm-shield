@@ -6,7 +6,6 @@ from core.models import GuardrailResult
 from core.llm_backend import async_llm_call
 
 _SYSTEM_PROMPT_TEMPLATE = (
-    "/no_think\n"
     "STRICT ALLOWLIST topic classifier. Decide if user message is within "
     "allowed scope using semantic understanding, not keyword matching.\n\n"
     "{rules}\n\n"
