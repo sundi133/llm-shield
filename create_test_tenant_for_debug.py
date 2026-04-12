@@ -32,13 +32,29 @@ def create_debug_tenant():
                 "settings": {
                     "strict_mode": True,
                     "per_agent": {
-                        "healthcare-doctor-trainee": ["patient_lookup", "prescription_check", "lab_results"],
+                        "healthcare-doctor-senior": [
+                            "patient_lookup",
+                            "prescribe_medication",
+                            "diagnosis_update",
+                            "surgery_scheduling",
+                            "delete_patient_record"
+                        ],
+                        "healthcare-doctor-trainee": ["patient_lookup"],
+                        "healthcare-nurse-head": [
+                            "patient_lookup",
+                            "update_vitals",
+                            "prescribe_medication"
+                        ],
                         "healthcare-ai-assistant": ["*"]
                     },
                     "per_role": {
-                        "doctor": ["patient_lookup", "prescription_check", "lab_results", "diagnosis_aid"],
-                        "admin": ["*"],
-                        "nurse": ["patient_lookup", "lab_results"]
+                        "doctor": [
+                            "patient_lookup",
+                            "prescribe_medication",
+                            "diagnosis_update"
+                        ],
+                        "nurse": ["patient_lookup", "update_vitals"],
+                        "admin": ["*"]
                     }
                 }
             }
