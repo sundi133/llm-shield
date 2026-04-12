@@ -5,3 +5,4 @@ pydantic-settings
 pyyaml
 redis
 upstash-redis
+httpx

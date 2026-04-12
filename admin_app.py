@@ -25,9 +25,10 @@ Or with Docker:
 
 import os
 
+import httpx
 import uvicorn
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.routes_tenant import router as tenant_router, global_router as tenant_audit_router
@@ -139,6 +140,38 @@ def create_admin_app() -> FastAPI:
     @app.get("/tenant")
     async def tenant_portal():
         return FileResponse(os.path.join(static_dir, "tenant.html"))
+
+    @app.api_route("/playground/proxy/{path:path}", methods=["POST"])
+    async def playground_proxy(path: str, request: Request):
+        """Proxy playground requests to a remote Shield endpoint (avoids CORS)."""
+        target_url = request.headers.get("X-Playground-Target", "").rstrip("/")
+        if not target_url:
+            return JSONResponse({"error": "Missing X-Playground-Target header"}, status_code=400)
+
+        forward_headers = {"Content-Type": "application/json"}
+        if auth := request.headers.get("Authorization"):
+            forward_headers["Authorization"] = auth
+        if api_key := request.headers.get("X-API-Key"):
+            forward_headers["X-API-Key"] = api_key
+
+        body = await request.body()
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                resp = await client.post(
+                    f"{target_url}/{path}",
+                    content=body,
+                    headers=forward_headers,
+                )
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"raw_response": resp.text, "status": resp.status_code}
+                return JSONResponse(data, status_code=resp.status_code)
+            except httpx.TimeoutException:
+                return JSONResponse({"error": "Upstream request timed out"}, status_code=504)
+            except httpx.ConnectError as e:
+                return JSONResponse({"error": f"Cannot reach endpoint: {e}"}, status_code=502)
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 

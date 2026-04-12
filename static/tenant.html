@@ -4792,36 +4792,44 @@ async function runPlaygroundTest() {
   btnText.textContent = 'Testing…';
   spinner.classList.remove('hidden');
 
-  const path = PG_DIRECTION === 'input' ? '/guardrails/input' : '/guardrails/output';
-  const url = endpoint + path;
+  const guardrailPath = PG_DIRECTION === 'input' ? 'guardrails/input' : 'guardrails/output';
+  const directUrl = endpoint + '/' + guardrailPath;
 
   const bodyKey = PG_DIRECTION === 'input' ? 'message' : 'output';
   const body = { [bodyKey]: message };
   if (agentId) body.agent_id = agentId;
   if (userRole) body.user_role = userRole;
 
-  const headers = {
-    'Content-Type': 'application/json',
-    'X-API-Key': apiKey,
-  };
-  if (PG_MODE === 'runpod' && runpodToken) {
-    headers['Authorization'] = 'Bearer ' + runpodToken;
-  }
-
-  // Build cURL for copy
-  let curlParts = [`curl -X POST '${url}'`];
-  Object.entries(headers).forEach(([k, v]) => {
+  // Build direct cURL for copy (always useful)
+  const directHeaders = { 'Content-Type': 'application/json', 'X-API-Key': apiKey };
+  if (PG_MODE === 'runpod' && runpodToken) directHeaders['Authorization'] = 'Bearer ' + runpodToken;
+  let curlParts = [`curl -X POST '${directUrl}'`];
+  Object.entries(directHeaders).forEach(([k, v]) => {
     curlParts.push(`  -H '${k}: ${v}'`);
   });
   curlParts.push(`  -d '${JSON.stringify(body)}'`);
   PG_LAST_CURL = curlParts.join(' \\\n');
 
+  // Use local proxy to avoid CORS when hitting remote endpoints
+  const isRemote = !endpoint.includes('localhost') && !endpoint.includes('127.0.0.1');
+  const fetchUrl = isRemote
+    ? `${BASE_URL}/playground/proxy/${guardrailPath}`
+    : directUrl;
+
+  const fetchHeaders = { 'Content-Type': 'application/json', 'X-API-Key': apiKey };
+  if (isRemote) {
+    fetchHeaders['X-Playground-Target'] = endpoint;
+    if (PG_MODE === 'runpod' && runpodToken) fetchHeaders['Authorization'] = 'Bearer ' + runpodToken;
+  } else {
+    if (PG_MODE === 'runpod' && runpodToken) fetchHeaders['Authorization'] = 'Bearer ' + runpodToken;
+  }
+
   const startTime = performance.now();
 
   try {
-    const resp = await fetch(url, {
+    const resp = await fetch(fetchUrl, {
       method: 'POST',
-      headers,
+      headers: fetchHeaders,
       body: JSON.stringify(body),
     });
 
