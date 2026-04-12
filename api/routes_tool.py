@@ -10,6 +10,7 @@ from guardrails.agentic.tool.tool_call_rate_limiting import ToolCallRateLimiting
 from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuardrail
 from guardrails.agentic.tool.tool_output_sanitization import ToolOutputSanitizationGuardrail
 from guardrails.agentic.tool.sensitive_action_confirmation import SensitiveActionConfirmationGuardrail
+from guardrails.base import _request_configs
 
 router = APIRouter(prefix="/v1/shield/tool", tags=["tool"])
 
@@ -53,7 +54,11 @@ def _format(result):
 
 
 @router.post("/check")
-async def check_tool(body: ToolCheckRequest):
+async def check_tool(body: ToolCheckRequest, request: Request):
+    # Extract tenant and user context from headers for policy enforcement
+    tenant_id = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
+    user_role = request.headers.get("X-User-Role") or request.headers.get("x-user-role", "user")
+
     context = {
         "agent_key": body.agent_key,
         "tool_name": body.tool_name,
@@ -62,27 +67,53 @@ async def check_tool(body: ToolCheckRequest):
         "tool_schema": body.tool_schema,
         "workflow": body.workflow,
         "confirmation_token": body.confirmation_token,
+        "tenant_id": tenant_id,
+        "user_role": user_role,
+        "X-Tenant-ID": tenant_id,  # Alternative format for backward compatibility
+        "X-User-Role": user_role,
     }
-    results = []
-    for name, cls in _CHECK_GUARDS:
-        if body.guardrails and name not in body.guardrails:
-            continue
-        guard = cls()
-        if not guard.enabled:
-            continue
-        r = await guard.check("", context)
-        results.append(_format(r))
-        if not r.passed and r.action == "block":
-            break  # early exit
 
-    allowed = all(r["passed"] or r["action"] not in ("block", "pending_confirmation") for r in results)
-    action = "pass"
-    for r in results:
-        if not r["passed"]:
-            action = r["action"]
-            break
+    # Check for tenant-specific guardrail config (server-side, platform-enforced)
+    tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
 
-    return {"allowed": allowed, "action": action, "guardrail_results": results}
+    # Set up per-request configs with tenant policy if available
+    configs = {}
+    if tenant_config and "input_guardrails" in tenant_config and "tool_allowlist" in tenant_config["input_guardrails"]:
+        # Use tenant-specific tool allowlist configuration
+        tool_allowlist_config = tenant_config["input_guardrails"]["tool_allowlist"]
+        configs["tool_allowlist"] = {
+            "enabled": tool_allowlist_config.get("enabled", True),
+            "action": tool_allowlist_config.get("action", "block"),
+            "settings": tool_allowlist_config.get("settings", {}),
+        }
+
+    # Set contextvar for tenant-specific policy
+    token = _request_configs.set(configs) if configs else None
+    try:
+        results = []
+        for name, cls in _CHECK_GUARDS:
+            if body.guardrails and name not in body.guardrails:
+                continue
+            guard = cls()
+            if not guard.enabled:
+                continue
+            r = await guard.check("", context)
+            results.append(_format(r))
+            if not r.passed and r.action == "block":
+                break  # early exit
+
+        allowed = all(r["passed"] or r["action"] not in ("block", "pending_confirmation") for r in results)
+        action = "pass"
+        for r in results:
+            if not r["passed"]:
+                action = r["action"]
+                break
+
+        return {"allowed": allowed, "action": action, "guardrail_results": results}
+    finally:
+        # Reset the contextvar
+        if token is not None:
+            _request_configs.reset(token)
 
 
 @router.post("/output")
