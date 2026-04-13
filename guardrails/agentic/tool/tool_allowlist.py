@@ -21,29 +21,64 @@ class ToolAllowlistGuardrail(BaseGuardrail):
             return GuardrailResult(passed=True, action="pass", guardrail_name=self.name,
                                    message="Missing agent_key or tool_name, skipping")
 
-        # Check per-agent allowlist first
+        # INTERSECTION MODEL: Both agent AND role must allow (if role provided)
         per_agent = self.settings.get("per_agent", {})
+        per_role = self.settings.get("per_role", {})
+        user_role = ctx.get("user_role") or ctx.get("X-User-Role")
+
+        agent_allowed = False
+        role_allowed = False
+        agent_message = ""
+        role_message = ""
+
+        # Check per-agent allowlist
         if agent_key in per_agent:
             allowed = per_agent[agent_key]
             if self._matches(tool_name, allowed):
-                return GuardrailResult(passed=True, action="pass", guardrail_name=self.name,
-                                       message=f"Tool '{tool_name}' allowed for agent '{agent_key}'")
-            return GuardrailResult(passed=False, action=self.configured_action, guardrail_name=self.name,
-                                   message=f"Tool '{tool_name}' not in allowlist for agent '{agent_key}'")
+                agent_allowed = True
+                agent_message = f"Agent '{agent_key}' permits '{tool_name}'"
+            else:
+                agent_message = f"Agent '{agent_key}' blocks '{tool_name}'"
+        else:
+            agent_message = f"Agent '{agent_key}' not configured"
 
         # Check per-role allowlist (only if role explicitly provided)
-        user_role = ctx.get("user_role") or ctx.get("X-User-Role")
         if user_role:
-            # Role explicitly provided - apply role-based restrictions
-            per_role = self.settings.get("per_role", {})
             if user_role in per_role:
                 allowed = per_role[user_role]
                 if self._matches(tool_name, allowed):
-                    return GuardrailResult(passed=True, action="pass", guardrail_name=self.name,
-                                           message=f"Tool '{tool_name}' allowed for role '{user_role}'")
+                    role_allowed = True
+                    role_message = f"Role '{user_role}' permits '{tool_name}'"
+                else:
+                    role_message = f"Role '{user_role}' blocks '{tool_name}'"
+            else:
+                role_message = f"Role '{user_role}' not configured"
+        else:
+            # No role provided - skip role-based checks entirely
+            role_allowed = True
+            role_message = "No role provided, skipping role check"
+
+        # INTERSECTION LOGIC: Both must allow
+        if agent_allowed and role_allowed:
+            if user_role:
+                return GuardrailResult(passed=True, action="pass", guardrail_name=self.name,
+                                       message=f"Tool '{tool_name}' allowed: {agent_message} AND {role_message}")
+            else:
+                return GuardrailResult(passed=True, action="pass", guardrail_name=self.name,
+                                       message=f"Tool '{tool_name}' allowed for agent '{agent_key}' (no role check)")
+        else:
+            # Block if either agent or role blocks
+            if not agent_allowed and not role_allowed:
                 return GuardrailResult(passed=False, action=self.configured_action, guardrail_name=self.name,
-                                       message=f"Tool '{tool_name}' not in allowlist for role '{user_role}'")
-        # No role provided - skip role-based checks entirely
+                                       message=f"Tool '{tool_name}' blocked: {agent_message} AND {role_message}")
+            elif not agent_allowed:
+                return GuardrailResult(passed=False, action=self.configured_action, guardrail_name=self.name,
+                                       message=f"Tool '{tool_name}' blocked: {agent_message}")
+            else:  # not role_allowed
+                return GuardrailResult(passed=False, action=self.configured_action, guardrail_name=self.name,
+                                       message=f"Tool '{tool_name}' blocked: {role_message}")
+
+        # Fallback - if we get here, neither agent nor role had explicit config
 
         # No allowlist configured — strict mode denies, otherwise allows
         if self.settings.get("strict_mode", True):
