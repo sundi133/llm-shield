@@ -126,18 +126,10 @@ input, select, textarea, button { font-family: inherit; }
   <!-- Sidebar -->
   <div class="sidebar">
     <div>
-      <h3>Connection</h3>
+      <h3>Tenant</h3>
       <div class="field">
         <label>Tenant API Key</label>
         <input type="password" id="api-key" placeholder="tenant-…-key-…">
-      </div>
-      <div class="field">
-        <label>Shield Endpoint</label>
-        <input type="text" id="shield-url" placeholder="https://your-shield.up.railway.app">
-      </div>
-      <div class="field">
-        <label>RunPod Token (if RunPod)</label>
-        <input type="password" id="runpod-token" placeholder="Optional">
       </div>
       <button class="btn btn-primary" onclick="loadPolicy()" id="load-btn">Load Policy</button>
       <div class="policy-status policy-none" id="policy-status" style="margin-top:0.5rem;">No policy loaded</div>
@@ -241,10 +233,8 @@ input, select, textarea, button { font-family: inherit; }
 
 <script>
 let POLICY = null;
-const ALL_TOOLS = [
-  'patient_lookup', 'update_vitals', 'prescribe_medication',
-  'diagnosis_update', 'surgery_scheduling', 'delete_patient_record'
-];
+let REGISTRY = {};
+let ALL_TOOLS = [];
 
 /* --- Helpers --- */
 function $(id) { return document.getElementById(id); }
@@ -253,27 +243,11 @@ function esc(t) { const d = document.createElement('div'); d.textContent = t; re
 function getConfig() {
   return {
     apiKey: $('api-key').value.trim(),
-    shieldUrl: $('shield-url').value.trim().replace(/\/$/, ''),
-    runpodToken: $('runpod-token').value.trim(),
     agentKey: $('agent-key').value,
     userRole: $('user-role').value,
     llmApiKey: $('llm-api-key').value.trim(),
     llmModel: $('llm-model').value,
   };
-}
-
-function proxyUrl(path) {
-  return '/playground/proxy/' + path.replace(/^\//, '');
-}
-
-function buildHeaders(cfg) {
-  const h = { 'Content-Type': 'application/json' };
-  if (cfg.apiKey) h['X-API-Key'] = cfg.apiKey;
-  if (cfg.runpodToken) h['Authorization'] = 'Bearer ' + cfg.runpodToken;
-  if (cfg.shieldUrl) h['X-Playground-Target'] = cfg.shieldUrl;
-  if (cfg.agentKey) h['X-Agent-Key'] = cfg.agentKey;
-  if (cfg.userRole) h['X-User-Role'] = cfg.userRole;
-  return h;
 }
 
 /* --- Auto-resize textarea --- */
@@ -338,6 +312,11 @@ function addToolCards(toolCalls) {
       </div>
       <div class="tool-card-args">${esc(argsStr)}</div>
       <div class="tool-card-reason">${esc(rbacMsg)}</div>
+      ${tc.data_policy && (tc.data_policy.input || tc.data_policy.output) ? `<div style="margin-top:4px;font-size:0.7rem;color:var(--text-muted);display:flex;gap:8px;">
+        <span>Data policy:</span>
+        ${tc.data_policy.input ? `<span style="padding:1px 6px;border-radius:3px;font-weight:600;background:${tc.data_policy.input==='allow'?'#23863618':tc.data_policy.input==='block'?'#da363318':'#d2992218'};color:${tc.data_policy.input==='allow'?'#3fb950':tc.data_policy.input==='block'?'#f85149':'#d29922'};">in: ${tc.data_policy.input}</span>` : ''}
+        ${tc.data_policy.output ? `<span style="padding:1px 6px;border-radius:3px;font-weight:600;background:${tc.data_policy.output==='allow'?'#23863618':tc.data_policy.output==='block'?'#da363318':'#d2992218'};color:${tc.data_policy.output==='allow'?'#3fb950':tc.data_policy.output==='block'?'#f85149':'#d29922'};">out: ${tc.data_policy.output}</span>` : ''}
+      </div>` : ''}
     `;
     container.appendChild(card);
   }
@@ -358,21 +337,36 @@ function hideTyping() {
   if (el) el.remove();
 }
 
-/* --- Policy loading --- */
+/* --- Policy + Registry loading --- */
 async function loadPolicy() {
   const cfg = getConfig();
   if (!cfg.apiKey) return alert('Enter a Tenant API Key first');
-  if (!cfg.shieldUrl) return alert('Enter the Shield endpoint URL');
 
   $('load-btn').disabled = true;
   $('load-btn').textContent = 'Loading…';
 
+  const tenantHeaders = {
+    'Content-Type': 'application/json',
+    'X-API-Key': cfg.apiKey,
+  };
+
   try {
-    const resp = await fetch(proxyUrl('v1/tenant/me/policies'), {
-      headers: buildHeaders(cfg),
-    });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    POLICY = await resp.json();
+    // Load policy and agent registry in parallel — direct local calls
+    const [policyResp, registryResp] = await Promise.all([
+      fetch('/v1/tenant/me/policies', { headers: tenantHeaders }),
+      fetch('/v1/agents/registry', { headers: tenantHeaders }).catch(() => null),
+    ]);
+
+    if (!policyResp.ok) throw new Error('Policy HTTP ' + policyResp.status);
+    POLICY = await policyResp.json();
+
+    if (registryResp && registryResp.ok) {
+      const regData = await registryResp.json();
+      REGISTRY = regData.agents || {};
+    } else {
+      REGISTRY = {};
+    }
+
     renderPolicyLoaded();
   } catch (e) {
     $('policy-status').className = 'policy-status policy-none';
@@ -385,29 +379,61 @@ async function loadPolicy() {
 
 function renderPolicyLoaded() {
   const ta = POLICY.input_guardrails?.tool_allowlist?.settings || {};
-  const perAgent = ta.per_agent || {};
+  const policyAgents = ta.per_agent || {};
   const perRole = ta.per_role || {};
+
+  // Merge agent keys from both policy and registry
+  const allAgentKeys = new Set([
+    ...Object.keys(policyAgents),
+    ...Object.keys(REGISTRY),
+  ]);
+
+  // Collect all known tool names from policy + registry
+  const toolSet = new Set();
+  for (const names of Object.values(policyAgents)) {
+    for (const n of names) { if (n !== '*') toolSet.add(n); }
+  }
+  for (const agent of Object.values(REGISTRY)) {
+    for (const t of (agent.tools || [])) { if (t !== '*') toolSet.add(t); }
+    for (const perms of Object.values(agent.role_permissions || {})) {
+      for (const t of perms) { if (t !== '*') toolSet.add(t); }
+    }
+  }
+  ALL_TOOLS = [...toolSet].sort();
+
+  // Collect all known roles from policy + registry
+  const roleSet = new Set(Object.keys(perRole));
+  for (const agent of Object.values(REGISTRY)) {
+    for (const r of Object.keys(agent.role_permissions || {})) {
+      roleSet.add(r);
+    }
+  }
 
   // Populate agent dropdown
   const agentSel = $('agent-key');
   agentSel.innerHTML = '';
-  for (const key of Object.keys(perAgent)) {
-    agentSel.innerHTML += `<option value="${esc(key)}">${esc(key)}</option>`;
+  for (const key of [...allAgentKeys].sort()) {
+    const src = REGISTRY[key] ? '(registry)' : '(policy)';
+    const label = REGISTRY[key]?.name ? `${key} — ${REGISTRY[key].name}` : key;
+    agentSel.innerHTML += `<option value="${esc(key)}">${esc(label)}</option>`;
   }
   agentSel.disabled = false;
 
   // Populate role dropdown
   const roleSel = $('user-role');
   roleSel.innerHTML = '';
-  for (const key of Object.keys(perRole)) {
+  for (const key of [...roleSet].sort()) {
     roleSel.innerHTML += `<option value="${esc(key)}">${esc(key)}</option>`;
   }
   roleSel.disabled = false;
 
-  const agents = Object.keys(perAgent).length;
-  const roles = Object.keys(perRole).length;
+  const agentCount = allAgentKeys.size;
+  const roleCount = roleSet.size;
+  const regCount = Object.keys(REGISTRY).length;
+  let statusText = `✓ Loaded — ${agentCount} agents, ${roleCount} roles`;
+  if (regCount > 0) statusText += ` (${regCount} from registry)`;
   $('policy-status').className = 'policy-status policy-ok';
-  $('policy-status').textContent = `✓ Loaded — ${agents} agents, ${roles} roles`;
+  $('policy-status').textContent = statusText;
   $('send-btn').disabled = !msgInput.value.trim();
 
   updateToolList();
@@ -416,37 +442,59 @@ function renderPolicyLoaded() {
 function updateToolList() {
   if (!POLICY) return;
   const ta = POLICY.input_guardrails?.tool_allowlist?.settings || {};
-  const perAgent = ta.per_agent || {};
-  const perRole = ta.per_role || {};
+  const policyPerAgent = ta.per_agent || {};
+  const policyPerRole = ta.per_role || {};
   const agent = $('agent-key').value;
   const role = $('user-role').value;
 
-  const agentTools = perAgent[agent] || [];
-  const roleTools = perRole[role] || [];
-
   const matchesTool = (name, list) => list.some(p => p === '*' || p === name);
-
   const listEl = $('tool-list');
   listEl.innerHTML = '';
 
-  for (const tool of ALL_TOOLS) {
-    const agentOk = matchesTool(tool, agentTools);
-    const roleOk = matchesTool(tool, roleTools);
-    const allowed = agentOk && roleOk;
+  // Determine which source to use for this agent
+  const regEntry = REGISTRY[agent];
 
-    let status, title;
-    if (allowed) {
-      status = 'allowed';
-      title = 'Allowed by both agent and role';
-    } else if (agentOk && !roleOk) {
-      status = 'blocked';
-      title = `Agent allows, but role '${role}' blocks`;
-    } else if (!agentOk && roleOk) {
-      status = 'blocked';
-      title = `Role allows, but agent '${agent}' blocks`;
+  for (const tool of ALL_TOOLS) {
+    let agentOk, roleOk, status, title;
+
+    if (regEntry) {
+      // Use registry: agent.tools + agent.role_permissions[role]
+      agentOk = matchesTool(tool, regEntry.tools || []);
+      const rolePerms = (regEntry.role_permissions || {})[role];
+      roleOk = rolePerms ? matchesTool(tool, rolePerms) : false;
+
+      if (agentOk && roleOk) {
+        status = 'allowed';
+        title = `Registry: agent and role '${role}' both permit`;
+      } else if (agentOk && !roleOk) {
+        status = 'blocked';
+        title = rolePerms ? `Registry: role '${role}' blocks` : `Registry: role '${role}' not configured`;
+      } else if (!agentOk && roleOk) {
+        status = 'blocked';
+        title = `Registry: agent '${agent}' does not have this tool`;
+      } else {
+        status = 'blocked';
+        title = 'Registry: blocked by both agent and role';
+      }
     } else {
-      status = 'blocked';
-      title = 'Blocked by both agent and role';
+      // Fall back to policy per_agent + per_role
+      agentOk = matchesTool(tool, policyPerAgent[agent] || []);
+      roleOk = matchesTool(tool, policyPerRole[role] || []);
+      const allowed = agentOk && roleOk;
+
+      if (allowed) {
+        status = 'allowed';
+        title = 'Policy: allowed by both agent and role';
+      } else if (agentOk && !roleOk) {
+        status = 'blocked';
+        title = `Policy: agent allows, but role '${role}' blocks`;
+      } else if (!agentOk && roleOk) {
+        status = 'blocked';
+        title = `Policy: role allows, but agent '${agent}' blocks`;
+      } else {
+        status = 'blocked';
+        title = 'Policy: blocked by both agent and role';
+      }
     }
 
     const chip = document.createElement('div');
@@ -456,7 +504,8 @@ function updateToolList() {
     listEl.appendChild(chip);
   }
 
-  $('header-status').textContent = agent + ' / ' + role;
+  const src = regEntry ? ' [registry]' : ' [policy]';
+  $('header-status').textContent = agent + ' / ' + role + src;
 }
 
 /* --- Send message --- */
@@ -464,7 +513,7 @@ async function sendMessage() {
   const text = msgInput.value.trim();
   if (!text) return;
   const cfg = getConfig();
-  if (!cfg.apiKey || !cfg.shieldUrl) return alert('Configure connection first');
+  if (!cfg.apiKey) return alert('Enter a Tenant API Key first');
   if (!cfg.agentKey) return alert('Select an agent key');
 
   // Add user message to UI
@@ -556,13 +605,13 @@ async function sendMessage() {
 
 /* --- Persist config in sessionStorage --- */
 function saveConfig() {
-  const keys = ['api-key', 'shield-url', 'runpod-token', 'llm-api-key', 'llm-model'];
+  const keys = ['api-key', 'llm-api-key', 'llm-model'];
   for (const k of keys) {
     sessionStorage.setItem('pg_' + k, $(k).value);
   }
 }
 function restoreConfig() {
-  const keys = ['api-key', 'shield-url', 'runpod-token', 'llm-api-key', 'llm-model'];
+  const keys = ['api-key', 'llm-api-key', 'llm-model'];
   for (const k of keys) {
     const v = sessionStorage.getItem('pg_' + k);
     if (v) $(k).value = v;
@@ -570,7 +619,7 @@ function restoreConfig() {
 }
 
 // Save on change
-['api-key', 'shield-url', 'runpod-token', 'llm-api-key', 'llm-model'].forEach(id => {
+['api-key', 'llm-api-key', 'llm-model'].forEach(id => {
   $(id).addEventListener('change', saveConfig);
   $(id).addEventListener('input', saveConfig);
 });

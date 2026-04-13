@@ -62,13 +62,69 @@ except Exception:
     pass
 
 
-def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None) -> list[dict]:
+def _load_agent_registry(tenant_id: str | None) -> dict:
+    """Load the agent registry from Redis for this tenant."""
+    if not tenant_id:
+        return {}
+    try:
+        from storage.tenant_store import _get_redis
+        r = _get_redis()
+        if r:
+            raw = r.get(f"agents:{tenant_id}")
+            if raw:
+                return json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        pass
+    return {}
+
+
+def _load_tool_policies(tenant_id: str | None) -> dict:
+    """Load per-tool data policies from Redis (policies:{tenant_id})."""
+    if not tenant_id:
+        return {}
+    try:
+        from storage.tenant_store import _get_redis
+        r = _get_redis()
+        if r:
+            raw = r.get(f"policies:{tenant_id}")
+            if raw:
+                data = json.loads(raw) if isinstance(raw, str) else raw
+                if isinstance(data, dict):
+                    return data
+    except Exception:
+        pass
+    return {}
+
+
+def _get_data_policy(tool_policies: dict, tool_name: str, user_role: str | None) -> dict:
+    """Get the input/output data policy for a specific tool+role."""
+    tp = tool_policies.get(tool_name) or {}
+    role_restrictions = tp.get("role_restrictions") or {}
+
+    if not user_role or user_role not in role_restrictions:
+        return {"input": None, "output": None, "sanitization": tp.get("data_sanitization")}
+
+    rp = role_restrictions[user_role]
+    if isinstance(rp, str):
+        return {"input": rp, "output": rp, "sanitization": tp.get("data_sanitization")}
+
+    return {
+        "input": rp.get("input"),
+        "output": rp.get("output"),
+        "sanitization": tp.get("data_sanitization"),
+    }
+
+
+def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
+                       agent_key: str | None = None,
+                       registry: dict | None = None) -> list[dict]:
     """Load tool definitions dynamically from Redis for this tenant.
 
     Priority:
       1. Explicit tool_definitions stored in Redis (PUT /v1/tenant/me/tools)
-      2. Auto-generate stub tools from the per_agent allowlist in the policy
-      3. Empty list — LLM will respond without tool calls
+      2. Agent registry — use the selected agent's tool list
+      3. Auto-generate stub tools from policy per_agent allowlist
+      4. Empty list — LLM will respond without tool calls
     """
     # 1. Try tool_definitions:{tenant_id} in Redis
     if tenant_id:
@@ -85,31 +141,82 @@ def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None) -> lis
         except Exception:
             pass
 
-    # 2. Build stub tools from per_agent tool names in policy
+    # Collect all known tool names from registry + policy
+    tool_names: set[str] = set()
+
+    # 2. Agent registry tools
+    if registry:
+        if agent_key and agent_key in registry:
+            for t in registry[agent_key].get("tools") or []:
+                if t != "*":
+                    tool_names.add(t)
+        else:
+            for agent_data in registry.values():
+                for t in agent_data.get("tools") or []:
+                    if t != "*":
+                        tool_names.add(t)
+
+    # 3. Policy per_agent tools
     if tenant_config:
         ta = (tenant_config.get("input_guardrails") or {}).get("tool_allowlist") or {}
         per_agent = (ta.get("settings") or {}).get("per_agent") or {}
-        tool_names: set[str] = set()
         for names in per_agent.values():
             for n in names:
                 if n != "*":
                     tool_names.add(n)
-        if tool_names:
-            return [
-                {"type": "function", "function": {
-                    "name": name,
-                    "description": f"Execute {name.replace('_', ' ')} action",
-                    "parameters": {"type": "object", "properties": {}, "required": []},
-                }}
-                for name in sorted(tool_names)
-            ]
+
+    if tool_names:
+        return [
+            {"type": "function", "function": {
+                "name": name,
+                "description": f"Execute {name.replace('_', ' ')} action",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            }}
+            for name in sorted(tool_names)
+        ]
 
     return []
 
 
 def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
-                tenant_config: dict | None) -> dict:
-    """Check tool permission against tenant RBAC policy (no guardrail imports)."""
+                tenant_config: dict | None,
+                registry: dict | None = None) -> dict:
+    """Check tool permission using agent registry first, then tenant policy.
+
+    Priority:
+      1. Agent registry role_permissions — most specific (per-agent per-role)
+      2. Tenant policy per_agent + per_role — broader intersection model
+    """
+    def _matches(name: str, patterns: list) -> bool:
+        return any(fnmatch.fnmatch(name, p) for p in patterns)
+
+    # --- 1. Check agent registry ---
+    agent_entry = (registry or {}).get(agent_key)
+    if agent_entry:
+        agent_tools = agent_entry.get("tools") or []
+        role_perms = agent_entry.get("role_permissions") or {}
+
+        agent_ok = _matches(tool_name, agent_tools)
+        agent_msg = (f"Registry agent '{agent_key}' permits '{tool_name}'" if agent_ok
+                     else f"Registry agent '{agent_key}' does not allow '{tool_name}'")
+
+        if user_role and user_role in role_perms:
+            role_ok = _matches(tool_name, role_perms[user_role])
+            role_msg = (f"Registry role '{user_role}' permits '{tool_name}'" if role_ok
+                        else f"Registry role '{user_role}' does not allow '{tool_name}'")
+        elif user_role:
+            role_ok = False
+            role_msg = f"Role '{user_role}' not in registry for agent '{agent_key}'"
+        else:
+            role_ok = True
+            role_msg = "No role provided, skipping role check"
+
+        allowed = agent_ok and role_ok
+        message = f"Tool '{tool_name}' {'allowed' if allowed else 'blocked'}: {agent_msg} AND {role_msg}"
+        return {"allowed": allowed, "action": "pass" if allowed else "block",
+                "message": message, "source": "agent_registry"}
+
+    # --- 2. Fall back to tenant policy ---
     per_agent: dict = {}
     per_role: dict = {}
 
@@ -118,9 +225,6 @@ def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
         settings = ta.get("settings") or {}
         per_agent = settings.get("per_agent") or {}
         per_role = settings.get("per_role") or {}
-
-    def _matches(name: str, patterns: list) -> bool:
-        return any(fnmatch.fnmatch(name, p) for p in patterns)
 
     agent_ok = _matches(tool_name, per_agent.get(agent_key, []))
     agent_msg = (f"Agent '{agent_key}' permits '{tool_name}'" if agent_ok
@@ -140,7 +244,8 @@ def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
 
     allowed = agent_ok and role_ok
     message = f"Tool '{tool_name}' {'allowed' if allowed else 'blocked'}: {agent_msg} AND {role_msg}"
-    return {"allowed": allowed, "action": "pass" if allowed else "block", "message": message}
+    return {"allowed": allowed, "action": "pass" if allowed else "block",
+            "message": message, "source": "tenant_policy"}
 
 
 def create_admin_app() -> FastAPI:
@@ -262,10 +367,14 @@ def create_admin_app() -> FastAPI:
         tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
         tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
 
-        tools = body.get("tools") or _load_tenant_tools(tenant_id, tenant_config)
+        registry = _load_agent_registry(tenant_id)
+        tool_policies = _load_tool_policies(tenant_id)
+
+        tools = body.get("tools") or _load_tenant_tools(
+            tenant_id, tenant_config, agent_key=agent_key, registry=registry)
         if not tools:
             return JSONResponse(status_code=400, content={
-                "error": "No tool definitions found. Register tools via PUT /v1/tenant/me/tools first.",
+                "error": "No tool definitions found. Register tools via PUT /v1/tenant/me/tools or agent registry.",
             })
 
         # --- Call OpenAI ---
@@ -308,12 +417,14 @@ def create_admin_app() -> FastAPI:
                 except json.JSONDecodeError:
                     args = {"_raw": args}
 
-            rbac = _check_rbac(name, agent_key, user_role, tenant_config)
+            rbac = _check_rbac(name, agent_key, user_role, tenant_config, registry=registry)
+            data_policy = _get_data_policy(tool_policies, name, user_role)
             tool_results.append({
                 "tool_call_id": tc.get("id", ""),
                 "tool_name": name,
                 "arguments": args,
                 "rbac": rbac,
+                "data_policy": data_policy,
             })
 
         has_blocked = any(not t["rbac"]["allowed"] for t in tool_results)

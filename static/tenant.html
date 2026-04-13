@@ -238,7 +238,7 @@
       </div>
       <div class="nav-item" data-tab="agents">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-        Agent Policies
+        Agent Registry
       </div>
       <div class="nav-item" data-tab="tool-policies">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
@@ -299,20 +299,47 @@
     <div id="tab-tool-policies" class="tab-pane hidden">
       <div class="page-header">
         <div class="page-title">Tool Policies</div>
-        <div class="page-desc">Data control plane for agent tool calls — sanitization, role restrictions, and LLM validation</div>
-        <div class="page-actions" style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+        <div class="page-desc">Data control plane for agent tool calls — sanitization, role restrictions, compliance, and LLM validation</div>
+      </div>
+
+      <!-- Sub-tabs -->
+      <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:1rem;">
+        <button class="tp-subtab active" data-subtab="tools" onclick="switchTPSubtab('tools')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Tools &amp; Role Access</button>
+        <button class="tp-subtab" data-subtab="data-policies" onclick="switchTPSubtab('data-policies')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Data Policies</button>
+        <button class="tp-subtab" data-subtab="roles" onclick="switchTPSubtab('roles')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Roles Overview</button>
+      </div>
+
+      <!-- Sub-tab: Tools & Role Access (existing) -->
+      <div id="tp-sub-tools" class="tp-subtab-pane">
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
           <button class="small" onclick="loadToolPolicyData()">Refresh</button>
           <button class="primary" onclick="showAddToolPolicyModal()">+ Add Tool Policy</button>
         </div>
-      </div>
-      <div id="tp-save-banner" class="edit-mode-banner hidden">
-        <span>You have unsaved tool policy changes</span>
-        <div style="display:flex;gap:0.5rem;">
-          <button class="small" onclick="loadToolPolicyData()">Discard</button>
-          <button class="primary small" onclick="saveAllToolPolicies()">Save Changes</button>
+        <div id="tp-save-banner" class="edit-mode-banner hidden">
+          <span>You have unsaved tool policy changes</span>
+          <div style="display:flex;gap:0.5rem;">
+            <button class="small" onclick="loadToolPolicyData()">Discard</button>
+            <button class="primary small" onclick="saveAllToolPolicies()">Save Changes</button>
+          </div>
         </div>
+        <div id="tool-policies-content">Loading tool policies...</div>
       </div>
-      <div id="tool-policies-content">Loading tool policies...</div>
+
+      <!-- Sub-tab: Data Policies -->
+      <div id="tp-sub-data-policies" class="tp-subtab-pane" style="display:none;">
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
+          <button class="small" onclick="loadDataPolicies()">Refresh</button>
+        </div>
+        <div id="data-policies-content">Loading data policies...</div>
+      </div>
+
+      <!-- Sub-tab: Roles Overview -->
+      <div id="tp-sub-roles" class="tp-subtab-pane" style="display:none;">
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
+          <button class="small" onclick="loadRolesOverview()">Refresh</button>
+        </div>
+        <div id="roles-overview-content">Loading roles...</div>
+      </div>
     </div>
 
     <!-- Agents -->
@@ -1697,93 +1724,114 @@ if __name__ == "__main__":
   </div>
 </div>
 
-<!-- Tool Policy Modal -->
+<!-- Tool Policy Modal (simplified) -->
 <div id="tool-policy-modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);z-index:100;display:flex;align-items:center;justify-content:center;padding:2rem;">
-  <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:1.5rem;max-width:750px;width:100%;box-shadow:var(--shadow-lg);max-height:90vh;overflow-y:auto;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;padding-bottom:1rem;border-bottom:1px solid var(--border);">
+  <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:1.5rem;max-width:520px;width:100%;box-shadow:var(--shadow-lg);max-height:90vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;padding-bottom:0.75rem;border-bottom:1px solid var(--border);">
       <div style="font-size:16px;font-weight:600;" id="tp-modal-title">Add Tool Policy</div>
       <button onclick="closeToolPolicyModal()" style="background:transparent;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">&times;</button>
     </div>
-    <div class="field">
-      <label>Tool Name</label>
-      <select id="tp-modal-name"><option value="">Select a tool...</option></select>
+
+    <!-- Tool selector -->
+    <div class="field" style="margin-bottom:1rem;">
+      <label style="font-size:12px;font-weight:600;">Tool</label>
+      <select id="tp-modal-name" style="width:100%;"><option value="">Select a tool...</option></select>
     </div>
-    <div class="field">
-      <label>Role Restrictions</label>
-      <div id="tp-modal-roles"></div>
-      <button class="small" onclick="addTPRoleRow()" style="margin-top:0.5rem;">+ Add Role</button>
-      <div id="tp-roles-empty" class="muted" style="font-size:11px;margin-top:0.4rem;display:none;">No roles found. Register agents with role permissions first.</div>
+
+    <!-- Role access grid -->
+    <div style="margin-bottom:1rem;">
+      <label style="font-size:12px;font-weight:600;display:block;margin-bottom:0.5rem;">Role Access</label>
+      <div id="tp-roles-empty" class="muted" style="font-size:11px;display:none;">No roles found.</div>
+      <table id="tp-modal-role-grid" style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);">
+            <th style="text-align:left;padding:0.4rem 0.5rem;color:var(--text-muted);font-weight:600;font-size:11px;">Role</th>
+            <th style="text-align:center;padding:0.4rem 0.3rem;color:var(--text-muted);font-weight:600;font-size:11px;">Input</th>
+            <th style="text-align:center;padding:0.4rem 0.3rem;color:var(--text-muted);font-weight:600;font-size:11px;">Output</th>
+          </tr>
+        </thead>
+        <tbody id="tp-modal-roles"></tbody>
+      </table>
     </div>
-    <div class="field">
-      <label>Data Sanitization — Patterns <span class="muted">(JSON array)</span></label>
-      <textarea id="tp-modal-patterns" style="min-height:140px;">[]</textarea>
-      <details style="margin-top:0.5rem;">
-        <summary style="font-size:11px;color:var(--text-muted);cursor:pointer;user-select:none;">Show example pattern format</summary>
-        <pre id="tp-pattern-example" style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.75rem;margin-top:0.4rem;overflow-x:auto;color:var(--text-dim);white-space:pre-wrap;"></pre>
-      </details>
+
+    <!-- Auto-sanitize toggles -->
+    <div style="margin-bottom:1rem;">
+      <label style="font-size:12px;font-weight:600;display:block;margin-bottom:0.5rem;">Auto-Sanitize (built-in PII patterns)</label>
+      <div id="tp-modal-sanitize" style="display:grid;grid-template-columns:1fr 1fr;gap:0.3rem 1rem;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" value="ssn" class="tp-san-toggle"> SSN / National ID</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" value="phone" class="tp-san-toggle"> Phone numbers</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" value="email" class="tp-san-toggle"> Email addresses</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" value="credit_card" class="tp-san-toggle"> Credit cards</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" value="address" class="tp-san-toggle"> Street addresses</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" value="dob" class="tp-san-toggle"> Date of birth</label>
+      </div>
     </div>
-    <div class="field">
-      <label style="display:flex;align-items:center;gap:0.5rem;">
-        LLM Validation
-        <label class="switch" style="margin-left:auto;">
-          <input type="checkbox" id="tp-modal-llm-enabled" onchange="document.getElementById('tp-llm-fields').classList.toggle('hidden',!this.checked)">
-          <span class="slider"></span>
-        </label>
+
+    <!-- Custom patterns -->
+    <div style="margin-bottom:1rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+        <label style="font-size:12px;font-weight:600;">Custom Patterns</label>
+        <button class="small" onclick="addCustomPatternRow()" style="font-size:10px;padding:2px 8px;">+ Add Pattern</button>
+      </div>
+      <div id="tp-custom-patterns"></div>
+      <div style="margin-top:0.4rem;">
+        <details style="font-size:11px;color:var(--text-muted);">
+          <summary style="cursor:pointer;user-select:none;">Examples of custom patterns</summary>
+          <div style="margin-top:0.4rem;padding:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:11px;line-height:1.6;">
+            <div style="display:grid;grid-template-columns:auto 1fr auto;gap:0.2rem 0.75rem;align-items:baseline;">
+              <strong>Medical Record #</strong><code style="font-size:10px;color:var(--text-dim);">\bMRN[:\s]*\d{6,10}\b</code><span style="color:var(--text-muted);">[MRN_REDACTED]</span>
+              <strong>DEA Number</strong><code style="font-size:10px;color:var(--text-dim);">\b[A-Z]{2}\d{7}\b</code><span style="color:var(--text-muted);">[DEA_REDACTED]</span>
+              <strong>IP Address</strong><code style="font-size:10px;color:var(--text-dim);">\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b</code><span style="color:var(--text-muted);">[IP_REDACTED]</span>
+              <strong>API Key</strong><code style="font-size:10px;color:var(--text-dim);">\b(sk|pk|api)[_-][A-Za-z0-9]{20,}\b</code><span style="color:var(--text-muted);">[KEY_REDACTED]</span>
+              <strong>Dollar Amount</strong><code style="font-size:10px;color:var(--text-dim);">\$[\d,]+\.?\d*</code><span style="color:var(--text-muted);">[AMOUNT_REDACTED]</span>
+              <strong>Passport #</strong><code style="font-size:10px;color:var(--text-dim);">\b[A-Z]{1,2}\d{6,9}\b</code><span style="color:var(--text-muted);">[PASSPORT_REDACTED]</span>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <!-- LLM validation toggle -->
+    <div style="margin-bottom:1rem;">
+      <label style="display:flex;align-items:center;gap:0.5rem;font-size:12px;font-weight:600;cursor:pointer;">
+        <input type="checkbox" id="tp-modal-llm-enabled" onchange="document.getElementById('tp-llm-fields').classList.toggle('hidden',!this.checked)"> LLM Validation
       </label>
-      <div id="tp-llm-fields" class="hidden" style="margin-top:0.75rem;">
-        <div class="field">
-          <label>Severity Level</label>
-          <select id="tp-modal-llm-severity" style="width:150px;">
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="critical">Critical</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Scan Types <span class="muted">(What to scan for)</span></label>
-          <div id="tp-modal-scan-types" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.5rem;">
-            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
-              <input type="checkbox" value="pii"> PII (Personal Info)
-            </label>
-            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
-              <input type="checkbox" value="phi"> PHI (Health Info)
-            </label>
-            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
-              <input type="checkbox" value="secrets"> Secrets
-            </label>
-            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
-              <input type="checkbox" value="dosage"> Dosage/Medication
-            </label>
-            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
-              <input type="checkbox" value="prescriptions"> Prescriptions
-            </label>
-            <label style="display:flex;align-items:center;gap:0.25rem;font-size:12px;">
-              <input type="checkbox" value="financial"> Financial Data
-            </label>
+      <div id="tp-llm-fields" class="hidden" style="margin-top:0.5rem;padding:0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+          <div class="field" style="margin-bottom:0;">
+            <label style="font-size:11px;">Severity</label>
+            <select id="tp-modal-llm-severity" style="width:100%;font-size:12px;">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label style="font-size:11px;">Threshold</label>
+            <input type="text" id="tp-modal-llm-threshold" value="0.8" style="width:100%;font-size:12px;">
           </div>
         </div>
-        <div class="field">
-          <label>Custom Sanitization Rules <span class="muted">(One rule per line)</span></label>
-          <textarea id="tp-modal-llm-rules" style="min-height:80px;font-size:12px;" placeholder="Remove any patient identifiers including names, addresses, or ID numbers&#10;Redact sensitive medical information that could identify individuals"></textarea>
-        </div>
-        <div class="field">
-          <label>LLM Model</label>
-          <select id="tp-modal-llm-model" style="width:200px;">
-            <option value="sanitization-model-v1">Sanitization Model v1</option>
-            <option value="sanitization-model-v2">Sanitization Model v2</option>
-            <option value="custom-model">Custom Model</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Confidence Threshold</label>
-          <input type="text" id="tp-modal-llm-threshold" value="0.8" style="width:100px;" placeholder="0.8">
+        <div class="field" style="margin-top:0.5rem;margin-bottom:0;">
+          <label style="font-size:11px;">Scan types</label>
+          <div id="tp-modal-scan-types" style="display:flex;flex-wrap:wrap;gap:0.4rem;">
+            <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="pii"> PII</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="phi"> PHI</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="secrets"> Secrets</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="financial"> Financial</label>
+          </div>
         </div>
       </div>
     </div>
-    <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem;">
+
+    <!-- Hidden fields for backward compat -->
+    <input type="hidden" id="tp-modal-patterns" value="[]">
+    <input type="hidden" id="tp-modal-llm-model" value="sanitization-model-v1">
+    <input type="hidden" id="tp-modal-llm-rules" value="">
+
+    <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--border);">
       <button onclick="closeToolPolicyModal()">Cancel</button>
-      <button class="primary" onclick="saveToolPolicyFromModal()">Save Tool Policy</button>
+      <button class="primary" onclick="saveToolPolicyFromModal()">Save</button>
     </div>
   </div>
 </div>
@@ -2946,22 +2994,57 @@ style.textContent = `
 document.head.appendChild(style);
 
 // ── Tool Policies ─────────────────────────
+
+function switchTPSubtab(name) {
+  document.querySelectorAll('.tp-subtab').forEach(b => {
+    b.classList.remove('active');
+    b.style.borderBottomColor = 'transparent';
+    b.style.color = 'var(--text-muted)';
+  });
+  document.querySelectorAll('.tp-subtab-pane').forEach(p => p.style.display = 'none');
+  const btn = document.querySelector(`.tp-subtab[data-subtab="${name}"]`);
+  if (btn) {
+    btn.classList.add('active');
+    btn.style.borderBottomColor = 'var(--primary)';
+    btn.style.color = 'var(--text)';
+  }
+  const pane = document.getElementById(`tp-sub-${name}`);
+  if (pane) pane.style.display = '';
+  if (name === 'data-policies') loadDataPolicies();
+  if (name === 'roles') loadRolesOverview();
+}
+
+// Initialize the first sub-tab styling
+setTimeout(() => {
+  const first = document.querySelector('.tp-subtab.active');
+  if (first) { first.style.borderBottomColor = 'var(--primary)'; first.style.color = 'var(--text)'; }
+}, 0);
+
 let TOOL_POLICIES = {};
 let TOOL_POLICIES_DIRTY = false;
 let EDITING_TOOL_POLICY = null;
 let REGISTERED_AGENT_TOOLS = [];
 let REGISTERED_AGENT_ROLES = [];
+let TOOL_AGENT_MAP = {};  // tool_name -> [agent_id, ...]
+let AGENTS_DATA = {};     // full registry snapshot
 
 async function loadToolPolicyData() {
   REGISTERED_AGENT_TOOLS = [];
   REGISTERED_AGENT_ROLES = [];
+  TOOL_AGENT_MAP = {};
+  AGENTS_DATA = {};
   try {
     const agentsRes = await apiCall('/v1/agents/registry');
     if (agentsRes && agentsRes.success && agentsRes.agents) {
+      AGENTS_DATA = agentsRes.agents;
       const toolSet = new Set();
       const roleSet = new Set();
-      Object.values(agentsRes.agents).forEach(agent => {
-        (agent.tools || []).forEach(t => toolSet.add(t));
+      Object.entries(agentsRes.agents).forEach(([agentId, agent]) => {
+        (agent.tools || []).forEach(t => {
+          toolSet.add(t);
+          if (!TOOL_AGENT_MAP[t]) TOOL_AGENT_MAP[t] = [];
+          TOOL_AGENT_MAP[t].push(agentId);
+        });
         Object.keys(agent.role_permissions || {}).forEach(r => roleSet.add(r));
       });
       REGISTERED_AGENT_TOOLS = [...toolSet].sort();
@@ -3024,19 +3107,23 @@ function displayToolPolicies() {
   REGISTERED_AGENT_ROLES.forEach(r => allRoles.add(r));
   const roles = [...allRoles].sort();
 
-  const roleColor = (a) => a === 'allow' ? '#10b981' : a === 'block' ? '#ef4444' : a === 'redact' ? '#f59e0b' : '#71717a';
+  const roleColor = (a) => a === 'allow' ? '#10b981' : a === 'block' ? '#ef4444' : a === 'redact' ? '#f59e0b' : a === 'mask' ? '#8b5cf6' : '#71717a';
+  const actionBadge = (a) => a ? `<span style="display:inline-block;padding:0.1rem 0.35rem;background:${roleColor(a)}18;color:${roleColor(a)};border-radius:3px;font-size:9px;font-weight:600;">${a}</span>` : '<span style="color:var(--text-muted);font-size:9px;">—</span>';
 
   let html = `
   <div class="card" style="overflow-x:auto;">
     <table style="width:100%;border-collapse:collapse;font-size:12px;">
       <thead>
+        <tr style="border-bottom:1px solid var(--border);">
+          <th rowspan="2" style="text-align:left;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;white-space:nowrap;min-width:160px;border-bottom:2px solid var(--border);">Tool</th>
+          <th rowspan="2" style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border);">Status</th>
+          ${roles.map(r => `<th colspan="2" style="text-align:center;padding:0.4rem 0.5rem;font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;border-left:1px solid var(--border);">${r}</th>`).join('')}
+          <th rowspan="2" style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border);">Patterns</th>
+          <th rowspan="2" style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border);">LLM</th>
+          <th rowspan="2" style="text-align:right;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border);">Actions</th>
+        </tr>
         <tr style="border-bottom:2px solid var(--border);">
-          <th style="text-align:left;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;white-space:nowrap;min-width:160px;">Tool</th>
-          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">Status</th>
-          ${roles.map(r => `<th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;white-space:nowrap;">${r}</th>`).join('')}
-          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">Patterns</th>
-          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">LLM</th>
-          <th style="text-align:right;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;">Actions</th>
+          ${roles.map(r => `<th style="text-align:center;padding:0.2rem 0.3rem;font-size:9px;color:var(--text-muted);font-weight:500;border-left:1px solid var(--border);">in</th><th style="text-align:center;padding:0.2rem 0.3rem;font-size:9px;color:var(--text-muted);font-weight:500;">out</th>`).join('')}
         </tr>
       </thead>
       <tbody>`;
@@ -3060,16 +3147,21 @@ function displayToolPolicies() {
         <tr style="border-bottom:1px solid var(--border);${!isConfigured ? 'opacity:0.6;' : ''}" ${isConfigured ? '' : 'title="No policy configured"'}>
           <td style="padding:0.55rem 0.75rem;">
             <div style="font-weight:600;font-size:12px;">${toolName.replace(/_/g, ' ')}</div>
-            <code style="font-size:10px;color:var(--text-muted);">${toolName}</code>
+            <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+              <code style="font-size:10px;color:var(--text-muted);">${toolName}</code>
+              ${(TOOL_AGENT_MAP[toolName] || []).map(a => `<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:rgba(88,166,255,0.1);color:#58a6ff;">${a}</span>`).join('')}
+            </div>
           </td>
           <td style="text-align:center;padding:0.55rem 0.5rem;">
             <span style="display:inline-block;padding:0.15rem 0.45rem;border-radius:4px;font-size:10px;font-weight:600;${isConfigured ? 'background:rgba(16,185,129,0.12);color:#10b981;' : 'background:rgba(113,113,122,0.12);color:#a1a1aa;'}">${isConfigured ? 'Active' : 'None'}</span>
           </td>
           ${roles.map(r => {
-            const action = toolRoles[r];
-            if (!isConfigured || !action) return `<td style="text-align:center;padding:0.55rem 0.5rem;color:var(--text-muted);font-size:11px;">—</td>`;
-            const c = roleColor(action);
-            return `<td style="text-align:center;padding:0.55rem 0.5rem;"><span style="display:inline-block;padding:0.15rem 0.4rem;background:${c}18;color:${c};border-radius:4px;font-size:10px;font-weight:600;">${action}</span></td>`;
+            const rp = toolRoles[r];
+            if (!isConfigured || !rp) return `<td style="text-align:center;padding:0.55rem 0.3rem;border-left:1px solid var(--border);">${actionBadge(null)}</td><td style="text-align:center;padding:0.55rem 0.3rem;">${actionBadge(null)}</td>`;
+            // Support both old format ("allow") and new format ({input:"allow",output:"redact"})
+            const inp = typeof rp === 'string' ? rp : (rp.input || null);
+            const out = typeof rp === 'string' ? rp : (rp.output || null);
+            return `<td style="text-align:center;padding:0.55rem 0.3rem;border-left:1px solid var(--border);">${actionBadge(inp)}</td><td style="text-align:center;padding:0.55rem 0.3rem;">${actionBadge(out)}</td>`;
           }).join('')}
           <td style="text-align:center;padding:0.55rem 0.5rem;font-size:11px;color:var(--text-dim);">${isConfigured ? sanitizationText : '—'}</td>
           <td style="text-align:center;padding:0.55rem 0.5rem;">
@@ -3081,6 +3173,7 @@ function displayToolPolicies() {
                  <button class="danger small" onclick="removeToolPolicy('${toolName}')" style="font-size:10px;padding:0.2rem 0.5rem;margin-left:0.25rem;">Delete</button>`
               : `<button class="primary small" onclick="showAddToolPolicyModalFor('${toolName}')" style="font-size:10px;padding:0.2rem 0.5rem;">+ Add Policy</button>`
             }
+            <button class="danger small" onclick="removeToolFromAgents('${toolName}')" style="font-size:9px;padding:0.15rem 0.4rem;margin-left:0.25rem;opacity:0.7;" title="Remove tool from all agents">✕</button>
           </td>
         </tr>`;
   });
@@ -3092,7 +3185,10 @@ function displayToolPolicies() {
   <div style="margin-top:0.75rem;display:flex;gap:1rem;font-size:11px;color:var(--text-muted);">
     <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#10b981;margin-right:4px;"></span>allow</span>
     <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#f59e0b;margin-right:4px;"></span>redact</span>
+    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#8b5cf6;margin-right:4px;"></span>mask</span>
     <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#ef4444;margin-right:4px;"></span>block</span>
+    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:rgba(88,166,255,0.15);margin-right:4px;color:#58a6ff;font-size:8px;padding:0 2px;border-radius:2px;">agent</span>= source agent</span>
+    <span>✕ = remove tool from agents</span>
     <span style="margin-left:auto;">${configuredTools.length}/${allTools.length} tools with policies</span>
   </div>`;
 
@@ -3101,31 +3197,109 @@ function displayToolPolicies() {
 
 function showAddToolPolicyModalFor(toolName) {
   showAddToolPolicyModal();
-  const nameEl = document.getElementById('tp-modal-name');
-  nameEl.value = toolName;
+  document.getElementById('tp-modal-name').value = toolName;
 }
 
-const EXAMPLE_PATTERNS_JSON = `[
-  {
-    "regex": "\\\\b\\\\d{3}-\\\\d{2}-\\\\d{4}\\\\b",
-    "replacement": "[SSN_REDACTED]",
-    "description": "Social Security Numbers"
-  },
-  {
-    "regex": "\\\\b\\\\d{3}[-.\\\\s]?\\\\d{3}[-.\\\\s]?\\\\d{4}\\\\b",
-    "replacement": "[PHONE_REDACTED]",
-    "description": "Phone Numbers"
-  },
-  {
-    "regex": "\\\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\\\.[A-Z|a-z]{2,}\\\\b",
-    "replacement": "[EMAIL_REDACTED]",
-    "description": "Email Addresses"
-  }
-]`;
+// Sanitization presets — toggle-based instead of raw JSON
+const SAN_PRESETS = {
+  ssn:         { regex: '\\b\\d{3}-\\d{2}-\\d{4}\\b', replacement: '[SSN_REDACTED]', description: 'Social Security Numbers' },
+  phone:       { regex: '\\b\\d{3}[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b', replacement: '[PHONE_REDACTED]', description: 'Phone Numbers' },
+  email:       { regex: '\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b', replacement: '[EMAIL_REDACTED]', description: 'Email Addresses' },
+  credit_card: { regex: '\\b\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}\\b', replacement: '[CARD_REDACTED]', description: 'Credit Card Numbers' },
+  address:     { regex: '\\b\\d+\\s+[A-Za-z\\s]+(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr)\\b', replacement: '[ADDRESS_REDACTED]', description: 'Street Addresses' },
+  dob:         { regex: '\\b(0[1-9]|1[0-2])[/\\-](0[1-9]|[12]\\d|3[01])[/\\-](19|20)\\d{2}\\b', replacement: '[DOB_REDACTED]', description: 'Date of Birth' },
+};
 
-function populatePatternExample() {
-  const el = document.getElementById('tp-pattern-example');
-  if (el) el.textContent = EXAMPLE_PATTERNS_JSON;
+function _buildRoleGrid(existingRoles) {
+  const tbody = document.getElementById('tp-modal-roles');
+  tbody.innerHTML = '';
+  const roles = [...REGISTERED_AGENT_ROLES].sort();
+  const actionColor = { allow: '#10b981', redact: '#f59e0b', mask: '#8b5cf6', block: '#ef4444' };
+  const actionSel = (sel) => ['allow','redact','mask','block'].map(a =>
+    `<option value="${a}" ${a===sel?'selected':''}>${a}</option>`
+  ).join('');
+
+  roles.forEach(role => {
+    const rp = existingRoles[role];
+    let inp = 'block', out = 'block';
+    if (typeof rp === 'string') { inp = rp; out = rp; }
+    else if (rp && typeof rp === 'object') { inp = rp.input || 'block'; out = rp.output || 'block'; }
+
+    const tr = document.createElement('tr');
+    tr.setAttribute('data-role', role);
+    tr.style.borderBottom = '1px solid var(--border)';
+    tr.innerHTML = `
+      <td style="padding:0.4rem 0.5rem;font-weight:600;font-size:12px;">${role}</td>
+      <td style="text-align:center;padding:0.4rem 0.3rem;">
+        <select class="tp-role-input" style="padding:3px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">${actionSel(inp)}</select>
+      </td>
+      <td style="text-align:center;padding:0.4rem 0.3rem;">
+        <select class="tp-role-output" style="padding:3px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">${actionSel(out)}</select>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('tp-roles-empty').style.display = roles.length ? 'none' : '';
+}
+
+function _setSanToggles(patterns) {
+  document.querySelectorAll('.tp-san-toggle').forEach(cb => cb.checked = false);
+  document.getElementById('tp-custom-patterns').innerHTML = '';
+  if (!patterns || !patterns.length) return;
+
+  const presetDescs = new Set(Object.values(SAN_PRESETS).map(p => p.description));
+  const presetRegexes = new Set(Object.values(SAN_PRESETS).map(p => p.regex));
+
+  patterns.forEach(p => {
+    // Check if it matches a preset
+    let matched = false;
+    Object.entries(SAN_PRESETS).forEach(([key, preset]) => {
+      if (p.description === preset.description || p.regex === preset.regex) {
+        const cb = document.querySelector(`.tp-san-toggle[value="${key}"]`);
+        if (cb) cb.checked = true;
+        matched = true;
+      }
+    });
+    if (!matched) {
+      addCustomPatternRow(p.description || '', p.regex || '', p.replacement || '[REDACTED]');
+    }
+  });
+}
+
+function addCustomPatternRow(desc, regex, replacement) {
+  desc = desc || '';
+  regex = regex || '';
+  replacement = replacement || '[REDACTED]';
+  const container = document.getElementById('tp-custom-patterns');
+  const row = document.createElement('div');
+  row.className = 'tp-custom-pat-row';
+  row.style.cssText = 'display:grid;grid-template-columns:1fr 1.5fr 1fr auto;gap:0.3rem;margin-bottom:0.3rem;align-items:center;';
+  row.innerHTML = `
+    <input type="text" class="tp-cp-desc" value="${desc}" placeholder="Label (e.g. MRN)" style="padding:4px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">
+    <input type="text" class="tp-cp-regex" value="${regex.replace(/"/g, '&quot;')}" placeholder="Regex pattern" style="padding:4px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;font-family:monospace;">
+    <input type="text" class="tp-cp-repl" value="${replacement}" placeholder="[REDACTED]" style="padding:4px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;font-family:monospace;">
+    <button class="danger small" onclick="this.closest('.tp-custom-pat-row').remove()" style="font-size:9px;padding:3px 6px;">✕</button>
+  `;
+  container.appendChild(row);
+}
+
+function _getActivePatterns() {
+  const toggled = [];
+  document.querySelectorAll('.tp-san-toggle:checked').forEach(cb => {
+    const preset = SAN_PRESETS[cb.value];
+    if (preset) toggled.push({ ...preset });
+  });
+  // Collect custom pattern rows
+  document.querySelectorAll('.tp-custom-pat-row').forEach(row => {
+    const desc = row.querySelector('.tp-cp-desc').value.trim();
+    const regex = row.querySelector('.tp-cp-regex').value.trim();
+    const repl = row.querySelector('.tp-cp-repl').value.trim() || '[REDACTED]';
+    if (regex) {
+      toggled.push({ description: desc || 'Custom pattern', regex, replacement: repl });
+    }
+  });
+  return toggled;
 }
 
 function showAddToolPolicyModal() {
@@ -3139,31 +3313,13 @@ function showAddToolPolicyModal() {
   nameEl.value = '';
   nameEl.disabled = false;
 
-  // Pre-populate all tenant roles with default "block"
-  document.getElementById('tp-modal-roles').innerHTML = '';
-  const emptyMsg = document.getElementById('tp-roles-empty');
-  if (REGISTERED_AGENT_ROLES.length) {
-    emptyMsg.style.display = 'none';
-    REGISTERED_AGENT_ROLES.forEach(role => addTPRoleRow(role, 'block'));
-  } else {
-    emptyMsg.style.display = '';
-  }
-
-  document.getElementById('tp-modal-patterns').value = '[]';
-  populatePatternExample();
+  _buildRoleGrid({});
+  _setSanToggles([]);
   document.getElementById('tp-modal-llm-enabled').checked = false;
   document.getElementById('tp-llm-fields').classList.add('hidden');
-
-  // Reset new LLM fields
   document.getElementById('tp-modal-llm-severity').value = 'medium';
-  document.getElementById('tp-modal-llm-model').value = 'sanitization-model-v1';
   document.getElementById('tp-modal-llm-threshold').value = '0.8';
-  document.getElementById('tp-modal-llm-rules').value = '';
-
-  // Reset scan type checkboxes
-  document.querySelectorAll('#tp-modal-scan-types input[type="checkbox"]').forEach(cb => {
-    cb.checked = false;
-  });
+  document.querySelectorAll('#tp-modal-scan-types input[type="checkbox"]').forEach(cb => cb.checked = false);
   document.getElementById('tool-policy-modal').classList.remove('hidden');
 }
 
@@ -3171,42 +3327,26 @@ function editToolPolicy(toolName) {
   const p = TOOL_POLICIES[toolName];
   if (!p) return;
   EDITING_TOOL_POLICY = toolName;
-  document.getElementById('tp-modal-title').textContent = `Edit — ${toolName}`;
+  document.getElementById('tp-modal-title').textContent = `Edit — ${toolName.replace(/_/g, ' ')}`;
   const nameEl = document.getElementById('tp-modal-name');
   nameEl.innerHTML = `<option value="${toolName}">${toolName.replace(/_/g, ' ')} (${toolName})</option>`;
   nameEl.value = toolName;
   nameEl.disabled = true;
 
-  document.getElementById('tp-modal-roles').innerHTML = '';
-  const existingRoles = p.role_restrictions || {};
-  const configuredRoleNames = new Set(Object.keys(existingRoles));
-  // Show existing role restrictions first
-  Object.entries(existingRoles).forEach(([role, action]) => addTPRoleRow(role, action));
-  // Add any tenant roles not yet configured (default block)
-  REGISTERED_AGENT_ROLES.filter(r => !configuredRoleNames.has(r)).forEach(r => addTPRoleRow(r, 'block'));
-  document.getElementById('tp-roles-empty').style.display = 'none';
+  _buildRoleGrid(p.role_restrictions || {});
 
   const patterns = (p.data_sanitization && p.data_sanitization.patterns) || [];
-  document.getElementById('tp-modal-patterns').value = JSON.stringify(patterns, null, 2);
-  populatePatternExample();
+  _setSanToggles(patterns);
+
   const llm = p.llm_validation || {};
   document.getElementById('tp-modal-llm-enabled').checked = !!llm.enabled;
   document.getElementById('tp-llm-fields').classList.toggle('hidden', !llm.enabled);
-
-  // Populate new LLM fields
   document.getElementById('tp-modal-llm-severity').value = llm.severity || 'medium';
-  document.getElementById('tp-modal-llm-model').value = llm.model || 'sanitization-model-v1';
   document.getElementById('tp-modal-llm-threshold').value = llm.confidence_threshold || 0.8;
-
-  // Populate scan types checkboxes
   const scanTypes = llm.scan_types || [];
   document.querySelectorAll('#tp-modal-scan-types input[type="checkbox"]').forEach(cb => {
     cb.checked = scanTypes.includes(cb.value);
   });
-
-  // Populate custom rules
-  const customRules = llm.custom_rules || [];
-  document.getElementById('tp-modal-llm-rules').value = customRules.join('\n');
   document.getElementById('tool-policy-modal').classList.remove('hidden');
 }
 
@@ -3214,59 +3354,22 @@ function closeToolPolicyModal() {
   document.getElementById('tool-policy-modal').classList.add('hidden');
 }
 
-function addTPRoleRow(roleName, action) {
-  roleName = roleName || '';
-  action = action || 'block';
-  const container = document.getElementById('tp-modal-roles');
-
-  const alreadyUsed = new Set();
-  container.querySelectorAll('.tp-role-name').forEach(sel => {
-    if (sel.value) alreadyUsed.add(sel.value);
-  });
-
-  const availableRoles = REGISTERED_AGENT_ROLES.filter(r => !alreadyUsed.has(r) || r === roleName);
-  if (!availableRoles.length && !roleName) {
-    showToast('All available roles already added', 'error');
-    return;
-  }
-
-  const row = document.createElement('div');
-  row.className = 'tp-role-row';
-  row.style.cssText = 'display:flex;gap:0.5rem;align-items:center;margin-bottom:0.4rem;';
-
-  const roleOpts = availableRoles.map(r =>
-    `<option value="${r}" ${r === roleName ? 'selected' : ''}>${r}</option>`
-  ).join('');
-
-  row.innerHTML = `
-    <select class="tp-role-name" style="flex:1;font-size:12px;padding:0.4rem 0.6rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);">
-      ${roleName ? '' : '<option value="">Select role...</option>'}${roleOpts}
-    </select>
-    <select class="tp-role-action" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:0.4rem 0.5rem;font-size:12px;">
-      <option value="allow" ${action==='allow'?'selected':''}>allow</option>
-      <option value="redact" ${action==='redact'?'selected':''}>redact</option>
-      <option value="block" ${action==='block'?'selected':''}>block</option>
-    </select>
-    <button class="danger small" onclick="this.closest('.tp-role-row').remove()" style="padding:0.3rem 0.5rem;">&times;</button>
-  `;
-  container.appendChild(row);
-}
-
 function saveToolPolicyFromModal() {
   const toolName = EDITING_TOOL_POLICY || document.getElementById('tp-modal-name').value.trim();
   if (!toolName) return showToast('Tool name is required', 'error');
   if (!REGISTERED_AGENT_TOOLS.includes(toolName)) return showToast('Tool "' + toolName + '" is not registered by any agent', 'error');
 
+  // Collect role restrictions from grid
   const roleRestrictions = {};
-  document.querySelectorAll('#tp-modal-roles .tp-role-row').forEach(row => {
-    const name = row.querySelector('.tp-role-name').value.trim();
-    const action = row.querySelector('.tp-role-action').value;
-    if (name) roleRestrictions[name] = action;
+  document.querySelectorAll('#tp-modal-roles tr[data-role]').forEach(row => {
+    const role = row.getAttribute('data-role');
+    const inp = row.querySelector('.tp-role-input').value;
+    const out = row.querySelector('.tp-role-output').value;
+    roleRestrictions[role] = { input: inp, output: out };
   });
 
-  let patterns = [];
-  try { patterns = JSON.parse(document.getElementById('tp-modal-patterns').value || '[]'); }
-  catch (e) { return showToast('Invalid JSON in patterns', 'error'); }
+  // Collect patterns from toggles + custom JSON
+  const patterns = _getActivePatterns();
 
   const existing = TOOL_POLICIES[toolName] || {};
   const policy = {
@@ -3276,22 +3379,12 @@ function saveToolPolicyFromModal() {
 
   const llmEnabled = document.getElementById('tp-modal-llm-enabled').checked;
   if (llmEnabled) {
-    // Collect scan types
     const scanTypes = [];
-    document.querySelectorAll('#tp-modal-scan-types input[type="checkbox"]:checked').forEach(cb => {
-      scanTypes.push(cb.value);
-    });
-
-    // Collect custom rules
-    const rulesText = document.getElementById('tp-modal-llm-rules').value.trim();
-    const customRules = rulesText ? rulesText.split('\n').map(r => r.trim()).filter(r => r.length > 0) : [];
-
+    document.querySelectorAll('#tp-modal-scan-types input[type="checkbox"]:checked').forEach(cb => scanTypes.push(cb.value));
     policy.llm_validation = {
       enabled: true,
       severity: document.getElementById('tp-modal-llm-severity').value,
       scan_types: scanTypes,
-      custom_rules: customRules,
-      model: document.getElementById('tp-modal-llm-model').value,
       confidence_threshold: parseFloat(document.getElementById('tp-modal-llm-threshold').value) || 0.8,
     };
   }
@@ -3313,6 +3406,64 @@ function removeToolPolicy(toolName) {
   showToast(`Tool policy "${toolName}" removed`, 'success');
 }
 
+async function removeToolFromAgents(toolName) {
+  const agents = TOOL_AGENT_MAP[toolName] || [];
+  if (!agents.length) {
+    showToast('Tool not found in any agent', 'error');
+    return;
+  }
+  if (!confirm(`Remove "${toolName}" from ${agents.length} agent(s): ${agents.join(', ')}?\n\nThis will update the agent registry in Redis.`)) return;
+
+  let errors = 0;
+  for (const agentId of agents) {
+    const agent = AGENTS_DATA[agentId];
+    if (!agent) continue;
+
+    // Remove tool from agent's tools list
+    agent.tools = (agent.tools || []).filter(t => t !== toolName);
+
+    // Remove tool from each role's permissions
+    const rp = agent.role_permissions || {};
+    for (const role of Object.keys(rp)) {
+      if (Array.isArray(rp[role])) {
+        rp[role] = rp[role].filter(t => t !== toolName);
+      }
+    }
+
+    // Update the agent in Redis
+    try {
+      const resp = await fetch(`/v1/agents/registry/${agentId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+        body: JSON.stringify(agent),
+      });
+      if (!resp.ok) errors++;
+    } catch (e) {
+      errors++;
+    }
+  }
+
+  // Also remove tool policy from Redis if one exists
+  if (TOOL_POLICIES[toolName]) {
+    try {
+      await fetch(`/v1/agents/tools/policies/${encodeURIComponent(toolName)}`, {
+        method: 'DELETE',
+        headers: { 'X-API-Key': API_KEY },
+      });
+    } catch (e) { /* best effort */ }
+    delete TOOL_POLICIES[toolName];
+  }
+
+  if (errors) {
+    showToast(`Removed tool but ${errors} agent update(s) failed`, 'error');
+  } else {
+    showToast(`"${toolName}" removed from ${agents.length} agent(s)`, 'success');
+  }
+
+  // Reload to refresh the tool list
+  await loadToolPolicyData();
+}
+
 async function saveAllToolPolicies() {
   try {
     const response = await fetch('/v1/agents/tools/policies', {
@@ -3332,6 +3483,383 @@ async function saveAllToolPolicies() {
     showToast('Network error: ' + e.message, 'error');
   }
 }
+
+// ── Data Policies (per-tool per-role) ─────
+let DATA_POLICIES_CACHE = {};
+
+async function loadDataPolicies() {
+  const container = document.getElementById('data-policies-content');
+  container.innerHTML = '<div class="muted" style="padding:1rem;">Loading data policies...</div>';
+
+  if (!REGISTERED_AGENT_TOOLS.length) {
+    await loadToolPolicyData();
+  }
+
+  if (!REGISTERED_AGENT_TOOLS.length) {
+    container.innerHTML = '<div class="muted" style="padding:2rem;text-align:center;">No tools registered. Go to Agent Registry first.</div>';
+    return;
+  }
+
+  // Fetch all data policies in one call
+  DATA_POLICIES_CACHE = {};
+  try {
+    const res = await fetch('/v1/data-policies/tools', { headers: { 'X-API-Key': API_KEY } });
+    if (res.ok) {
+      const data = await res.json();
+      DATA_POLICIES_CACHE = (data.success && data.policies) ? data.policies : {};
+    }
+  } catch (e) { /* skip */ }
+
+  // Also fetch the lightweight tool_policies from agents registry
+  if (!Object.keys(TOOL_POLICIES).length) {
+    try {
+      const r = await apiCall('/v1/agents/tools/policies');
+      if (r && r.success && r.tool_policies) TOOL_POLICIES = r.tool_policies;
+    } catch (e) {}
+  }
+
+  displayDataPolicies();
+}
+
+function displayDataPolicies() {
+  const container = document.getElementById('data-policies-content');
+  const roles = [...REGISTERED_AGENT_ROLES].sort();
+  const tools = [...REGISTERED_AGENT_TOOLS].sort();
+
+  if (!tools.length) {
+    container.innerHTML = '<div class="muted" style="padding:2rem;text-align:center;">No tools registered.</div>';
+    return;
+  }
+
+  const actionColor = (a) => a === 'allow' ? '#10b981' : a === 'block' ? '#ef4444' : a === 'redact' ? '#f59e0b' : a === 'mask' ? '#8b5cf6' : '#71717a';
+  const badge = (a) => a ? `<span style="display:inline-block;padding:2px 6px;background:${actionColor(a)}18;color:${actionColor(a)};border-radius:3px;font-size:10px;font-weight:600;">${a}</span>` : '<span style="color:var(--text-muted);font-size:10px;">—</span>';
+
+  let html = `<div class="card" style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border);">
+          <th style="text-align:left;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;min-width:160px;">Tool</th>
+          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">Compliance</th>
+          ${roles.map(r => `<th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;border-left:1px solid var(--border);">${r}<div style="display:flex;justify-content:center;gap:2px;margin-top:2px;"><span style="font-size:8px;color:var(--text-muted);">action</span><span style="font-size:8px;color:var(--text-muted);">scope</span></div></th>`).join('')}
+          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">Sanitization</th>
+          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">Audit</th>
+          <th style="text-align:right;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;">Actions</th>
+        </tr>
+      </thead><tbody>`;
+
+  tools.forEach(toolName => {
+    const dp = DATA_POLICIES_CACHE[toolName] || {};
+    const rolePolicies = {};
+    (dp.role_policies || []).forEach(rp => { rolePolicies[rp.role] = rp; });
+
+    const sanRules = dp.sanitization_rules || [];
+    const compliance = dp.compliance_framework || null;
+    const auditReq = dp.audit_required || false;
+
+    // Also merge in lightweight tool_policies role_restrictions
+    const tpRoles = (TOOL_POLICIES[toolName] || {}).role_restrictions || {};
+
+    html += `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:0.55rem 0.75rem;">
+        <div style="font-weight:600;font-size:12px;">${toolName.replace(/_/g, ' ')}</div>
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+          <code style="font-size:10px;color:var(--text-muted);">${toolName}</code>
+          ${(TOOL_AGENT_MAP[toolName] || []).map(a => `<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:rgba(88,166,255,0.1);color:#58a6ff;">${a}</span>`).join('')}
+        </div>
+      </td>
+      <td style="text-align:center;padding:0.55rem 0.5rem;">
+        ${compliance ? `<span style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;background:rgba(139,92,246,0.12);color:#8b5cf6;text-transform:uppercase;">${compliance}</span>` : '<span style="color:var(--text-muted);font-size:10px;">—</span>'}
+      </td>
+      ${roles.map(r => {
+        const rp = rolePolicies[r];
+        const tp = tpRoles[r];
+        const action = rp ? rp.action : (typeof tp === 'string' ? tp : (tp && tp.input ? tp.input : null));
+        const scope = rp && rp.data_scope && rp.data_scope.length ? rp.data_scope.join(', ') : '—';
+        return `<td style="text-align:center;padding:0.55rem 0.3rem;border-left:1px solid var(--border);vertical-align:middle;">
+          <div>${badge(action)}</div>
+          <div style="font-size:9px;color:var(--text-muted);margin-top:2px;">${scope}</div>
+        </td>`;
+      }).join('')}
+      <td style="text-align:center;padding:0.55rem 0.5rem;">
+        ${sanRules.length ? `<span style="font-size:10px;font-weight:600;color:#10b981;">${sanRules.length} rule${sanRules.length > 1 ? 's' : ''}</span>` : '<span style="color:var(--text-muted);font-size:10px;">—</span>'}
+      </td>
+      <td style="text-align:center;padding:0.55rem 0.5rem;">
+        <span style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;${auditReq ? 'background:rgba(16,185,129,0.12);color:#10b981;' : 'background:rgba(113,113,122,0.12);color:#a1a1aa;'}">${auditReq ? 'On' : 'Off'}</span>
+      </td>
+      <td style="text-align:right;padding:0.55rem 0.75rem;white-space:nowrap;">
+        <button class="primary small" onclick="openDataPolicyModal('${toolName}')" style="font-size:10px;padding:0.2rem 0.5rem;">Configure</button>
+      </td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>
+    <div style="margin-top:0.75rem;display:flex;gap:1rem;font-size:11px;color:var(--text-muted);flex-wrap:wrap;">
+      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#10b981;margin-right:4px;"></span>allow</span>
+      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#f59e0b;margin-right:4px;"></span>redact</span>
+      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#8b5cf6;margin-right:4px;"></span>mask</span>
+      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#ef4444;margin-right:4px;"></span>block</span>
+      <span style="margin-left:auto;">scope = data types visible to role</span>
+    </div>`;
+
+  container.innerHTML = html;
+}
+
+function openDataPolicyModal(toolName) {
+  const dp = DATA_POLICIES_CACHE[toolName] || {};
+  const roles = [...REGISTERED_AGENT_ROLES].sort();
+  const rolePolicies = {};
+  (dp.role_policies || []).forEach(rp => { rolePolicies[rp.role] = rp; });
+
+  const actionOpts = (selected) => ['allow','redact','mask','block'].map(a => `<option value="${a}" ${a === selected ? 'selected' : ''}>${a}</option>`).join('');
+
+  let html = `
+  <div style="position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;display:flex;align-items:center;justify-content:center;" id="dp-modal-overlay" onclick="if(event.target===this)this.remove()">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.5rem;width:600px;max-height:80vh;overflow-y:auto;">
+      <div style="font-size:16px;font-weight:700;margin-bottom:0.25rem;">Data Policy: ${toolName.replace(/_/g, ' ')}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:1rem;">Configure per-role data access, sanitization rules, and compliance</div>
+
+      <!-- Compliance -->
+      <div style="margin-bottom:1rem;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-dim);display:block;margin-bottom:4px;">Compliance Framework</label>
+        <select id="dp-compliance" style="width:100%;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:12px;">
+          <option value="">None</option>
+          <option value="hipaa" ${dp.compliance_framework === 'hipaa' ? 'selected' : ''}>HIPAA</option>
+          <option value="pci_dss" ${dp.compliance_framework === 'pci_dss' ? 'selected' : ''}>PCI-DSS</option>
+          <option value="gdpr" ${dp.compliance_framework === 'gdpr' ? 'selected' : ''}>GDPR</option>
+        </select>
+      </div>
+
+      <!-- Audit -->
+      <div style="margin-bottom:1rem;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
+          <input type="checkbox" id="dp-audit" ${dp.audit_required ? 'checked' : ''}>
+          <span style="font-weight:600;">Audit Required</span>
+        </label>
+      </div>
+
+      <!-- Retention -->
+      <div style="margin-bottom:1rem;">
+        <label style="font-size:11px;font-weight:600;color:var(--text-dim);display:block;margin-bottom:4px;">Retention (days)</label>
+        <input type="number" id="dp-retention" value="${dp.retention_days || ''}" placeholder="e.g. 90" style="width:100%;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:12px;">
+      </div>
+
+      <!-- Per-Role Policies -->
+      <div style="margin-bottom:1rem;">
+        <div style="font-size:12px;font-weight:700;margin-bottom:0.5rem;">Per-Role Data Access</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);">
+              <th style="text-align:left;padding:0.4rem;font-weight:600;color:var(--text-muted);">Role</th>
+              <th style="text-align:center;padding:0.4rem;font-weight:600;color:var(--text-muted);">Action</th>
+              <th style="text-align:left;padding:0.4rem;font-weight:600;color:var(--text-muted);">Data Scope</th>
+              <th style="text-align:center;padding:0.4rem;font-weight:600;color:var(--text-muted);">Redaction</th>
+            </tr>
+          </thead>
+          <tbody id="dp-roles-body">
+            ${roles.map(r => {
+              const rp = rolePolicies[r] || {};
+              return `<tr style="border-bottom:1px solid var(--border);" data-role="${r}">
+                <td style="padding:0.4rem;font-weight:600;">${r}</td>
+                <td style="text-align:center;padding:0.4rem;">
+                  <select class="dp-role-action" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">
+                    ${actionOpts(rp.action || 'block')}
+                  </select>
+                </td>
+                <td style="padding:0.4rem;">
+                  <input type="text" class="dp-role-scope" value="${(rp.data_scope || []).join(', ')}" placeholder="medical, personal, contact" style="width:100%;padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">
+                </td>
+                <td style="text-align:center;padding:0.4rem;">
+                  <select class="dp-role-redaction" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">
+                    <option value="none" ${rp.redaction_level === 'none' ? 'selected' : ''}>none</option>
+                    <option value="partial" ${(!rp.redaction_level || rp.redaction_level === 'partial') ? 'selected' : ''}>partial</option>
+                    <option value="full" ${rp.redaction_level === 'full' ? 'selected' : ''}>full</option>
+                  </select>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Sanitization Rules -->
+      <div style="margin-bottom:1rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+          <div style="font-size:12px;font-weight:700;">Sanitization Rules</div>
+          <button class="small" onclick="addDPSanitizationRule()" style="font-size:10px;padding:2px 8px;">+ Add Rule</button>
+        </div>
+        <div id="dp-san-rules">
+          ${(dp.sanitization_rules || []).map((sr, i) => dpSanRuleRow(sr, i)).join('')}
+        </div>
+      </div>
+
+      <!-- Buttons -->
+      <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem;">
+        <button class="small" onclick="document.getElementById('dp-modal-overlay').remove()">Cancel</button>
+        <button class="primary small" onclick="saveDataPolicy('${toolName}')">Save Data Policy</button>
+      </div>
+    </div>
+  </div>`;
+
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+let _dpSanIdx = 0;
+function dpSanRuleRow(sr, idx) {
+  sr = sr || { pattern_id: '', regex: '', replacement: '', description: '', enabled: true, severity: 'medium' };
+  const id = `dp-san-${idx || _dpSanIdx++}`;
+  return `<div class="dp-san-row" style="border:1px solid var(--border);border-radius:6px;padding:0.5rem;margin-bottom:0.5rem;font-size:11px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.3rem;">
+      <input type="text" class="dp-san-id" value="${sr.pattern_id}" placeholder="pattern_id (e.g. ssn_redaction)" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">
+      <input type="text" class="dp-san-desc" value="${sr.description}" placeholder="Description" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:0.4rem;align-items:center;">
+      <input type="text" class="dp-san-regex" value="${sr.regex.replace(/"/g, '&quot;')}" placeholder="Regex" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;font-family:monospace;">
+      <input type="text" class="dp-san-replacement" value="${sr.replacement}" placeholder="Replacement" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;font-family:monospace;">
+      <select class="dp-san-severity" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:10px;">
+        <option value="low" ${sr.severity === 'low' ? 'selected' : ''}>low</option>
+        <option value="medium" ${sr.severity === 'medium' ? 'selected' : ''}>medium</option>
+        <option value="high" ${sr.severity === 'high' ? 'selected' : ''}>high</option>
+        <option value="critical" ${sr.severity === 'critical' ? 'selected' : ''}>critical</option>
+      </select>
+      <button class="danger small" onclick="this.closest('.dp-san-row').remove()" style="font-size:9px;padding:2px 6px;">✕</button>
+    </div>
+  </div>`;
+}
+
+function addDPSanitizationRule() {
+  const container = document.getElementById('dp-san-rules');
+  container.insertAdjacentHTML('beforeend', dpSanRuleRow(null, _dpSanIdx++));
+}
+
+async function saveDataPolicy(toolName) {
+  const compliance = document.getElementById('dp-compliance').value || null;
+  const audit = document.getElementById('dp-audit').checked;
+  const retention = parseInt(document.getElementById('dp-retention').value) || null;
+
+  // Collect role policies
+  const rolePolicies = [];
+  document.querySelectorAll('#dp-roles-body tr[data-role]').forEach(row => {
+    const role = row.getAttribute('data-role');
+    const action = row.querySelector('.dp-role-action').value;
+    const scopeStr = row.querySelector('.dp-role-scope').value.trim();
+    const scope = scopeStr ? scopeStr.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const redaction = row.querySelector('.dp-role-redaction').value;
+    rolePolicies.push({ role, action, data_scope: scope, redaction_level: redaction });
+  });
+
+  // Collect sanitization rules
+  const sanRules = [];
+  document.querySelectorAll('#dp-san-rules .dp-san-row').forEach(row => {
+    sanRules.push({
+      pattern_id: row.querySelector('.dp-san-id').value.trim(),
+      regex: row.querySelector('.dp-san-regex').value,
+      replacement: row.querySelector('.dp-san-replacement').value,
+      description: row.querySelector('.dp-san-desc').value.trim(),
+      enabled: true,
+      severity: row.querySelector('.dp-san-severity').value,
+    });
+  });
+
+  const policy = {
+    tool_name: toolName,
+    sanitization_rules: sanRules,
+    role_policies: rolePolicies,
+    compliance_framework: compliance,
+    audit_required: audit,
+    retention_days: retention,
+  };
+
+  try {
+    const res = await fetch(`/v1/data-policies/tools/${encodeURIComponent(toolName)}/policy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+      body: JSON.stringify(policy),
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`Data policy saved for "${toolName}"`, 'success');
+      document.getElementById('dp-modal-overlay').remove();
+      DATA_POLICIES_CACHE[toolName] = policy;
+      displayDataPolicies();
+    } else {
+      showToast(data.detail || 'Failed to save', 'error');
+    }
+  } catch (e) {
+    showToast('Network error: ' + e.message, 'error');
+  }
+}
+
+
+// ── Roles Overview ────────────────────────
+async function loadRolesOverview() {
+  const container = document.getElementById('roles-overview-content');
+  container.innerHTML = '<div class="muted" style="padding:1rem;">Loading roles...</div>';
+
+  if (!Object.keys(AGENTS_DATA).length) {
+    await loadToolPolicyData();
+  }
+
+  if (!REGISTERED_AGENT_ROLES.length) {
+    container.innerHTML = '<div class="muted" style="padding:2rem;text-align:center;">No roles found. Roles are defined in the Agent Registry.</div>';
+    return;
+  }
+
+  const roles = [...REGISTERED_AGENT_ROLES].sort();
+  const agents = Object.entries(AGENTS_DATA);
+
+  let html = '';
+  roles.forEach(role => {
+    // Find which agents grant this role and their tool permissions
+    const agentAccess = [];
+    agents.forEach(([agentId, agent]) => {
+      const rp = (agent.role_permissions || {})[role];
+      if (rp) {
+        agentAccess.push({ agentId, agent, tools: rp });
+      }
+    });
+
+    // Collect all tools this role can access across all agents
+    const allToolsSet = new Set();
+    agentAccess.forEach(a => (a.tools || []).forEach(t => allToolsSet.add(t)));
+    const toolCount = allToolsSet.has('*') ? 'all' : allToolsSet.size;
+
+    html += `<div class="card" style="margin-bottom:0.75rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+        <div>
+          <span style="font-size:14px;font-weight:700;">${role}</span>
+          <span style="font-size:11px;color:var(--text-muted);margin-left:8px;">${agentAccess.length} agent(s) &middot; ${toolCount} tool(s)</span>
+        </div>
+      </div>`;
+
+    if (agentAccess.length) {
+      html += `<table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);">
+            <th style="text-align:left;padding:0.35rem 0.5rem;color:var(--text-muted);font-weight:600;">Agent</th>
+            <th style="text-align:left;padding:0.35rem 0.5rem;color:var(--text-muted);font-weight:600;">Permitted Tools</th>
+          </tr>
+        </thead><tbody>`;
+      agentAccess.forEach(({ agentId, tools }) => {
+        const toolList = Array.isArray(tools) ? tools : [];
+        html += `<tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:0.35rem 0.5rem;font-weight:600;">
+            <span style="font-size:10px;padding:2px 6px;border-radius:3px;background:rgba(88,166,255,0.1);color:#58a6ff;">${agentId}</span>
+          </td>
+          <td style="padding:0.35rem 0.5rem;">
+            ${toolList.map(t => `<code style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg);margin-right:3px;">${t}</code>`).join('')}
+          </td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+    } else {
+      html += '<div class="muted" style="font-size:11px;">No agents define this role.</div>';
+    }
+    html += '</div>';
+  });
+
+  container.innerHTML = html;
+}
+
 
 // ── API Reference ─────────────────────────
 const API_ENDPOINTS = [
@@ -3523,6 +4051,78 @@ const API_ENDPOINTS = [
     ]
   },
   {
+    section: 'Data Policies (per-tool per-role)',
+    desc: 'Advanced data protection with sanitization rules, compliance frameworks, and role-specific data access control. Stored in Redis.',
+    endpoints: [
+      {
+        method: 'GET', path: '/v1/data-policies/tools',
+        desc: 'Get all data policies for the tenant',
+        example_response: { success: true, policies: { patient_lookup: { tool_name: 'patient_lookup', compliance_framework: 'hipaa', audit_required: true, role_policies: [{ role: 'doctor', action: 'allow', data_scope: ['medical','personal'], redaction_level: 'partial' }], sanitization_rules: [{ pattern_id: 'ssn_redaction', regex: '\\b\\d{3}-\\d{2}-\\d{4}\\b', replacement: '[SSN_REDACTED]', severity: 'critical' }] } }, count: 1 }
+      },
+      {
+        method: 'POST', path: '/v1/data-policies/tools/{tool_name}/policy',
+        desc: 'Create or update data policy for a tool',
+        example_body: { tool_name: 'patient_lookup', compliance_framework: 'hipaa', audit_required: true, retention_days: 90, role_policies: [{ role: 'doctor', action: 'allow', data_scope: ['medical','personal','contact'], redaction_level: 'partial' }, { role: 'nurse', action: 'redact', data_scope: ['medical','contact'], redaction_level: 'partial' }, { role: 'patient', action: 'block', data_scope: [], redaction_level: 'full' }], sanitization_rules: [{ pattern_id: 'ssn_redaction', regex: '\\b\\d{3}-\\d{2}-\\d{4}\\b', replacement: '[SSN_REDACTED]', description: 'Social Security Numbers', severity: 'critical' }] },
+        example_response: { success: true, message: "Data policy created for tool 'patient_lookup'" }
+      },
+      {
+        method: 'GET', path: '/v1/data-policies/tools/{tool_name}/policy',
+        desc: 'Get data policy for a specific tool',
+        example_response: { success: true, tool_name: 'patient_lookup', policy: { tool_name: 'patient_lookup', compliance_framework: 'hipaa', role_policies: [], sanitization_rules: [] } }
+      },
+      {
+        method: 'DELETE', path: '/v1/data-policies/tools/{tool_name}/policy',
+        desc: 'Delete data policy for a tool',
+        example_response: { success: true, message: "Data policy deleted for 'patient_lookup'" }
+      },
+      {
+        method: 'POST', path: '/v1/data-policies/validate',
+        desc: 'Validate data against policies (applies sanitization rules and role checks)',
+        example_body: { data: 'Patient SSN: 123-45-6789', tool_name: 'patient_lookup', user_role: 'nurse', compliance_check: true },
+        example_response: { validation_result: { compliant: false, risk_level: 'high', violations_count: 1 }, sanitized_data: 'Patient SSN: [SSN_REDACTED]', data_modified: true }
+      }
+    ]
+  },
+  {
+    section: 'Tenant Tools & Agents',
+    desc: 'Manage tool definitions and view agent/role mappings for the tenant.',
+    endpoints: [
+      {
+        method: 'GET', path: '/v1/tenant/me/tools',
+        desc: 'Get tenant tool definitions (OpenAI-format schemas)',
+        example_response: { tenant_id: '...', tools: [{ type: 'function', function: { name: 'patient_lookup', description: '...', parameters: {} } }], tool_names: ['patient_lookup'], per_role: { doctor: ['*'] }, per_agent: {} }
+      },
+      {
+        method: 'PUT', path: '/v1/tenant/me/tools',
+        desc: 'Register or replace tenant tool definitions',
+        example_body: { tools: [{ type: 'function', function: { name: 'patient_lookup', description: 'Look up a patient record', parameters: { type: 'object', properties: { patient_id: { type: 'string', description: 'Patient ID' } }, required: ['patient_id'] } } }] },
+        example_response: { status: 'ok', tool_count: 1, tool_names: ['patient_lookup'] }
+      },
+      {
+        method: 'GET', path: '/v1/tenant/me/agents',
+        desc: 'Get tenant agent registry with role mappings',
+        example_response: { tenant_id: '...', agents: { 'my-agent': { agent_id: 'my-agent', tools: ['patient_lookup'], role_permissions: { doctor: ['patient_lookup'] } } } }
+      },
+      {
+        method: 'POST', path: '/v1/agents/seed-test-data',
+        desc: 'Seed sample healthcare agents and policies for testing',
+        example_response: { success: true, message: 'Test data seeded' }
+      }
+    ]
+  },
+  {
+    section: 'Agent Chat',
+    desc: 'LLM-powered chat with RBAC-enforced function calling. Requires an LLM API key.',
+    endpoints: [
+      {
+        method: 'POST', path: '/v1/shield/chat/agent',
+        desc: 'Send a chat message; LLM decides tool calls, RBAC enforces permissions',
+        example_body: { messages: [{ role: 'user', content: 'Look up patient P-1234' }], agent_key: 'healthcare-doctor', user_role: 'nurse', llm_api_key: 'sk-...', llm_model: 'gpt-4o-mini' },
+        example_response: { assistant_message: '...', tool_results: [{ tool_name: 'patient_lookup', arguments: { patient_id: 'P-1234' }, rbac: { allowed: false, action: 'block', message: "Tool 'patient_lookup' blocked" } }] }
+      }
+    ]
+  },
+  {
     section: 'Classify (Runtime)',
     desc: 'Run guardrails against input or output text in real-time.',
     endpoints: [
@@ -3646,10 +4246,18 @@ const ENDPOINT_MAP = [
     { m: 'DELETE', p: '/v1/agents/tools/policies/{tool_name}', d: 'Delete tool policy' },
   ]},
   { cat: 'Configuration — Data Policies', color: '#f59e0b', where: 'admin', endpoints: [
+    { m: 'GET', p: '/v1/data-policies/tools', d: 'Get all data policies for tenant' },
     { m: 'POST', p: '/v1/data-policies/tools/{tool_name}/policy', d: 'Create/update tool data policy' },
     { m: 'GET', p: '/v1/data-policies/tools/{tool_name}/policy', d: 'Get tool data policy' },
+    { m: 'DELETE', p: '/v1/data-policies/tools/{tool_name}/policy', d: 'Delete tool data policy' },
     { m: 'GET', p: '/v1/data-policies/compliance/frameworks', d: 'List compliance frameworks (HIPAA, PCI-DSS, GDPR)' },
     { m: 'POST', p: '/v1/data-policies/validate', d: 'Validate data against policies' },
+  ]},
+  { cat: 'Configuration — Tenant Tools & Agents', color: '#f59e0b', where: 'admin', endpoints: [
+    { m: 'GET', p: '/v1/tenant/me/tools', d: 'Get tenant tool definitions (OpenAI-format schemas)' },
+    { m: 'PUT', p: '/v1/tenant/me/tools', d: 'Register/replace tenant tool definitions' },
+    { m: 'GET', p: '/v1/tenant/me/agents', d: 'Get tenant agent registry with role mappings' },
+    { m: 'POST', p: '/v1/agents/seed-test-data', d: 'Seed sample agents and policies for testing' },
   ]},
   { cat: 'Configuration — Shield Policies', color: '#f59e0b', where: 'admin', endpoints: [
     { m: 'GET', p: '/v1/shield/policies/{tenant_id}', d: 'List data-protection policies for tenant' },
@@ -3685,6 +4293,7 @@ const ENDPOINT_MAP = [
     { m: 'POST', p: '/guardrails/input', d: 'Run input guardrails on user text' },
     { m: 'POST', p: '/guardrails/output', d: 'Run output guardrails on LLM output' },
     { m: 'POST', p: '/v1/shield/chat/completions', d: 'Full proxy: input guardrails → LLM → output guardrails' },
+    { m: 'POST', p: '/v1/shield/chat/agent', d: 'Agent chat with RBAC-enforced tool calling' },
   ]},
   { cat: 'Runtime — Tool & Agent Guards (production server)', color: '#6366f1', where: 'runtime', endpoints: [
     { m: 'POST', p: '/v1/shield/tool/check', d: 'Pre-execution tool call validation' },
@@ -5117,14 +5726,50 @@ async function loadTenantPolicy() {
     const data = await resp.json();
     TENANT_POLICY = data;
 
-    // Extract RBAC configuration
-    const toolAllowlist = data.input_guardrails?.tool_allowlist;
-    if (!toolAllowlist) {
-      throw new Error('No tool_allowlist configuration found in tenant policy');
-    }
+    // Also fetch agent registry to build complete RBAC picture
+    let registryAgents = {};
+    try {
+      const regResp = await fetch(`${adminEndpoint}/v1/agents/registry`, {
+        method: 'GET', headers: headers
+      });
+      if (regResp.ok) {
+        const regData = await regResp.json();
+        if (regData.success && regData.agents) registryAgents = regData.agents;
+      }
+    } catch (e) { /* no registry */ }
 
-    populateRbacDropdowns(toolAllowlist);
-    statusText.innerHTML = `<span style="color:var(--success);">✅ Policy loaded successfully</span> • Found ${Object.keys(toolAllowlist.settings?.per_agent || {}).length} agents, ${Object.keys(toolAllowlist.settings?.per_role || {}).length} roles`;
+    // Build merged allowlist from tenant policy + agent registry
+    const toolAllowlist = data.input_guardrails?.tool_allowlist || {};
+    const mergedSettings = { ...(toolAllowlist.settings || {}) };
+    const mergedPerAgent = { ...(mergedSettings.per_agent || {}) };
+    const mergedPerRole = { ...(mergedSettings.per_role || {}) };
+
+    // Merge agent registry into per_agent and per_role
+    Object.entries(registryAgents).forEach(([agentId, agent]) => {
+      if (!mergedPerAgent[agentId] && agent.tools && agent.tools.length) {
+        mergedPerAgent[agentId] = agent.tools;
+      }
+      Object.entries(agent.role_permissions || {}).forEach(([role, tools]) => {
+        if (!mergedPerRole[role]) {
+          mergedPerRole[role] = Array.isArray(tools) ? tools : [];
+        }
+      });
+    });
+
+    mergedSettings.per_agent = mergedPerAgent;
+    mergedSettings.per_role = mergedPerRole;
+    const merged = { ...toolAllowlist, settings: mergedSettings };
+
+    // Store merged data on TENANT_POLICY for updateRbacHelp
+    if (!TENANT_POLICY.input_guardrails) TENANT_POLICY.input_guardrails = {};
+    TENANT_POLICY.input_guardrails.tool_allowlist = merged;
+    TENANT_POLICY._registry = registryAgents;
+
+    populateRbacDropdowns(merged);
+    const agentCount = Object.keys(mergedPerAgent).length;
+    const roleCount = Object.keys(mergedPerRole).length;
+    const src = Object.keys(registryAgents).length ? 'agent registry + tenant policy' : 'tenant policy';
+    statusText.innerHTML = `<span style="color:var(--success);">✅ Policy loaded successfully</span> • Found ${agentCount} agents, ${roleCount} roles (from ${src})`;
 
     // Enable controls
     document.getElementById('rbac-agent-key').disabled = false;
@@ -5158,15 +5803,6 @@ function populateRbacDropdowns(toolAllowlist) {
     const option = document.createElement('option');
     option.value = agent;
     option.textContent = agent;
-    agentSelect.appendChild(option);
-  });
-
-  // Add "test agents" for role-based testing
-  Object.keys(perRole).forEach(role => {
-    const option = document.createElement('option');
-    option.value = `test-${role}-agent`;
-    option.textContent = `test-${role}-agent (for role testing)`;
-    option.style.fontStyle = 'italic';
     agentSelect.appendChild(option);
   });
 
@@ -5228,12 +5864,39 @@ function updateRbacHelp() {
     return;
   }
 
+  const matchesTool = (toolName, patterns) => (patterns || []).some(p => p === '*' || p === toolName);
+
+  // Check agent registry first (highest priority)
+  const registry = TENANT_POLICY._registry || {};
+  const regAgent = registry[agent];
+
+  if (regAgent) {
+    const agentOk = matchesTool(tool, regAgent.tools || []);
+    const agentMsg = agentOk ? `registry agent '${agent}' permits '${tool}'` : `registry agent '${agent}' blocks '${tool}'`;
+
+    const rolePerms = (regAgent.role_permissions || {})[role];
+    let roleOk, roleMsg;
+    if (rolePerms) {
+      roleOk = matchesTool(tool, rolePerms);
+      roleMsg = roleOk ? `registry role '${role}' permits '${tool}'` : `registry role '${role}' blocks '${tool}'`;
+    } else {
+      roleOk = false;
+      roleMsg = `role '${role}' not in registry for agent '${agent}'`;
+    }
+
+    const expected = agentOk && roleOk;
+    const reason = expected
+      ? `✅ ALLOW (${agentMsg} AND ${roleMsg})`
+      : `❌ BLOCK (${agentMsg} AND ${roleMsg})`;
+    helpText.innerHTML = `<strong>${reason}</strong><br><span style="color:var(--text-muted);font-size:11px;">Source: Agent Registry (highest priority)</span>`;
+    return;
+  }
+
+  // Fall back to tenant policy
   const toolAllowlist = TENANT_POLICY.input_guardrails?.tool_allowlist?.settings || {};
   const perAgent = toolAllowlist.per_agent || {};
   const perRole = toolAllowlist.per_role || {};
   const strictMode = toolAllowlist.strict_mode !== false;
-
-  const matchesTool = (toolName, patterns) => patterns.some(p => p === '*' || p === toolName);
 
   let agentAllowed = false;
   let roleAllowed = false;
@@ -5286,7 +5949,7 @@ function updateRbacHelp() {
     permissionType = 'No Policy';
   }
 
-  helpText.innerHTML = `<strong>${reason}</strong><br><span style="color:var(--text-muted);font-size:11px;">Permission type: ${permissionType}</span>`;
+  helpText.innerHTML = `<strong>${reason}</strong><br><span style="color:var(--text-muted);font-size:11px;">Source: Tenant Policy — ${permissionType}</span>`;
 }
 
 async function runRbacTest() {
