@@ -119,22 +119,25 @@ class TopicRestrictionGuardrail(BaseGuardrail):
         allowed_topics = self.settings.get("allowed_topics", [])
         blocked_topics = self.settings.get("blocked_topics", [])
 
+        # Conversational topics are always exempt from topic restrictions —
+        # greetings, thanks, farewells are social lubricant, not topic violations.
+        _CONVERSATIONAL_TOPICS = {
+            "greeting", "greetings", "farewell", "thanks", "thank_you",
+            "pleasantry", "small_talk", "acknowledgment", "introduction",
+            "goodbye", "hello", "welcome", "chitchat",
+        }
+
         # Override: if LLM said "not related" but ALL detected topics are in
-        # the allowed list, trust the topic detection over the boolean.
-        # Catches false negatives from typos or vague phrasing.
-        # Does NOT override if any detected topic is off-scope.
+        # the allowed list or are conversational, trust the topic detection.
         if not related and allowed_topics and topics:
             allowed_lower = {t.lower().replace(" ", "_") for t in allowed_topics}
             detected_lower = {t.lower().replace(" ", "_") for t in topics}
-            if detected_lower <= allowed_lower:
+            if detected_lower <= (allowed_lower | _CONVERSATIONAL_TOPICS):
                 related = True
-
-        # Reverse override: if LLM said "related" but a detected topic is
-        # NOT in the allowed list, force block. The LLM missed the off-topic part.
         if related and allowed_topics and topics:
             allowed_lower = {t.lower().replace(" ", "_") for t in allowed_topics}
             detected_lower = {t.lower().replace(" ", "_") for t in topics}
-            off_scope = detected_lower - allowed_lower
+            off_scope = detected_lower - allowed_lower - _CONVERSATIONAL_TOPICS
             if off_scope:
                 related = False
 
