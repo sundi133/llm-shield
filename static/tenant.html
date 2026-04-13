@@ -5256,13 +5256,15 @@ function updateRbacHelp() {
 }
 
 async function runRbacTest() {
-  // Use local backend endpoint to proxy tool checking
+  // Get configuration from playground settings
   const apiKey = document.getElementById('pg-api-key').value.trim();
+  const runpodToken = document.getElementById('pg-runpod-token').value.trim();
   const agentKey = document.getElementById('rbac-agent-key').value.trim();
   const userRole = document.getElementById('rbac-user-role').value.trim();
   const toolName = document.getElementById('rbac-tool-name').value.trim();
 
   if (!apiKey) return showToast('API Key is required', 'error');
+  if (!runpodToken) return showToast('RunPod Token is required for tool testing', 'error');
   if (!agentKey) return showToast('Agent Key is required', 'error');
   if (!toolName) return showToast('Tool Name is required', 'error');
 
@@ -5290,11 +5292,9 @@ async function runRbacTest() {
     'Content-Type': 'application/json',
     'X-API-Key': apiKey,
     'X-Agent-Key': agentKey,
-    'X-Playground-Target': 'https://kk5losqxwr2ui7.api.runpod.ai'
+    'X-Playground-Target': 'https://kk5losqxwr2ui7.api.runpod.ai',
+    'Authorization': `Bearer ${runpodToken}`
   };
-
-  // Note: Authorization header should be automatically added by shield-admin proxy
-  // since RUNPOD_TOKEN environment variable is provided to the container
 
   // Only add role header if role is provided
   if (userRole) headers['X-User-Role'] = userRole;
