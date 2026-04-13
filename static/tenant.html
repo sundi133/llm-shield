@@ -5275,8 +5275,8 @@ async function runRbacTest() {
   btnText.textContent = 'Testing…';
   spinner.classList.remove('hidden');
 
-  // Use main LLM Shield app endpoint (port 8000)
-  const toolCheckUrl = 'http://localhost:8000/api/rbac/test-tool';
+  // Use shield-admin proxy to forward to RunPod endpoint
+  const toolCheckUrl = 'http://localhost:8080/playground/proxy/v1/shield/tool/check';
 
   const body = {
     agent_key: agentKey,
@@ -5288,8 +5288,13 @@ async function runRbacTest() {
 
   const headers = {
     'Content-Type': 'application/json',
-    'X-API-Key': apiKey
+    'X-API-Key': apiKey,
+    'X-Agent-Key': agentKey,
+    'X-Playground-Target': 'https://kk5losqxwr2ui7.api.runpod.ai'
   };
+
+  // Only add role header if role is provided
+  if (userRole) headers['X-User-Role'] = userRole;
 
   // Build cURL for copy (using main app endpoint)
   const fullUrl = toolCheckUrl;
