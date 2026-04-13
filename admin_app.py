@@ -23,7 +23,10 @@ Or with Docker:
         shield-admin
 """
 
+import fnmatch
+import json
 import os
+from datetime import datetime
 
 import httpx
 import uvicorn
@@ -57,6 +60,87 @@ try:
     from api.routes_config import router as _config_router
 except Exception:
     pass
+
+
+def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None) -> list[dict]:
+    """Load tool definitions dynamically from Redis for this tenant.
+
+    Priority:
+      1. Explicit tool_definitions stored in Redis (PUT /v1/tenant/me/tools)
+      2. Auto-generate stub tools from the per_agent allowlist in the policy
+      3. Empty list — LLM will respond without tool calls
+    """
+    # 1. Try tool_definitions:{tenant_id} in Redis
+    if tenant_id:
+        try:
+            from storage.tenant_store import _get_redis, _fallback_store
+            r = _get_redis()
+            raw = r.get(f"tool_definitions:{tenant_id}") if r else None
+            if not raw:
+                raw = _fallback_store.get(f"tool_definitions:{tenant_id}")
+            if raw:
+                tools = json.loads(raw)
+                if tools:
+                    return tools
+        except Exception:
+            pass
+
+    # 2. Build stub tools from per_agent tool names in policy
+    if tenant_config:
+        ta = (tenant_config.get("input_guardrails") or {}).get("tool_allowlist") or {}
+        per_agent = (ta.get("settings") or {}).get("per_agent") or {}
+        tool_names: set[str] = set()
+        for names in per_agent.values():
+            for n in names:
+                if n != "*":
+                    tool_names.add(n)
+        if tool_names:
+            return [
+                {"type": "function", "function": {
+                    "name": name,
+                    "description": f"Execute {name.replace('_', ' ')} action",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                }}
+                for name in sorted(tool_names)
+            ]
+
+    return []
+
+
+def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
+                tenant_config: dict | None) -> dict:
+    """Check tool permission against tenant RBAC policy (no guardrail imports)."""
+    per_agent: dict = {}
+    per_role: dict = {}
+
+    if tenant_config:
+        ta = (tenant_config.get("input_guardrails") or {}).get("tool_allowlist") or {}
+        settings = ta.get("settings") or {}
+        per_agent = settings.get("per_agent") or {}
+        per_role = settings.get("per_role") or {}
+
+    def _matches(name: str, patterns: list) -> bool:
+        return any(fnmatch.fnmatch(name, p) for p in patterns)
+
+    agent_ok = _matches(tool_name, per_agent.get(agent_key, []))
+    agent_msg = (f"Agent '{agent_key}' permits '{tool_name}'" if agent_ok
+                 else f"Agent '{agent_key}' does not allow '{tool_name}'"
+                 if agent_key in per_agent
+                 else f"Agent '{agent_key}' not configured")
+
+    if user_role:
+        role_ok = _matches(tool_name, per_role.get(user_role, []))
+        role_msg = (f"Role '{user_role}' permits '{tool_name}'" if role_ok
+                    else f"Role '{user_role}' does not allow '{tool_name}'"
+                    if user_role in per_role
+                    else f"Role '{user_role}' not configured")
+    else:
+        role_ok = True
+        role_msg = "No role provided, skipping role check"
+
+    allowed = agent_ok and role_ok
+    message = f"Tool '{tool_name}' {'allowed' if allowed else 'blocked'}: {agent_msg} AND {role_msg}"
+    return {"allowed": allowed, "action": "pass" if allowed else "block", "message": message}
 
 
 def create_admin_app() -> FastAPI:
@@ -141,7 +225,110 @@ def create_admin_app() -> FastAPI:
     async def tenant_portal():
         return FileResponse(os.path.join(static_dir, "tenant.html"))
 
-    @app.api_route("/playground/proxy/{path:path}", methods=["POST"])
+    @app.get("/playground")
+    async def playground():
+        return FileResponse(os.path.join(static_dir, "playground.html"))
+
+    # ------------------------------------------------------------------
+    # Lightweight agent chat — calls OpenAI directly, checks RBAC from
+    # tenant config in Redis.  Zero guardrail-module dependencies.
+    # ------------------------------------------------------------------
+    @app.post("/v1/shield/chat/agent")
+    async def agent_chat(request: Request):
+        start = datetime.now()
+        body = await request.json()
+
+        messages = body.get("messages", [])
+        agent_key = body.get("agent_key", "") or request.headers.get("X-Agent-Key", "")
+        user_role = body.get("user_role") or request.headers.get("X-User-Role")
+        llm_api_key = body.get("llm_api_key")
+        llm_model = body.get("llm_model", "gpt-4o-mini")
+
+        if not llm_api_key:
+            return JSONResponse(status_code=400,
+                                content={"error": "llm_api_key is required for the admin playground"})
+
+        default_system = (
+            "You are an AI assistant. "
+            "Use the available tools to help with tasks. "
+            "Always use tools when a task requires looking up, updating, or managing data."
+        )
+        if messages and not any(m.get("role") == "system" for m in messages):
+            messages = [{"role": "system", "content": default_system}] + messages
+
+        if not messages:
+            return JSONResponse(status_code=400, content={"error": "messages required"})
+
+        tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
+        tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
+
+        tools = body.get("tools") or _load_tenant_tools(tenant_id, tenant_config)
+        if not tools:
+            return JSONResponse(status_code=400, content={
+                "error": "No tool definitions found. Register tools via PUT /v1/tenant/me/tools first.",
+            })
+
+        # --- Call OpenAI ---
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    json={
+                        "model": llm_model,
+                        "messages": messages,
+                        "tools": tools,
+                        "tool_choice": "auto",
+                        "max_tokens": 1024,
+                        "temperature": 0.3,
+                    },
+                    headers={"Authorization": f"Bearer {llm_api_key}"},
+                )
+                llm_data = resp.json()
+        except Exception as e:
+            return JSONResponse(status_code=502, content={"error": f"LLM call failed: {e}"})
+
+        if "error" in llm_data:
+            return JSONResponse(status_code=502,
+                                content={"error": "LLM returned an error", "llm_error": llm_data["error"]})
+
+        # --- Parse tool calls ---
+        choices = llm_data.get("choices", [])
+        message_obj = choices[0].get("message", {}) if choices else {}
+        content = message_obj.get("content") or ""
+        raw_calls = message_obj.get("tool_calls") or []
+
+        tool_results = []
+        for tc in raw_calls:
+            func = tc.get("function", {})
+            name = func.get("name", "unknown")
+            args = func.get("arguments", "{}")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {"_raw": args}
+
+            rbac = _check_rbac(name, agent_key, user_role, tenant_config)
+            tool_results.append({
+                "tool_call_id": tc.get("id", ""),
+                "tool_name": name,
+                "arguments": args,
+                "rbac": rbac,
+            })
+
+        has_blocked = any(not t["rbac"]["allowed"] for t in tool_results)
+        latency_ms = (datetime.now() - start).total_seconds() * 1000
+
+        return {
+            "text": content,
+            "tool_calls": tool_results,
+            "has_blocked_tools": has_blocked,
+            "all_tools_allowed": not has_blocked and len(tool_results) > 0,
+            "usage": llm_data.get("usage"),
+            "latency_ms": round(latency_ms, 2),
+        }
+
+    @app.api_route("/playground/proxy/{path:path}", methods=["GET", "POST"])
     async def playground_proxy(path: str, request: Request):
         """Proxy playground requests to a remote Shield endpoint (avoids CORS)."""
         target_url = request.headers.get("X-Playground-Target", "").rstrip("/")
@@ -153,16 +340,27 @@ def create_admin_app() -> FastAPI:
             forward_headers["Authorization"] = auth
         if api_key := request.headers.get("X-API-Key"):
             forward_headers["X-API-Key"] = api_key
+        if user_role := request.headers.get("X-User-Role"):
+            forward_headers["X-User-Role"] = user_role
+        if agent_key := request.headers.get("X-Agent-Key"):
+            forward_headers["X-Agent-Key"] = agent_key
+        if tenant_id := request.headers.get("X-Tenant-ID"):
+            forward_headers["X-Tenant-ID"] = tenant_id
 
-        body = await request.body()
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             try:
-                resp = await client.post(
-                    f"{target_url}/{path}",
-                    content=body,
-                    headers=forward_headers,
-                )
+                if request.method == "GET":
+                    resp = await client.get(
+                        f"{target_url}/{path}",
+                        headers=forward_headers,
+                    )
+                else:
+                    body = await request.body()
+                    resp = await client.post(
+                        f"{target_url}/{path}",
+                        content=body,
+                        headers=forward_headers,
+                    )
                 try:
                     data = resp.json()
                 except Exception:

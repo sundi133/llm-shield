@@ -329,3 +329,98 @@ async def revoke_my_api_key(request: Request, body: dict):
     )
 
     return {"status": "revoked", "tenant_id": tenant_id, "preview": _key_preview(api_key)}
+
+
+# ---------------------------------------------------------------------------
+# Tool Definitions — tenant-specific OpenAI-format tool schemas
+# ---------------------------------------------------------------------------
+
+@router.get("/me/tools")
+async def get_my_tools(request: Request):
+    """Return the tenant's registered tool definitions (full OpenAI-format schemas).
+
+    These are the tools available for agentic chat and Deep Agent integration.
+    Each tool has a name, description, and parameter schema.
+    """
+    tenant_id = _require_tenant(request)
+
+    import json as _json
+    r = _get_redis()
+    raw = r.get(f"tool_definitions:{tenant_id}") if r else None
+    tools = _json.loads(raw) if raw else []
+
+    config = get_tenant(tenant_id)
+    allowlist = (config or {}).get("input_guardrails", {}).get("tool_allowlist", {}).get("settings", {})
+
+    return {
+        "tenant_id": tenant_id,
+        "tools": tools,
+        "tool_names": [t["function"]["name"] for t in tools if "function" in t],
+        "per_role": allowlist.get("per_role", {}),
+        "per_agent": allowlist.get("per_agent", {}),
+    }
+
+
+@router.put("/me/tools")
+async def set_my_tools(request: Request):
+    """Register or replace the tenant's tool definitions.
+
+    Body: { "tools": [ { "type": "function", "function": { "name": "...", ... } }, ... ] }
+
+    These are OpenAI-format tool schemas used by /v1/shield/chat/agent
+    and the Deep Agent integration.
+    """
+    import json as _json
+    tenant_id = _require_tenant(request)
+    body = await request.json()
+    tools = body.get("tools", [])
+
+    for t in tools:
+        if "function" not in t or "name" not in t.get("function", {}):
+            raise HTTPException(status_code=422, detail="Each tool must have function.name")
+
+    r = _get_redis()
+    if r:
+        r.set(f"tool_definitions:{tenant_id}", _json.dumps(tools))
+    else:
+        from storage.tenant_store import _fallback_store
+        _fallback_store[f"tool_definitions:{tenant_id}"] = _json.dumps(tools)
+
+    log_admin_action(
+        action="tenant_set_tool_definitions",
+        actor=f"tenant:{tenant_id}",
+        tenant_id=tenant_id,
+        source_ip=request.client.host if request.client else "",
+        metadata={"tool_count": len(tools), "names": [t["function"]["name"] for t in tools]},
+    )
+
+    return {
+        "status": "ok",
+        "tenant_id": tenant_id,
+        "tool_count": len(tools),
+        "tool_names": [t["function"]["name"] for t in tools],
+    }
+
+
+@router.get("/me/agents")
+async def get_my_agents(request: Request):
+    """Return the tenant's full agent registry with roles and tool mappings."""
+    import json as _json
+    tenant_id = _require_tenant(request)
+
+    config = get_tenant(tenant_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    allowlist = config.get("input_guardrails", {}).get("tool_allowlist", {}).get("settings", {})
+
+    r = _get_redis()
+    agents_raw = r.get(f"agents:{tenant_id}") if r else None
+    agent_registry = _json.loads(agents_raw) if agents_raw else {}
+
+    return {
+        "tenant_id": tenant_id,
+        "per_agent": allowlist.get("per_agent", {}),
+        "per_role": allowlist.get("per_role", {}),
+        "agent_registry": agent_registry,
+    }

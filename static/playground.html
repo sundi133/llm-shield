@@ -3,261 +3,579 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LLM Shield Playground</title>
+<title>LLM Shield — Agent Chat Playground</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    background: #0d1117;
-    color: #c9d1d9;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 2rem 1rem;
-  }
-  h1 { color: #58a6ff; margin-bottom: 0.5rem; font-size: 1.8rem; }
-  .subtitle { color: #8b949e; margin-bottom: 2rem; font-size: 0.95rem; }
-  .container { width: 100%; max-width: 800px; }
-  .card {
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-  label { display: block; color: #8b949e; font-size: 0.85rem; margin-bottom: 0.4rem; font-weight: 600; }
-  textarea, input[type="text"] {
-    width: 100%;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    color: #c9d1d9;
-    padding: 0.75rem;
-    font-family: inherit;
-    font-size: 0.95rem;
-    resize: vertical;
-  }
-  textarea { min-height: 120px; }
-  textarea:focus, input:focus { outline: none; border-color: #58a6ff; }
-  .row { display: flex; gap: 1rem; margin-top: 1rem; }
-  .row > * { flex: 1; }
-  button {
-    padding: 0.7rem 1.5rem;
-    border-radius: 6px;
-    border: 1px solid #30363d;
-    font-size: 0.95rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .btn-classify { background: #238636; color: #fff; border-color: #238636; }
-  .btn-classify:hover { background: #2ea043; }
-  .btn-shield { background: #1f6feb; color: #fff; border-color: #1f6feb; }
-  .btn-shield:hover { background: #388bfd; }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  .results-panel {
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    padding: 1rem;
-    min-height: 100px;
-    white-space: pre-wrap;
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 0.85rem;
-    line-height: 1.5;
-    overflow-x: auto;
-  }
-  .badge {
-    display: inline-block;
-    padding: 0.2rem 0.6rem;
-    border-radius: 12px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    margin-right: 0.5rem;
-  }
-  .badge-safe { background: #238636; color: #fff; }
-  .badge-unsafe { background: #da3633; color: #fff; }
-  .latency { color: #8b949e; font-size: 0.8rem; margin-top: 0.5rem; }
-  .result-header { display: flex; align-items: center; margin-bottom: 0.75rem; }
-  .guardrail-item {
-    border-left: 3px solid #30363d;
-    padding: 0.4rem 0.8rem;
-    margin: 0.4rem 0;
-    font-size: 0.85rem;
-  }
-  .guardrail-pass { border-left-color: #238636; }
-  .guardrail-block { border-left-color: #da3633; }
-  .guardrail-warn { border-left-color: #d29922; }
+:root {
+  --bg-0: #0d1117; --bg-1: #161b22; --bg-2: #1c2128; --bg-3: #21262d;
+  --border: #30363d; --border-light: #444c56;
+  --text: #e6edf3; --text-dim: #c9d1d9; --text-muted: #8b949e;
+  --accent: #58a6ff; --accent-dim: #1f6feb;
+  --success: #3fb950; --success-dim: #238636;
+  --danger: #f85149; --danger-dim: #da3633;
+  --warning: #d29922;
+  --user-bg: #1f3a5f; --assistant-bg: #1c2128;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; background: var(--bg-0); color: var(--text-dim); height: 100vh; overflow: hidden; }
+input, select, textarea, button { font-family: inherit; }
+
+.app { display: grid; grid-template-columns: 280px 1fr; grid-template-rows: 52px 1fr; height: 100vh; }
+
+/* --- Header --- */
+.header { grid-column: 1 / -1; background: var(--bg-1); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 1.25rem; gap: 0.75rem; z-index: 10; }
+.header h1 { font-size: 1rem; color: var(--text); font-weight: 700; }
+.header h1 span { color: var(--accent); }
+.header .tag { font-size: 0.65rem; padding: 2px 8px; border-radius: 10px; background: var(--accent-dim); color: #fff; font-weight: 600; letter-spacing: 0.5px; }
+.header .spacer { flex: 1; }
+.header .status { font-size: 0.75rem; color: var(--text-muted); font-family: 'SF Mono', 'JetBrains Mono', monospace; }
+
+/* --- Sidebar --- */
+.sidebar { background: var(--bg-1); border-right: 1px solid var(--border); overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 1rem; }
+.sidebar h3 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 0.25rem; }
+.field { margin-bottom: 0.5rem; }
+.field label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px; font-weight: 600; }
+.field input, .field select { width: 100%; background: var(--bg-0); border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); padding: 7px 10px; font-size: 0.8rem; }
+.field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+.field input::placeholder { color: var(--border-light); }
+.btn { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.15s; width: 100%; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary { background: var(--accent-dim); color: #fff; border-color: var(--accent-dim); }
+.btn-primary:hover:not(:disabled) { background: var(--accent); }
+.policy-status { font-size: 0.75rem; padding: 6px 10px; border-radius: 6px; background: var(--bg-0); border: 1px solid var(--border); }
+.policy-ok { border-color: var(--success-dim); color: var(--success); }
+.policy-none { color: var(--text-muted); }
+
+.tool-list { display: flex; flex-direction: column; gap: 3px; }
+.tool-chip { font-size: 0.72rem; padding: 4px 8px; border-radius: 4px; background: var(--bg-0); border: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }
+.tool-chip .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.tool-chip .dot.allowed { background: var(--success); }
+.tool-chip .dot.blocked { background: var(--danger); }
+.tool-chip .dot.unknown { background: var(--text-muted); }
+.tool-chip .name { font-family: 'SF Mono', 'JetBrains Mono', monospace; color: var(--text-dim); }
+.divider { height: 1px; background: var(--border); margin: 0.25rem 0; }
+
+/* --- Chat --- */
+.chat-area { display: flex; flex-direction: column; overflow: hidden; }
+.messages { flex: 1; overflow-y: auto; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+.messages::-webkit-scrollbar { width: 6px; }
+.messages::-webkit-scrollbar-track { background: transparent; }
+.messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.msg { max-width: 85%; border-radius: 12px; padding: 0.75rem 1rem; font-size: 0.88rem; line-height: 1.55; animation: fadeIn 0.2s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.msg-user { align-self: flex-end; background: var(--user-bg); border: 1px solid #2a5a8f; color: var(--text); border-bottom-right-radius: 4px; }
+.msg-assistant { align-self: flex-start; background: var(--assistant-bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.msg-system { align-self: center; background: var(--bg-3); border: 1px solid var(--border); color: var(--text-muted); font-size: 0.78rem; max-width: 70%; text-align: center; }
+.msg-error { align-self: center; background: #2d1b1b; border: 1px solid var(--danger-dim); color: var(--danger); font-size: 0.82rem; max-width: 70%; }
+
+.msg-assistant .content { white-space: pre-wrap; }
+.msg-meta { font-size: 0.68rem; color: var(--text-muted); margin-top: 6px; font-family: 'SF Mono', 'JetBrains Mono', monospace; }
+
+/* Tool call cards */
+.tool-calls { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; }
+.tool-card { border-radius: 8px; padding: 0.65rem 0.85rem; border: 1px solid var(--border); }
+.tool-card-allowed { background: #0d2818; border-color: var(--success-dim); }
+.tool-card-blocked { background: #2d1215; border-color: var(--danger-dim); }
+.tool-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.tool-card-header .icon { font-size: 1rem; }
+.tool-card-header .name { font-family: 'SF Mono', 'JetBrains Mono', monospace; font-weight: 600; font-size: 0.82rem; color: var(--text); }
+.tool-card-header .badge { font-size: 0.65rem; padding: 2px 8px; border-radius: 10px; font-weight: 700; letter-spacing: 0.3px; margin-left: auto; }
+.badge-allowed { background: var(--success-dim); color: #fff; }
+.badge-blocked { background: var(--danger-dim); color: #fff; }
+.tool-card-args { font-family: 'SF Mono', 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text-muted); background: rgba(0,0,0,0.25); padding: 6px 10px; border-radius: 4px; margin-bottom: 6px; white-space: pre-wrap; }
+.tool-card-reason { font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }
+
+/* Input bar */
+.input-bar { padding: 0.75rem 1.25rem; border-top: 1px solid var(--border); background: var(--bg-1); display: flex; gap: 0.5rem; align-items: flex-end; }
+.input-bar textarea { flex: 1; background: var(--bg-0); border: 1px solid var(--border); border-radius: 10px; color: var(--text-dim); padding: 10px 14px; font-size: 0.88rem; resize: none; min-height: 42px; max-height: 140px; line-height: 1.4; }
+.input-bar textarea:focus { outline: none; border-color: var(--accent); }
+.input-bar textarea::placeholder { color: var(--border-light); }
+.send-btn { width: 42px; height: 42px; border-radius: 10px; border: none; background: var(--accent-dim); color: #fff; font-size: 1.1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s; flex-shrink: 0; }
+.send-btn:hover:not(:disabled) { background: var(--accent); }
+.send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* Loading */
+.typing-indicator { align-self: flex-start; padding: 0.75rem 1rem; }
+.typing-dots { display: flex; gap: 5px; }
+.typing-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); animation: bounce 1.2s infinite; }
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-8px); } }
+
+/* Presets */
+.presets { display: flex; flex-direction: column; gap: 3px; }
+.preset-btn { text-align: left; background: var(--bg-0); border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); padding: 6px 10px; font-size: 0.72rem; cursor: pointer; transition: border-color 0.15s; }
+.preset-btn:hover { border-color: var(--accent); color: var(--text); }
+.preset-btn .label { font-weight: 600; display: block; margin-bottom: 1px; }
+.preset-btn .desc { color: var(--text-muted); font-size: 0.68rem; }
+
+/* LLM config */
+.llm-config { display: flex; flex-direction: column; gap: 0.4rem; }
 </style>
 </head>
 <body>
-  <h1>LLM Shield Playground</h1>
-  <p class="subtitle">Test guardrails interactively</p>
+<div class="app">
+  <!-- Header -->
+  <div class="header">
+    <h1><span>LLM Shield</span> Agent Chat</h1>
+    <span class="tag">PLAYGROUND</span>
+    <span class="spacer"></span>
+    <span class="status" id="header-status"></span>
+  </div>
 
-  <div class="container">
-    <div class="card">
-      <label for="api-key">API Key (required if auth enabled)</label>
-      <input type="text" id="api-key" placeholder="Your Shield API key">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div>
+      <h3>Connection</h3>
+      <div class="field">
+        <label>Tenant API Key</label>
+        <input type="password" id="api-key" placeholder="tenant-…-key-…">
+      </div>
+      <div class="field">
+        <label>Shield Endpoint</label>
+        <input type="text" id="shield-url" placeholder="https://your-shield.up.railway.app">
+      </div>
+      <div class="field">
+        <label>RunPod Token (if RunPod)</label>
+        <input type="password" id="runpod-token" placeholder="Optional">
+      </div>
+      <button class="btn btn-primary" onclick="loadPolicy()" id="load-btn">Load Policy</button>
+      <div class="policy-status policy-none" id="policy-status" style="margin-top:0.5rem;">No policy loaded</div>
+    </div>
 
-      <label for="agent-key" style="margin-top: 1rem;">Agent Key (optional, for RBAC)</label>
-      <input type="text" id="agent-key" placeholder="e.g. support-bot-1">
+    <div class="divider"></div>
 
-      <label for="input-text" style="margin-top: 1rem;">Message</label>
-      <textarea id="input-text" placeholder="Type a message to test against the guardrails..."></textarea>
-
-      <div class="row">
-        <button class="btn-classify" id="btn-classify" onclick="doClassify()">Classify</button>
-        <button class="btn-shield" id="btn-shield" onclick="doShieldChat()">Shield Chat</button>
+    <div>
+      <h3>Agent Context</h3>
+      <div class="field">
+        <label>Agent Key</label>
+        <select id="agent-key" disabled onchange="updateToolList()">
+          <option value="">Load policy first…</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>User Role</label>
+        <select id="user-role" disabled onchange="updateToolList()">
+          <option value="">Load policy first…</option>
+        </select>
       </div>
     </div>
 
-    <div class="card">
-      <label>Results</label>
-      <div class="results-panel" id="results">Awaiting input...</div>
+    <div class="divider"></div>
+
+    <div>
+      <h3>LLM (for function calling)</h3>
+      <div class="llm-config">
+        <div class="field">
+          <label>OpenAI API Key</label>
+          <input type="password" id="llm-api-key" placeholder="sk-…">
+        </div>
+        <div class="field">
+          <label>Model</label>
+          <select id="llm-model">
+            <option value="gpt-4o-mini">gpt-4o-mini</option>
+            <option value="gpt-4o">gpt-4o</option>
+            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+            <option value="gpt-4.1-nano">gpt-4.1-nano</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div>
+      <h3>Tool Access (agent + role)</h3>
+      <div class="tool-list" id="tool-list">
+        <div style="font-size:0.75rem;color:var(--text-muted);">Load policy to see tool permissions</div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div>
+      <h3>Quick Prompts</h3>
+      <div class="presets" id="presets">
+        <button class="preset-btn" onclick="usePreset('Look up the medical history for patient P-12345')">
+          <span class="label">Patient Lookup</span>
+          <span class="desc">Look up medical history</span>
+        </button>
+        <button class="preset-btn" onclick="usePreset('Update vitals for patient P-12345: BP 130/85, HR 78, temp 98.6°F')">
+          <span class="label">Update Vitals</span>
+          <span class="desc">Record new vital signs</span>
+        </button>
+        <button class="preset-btn" onclick="usePreset('Prescribe Lisinopril 10mg daily for patient P-12345 for hypertension')">
+          <span class="label">Prescribe Medication</span>
+          <span class="desc">Create a new prescription</span>
+        </button>
+        <button class="preset-btn" onclick="usePreset('Update diagnosis for patient P-12345 to E11 - Type 2 Diabetes, status active')">
+          <span class="label">Update Diagnosis</span>
+          <span class="desc">Add/update a diagnosis</span>
+        </button>
+        <button class="preset-btn" onclick="usePreset('Schedule an appendectomy for patient P-12345 on 2026-05-15')">
+          <span class="label">Schedule Surgery</span>
+          <span class="desc">Book a procedure</span>
+        </button>
+        <button class="preset-btn" onclick="usePreset('Delete the record for patient P-99999 — duplicate entry created by mistake')">
+          <span class="label">Delete Record</span>
+          <span class="desc">Remove patient record</span>
+        </button>
+      </div>
     </div>
   </div>
 
+  <!-- Chat -->
+  <div class="chat-area">
+    <div class="messages" id="messages">
+      <div class="msg msg-system">
+        Healthcare AI Agent Playground — select an agent, role, and send a message.
+        The LLM will decide which tools to call, and RBAC will enforce permissions.
+      </div>
+    </div>
+    <div class="input-bar">
+      <textarea id="msg-input" rows="1" placeholder="Ask the healthcare AI to do something…" onkeydown="handleKey(event)"></textarea>
+      <button class="send-btn" id="send-btn" onclick="sendMessage()" disabled title="Send">&#9654;</button>
+    </div>
+  </div>
+</div>
+
 <script>
-  const resultsEl = document.getElementById("results");
+let POLICY = null;
+const ALL_TOOLS = [
+  'patient_lookup', 'update_vitals', 'prescribe_medication',
+  'diagnosis_update', 'surgery_scheduling', 'delete_patient_record'
+];
 
-  function getInput() {
-    return document.getElementById("input-text").value.trim();
+/* --- Helpers --- */
+function $(id) { return document.getElementById(id); }
+function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+function getConfig() {
+  return {
+    apiKey: $('api-key').value.trim(),
+    shieldUrl: $('shield-url').value.trim().replace(/\/$/, ''),
+    runpodToken: $('runpod-token').value.trim(),
+    agentKey: $('agent-key').value,
+    userRole: $('user-role').value,
+    llmApiKey: $('llm-api-key').value.trim(),
+    llmModel: $('llm-model').value,
+  };
+}
+
+function proxyUrl(path) {
+  return '/playground/proxy/' + path.replace(/^\//, '');
+}
+
+function buildHeaders(cfg) {
+  const h = { 'Content-Type': 'application/json' };
+  if (cfg.apiKey) h['X-API-Key'] = cfg.apiKey;
+  if (cfg.runpodToken) h['Authorization'] = 'Bearer ' + cfg.runpodToken;
+  if (cfg.shieldUrl) h['X-Playground-Target'] = cfg.shieldUrl;
+  if (cfg.agentKey) h['X-Agent-Key'] = cfg.agentKey;
+  if (cfg.userRole) h['X-User-Role'] = cfg.userRole;
+  return h;
+}
+
+/* --- Auto-resize textarea --- */
+const msgInput = $('msg-input');
+msgInput.addEventListener('input', () => {
+  msgInput.style.height = 'auto';
+  msgInput.style.height = Math.min(msgInput.scrollHeight, 140) + 'px';
+  $('send-btn').disabled = !msgInput.value.trim();
+});
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+function usePreset(text) {
+  msgInput.value = text;
+  msgInput.dispatchEvent(new Event('input'));
+  msgInput.focus();
+}
+
+/* --- Messages --- */
+const messagesEl = $('messages');
+let conversationHistory = [];
+
+function scrollBottom() {
+  requestAnimationFrame(() => messagesEl.scrollTop = messagesEl.scrollHeight);
+}
+
+function addMessage(role, html, meta) {
+  const cls = role === 'user' ? 'msg-user' : role === 'error' ? 'msg-error' : 'msg-assistant';
+  const div = document.createElement('div');
+  div.className = 'msg ' + cls;
+  let inner = '<div class="content">' + html + '</div>';
+  if (meta) inner += '<div class="msg-meta">' + esc(meta) + '</div>';
+  div.innerHTML = inner;
+  messagesEl.appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+function addToolCards(toolCalls) {
+  if (!toolCalls || !toolCalls.length) return;
+  const container = document.createElement('div');
+  container.className = 'tool-calls';
+  container.style.alignSelf = 'flex-start';
+  container.style.maxWidth = '85%';
+  container.style.animation = 'fadeIn 0.2s ease';
+
+  for (const tc of toolCalls) {
+    const allowed = tc.rbac && tc.rbac.allowed;
+    const card = document.createElement('div');
+    card.className = 'tool-card ' + (allowed ? 'tool-card-allowed' : 'tool-card-blocked');
+
+    const argsStr = JSON.stringify(tc.arguments || {}, null, 2);
+    const rbacMsg = tc.rbac ? tc.rbac.message : '';
+
+    card.innerHTML = `
+      <div class="tool-card-header">
+        <span class="icon">${allowed ? '✅' : '🚫'}</span>
+        <span class="name">${esc(tc.tool_name)}</span>
+        <span class="badge ${allowed ? 'badge-allowed' : 'badge-blocked'}">${allowed ? 'ALLOWED' : 'BLOCKED'}</span>
+      </div>
+      <div class="tool-card-args">${esc(argsStr)}</div>
+      <div class="tool-card-reason">${esc(rbacMsg)}</div>
+    `;
+    container.appendChild(card);
   }
+  messagesEl.appendChild(container);
+  scrollBottom();
+}
 
-  function getAgentKey() {
-    return document.getElementById("agent-key").value.trim();
+function showTyping() {
+  const div = document.createElement('div');
+  div.className = 'typing-indicator';
+  div.id = 'typing';
+  div.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
+  messagesEl.appendChild(div);
+  scrollBottom();
+}
+function hideTyping() {
+  const el = $('typing');
+  if (el) el.remove();
+}
+
+/* --- Policy loading --- */
+async function loadPolicy() {
+  const cfg = getConfig();
+  if (!cfg.apiKey) return alert('Enter a Tenant API Key first');
+  if (!cfg.shieldUrl) return alert('Enter the Shield endpoint URL');
+
+  $('load-btn').disabled = true;
+  $('load-btn').textContent = 'Loading…';
+
+  try {
+    const resp = await fetch(proxyUrl('v1/tenant/me/policies'), {
+      headers: buildHeaders(cfg),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    POLICY = await resp.json();
+    renderPolicyLoaded();
+  } catch (e) {
+    $('policy-status').className = 'policy-status policy-none';
+    $('policy-status').textContent = 'Failed: ' + e.message;
+  } finally {
+    $('load-btn').disabled = false;
+    $('load-btn').textContent = 'Load Policy';
   }
+}
 
-  function getApiKey() {
-    return document.getElementById("api-key").value.trim();
+function renderPolicyLoaded() {
+  const ta = POLICY.input_guardrails?.tool_allowlist?.settings || {};
+  const perAgent = ta.per_agent || {};
+  const perRole = ta.per_role || {};
+
+  // Populate agent dropdown
+  const agentSel = $('agent-key');
+  agentSel.innerHTML = '';
+  for (const key of Object.keys(perAgent)) {
+    agentSel.innerHTML += `<option value="${esc(key)}">${esc(key)}</option>`;
   }
+  agentSel.disabled = false;
 
-  function buildHeaders() {
-    const headers = { "Content-Type": "application/json" };
-    const apiKey = getApiKey();
-    if (apiKey) headers["Authorization"] = "Bearer " + apiKey;
-    const agentKey = getAgentKey();
-    if (agentKey) headers["X-Agent-Key"] = agentKey;
-    return headers;
+  // Populate role dropdown
+  const roleSel = $('user-role');
+  roleSel.innerHTML = '';
+  for (const key of Object.keys(perRole)) {
+    roleSel.innerHTML += `<option value="${esc(key)}">${esc(key)}</option>`;
   }
+  roleSel.disabled = false;
 
-  function setLoading(loading) {
-    document.getElementById("btn-classify").disabled = loading;
-    document.getElementById("btn-shield").disabled = loading;
-    if (loading) {
-      resultsEl.innerHTML = "Processing...";
+  const agents = Object.keys(perAgent).length;
+  const roles = Object.keys(perRole).length;
+  $('policy-status').className = 'policy-status policy-ok';
+  $('policy-status').textContent = `✓ Loaded — ${agents} agents, ${roles} roles`;
+  $('send-btn').disabled = !msgInput.value.trim();
+
+  updateToolList();
+}
+
+function updateToolList() {
+  if (!POLICY) return;
+  const ta = POLICY.input_guardrails?.tool_allowlist?.settings || {};
+  const perAgent = ta.per_agent || {};
+  const perRole = ta.per_role || {};
+  const agent = $('agent-key').value;
+  const role = $('user-role').value;
+
+  const agentTools = perAgent[agent] || [];
+  const roleTools = perRole[role] || [];
+
+  const matchesTool = (name, list) => list.some(p => p === '*' || p === name);
+
+  const listEl = $('tool-list');
+  listEl.innerHTML = '';
+
+  for (const tool of ALL_TOOLS) {
+    const agentOk = matchesTool(tool, agentTools);
+    const roleOk = matchesTool(tool, roleTools);
+    const allowed = agentOk && roleOk;
+
+    let status, title;
+    if (allowed) {
+      status = 'allowed';
+      title = 'Allowed by both agent and role';
+    } else if (agentOk && !roleOk) {
+      status = 'blocked';
+      title = `Agent allows, but role '${role}' blocks`;
+    } else if (!agentOk && roleOk) {
+      status = 'blocked';
+      title = `Role allows, but agent '${agent}' blocks`;
+    } else {
+      status = 'blocked';
+      title = 'Blocked by both agent and role';
     }
+
+    const chip = document.createElement('div');
+    chip.className = 'tool-chip';
+    chip.title = title;
+    chip.innerHTML = `<span class="dot ${status}"></span><span class="name">${tool}</span>`;
+    listEl.appendChild(chip);
   }
 
-  function renderClassifyResult(data, latencyMs) {
-    const safe = data.safe;
-    const badge = safe
-      ? '<span class="badge badge-safe">SAFE</span>'
-      : '<span class="badge badge-unsafe">UNSAFE</span>';
+  $('header-status').textContent = agent + ' / ' + role;
+}
 
-    let html = '<div class="result-header">' + badge + '</div>';
+/* --- Send message --- */
+async function sendMessage() {
+  const text = msgInput.value.trim();
+  if (!text) return;
+  const cfg = getConfig();
+  if (!cfg.apiKey || !cfg.shieldUrl) return alert('Configure connection first');
+  if (!cfg.agentKey) return alert('Select an agent key');
 
-    if (data.guardrail_results && data.guardrail_results.results) {
-      html += renderGuardrails(data.guardrail_results.results);
+  // Add user message to UI
+  addMessage('user', esc(text));
+  conversationHistory.push({ role: 'user', content: text });
+
+  msgInput.value = '';
+  msgInput.style.height = 'auto';
+  $('send-btn').disabled = true;
+
+  showTyping();
+  const start = performance.now();
+
+  try {
+    const body = {
+      messages: conversationHistory.slice(),
+      agent_key: cfg.agentKey,
+      user_role: cfg.userRole,
+    };
+
+    if (cfg.llmApiKey) {
+      body.llm_api_key = cfg.llmApiKey;
+      body.llm_model = cfg.llmModel;
     }
 
-    if (data.reason) {
-      html += '\n<strong>Reason:</strong> ' + escapeHtml(data.reason);
+    const chatHeaders = {
+      'Content-Type': 'application/json',
+      'X-API-Key': cfg.apiKey,
+      'X-Agent-Key': cfg.agentKey,
+      'X-User-Role': cfg.userRole,
+    };
+    const resp = await fetch('/v1/shield/chat/agent', {
+      method: 'POST',
+      headers: chatHeaders,
+      body: JSON.stringify(body),
+    });
+
+    const elapsed = Math.round(performance.now() - start);
+    const data = await resp.json();
+
+    hideTyping();
+
+    if (resp.status === 403 && data.blocked) {
+      addMessage('error',
+        '<strong>Blocked by ' + esc(data.stage || 'guardrail') + '</strong><br>' + esc(data.block_reason || ''),
+        elapsed + 'ms'
+      );
+      return;
     }
 
-    html += '<div class="latency">Latency: ' + latencyMs + 'ms</div>';
-    resultsEl.innerHTML = html;
-  }
-
-  function renderShieldResult(data, latencyMs) {
-    const blocked = data.blocked;
-    const badge = blocked
-      ? '<span class="badge badge-unsafe">BLOCKED</span>'
-      : '<span class="badge badge-safe">ALLOWED</span>';
-
-    let html = '<div class="result-header">' + badge + '</div>';
-
-    if (data.block_reason) {
-      html += '<strong>Block reason:</strong> ' + escapeHtml(data.block_reason) + '\n\n';
+    if (!resp.ok) {
+      addMessage('error', esc(data.error || data.detail || JSON.stringify(data)), elapsed + 'ms');
+      return;
     }
 
+    // Assistant text
     if (data.text) {
-      html += '<strong>Response:</strong>\n' + escapeHtml(data.text) + '\n\n';
+      addMessage('assistant', esc(data.text), elapsed + 'ms · ' + (cfg.llmApiKey ? cfg.llmModel : 'built-in'));
+      conversationHistory.push({ role: 'assistant', content: data.text });
     }
 
-    if (data.guardrail_results && data.guardrail_results.results) {
-      html += renderGuardrails(data.guardrail_results.results);
+    // Tool call cards
+    if (data.tool_calls && data.tool_calls.length) {
+      addToolCards(data.tool_calls);
+
+      if (!data.text) {
+        const summary = data.tool_calls.map(tc => {
+          const ok = tc.rbac?.allowed;
+          return (ok ? '✅' : '🚫') + ' ' + tc.tool_name;
+        }).join('\n');
+        addMessage('assistant',
+          '<em>Tool calls requested:</em>\n' + esc(summary),
+          elapsed + 'ms'
+        );
+      }
     }
 
-    html += '<div class="latency">Latency: ' + latencyMs + 'ms</div>';
-    resultsEl.innerHTML = html;
-  }
-
-  function renderGuardrails(results) {
-    let html = '<strong>Guardrail Results:</strong>\n';
-    for (const r of results) {
-      const cls = r.action === "block" ? "guardrail-block"
-                : r.action === "warn" ? "guardrail-warn"
-                : "guardrail-pass";
-      html += '<div class="guardrail-item ' + cls + '">'
-            + '<strong>' + escapeHtml(r.guardrail_name) + '</strong> '
-            + '[' + r.action + '] '
-            + (r.message ? escapeHtml(r.message) : '')
-            + '</div>';
+    if (!data.text && (!data.tool_calls || !data.tool_calls.length)) {
+      addMessage('assistant', '<em>(empty response)</em>', elapsed + 'ms');
     }
-    return html;
+
+  } catch (e) {
+    hideTyping();
+    addMessage('error', 'Network error: ' + esc(e.message));
+  } finally {
+    $('send-btn').disabled = !msgInput.value.trim();
   }
+}
 
-  function escapeHtml(text) {
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
+/* --- Persist config in sessionStorage --- */
+function saveConfig() {
+  const keys = ['api-key', 'shield-url', 'runpod-token', 'llm-api-key', 'llm-model'];
+  for (const k of keys) {
+    sessionStorage.setItem('pg_' + k, $(k).value);
   }
-
-  async function doClassify() {
-    const message = getInput();
-    if (!message) { resultsEl.innerHTML = "Please enter a message."; return; }
-
-    setLoading(true);
-    const start = performance.now();
-    try {
-      const resp = await fetch("/guardrails/input", {
-        method: "POST",
-        headers: buildHeaders(),
-        body: JSON.stringify({ message: message }),
-      });
-      const data = await resp.json();
-      const latency = Math.round(performance.now() - start);
-      renderClassifyResult(data, latency);
-    } catch (err) {
-      resultsEl.innerHTML = "Error: " + escapeHtml(err.message);
-    } finally {
-      setLoading(false);
-    }
+}
+function restoreConfig() {
+  const keys = ['api-key', 'shield-url', 'runpod-token', 'llm-api-key', 'llm-model'];
+  for (const k of keys) {
+    const v = sessionStorage.getItem('pg_' + k);
+    if (v) $(k).value = v;
   }
+}
 
-  async function doShieldChat() {
-    const message = getInput();
-    if (!message) { resultsEl.innerHTML = "Please enter a message."; return; }
+// Save on change
+['api-key', 'shield-url', 'runpod-token', 'llm-api-key', 'llm-model'].forEach(id => {
+  $(id).addEventListener('change', saveConfig);
+  $(id).addEventListener('input', saveConfig);
+});
 
-    setLoading(true);
-    const start = performance.now();
-    try {
-      const resp = await fetch("/v1/shield/chat/completions", {
-        method: "POST",
-        headers: buildHeaders(),
-        body: JSON.stringify({ prompt: message }),
-      });
-      const data = await resp.json();
-      const latency = Math.round(performance.now() - start);
-      renderShieldResult(data, latency);
-    } catch (err) {
-      resultsEl.innerHTML = "Error: " + escapeHtml(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
+restoreConfig();
 </script>
 </body>
 </html>

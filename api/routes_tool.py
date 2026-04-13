@@ -26,6 +26,7 @@ _CHECK_GUARDS = [
 class ToolCheckRequest(BaseModel):
     agent_key: str
     tool_name: str
+    user_role: Optional[str] = None
     session_id: Optional[str] = None
     tool_params: Optional[dict] = None
     tool_schema: Optional[dict] = None
@@ -55,9 +56,12 @@ def _format(result):
 
 @router.post("/check")
 async def check_tool(body: ToolCheckRequest, request: Request):
-    # Extract tenant and user context from headers for policy enforcement
     tenant_id = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
-    user_role = request.headers.get("X-User-Role") or request.headers.get("x-user-role", "user")
+    user_role = (
+        body.user_role
+        or request.headers.get("X-User-Role")
+        or request.headers.get("x-user-role")
+    )
 
     context = {
         "agent_key": body.agent_key,
@@ -69,7 +73,7 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         "confirmation_token": body.confirmation_token,
         "tenant_id": tenant_id,
         "user_role": user_role,
-        "X-Tenant-ID": tenant_id,  # Alternative format for backward compatibility
+        "X-Tenant-ID": tenant_id,
         "X-User-Role": user_role,
     }
 

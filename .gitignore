@@ -25,4 +25,9 @@ test_votal.sh
 test_*.py
 debug_*.py
 compare_*.py
+verify_*.py
 policy.json
+
+# One-off test/debug HTML files
+dynamic_rbac_testing_section.html
+rbac_tool_testing_section.html
