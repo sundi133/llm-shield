@@ -5275,8 +5275,8 @@ async function runRbacTest() {
   btnText.textContent = 'Testing…';
   spinner.classList.remove('hidden');
 
-  // Use local backend endpoint (no CORS issues)
-  const toolCheckUrl = '/api/rbac/test-tool';
+  // Use main LLM Shield app endpoint (port 8000)
+  const toolCheckUrl = 'http://localhost:8000/api/rbac/test-tool';
 
   const body = {
     agent_key: agentKey,
@@ -5291,8 +5291,8 @@ async function runRbacTest() {
     'X-API-Key': apiKey
   };
 
-  // Build cURL for copy (using local backend endpoint)
-  const fullUrl = window.location.origin + toolCheckUrl;
+  // Build cURL for copy (using main app endpoint)
+  const fullUrl = toolCheckUrl;
   let curlParts = [`curl -X POST '${fullUrl}'`];
   Object.entries(headers).forEach(([k, v]) => {
     curlParts.push(`  -H '${k}: ${v}'`);
