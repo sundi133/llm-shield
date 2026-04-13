@@ -5659,8 +5659,6 @@ function copyPlaygroundCurl() {
 let TENANT_POLICY = null;
 
 async function loadTenantPolicy() {
-  // Use shield-admin container endpoint directly
-  const adminEndpoint = 'http://localhost:8080';
   const apiKey = document.getElementById('pg-api-key').value.trim();
 
   if (!apiKey) {
@@ -5676,7 +5674,7 @@ async function loadTenantPolicy() {
   btn.disabled = true;
   btnText.textContent = 'Loading...';
   spinner.classList.remove('hidden');
-  statusText.textContent = 'Fetching tenant policy from Redis via shield-admin (localhost:8080)...';
+  statusText.textContent = 'Fetching tenant policy...';
 
   try {
     // Fetch tenant policy from local shield-admin container
@@ -5685,7 +5683,7 @@ async function loadTenantPolicy() {
       'X-API-Key': apiKey,
     };
 
-    const resp = await fetch(`${adminEndpoint}/v1/tenant/me/policies`, {
+    const resp = await fetch(`${BASE_URL}/v1/tenant/me/policies`, {
       method: 'GET',
       headers: headers
     });
@@ -5700,7 +5698,7 @@ async function loadTenantPolicy() {
     // Also fetch agent registry to build complete RBAC picture
     let registryAgents = {};
     try {
-      const regResp = await fetch(`${adminEndpoint}/v1/agents/registry`, {
+      const regResp = await fetch(`${BASE_URL}/v1/agents/registry`, {
         method: 'GET', headers: headers
       });
       if (regResp.ok) {
@@ -5932,9 +5930,11 @@ async function runRbacTest() {
   const toolName = document.getElementById('rbac-tool-name').value.trim();
 
   if (!apiKey) return showToast('API Key is required', 'error');
-  if (!runpodToken) return showToast('RunPod Token is required for tool testing', 'error');
   if (!agentKey) return showToast('Agent Key is required', 'error');
   if (!toolName) return showToast('Tool Name is required', 'error');
+
+  const shieldEndpoint = document.getElementById('pg-endpoint').value.trim().replace(/\/+$/, '');
+  if (!shieldEndpoint) return showToast('Shield Endpoint is required — configure it in the Playground tab above', 'error');
 
   document.getElementById('rbac-response-card').style.display = 'none';
 
@@ -5945,8 +5945,7 @@ async function runRbacTest() {
   btnText.textContent = 'Testing…';
   spinner.classList.remove('hidden');
 
-  // Use shield-admin proxy to forward to RunPod endpoint
-  const toolCheckUrl = 'http://localhost:8080/playground/proxy/v1/shield/tool/check';
+  const toolCheckUrl = `${BASE_URL}/playground/proxy/v1/shield/tool/check`;
 
   const body = {
     agent_key: agentKey,
@@ -5960,9 +5959,9 @@ async function runRbacTest() {
     'Content-Type': 'application/json',
     'X-API-Key': apiKey,
     'X-Agent-Key': agentKey,
-    'X-Playground-Target': 'https://kk5losqxwr2ui7.api.runpod.ai',
-    'Authorization': `Bearer ${runpodToken}`
+    'X-Playground-Target': shieldEndpoint,
   };
+  if (runpodToken) headers['Authorization'] = `Bearer ${runpodToken}`;
 
   // Only add role header if role is provided
   if (userRole) headers['X-User-Role'] = userRole;
