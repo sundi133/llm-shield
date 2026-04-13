@@ -5293,6 +5293,9 @@ async function runRbacTest() {
     'X-Playground-Target': 'https://kk5losqxwr2ui7.api.runpod.ai'
   };
 
+  // Note: Authorization header should be automatically added by shield-admin proxy
+  // since RUNPOD_TOKEN environment variable is provided to the container
+
   // Only add role header if role is provided
   if (userRole) headers['X-User-Role'] = userRole;
 
