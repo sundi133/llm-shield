@@ -22,3 +22,7 @@ test_votal.sh
 *.tmp
 *.swp
 .DS_Store
+test_*.py
+debug_*.py
+compare_*.py
+policy.json
