@@ -140,9 +140,9 @@ input, select, textarea, button { font-family: inherit; }
     <div>
       <h3>Agent Context</h3>
       <div class="field">
-        <label>Agent Key</label>
-        <select id="agent-key" disabled onchange="updateToolList()">
-          <option value="">Load policy first…</option>
+        <label>Agent Key <span style="font-weight:400;color:var(--text-muted);">(multi-select)</span></label>
+        <select id="agent-key" disabled multiple size="3" onchange="updateToolList()" style="min-height:60px;">
+          <option value="" disabled>Load policy first…</option>
         </select>
       </div>
       <div class="field">
@@ -177,6 +177,23 @@ input, select, textarea, button { font-family: inherit; }
     <div class="divider"></div>
 
     <div>
+      <h3>Shield Guardrails</h3>
+      <div class="field">
+        <label>Shield Endpoint <span style="font-weight:400;color:var(--text-muted);">(for guardrails)</span></label>
+        <input type="text" id="shield-endpoint" placeholder="https://your-shield.api.runpod.ai">
+      </div>
+      <div class="field">
+        <label>Shield Auth Token <span style="font-weight:400;color:var(--text-muted);">(Bearer)</span></label>
+        <input type="password" id="shield-token" placeholder="rpa_… or Bearer token">
+      </div>
+      <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">
+        If set, input &amp; output guardrails run before/after LLM calls. Leave empty to skip guardrails.
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div>
       <h3>Tool Access (agent + role)</h3>
       <div class="tool-list" id="tool-list">
         <div style="font-size:0.75rem;color:var(--text-muted);">Load policy to see tool permissions</div>
@@ -188,30 +205,7 @@ input, select, textarea, button { font-family: inherit; }
     <div>
       <h3>Quick Prompts</h3>
       <div class="presets" id="presets">
-        <button class="preset-btn" onclick="usePreset('Look up the medical history for patient P-12345')">
-          <span class="label">Patient Lookup</span>
-          <span class="desc">Look up medical history</span>
-        </button>
-        <button class="preset-btn" onclick="usePreset('Update vitals for patient P-12345: BP 130/85, HR 78, temp 98.6°F')">
-          <span class="label">Update Vitals</span>
-          <span class="desc">Record new vital signs</span>
-        </button>
-        <button class="preset-btn" onclick="usePreset('Prescribe Lisinopril 10mg daily for patient P-12345 for hypertension')">
-          <span class="label">Prescribe Medication</span>
-          <span class="desc">Create a new prescription</span>
-        </button>
-        <button class="preset-btn" onclick="usePreset('Update diagnosis for patient P-12345 to E11 - Type 2 Diabetes, status active')">
-          <span class="label">Update Diagnosis</span>
-          <span class="desc">Add/update a diagnosis</span>
-        </button>
-        <button class="preset-btn" onclick="usePreset('Schedule an appendectomy for patient P-12345 on 2026-05-15')">
-          <span class="label">Schedule Surgery</span>
-          <span class="desc">Book a procedure</span>
-        </button>
-        <button class="preset-btn" onclick="usePreset('Delete the record for patient P-99999 — duplicate entry created by mistake')">
-          <span class="label">Delete Record</span>
-          <span class="desc">Remove patient record</span>
-        </button>
+        <span class="muted" style="font-size:12px;">Select an agent to see tool-based prompts</span>
       </div>
     </div>
   </div>
@@ -225,7 +219,7 @@ input, select, textarea, button { font-family: inherit; }
       </div>
     </div>
     <div class="input-bar">
-      <textarea id="msg-input" rows="1" placeholder="Ask the healthcare AI to do something…" onkeydown="handleKey(event)"></textarea>
+      <textarea id="msg-input" rows="1" placeholder="Send a message to the AI agent…" onkeydown="handleKey(event)"></textarea>
       <button class="send-btn" id="send-btn" onclick="sendMessage()" disabled title="Send">&#9654;</button>
     </div>
   </div>
@@ -241,12 +235,17 @@ function $(id) { return document.getElementById(id); }
 function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
 
 function getConfig() {
+  const agentSel = $('agent-key');
+  const selectedAgents = [...agentSel.selectedOptions].map(o => o.value).filter(Boolean);
   return {
     apiKey: $('api-key').value.trim(),
-    agentKey: $('agent-key').value,
+    agentKey: selectedAgents[0] || '',
+    selectedAgents,
     userRole: $('user-role').value,
     llmApiKey: $('llm-api-key').value.trim(),
     llmModel: $('llm-model').value,
+    shieldEndpoint: $('shield-endpoint').value.trim(),
+    shieldToken: $('shield-token').value.trim(),
   };
 }
 
@@ -321,6 +320,56 @@ function addToolCards(toolCalls) {
     container.appendChild(card);
   }
   messagesEl.appendChild(container);
+  scrollBottom();
+}
+
+function addGuardrailCard(stage, result, blocked, blockReason) {
+  if (!result) return;
+  const div = document.createElement('div');
+  div.className = 'msg ' + (blocked ? 'msg-error' : 'msg-system');
+  div.style.maxWidth = '90%';
+  div.style.textAlign = 'left';
+
+  const icon = blocked ? '🛡️ ❌' : '🛡️ ✅';
+  const label = stage === 'input' ? 'Input Guardrails' : 'Output Guardrails';
+  const action = result.action || 'pass';
+  const time = result.inference_time_ms ? `${Math.round(result.inference_time_ms)}ms` : '';
+
+  let html = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+    <span style="font-size:1rem;">${icon}</span>
+    <strong style="font-size:0.82rem;">${label}</strong>
+    <span style="font-size:0.65rem;padding:2px 8px;border-radius:10px;font-weight:700;
+      background:${blocked ? 'var(--danger-dim)' : 'var(--success-dim)'};color:#fff;">
+      ${action.toUpperCase()}
+    </span>
+    ${time ? `<span style="font-size:0.68rem;color:var(--text-muted);margin-left:auto;">${time}</span>` : ''}
+  </div>`;
+
+  if (blocked && blockReason) {
+    html += `<div style="font-size:0.78rem;color:var(--danger);margin-bottom:6px;">${esc(blockReason)}</div>`;
+  }
+
+  const items = result.guardrail_results || [];
+  if (items.length) {
+    html += '<div style="display:flex;flex-direction:column;gap:3px;">';
+    for (const gr of items) {
+      const passed = gr.passed !== false;
+      const grAction = gr.action || 'pass';
+      const dot = passed ? '🟢' : (grAction === 'block' ? '🔴' : '🟡');
+      const name = gr.guardrail || gr.name || '?';
+      const msg = gr.message || gr.reason || '';
+      html += `<div style="font-size:0.72rem;display:flex;align-items:center;gap:6px;padding:3px 8px;
+        background:rgba(0,0,0,0.2);border-radius:4px;">
+        <span>${dot}</span>
+        <span style="font-weight:600;color:var(--text-dim);min-width:120px;">${esc(name)}</span>
+        <span style="color:var(--text-muted);">${esc(msg).substring(0, 120)}</span>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  div.innerHTML = html;
+  messagesEl.appendChild(div);
   scrollBottom();
 }
 
@@ -409,15 +458,18 @@ function renderPolicyLoaded() {
     }
   }
 
-  // Populate agent dropdown
+  // Populate agent dropdown (multi-select)
   const agentSel = $('agent-key');
   agentSel.innerHTML = '';
-  for (const key of [...allAgentKeys].sort()) {
-    const src = REGISTRY[key] ? '(registry)' : '(policy)';
+  const sortedAgents = [...allAgentKeys].sort();
+  for (const key of sortedAgents) {
     const label = REGISTRY[key]?.name ? `${key} — ${REGISTRY[key].name}` : key;
     agentSel.innerHTML += `<option value="${esc(key)}">${esc(label)}</option>`;
   }
   agentSel.disabled = false;
+  // Auto-select first agent
+  if (sortedAgents.length) agentSel.options[0].selected = true;
+  agentSel.size = Math.min(sortedAgents.length, 5);
 
   // Populate role dropdown
   const roleSel = $('user-role');
@@ -444,68 +496,91 @@ function updateToolList() {
   const ta = POLICY.input_guardrails?.tool_allowlist?.settings || {};
   const policyPerAgent = ta.per_agent || {};
   const policyPerRole = ta.per_role || {};
-  const agent = $('agent-key').value;
-  const role = $('user-role').value;
+  const cfg = getConfig();
+  const selectedAgents = cfg.selectedAgents;
+  const role = cfg.userRole;
 
   const matchesTool = (name, list) => list.some(p => p === '*' || p === name);
   const listEl = $('tool-list');
   listEl.innerHTML = '';
 
-  // Determine which source to use for this agent
-  const regEntry = REGISTRY[agent];
+  if (!selectedAgents.length) {
+    listEl.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);">Select an agent to see tools</div>';
+    $('header-status').textContent = 'no agent selected';
+    return;
+  }
 
-  for (const tool of ALL_TOOLS) {
-    let agentOk, roleOk, status, title;
-
+  // Collect tools only from selected agents
+  const toolsForSelectedAgents = new Set();
+  for (const agent of selectedAgents) {
+    const regEntry = REGISTRY[agent];
     if (regEntry) {
-      // Use registry: agent.tools + agent.role_permissions[role]
-      agentOk = matchesTool(tool, regEntry.tools || []);
-      const rolePerms = (regEntry.role_permissions || {})[role];
-      roleOk = rolePerms ? matchesTool(tool, rolePerms) : false;
+      for (const t of (regEntry.tools || [])) { if (t !== '*') toolsForSelectedAgents.add(t); }
+    } else if (policyPerAgent[agent]) {
+      for (const t of policyPerAgent[agent]) { if (t !== '*') toolsForSelectedAgents.add(t); }
+    }
+  }
 
-      if (agentOk && roleOk) {
-        status = 'allowed';
-        title = `Registry: agent and role '${role}' both permit`;
-      } else if (agentOk && !roleOk) {
-        status = 'blocked';
-        title = rolePerms ? `Registry: role '${role}' blocks` : `Registry: role '${role}' not configured`;
-      } else if (!agentOk && roleOk) {
-        status = 'blocked';
-        title = `Registry: agent '${agent}' does not have this tool`;
-      } else {
-        status = 'blocked';
-        title = 'Registry: blocked by both agent and role';
-      }
-    } else {
-      // Fall back to policy per_agent + per_role
-      agentOk = matchesTool(tool, policyPerAgent[agent] || []);
-      roleOk = matchesTool(tool, policyPerRole[role] || []);
-      const allowed = agentOk && roleOk;
+  const toolList = [...toolsForSelectedAgents].sort();
 
-      if (allowed) {
-        status = 'allowed';
-        title = 'Policy: allowed by both agent and role';
-      } else if (agentOk && !roleOk) {
-        status = 'blocked';
-        title = `Policy: agent allows, but role '${role}' blocks`;
-      } else if (!agentOk && roleOk) {
-        status = 'blocked';
-        title = `Policy: role allows, but agent '${agent}' blocks`;
+  for (const tool of toolList) {
+    // Check access across all selected agents — allowed if ANY selected agent permits
+    let bestStatus = 'blocked';
+    let bestTitle = '';
+
+    for (const agent of selectedAgents) {
+      const regEntry = REGISTRY[agent];
+      let agentOk, roleOk;
+
+      if (regEntry) {
+        agentOk = matchesTool(tool, regEntry.tools || []);
+        const rolePerms = (regEntry.role_permissions || {})[role];
+        roleOk = rolePerms ? matchesTool(tool, rolePerms) : false;
+
+        if (agentOk && roleOk) {
+          bestStatus = 'allowed';
+          bestTitle = `${agent}: agent and role '${role}' both permit`;
+          break;
+        } else {
+          bestTitle = bestTitle || `${agent}: ${!agentOk ? 'agent blocks' : `role '${role}' blocks`}`;
+        }
       } else {
-        status = 'blocked';
-        title = 'Policy: blocked by both agent and role';
+        agentOk = matchesTool(tool, policyPerAgent[agent] || []);
+        roleOk = matchesTool(tool, policyPerRole[role] || []);
+        if (agentOk && roleOk) {
+          bestStatus = 'allowed';
+          bestTitle = `${agent}: policy allows`;
+          break;
+        } else {
+          bestTitle = bestTitle || `${agent}: ${!agentOk ? 'agent blocks' : `role '${role}' blocks`}`;
+        }
       }
     }
 
     const chip = document.createElement('div');
     chip.className = 'tool-chip';
-    chip.title = title;
-    chip.innerHTML = `<span class="dot ${status}"></span><span class="name">${tool}</span>`;
+    chip.title = bestTitle;
+    chip.innerHTML = `<span class="dot ${bestStatus}"></span><span class="name">${tool}</span>`;
     listEl.appendChild(chip);
   }
 
-  const src = regEntry ? ' [registry]' : ' [policy]';
-  $('header-status').textContent = agent + ' / ' + role + src;
+  const agentLabel = selectedAgents.length === 1 ? selectedAgents[0] : `${selectedAgents.length} agents`;
+  $('header-status').textContent = `${agentLabel} / ${role}`;
+
+  // Dynamically generate quick prompts from the selected agent's tools
+  const presetsEl = $('presets');
+  if (toolList.length === 0) {
+    presetsEl.innerHTML = '<span class="muted" style="font-size:12px;">No tools available for selected agent(s)</span>';
+    return;
+  }
+  let presetsHtml = '';
+  for (const tool of toolList.slice(0, 6)) {
+    const readable = tool.replace(/_/g, ' ');
+    const label = readable.replace(/\b\w/g, c => c.toUpperCase());
+    presetsHtml += `<button class="preset-btn" onclick="usePreset('Use ${readable} with example data')">
+      <span class="label">${label}</span><span class="desc">${readable}</span></button>`;
+  }
+  presetsEl.innerHTML = presetsHtml;
 }
 
 /* --- Send message --- */
@@ -514,7 +589,7 @@ async function sendMessage() {
   if (!text) return;
   const cfg = getConfig();
   if (!cfg.apiKey) return alert('Enter a Tenant API Key first');
-  if (!cfg.agentKey) return alert('Select an agent key');
+  if (!cfg.agentKey) return alert('Select at least one agent');
 
   // Add user message to UI
   addMessage('user', esc(text));
@@ -538,6 +613,10 @@ async function sendMessage() {
       body.llm_api_key = cfg.llmApiKey;
       body.llm_model = cfg.llmModel;
     }
+    if (cfg.shieldEndpoint) {
+      body.shield_endpoint = cfg.shieldEndpoint;
+      if (cfg.shieldToken) body.shield_token = cfg.shieldToken;
+    }
 
     const chatHeaders = {
       'Content-Type': 'application/json',
@@ -556,17 +635,20 @@ async function sendMessage() {
 
     hideTyping();
 
+    // Input guardrails blocked the message
     if (resp.status === 403 && data.blocked) {
-      addMessage('error',
-        '<strong>Blocked by ' + esc(data.stage || 'guardrail') + '</strong><br>' + esc(data.block_reason || ''),
-        elapsed + 'ms'
-      );
+      addGuardrailCard('input', data.input_guardrails, true, data.block_reason);
       return;
     }
 
     if (!resp.ok) {
       addMessage('error', esc(data.error || data.detail || JSON.stringify(data)), elapsed + 'ms');
       return;
+    }
+
+    // Show input guardrail results (passed)
+    if (data.input_guardrails) {
+      addGuardrailCard('input', data.input_guardrails, false);
     }
 
     // Assistant text
@@ -591,6 +673,11 @@ async function sendMessage() {
       }
     }
 
+    // Show output guardrail results
+    if (data.output_guardrails) {
+      addGuardrailCard('output', data.output_guardrails, !!data.output_blocked, data.output_block_reason);
+    }
+
     if (!data.text && (!data.tool_calls || !data.tool_calls.length)) {
       addMessage('assistant', '<em>(empty response)</em>', elapsed + 'ms');
     }
@@ -604,22 +691,20 @@ async function sendMessage() {
 }
 
 /* --- Persist config in sessionStorage --- */
+const PERSIST_KEYS = ['api-key', 'llm-api-key', 'llm-model', 'shield-endpoint', 'shield-token'];
 function saveConfig() {
-  const keys = ['api-key', 'llm-api-key', 'llm-model'];
-  for (const k of keys) {
+  for (const k of PERSIST_KEYS) {
     sessionStorage.setItem('pg_' + k, $(k).value);
   }
 }
 function restoreConfig() {
-  const keys = ['api-key', 'llm-api-key', 'llm-model'];
-  for (const k of keys) {
+  for (const k of PERSIST_KEYS) {
     const v = sessionStorage.getItem('pg_' + k);
     if (v) $(k).value = v;
   }
 }
 
-// Save on change
-['api-key', 'llm-api-key', 'llm-model'].forEach(id => {
+PERSIST_KEYS.forEach(id => {
   $(id).addEventListener('change', saveConfig);
   $(id).addEventListener('input', saveConfig);
 });

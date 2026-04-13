@@ -169,13 +169,106 @@ def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
         return [
             {"type": "function", "function": {
                 "name": name,
-                "description": f"Execute {name.replace('_', ' ')} action",
-                "parameters": {"type": "object", "properties": {}, "required": []},
+                **_tool_stub_meta(name, registry=registry),
             }}
             for name in sorted(tool_names)
         ]
 
     return []
+
+
+def _tool_stub_meta(name: str, registry: dict | None = None) -> dict:
+    """Generate description + parameters from the tool name and optional registry metadata.
+
+    Checks the agent registry for a tool description first, then derives
+    a meaningful description from the tool name itself. No hardcoded hints.
+    """
+    # Check if the registry has a description for this tool
+    if registry:
+        for agent_data in registry.values():
+            tool_descs = agent_data.get("tool_descriptions") or {}
+            if name in tool_descs:
+                td = tool_descs[name]
+                if isinstance(td, str):
+                    return {
+                        "description": td,
+                        "parameters": _infer_params(name),
+                    }
+                if isinstance(td, dict):
+                    return {
+                        "description": td.get("description", f"Perform {name.replace('_', ' ')}"),
+                        "parameters": td.get("parameters", _infer_params(name)),
+                    }
+
+    # Derive description from the name — parse verb + noun from snake_case
+    parts = name.split("_")
+    readable = " ".join(parts)
+
+    # Common verb prefixes get better descriptions
+    verb_map = {
+        "get": f"Retrieve {' '.join(parts[1:])} data",
+        "set": f"Set or update {' '.join(parts[1:])}",
+        "create": f"Create a new {' '.join(parts[1:])}",
+        "update": f"Update an existing {' '.join(parts[1:])}",
+        "delete": f"Delete {' '.join(parts[1:])}",
+        "remove": f"Remove {' '.join(parts[1:])}",
+        "list": f"List all {' '.join(parts[1:])}",
+        "search": f"Search for {' '.join(parts[1:])}",
+        "view": f"View {' '.join(parts[1:])} details",
+        "lookup": f"Look up {' '.join(parts[1:])} by identifier",
+        "check": f"Check {' '.join(parts[1:])} status",
+        "send": f"Send {' '.join(parts[1:])}",
+        "generate": f"Generate {' '.join(parts[1:])}",
+        "schedule": f"Schedule {' '.join(parts[1:])}",
+        "cancel": f"Cancel {' '.join(parts[1:])}",
+        "approve": f"Approve {' '.join(parts[1:])}",
+        "submit": f"Submit {' '.join(parts[1:])}",
+    }
+
+    if parts[0] in verb_map and len(parts) > 1:
+        desc = verb_map[parts[0]]
+    elif len(parts) >= 2 and parts[-1] in ("lookup", "search", "update", "delete", "create"):
+        verb = parts[-1]
+        noun = " ".join(parts[:-1])
+        desc = f"{verb.capitalize()} {noun}"
+    else:
+        desc = f"Perform the '{readable}' operation"
+
+    return {
+        "description": desc,
+        "parameters": _infer_params(name),
+    }
+
+
+def _infer_params(name: str) -> dict:
+    """Infer a reasonable parameter schema from the tool name."""
+    parts = name.split("_")
+    props = {}
+
+    # If name contains a noun that looks like an entity, add an ID parameter
+    for noun in parts:
+        if noun in ("lookup", "update", "delete", "create", "view",
+                     "get", "set", "check", "search", "schedule",
+                     "send", "generate", "cancel", "approve",
+                     "submit", "list", "remove"):
+            continue
+        props[f"{noun}_id"] = {"type": "string", "description": f"The {noun} identifier"}
+        break
+
+    # If it's an update/create/set, add a generic data param
+    if parts[0] in ("update", "create", "set", "submit"):
+        props["data"] = {"type": "string", "description": "Data or details for this operation"}
+    elif parts[0] in ("search", "lookup"):
+        props["query"] = {"type": "string", "description": "Search query or identifier"}
+
+    if not props:
+        props["input"] = {"type": "string", "description": f"Input for {name.replace('_', ' ')}"}
+
+    return {
+        "type": "object",
+        "properties": props,
+        "required": list(props.keys())[:1],
+    }
 
 
 def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
@@ -246,6 +339,17 @@ def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
     message = f"Tool '{tool_name}' {'allowed' if allowed else 'blocked'}: {agent_msg} AND {role_msg}"
     return {"allowed": allowed, "action": "pass" if allowed else "block",
             "message": message, "source": "tenant_policy"}
+
+
+def _extract_block_reason(guardrail_result: dict) -> str:
+    """Pull a human-readable block reason from a guardrail response."""
+    reasons = []
+    for gr in guardrail_result.get("guardrail_results", []):
+        if gr.get("action") == "block" and not gr.get("passed", True):
+            name = gr.get("guardrail", gr.get("name", "unknown"))
+            msg = gr.get("message", gr.get("reason", ""))
+            reasons.append(f"{name}: {msg}" if msg else name)
+    return "; ".join(reasons) if reasons else guardrail_result.get("action", "blocked")
 
 
 def create_admin_app() -> FastAPI:
@@ -337,7 +441,38 @@ def create_admin_app() -> FastAPI:
     # ------------------------------------------------------------------
     # Lightweight agent chat — calls OpenAI directly, checks RBAC from
     # tenant config in Redis.  Zero guardrail-module dependencies.
+    # Guardrails are invoked via HTTP against the remote Shield server.
     # ------------------------------------------------------------------
+
+    async def _call_guardrails(
+        client: httpx.AsyncClient,
+        shield_url: str,
+        stage: str,
+        payload: dict,
+        api_key: str,
+        auth_token: str = "",
+        agent_key: str = "",
+        user_role: str = "",
+    ) -> dict | None:
+        """Call input or output guardrails on the remote Shield server.
+        Returns the parsed JSON response, or None on failure."""
+        endpoint = f"{shield_url.rstrip('/')}/guardrails/{stage}"
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Key": api_key,
+        }
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+        if agent_key:
+            headers["X-Agent-Key"] = agent_key
+        if user_role:
+            headers["X-User-Role"] = user_role
+        try:
+            resp = await client.post(endpoint, json=payload, headers=headers)
+            return resp.json()
+        except Exception:
+            return None
+
     @app.post("/v1/shield/chat/agent")
     async def agent_chat(request: Request):
         start = datetime.now()
@@ -348,6 +483,9 @@ def create_admin_app() -> FastAPI:
         user_role = body.get("user_role") or request.headers.get("X-User-Role")
         llm_api_key = body.get("llm_api_key")
         llm_model = body.get("llm_model", "gpt-4o-mini")
+        shield_endpoint = body.get("shield_endpoint", "").strip().rstrip("/")
+        shield_token = body.get("shield_token", "").strip()
+        api_key = request.headers.get("X-API-Key", "")
 
         if not llm_api_key:
             return JSONResponse(status_code=400,
@@ -377,9 +515,37 @@ def create_admin_app() -> FastAPI:
                 "error": "No tool definitions found. Register tools via PUT /v1/tenant/me/tools or agent registry.",
             })
 
-        # --- Call OpenAI ---
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
+        # Extract the latest user message for guardrail checking
+        user_message = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                user_message = m.get("content", "")
+                break
+
+        input_guardrail_result = None
+        output_guardrail_result = None
+
+        async with httpx.AsyncClient(timeout=60) as client:
+            # --- Step 1: Input Guardrails ---
+            if shield_endpoint and user_message:
+                input_guardrail_result = await _call_guardrails(
+                    client, shield_endpoint, "input",
+                    {"message": user_message},
+                    api_key=api_key, auth_token=shield_token,
+                    agent_key=agent_key, user_role=user_role or "",
+                )
+                if input_guardrail_result and input_guardrail_result.get("action") == "block":
+                    latency_ms = (datetime.now() - start).total_seconds() * 1000
+                    return JSONResponse(status_code=403, content={
+                        "blocked": True,
+                        "stage": "input_guardrails",
+                        "block_reason": _extract_block_reason(input_guardrail_result),
+                        "input_guardrails": input_guardrail_result,
+                        "latency_ms": round(latency_ms, 2),
+                    })
+
+            # --- Step 2: Call OpenAI ---
+            try:
                 resp = await client.post(
                     "https://api.openai.com/v1/chat/completions",
                     json={
@@ -393,14 +559,14 @@ def create_admin_app() -> FastAPI:
                     headers={"Authorization": f"Bearer {llm_api_key}"},
                 )
                 llm_data = resp.json()
-        except Exception as e:
-            return JSONResponse(status_code=502, content={"error": f"LLM call failed: {e}"})
+            except Exception as e:
+                return JSONResponse(status_code=502, content={"error": f"LLM call failed: {e}"})
 
         if "error" in llm_data:
             return JSONResponse(status_code=502,
                                 content={"error": "LLM returned an error", "llm_error": llm_data["error"]})
 
-        # --- Parse tool calls ---
+        # --- Step 3: Parse tool calls + RBAC ---
         choices = llm_data.get("choices", [])
         message_obj = choices[0].get("message", {}) if choices else {}
         content = message_obj.get("content") or ""
@@ -428,9 +594,27 @@ def create_admin_app() -> FastAPI:
             })
 
         has_blocked = any(not t["rbac"]["allowed"] for t in tool_results)
+
+        # --- Step 4: Output Guardrails ---
+        if shield_endpoint and content:
+            async with httpx.AsyncClient(timeout=60) as client:
+                output_guardrail_result = await _call_guardrails(
+                    client, shield_endpoint, "output",
+                    {
+                        "output": content,
+                        "context": {
+                            "agent_id": agent_key,
+                            "user_role": user_role or "",
+                            "tool_calls": [t["tool_name"] for t in tool_results],
+                        },
+                    },
+                    api_key=api_key, auth_token=shield_token,
+                    agent_key=agent_key, user_role=user_role or "",
+                )
+
         latency_ms = (datetime.now() - start).total_seconds() * 1000
 
-        return {
+        result = {
             "text": content,
             "tool_calls": tool_results,
             "has_blocked_tools": has_blocked,
@@ -438,6 +622,16 @@ def create_admin_app() -> FastAPI:
             "usage": llm_data.get("usage"),
             "latency_ms": round(latency_ms, 2),
         }
+
+        if input_guardrail_result:
+            result["input_guardrails"] = input_guardrail_result
+        if output_guardrail_result:
+            result["output_guardrails"] = output_guardrail_result
+            if output_guardrail_result.get("action") == "block":
+                result["output_blocked"] = True
+                result["output_block_reason"] = _extract_block_reason(output_guardrail_result)
+
+        return result
 
     @app.api_route("/playground/proxy/{path:path}", methods=["GET", "POST"])
     async def playground_proxy(path: str, request: Request):
