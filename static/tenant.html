@@ -1494,6 +1494,99 @@ if __name__ == "__main__":
         </div>
       </div>
 
+      <!-- RBAC Tool Testing -->
+      <div class="card" style="margin-bottom:1rem; border: 2px solid var(--accent); background: rgba(99, 102, 241, 0.05);">
+        <div class="card-header" style="margin-bottom:0.5rem;">
+          <div>
+            <div class="card-title">🛡️ RBAC Tool Testing</div>
+            <div class="card-subtitle">Test tool permissions for your tenant's agents and roles</div>
+          </div>
+          <div style="display:flex;gap:0.5rem;">
+            <button class="small" onclick="loadTenantPolicy()" id="policy-reload-btn">
+              <span id="policy-reload-text">Load Policy</span>
+              <span id="policy-reload-spinner" class="hidden" style="display:inline-block;width:12px;height:12px;border:2px solid var(--text-muted);border-top:2px solid var(--text);border-radius:50%;animation:spin 0.6s linear infinite;margin-left:0.4rem;"></span>
+            </button>
+            <button class="small" onclick="toggleRbacSection()" id="rbac-toggle">Show RBAC Tests</button>
+          </div>
+        </div>
+
+        <div id="rbac-section" style="display:none;">
+          <!-- Policy Loading Status -->
+          <div id="policy-status" style="margin-bottom:1rem; padding:0.75rem; background:var(--bg-3); border:1px solid var(--border); border-radius:6px;">
+            <div style="font-size:11px; color:var(--text-muted); font-weight:600; margin-bottom:0.5rem;">POLICY STATUS</div>
+            <div id="policy-status-text" style="font-size:12px; color:var(--text-dim);">Click "Load Policy" to fetch your tenant's RBAC configuration</div>
+          </div>
+
+          <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+            <div class="field" style="flex:1;min-width:160px;margin-bottom:0;">
+              <label>Agent Key</label>
+              <select id="rbac-agent-key" onchange="updateRbacHelp()" disabled>
+                <option value="">Load policy first...</option>
+              </select>
+            </div>
+            <div class="field" style="flex:1;min-width:120px;margin-bottom:0;">
+              <label>User Role</label>
+              <select id="rbac-user-role" onchange="updateRbacHelp()" disabled>
+                <option value="">Load policy first...</option>
+              </select>
+            </div>
+            <div class="field" style="flex:1;min-width:160px;margin-bottom:0;">
+              <label>Tool Name</label>
+              <input type="text" id="rbac-tool-name" placeholder="e.g. patient_lookup" onchange="updateRbacHelp()" disabled>
+            </div>
+          </div>
+
+          <!-- Expected Result Helper -->
+          <div id="rbac-help" class="field" style="margin-bottom:1rem; padding:0.75rem; background:var(--bg-3); border:1px solid var(--border); border-radius:6px;">
+            <div style="font-size:11px; color:var(--text-muted); font-weight:600; margin-bottom:0.5rem;">EXPECTED RESULT</div>
+            <div id="rbac-help-text" style="font-size:12px; color:var(--text-dim);">Load your tenant policy to see expected RBAC results</div>
+          </div>
+
+          <!-- Available Tools Helper -->
+          <div id="tools-helper" class="field" style="display:none; margin-bottom:1rem; padding:0.75rem; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
+            <div style="font-size:11px; color:var(--text-muted); font-weight:600; margin-bottom:0.5rem;">AVAILABLE TOOLS</div>
+            <div id="tools-list" style="font-size:11px; color:var(--text-dim); font-family:'JetBrains Mono',monospace; line-height:1.6;"></div>
+          </div>
+
+          <div style="display:flex;gap:0.5rem;align-items:center; margin-bottom:1rem;">
+            <button class="primary" onclick="runRbacTest()" id="rbac-test-btn" style="min-width:140px;" disabled>
+              <span id="rbac-test-text">Test Tool Permission</span>
+              <span id="rbac-test-spinner" class="hidden" style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top:2px solid #fff;border-radius:50%;animation:spin 0.6s linear infinite;margin-left:0.4rem;vertical-align:middle;"></span>
+            </button>
+            <button class="small" onclick="runQuickRbacTests()" id="quick-tests-btn" disabled>Quick Test Suite</button>
+            <span id="rbac-timing" class="muted" style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11px;"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- RBAC Response -->
+      <div class="card" id="rbac-response-card" style="display:none;">
+        <div class="card-header" style="margin-bottom:0.5rem;">
+          <div>
+            <div class="card-title">
+              RBAC Test Result
+              <span id="rbac-decision-badge" style="margin-left:0.5rem;"></span>
+            </div>
+            <div class="card-subtitle" id="rbac-response-subtitle"></div>
+          </div>
+          <div style="display:flex;gap:0.35rem;">
+            <button class="small" onclick="copyRbacResponse()">Copy JSON</button>
+            <button class="small" onclick="copyRbacCurl()">Copy as cURL</button>
+          </div>
+        </div>
+
+        <!-- Permission Analysis -->
+        <div id="rbac-analysis" style="margin-bottom:1rem;"></div>
+
+        <!-- Raw JSON -->
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;">
+            <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.4px;">Raw Response</span>
+          </div>
+          <pre id="rbac-response-json" style="font-size:11.5px;max-height:300px;overflow-y:auto;line-height:1.5;"></pre>
+        </div>
+      </div>
+
       <!-- Response -->
       <div class="card" id="pg-response-card" style="display:none;">
         <div class="card-header" style="margin-bottom:0.5rem;">
@@ -4974,6 +5067,370 @@ function copyPlaygroundCurl() {
   if (!PG_LAST_CURL) return;
   navigator.clipboard.writeText(PG_LAST_CURL)
     .then(() => showToast('cURL command copied', 'success'));
+}
+
+// ── Dynamic RBAC Testing ────────────────────────────
+let TENANT_POLICY = null;
+
+async function loadTenantPolicy() {
+  const endpoint = document.getElementById('pg-endpoint').value.trim().replace(/\/+$/, '');
+  const runpodToken = document.getElementById('pg-runpod-token').value.trim();
+  const apiKey = document.getElementById('pg-api-key').value.trim();
+
+  if (!endpoint || !apiKey) {
+    showToast('Endpoint and API Key are required to load policy', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('policy-reload-btn');
+  const btnText = document.getElementById('policy-reload-text');
+  const spinner = document.getElementById('policy-reload-spinner');
+  const statusText = document.getElementById('policy-status-text');
+
+  btn.disabled = true;
+  btnText.textContent = 'Loading...';
+  spinner.classList.remove('hidden');
+  statusText.textContent = 'Fetching tenant policy configuration...';
+
+  try {
+    // Try to fetch tenant policy from the API
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-API-Key': apiKey
+    };
+    if (runpodToken) headers['Authorization'] = 'Bearer ' + runpodToken;
+
+    const resp = await fetch(`${endpoint}/v1/tenant/me/policies`, {
+      method: 'GET',
+      headers: headers
+    });
+
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+    }
+
+    const data = await resp.json();
+    TENANT_POLICY = data;
+
+    // Extract RBAC configuration
+    const toolAllowlist = data.input_guardrails?.tool_allowlist;
+    if (!toolAllowlist) {
+      throw new Error('No tool_allowlist configuration found in tenant policy');
+    }
+
+    populateRbacDropdowns(toolAllowlist);
+    statusText.innerHTML = `<span style="color:var(--success);">✅ Policy loaded successfully</span> • Found ${Object.keys(toolAllowlist.settings?.per_agent || {}).length} agents, ${Object.keys(toolAllowlist.settings?.per_role || {}).length} roles`;
+
+    // Enable controls
+    document.getElementById('rbac-agent-key').disabled = false;
+    document.getElementById('rbac-user-role').disabled = false;
+    document.getElementById('rbac-tool-name').disabled = false;
+    document.getElementById('rbac-test-btn').disabled = false;
+    document.getElementById('quick-tests-btn').disabled = false;
+
+  } catch (error) {
+    console.error('Failed to load tenant policy:', error);
+    statusText.innerHTML = `<span style="color:var(--danger);">❌ Failed to load policy: ${error.message}</span>`;
+    TENANT_POLICY = null;
+  } finally {
+    btn.disabled = false;
+    btnText.textContent = 'Load Policy';
+    spinner.classList.add('hidden');
+  }
+}
+
+function populateRbacDropdowns(toolAllowlist) {
+  const settings = toolAllowlist.settings || {};
+  const perAgent = settings.per_agent || {};
+  const perRole = settings.per_role || {};
+
+  // Populate Agent dropdown
+  const agentSelect = document.getElementById('rbac-agent-key');
+  agentSelect.innerHTML = '<option value="">Select Agent...</option>';
+
+  // Add configured agents
+  Object.keys(perAgent).forEach(agent => {
+    const option = document.createElement('option');
+    option.value = agent;
+    option.textContent = agent;
+    agentSelect.appendChild(option);
+  });
+
+  // Add "test agents" for role-based testing
+  Object.keys(perRole).forEach(role => {
+    const option = document.createElement('option');
+    option.value = `test-${role}-agent`;
+    option.textContent = `test-${role}-agent (for role testing)`;
+    option.style.fontStyle = 'italic';
+    agentSelect.appendChild(option);
+  });
+
+  // Populate Role dropdown
+  const roleSelect = document.getElementById('rbac-user-role');
+  roleSelect.innerHTML = '';
+
+  Object.keys(perRole).forEach(role => {
+    const option = document.createElement('option');
+    option.value = role;
+    option.textContent = role;
+    roleSelect.appendChild(option);
+  });
+
+  // Show available tools
+  const allTools = new Set();
+  Object.values(perAgent).forEach(tools => {
+    tools.forEach(tool => {
+      if (tool !== '*') allTools.add(tool);
+    });
+  });
+  Object.values(perRole).forEach(tools => {
+    tools.forEach(tool => {
+      if (tool !== '*') allTools.add(tool);
+    });
+  });
+
+  if (allTools.size > 0) {
+    const toolsHelper = document.getElementById('tools-helper');
+    const toolsList = document.getElementById('tools-list');
+    toolsList.textContent = Array.from(allTools).sort().join(', ');
+    toolsHelper.style.display = 'block';
+  }
+}
+
+function toggleRbacSection() {
+  const section = document.getElementById('rbac-section');
+  const btn = document.getElementById('rbac-toggle');
+
+  if (section.style.display === 'none') {
+    section.style.display = 'block';
+    btn.textContent = 'Hide RBAC Tests';
+  } else {
+    section.style.display = 'none';
+    btn.textContent = 'Show RBAC Tests';
+  }
+}
+
+function updateRbacHelp() {
+  if (!TENANT_POLICY) return;
+
+  const agent = document.getElementById('rbac-agent-key').value;
+  const role = document.getElementById('rbac-user-role').value;
+  const tool = document.getElementById('rbac-tool-name').value;
+  const helpText = document.getElementById('rbac-help-text');
+
+  if (!agent || !tool || !role) {
+    helpText.textContent = 'Select agent, role, and tool to see expected result';
+    return;
+  }
+
+  const toolAllowlist = TENANT_POLICY.input_guardrails?.tool_allowlist?.settings || {};
+  const perAgent = toolAllowlist.per_agent || {};
+  const perRole = toolAllowlist.per_role || {};
+
+  let expected = false;
+  let reason = '';
+  let permissionType = '';
+
+  // Check per-agent first
+  if (perAgent[agent]) {
+    const agentTools = perAgent[agent];
+    expected = agentTools.includes('*') || agentTools.includes(tool);
+    reason = expected ? `✅ ALLOW (agent has '${tool}' permission)` : `❌ BLOCK (agent missing '${tool}' permission)`;
+    permissionType = 'Per-Agent';
+  }
+  // Fallback to per-role
+  else if (perRole[role]) {
+    const roleTools = perRole[role];
+    expected = roleTools.includes('*') || roleTools.includes(tool);
+    reason = expected ? `✅ ALLOW (${role} role permits '${tool}')` : `❌ BLOCK (${role} role missing '${tool}')`;
+    permissionType = 'Per-Role (fallback)';
+  }
+  // No configuration found
+  else {
+    expected = false;
+    reason = `❌ BLOCK (no configuration found)`;
+    permissionType = 'No Policy';
+  }
+
+  helpText.innerHTML = `<strong>${reason}</strong><br><span style="color:var(--text-muted);font-size:11px;">Permission type: ${permissionType}</span>`;
+}
+
+async function runRbacTest() {
+  const endpoint = document.getElementById('pg-endpoint').value.trim().replace(/\/+$/, '');
+  const runpodToken = document.getElementById('pg-runpod-token').value.trim();
+  const apiKey = document.getElementById('pg-api-key').value.trim();
+  const agentKey = document.getElementById('rbac-agent-key').value.trim();
+  const userRole = document.getElementById('rbac-user-role').value.trim();
+  const toolName = document.getElementById('rbac-tool-name').value.trim();
+
+  if (!endpoint) return showToast('Endpoint URL is required', 'error');
+  if (!apiKey) return showToast('API Key is required', 'error');
+  if (!agentKey) return showToast('Agent Key is required', 'error');
+  if (!toolName) return showToast('Tool Name is required', 'error');
+
+  document.getElementById('rbac-response-card').style.display = 'none';
+
+  const btn = document.getElementById('rbac-test-btn');
+  const btnText = document.getElementById('rbac-test-text');
+  const spinner = document.getElementById('rbac-test-spinner');
+  btn.disabled = true;
+  btnText.textContent = 'Testing…';
+  spinner.classList.remove('hidden');
+
+  const toolCheckUrl = endpoint + '/v1/shield/tool/check';
+
+  const body = {
+    agent_key: agentKey,
+    tool_name: toolName,
+    session_id: 'portal-rbac-' + Date.now(),
+    tool_params: {}
+  };
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-API-Key': apiKey,
+    'X-User-Role': userRole,
+    'X-Agent-Key': agentKey
+  };
+
+  if (runpodToken) headers['Authorization'] = 'Bearer ' + runpodToken;
+
+  // Build cURL for copy
+  let curlParts = [`curl -X POST '${toolCheckUrl}'`];
+  Object.entries(headers).forEach(([k, v]) => {
+    if (k === 'Authorization' && v.startsWith('Bearer')) {
+      curlParts.push(`  -H '${k}: Bearer [TOKEN]'`);
+    } else {
+      curlParts.push(`  -H '${k}: ${v}'`);
+    }
+  });
+  curlParts.push(`  -d '${JSON.stringify(body)}'`);
+  window.rbacLastCurl = curlParts.join(' \\\n');
+
+  const startTime = performance.now();
+
+  try {
+    const resp = await fetch(toolCheckUrl, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(body)
+    });
+
+    const elapsed = performance.now() - startTime;
+    document.getElementById('rbac-timing').textContent = `${elapsed.toFixed(0)}ms round-trip`;
+
+    const data = await resp.json();
+    window.rbacLastResponse = data;
+
+    if (!resp.ok) {
+      showToast(`HTTP ${resp.status}: ${data.detail || data.error || JSON.stringify(data)}`, 'error');
+      return;
+    }
+
+    renderRbacResponse(data, elapsed, agentKey, userRole, toolName);
+  } catch (e) {
+    const elapsed = performance.now() - startTime;
+    document.getElementById('rbac-timing').textContent = `${elapsed.toFixed(0)}ms (failed)`;
+    showToast(`Network error: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btnText.textContent = 'Test Tool Permission';
+    spinner.classList.add('hidden');
+  }
+}
+
+function renderRbacResponse(data, elapsed, agentKey, userRole, toolName) {
+  const card = document.getElementById('rbac-response-card');
+  const badge = document.getElementById('rbac-decision-badge');
+  const subtitle = document.getElementById('rbac-response-subtitle');
+  const analysis = document.getElementById('rbac-analysis');
+  const json = document.getElementById('rbac-response-json');
+
+  const allowed = data.allowed;
+  const guardrailResults = data.guardrail_results || [];
+  const toolAllowlistResult = guardrailResults.find(g => g.guardrail === 'tool_allowlist');
+
+  // Decision badge
+  if (allowed) {
+    badge.innerHTML = '<span class="badge badge-success">ALLOWED</span>';
+  } else {
+    badge.innerHTML = '<span class="badge badge-danger">BLOCKED</span>';
+  }
+
+  // Subtitle
+  subtitle.textContent = `${agentKey} (${userRole}) → ${toolName} • ${elapsed.toFixed(0)}ms`;
+
+  // Analysis
+  let analysisHtml = '<div style="display:grid;gap:0.5rem;">';
+
+  if (toolAllowlistResult) {
+    const permType = toolAllowlistResult.message.includes('for agent') ? 'Per-Agent' :
+                    toolAllowlistResult.message.includes('for role') ? 'Per-Role' : 'System Default';
+
+    analysisHtml += `
+      <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem;background:var(--bg-3);border-radius:6px;">
+        <span style="${allowed ? 'color:var(--success)' : 'color:var(--danger)'};">
+          ${allowed ? '✅' : '❌'}
+        </span>
+        <div style="flex:1;">
+          <div style="font-weight:600;font-size:12px;">${toolAllowlistResult.message}</div>
+          <div style="font-size:11px;color:var(--text-muted);">Permission Type: ${permType}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Other guardrails
+  guardrailResults.forEach(result => {
+    if (result.guardrail === 'tool_allowlist') return;
+
+    analysisHtml += `
+      <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem;background:var(--bg-3);border-radius:6px;">
+        <span style="${result.passed ? 'color:var(--success)' : 'color:var(--danger)'};">
+          ${result.passed ? '✅' : '❌'}
+        </span>
+        <div style="flex:1;">
+          <div style="font-weight:600;font-size:12px;">${result.guardrail}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${result.message}</div>
+        </div>
+      </div>
+    `;
+  });
+
+  analysisHtml += '</div>';
+  analysis.innerHTML = analysisHtml;
+
+  // Raw JSON
+  json.textContent = JSON.stringify(data, null, 2);
+
+  card.style.display = 'block';
+}
+
+function copyRbacResponse() {
+  if (window.rbacLastResponse) {
+    navigator.clipboard.writeText(JSON.stringify(window.rbacLastResponse, null, 2));
+    showToast('Response copied to clipboard', 'success');
+  }
+}
+
+function copyRbacCurl() {
+  if (window.rbacLastCurl) {
+    navigator.clipboard.writeText(window.rbacLastCurl);
+    showToast('cURL command copied to clipboard', 'success');
+  }
+}
+
+async function runQuickRbacTests() {
+  if (!TENANT_POLICY) {
+    showToast('Load tenant policy first', 'error');
+    return;
+  }
+
+  showToast('Running quick RBAC test suite...', 'info');
+
+  // Implementation for automated testing of key scenarios
+  // Could test: each agent with their allowed/blocked tools
+  // This would be a comprehensive test runner
 }
 
 if (API_KEY) {
