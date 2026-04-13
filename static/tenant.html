@@ -5090,7 +5090,7 @@ async function loadTenantPolicy() {
   btn.disabled = true;
   btnText.textContent = 'Loading...';
   spinner.classList.remove('hidden');
-  statusText.textContent = 'Fetching tenant policy from Redis via shield-admin...';
+  statusText.textContent = 'Fetching tenant policy from Redis via shield-admin (localhost:8080)...';
 
   try {
     // Fetch tenant policy from local shield-admin container
@@ -5256,13 +5256,15 @@ function updateRbacHelp() {
 }
 
 async function runRbacTest() {
-  // Use shield-admin container endpoint directly
-  const adminEndpoint = 'http://localhost:8080';
+  // Use RunPod endpoint for tool checking (guardrail service)
+  const guardrailEndpoint = document.getElementById('pg-endpoint').value.trim().replace(/\/+$/, '');
+  const runpodToken = document.getElementById('pg-runpod-token').value.trim();
   const apiKey = document.getElementById('pg-api-key').value.trim();
   const agentKey = document.getElementById('rbac-agent-key').value.trim();
   const userRole = document.getElementById('rbac-user-role').value.trim();
   const toolName = document.getElementById('rbac-tool-name').value.trim();
 
+  if (!guardrailEndpoint) return showToast('Guardrail Endpoint URL is required for tool testing', 'error');
   if (!apiKey) return showToast('API Key is required', 'error');
   if (!agentKey) return showToast('Agent Key is required', 'error');
   if (!toolName) return showToast('Tool Name is required', 'error');
@@ -5276,7 +5278,7 @@ async function runRbacTest() {
   btnText.textContent = 'Testing…';
   spinner.classList.remove('hidden');
 
-  const toolCheckUrl = adminEndpoint + '/v1/shield/tool/check';
+  const toolCheckUrl = guardrailEndpoint + '/v1/shield/tool/check';
 
   const body = {
     agent_key: agentKey,
@@ -5288,9 +5290,11 @@ async function runRbacTest() {
   const headers = {
     'Content-Type': 'application/json',
     'X-API-Key': apiKey,
-    'X-Agent-Key': agentKey,
-    'X-Admin-Key': '0dd0299ae7742405e4f5c61e420a5058ca7d6aceZjA4ZmViY3AyNzA5MzM'
+    'X-Agent-Key': agentKey
   };
+
+  // Add RunPod token if provided
+  if (runpodToken) headers['Authorization'] = 'Bearer ' + runpodToken;
 
   // Only add role header if role is provided
   if (userRole) headers['X-User-Role'] = userRole;
@@ -5298,8 +5302,8 @@ async function runRbacTest() {
   // Build cURL for copy
   let curlParts = [`curl -X POST '${toolCheckUrl}'`];
   Object.entries(headers).forEach(([k, v]) => {
-    if (k === 'X-Admin-Key') {
-      curlParts.push(`  -H '${k}: [ADMIN_KEY]'`);
+    if (k === 'Authorization' && v.startsWith('Bearer')) {
+      curlParts.push(`  -H '${k}: Bearer [TOKEN]'`);
     } else {
       curlParts.push(`  -H '${k}: ${v}'`);
     }
