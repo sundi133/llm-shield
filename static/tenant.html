@@ -5256,15 +5256,12 @@ function updateRbacHelp() {
 }
 
 async function runRbacTest() {
-  // Use RunPod endpoint for tool checking (guardrail service)
-  const guardrailEndpoint = document.getElementById('pg-endpoint').value.trim().replace(/\/+$/, '');
-  const runpodToken = document.getElementById('pg-runpod-token').value.trim();
+  // Use local backend endpoint to proxy tool checking
   const apiKey = document.getElementById('pg-api-key').value.trim();
   const agentKey = document.getElementById('rbac-agent-key').value.trim();
   const userRole = document.getElementById('rbac-user-role').value.trim();
   const toolName = document.getElementById('rbac-tool-name').value.trim();
 
-  if (!guardrailEndpoint) return showToast('Guardrail Endpoint URL is required for tool testing', 'error');
   if (!apiKey) return showToast('API Key is required', 'error');
   if (!agentKey) return showToast('Agent Key is required', 'error');
   if (!toolName) return showToast('Tool Name is required', 'error');
@@ -5278,35 +5275,27 @@ async function runRbacTest() {
   btnText.textContent = 'Testing…';
   spinner.classList.remove('hidden');
 
-  const toolCheckUrl = guardrailEndpoint + '/v1/shield/tool/check';
+  // Use local backend endpoint (no CORS issues)
+  const toolCheckUrl = '/api/rbac/test-tool';
 
   const body = {
     agent_key: agentKey,
     tool_name: toolName,
+    user_role: userRole || null,
     session_id: 'portal-rbac-' + Date.now(),
     tool_params: {}
   };
 
   const headers = {
     'Content-Type': 'application/json',
-    'X-API-Key': apiKey,
-    'X-Agent-Key': agentKey
+    'X-API-Key': apiKey
   };
 
-  // Add RunPod token if provided
-  if (runpodToken) headers['Authorization'] = 'Bearer ' + runpodToken;
-
-  // Only add role header if role is provided
-  if (userRole) headers['X-User-Role'] = userRole;
-
-  // Build cURL for copy
-  let curlParts = [`curl -X POST '${toolCheckUrl}'`];
+  // Build cURL for copy (using local backend endpoint)
+  const fullUrl = window.location.origin + toolCheckUrl;
+  let curlParts = [`curl -X POST '${fullUrl}'`];
   Object.entries(headers).forEach(([k, v]) => {
-    if (k === 'Authorization' && v.startsWith('Bearer')) {
-      curlParts.push(`  -H '${k}: Bearer [TOKEN]'`);
-    } else {
-      curlParts.push(`  -H '${k}: ${v}'`);
-    }
+    curlParts.push(`  -H '${k}: ${v}'`);
   });
   curlParts.push(`  -d '${JSON.stringify(body)}'`);
   window.rbacLastCurl = curlParts.join(' \\\n');
