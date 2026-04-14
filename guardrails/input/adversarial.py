@@ -131,7 +131,7 @@ def preprocess_content(content: str) -> str:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = (
-    "You are a security classifier for AI agent systems.\n\n"
+    "You are a security classifier of user messages for AI agent systems.\n\n"
     "IMPORTANT — SAFE messages (answer false):\n"
     "Users send legitimate work requests to AI agents. These are ALWAYS safe:\n"
     "- Prescribing, ordering, dispensing medications or treatments\n"

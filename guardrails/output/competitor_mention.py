@@ -19,27 +19,19 @@ class CompetitorMentionGuardrail(BaseGuardrail):
     tier = "fast"
     stage = "output"
 
-    def __init__(self):
-        settings = self.settings
-        self._competitors: list[str] = settings.get("competitors", [])
-        self._replacement_message: str = settings.get(
-            "replacement_message",
-            "I can only provide information about our products and services.",
-        )
-        self._detect_indirect: bool = settings.get("detect_indirect", False)
-        self._patterns: list[re.Pattern] = []
-        for name in self._competitors:
-            # Word-boundary match, case-insensitive
-            self._patterns.append(
-                re.compile(r"\b" + re.escape(name) + r"\b", re.IGNORECASE)
-            )
-
     async def check(
         self, content: str, context: Optional[dict] = None
     ) -> GuardrailResult:
         start = time.perf_counter()
+        settings = self.settings
+        competitors: list[str] = settings.get("competitors", [])
+        replacement_message: str = settings.get(
+            "replacement_message",
+            "I can only provide information about our products and services.",
+        )
+        detect_indirect: bool = settings.get("detect_indirect", False)
 
-        if not self._competitors:
+        if not competitors:
             elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(
                 passed=True,
@@ -49,8 +41,13 @@ class CompetitorMentionGuardrail(BaseGuardrail):
                 latency_ms=round(elapsed, 2),
             )
 
+        patterns = [
+            re.compile(r"\b" + re.escape(name) + r"\b", re.IGNORECASE)
+            for name in competitors
+        ]
+
         mentions = []
-        for pattern, competitor_name in zip(self._patterns, self._competitors):
+        for pattern, competitor_name in zip(patterns, competitors):
             found = list(pattern.finditer(content))
             if found:
                 mentions.append(
@@ -74,8 +71,8 @@ class CompetitorMentionGuardrail(BaseGuardrail):
                 message=f"Competitor mentions detected: {', '.join(names)}",
                 details={
                     "mentions": mentions,
-                    "replacement_message": self._replacement_message,
-                    "detect_indirect": self._detect_indirect,
+                    "replacement_message": replacement_message,
+                    "detect_indirect": detect_indirect,
                 },
                 latency_ms=round(elapsed, 2),
             )
