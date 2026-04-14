@@ -33,7 +33,7 @@ ENV VOTAL_ES_ENABLED=true
 ENV VOTAL_ES_INDEX=votal-shield-logs
 
 # vLLM server configuration
-ENV MODEL_NAME=votal-ai/vai35-4B
+ENV MODEL_NAME=votal-ai/vai35-4B-v2
 ENV VLLM_HOST=0.0.0.0
 ENV VLLM_PORT=8000
 ENV LLM_BACKEND_TYPE=vllm
