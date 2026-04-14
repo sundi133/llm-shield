@@ -690,40 +690,56 @@ async function sendMessage() {
       addGuardrailCard('input', data.input_guardrails, false);
     }
 
-    // Assistant text
-    if (data.text) {
-      addMessage('assistant', esc(data.text), elapsed + 'ms · ' + (cfg.llmApiKey ? cfg.llmModel : 'built-in'));
-      conversationHistory.push({ role: 'assistant', content: data.text });
-    }
+    // Check if output guardrails blocked the response
+    const outputBlocked = !!data.output_blocked;
 
-    // Tool call cards + natural-language follow-up
-    if (data.tool_calls && data.tool_calls.length) {
-      addToolCards(data.tool_calls);
-
-      const lines = [];
-      for (const tc of data.tool_calls) {
-        const ok = tc.rbac?.allowed;
-        const readable = tc.tool_name.replace(/_/g, ' ');
-        if (ok) {
-          const argSummary = Object.entries(tc.arguments || {})
-            .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
-            .join(', ');
-          lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}`);
-        } else {
-          lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong> with your current role.`);
-        }
+    if (outputBlocked) {
+      // Show guardrail card first so user sees why
+      if (data.output_guardrails) {
+        addGuardrailCard('output', data.output_guardrails, true, data.output_block_reason);
       }
-      addMessage('assistant', lines.join('<br>'), elapsed + 'ms');
-      conversationHistory.push({ role: 'assistant', content: lines.map(l => l.replace(/<[^>]+>/g, '')).join('\n') });
-    }
+      const reason = data.output_block_reason || 'content policy violation';
+      addMessage('assistant',
+        `I'm sorry, I can't share that response — it was flagged by our content policy (<em>${esc(reason)}</em>). ` +
+        `Please try rephrasing your question or ask about something else.`,
+        elapsed + 'ms');
+      conversationHistory.push({ role: 'assistant', content: `Response blocked: ${reason}` });
+    } else {
+      // Assistant text (only when not blocked)
+      if (data.text) {
+        addMessage('assistant', esc(data.text), elapsed + 'ms · ' + (cfg.llmApiKey ? cfg.llmModel : 'built-in'));
+        conversationHistory.push({ role: 'assistant', content: data.text });
+      }
 
-    // Show output guardrail results
-    if (data.output_guardrails) {
-      addGuardrailCard('output', data.output_guardrails, !!data.output_blocked, data.output_block_reason);
-    }
+      // Tool call cards + natural-language follow-up
+      if (data.tool_calls && data.tool_calls.length) {
+        addToolCards(data.tool_calls);
 
-    if (!data.text && (!data.tool_calls || !data.tool_calls.length)) {
-      addMessage('assistant', '<em>(empty response)</em>', elapsed + 'ms');
+        const lines = [];
+        for (const tc of data.tool_calls) {
+          const ok = tc.rbac?.allowed;
+          const readable = tc.tool_name.replace(/_/g, ' ');
+          if (ok) {
+            const argSummary = Object.entries(tc.arguments || {})
+              .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
+              .join(', ');
+            lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}`);
+          } else {
+            lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong> with your current role.`);
+          }
+        }
+        addMessage('assistant', lines.join('<br>'), elapsed + 'ms');
+        conversationHistory.push({ role: 'assistant', content: lines.map(l => l.replace(/<[^>]+>/g, '')).join('\n') });
+      }
+
+      // Show output guardrail results (passed)
+      if (data.output_guardrails) {
+        addGuardrailCard('output', data.output_guardrails, false);
+      }
+
+      if (!data.text && (!data.tool_calls || !data.tool_calls.length)) {
+        addMessage('assistant', '<em>(empty response)</em>', elapsed + 'ms');
+      }
     }
 
   } catch (e) {
