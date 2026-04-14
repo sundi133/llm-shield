@@ -76,6 +76,7 @@ input, select, textarea, button { font-family: inherit; }
 .tool-card { border-radius: 8px; padding: 0.65rem 0.85rem; border: 1px solid var(--border); }
 .tool-card-allowed { background: #0d2818; border-color: var(--success-dim); }
 .tool-card-blocked { background: #2d1215; border-color: var(--danger-dim); }
+.tool-card-unregistered { background: #2d2510; border-color: var(--warning); }
 .tool-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .tool-card-header .icon { font-size: 1rem; }
 .tool-card-header .name { font-family: 'SF Mono', 'JetBrains Mono', monospace; font-weight: 600; font-size: 0.82rem; color: var(--text); }
@@ -297,16 +298,18 @@ function addToolCards(toolCalls) {
 
   for (const tc of toolCalls) {
     const allowed = tc.rbac && tc.rbac.allowed;
+    const isUnreg = tc.unregistered;
     const card = document.createElement('div');
-    card.className = 'tool-card ' + (allowed ? 'tool-card-allowed' : 'tool-card-blocked');
+    card.className = 'tool-card ' + (isUnreg ? 'tool-card-unregistered' : allowed ? 'tool-card-allowed' : 'tool-card-blocked');
 
     const argsStr = JSON.stringify(tc.arguments || {}, null, 2);
     const rbacMsg = tc.rbac ? tc.rbac.message : '';
 
     card.innerHTML = `
       <div class="tool-card-header">
-        <span class="icon">${allowed ? '✅' : '🚫'}</span>
+        <span class="icon">${isUnreg ? '⚠' : allowed ? '✅' : '🚫'}</span>
         <span class="name">${esc(tc.tool_name)}</span>
+        ${isUnreg ? '<span class="badge" style="background:#92400e;color:#fbbf24;">UNREGISTERED</span>' : ''}
         <span class="badge ${allowed ? 'badge-allowed' : 'badge-blocked'}">${allowed ? 'ALLOWED' : 'BLOCKED'}</span>
       </div>
       <div class="tool-card-args">${esc(argsStr)}</div>
@@ -719,7 +722,9 @@ async function sendMessage() {
         for (const tc of data.tool_calls) {
           const ok = tc.rbac?.allowed;
           const readable = tc.tool_name.replace(/_/g, ' ');
-          if (ok) {
+          if (tc.unregistered) {
+            lines.push(`⚠ Tool <strong>${esc(readable)}</strong> is not registered — it was blocked. Register it in your agent registry to enable access.`);
+          } else if (ok) {
             const argSummary = Object.entries(tc.arguments || {})
               .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
               .join(', ');
@@ -730,6 +735,13 @@ async function sendMessage() {
         }
         addMessage('assistant', lines.join('<br>'), elapsed + 'ms');
         conversationHistory.push({ role: 'assistant', content: lines.map(l => l.replace(/<[^>]+>/g, '')).join('\n') });
+      }
+
+      if (data.unregistered) {
+        const parts = [];
+        if (data.unregistered.agents?.length) parts.push(`agent(s): <strong>${data.unregistered.agents.map(esc).join(', ')}</strong>`);
+        if (data.unregistered.tools?.length) parts.push(`tool(s): <strong>${data.unregistered.tools.map(esc).join(', ')}</strong>`);
+        if (parts.length) addMessage('system', '⚠ Unregistered ' + parts.join(' and ') + ' detected. Register them in the Agent Registry to enable proper RBAC.');
       }
 
       // Show output guardrail results (passed)
