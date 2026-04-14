@@ -27,6 +27,8 @@ class RoleDataPolicy(BaseModel):
     action: str  # allow, redact, block, mask
     data_scope: List[str] = []
     redaction_level: str = "partial"  # none, partial, full
+    input_rules: List[str] = []
+    output_rules: List[str] = []
 
 
 class ToolDataPolicy(BaseModel):

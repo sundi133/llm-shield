@@ -3065,13 +3065,11 @@ function displayToolPolicies() {
   }
 
   const allTools = [...configuredTools, ...unconfiguredTools];
-
   if (!allTools.length) {
     container.innerHTML = '<div class="muted" style="padding:2rem;text-align:center;">No tools registered by agents.</div>';
     return;
   }
 
-  // Collect all unique roles across all tool policies
   const allRoles = new Set();
   configuredTools.forEach(t => {
     Object.keys((TOOL_POLICIES[t] || {}).role_restrictions || {}).forEach(r => allRoles.add(r));
@@ -3080,27 +3078,14 @@ function displayToolPolicies() {
   const roles = [...allRoles].sort();
 
   const roleColor = (a) => a === 'allow' ? '#10b981' : a === 'block' ? '#ef4444' : a === 'redact' ? '#f59e0b' : a === 'mask' ? '#8b5cf6' : '#71717a';
-  const actionBadge = (a) => a ? `<span style="display:inline-block;padding:0.1rem 0.35rem;background:${roleColor(a)}18;color:${roleColor(a)};border-radius:3px;font-size:9px;font-weight:600;">${a}</span>` : '<span style="color:var(--text-muted);font-size:9px;">—</span>';
+  const actionBadge = (a, size) => {
+    const sz = size || '11px';
+    return a ? `<span style="display:inline-block;padding:0.15rem 0.5rem;background:${roleColor(a)}18;color:${roleColor(a)};border-radius:4px;font-size:${sz};font-weight:600;">${a}</span>` : `<span style="color:var(--text-muted);font-size:${sz};">—</span>`;
+  };
 
-  let html = `
-  <div class="card" style="overflow-x:auto;">
-    <table style="width:100%;border-collapse:collapse;font-size:12px;">
-      <thead>
-        <tr style="border-bottom:1px solid var(--border);">
-          <th rowspan="2" style="text-align:left;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;white-space:nowrap;min-width:160px;border-bottom:2px solid var(--border);">Tool</th>
-          <th rowspan="2" style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border);">Status</th>
-          ${roles.map(r => `<th colspan="2" style="text-align:center;padding:0.4rem 0.5rem;font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;border-left:1px solid var(--border);">${r}</th>`).join('')}
-          <th rowspan="2" style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border);">Patterns</th>
-          <th rowspan="2" style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border);">LLM</th>
-          <th rowspan="2" style="text-align:right;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border);">Actions</th>
-        </tr>
-        <tr style="border-bottom:2px solid var(--border);">
-          ${roles.map(r => `<th style="text-align:center;padding:0.2rem 0.3rem;font-size:9px;color:var(--text-muted);font-weight:500;border-left:1px solid var(--border);">in</th><th style="text-align:center;padding:0.2rem 0.3rem;font-size:9px;color:var(--text-muted);font-weight:500;">out</th>`).join('')}
-        </tr>
-      </thead>
-      <tbody>`;
+  let html = `<div class="card" style="padding:0;">`;
 
-  allTools.forEach(toolName => {
+  allTools.forEach((toolName, idx) => {
     const isConfigured = configuredTools.includes(toolName);
     const p = TOOL_POLICIES[toolName] || {};
     const toolRoles = p.role_restrictions || {};
@@ -3111,57 +3096,90 @@ function displayToolPolicies() {
       if (p.data_sanitization.redact_ssn) flags.push('SSN');
       if (p.data_sanitization.mask_phone) flags.push('Phone');
     }
-    const patternSummary = patterns.length ? `${patterns.length}` : '';
+    const patternCount = patterns.length;
     const flagSummary = flags.length ? flags.join(', ') : '';
-    const sanitizationText = [patternSummary && `${patternSummary} pattern${patterns.length > 1 ? 's' : ''}`, flagSummary].filter(Boolean).join(' · ') || '—';
+    const sanitizationText = [patternCount && `${patternCount} pattern${patternCount > 1 ? 's' : ''}`, flagSummary].filter(Boolean).join(' · ') || 'None';
+
+    const configuredRoleCount = Object.keys(toolRoles).length;
+    const roleSummaryParts = [];
+    ['allow','redact','mask','block'].forEach(action => {
+      const count = Object.values(toolRoles).filter(rp => {
+        const inp = typeof rp === 'string' ? rp : (rp.input || null);
+        return inp === action;
+      }).length;
+      if (count) roleSummaryParts.push(`<span style="color:${roleColor(action)};font-weight:600;">${count}</span> ${action}`);
+    });
+    const roleSummary = roleSummaryParts.length ? roleSummaryParts.join(', ') : `<span style="color:var(--text-muted);">No roles configured</span>`;
+
+    const toolId = `tp-expand-${toolName.replace(/[^a-zA-Z0-9]/g, '_')}`;
 
     html += `
-        <tr style="border-bottom:1px solid var(--border);${!isConfigured ? 'opacity:0.6;' : ''}" ${isConfigured ? '' : 'title="No policy configured"'}>
-          <td style="padding:0.55rem 0.75rem;">
-            <div style="font-weight:600;font-size:12px;">${toolName.replace(/_/g, ' ')}</div>
-            <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-              <code style="font-size:10px;color:var(--text-muted);">${toolName}</code>
-              ${(TOOL_AGENT_MAP[toolName] || []).map(a => `<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:rgba(88,166,255,0.1);color:#58a6ff;">${a}</span>`).join('')}
+      <div style="border-bottom:1px solid var(--border);${!isConfigured ? 'opacity:0.6;' : ''}">
+        <!-- Tool summary row -->
+        <div onclick="document.getElementById('${toolId}').classList.toggle('hidden')" style="display:flex;align-items:center;gap:1rem;padding:0.85rem 1rem;cursor:pointer;transition:background 0.1s;" onmouseenter="this.style.background='rgba(255,255,255,0.03)'" onmouseleave="this.style.background=''">
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+              <span style="font-weight:700;font-size:14px;">${toolName.replace(/_/g, ' ')}</span>
+              <code style="font-size:11px;color:var(--text-muted);background:rgba(255,255,255,0.05);padding:1px 6px;border-radius:3px;">${toolName}</code>
+              <span style="display:inline-block;padding:0.15rem 0.5rem;border-radius:4px;font-size:11px;font-weight:600;${isConfigured ? 'background:rgba(16,185,129,0.12);color:#10b981;' : 'background:rgba(113,113,122,0.12);color:#a1a1aa;'}">${isConfigured ? 'Active' : 'No Policy'}</span>
             </div>
-          </td>
-          <td style="text-align:center;padding:0.55rem 0.5rem;">
-            <span style="display:inline-block;padding:0.15rem 0.45rem;border-radius:4px;font-size:10px;font-weight:600;${isConfigured ? 'background:rgba(16,185,129,0.12);color:#10b981;' : 'background:rgba(113,113,122,0.12);color:#a1a1aa;'}">${isConfigured ? 'Active' : 'None'}</span>
-          </td>
-          ${roles.map(r => {
-            const rp = toolRoles[r];
-            if (!isConfigured || !rp) return `<td style="text-align:center;padding:0.55rem 0.3rem;border-left:1px solid var(--border);">${actionBadge(null)}</td><td style="text-align:center;padding:0.55rem 0.3rem;">${actionBadge(null)}</td>`;
-            // Support both old format ("allow") and new format ({input:"allow",output:"redact"})
-            const inp = typeof rp === 'string' ? rp : (rp.input || null);
-            const out = typeof rp === 'string' ? rp : (rp.output || null);
-            return `<td style="text-align:center;padding:0.55rem 0.3rem;border-left:1px solid var(--border);">${actionBadge(inp)}</td><td style="text-align:center;padding:0.55rem 0.3rem;">${actionBadge(out)}</td>`;
-          }).join('')}
-          <td style="text-align:center;padding:0.55rem 0.5rem;font-size:11px;color:var(--text-dim);">${isConfigured ? sanitizationText : '—'}</td>
-          <td style="text-align:center;padding:0.55rem 0.5rem;">
-            ${isConfigured ? `<span style="font-size:10px;padding:0.15rem 0.4rem;border-radius:4px;font-weight:600;${hasLLM ? 'background:rgba(16,185,129,0.12);color:#10b981;' : 'background:rgba(113,113,122,0.12);color:#a1a1aa;'}">${hasLLM ? 'On' : 'Off'}</span>` : '<span style="color:var(--text-muted);font-size:11px;">—</span>'}
-          </td>
-          <td style="text-align:right;padding:0.55rem 0.75rem;white-space:nowrap;">
+            <div style="display:flex;align-items:center;gap:0.75rem;margin-top:0.35rem;font-size:12px;color:var(--text-muted);flex-wrap:wrap;">
+              <span>Agents: ${(TOOL_AGENT_MAP[toolName] || []).map(a => `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(88,166,255,0.1);color:#58a6ff;font-weight:500;">${a}</span>`).join(' ') || '<span style="color:var(--text-muted);">none</span>'}</span>
+              <span style="color:var(--border);">|</span>
+              <span>Roles: ${roleSummary}</span>
+              <span style="color:var(--border);">|</span>
+              <span>Patterns: ${isConfigured ? sanitizationText : '—'}</span>
+              <span style="color:var(--border);">|</span>
+              <span>LLM: <span style="font-weight:600;color:${hasLLM ? '#10b981' : 'var(--text-muted)'};">${hasLLM ? 'On' : 'Off'}</span></span>
+            </div>
+          </div>
+          <div style="display:flex;gap:0.4rem;flex-shrink:0;">
             ${isConfigured
-              ? `<button class="small" onclick="editToolPolicy('${toolName}')" style="font-size:10px;padding:0.2rem 0.5rem;">Edit</button>
-                 <button class="danger small" onclick="removeToolPolicy('${toolName}')" style="font-size:10px;padding:0.2rem 0.5rem;margin-left:0.25rem;">Delete</button>`
-              : `<button class="primary small" onclick="showAddToolPolicyModalFor('${toolName}')" style="font-size:10px;padding:0.2rem 0.5rem;">+ Add Policy</button>`
+              ? `<button class="small" onclick="event.stopPropagation();editToolPolicy('${toolName}')" style="font-size:11px;padding:0.3rem 0.7rem;">Edit</button>
+                 <button class="danger small" onclick="event.stopPropagation();removeToolPolicy('${toolName}')" style="font-size:11px;padding:0.3rem 0.7rem;">Delete</button>`
+              : `<button class="primary small" onclick="event.stopPropagation();showAddToolPolicyModalFor('${toolName}')" style="font-size:11px;padding:0.3rem 0.7rem;">+ Add Policy</button>`
             }
-            <button class="danger small" onclick="removeToolFromAgents('${toolName}')" style="font-size:9px;padding:0.15rem 0.4rem;margin-left:0.25rem;opacity:0.7;" title="Remove tool from all agents">✕</button>
-          </td>
-        </tr>`;
+            <button class="danger small" onclick="event.stopPropagation();removeToolFromAgents('${toolName}')" style="font-size:10px;padding:0.25rem 0.5rem;opacity:0.6;" title="Remove tool from all agents">✕</button>
+          </div>
+        </div>
+        <!-- Expanded role details -->
+        <div id="${toolId}" class="hidden" style="padding:0 1rem 0.85rem 1rem;">
+          ${isConfigured && roles.length ? `
+          <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:0.25rem;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+            <thead>
+              <tr style="background:rgba(255,255,255,0.03);">
+                <th style="text-align:left;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:30%;">Role</th>
+                <th style="text-align:center;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;">Input</th>
+                <th style="text-align:center;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;">Output</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${roles.map(r => {
+                const rp = toolRoles[r];
+                let inp = null, out = null;
+                if (rp) {
+                  inp = typeof rp === 'string' ? rp : (rp.input || null);
+                  out = typeof rp === 'string' ? rp : (rp.output || null);
+                }
+                return `<tr style="border-top:1px solid var(--border);">
+                  <td style="padding:0.5rem 0.75rem;font-weight:600;font-size:13px;">${r}</td>
+                  <td style="text-align:center;padding:0.5rem 0.75rem;">${actionBadge(inp, '12px')}</td>
+                  <td style="text-align:center;padding:0.5rem 0.75rem;">${actionBadge(out, '12px')}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>` : `<div style="padding:0.5rem 0;font-size:13px;color:var(--text-muted);">${isConfigured ? 'No roles configured for this tool.' : 'Add a policy to configure role access.'}</div>`}
+        </div>
+      </div>`;
   });
 
-  html += `
-      </tbody>
-    </table>
-  </div>
-  <div style="margin-top:0.75rem;display:flex;gap:1rem;font-size:11px;color:var(--text-muted);">
-    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#10b981;margin-right:4px;"></span>allow</span>
-    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#f59e0b;margin-right:4px;"></span>redact</span>
-    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#8b5cf6;margin-right:4px;"></span>mask</span>
-    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#ef4444;margin-right:4px;"></span>block</span>
-    <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:rgba(88,166,255,0.15);margin-right:4px;color:#58a6ff;font-size:8px;padding:0 2px;border-radius:2px;">agent</span>= source agent</span>
-    <span>✕ = remove tool from agents</span>
-    <span style="margin-left:auto;">${configuredTools.length}/${allTools.length} tools with policies</span>
+  html += `</div>
+  <div style="margin-top:0.75rem;display:flex;gap:1.25rem;font-size:12px;color:var(--text-muted);flex-wrap:wrap;align-items:center;">
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#10b981;margin-right:5px;vertical-align:middle;"></span>allow</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f59e0b;margin-right:5px;vertical-align:middle;"></span>redact</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#8b5cf6;margin-right:5px;vertical-align:middle;"></span>mask</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ef4444;margin-right:5px;vertical-align:middle;"></span>block</span>
+    <span style="margin-left:auto;font-size:12px;">${configuredTools.length}/${allTools.length} tools with policies</span>
   </div>`;
 
   container.innerHTML = html;
@@ -3504,20 +3522,12 @@ function displayDataPolicies() {
   }
 
   const actionColor = (a) => a === 'allow' ? '#10b981' : a === 'block' ? '#ef4444' : a === 'redact' ? '#f59e0b' : a === 'mask' ? '#8b5cf6' : '#71717a';
-  const badge = (a) => a ? `<span style="display:inline-block;padding:2px 6px;background:${actionColor(a)}18;color:${actionColor(a)};border-radius:3px;font-size:10px;font-weight:600;">${a}</span>` : '<span style="color:var(--text-muted);font-size:10px;">—</span>';
+  const badge = (a, sz) => {
+    sz = sz || '12px';
+    return a ? `<span style="display:inline-block;padding:0.15rem 0.5rem;background:${actionColor(a)}18;color:${actionColor(a)};border-radius:4px;font-size:${sz};font-weight:600;">${a}</span>` : `<span style="color:var(--text-muted);font-size:${sz};">—</span>`;
+  };
 
-  let html = `<div class="card" style="overflow-x:auto;">
-    <table style="width:100%;border-collapse:collapse;font-size:12px;">
-      <thead>
-        <tr style="border-bottom:2px solid var(--border);">
-          <th style="text-align:left;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;min-width:160px;">Tool</th>
-          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">Compliance</th>
-          ${roles.map(r => `<th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-dim);font-weight:600;white-space:nowrap;border-left:1px solid var(--border);">${r}<div style="display:flex;justify-content:center;gap:2px;margin-top:2px;"><span style="font-size:8px;color:var(--text-muted);">action</span><span style="font-size:8px;color:var(--text-muted);">scope</span></div></th>`).join('')}
-          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">Sanitization</th>
-          <th style="text-align:center;padding:0.6rem 0.5rem;font-size:11px;color:var(--text-muted);font-weight:600;">Audit</th>
-          <th style="text-align:right;padding:0.6rem 0.75rem;font-size:11px;color:var(--text-muted);font-weight:600;">Actions</th>
-        </tr>
-      </thead><tbody>`;
+  let html = `<div class="card" style="padding:0;">`;
 
   tools.forEach(toolName => {
     const dp = DATA_POLICIES_CACHE[toolName] || {};
@@ -3527,50 +3537,84 @@ function displayDataPolicies() {
     const sanRules = dp.sanitization_rules || [];
     const compliance = dp.compliance_framework || null;
     const auditReq = dp.audit_required || false;
-
-    // Also merge in lightweight tool_policies role_restrictions
     const tpRoles = (TOOL_POLICIES[toolName] || {}).role_restrictions || {};
 
-    html += `<tr style="border-bottom:1px solid var(--border);">
-      <td style="padding:0.55rem 0.75rem;">
-        <div style="font-weight:600;font-size:12px;">${toolName.replace(/_/g, ' ')}</div>
-        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-          <code style="font-size:10px;color:var(--text-muted);">${toolName}</code>
-          ${(TOOL_AGENT_MAP[toolName] || []).map(a => `<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:rgba(88,166,255,0.1);color:#58a6ff;">${a}</span>`).join('')}
+    const hasData = Object.keys(rolePolicies).length > 0 || sanRules.length > 0;
+    const sanText = sanRules.length ? `${sanRules.length} rule${sanRules.length > 1 ? 's' : ''}` : 'None';
+
+    const roleSummaryParts = [];
+    roles.forEach(r => {
+      const rp = rolePolicies[r];
+      const tp = tpRoles[r];
+      const action = rp ? rp.action : (typeof tp === 'string' ? tp : (tp && tp.input ? tp.input : null));
+      if (action) roleSummaryParts.push(`<span style="color:${actionColor(action)};font-weight:600;">${r}</span>`);
+    });
+    const roleSummary = roleSummaryParts.length ? roleSummaryParts.join(', ') : `<span style="color:var(--text-muted);">No role policies</span>`;
+
+    const dpId = `dp-expand-${toolName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+
+    html += `
+      <div style="border-bottom:1px solid var(--border);">
+        <div onclick="document.getElementById('${dpId}').classList.toggle('hidden')" style="display:flex;align-items:center;gap:1rem;padding:0.85rem 1rem;cursor:pointer;transition:background 0.1s;" onmouseenter="this.style.background='rgba(255,255,255,0.03)'" onmouseleave="this.style.background=''">
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+              <span style="font-weight:700;font-size:14px;">${toolName.replace(/_/g, ' ')}</span>
+              <code style="font-size:11px;color:var(--text-muted);background:rgba(255,255,255,0.05);padding:1px 6px;border-radius:3px;">${toolName}</code>
+              ${(TOOL_AGENT_MAP[toolName] || []).map(a => `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(88,166,255,0.1);color:#58a6ff;font-weight:500;">${a}</span>`).join('')}
+            </div>
+            <div style="display:flex;align-items:center;gap:0.75rem;margin-top:0.35rem;font-size:12px;color:var(--text-muted);flex-wrap:wrap;">
+              ${compliance ? `<span>Compliance: <span style="font-weight:600;color:#8b5cf6;text-transform:uppercase;">${compliance}</span></span><span style="color:var(--border);">|</span>` : ''}
+              <span>Roles: ${roleSummary}</span>
+              <span style="color:var(--border);">|</span>
+              <span>Sanitization: <span style="font-weight:600;color:${sanRules.length ? '#10b981' : 'var(--text-muted)'};">${sanText}</span></span>
+              <span style="color:var(--border);">|</span>
+              <span>Audit: <span style="font-weight:600;color:${auditReq ? '#10b981' : 'var(--text-muted)'};">${auditReq ? 'On' : 'Off'}</span></span>
+            </div>
+          </div>
+          <button class="primary small" onclick="event.stopPropagation();openDataPolicyModal('${toolName}')" style="font-size:11px;padding:0.3rem 0.7rem;flex-shrink:0;">Configure</button>
         </div>
-      </td>
-      <td style="text-align:center;padding:0.55rem 0.5rem;">
-        ${compliance ? `<span style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;background:rgba(139,92,246,0.12);color:#8b5cf6;text-transform:uppercase;">${compliance}</span>` : '<span style="color:var(--text-muted);font-size:10px;">—</span>'}
-      </td>
-      ${roles.map(r => {
-        const rp = rolePolicies[r];
-        const tp = tpRoles[r];
-        const action = rp ? rp.action : (typeof tp === 'string' ? tp : (tp && tp.input ? tp.input : null));
-        const scope = rp && rp.data_scope && rp.data_scope.length ? rp.data_scope.join(', ') : '—';
-        return `<td style="text-align:center;padding:0.55rem 0.3rem;border-left:1px solid var(--border);vertical-align:middle;">
-          <div>${badge(action)}</div>
-          <div style="font-size:9px;color:var(--text-muted);margin-top:2px;">${scope}</div>
-        </td>`;
-      }).join('')}
-      <td style="text-align:center;padding:0.55rem 0.5rem;">
-        ${sanRules.length ? `<span style="font-size:10px;font-weight:600;color:#10b981;">${sanRules.length} rule${sanRules.length > 1 ? 's' : ''}</span>` : '<span style="color:var(--text-muted);font-size:10px;">—</span>'}
-      </td>
-      <td style="text-align:center;padding:0.55rem 0.5rem;">
-        <span style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;${auditReq ? 'background:rgba(16,185,129,0.12);color:#10b981;' : 'background:rgba(113,113,122,0.12);color:#a1a1aa;'}">${auditReq ? 'On' : 'Off'}</span>
-      </td>
-      <td style="text-align:right;padding:0.55rem 0.75rem;white-space:nowrap;">
-        <button class="primary small" onclick="openDataPolicyModal('${toolName}')" style="font-size:10px;padding:0.2rem 0.5rem;">Configure</button>
-      </td>
-    </tr>`;
+        <div id="${dpId}" class="hidden" style="padding:0 1rem 0.85rem 1rem;">
+          ${roles.length ? `
+          <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:0.25rem;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+            <thead>
+              <tr style="background:rgba(255,255,255,0.03);">
+                <th style="text-align:left;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:15%;">Role</th>
+                <th style="text-align:center;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:10%;">Action</th>
+                <th style="text-align:left;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:20%;">Data Scope</th>
+                <th style="text-align:left;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:27%;">Input Rules</th>
+                <th style="text-align:left;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:27%;">Output Rules</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${roles.map(r => {
+                const rp = rolePolicies[r];
+                const tp = tpRoles[r];
+                const action = rp ? rp.action : (typeof tp === 'string' ? tp : (tp && tp.input ? tp.input : null));
+                const scope = rp && rp.data_scope && rp.data_scope.length ? rp.data_scope.join(', ') : '—';
+                const inRules = rp && rp.input_rules && rp.input_rules.length ? rp.input_rules : [];
+                const outRules = rp && rp.output_rules && rp.output_rules.length ? rp.output_rules : [];
+                const renderRules = (rules) => rules.length ? rules.map(r => '<span style="display:block;font-size:11px;color:var(--text-dim);padding:1px 0;">• ' + r + '</span>').join('') : '<span style="color:var(--text-muted);font-size:11px;">—</span>';
+                return `<tr style="border-top:1px solid var(--border);vertical-align:top;">
+                  <td style="padding:0.5rem 0.75rem;font-weight:600;font-size:13px;">${r}</td>
+                  <td style="text-align:center;padding:0.5rem 0.75rem;">${badge(action, '12px')}</td>
+                  <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);">${scope}</td>
+                  <td style="padding:0.5rem 0.75rem;">${renderRules(inRules)}</td>
+                  <td style="padding:0.5rem 0.75rem;">${renderRules(outRules)}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>` : `<div style="padding:0.5rem 0;font-size:13px;color:var(--text-muted);">No roles configured.</div>`}
+        </div>
+      </div>`;
   });
 
-  html += `</tbody></table></div>
-    <div style="margin-top:0.75rem;display:flex;gap:1rem;font-size:11px;color:var(--text-muted);flex-wrap:wrap;">
-      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#10b981;margin-right:4px;"></span>allow</span>
-      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#f59e0b;margin-right:4px;"></span>redact</span>
-      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#8b5cf6;margin-right:4px;"></span>mask</span>
-      <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#ef4444;margin-right:4px;"></span>block</span>
-      <span style="margin-left:auto;">scope = data types visible to role</span>
+  html += `</div>
+    <div style="margin-top:0.75rem;display:flex;gap:1.25rem;font-size:12px;color:var(--text-muted);flex-wrap:wrap;align-items:center;">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#10b981;margin-right:5px;vertical-align:middle;"></span>allow</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f59e0b;margin-right:5px;vertical-align:middle;"></span>redact</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#8b5cf6;margin-right:5px;vertical-align:middle;"></span>mask</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ef4444;margin-right:5px;vertical-align:middle;"></span>block</span>
+      <span style="margin-left:auto;font-size:12px;">scope = data types visible to role</span>
     </div>`;
 
   container.innerHTML = html;
@@ -3585,8 +3629,8 @@ function openDataPolicyModal(toolName) {
   const actionOpts = (selected) => ['allow','redact','mask','block'].map(a => `<option value="${a}" ${a === selected ? 'selected' : ''}>${a}</option>`).join('');
 
   let html = `
-  <div style="position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;display:flex;align-items:center;justify-content:center;" id="dp-modal-overlay" onclick="if(event.target===this)this.remove()">
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.5rem;width:600px;max-height:80vh;overflow-y:auto;">
+  <div style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);" id="dp-modal-overlay" onclick="if(event.target===this)this.remove()">
+    <div style="background:var(--bg-2);border:1px solid var(--border-strong);border-radius:12px;padding:1.5rem;width:650px;max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-lg);">
       <div style="font-size:16px;font-weight:700;margin-bottom:0.25rem;">Data Policy: ${toolName.replace(/_/g, ' ')}</div>
       <div style="font-size:11px;color:var(--text-muted);margin-bottom:1rem;">Configure per-role data access, sanitization rules, and compliance</div>
 
@@ -3617,40 +3661,38 @@ function openDataPolicyModal(toolName) {
 
       <!-- Per-Role Policies -->
       <div style="margin-bottom:1rem;">
-        <div style="font-size:12px;font-weight:700;margin-bottom:0.5rem;">Per-Role Data Access</div>
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border);">
-              <th style="text-align:left;padding:0.4rem;font-weight:600;color:var(--text-muted);">Role</th>
-              <th style="text-align:center;padding:0.4rem;font-weight:600;color:var(--text-muted);">Action</th>
-              <th style="text-align:left;padding:0.4rem;font-weight:600;color:var(--text-muted);">Data Scope</th>
-              <th style="text-align:center;padding:0.4rem;font-weight:600;color:var(--text-muted);">Redaction</th>
-            </tr>
-          </thead>
-          <tbody id="dp-roles-body">
-            ${roles.map(r => {
-              const rp = rolePolicies[r] || {};
-              return `<tr style="border-bottom:1px solid var(--border);" data-role="${r}">
-                <td style="padding:0.4rem;font-weight:600;">${r}</td>
-                <td style="text-align:center;padding:0.4rem;">
-                  <select class="dp-role-action" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">
-                    ${actionOpts(rp.action || 'block')}
-                  </select>
-                </td>
-                <td style="padding:0.4rem;">
-                  <input type="text" class="dp-role-scope" value="${(rp.data_scope || []).join(', ')}" placeholder="medical, personal, contact" style="width:100%;padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">
-                </td>
-                <td style="text-align:center;padding:0.4rem;">
-                  <select class="dp-role-redaction" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">
-                    <option value="none" ${rp.redaction_level === 'none' ? 'selected' : ''}>none</option>
-                    <option value="partial" ${(!rp.redaction_level || rp.redaction_level === 'partial') ? 'selected' : ''}>partial</option>
-                    <option value="full" ${rp.redaction_level === 'full' ? 'selected' : ''}>full</option>
-                  </select>
-                </td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
+        <div style="font-size:13px;font-weight:700;margin-bottom:0.5rem;">Per-Role Data Access</div>
+        <div id="dp-roles-body">
+          ${roles.map(r => {
+            const rp = rolePolicies[r] || {};
+            const inputRules = (rp.input_rules || []).join('\\n');
+            const outputRules = (rp.output_rules || []).join('\\n');
+            return `<div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;margin-bottom:0.5rem;" data-role="${r}">
+              <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem;">
+                <span style="font-weight:700;font-size:13px;min-width:80px;">${r}</span>
+                <select class="dp-role-action" style="padding:3px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;">
+                  ${actionOpts(rp.action || 'block')}
+                </select>
+                <input type="text" class="dp-role-scope" value="${(rp.data_scope || []).join(', ')}" placeholder="Data scope: medical, personal, contact" style="flex:1;padding:3px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;">
+                <select class="dp-role-redaction" style="padding:3px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;">
+                  <option value="none" ${rp.redaction_level === 'none' ? 'selected' : ''}>none</option>
+                  <option value="partial" ${(!rp.redaction_level || rp.redaction_level === 'partial') ? 'selected' : ''}>partial</option>
+                  <option value="full" ${rp.redaction_level === 'full' ? 'selected' : ''}>full</option>
+                </select>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+                <div>
+                  <label style="font-size:11px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:3px;">Input Rules <span style="font-weight:400;color:var(--text-dim);">(LLM-validated)</span></label>
+                  <textarea class="dp-role-input-rules" rows="2" placeholder="One rule per line, e.g.:\\nMust include a valid ID\\nDo not accept amounts over 10000" style="width:100%;padding:6px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;resize:vertical;font-family:inherit;">${inputRules}</textarea>
+                </div>
+                <div>
+                  <label style="font-size:11px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:3px;">Output Rules <span style="font-weight:400;color:var(--text-dim);">(LLM-validated)</span></label>
+                  <textarea class="dp-role-output-rules" rows="2" placeholder="One rule per line, e.g.:\\nRedact SSN from response\\nDo not include internal account numbers" style="width:100%;padding:6px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;resize:vertical;font-family:inherit;">${outputRules}</textarea>
+                </div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
       </div>
 
       <!-- Sanitization Rules -->
@@ -3710,13 +3752,18 @@ async function saveDataPolicy(toolName) {
 
   // Collect role policies
   const rolePolicies = [];
-  document.querySelectorAll('#dp-roles-body tr[data-role]').forEach(row => {
+  document.querySelectorAll('#dp-roles-body [data-role]').forEach(row => {
     const role = row.getAttribute('data-role');
     const action = row.querySelector('.dp-role-action').value;
     const scopeStr = row.querySelector('.dp-role-scope').value.trim();
     const scope = scopeStr ? scopeStr.split(',').map(s => s.trim()).filter(Boolean) : [];
     const redaction = row.querySelector('.dp-role-redaction').value;
-    rolePolicies.push({ role, action, data_scope: scope, redaction_level: redaction });
+    const inputRulesRaw = row.querySelector('.dp-role-input-rules')?.value.trim() || '';
+    const outputRulesRaw = row.querySelector('.dp-role-output-rules')?.value.trim() || '';
+    const inputRules = inputRulesRaw ? inputRulesRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
+    const outputRules = outputRulesRaw ? outputRulesRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
+    rolePolicies.push({ role, action, data_scope: scope, redaction_level: redaction,
+                        input_rules: inputRules, output_rules: outputRules });
   });
 
   // Collect sanitization rules

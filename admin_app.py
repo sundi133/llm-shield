@@ -96,23 +96,111 @@ def _load_tool_policies(tenant_id: str | None) -> dict:
     return {}
 
 
-def _get_data_policy(tool_policies: dict, tool_name: str, user_role: str | None) -> dict:
-    """Get the input/output data policy for a specific tool+role."""
+def _get_data_policy(tool_policies: dict, tool_name: str, user_role: str | None,
+                     data_policies: dict | None = None) -> dict:
+    """Get the input/output data policy for a specific tool+role,
+    including free-form LLM-validated rules from data_policies."""
     tp = tool_policies.get(tool_name) or {}
     role_restrictions = tp.get("role_restrictions") or {}
 
-    if not user_role or user_role not in role_restrictions:
-        return {"input": None, "output": None, "sanitization": tp.get("data_sanitization")}
+    result = {"input": None, "output": None,
+              "sanitization": tp.get("data_sanitization"),
+              "input_rules": [], "output_rules": []}
 
-    rp = role_restrictions[user_role]
-    if isinstance(rp, str):
-        return {"input": rp, "output": rp, "sanitization": tp.get("data_sanitization")}
+    if user_role and user_role in role_restrictions:
+        rp = role_restrictions[user_role]
+        if isinstance(rp, str):
+            result["input"] = rp
+            result["output"] = rp
+        else:
+            result["input"] = rp.get("input")
+            result["output"] = rp.get("output")
 
-    return {
-        "input": rp.get("input"),
-        "output": rp.get("output"),
-        "sanitization": tp.get("data_sanitization"),
-    }
+    if data_policies:
+        dp = data_policies.get(tool_name) or {}
+        for rp in dp.get("role_policies", []):
+            if rp.get("role") == user_role:
+                result["input_rules"] = rp.get("input_rules", [])
+                result["output_rules"] = rp.get("output_rules", [])
+                break
+
+    return result
+
+
+def _load_data_policies(tenant_id: str | None) -> dict:
+    """Load advanced data policies from Redis (data_policies:{tenant_id})."""
+    if not tenant_id:
+        return {}
+    try:
+        from storage.tenant_store import _get_redis
+        r = _get_redis()
+        if r:
+            raw = r.get(f"data_policies:{tenant_id}")
+            if raw:
+                data = json.loads(raw) if isinstance(raw, str) else raw
+                if isinstance(data, dict):
+                    return data
+    except Exception:
+        pass
+    return {}
+
+
+async def _validate_data_rules(
+    client, shield_url: str, content: str, rules: list[str],
+    tool_name: str, stage: str, api_key: str, auth_token: str = "",
+) -> dict | None:
+    """Validate content against free-form rules using the Shield server's vLLM.
+    Returns {"passed": bool, "violations": [...]} or None on failure."""
+    if not rules or not shield_url or not content:
+        return None
+    prompt = (
+        f"You are a data policy validator for the tool '{tool_name}' ({stage} stage).\n"
+        f"Check if the following content violates ANY of these rules:\n\n"
+    )
+    for i, rule in enumerate(rules, 1):
+        prompt += f"{i}. {rule}\n"
+    prompt += (
+        f"\nContent to validate:\n{content}\n\n"
+        "Output ONLY one CSV line: violated,rule_number,explanation\n"
+        "Examples:\n"
+        "false,0,No violations found\n"
+        "true,2,Contains SSN which violates rule 2\n"
+    )
+    headers = {"Content-Type": "application/json", "X-API-Key": api_key}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    try:
+        resp = await client.post(
+            f"{shield_url.rstrip('/')}/v1/chat/completions",
+            json={
+                "model": "votal-ai/vai35-4B",
+                "messages": [
+                    {"role": "system", "content": "You are a strict data policy validator. Output ONLY the CSV line."},
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 60,
+                "temperature": 0,
+            },
+            headers=headers,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        raw = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        line = raw.strip().split("\n")[0].strip()
+        parts = [p.strip() for p in line.split(",", 2)]
+        violated = parts[0].lower() == "true" if parts else False
+        rule_num = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        explanation = parts[2] if len(parts) > 2 else ""
+        return {
+            "passed": not violated,
+            "violated_rule": rules[rule_num - 1] if violated and 0 < rule_num <= len(rules) else None,
+            "explanation": explanation,
+            "stage": stage,
+            "tool": tool_name,
+        }
+    except Exception:
+        return None
 
 
 def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
@@ -621,6 +709,7 @@ def create_admin_app() -> FastAPI:
 
         registry = _load_agent_registry(tenant_id)
         tool_policies = _load_tool_policies(tenant_id)
+        data_policies = _load_data_policies(tenant_id)
 
         tools = body.get("tools") or _load_tenant_tools(
             tenant_id, tenant_config, agent_key=agent_key, registry=registry)
@@ -687,6 +776,7 @@ def create_admin_app() -> FastAPI:
         raw_calls = message_obj.get("tool_calls") or []
 
         tool_results = []
+        data_rule_results = []
         for tc in raw_calls:
             func = tc.get("function", {})
             name = func.get("name", "unknown")
@@ -698,7 +788,8 @@ def create_admin_app() -> FastAPI:
                     args = {"_raw": args}
 
             rbac = _check_rbac(name, agent_key, user_role, tenant_config, registry=registry)
-            data_policy = _get_data_policy(tool_policies, name, user_role)
+            data_policy = _get_data_policy(tool_policies, name, user_role,
+                                           data_policies=data_policies)
             entry = {
                 "tool_call_id": tc.get("id", ""),
                 "tool_name": name,
@@ -708,6 +799,27 @@ def create_admin_app() -> FastAPI:
             }
             if rbac["allowed"]:
                 entry["simulated_output"] = _simulate_tool(name, args)
+                if shield_endpoint and data_policy.get("input_rules"):
+                    async with httpx.AsyncClient(timeout=30) as rule_client:
+                        input_check = await _validate_data_rules(
+                            rule_client, shield_endpoint,
+                            json.dumps(args), data_policy["input_rules"],
+                            name, "input", api_key, shield_token,
+                        )
+                    if input_check and not input_check["passed"]:
+                        entry["data_rule_violation"] = input_check
+                        data_rule_results.append(input_check)
+                if shield_endpoint and data_policy.get("output_rules") and entry.get("simulated_output"):
+                    async with httpx.AsyncClient(timeout=30) as rule_client:
+                        output_check = await _validate_data_rules(
+                            rule_client, shield_endpoint,
+                            json.dumps(entry["simulated_output"]),
+                            data_policy["output_rules"],
+                            name, "output", api_key, shield_token,
+                        )
+                    if output_check and not output_check["passed"]:
+                        entry["data_rule_violation"] = output_check
+                        data_rule_results.append(output_check)
             tool_results.append(entry)
 
         has_blocked = any(not t["rbac"]["allowed"] for t in tool_results)
@@ -739,6 +851,8 @@ def create_admin_app() -> FastAPI:
             "usage": llm_data.get("usage"),
             "latency_ms": round(latency_ms, 2),
         }
+        if data_rule_results:
+            result["data_rule_violations"] = data_rule_results
 
         if input_guardrail_result:
             result["input_guardrails"] = input_guardrail_result
