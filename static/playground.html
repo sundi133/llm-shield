@@ -573,12 +573,51 @@ function updateToolList() {
     presetsEl.innerHTML = '<span class="muted" style="font-size:12px;">No tools available for selected agent(s)</span>';
     return;
   }
+  const VERBS = ['lookup','get','view','search','list','check','find',
+    'update','set','edit','create','add','register','schedule','submit',
+    'delete','remove','cancel','send','notify','email','generate','export',
+    'prescribe','approve','reject','assign','transfer','process','verify'];
+  const READ_VERBS = ['lookup','get','view','search','list','check','find'];
+  const WRITE_VERBS = ['update','set','edit'];
+  const CREATE_VERBS = ['create','add','register','schedule','submit','prescribe','assign'];
+  const DELETE_VERBS = ['delete','remove','cancel','reject'];
+
   let presetsHtml = '';
   for (const tool of toolList.slice(0, 6)) {
-    const readable = tool.replace(/_/g, ' ');
-    const label = readable.replace(/\b\w/g, c => c.toUpperCase());
-    presetsHtml += `<button class="preset-btn" onclick="usePreset('Use ${readable} with example data')">
-      <span class="label">${label}</span><span class="desc">${readable}</span></button>`;
+    const parts = tool.split('_');
+    const label = parts.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+    // Detect verb — could be first or last part (e.g. update_vitals vs diagnosis_update)
+    let verb, noun;
+    if (VERBS.includes(parts[0])) {
+      verb = parts[0];
+      noun = parts.slice(1).join(' ');
+    } else if (parts.length > 1 && VERBS.includes(parts[parts.length - 1])) {
+      verb = parts[parts.length - 1];
+      noun = parts.slice(0, -1).join(' ');
+    } else {
+      verb = '';
+      noun = label;
+    }
+    const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+    let prompt;
+    if (READ_VERBS.includes(verb))
+      prompt = `${cap(verb)} ${noun} for ID-12345`;
+    else if (WRITE_VERBS.includes(verb))
+      prompt = `${cap(verb)} ${noun} for ID-12345`;
+    else if (CREATE_VERBS.includes(verb))
+      prompt = `${cap(verb)} ${noun} for ID-12345`;
+    else if (DELETE_VERBS.includes(verb))
+      prompt = `${cap(verb)} ${noun} for ID-12345`;
+    else if (['send','notify','email'].includes(verb))
+      prompt = `Send a ${noun} notification`;
+    else if (['generate','export'].includes(verb))
+      prompt = `Generate ${noun} report`;
+    else
+      prompt = `${noun} for ID-12345`;
+    presetsHtml += `<button class="preset-btn" onclick="usePreset('${prompt.replace(/'/g,"\\'")}')">
+      <span class="label">${label}</span><span class="desc">${prompt}</span></button>`;
   }
   presetsEl.innerHTML = presetsHtml;
 }
@@ -657,20 +696,25 @@ async function sendMessage() {
       conversationHistory.push({ role: 'assistant', content: data.text });
     }
 
-    // Tool call cards
+    // Tool call cards + natural-language follow-up
     if (data.tool_calls && data.tool_calls.length) {
       addToolCards(data.tool_calls);
 
-      if (!data.text) {
-        const summary = data.tool_calls.map(tc => {
-          const ok = tc.rbac?.allowed;
-          return (ok ? '✅' : '🚫') + ' ' + tc.tool_name;
-        }).join('\n');
-        addMessage('assistant',
-          '<em>Tool calls requested:</em>\n' + esc(summary),
-          elapsed + 'ms'
-        );
+      const lines = [];
+      for (const tc of data.tool_calls) {
+        const ok = tc.rbac?.allowed;
+        const readable = tc.tool_name.replace(/_/g, ' ');
+        if (ok) {
+          const argSummary = Object.entries(tc.arguments || {})
+            .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
+            .join(', ');
+          lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}`);
+        } else {
+          lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong> with your current role.`);
+        }
       }
+      addMessage('assistant', lines.join('<br>'), elapsed + 'ms');
+      conversationHistory.push({ role: 'assistant', content: lines.map(l => l.replace(/<[^>]+>/g, '')).join('\n') });
     }
 
     // Show output guardrail results
