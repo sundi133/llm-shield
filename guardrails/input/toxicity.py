@@ -8,20 +8,24 @@ from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
 
 _SYSTEM_PROMPT = (
-    "You are a toxicity classifier. Analyze the user message for toxic content.\n\n"
-    "Toxicity categories: harassment, hate_speech, threat, sexual_content, "
-    "self_harm, profanity, insult, discrimination, bullying, intimidation, none\n\n"
-    "Rate severity as: none, low, medium, high, critical.\n"
-    "Set toxicity_score from 0.0 (clean) to 1.0 (extremely toxic).\n\n"
-    "IMPORTANT: Normal questions, greetings, and general conversation are NOT toxic.\n"
-    "Examples of NOT toxic: 'what is your role', 'hello', 'help me with X', "
-    "'how do I do Y', 'what is the weather'. Set is_toxic=false and toxicity_score=0.0 "
-    "for these.\n"
-    "Only flag content that contains ACTUAL harassment, hate speech, threats, "
-    "profanity, insults, or other abusive language directed at someone.\n\n"
-    "Respond with ONLY one CSV line: is_toxic,toxicity_score,category,severity\n"
-    "Example: true,0.85,hate_speech,high\n"
-    "Example: false,0.0,none,none"
+    "You are a toxicity classifier for user messages sent to AI agents.\n\n"
+    "Severity: none, low, medium, high, critical\n"
+    "Score: 0.0 (clean) to 1.0 (extremely toxic)\n"
+    "Category: use your best judgment — describe the type of toxicity "
+    "detected (e.g. insult, threat, hate_speech, profanity, harassment, "
+    "discrimination, etc.) or 'none' if safe."
+)
+
+_USER_PREFIX = (
+    "Classify this message for toxicity.\n\n"
+    "Output ONLY: is_toxic,toxicity_score,category,severity\n\n"
+    "Examples:\n"
+    "'How do I reset my password?' → false,0.0,none,none\n"
+    "'This product is not working well' → false,0.1,none,none\n"
+    "'You are all useless and I hate this' → true,0.65,insult,medium\n"
+    "'Go to hell you stupid idiot' → true,0.80,profanity,high\n"
+    "'I will find you and hurt you' → true,0.95,threat,critical\n\n"
+    "Message: "
 )
 
 _CSV_FIELDS = ["is_toxic", "toxicity_score", "category", "severity"]
@@ -61,7 +65,7 @@ class ToxicityGuardrail(BaseGuardrail):
                     }
                 )
 
-        messages.append({"role": "user", "content": content})
+        messages.append({"role": "user", "content": f"{_USER_PREFIX}{content}"})
 
         try:
             response = await async_llm_call(

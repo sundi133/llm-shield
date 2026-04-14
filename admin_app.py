@@ -169,6 +169,7 @@ def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
         return [
             {"type": "function", "function": {
                 "name": name,
+                "strict": True,
                 **_tool_stub_meta(name, registry=registry),
             }}
             for name in sorted(tool_names)
@@ -177,97 +178,128 @@ def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
     return []
 
 
+_VERB_SET = frozenset([
+    "get", "set", "create", "update", "delete", "remove", "list", "search",
+    "view", "lookup", "check", "send", "generate", "schedule", "cancel",
+    "approve", "submit", "prescribe", "assign", "transfer", "process",
+    "verify", "notify", "export", "find", "add", "register", "edit",
+    "reject", "review",
+])
+
+
+def _parse_verb_noun(name: str) -> tuple[str, str]:
+    """Split a snake_case tool name into (verb, noun).
+    Handles both verb-first and verb-last patterns."""
+    parts = name.split("_")
+    if parts[0] in _VERB_SET:
+        return parts[0], " ".join(parts[1:])
+    if len(parts) > 1 and parts[-1] in _VERB_SET:
+        return parts[-1], " ".join(parts[:-1])
+    return "", " ".join(parts)
+
+
 def _tool_stub_meta(name: str, registry: dict | None = None) -> dict:
-    """Generate description + parameters from the tool name and optional registry metadata.
+    """Generate description + parameters following OpenAI function calling
+    best practices (strict mode, clear descriptions, additionalProperties).
 
     Checks the agent registry for a tool description first, then derives
-    a meaningful description from the tool name itself. No hardcoded hints.
+    a meaningful description from the tool name itself.
     """
-    # Check if the registry has a description for this tool
     if registry:
         for agent_data in registry.values():
             tool_descs = agent_data.get("tool_descriptions") or {}
             if name in tool_descs:
                 td = tool_descs[name]
                 if isinstance(td, str):
-                    return {
-                        "description": td,
-                        "parameters": _infer_params(name),
-                    }
+                    return {"description": td, "parameters": _infer_params(name)}
                 if isinstance(td, dict):
                     return {
                         "description": td.get("description", f"Perform {name.replace('_', ' ')}"),
                         "parameters": td.get("parameters", _infer_params(name)),
                     }
 
-    # Derive description from the name — parse verb + noun from snake_case
-    parts = name.split("_")
-    readable = " ".join(parts)
+    verb, noun = _parse_verb_noun(name)
 
-    # Common verb prefixes get better descriptions
-    verb_map = {
-        "get": f"Retrieve {' '.join(parts[1:])} data",
-        "set": f"Set or update {' '.join(parts[1:])}",
-        "create": f"Create a new {' '.join(parts[1:])}",
-        "update": f"Update an existing {' '.join(parts[1:])}",
-        "delete": f"Delete {' '.join(parts[1:])}",
-        "remove": f"Remove {' '.join(parts[1:])}",
-        "list": f"List all {' '.join(parts[1:])}",
-        "search": f"Search for {' '.join(parts[1:])}",
-        "view": f"View {' '.join(parts[1:])} details",
-        "lookup": f"Look up {' '.join(parts[1:])} by identifier",
-        "check": f"Check {' '.join(parts[1:])} status",
-        "send": f"Send {' '.join(parts[1:])}",
-        "generate": f"Generate {' '.join(parts[1:])}",
-        "schedule": f"Schedule {' '.join(parts[1:])}",
-        "cancel": f"Cancel {' '.join(parts[1:])}",
-        "approve": f"Approve {' '.join(parts[1:])}",
-        "submit": f"Submit {' '.join(parts[1:])}",
+    desc_map = {
+        "get": f"Retrieve {noun} data by identifier.",
+        "set": f"Set or update {noun}.",
+        "create": f"Create a new {noun} record.",
+        "add": f"Add a new {noun}.",
+        "register": f"Register a new {noun}.",
+        "update": f"Update an existing {noun} record. Use this when the user wants to modify or change {noun}.",
+        "edit": f"Edit {noun} details.",
+        "delete": f"Permanently delete a {noun} record.",
+        "remove": f"Remove {noun}.",
+        "list": f"List all {noun} records.",
+        "search": f"Search for {noun} by query.",
+        "find": f"Find {noun} matching criteria.",
+        "view": f"View {noun} details.",
+        "lookup": f"Look up {noun} by identifier.",
+        "check": f"Check the status of {noun}.",
+        "send": f"Send a {noun} message or notification.",
+        "notify": f"Send a {noun} notification.",
+        "generate": f"Generate a {noun} report or output.",
+        "export": f"Export {noun} data.",
+        "schedule": f"Schedule a {noun}.",
+        "cancel": f"Cancel a {noun}.",
+        "approve": f"Approve a {noun} request.",
+        "reject": f"Reject a {noun} request.",
+        "review": f"Review {noun}.",
+        "submit": f"Submit {noun}.",
+        "prescribe": f"Prescribe {noun} for a subject.",
+        "assign": f"Assign {noun}.",
+        "transfer": f"Transfer {noun}.",
+        "process": f"Process a {noun} operation.",
+        "verify": f"Verify {noun}.",
     }
 
-    if parts[0] in verb_map and len(parts) > 1:
-        desc = verb_map[parts[0]]
-    elif len(parts) >= 2 and parts[-1] in ("lookup", "search", "update", "delete", "create"):
-        verb = parts[-1]
-        noun = " ".join(parts[:-1])
-        desc = f"{verb.capitalize()} {noun}"
-    else:
-        desc = f"Perform the '{readable}' operation"
+    desc = desc_map.get(verb, f"Perform the '{name.replace('_', ' ')}' operation.")
 
-    return {
-        "description": desc,
-        "parameters": _infer_params(name),
-    }
+    return {"description": desc, "parameters": _infer_params(name, verb)}
 
 
-def _infer_params(name: str) -> dict:
-    """Infer a reasonable parameter schema from the tool name."""
+def _infer_params(name: str, verb: str = "") -> dict:
+    """Infer a parameter schema from the tool name.
+    Follows OpenAI strict mode: all fields required, additionalProperties false."""
     parts = name.split("_")
-    props = {}
+    props: dict[str, dict] = {}
 
-    # If name contains a noun that looks like an entity, add an ID parameter
-    for noun in parts:
-        if noun in ("lookup", "update", "delete", "create", "view",
-                     "get", "set", "check", "search", "schedule",
-                     "send", "generate", "cancel", "approve",
-                     "submit", "list", "remove"):
-            continue
-        props[f"{noun}_id"] = {"type": "string", "description": f"The {noun} identifier"}
-        break
+    if not verb:
+        verb, _ = _parse_verb_noun(name)
 
-    # If it's an update/create/set, add a generic data param
-    if parts[0] in ("update", "create", "set", "submit"):
-        props["data"] = {"type": "string", "description": "Data or details for this operation"}
-    elif parts[0] in ("search", "lookup"):
-        props["query"] = {"type": "string", "description": "Search query or identifier"}
+    nouns = [p for p in parts if p not in _VERB_SET]
+
+    if nouns:
+        entity = nouns[0]
+        props[f"{entity}_id"] = {
+            "type": "string",
+            "description": f"The unique identifier for the {entity}.",
+        }
+
+    write_verbs = {"update", "create", "set", "submit", "edit", "add",
+                   "register", "prescribe", "assign", "schedule"}
+    if verb in write_verbs:
+        props["data"] = {
+            "type": "string",
+            "description": f"The data or details for this {verb} operation.",
+        }
+    elif verb in ("search", "lookup", "find"):
+        props["query"] = {
+            "type": "string",
+            "description": "Search query or lookup identifier.",
+        }
 
     if not props:
-        props["input"] = {"type": "string", "description": f"Input for {name.replace('_', ' ')}"}
+        props["input"] = {
+            "type": "string",
+            "description": f"Input for the {name.replace('_', ' ')} operation.",
+        }
 
     return {
         "type": "object",
         "properties": props,
-        "required": list(props.keys())[:1],
+        "required": list(props.keys()),
+        "additionalProperties": False,
     }
 
 
@@ -339,6 +371,75 @@ def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
     message = f"Tool '{tool_name}' {'allowed' if allowed else 'blocked'}: {agent_msg} AND {role_msg}"
     return {"allowed": allowed, "action": "pass" if allowed else "block",
             "message": message, "source": "tenant_policy"}
+
+
+def _simulate_tool(name: str, args: dict) -> dict:
+    """Generate a plausible simulated response for a tool call.
+
+    This is for playground demo purposes only — real integrations will
+    execute actual business logic and return real data.
+    """
+    import random
+    import string
+
+    ref_id = "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Build a response that echoes back the args meaningfully
+    result: dict = {"status": "success", "timestamp": ts, "reference_id": ref_id}
+
+    # Extract the primary entity ID from args (first *_id or id-like field)
+    entity_id = None
+    for key, val in args.items():
+        if ("id" in key.lower() or key == "query") and isinstance(val, str):
+            entity_id = val
+            break
+
+    parts = name.split("_")
+    verb = parts[0] if parts else ""
+
+    if verb in ("get", "lookup", "view", "search", "list", "check"):
+        result["data"] = {
+            "id": entity_id or f"REC-{ref_id}",
+            "name": "Jane Doe",
+            "status": "active",
+            "created_at": "2025-01-15T09:30:00Z",
+            "details": f"Sample record retrieved by {name}",
+        }
+        # Add extra fields echoing each arg
+        for k, v in args.items():
+            if k not in result["data"]:
+                result["data"][k] = v
+        result["message"] = f"Found 1 record matching query"
+
+    elif verb in ("update", "set", "edit"):
+        result["updated_fields"] = {k: v for k, v in args.items()
+                                     if "id" not in k.lower()}
+        result["message"] = f"Successfully updated {' '.join(parts[1:])} for {entity_id or 'record'}"
+
+    elif verb in ("create", "add", "register", "schedule", "submit"):
+        result["created_id"] = f"NEW-{ref_id}"
+        result["data"] = dict(args)
+        result["message"] = f"Successfully created {' '.join(parts[1:])}"
+
+    elif verb in ("delete", "remove", "cancel"):
+        result["deleted_id"] = entity_id or f"DEL-{ref_id}"
+        result["message"] = f"Successfully deleted {' '.join(parts[1:])} {entity_id or ''}"
+
+    elif verb in ("send", "notify", "email"):
+        result["delivered"] = True
+        result["message"] = f"Notification sent successfully"
+
+    elif verb in ("generate", "export"):
+        result["file_url"] = f"https://example.com/reports/{ref_id}.pdf"
+        result["message"] = f"Report generated: {ref_id}"
+
+    else:
+        result["data"] = dict(args)
+        result["message"] = f"{name} executed successfully"
+
+    result["_note"] = "Simulated response — replace with your business logic"
+    return result
 
 
 def _extract_block_reason(guardrail_result: dict) -> str:
@@ -494,13 +595,26 @@ def create_admin_app() -> FastAPI:
         default_system = (
             "You are an AI assistant. "
             "Use the available tools to help with tasks. "
-            "Always use tools when a task requires looking up, updating, or managing data."
+            "Always call the tool that best matches the user's request. "
+            "Do NOT avoid or substitute a tool because it was previously "
+            "blocked or denied — permissions are handled by an external "
+            "system, not by you. Your job is to pick the semantically "
+            "correct tool every time regardless of past outcomes."
         )
         if messages and not any(m.get("role") == "system" for m in messages):
             messages = [{"role": "system", "content": default_system}] + messages
 
         if not messages:
             return JSONResponse(status_code=400, content={"error": "messages required"})
+
+        # Strip RBAC block/allow messages from history so the LLM doesn't
+        # learn to avoid tools that were previously blocked.
+        _rbac_phrases = ("don't have access", "Executing ", "Tool calls requested")
+        messages = [
+            m for m in messages
+            if m.get("role") != "assistant"
+            or not any(p in (m.get("content") or "") for p in _rbac_phrases)
+        ]
 
         tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
         tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
@@ -585,13 +699,16 @@ def create_admin_app() -> FastAPI:
 
             rbac = _check_rbac(name, agent_key, user_role, tenant_config, registry=registry)
             data_policy = _get_data_policy(tool_policies, name, user_role)
-            tool_results.append({
+            entry = {
                 "tool_call_id": tc.get("id", ""),
                 "tool_name": name,
                 "arguments": args,
                 "rbac": rbac,
                 "data_policy": data_policy,
-            })
+            }
+            if rbac["allowed"]:
+                entry["simulated_output"] = _simulate_tool(name, args)
+            tool_results.append(entry)
 
         has_blocked = any(not t["rbac"]["allowed"] for t in tool_results)
 

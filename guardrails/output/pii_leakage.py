@@ -76,6 +76,23 @@ _PRESIDIO_ENTITY_MAP = {
 }
 
 
+_analyzer_instance = None
+
+
+def _get_analyzer():
+    """Lazy singleton for presidio AnalyzerEngine — loaded once, reused."""
+    global _analyzer_instance
+    if _analyzer_instance is None:
+        try:
+            from presidio_analyzer import AnalyzerEngine
+            _analyzer_instance = AnalyzerEngine()
+        except ImportError:
+            logger.warning(
+                "presidio-analyzer not installed; using regex-only mode."
+            )
+    return _analyzer_instance
+
+
 class PIILeakageGuardrail(BaseGuardrail):
     """Detect and flag sensitive data (SSNs, credit cards, API keys, etc.) in LLM outputs.
 
@@ -86,68 +103,37 @@ class PIILeakageGuardrail(BaseGuardrail):
     tier = "fast"
     stage = "output"
 
-    def __init__(self):
-        settings = self.settings
-        # Accept both pii_types (from UI) and entities (legacy)
-        self._pii_types: list[str] = settings.get(
-            "pii_types",
-            settings.get(
-                "entities",
-                [
-                    "SSN",
-                    "Credit Card",
-                    "Email",
-                    "Phone Number",
-                    "API Key",
-                    "Password",
-                    "Address",
-                    "Date of Birth",
-                    "Passport Number",
-                    "Bank Account",
-                ],
-            ),
-        )
-        self._threshold: float = settings.get(
-            "threshold", settings.get("score_threshold", 0.7)
-        )
-        self._auto_redact: bool = settings.get("auto_redact", False)
-        self._mode: str = settings.get("mode", "mask")  # mask, remove, redact
-        self._use_presidio: bool = settings.get("use_presidio", True)
-        self._analyzer = None
-
-        # Build active regex patterns based on selected PII types
-        self._active_patterns: dict[str, re.Pattern] = {}
-        for pii_type in self._pii_types:
-            key = _PII_TYPE_MAP.get(pii_type, pii_type.lower().replace(" ", "_"))
-            if key in _BUILTIN_PATTERNS:
-                self._active_patterns[key] = _BUILTIN_PATTERNS[key]
-
-        # Build active presidio entities
-        self._presidio_entities: list[str] = []
-        if self._use_presidio:
-            for pii_type in self._pii_types:
-                entity = _PRESIDIO_ENTITY_MAP.get(pii_type)
-                if entity:
-                    self._presidio_entities.append(entity)
-
-            if self._presidio_entities:
-                try:
-                    from presidio_analyzer import AnalyzerEngine
-
-                    self._analyzer = AnalyzerEngine()
-                except ImportError:
-                    logger.warning(
-                        "presidio-analyzer not installed; PII leakage guardrail will use regex-only mode."
-                    )
+    _DEFAULT_PII_TYPES = [
+        "SSN", "Credit Card", "Email", "Phone Number", "API Key",
+        "Password", "Address", "Date of Birth", "Passport Number",
+        "Bank Account",
+    ]
 
     async def check(
         self, content: str, context: Optional[dict] = None
     ) -> GuardrailResult:
         start = time.perf_counter()
+        settings = self.settings
+
+        pii_types: list[str] = settings.get(
+            "pii_types", settings.get("entities", self._DEFAULT_PII_TYPES)
+        )
+        threshold: float = settings.get(
+            "threshold", settings.get("score_threshold", 0.7)
+        )
+        auto_redact: bool = settings.get("auto_redact", False)
+        mode: str = settings.get("mode", "mask")
+        use_presidio: bool = settings.get("use_presidio", True)
+
+        active_patterns: dict[str, re.Pattern] = {}
+        for pii_type in pii_types:
+            key = _PII_TYPE_MAP.get(pii_type, pii_type.lower().replace(" ", "_"))
+            if key in _BUILTIN_PATTERNS:
+                active_patterns[key] = _BUILTIN_PATTERNS[key]
+
         all_detections = []
 
-        # Phase 1: fast regex scan (only active patterns)
-        for pattern_name, pattern in self._active_patterns.items():
+        for pattern_name, pattern in active_patterns.items():
             for match in pattern.finditer(content):
                 all_detections.append(
                     {
@@ -159,47 +145,53 @@ class PIILeakageGuardrail(BaseGuardrail):
                     }
                 )
 
-        # Phase 2: presidio scan (if available and entities selected)
-        if self._analyzer is not None and self._presidio_entities:
-            try:
-                results = self._analyzer.analyze(
-                    text=content,
-                    entities=self._presidio_entities,
-                    language="en",
-                    score_threshold=self._threshold,
-                )
-                for r in results:
-                    if not any(
-                        d["start"] == r.start and d["end"] == r.end
-                        for d in all_detections
-                    ):
-                        all_detections.append(
-                            {
-                                "type": r.entity_type.lower(),
-                                "score": round(r.score, 3),
-                                "start": r.start,
-                                "end": r.end,
-                                "source": "presidio",
-                            }
-                        )
-            except Exception as e:
-                logger.warning("Presidio analysis failed: %s", e)
+        if use_presidio:
+            presidio_entities: list[str] = []
+            for pii_type in pii_types:
+                entity = _PRESIDIO_ENTITY_MAP.get(pii_type)
+                if entity:
+                    presidio_entities.append(entity)
+
+            analyzer = _get_analyzer()
+            if analyzer and presidio_entities:
+                try:
+                    results = analyzer.analyze(
+                        text=content,
+                        entities=presidio_entities,
+                        language="en",
+                        score_threshold=threshold,
+                    )
+                    for r in results:
+                        if not any(
+                            d["start"] == r.start and d["end"] == r.end
+                            for d in all_detections
+                        ):
+                            all_detections.append(
+                                {
+                                    "type": r.entity_type.lower(),
+                                    "score": round(r.score, 3),
+                                    "start": r.start,
+                                    "end": r.end,
+                                    "source": "presidio",
+                                }
+                            )
+                except Exception as e:
+                    logger.warning("Presidio analysis failed: %s", e)
 
         elapsed = (time.perf_counter() - start) * 1000
 
-        # Apply auto-redaction if enabled
         redacted_output = None
-        if all_detections and self._auto_redact:
-            redacted_output = _apply_redaction(content, all_detections, self._mode)
+        if all_detections and auto_redact:
+            redacted_output = _apply_redaction(content, all_detections, mode)
 
         if all_detections:
             types = sorted(set(d["type"] for d in all_detections))
             details = {
                 "detections": all_detections,
-                "pii_types_checked": self._pii_types,
-                "threshold": self._threshold,
-                "mode": self._mode,
-                "auto_redact": self._auto_redact,
+                "pii_types_checked": pii_types,
+                "threshold": threshold,
+                "mode": mode,
+                "auto_redact": auto_redact,
             }
             if redacted_output is not None:
                 details["redacted_output"] = redacted_output
@@ -219,8 +211,8 @@ class PIILeakageGuardrail(BaseGuardrail):
             guardrail_name=self.name,
             message="No PII or sensitive data detected in output",
             details={
-                "pii_types_checked": self._pii_types,
-                "threshold": self._threshold,
+                "pii_types_checked": pii_types,
+                "threshold": threshold,
             },
             latency_ms=round(elapsed, 2),
         )

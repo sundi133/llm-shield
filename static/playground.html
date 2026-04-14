@@ -837,20 +837,25 @@ async function sendMessage() {
       conversationHistory.push({ role: 'assistant', content: data.text });
     }
 
-    // Tool call cards
+    // Tool call cards + natural-language follow-up
     if (data.tool_calls && data.tool_calls.length) {
       addToolCards(data.tool_calls);
 
-      if (!data.text) {
-        const summary = data.tool_calls.map(tc => {
-          const ok = tc.rbac?.allowed;
-          return (ok ? '✅' : '🚫') + ' ' + tc.tool_name;
-        }).join('\n');
-        addMessage('assistant',
-          '<em>Tool calls requested:</em>\n' + esc(summary),
-          elapsed + 'ms'
-        );
+      const lines = [];
+      for (const tc of data.tool_calls) {
+        const ok = tc.rbac?.allowed;
+        const readable = tc.tool_name.replace(/_/g, ' ');
+        if (ok) {
+          const argSummary = Object.entries(tc.arguments || {})
+            .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
+            .join(', ');
+          lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}`);
+        } else {
+          lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong> with your current role.`);
+        }
       }
+      addMessage('assistant', lines.join('<br>'), elapsed + 'ms');
+      conversationHistory.push({ role: 'assistant', content: lines.map(l => l.replace(/<[^>]+>/g, '')).join('\n') });
     }
 
     // Show output guardrail results
