@@ -225,6 +225,55 @@ async def delete_tool_policy(tool_name: str, request: Request):
         raise HTTPException(status_code=500, detail=f"Failed to delete tool policy: {str(e)}")
 
 
+@router.get("/unregistered")
+async def get_unregistered(request: Request):
+    """Get agents and tools that were used but never registered."""
+    try:
+        tenant_id = get_tenant_from_api_key(request)
+        key = f"unregistered:{tenant_id}"
+        data = get_redis_data(key) or {"agents": {}, "tools": {}}
+        return {
+            "success": True,
+            "tenant_id": tenant_id,
+            "unregistered_agents": data.get("agents", {}),
+            "unregistered_tools": data.get("tools", {}),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load unregistered items: {str(e)}")
+
+
+@router.delete("/unregistered/{item_type}/{item_id}")
+async def dismiss_unregistered(item_type: str, item_id: str, request: Request):
+    """Dismiss (remove) a tracked unregistered agent or tool."""
+    if item_type not in ("agents", "tools"):
+        raise HTTPException(status_code=400, detail="item_type must be 'agents' or 'tools'")
+    try:
+        tenant_id = get_tenant_from_api_key(request)
+        key = f"unregistered:{tenant_id}"
+        redis_client = _get_redis()
+        if not redis_client:
+            raise Exception("Redis connection not available")
+
+        raw = redis_client.get(key)
+        data = json.loads(raw) if raw and isinstance(raw, str) else (raw or {})
+        if not isinstance(data, dict):
+            data = {}
+
+        section = data.get(item_type, {})
+        if item_id in section:
+            del section[item_id]
+            data[item_type] = section
+            redis_client.set(key, json.dumps(data))
+
+        return {"success": True, "message": f"Dismissed {item_type[:-1]} '{item_id}'"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/seed-test-data")
 async def seed_test_data():
     """Seed test tenant with sample agents and policies data."""

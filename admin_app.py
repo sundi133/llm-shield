@@ -145,6 +145,99 @@ def _load_data_policies(tenant_id: str | None) -> dict:
     return {}
 
 
+def _get_registered_tool_names(registry: dict, tool_policies: dict,
+                               tenant_config: dict | None) -> set[str]:
+    """Collect all known/registered tool names across registry, policies, and tenant config."""
+    names: set[str] = set()
+    for agent_data in registry.values():
+        for t in agent_data.get("tools") or []:
+            if t != "*":
+                names.add(t)
+        for role_tools in (agent_data.get("role_permissions") or {}).values():
+            for t in role_tools:
+                if t != "*":
+                    names.add(t)
+    for tool_name in tool_policies:
+        if tool_name not in ("updated_at",):
+            names.add(tool_name)
+    if tenant_config:
+        ta = (tenant_config.get("input_guardrails") or {}).get("tool_allowlist") or {}
+        for agent_tools in ((ta.get("settings") or {}).get("per_agent") or {}).values():
+            for t in agent_tools:
+                if t != "*":
+                    names.add(t)
+    return names
+
+
+def _track_unregistered(tenant_id: str, agent_key: str | None,
+                        tool_names: list[str],
+                        registry: dict, registered_tools: set[str]) -> dict:
+    """Detect unregistered agents/tools and persist them in Redis.
+
+    Returns {"agents": [...], "tools": [...]} of newly detected unregistered items.
+    Non-blocking — failures are silently ignored.
+    """
+    result = {"agents": [], "tools": []}
+    if not tenant_id:
+        return result
+
+    unreg_agents = []
+    unreg_tools = []
+
+    if agent_key and agent_key not in registry:
+        unreg_agents.append(agent_key)
+
+    for tn in tool_names:
+        if tn not in registered_tools:
+            unreg_tools.append(tn)
+
+    if not unreg_agents and not unreg_tools:
+        return result
+
+    import time as _time
+    now = int(_time.time())
+
+    try:
+        from storage.tenant_store import _get_redis
+        r = _get_redis()
+        if not r:
+            return result
+
+        key = f"unregistered:{tenant_id}"
+        raw = r.get(key)
+        store = json.loads(raw) if raw and isinstance(raw, str) else (raw or {})
+        if not isinstance(store, dict):
+            store = {}
+
+        agents_map = store.get("agents", {})
+        tools_map = store.get("tools", {})
+
+        for a in unreg_agents:
+            if a not in agents_map:
+                agents_map[a] = {"first_seen": now, "last_seen": now, "call_count": 1}
+            else:
+                agents_map[a]["last_seen"] = now
+                agents_map[a]["call_count"] = agents_map[a].get("call_count", 0) + 1
+
+        for t in unreg_tools:
+            if t not in tools_map:
+                tools_map[t] = {"first_seen": now, "last_seen": now, "call_count": 1,
+                                "seen_from_agent": agent_key or "unknown"}
+            else:
+                tools_map[t]["last_seen"] = now
+                tools_map[t]["call_count"] = tools_map[t].get("call_count", 0) + 1
+
+        store["agents"] = agents_map
+        store["tools"] = tools_map
+        r.set(key, json.dumps(store))
+
+        result["agents"] = unreg_agents
+        result["tools"] = unreg_tools
+    except Exception:
+        pass
+    return result
+
+
 async def _validate_data_rules(
     client, shield_url: str, content: str, rules: list[str],
     tool_name: str, stage: str, api_key: str, auth_token: str = "",
@@ -681,13 +774,15 @@ def create_admin_app() -> FastAPI:
                                 content={"error": "llm_api_key is required for the admin playground"})
 
         default_system = (
-            "You are an AI assistant. "
-            "Use the available tools to help with tasks. "
-            "Always call the tool that best matches the user's request. "
-            "Do NOT avoid or substitute a tool because it was previously "
-            "blocked or denied — permissions are handled by an external "
-            "system, not by you. Your job is to pick the semantically "
-            "correct tool every time regardless of past outcomes."
+            "You are an AI assistant with access to tools. "
+            "Call a tool ONLY when the user is explicitly requesting an action "
+            "that requires one (e.g. looking up data, performing a transaction, "
+            "running a calculation). For conversational messages — greetings, "
+            "feedback, opinions, follow-up questions, or general discussion — "
+            "respond naturally in plain text without calling any tools. "
+            "When a tool IS needed, pick the semantically correct one. "
+            "Do NOT avoid a tool because it was previously blocked or denied — "
+            "permissions are handled externally, not by you."
         )
         if messages and not any(m.get("role") == "system" for m in messages):
             messages = [{"role": "system", "content": default_system}] + messages
@@ -710,6 +805,7 @@ def create_admin_app() -> FastAPI:
         registry = _load_agent_registry(tenant_id)
         tool_policies = _load_tool_policies(tenant_id)
         data_policies = _load_data_policies(tenant_id)
+        registered_tools = _get_registered_tool_names(registry, tool_policies, tenant_config)
 
         tools = body.get("tools") or _load_tenant_tools(
             tenant_id, tenant_config, agent_key=agent_key, registry=registry)
@@ -824,6 +920,16 @@ def create_admin_app() -> FastAPI:
 
         has_blocked = any(not t["rbac"]["allowed"] for t in tool_results)
 
+        # --- Step 3b: Track unregistered agents/tools ---
+        called_tool_names = [t["tool_name"] for t in tool_results]
+        unreg = _track_unregistered(
+            tenant_id, agent_key, called_tool_names,
+            registry, registered_tools,
+        )
+        for tr in tool_results:
+            if tr["tool_name"] in unreg.get("tools", []):
+                tr["unregistered"] = True
+
         # --- Step 4: Output Guardrails ---
         if shield_endpoint and content:
             async with httpx.AsyncClient(timeout=60) as client:
@@ -853,6 +959,8 @@ def create_admin_app() -> FastAPI:
         }
         if data_rule_results:
             result["data_rule_violations"] = data_rule_results
+        if unreg["agents"] or unreg["tools"]:
+            result["unregistered"] = unreg
 
         if input_guardrail_result:
             result["input_guardrails"] = input_guardrail_result

@@ -2544,9 +2544,16 @@ async function loadActivity() {
 // ── Agents ────────────────────────────────
 async function loadAgentData() {
   try {
-    const response = await apiCall('/v1/agents/registry');
-    if (response && response.success && response.agents) {
-      displayAgents(response.agents);
+    const [regResponse, unregResponse] = await Promise.all([
+      apiCall('/v1/agents/registry'),
+      apiCall('/v1/agents/unregistered').catch(() => null),
+    ]);
+    if (regResponse && regResponse.success && regResponse.agents) {
+      const unreg = unregResponse && unregResponse.success ? {
+        agents: unregResponse.unregistered_agents || {},
+        tools: unregResponse.unregistered_tools || {},
+      } : { agents: {}, tools: {} };
+      displayAgents(regResponse.agents, unreg);
     } else {
       document.getElementById('agents-content').innerHTML = `
         <div style="color: var(--text-muted); text-align: center; padding: 2rem;">
@@ -2568,10 +2575,14 @@ async function loadAgentData() {
   }
 }
 
-function displayAgents(agents) {
+function displayAgents(agents, unreg) {
+  unreg = unreg || { agents: {}, tools: {} };
+  const unregAgentKeys = Object.keys(unreg.agents || {});
+  const unregToolKeys = Object.keys(unreg.tools || {});
+  const hasUnregistered = unregAgentKeys.length > 0 || unregToolKeys.length > 0;
+
   let html = '<div class="agents-container" style="gap: 1.5rem;">';
 
-  // Add agent button
   html += `
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
       <div style="font-size: 14px; font-weight: 600; color: var(--text);">${Object.keys(agents).length} Agent(s) Registered</div>
@@ -2580,6 +2591,48 @@ function displayAgents(agents) {
       </button>
     </div>
   `;
+
+  if (hasUnregistered) {
+    html += `
+    <div style="background:rgba(245,158,11,0.08);border:1px solid var(--warn);border-radius:8px;padding:1rem;margin-bottom:1rem;">
+      <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;">
+        <span style="font-size:16px;">⚠</span>
+        <span style="font-size:13px;font-weight:700;color:var(--warn);">Unregistered Usage Detected</span>
+        <span style="font-size:11px;color:var(--text-muted);margin-left:auto;">These were used via API but are not in your registry</span>
+      </div>`;
+
+    if (unregAgentKeys.length > 0) {
+      html += `<div style="font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px;">Unregistered Agents</div>`;
+      html += `<div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:${unregToolKeys.length > 0 ? '0.75rem' : '0'};">`;
+      for (const [agentId, meta] of Object.entries(unreg.agents)) {
+        const ago = _timeAgo(meta.last_seen);
+        html += `
+        <div style="display:flex;align-items:center;gap:0.5rem;background:var(--bg-3);border:1px solid var(--warn);border-radius:6px;padding:0.4rem 0.65rem;">
+          <span style="font-family:monospace;font-size:12px;color:var(--warn);font-weight:600;">${agentId}</span>
+          <span style="font-size:10px;color:var(--text-muted);">${meta.call_count || 1} call${(meta.call_count||1)>1?'s':''} · ${ago}</span>
+          <button onclick="dismissUnregistered('agents','${agentId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:0 2px;" title="Dismiss">✕</button>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+
+    if (unregToolKeys.length > 0) {
+      html += `<div style="font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px;">Unregistered Tools</div>`;
+      html += `<div style="display:flex;flex-wrap:wrap;gap:0.4rem;">`;
+      for (const [toolId, meta] of Object.entries(unreg.tools)) {
+        const ago = _timeAgo(meta.last_seen);
+        html += `
+        <div style="display:flex;align-items:center;gap:0.5rem;background:var(--bg-3);border:1px solid var(--warn);border-radius:6px;padding:0.4rem 0.65rem;">
+          <span style="font-family:monospace;font-size:12px;color:var(--warn);font-weight:600;">${toolId}</span>
+          <span style="font-size:10px;color:var(--text-muted);">${meta.call_count || 1} call${(meta.call_count||1)>1?'s':''} · ${ago}${meta.seen_from_agent ? ' · via '+meta.seen_from_agent : ''}</span>
+          <button onclick="dismissUnregistered('tools','${toolId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:0 2px;" title="Dismiss">✕</button>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+  }
 
   if (Object.keys(agents).length === 0) {
     html += `
@@ -2597,6 +2650,25 @@ function displayAgents(agents) {
 
   html += '</div>';
   document.getElementById('agents-content').innerHTML = html;
+}
+
+function _timeAgo(ts) {
+  if (!ts) return 'unknown';
+  const diff = Math.floor(Date.now() / 1000) - ts;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+async function dismissUnregistered(type, id) {
+  try {
+    await apiCall(`/v1/agents/unregistered/${type}/${id}`, { method: 'DELETE' });
+    showToast(`Dismissed ${type.slice(0, -1)} "${id}"`, 'success');
+    loadAgentData();
+  } catch (e) {
+    showToast('Failed to dismiss: ' + e.message, 'error');
+  }
 }
 
 function createAgentCard(agentId, agent) {
