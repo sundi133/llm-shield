@@ -646,12 +646,12 @@ telemetry:
   enabled: true
   flush_interval_seconds: 5
 
-  # Local JSON file (uncomment to enable as fallback)
-  # file:
-  #   enabled: true
-  #   path: "logs/votal-shield.json"
-  #   max_size_mb: 100
-  #   max_files: 10
+  # Local JSON file with rotation for safe=false events
+  file:
+    enabled: true
+    path: "logs/votal-shield.json"
+    max_size_mb: 100
+    max_files: 10
 
   # Elasticsearch / Elastic SIEM
   # Set via env vars: VOTAL_ES_URL, VOTAL_ES_API_KEY
