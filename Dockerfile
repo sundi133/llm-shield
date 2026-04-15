@@ -21,6 +21,9 @@ COPY api/ api/
 COPY storage/ storage/
 COPY static/ static/
 
+# Create logs directory for telemetry file logging
+RUN mkdir -p logs && chmod 755 logs
+
 # Telemetry / SIEM defaults (non-secret). Credentials must be injected at
 # RUNTIME via RunPod Secrets: https://docs.runpod.io/pods/templates/secrets
 # In your RunPod endpoint env vars, reference them as:
