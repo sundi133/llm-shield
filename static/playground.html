@@ -908,23 +908,42 @@ async function sendMessage() {
       if (data.tool_calls && data.tool_calls.length) {
         addToolCards(data.tool_calls);
 
+        // Build OpenAI-format tool_calls for conversation history so the LLM
+        // knows these tools were already invoked and won't re-trigger them.
+        const historyToolCalls = data.tool_calls.map((tc, i) => ({
+          id: tc.tool_call_id || `call_${Date.now()}_${i}`,
+          type: 'function',
+          function: { name: tc.tool_name, arguments: JSON.stringify(tc.arguments || {}) },
+        }));
+        conversationHistory.push({
+          role: 'assistant',
+          content: data.text || null,
+          tool_calls: historyToolCalls,
+        });
+
+        // Add a tool-role result message per call so the LLM sees them as completed.
         const lines = [];
-        for (const tc of data.tool_calls) {
+        for (let i = 0; i < data.tool_calls.length; i++) {
+          const tc = data.tool_calls[i];
           const ok = tc.rbac?.allowed;
           const readable = tc.tool_name.replace(/_/g, ' ');
+          const callId = historyToolCalls[i].id;
+
           if (tc.unregistered) {
             lines.push(`⚠ Tool <strong>${esc(readable)}</strong> is not registered — it was blocked. Register it in your agent registry to enable access.`);
+            conversationHistory.push({ role: 'tool', tool_call_id: callId, content: `Tool ${tc.tool_name} is not registered.` });
           } else if (ok) {
             const argSummary = Object.entries(tc.arguments || {})
               .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
               .join(', ');
             lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}`);
+            conversationHistory.push({ role: 'tool', tool_call_id: callId, content: `Executed ${tc.tool_name} successfully.` });
           } else {
             lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong> with your current role.`);
+            conversationHistory.push({ role: 'tool', tool_call_id: callId, content: `Access denied: ${tc.tool_name} is not permitted for your role.` });
           }
         }
         addMessage('assistant', lines.join('<br>'), elapsed + 'ms');
-        conversationHistory.push({ role: 'assistant', content: lines.map(l => l.replace(/<[^>]+>/g, '')).join('\n') });
       }
 
       if (data.unregistered) {
