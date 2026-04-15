@@ -4,11 +4,7 @@ guardrails:
     enabled: true
     action: block
     settings:
-      keywords:
-        - hack
-        - exploit
-        - malware
-        - ransomware
+      keywords: []  # Empty by default - customers can add their own
       case_insensitive: true
 
   length_limit:
@@ -23,13 +19,7 @@ guardrails:
     enabled: true
     action: block
     settings:
-      patterns:
-        - pattern: '\b\d{3}-\d{2}-\d{4}\b'
-          description: "SSN pattern"
-          action: block
-        - pattern: 'password\s*=\s*\S+'
-          description: "Password in text"
-          action: warn
+      patterns: []  # Empty by default - customers can add their own patterns
 
   pii_detection:
     enabled: true
@@ -57,7 +47,7 @@ guardrails:
       min_polarity: -0.8
 
   rate_limiter:
-    enabled: true
+    enabled: false  # Disable by default - customers can configure their own limits
     action: block
     settings:
       max_requests: 10000000
@@ -70,7 +60,7 @@ guardrails:
       extra_patterns: []
 
   toxicity:
-    enabled: false
+    enabled: true  # Enable for all customers
     action: block
     settings:
       threshold: 0.7
@@ -83,12 +73,30 @@ guardrails:
       confidence_threshold: 0.7
 
   topic_restriction:
-    enabled: true
+    enabled: false  # Disable by default - allow all topics for universal deployment
     action: block
     settings:
       blocked_topics:
         - weapons
         - illegal_activities
+        - violence
+        - self_harm
+        - suicide
+        - drug_manufacturing
+        - terrorism
+        - child_exploitation
+        - hacking
+        - malware
+        - fraud
+        - identity_theft
+        - money_laundering
+        - human_trafficking
+        - hate_speech
+        - harassment
+        - sexual_content
+        - doxxing
+        - extremism
+        - animal_cruelty
 
   topic_enforcement:
     enabled: false
@@ -114,12 +122,12 @@ guardrails:
 
   # --- Slow-tier output guardrails (LLM-based) ---
   hallucinated_links:
-    enabled: false
+    enabled: false  # Disable by default - can be resource intensive
     action: warn
     settings: {}
 
   tone_enforcement:
-    enabled: true
+    enabled: true  # Enable with generic professional tone settings
     action: warn
     settings:
       blocked_tones:
@@ -176,7 +184,7 @@ guardrails:
       use_presidio: true
 
   competitor_mention:
-    enabled: true
+    enabled: false  # Disable by default - too company-specific
     action: log
     settings:
       competitors: []
