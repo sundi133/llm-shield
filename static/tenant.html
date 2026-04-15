@@ -61,9 +61,11 @@
 
   .nav-section { margin: 0.75rem 0; }
   .nav-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); padding: 0.5rem 0.75rem 0.4rem; font-weight: 600; }
-  .nav-item { display: flex; align-items: center; gap: 0.65rem; padding: 0.55rem 0.75rem; border-radius: var(--radius-sm); color: var(--text-dim); cursor: pointer; font-size: 13.5px; font-weight: 500; transition: background 0.1s, color 0.1s; margin: 1px 0; }
+  .nav-item { display: flex; align-items: center; gap: 0.65rem; padding: 0.55rem 0.75rem; border-radius: var(--radius-sm); color: var(--text-dim); cursor: pointer; font-size: 13.5px; font-weight: 500; transition: background 0.1s, color 0.1s; margin: 1px 0; position: relative; }
   .nav-item:hover { background: var(--bg-hover); color: var(--text); }
   .nav-item.active { background: var(--accent-dim); color: var(--accent-hover); }
+  .nav-badge { font-size:9px; font-weight:700; background:#f59e0b; color:#000; border-radius:10px; padding:1px 5px; margin-left:auto; min-width:16px; text-align:center; line-height:14px; display:none; }
+  .nav-badge.visible { display:inline-block; }
   .nav-icon { width: 16px; height: 16px; flex-shrink: 0; stroke-width: 2; }
 
   .sidebar-footer { margin-top: auto; padding: 1rem 0.75rem 0; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
@@ -239,10 +241,12 @@
       <div class="nav-item" data-tab="agents">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
         Agent Registry
+        <span id="nav-badge-agents" class="nav-badge"></span>
       </div>
       <div class="nav-item" data-tab="tool-policies">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
         Tool Registry
+        <span id="nav-badge-tools" class="nav-badge"></span>
       </div>
       <div class="nav-item" data-tab="usage">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
@@ -344,22 +348,18 @@
 
     <!-- Agents -->
     <div id="tab-agents" class="tab-pane hidden">
-      <div class="page-header">
-        <div class="page-title">Agents Registry</div>
-        <div class="page-desc">Manage your AI agents and their role permissions</div>
-        <div class="page-actions">
-          <button class="primary" onclick="loadAgentData()">Refresh</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;">
+        <div>
+          <div style="font-size:22px;font-weight:700;letter-spacing:-0.3px;color:var(--text);">Agent Registry</div>
+          <div style="color:var(--text-dim);font-size:13px;margin-top:0.2rem;">Register AI agents and configure role-based tool permissions</div>
+        </div>
+        <div style="display:flex;gap:0.5rem;">
+          <button class="small" onclick="loadAgentData()" style="font-size:12px;">Refresh</button>
+          <button class="primary" onclick="showAddAgentModal()" style="font-size:12px;">+ Add Agent</button>
         </div>
       </div>
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Registered Agents</div>
-            <div class="card-subtitle">AI agents configured for your tenant</div>
-          </div>
-        </div>
-        <div id="agents-content">Loading agents...</div>
-      </div>
+      <div id="agents-shadow-agents"></div>
+      <div id="agents-content">Loading agents...</div>
     </div>
 
 
@@ -2585,94 +2585,132 @@ async function loadAgentData() {
 
 function displayAgents(agents, unreg) {
   unreg = unreg || { agents: {}, tools: {} };
-  const unregAgentKeys = Object.keys(unreg.agents || {});
-  const unregToolKeys = Object.keys(unreg.tools || {});
-  const hasUnregistered = unregAgentKeys.length > 0 || unregToolKeys.length > 0;
+  const shadowAgents = unreg.agents || {};
+  const shadowAgentCount = Object.keys(shadowAgents).length;
 
-  let html = '<div class="agents-container" style="gap: 1.5rem;">';
+  window._shadowTools = unreg.tools || {};
+  const shadowToolCount = Object.keys(window._shadowTools).length;
 
-  html += `
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-      <div style="font-size: 14px; font-weight: 600; color: var(--text);">${Object.keys(agents).length} Agent(s) Registered</div>
-      <button class="primary" onclick="showAddAgentModal()" style="font-size: 12px; padding: 0.5rem 1rem;">
-        + Add Agent
-      </button>
-    </div>
-  `;
+  // Nav badges
+  _updateNavBadge('nav-badge-agents', shadowAgentCount);
+  _updateNavBadge('nav-badge-tools', shadowToolCount);
 
-  if (hasUnregistered) {
-    html += `
-    <div style="background:rgba(245,158,11,0.08);border:1px solid var(--warn);border-radius:8px;padding:1rem;margin-bottom:1rem;">
-      <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;">
-        <span style="font-size:16px;">⚠</span>
-        <span style="font-size:13px;font-weight:700;color:var(--warn);">Shadow Discovery</span>
-        <span style="font-size:11px;color:var(--text-muted);margin-left:auto;">Agents &amp; tools used via API but not in your registry</span>
-      </div>`;
-
-    if (unregAgentKeys.length > 0) {
-      html += `<div style="font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px;">Shadow Agents (${unregAgentKeys.length})</div>`;
-      html += `<div style="display:flex;flex-direction:column;gap:0.4rem;margin-bottom:${unregToolKeys.length > 0 ? '0.75rem' : '0'};">`;
-      for (const [agentId, meta] of Object.entries(unreg.agents)) {
+  // Shadow agents — collapsible summary bar
+  const el = document.getElementById('agents-shadow-agents');
+  if (shadowAgentCount === 0) {
+    el.innerHTML = '';
+  } else {
+    el.innerHTML = _buildShadowPanel({
+      id: 'shadow-agents',
+      title: `${shadowAgentCount} Shadow Agent${shadowAgentCount > 1 ? 's' : ''}`,
+      subtitle: 'Unregistered agents calling the API',
+      items: shadowAgents,
+      type: 'agents',
+      renderRow: (itemId, meta) => {
         const ago = _timeAgo(meta.last_seen);
         const endpoints = (meta.endpoints || []).map(e => e.split('/').pop()).join(', ');
         const roles = (meta.roles || []).join(', ');
-        const source = meta.source === 'middleware_discovery' ? 'API' : 'chat';
-        html += `
-        <div style="background:var(--bg-3);border:1px solid var(--warn);border-radius:6px;padding:0.5rem 0.75rem;">
-          <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;">
-            <span style="font-family:monospace;font-size:12px;color:var(--warn);font-weight:700;">${agentId}</span>
-            <span style="font-size:9px;padding:1px 6px;border-radius:10px;background:rgba(245,158,11,0.15);color:var(--warn);font-weight:600;">${source}</span>
-            <span style="font-size:10px;color:var(--text-muted);margin-left:auto;">${meta.call_count || 1} call${(meta.call_count||1)>1?'s':''} · ${ago}</span>
-            <button onclick="dismissUnregistered('agents','${agentId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:0 2px;" title="Dismiss">✕</button>
-          </div>
-          <div style="display:flex;gap:1rem;font-size:10px;color:var(--text-muted);">
-            ${endpoints ? `<span>Endpoints: <span style="color:var(--text-dim);">${endpoints}</span></span>` : ''}
-            ${roles ? `<span>Roles: <span style="color:var(--text-dim);">${roles}</span></span>` : ''}
-            ${meta.first_seen ? `<span>First seen: <span style="color:var(--text-dim);">${_timeAgo(meta.first_seen)}</span></span>` : ''}
-          </div>
-        </div>`;
-      }
-      html += `</div>`;
-    }
-
-    if (unregToolKeys.length > 0) {
-      html += `<div style="font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px;">Shadow Tools (${unregToolKeys.length})</div>`;
-      html += `<div style="display:flex;flex-direction:column;gap:0.4rem;">`;
-      for (const [toolId, meta] of Object.entries(unreg.tools)) {
-        const ago = _timeAgo(meta.last_seen);
-        html += `
-        <div style="background:var(--bg-3);border:1px solid var(--warn);border-radius:6px;padding:0.5rem 0.75rem;">
-          <div style="display:flex;align-items:center;gap:0.5rem;">
-            <span style="font-family:monospace;font-size:12px;color:var(--warn);font-weight:700;">${toolId}</span>
-            <span style="font-size:10px;color:var(--text-muted);">${meta.call_count || 1} call${(meta.call_count||1)>1?'s':''} · ${ago}</span>
-            ${meta.seen_from_agent ? `<span style="font-size:10px;color:var(--text-muted);">via <span style="color:var(--text-dim);">${meta.seen_from_agent}</span></span>` : ''}
-            <span style="margin-left:auto;"></span>
-            <button onclick="dismissUnregistered('tools','${toolId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:0 2px;" title="Dismiss">✕</button>
-          </div>
-        </div>`;
-      }
-      html += `</div>`;
-    }
-
-    html += `</div>`;
+        const src = meta.source === 'middleware_discovery' ? 'API' : 'chat';
+        return `<tr data-search="${itemId.toLowerCase()}" style="border-bottom:1px solid var(--border);">
+          <td style="padding:0.5rem 0.75rem;font-family:var(--font-mono);font-size:12px;color:var(--warn);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${itemId}</td>
+          <td style="padding:0.5rem 0.75rem;"><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(245,158,11,0.15);color:var(--warn);font-weight:600;">${src}</span></td>
+          <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${endpoints || '—'}</td>
+          <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);">${roles || '—'}</td>
+          <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);text-align:right;">${meta.call_count || 1}</td>
+          <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);text-align:right;white-space:nowrap;">${ago}</td>
+          <td style="padding:0.5rem 0.5rem;text-align:right;"><button onclick="dismissUnregistered('agents','${itemId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px;" title="Dismiss" onmouseover="this.style.color='var(--warn)'" onmouseout="this.style.color='var(--text-muted)'">✕</button></td>
+        </tr>`;
+      },
+      columns: [
+        { label: 'Agent ID', width: '22%' },
+        { label: 'Source', width: '8%' },
+        { label: 'Endpoints', width: '28%' },
+        { label: 'Roles', width: '14%' },
+        { label: 'Calls', width: '8%', align: 'right' },
+        { label: 'Last Seen', width: '12%', align: 'right' },
+        { label: '', width: '8%', align: 'right' },
+      ],
+    });
   }
 
+  // Agent cards
+  let html = '';
   if (Object.keys(agents).length === 0) {
     html += `
-      <div style="text-align: center; padding: 3rem; background: var(--bg-2); border-radius: 8px;">
-        <div style="font-size: 16px; margin-bottom: 0.5rem;">No Agents Registered</div>
-        <div style="font-size: 13px; color: var(--text-dim); margin-bottom: 1.5rem;">Create your first AI agent to get started</div>
+      <div style="text-align:center;padding:3rem;background:var(--bg-2);border-radius:8px;border:1px solid var(--border);">
+        <div style="font-size:16px;margin-bottom:0.5rem;">No Agents Registered</div>
+        <div style="font-size:13px;color:var(--text-dim);margin-bottom:1.5rem;">Create your first AI agent to get started</div>
         <button class="primary" onclick="showAddAgentModal()">+ Create Agent</button>
-      </div>
-    `;
+      </div>`;
   } else {
+    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:0.75rem;">${Object.keys(agents).length} agent(s) registered</div>`;
     Object.entries(agents).forEach(([agentId, agent]) => {
       html += createAgentCard(agentId, agent);
     });
   }
-
-  html += '</div>';
   document.getElementById('agents-content').innerHTML = html;
+}
+
+// ── Shared shadow panel builder ──────────────────────────────────
+function _updateNavBadge(elId, count) {
+  const badge = document.getElementById(elId);
+  if (!badge) return;
+  if (count > 0) {
+    badge.textContent = count > 99 ? '99+' : count;
+    badge.classList.add('visible');
+  } else {
+    badge.classList.remove('visible');
+  }
+}
+
+function _buildShadowPanel({ id, title, subtitle, items, type, renderRow, columns }) {
+  const count = Object.keys(items).length;
+  const rows = Object.entries(items).map(([k, v]) => renderRow(k, v)).join('');
+
+  return `
+  <div style="background:rgba(245,158,11,0.05);border:1px solid rgba(245,158,11,0.3);border-radius:10px;margin-bottom:1.25rem;overflow:hidden;">
+    <div onclick="toggleShadowPanel('${id}')" style="display:flex;align-items:center;gap:0.5rem;padding:0.75rem 1.25rem;cursor:pointer;user-select:none;">
+      <span style="font-size:14px;color:var(--warn);">⚠</span>
+      <span style="font-size:13px;font-weight:700;color:var(--warn);">${title}</span>
+      <span style="font-size:11px;color:var(--text-muted);">— ${subtitle}</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--text-muted);" id="${id}-toggle-hint">Click to expand</span>
+      <span id="${id}-chevron" style="font-size:12px;color:var(--text-muted);transition:transform 0.15s;">▶</span>
+    </div>
+    <div id="${id}-body" style="display:none;border-top:1px solid rgba(245,158,11,0.2);padding:0.75rem 1.25rem 1rem;">
+      ${count > 5 ? `<input type="text" placeholder="Filter ${type}..." oninput="filterShadowRows('${id}',this.value)" style="width:100%;padding:0.4rem 0.75rem;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);margin-bottom:0.75rem;outline:none;box-sizing:border-box;">` : ''}
+      <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg-2);">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;">
+          <thead>
+            <tr style="background:var(--bg-3);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1;">
+              ${columns.map(c =>
+                `<th style="padding:0.5rem 0.75rem;color:var(--text-muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.4px;white-space:nowrap;text-align:left;${c.align === 'right' ? 'text-align:right;' : ''}${c.width ? 'width:'+c.width+';' : ''}">${c.label}</th>`
+              ).join('')}
+            </tr>
+          </thead>
+          <tbody id="${id}-rows">${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
+function toggleShadowPanel(id) {
+  const body = document.getElementById(id + '-body');
+  const chevron = document.getElementById(id + '-chevron');
+  const hint = document.getElementById(id + '-toggle-hint');
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  chevron.style.transform = open ? '' : 'rotate(90deg)';
+  if (hint) hint.textContent = open ? 'Click to expand' : 'Click to collapse';
+}
+
+function filterShadowRows(id, query) {
+  const rows = document.querySelectorAll(`#${id}-rows tr`);
+  const q = query.toLowerCase();
+  rows.forEach(r => {
+    r.style.display = !q || r.getAttribute('data-search').includes(q) ? '' : 'none';
+  });
 }
 
 function _timeAgo(ts) {
@@ -2688,6 +2726,9 @@ async function dismissUnregistered(type, id) {
   try {
     await apiCall(`/v1/agents/unregistered/${type}/${id}`, { method: 'DELETE' });
     showToast(`Dismissed ${type.slice(0, -1)} "${id}"`, 'success');
+    if (type === 'tools') {
+      loadToolPolicyData();
+    }
     loadAgentData();
   } catch (e) {
     showToast('Failed to dismiss: ' + e.message, 'error');
@@ -3100,8 +3141,13 @@ async function loadToolPolicyData() {
   REGISTERED_AGENT_ROLES = [];
   TOOL_AGENT_MAP = {};
   AGENTS_DATA = {};
+  window._shadowTools = window._shadowTools || {};
+
   try {
-    const agentsRes = await apiCall('/v1/agents/registry');
+    const [agentsRes, unregRes] = await Promise.all([
+      apiCall('/v1/agents/registry'),
+      apiCall('/v1/agents/unregistered').catch(() => null),
+    ]);
     if (agentsRes && agentsRes.success && agentsRes.agents) {
       AGENTS_DATA = agentsRes.agents;
       const toolSet = new Set();
@@ -3117,6 +3163,9 @@ async function loadToolPolicyData() {
       REGISTERED_AGENT_TOOLS = [...toolSet].sort();
       REGISTERED_AGENT_ROLES = [...roleSet].sort();
     }
+    if (unregRes && unregRes.success) {
+      window._shadowTools = unregRes.unregistered_tools || {};
+    }
   } catch (e) { /* no agents available */ }
 
   if (!REGISTERED_AGENT_TOOLS.length) {
@@ -3129,6 +3178,7 @@ async function loadToolPolicyData() {
         <div class="muted" style="margin-bottom:1.25rem;">Register agents with tools in the Agents tab first, then configure data policies for their tools here.</div>
         <button class="primary small" onclick="document.querySelector('.nav-item[data-tab=agents]').click()">Go to Agents</button>
       </div>`;
+    displayShadowTools();
     return;
   }
 
@@ -3147,6 +3197,53 @@ async function loadToolPolicyData() {
   TOOL_POLICIES_DIRTY = false;
   document.getElementById('tp-save-banner').classList.add('hidden');
   displayToolPolicies();
+  displayShadowTools();
+}
+
+function displayShadowTools() {
+  let container = document.getElementById('shadow-tools-panel');
+  if (!container) {
+    const parent = document.getElementById('tp-sub-tools');
+    if (!parent) return;
+    container = document.createElement('div');
+    container.id = 'shadow-tools-panel';
+    parent.insertBefore(container, parent.firstChild);
+  }
+
+  const shadowTools = window._shadowTools || {};
+  const keys = Object.keys(shadowTools);
+
+  _updateNavBadge('nav-badge-tools', keys.length);
+
+  if (!keys.length) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = _buildShadowPanel({
+    id: 'shadow-tools',
+    title: `${keys.length} Shadow Tool${keys.length > 1 ? 's' : ''}`,
+    subtitle: 'Tools called via API but not in any agent registry',
+    items: shadowTools,
+    type: 'tools',
+    renderRow: (toolId, meta) => {
+      const ago = _timeAgo(meta.last_seen);
+      return `<tr data-search="${toolId.toLowerCase()}" style="border-bottom:1px solid var(--border);">
+        <td style="padding:0.5rem 0.75rem;font-family:var(--font-mono);font-size:12px;color:var(--warn);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${toolId}</td>
+        <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${meta.seen_from_agent || '—'}</td>
+        <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);text-align:right;">${meta.call_count || 1}</td>
+        <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);text-align:right;white-space:nowrap;">${ago}</td>
+        <td style="padding:0.5rem 0.5rem;text-align:right;"><button onclick="dismissUnregistered('tools','${toolId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px;" title="Dismiss" onmouseover="this.style.color='var(--warn)'" onmouseout="this.style.color='var(--text-muted)'">✕</button></td>
+      </tr>`;
+    },
+    columns: [
+      { label: 'Tool Name', width: '30%' },
+      { label: 'Via Agent', width: '28%' },
+      { label: 'Calls', width: '12%', align: 'right' },
+      { label: 'Last Seen', width: '18%', align: 'right' },
+      { label: '', width: '12%', align: 'right' },
+    ],
+  });
 }
 
 function displayToolPolicies() {
