@@ -1,6 +1,8 @@
 """Shield middleware for enriching requests with agent/tenant context and rate limiting."""
 
+import json
 import time
+import threading
 from typing import Optional
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -13,6 +15,131 @@ from storage.rate_limiter import check_and_increment
 # In-memory cache for tenant lookups to reduce Redis hits
 _tenant_cache: dict[str, tuple[Optional[str], Optional[dict], float]] = {}
 _CACHE_TTL_SECONDS = 60  # Cache tenant data for 1 minute
+
+# ── Shadow Agent Discovery ──────────────────────────────────────────
+# Buffers shadow agent sightings in-memory and flushes to Redis
+# periodically to avoid adding latency to every request.
+_shadow_buffer: dict[str, dict] = {}  # key = "tenant_id::agent_key"
+_shadow_lock = threading.Lock()
+_shadow_last_flush = 0.0
+_SHADOW_FLUSH_INTERVAL = 30  # seconds
+
+# In-memory cache of registered agent keys per tenant (avoids Redis on every req)
+_registry_cache: dict[str, tuple[set[str], float]] = {}
+_REGISTRY_CACHE_TTL = 120  # seconds
+
+
+def _get_registered_agents(tenant_id: str) -> set[str]:
+    """Get the set of registered agent keys for a tenant (cached)."""
+    now = time.time()
+    if tenant_id in _registry_cache:
+        keys, ts = _registry_cache[tenant_id]
+        if now - ts < _REGISTRY_CACHE_TTL:
+            return keys
+    try:
+        from storage.tenant_store import _get_redis
+        r = _get_redis()
+        if r:
+            raw = r.get(f"agents:{tenant_id}")
+            if raw:
+                data = json.loads(raw) if isinstance(raw, str) else raw
+                if isinstance(data, dict):
+                    keys = set(data.keys())
+                    _registry_cache[tenant_id] = (keys, now)
+                    return keys
+    except Exception:
+        pass
+    _registry_cache[tenant_id] = (set(), now)
+    return set()
+
+
+def _record_shadow_agent(tenant_id: str, agent_key: str, endpoint: str,
+                         user_role: str | None):
+    """Buffer a shadow agent sighting (non-blocking, in-memory)."""
+    buf_key = f"{tenant_id}::{agent_key}"
+    now = int(time.time())
+    with _shadow_lock:
+        if buf_key in _shadow_buffer:
+            entry = _shadow_buffer[buf_key]
+            entry["last_seen"] = now
+            entry["call_count"] += 1
+            entry["endpoints"].add(endpoint)
+            if user_role:
+                entry["roles"].add(user_role)
+        else:
+            _shadow_buffer[buf_key] = {
+                "tenant_id": tenant_id,
+                "agent_key": agent_key,
+                "first_seen": now,
+                "last_seen": now,
+                "call_count": 1,
+                "endpoints": {endpoint},
+                "roles": {user_role} if user_role else set(),
+            }
+    _maybe_flush_shadows()
+
+
+def _maybe_flush_shadows():
+    """Flush the buffer to Redis if enough time has passed."""
+    global _shadow_last_flush
+    now = time.time()
+    if now - _shadow_last_flush < _SHADOW_FLUSH_INTERVAL:
+        return
+    _shadow_last_flush = now
+    threading.Thread(target=_flush_shadows_to_redis, daemon=True).start()
+
+
+def _flush_shadows_to_redis():
+    """Write buffered shadow agent sightings to Redis (runs in background thread)."""
+    with _shadow_lock:
+        if not _shadow_buffer:
+            return
+        batch = dict(_shadow_buffer)
+        _shadow_buffer.clear()
+
+    try:
+        from storage.tenant_store import _get_redis
+        r = _get_redis()
+        if not r:
+            return
+
+        per_tenant: dict[str, list] = {}
+        for entry in batch.values():
+            tid = entry["tenant_id"]
+            per_tenant.setdefault(tid, []).append(entry)
+
+        for tid, entries in per_tenant.items():
+            key = f"unregistered:{tid}"
+            raw = r.get(key)
+            store = json.loads(raw) if raw and isinstance(raw, str) else {}
+            if not isinstance(store, dict):
+                store = {}
+            agents_map = store.get("agents", {})
+
+            for e in entries:
+                aid = e["agent_key"]
+                if aid in agents_map:
+                    existing = agents_map[aid]
+                    existing["last_seen"] = e["last_seen"]
+                    existing["call_count"] = existing.get("call_count", 0) + e["call_count"]
+                    prev_ep = set(existing.get("endpoints", []))
+                    existing["endpoints"] = sorted(prev_ep | e["endpoints"])
+                    prev_roles = set(existing.get("roles", []))
+                    existing["roles"] = sorted(prev_roles | e["roles"])
+                else:
+                    agents_map[aid] = {
+                        "first_seen": e["first_seen"],
+                        "last_seen": e["last_seen"],
+                        "call_count": e["call_count"],
+                        "endpoints": sorted(e["endpoints"]),
+                        "roles": sorted(e["roles"]),
+                        "source": "middleware_discovery",
+                    }
+
+            store["agents"] = agents_map
+            r.set(key, json.dumps(store))
+    except Exception:
+        pass
 
 
 def _get_cached_tenant(api_key: str) -> tuple[Optional[str], Optional[dict]]:
@@ -75,6 +202,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             request.state.agent_key = agent_key
 
             # Resolve role if agent key is present
+            user_role = request.headers.get("X-User-Role")
             if agent_key:
                 role = enforcer.resolve_role(agent_key)
                 request.state.role = role
@@ -92,6 +220,17 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                 if tenant_id and tenant_config:
                     request.state.tenant_id = tenant_id
                     request.state.tenant_config = tenant_config
+
+                    # Shadow agent discovery — detect unregistered agent keys
+                    if agent_key:
+                        registered = _get_registered_agents(tenant_id)
+                        if registered and agent_key not in registered:
+                            request.state.shadow_agent = True
+                            _record_shadow_agent(
+                                tenant_id, agent_key, path, user_role,
+                            )
+                        else:
+                            request.state.shadow_agent = False
 
                     # Per-tenant rate limiting based on quota
                     quota = tenant_config.get("quota") or {}

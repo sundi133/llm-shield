@@ -807,12 +807,26 @@ def create_admin_app() -> FastAPI:
         data_policies = _load_data_policies(tenant_id)
         registered_tools = _get_registered_tool_names(registry, tool_policies, tenant_config)
 
-        tools = body.get("tools") or _load_tenant_tools(
+        user_supplied_tools = body.get("tools")
+        tools = user_supplied_tools or _load_tenant_tools(
             tenant_id, tenant_config, agent_key=agent_key, registry=registry)
         if not tools:
             return JSONResponse(status_code=400, content={
                 "error": "No tool definitions found. Register tools via PUT /v1/tenant/me/tools or agent registry.",
             })
+
+        # Layer 2: detect shadow tools from developer-supplied definitions
+        if user_supplied_tools and tenant_id:
+            supplied_names = [
+                (t.get("function") or {}).get("name", "")
+                for t in user_supplied_tools if isinstance(t, dict)
+            ]
+            shadow_tool_names = [n for n in supplied_names if n and n not in registered_tools]
+            if shadow_tool_names:
+                _track_unregistered(
+                    tenant_id, agent_key, shadow_tool_names,
+                    registry, registered_tools,
+                )
 
         # Extract the latest user message for guardrail checking
         user_message = ""

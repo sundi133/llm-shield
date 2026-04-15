@@ -482,6 +482,8 @@
         <button class="api-sub-tab" data-api-tab="curl-examples" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">cURL</button>
         <button class="api-sub-tab" data-api-tab="langchain" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">LangChain</button>
         <button class="api-sub-tab" data-api-tab="crewai" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">CrewAI</button>
+        <button class="api-sub-tab" data-api-tab="openai-agents" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">OpenAI Agents</button>
+        <button class="api-sub-tab" data-api-tab="anthropic" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">Anthropic</button>
         <button class="api-sub-tab" data-api-tab="api-reference" onclick="switchApiTab(this)" style="padding:0.5rem 1rem;font-size:12px;font-weight:600;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">API Reference</button>
       </div>
 
@@ -551,402 +553,206 @@
         <div class="card" style="margin-bottom:1rem;">
           <div class="card-header">
             <div>
-              <div class="card-title">🦜 LangChain + LLM Shield Integration</div>
-              <div class="card-subtitle">Complete example showing how to create protected LangChain agents with guardrails</div>
+              <div class="card-title">LangChain + LLM Shield</div>
+              <div class="card-subtitle">Protect LangChain agents with guardrails, RBAC, and shadow discovery</div>
             </div>
           </div>
           <div style="padding:0 1.25rem 1.25rem;">
             <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Agent Registry</span>
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Tool Policies</span>
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Runtime Validation</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Input/Output Guardrails</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Tool RBAC</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
             </div>
           </div>
         </div>
 
         <div class="sdk-section">
-          <div class="sdk-section-title">1. Install Dependencies</div>
+          <div class="sdk-section-title">1. Install</div>
           <div style="background:var(--bg-2);padding:1rem;border-radius:6px;margin:0.5rem 0;">
             <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
-pip install langchain openai requests<br>
-pip install serpapi google-search-results  # For tools
+pip install langchain langchain-openai openai requests
             </code>
           </div>
         </div>
 
         <div class="sdk-section">
-          <div class="sdk-section-title">2. Environment Setup</div>
-          <div class="sdk-section-desc">Configure for your deployment environment</div>
-
-          <div style="margin:0.5rem 0;">
-            <h4 style="font-size:13px;color:var(--text);margin:0.5rem 0;">Local/Self-Hosted LLM Shield</h4>
-            <div style="background:var(--bg-2);padding:1rem;border-radius:6px;">
-              <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
-export TENANT_ID="your_tenant_id"<br>
-export API_KEY="your_api_key"<br>
-export OPENAI_API_KEY="sk-your_openai_key"<br>
-export LLM_SHIELD_URL="<span id="langchain-base-url">loading...</span>"
-              </code>
-            </div>
-          </div>
-
-          <div style="margin:0.5rem 0;">
-            <h4 style="font-size:13px;color:var(--text);margin:0.5rem 0;">RunPod Hosted LLM Shield (Recommended)</h4>
-            <div style="background:var(--bg-2);padding:1rem;border-radius:6px;">
-              <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
-# Replace with your actual RunPod endpoint and credentials<br>
-export RUNPOD_TOKEN="rpa_YOUR_RUNPOD_TOKEN_HERE"<br>
-export TENANT_ID="tenant-YYYYMMDDHHMMSS-XXXXXX"<br>
-export API_KEY="tenant-YYYYMMDDHHMMSS-XXXXXX-key-XXXXXX"<br>
-export OPENAI_API_KEY="sk-your_openai_key"<br>
-export LLM_SHIELD_URL="https://your-llm-shield-endpoint.runpod.ai"
-              </code>
-            </div>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:0.5rem;padding:0.5rem;background:var(--accent-dim);border-radius:4px;">
-              💡 <strong>RunPod Benefits:</strong> GPU-accelerated models, auto-scaling, global CDN, and managed infrastructure
-            </div>
-          </div>
-        </div>
-
-        <div class="sdk-section">
-          <div class="sdk-section-title">3. Complete LangChain Integration</div>
-          <div class="sdk-section-desc">SafeLangChainAgent with full LLM Shield protection</div>
+          <div class="sdk-section-title">2. Complete Integration</div>
+          <div class="sdk-section-desc">LangChain agent with Shield guardrails, RBAC, and shadow discovery</div>
           <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
             <div style="background:var(--border);padding:0.5rem 1rem;font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border);">
-              langchain_integration.py
+              langchain_shield_agent.py
               <button onclick="copyToClipboard('langchain-code')" style="float:right;background:none;border:none;color:var(--accent-hover);cursor:pointer;font-size:11px;">Copy</button>
             </div>
             <div style="padding:1rem;overflow-x:auto;">
-              <pre id="langchain-code" style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code>#!/usr/bin/env python3
+              <pre id="langchain-code" style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text);"><code>"""
+LangChain + LLM Shield Integration
+Guardrails, RBAC, data policies, and shadow agent discovery
 """
-LangChain + LLM Shield Integration Example
-Complete protected agent with guardrails, tool policies, and runtime validation
-"""
+import os, json, requests
+from langchain_openai import ChatOpenAI
+from langchain.agents import create_openai_tools_agent, AgentExecutor
+from langchain.tools import tool
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-import os
-import json
-import requests
-from typing import Dict, List, Any, Optional
-from langchain.agents import AgentType, initialize_agent, load_tools
-from langchain.llms import OpenAI
-from langchain.tools import BaseTool
-from langchain.schema import AgentAction, AgentFinish
-from langchain.callbacks.base import BaseCallbackHandler
+SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+API_KEY    = os.getenv("API_KEY")
+AGENT_ID   = os.getenv("AGENT_ID", "my-langchain-agent")
+USER_ROLE  = os.getenv("USER_ROLE", "user")
 
-class LLMShieldConfig:
-    """Configuration for LLM Shield integration"""
-    def __init__(self):
-        # Support both local and RunPod hosted LLM Shield
-        self.base_url = os.getenv('LLM_SHIELD_URL', 'http://localhost:8080')
-        self.auth_token = os.getenv('RUNPOD_TOKEN')  # For RunPod hosted
-        self.api_key = os.getenv('API_KEY')
-        self.tenant_id = os.getenv('TENANT_ID')
+shield = requests.Session()
+shield.headers.update({
+    "X-API-Key":   API_KEY,
+    "X-Agent-Key": AGENT_ID,
+    "X-User-Role": USER_ROLE,
+    "Content-Type": "application/json",
+})
 
-        self.session = requests.Session()
-        headers = {
-            'Content-Type': 'application/json'
-        }
 
-        # Configure authentication based on deployment type
-        if self.auth_token:
-            # RunPod hosted LLM Shield
-            headers['Authorization'] = f'Bearer {self.auth_token}'
-
-        if self.api_key:
-            # API key for both local and RunPod
-            headers['X-API-Key'] = self.api_key
-
-        self.session.headers.update(headers)
-
-class LLMShieldAgentManager:
-    """Manages agent registration and tool policies with LLM Shield"""
-
-    def __init__(self, config: LLMShieldConfig):
-        self.config = config
-
-    def register_agent(self, agent_config: Dict) -> Dict:
-        """Register an agent with LLM Shield"""
-        try:
-            response = self.config.session.post(
-                f"{self.config.base_url}/v1/agents/registry",
-                json=agent_config
-            )
-            if response.status_code in [200, 201]:
-                print(f"✅ Agent '{agent_config['id']}' registered successfully")
-                return response.json()
-            else:
-                print(f"❌ Failed to register agent: {response.status_code}")
-                return {}
-        except Exception as e:
-            print(f"❌ Error registering agent: {e}")
-            return {}
-
-    def update_tool_policies(self, policies: Dict) -> bool:
-        """Update tool policies for all agents"""
-        try:
-            response = self.config.session.put(
-                f"{self.config.base_url}/v1/agents/tools/policies",
-                json=policies
-            )
-            if response.status_code == 200:
-                print("✅ Tool policies updated successfully")
-                return True
-            else:
-                print(f"❌ Failed to update tool policies: {response.status_code}")
-                return False
-        except Exception as e:
-            print(f"❌ Error updating tool policies: {e}")
-            return False
-
-class GuardrailsCallbackHandler(BaseCallbackHandler):
-    """LangChain callback handler for LLM Shield integration"""
-
-    def __init__(self, config: LLMShieldConfig):
-        self.config = config
-
-    def on_agent_action(self, action: AgentAction, **kwargs) -> Any:
-        """Validate agent actions before execution"""
-        print(f"🛡️ Validating action: {action.tool}")
-
-        # Validate tool call with LLM Shield
-        validation_payload = {
-            "tool_name": action.tool,
-            "parameters": {"input": action.tool_input},
-            "agent_id": kwargs.get('agent_id', 'langchain_agent'),
-            "tenant_id": self.config.tenant_id
-        }
-
-        try:
-            response = self.config.session.post(
-                f"{self.config.base_url}/v1/shield/tool/check",
-                json=validation_payload
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-                if not result.get('allowed', True):
-                    print(f"🚫 Tool call blocked: {result.get('reason', 'Policy violation')}")
-                    return None
-                else:
-                    print(f"✅ Tool call approved: {action.tool}")
-            else:
-                print(f"⚠️ Could not validate tool call: {response.status_code}")
-        except Exception as e:
-            print(f"⚠️ Guardrails validation error: {e}")
-
-class SafeLangChainAgent:
-    """LangChain agent with integrated LLM Shield protection"""
-
-    def __init__(self, agent_id: str, agent_config: Dict):
-        self.agent_id = agent_id
-        self.config = LLMShieldConfig()
-        self.agent_manager = LLMShieldAgentManager(self.config)
-        self.callback_handler = GuardrailsCallbackHandler(self.config)
-
-        # Register agent with LLM Shield
-        self.agent_manager.register_agent(agent_config)
-
-        # Initialize LangChain components
-        self.llm = OpenAI(temperature=0)
-        self.tools = []
-        self.agent = None
-
-    def add_tool(self, tool_name: str, tool_policy: Dict = None):
-        """Add a tool with optional policy"""
-        # Load LangChain tool
-        if tool_name in ['serpapi', 'llm-math', 'requests', 'terminal']:
-            langchain_tools = load_tools([tool_name], llm=self.llm)
-            self.tools.extend(langchain_tools)
-
-        # Set tool policy if provided
-        if tool_policy:
-            self.agent_manager.set_tool_policy(tool_name, tool_policy)
-            print(f"📋 Policy set for tool: {tool_name}")
-
-    def initialize_agent(self):
-        """Initialize the LangChain agent with guardrails"""
-        self.agent = initialize_agent(
-            tools=self.tools,
-            llm=self.llm,
-            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-            callbacks=[self.callback_handler],
-            verbose=True
-        )
-        print(f"🤖 Agent '{self.agent_id}' initialized with {len(self.tools)} tools")
-
-    def run(self, query: str) -> str:
-        """Run the agent with full guardrails protection"""
-        if not self.agent:
-            self.initialize_agent()
-
-        # Validate input query
-        input_validation = {
-            "message": query,
-            "tenant_id": self.config.tenant_id
-        }
-
-        try:
-            response = self.config.session.post(
-                f"{self.config.base_url}/guardrails/input",
-                json=input_validation
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-                if not result.get('safe', True):
-                    triggered = [g['guardrail'] for g in result.get('guardrail_results', []) if not g.get('passed', True)]
-                    return f"🚫 Query blocked by input guardrails: {', '.join(triggered)}"
-
-            # Execute agent with protection
-            print(f"🚀 Executing agent query: {query}")
-            result = self.agent.run(query)
-            return result
-
-        except Exception as e:
-            print(f"❌ Agent execution error: {e}")
-            return f"Error: {str(e)}"
-
-# Example usage
-def main():
-    """Example usage of LangChain + LLM Shield integration"""
-
-    # 1. Define agent configuration
-    financial_agent_config = {
-        "id": "financial_advisor_langchain",
-        "name": "Financial Advisor (LangChain)",
-        "role": "financial_advisor",
-        "description": "AI agent that provides financial advice using various tools",
-        "tools": ["serpapi", "llm-math"],
-        "policies": ["pii_protection", "financial_compliance"],
-        "max_iterations": 10,
-        "allowed_domains": ["financial", "investment", "banking"]
-    }
-
-    # 2. Create protected agent
-    agent = SafeLangChainAgent("financial_advisor_langchain", financial_agent_config)
-
-    # 3. Add tools with policies
-    agent.add_tool("serpapi", {
-        "allowed_domains": ["finance.yahoo.com", "bloomberg.com", "sec.gov"],
-        "rate_limit": {"requests_per_minute": 10},
-        "content_filters": ["no_personal_advice", "factual_only"]
+# ── 1. Register Agent (do this once) ──────────────────────────────
+def register_agent():
+    """Register the agent so Shield knows about it.
+    If you skip this, the agent appears as a SHADOW AGENT."""
+    resp = shield.post(f"{SHIELD_URL}/v1/agents/registry", json={
+        "agent_id": AGENT_ID,
+        "name": "LangChain Support Agent",
+        "description": "Customer support agent built with LangChain",
+        "tools": ["search_faq", "create_ticket", "check_order_status"],
+        "role_permissions": {
+            "user":    ["search_faq", "check_order_status"],
+            "support": ["search_faq", "create_ticket", "check_order_status"],
+            "admin":   ["search_faq", "create_ticket", "check_order_status"],
+        },
     })
+    print("Registered:", resp.json())
 
-    agent.add_tool("llm-math", {
-        "max_computation_time": 30,
-        "allowed_operations": ["basic_math", "financial_calculations"],
-        "precision_limit": 10
-    })
 
-    # 4. Test agent with queries
-    test_queries = [
-        "What is the current stock price of AAPL?",
-        "Calculate the compound interest for $10,000 at 5% for 10 years",
-        "What's my social security number?",  # Should be blocked
-    ]
+# ── 2. Define LangChain tools ─────────────────────────────────────
+@tool
+def search_faq(query: str) -> str:
+    """Search the FAQ knowledge base for answers."""
+    return f"FAQ result for '{query}': Check our help center at /help."
 
-    print("🧪 Testing Financial Advisor Agent with LLM Shield Protection")
-    print("=" * 70)
+@tool
+def create_ticket(subject: str, description: str) -> str:
+    """Create a support ticket for the customer."""
+    return f"Ticket created: {subject} — ID: TKT-{hash(subject) % 10000}"
 
-    for query in test_queries:
-        print(f"\n📝 Query: {query}")
-        print("-" * 50)
-        result = agent.run(query)
-        print(f"📋 Result: {result}")
+@tool
+def check_order_status(order_id: str) -> str:
+    """Check the current status of a customer order."""
+    return f"Order {order_id}: Shipped, arriving in 2 days."
+
+lc_tools = [search_faq, create_ticket, check_order_status]
+
+
+# ── 3. Shielded LangChain agent ──────────────────────────────────
+def run_agent(user_message: str):
+    # Step 1: Input guardrails
+    guard_in = shield.post(f"{SHIELD_URL}/guardrails/input",
+                           json={"message": user_message}).json()
+    if guard_in.get("action") == "block":
+        blocked = [r for r in guard_in.get("guardrail_results", [])
+                   if r.get("action") == "block"]
+        return f"Blocked by input guardrails: {blocked[0]['guardrail']}"
+
+    # Step 2: Use Shield's agent chat for RBAC + tool execution
+    # This sends tools in OpenAI format, gets back RBAC results
+    openai_tools = []
+    for t in lc_tools:
+        openai_tools.append({"type": "function", "function": {
+            "name": t.name,
+            "description": t.description,
+            "strict": True,
+            "parameters": {
+                "type": "object",
+                "properties": {k: {"type": "string"}
+                               for k in (t.args_schema.schema()
+                                         .get("properties", {}).keys())},
+                "required": list(t.args_schema.schema()
+                                 .get("required", [])),
+                "additionalProperties": False,
+            },
+        }})
+
+    result = shield.post(f"{SHIELD_URL}/v1/shield/chat/agent", json={
+        "messages": [{"role": "user", "content": user_message}],
+        "agent_key": AGENT_ID,
+        "user_role": USER_ROLE,
+        "llm_api_key": os.getenv("OPENAI_API_KEY"),
+        "tools": openai_tools,
+    }).json()
+
+    # Step 3: Process tool call results
+    output_parts = []
+    for tc in result.get("tool_calls", []):
+        name = tc["tool_name"]
+        if tc["rbac"]["allowed"]:
+            tool_fn = {t.name: t for t in lc_tools}.get(name)
+            if tool_fn:
+                out = tool_fn.invoke(tc["arguments"])
+                output_parts.append(f"[{name}] {out}")
+        else:
+            output_parts.append(f"BLOCKED: {name} — {tc['rbac']['message']}")
+
+    # Shadow discovery feedback
+    if result.get("unregistered"):
+        u = result["unregistered"]
+        if u.get("agents"):
+            output_parts.append(f"[Shadow agent: {u['agents']}]")
+        if u.get("tools"):
+            output_parts.append(f"[Shadow tools: {u['tools']}]")
+
+    # Step 4: Output guardrails
+    final_text = result.get("text", "") or "\n".join(output_parts)
+    if final_text:
+        guard_out = shield.post(f"{SHIELD_URL}/guardrails/output",
+                                json={"output": final_text}).json()
+        if guard_out.get("action") == "block":
+            return "Response blocked by output policy."
+
+    return final_text or "\n".join(output_parts)
+
 
 if __name__ == "__main__":
-    main()</code></pre>
+    # register_agent()  # Uncomment on first run
+    print(run_agent("What is your return policy?"))
+    print(run_agent("Check status of order ORD-555"))
+    print(run_agent("Create a ticket: billing issue"))</code></pre>
             </div>
           </div>
         </div>
 
         <div class="sdk-section">
-          <div class="sdk-section-title">4. Agent Registration API Call</div>
-          <div class="sdk-section-desc">How the agent gets registered with LLM Shield</div>
-          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
-            <div style="padding:1rem;overflow-x:auto;">
-              <pre style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code># Agent registration payload
-{
-    "id": "financial_advisor_langchain",
-    "name": "Financial Advisor (LangChain)",
-    "role": "financial_advisor",
-    "description": "AI agent that provides financial advice using various tools",
-    "tools": ["serpapi", "llm-math"],
-    "policies": ["pii_protection", "financial_compliance"],
-    "max_iterations": 10,
-    "allowed_domains": ["financial", "investment", "banking"]
-}</code></pre>
+          <div class="sdk-section-title">3. Shadow Discovery</div>
+          <div class="sdk-section-desc">What happens when a LangChain agent is deployed without registering</div>
+          <div style="background:rgba(245,158,11,0.06);border:1px solid var(--warn);border-radius:8px;padding:1rem;margin:0.5rem 0;">
+            <div style="font-size:12px;color:var(--text);line-height:1.6;">
+              <strong style="color:var(--warn);">If <code>AGENT_ID</code> is not registered:</strong><br>
+              1. Every API call with that <code>X-Agent-Key</code> is tracked by the middleware<br>
+              2. Any tools the LLM calls are flagged as shadow tools<br>
+              3. The tenant portal Agents tab shows a "Shadow Discovery" panel<br>
+              4. Metadata captured: call count, endpoints hit, roles used, first/last seen<br>
+              5. Admin can dismiss or register the agent from the UI
             </div>
           </div>
         </div>
 
         <div class="sdk-section">
-          <div class="sdk-section-title">5. Tool Policies Configuration</div>
-          <div class="sdk-section-desc">Granular control over tool access and data handling</div>
-          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
-            <div style="padding:1rem;overflow-x:auto;">
-              <pre style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code># Tool policies payload
-{
-    "serpapi": {
-        "allowed_domains": ["finance.yahoo.com", "bloomberg.com", "sec.gov"],
-        "rate_limit": {"requests_per_minute": 10},
-        "content_filters": ["no_personal_advice", "factual_only"],
-        "audit_required": true
-    },
-    "llm-math": {
-        "max_computation_time": 30,
-        "allowed_operations": ["basic_math", "financial_calculations"],
-        "precision_limit": 10,
-        "audit_required": false
-    }
-}</code></pre>
-            </div>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:1.5rem;">
-          <div class="card-header">
-            <div>
-              <div class="card-title">💡 Key Features</div>
-              <div class="card-subtitle">What makes this integration powerful</div>
-            </div>
-          </div>
-          <div style="padding:1.25rem;">
-            <ul style="margin:0;padding-left:1.5rem;color:var(--text-dim);line-height:1.6;">
-              <li><strong>Runtime Validation:</strong> Every tool call is validated against policies before execution</li>
-              <li><strong>Input/Output Guardrails:</strong> User queries and agent responses are checked for safety</li>
-              <li><strong>Tool Policy Enforcement:</strong> Granular control over what tools can do and access</li>
-              <li><strong>Audit Trail:</strong> Complete logging of all agent actions and policy decisions</li>
-              <li><strong>Role-Based Access:</strong> Different permissions based on user roles</li>
-            </ul>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:1rem;">
-          <div class="card-header">
-            <div>
-              <div class="card-title">🚀 RunPod Deployment Benefits</div>
-              <div class="card-subtitle">Why use RunPod for LLM Shield hosting</div>
-            </div>
-          </div>
-          <div style="padding:1.25rem;">
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1rem;">
-              <div>
-                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">🔥 GPU Acceleration</h4>
-                <p style="margin:0;font-size:12px;color:var(--text-dim);">Hardware-accelerated model inference for faster guardrail processing</p>
-              </div>
-              <div>
-                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">⚡ Auto-Scaling</h4>
-                <p style="margin:0;font-size:12px;color:var(--text-dim);">Serverless scaling based on demand, pay only for usage</p>
-              </div>
-              <div>
-                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">🌍 Global CDN</h4>
-                <p style="margin:0;font-size:12px;color:var(--text-dim);">Low-latency endpoints worldwide for better performance</p>
-              </div>
-              <div>
-                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">🛠️ Managed Infrastructure</h4>
-                <p style="margin:0;font-size:12px;color:var(--text-dim);">No DevOps overhead, automated updates and monitoring</p>
-              </div>
+          <div class="sdk-section-title">4. Integration Architecture</div>
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:1rem;margin:0.5rem 0;">
+            <div style="font-size:12px;color:var(--text);line-height:1.8;font-family:var(--font-mono);">
+              User Message<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/input</span> ── block toxic/adversarial/PII<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/chat/agent</span> ── LLM picks tools + RBAC<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── allowed → LangChain tool.invoke()<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── blocked → deny + log<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span style="color:var(--warn);">unregistered → shadow discovery</span><br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/output</span> ── block competitors/PII/bias<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;└─▶ Response to User
             </div>
           </div>
         </div>
@@ -957,489 +763,691 @@ if __name__ == "__main__":
         <div class="card" style="margin-bottom:1rem;">
           <div class="card-header">
             <div>
-              <div class="card-title">🚢 CrewAI + LLM Shield Integration</div>
-              <div class="card-subtitle">Multi-agent crew with coordinated policies and unified governance</div>
+              <div class="card-title">CrewAI + LLM Shield</div>
+              <div class="card-subtitle">Multi-agent crews with guardrails, RBAC per agent, and shadow discovery</div>
             </div>
           </div>
           <div style="padding:0 1.25rem 1.25rem;">
             <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Multi-Agent</span>
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Crew Coordination</span>
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Team Policies</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Multi-Agent RBAC</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Input/Output Guardrails</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
             </div>
           </div>
         </div>
 
         <div class="sdk-section">
-          <div class="sdk-section-title">1. Install Dependencies</div>
+          <div class="sdk-section-title">1. Install</div>
           <div style="background:var(--bg-2);padding:1rem;border-radius:6px;margin:0.5rem 0;">
             <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
-pip install crewai crewai-tools openai requests<br>
-pip install serper  # For web search tools
+pip install crewai crewai-tools openai requests
             </code>
           </div>
         </div>
 
         <div class="sdk-section">
-          <div class="sdk-section-title">2. Environment Setup</div>
-          <div class="sdk-section-desc">Configure for your deployment environment</div>
-
-          <div style="margin:0.5rem 0;">
-            <h4 style="font-size:13px;color:var(--text);margin:0.5rem 0;">Local/Self-Hosted LLM Shield</h4>
-            <div style="background:var(--bg-2);padding:1rem;border-radius:6px;">
-              <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
-export TENANT_ID="your_tenant_id"<br>
-export API_KEY="your_api_key"<br>
-export OPENAI_API_KEY="sk-your_openai_key"<br>
-export SERPER_API_KEY="your_serper_key"<br>
-export LLM_SHIELD_URL="<span id="crewai-base-url">loading...</span>"
-              </code>
-            </div>
-          </div>
-
-          <div style="margin:0.5rem 0;">
-            <h4 style="font-size:13px;color:var(--text);margin:0.5rem 0;">RunPod Hosted LLM Shield (Recommended)</h4>
-            <div style="background:var(--bg-2);padding:1rem;border-radius:6px;">
-              <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
-# Replace with your actual RunPod endpoint and credentials<br>
-export RUNPOD_TOKEN="rpa_YOUR_RUNPOD_TOKEN_HERE"<br>
-export TENANT_ID="tenant-YYYYMMDDHHMMSS-XXXXXX"<br>
-export API_KEY="tenant-YYYYMMDDHHMMSS-XXXXXX-key-XXXXXX"<br>
-export OPENAI_API_KEY="sk-your_openai_key"<br>
-export SERPER_API_KEY="your_serper_key"<br>
-export LLM_SHIELD_URL="https://your-llm-shield-endpoint.runpod.ai"
-              </code>
-            </div>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:0.5rem;padding:0.5rem;background:var(--accent-dim);border-radius:4px;">
-              💡 <strong>RunPod Benefits:</strong> GPU-accelerated models, auto-scaling, serverless inference, and managed infrastructure
-            </div>
-          </div>
-        </div>
-
-        <div class="sdk-section">
-          <div class="sdk-section-title">3. Complete CrewAI Integration</div>
-          <div class="sdk-section-desc">ProtectedCrewAI with multi-agent coordination and unified governance</div>
+          <div class="sdk-section-title">2. Complete Integration</div>
+          <div class="sdk-section-desc">Each CrewAI agent registers with Shield separately, enabling per-agent RBAC and shadow detection</div>
           <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
             <div style="background:var(--border);padding:0.5rem 1rem;font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border);">
-              crewai_integration.py
+              crewai_shield_agent.py
               <button onclick="copyToClipboard('crewai-code')" style="float:right;background:none;border:none;color:var(--accent-hover);cursor:pointer;font-size:11px;">Copy</button>
             </div>
             <div style="padding:1rem;overflow-x:auto;">
-              <pre id="crewai-code" style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code>#!/usr/bin/env python3
+              <pre id="crewai-code" style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text);"><code>"""
+CrewAI + LLM Shield — Multi-Agent with RBAC, Guardrails, Shadow Discovery
+Each crew member is a registered Shield agent with its own RBAC policy.
 """
-CrewAI + LLM Shield Integration Example
-Multi-agent crew with protected agents and unified policy enforcement
-"""
-
-import os
-import json
-import requests
-from typing import Dict, List, Any, Optional
+import os, json, requests
 from crewai import Agent, Task, Crew, Process
-from crewai_tools import SerperDevTool, WebsiteSearchTool, FileReadTool
-from langchain.llms import OpenAI
+from crewai.tools import BaseTool
+from typing import Type
+from pydantic import BaseModel, Field
 
-class LLMShieldCrewManager:
-    """Manages CrewAI integration with LLM Shield"""
+SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+API_KEY    = os.getenv("API_KEY")
 
-    def __init__(self):
-        # Support both local and RunPod hosted LLM Shield
-        self.base_url = os.getenv('LLM_SHIELD_URL', 'http://localhost:8080')
-        self.auth_token = os.getenv('RUNPOD_TOKEN')  # For RunPod hosted
-        self.api_key = os.getenv('API_KEY')
-        self.tenant_id = os.getenv('TENANT_ID')
+shield = requests.Session()
+shield.headers.update({
+    "X-API-Key":   API_KEY,
+    "Content-Type": "application/json",
+})
 
-        self.session = requests.Session()
-        headers = {
-            'Content-Type': 'application/json'
-        }
 
-        # Configure authentication based on deployment type
-        if self.auth_token:
-            # RunPod hosted LLM Shield
-            headers['Authorization'] = f'Bearer {self.auth_token}'
-
-        if self.api_key:
-            # API key for both local and RunPod
-            headers['X-API-Key'] = self.api_key
-
-        self.session.headers.update(headers)
-
-    def register_crew_agents(self, crew_config: Dict) -> bool:
-        """Register all agents in a crew with LLM Shield"""
-        success = True
-        for agent_config in crew_config.get('agents', []):
-            try:
-                response = self.session.post(
-                    f"{self.base_url}/v1/agents/registry",
-                    json=agent_config
-                )
-                if response.status_code in [200, 201]:
-                    print(f"✅ Agent '{agent_config['id']}' registered")
-                else:
-                    print(f"❌ Failed to register agent '{agent_config['id']}': {response.status_code}")
-                    success = False
-            except Exception as e:
-                print(f"❌ Error registering agent '{agent_config['id']}': {e}")
-                success = False
-        return success
-
-    def validate_input(self, message: str) -> Dict:
-        """Validate input against guardrails"""
-        payload = {
-            "message": message,
-            "tenant_id": self.tenant_id
-        }
-
-        try:
-            response = self.session.post(f"{self.base_url}/guardrails/input", json=payload)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                return {"safe": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"safe": False, "error": str(e)}
-
-    def validate_output(self, output: str) -> Dict:
-        """Validate output against guardrails"""
-        payload = {
-            "output": output,
-            "tenant_id": self.tenant_id
-        }
-
-        try:
-            response = self.session.post(f"{self.base_url}/guardrails/output", json=payload)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                return {"safe": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"safe": False, "error": str(e)}
-
-class ProtectedCrewAI:
-    """CrewAI with integrated LLM Shield protection"""
-
-    def __init__(self, crew_name: str):
-        self.crew_name = crew_name
-        self.shield_manager = LLMShieldCrewManager()
-        self.llm = OpenAI(temperature=0.1)
-        self.agents = []
-        self.tasks = []
-        self.crew = None
-
-    def create_protected_agent(self, agent_config: Dict) -> Agent:
-        """Create a CrewAI agent with LLM Shield protection"""
-
-        # Register with LLM Shield first
-        shield_config = {
-            "id": agent_config["id"],
-            "name": agent_config["role"],
-            "role": agent_config.get("role_type", "assistant"),
-            "description": agent_config["goal"],
-            "tools": [tool.name if hasattr(tool, 'name') else str(tool)
-                     for tool in agent_config.get("tools", [])],
-            "policies": agent_config.get("policies", [])
-        }
-
-        response = self.shield_manager.session.post(
-            f"{self.shield_manager.base_url}/v1/agents/registry",
-            json=shield_config
-        )
-
-        if response.status_code in [200, 201]:
-            print(f"✅ Agent '{agent_config['id']}' registered with LLM Shield")
-        else:
-            print(f"⚠️ Could not register agent with LLM Shield: {response.status_code}")
-
-        # Create CrewAI agent
-        agent = Agent(
-            role=agent_config["role"],
-            goal=agent_config["goal"],
-            backstory=agent_config.get("backstory", ""),
-            tools=agent_config.get("tools", []),
-            llm=self.llm,
-            verbose=True,
-            max_iter=agent_config.get("max_iterations", 5),
-            memory=agent_config.get("memory", True),
-            allow_delegation=agent_config.get("allow_delegation", False)
-        )
-
-        # Store agent with metadata
-        agent_data = {
-            "agent": agent,
-            "id": agent_config["id"],
-            "policies": agent_config.get("policies", [])
-        }
-        self.agents.append(agent_data)
-
-        return agent
-
-    def create_protected_task(self, task_config: Dict, agent: Agent) -> Task:
-        """Create a task with input/output validation"""
-
-        def validate_task_description(description):
-            """Validate task description"""
-            validation = self.shield_manager.validate_input(description)
-            if not validation.get('safe', True):
-                triggered = [g['guardrail'] for g in validation.get('guardrail_results', []) if not g.get('passed', True)]
-                raise ValueError(f"Task blocked by input guardrails: {', '.join(triggered)}")
-            return description
-
-        task = Task(
-            description=validate_task_description(task_config["description"]),
-            agent=agent,
-            expected_output=task_config.get("expected_output", "Detailed analysis and recommendations"),
-            tools=task_config.get("tools", [])
-        )
-
-        self.tasks.append(task)
-        return task
-
-    def setup_tool_policies(self, tool_policies: Dict):
-        """Setup tool policies for the crew"""
-        try:
-            response = self.shield_manager.session.put(
-                f"{self.shield_manager.base_url}/v1/agents/tools/policies",
-                json=tool_policies
-            )
-            if response.status_code == 200:
-                print("✅ Tool policies configured")
-            else:
-                print(f"⚠️ Could not configure tool policies: {response.status_code}")
-        except Exception as e:
-            print(f"⚠️ Error configuring tool policies: {e}")
-
-    def execute_crew(self, process_type: Process = Process.sequential) -> str:
-        """Execute the crew with full protection"""
-
-        # Create crew
-        self.crew = Crew(
-            agents=[agent_data["agent"] for agent_data in self.agents],
-            tasks=self.tasks,
-            process=process_type,
-            verbose=True,
-            memory=True
-        )
-
-        print(f"🚀 Executing crew '{self.crew_name}' with {len(self.agents)} agents")
-
-        try:
-            # Execute crew
-            result = self.crew.kickoff()
-
-            # Validate final output
-            validation = self.shield_manager.validate_output(str(result))
-            if not validation.get('safe', True):
-                triggered = [g['guardrail'] for g in validation.get('guardrail_results', []) if not g.get('passed', True)]
-                return f"🚫 Output blocked by guardrails: {', '.join(triggered)}"
-
-            print("✅ Crew execution completed successfully")
-            return str(result)
-
-        except Exception as e:
-            print(f"❌ Crew execution failed: {e}")
-            return f"Error: {str(e)}"
-
-def main():
-    """Example: Financial Research Crew with LLM Shield Protection"""
-
-    # Initialize protected crew
-    crew = ProtectedCrewAI("financial_research_crew")
-
-    # Setup tool policies
-    tool_policies = {
-        "serper_search": {
-            "allowed_domains": ["finance.yahoo.com", "bloomberg.com", "reuters.com", "sec.gov"],
-            "rate_limit": {"requests_per_minute": 20},
-            "content_filters": ["financial_news_only", "no_personal_data"],
-            "audit_required": True
+# ── 1. Register all crew agents (do once) ─────────────────────────
+def register_crew():
+    agents = [
+        {
+            "agent_id": "research-agent",
+            "name": "Research Analyst",
+            "description": "Searches public data sources",
+            "tools": ["web_search", "document_search"],
+            "role_permissions": {
+                "analyst": ["web_search", "document_search"],
+                "viewer":  ["web_search"],
+            },
         },
-        "website_search": {
-            "allowed_domains": ["sec.gov", "investor.gov", "finra.org"],
-            "max_pages": 5,
-            "content_filters": ["regulatory_content_only"],
-            "timeout": 30
-        }
-    }
+        {
+            "agent_id": "writer-agent",
+            "name": "Report Writer",
+            "description": "Writes final reports from research",
+            "tools": ["generate_report", "send_email"],
+            "role_permissions": {
+                "analyst": ["generate_report", "send_email"],
+                "viewer":  ["generate_report"],
+            },
+        },
+    ]
+    for a in agents:
+        r = shield.post(f"{SHIELD_URL}/v1/agents/registry", json=a)
+        print(f"Register {a['agent_id']}: {r.status_code}")
 
-    crew.setup_tool_policies(tool_policies)
 
-    # Create tools
-    search_tool = SerperDevTool()
-    website_tool = WebsiteSearchTool()
+# ── 2. Shield-aware tool wrapper ──────────────────────────────────
+class ShieldTool(BaseTool):
+    """Wraps any tool call through Shield's chat/agent for RBAC."""
+    agent_key: str = ""
+    user_role: str = "analyst"
 
-    # Create protected research agent
-    research_agent_config = {
-        "id": "financial_researcher_crew",
-        "role": "Senior Financial Research Analyst",
-        "role_type": "financial_analyst",
-        "goal": "Conduct comprehensive financial research and provide data-driven insights",
-        "backstory": """You are an expert financial research analyst with 15 years of experience
-        in equity research, financial modeling, and market analysis.""",
-        "tools": [search_tool, website_tool],
-        "policies": ["financial_compliance", "data_privacy", "professional_conduct"],
-        "max_iterations": 10,
-        "memory": True,
-        "allow_delegation": False
-    }
+    def _run(self, query: str) -> str:
+        result = shield.post(f"{SHIELD_URL}/v1/shield/chat/agent", json={
+            "messages": [{"role": "user", "content": query}],
+            "agent_key": self.agent_key,
+            "user_role": self.user_role,
+            "llm_api_key": os.getenv("OPENAI_API_KEY"),
+        }).json()
 
-    research_agent = crew.create_protected_agent(research_agent_config)
+        parts = []
+        for tc in result.get("tool_calls", []):
+            if tc["rbac"]["allowed"]:
+                parts.append(f"[{tc['tool_name']}] OK")
+            else:
+                parts.append(f"BLOCKED: {tc['tool_name']} — {tc['rbac']['message']}")
 
-    # Create protected analysis agent
-    analysis_agent_config = {
-        "id": "financial_analyst_crew",
-        "role": "Investment Analysis Specialist",
-        "role_type": "investment_analyst",
-        "goal": "Analyze financial data and provide investment recommendations",
-        "backstory": """You are a quantitative analyst specializing in investment analysis,
-        risk assessment, and portfolio optimization.""",
-        "tools": [],
-        "policies": ["investment_compliance", "risk_management", "client_confidentiality"],
-        "max_iterations": 8,
-        "memory": True,
-        "allow_delegation": False
-    }
+        # Shadow discovery
+        unreg = result.get("unregistered", {})
+        if unreg.get("agents"):
+            parts.append(f"Shadow agents detected: {unreg['agents']}")
+        if unreg.get("tools"):
+            parts.append(f"Shadow tools detected: {unreg['tools']}")
 
-    analysis_agent = crew.create_protected_agent(analysis_agent_config)
+        return result.get("text", "") or "\n".join(parts)
 
-    # Create protected tasks
-    research_task_config = {
-        "description": """Research the latest financial performance and market position of Apple Inc. (AAPL).
-        Focus on factual, publicly available information from reputable financial sources.""",
-        "expected_output": "Comprehensive research report with key financial metrics and market analysis",
-        "tools": [search_tool, website_tool]
-    }
 
-    analysis_task_config = {
-        "description": """Based on the research findings, provide a detailed investment analysis of Apple Inc.
-        Ensure all analysis follows regulatory guidelines and professional standards.""",
-        "expected_output": "Professional investment analysis with clear recommendation and supporting rationale"
-    }
+# ── 3. Input/output guardrails wrapper ────────────────────────────
+def check_input(text: str) -> str | None:
+    r = shield.post(f"{SHIELD_URL}/guardrails/input",
+                    json={"message": text}).json()
+    if r.get("action") == "block":
+        blocked = [g["guardrail"] for g in r.get("guardrail_results", [])
+                   if g.get("action") == "block"]
+        return f"Input blocked: {', '.join(blocked)}"
+    return None
 
-    research_task = crew.create_protected_task(research_task_config, research_agent)
-    analysis_task = crew.create_protected_task(analysis_task_config, analysis_agent)
+def check_output(text: str) -> str | None:
+    r = shield.post(f"{SHIELD_URL}/guardrails/output",
+                    json={"output": text}).json()
+    if r.get("action") == "block":
+        blocked = [g["guardrail"] for g in r.get("guardrail_results", [])
+                   if g.get("action") == "block"]
+        return f"Output blocked: {', '.join(blocked)}"
+    return None
 
-    # Execute the crew
-    result = crew.execute_crew(Process.sequential)
 
-    print("\n📋 Final Result:")
-    print("-" * 50)
-    print(result)
+# ── 4. Build the crew ─────────────────────────────────────────────
+class WebSearchInput(BaseModel):
+    query: str = Field(description="Search query")
+
+class WebSearchTool(ShieldTool):
+    name: str = "web_search"
+    description: str = "Search the web for information"
+    args_schema: Type[BaseModel] = WebSearchInput
+    agent_key: str = "research-agent"
+
+class GenerateReportInput(BaseModel):
+    query: str = Field(description="Report topic and data")
+
+class GenerateReportTool(ShieldTool):
+    name: str = "generate_report"
+    description: str = "Generate a formatted report"
+    args_schema: Type[BaseModel] = GenerateReportInput
+    agent_key: str = "writer-agent"
+
+def run_crew(topic: str, user_role: str = "analyst"):
+    # Input guardrails
+    block = check_input(topic)
+    if block:
+        return block
+
+    researcher = Agent(
+        role="Research Analyst",
+        goal=f"Research: {topic}",
+        backstory="Senior analyst with deep domain expertise",
+        tools=[WebSearchTool(user_role=user_role)],
+        verbose=True,
+    )
+    writer = Agent(
+        role="Report Writer",
+        goal="Write a clear, actionable report",
+        backstory="Technical writer specializing in research reports",
+        tools=[GenerateReportTool(user_role=user_role)],
+        verbose=True,
+    )
+
+    research_task = Task(
+        description=f"Research {topic} thoroughly using web search",
+        expected_output="Key findings with sources",
+        agent=researcher,
+    )
+    report_task = Task(
+        description="Synthesize research into a report",
+        expected_output="Formatted report with recommendations",
+        agent=writer,
+    )
+
+    crew = Crew(
+        agents=[researcher, writer],
+        tasks=[research_task, report_task],
+        process=Process.sequential,
+        verbose=True,
+    )
+    result = str(crew.kickoff())
+
+    # Output guardrails
+    block = check_output(result)
+    if block:
+        return block
+
+    return result
+
+
+# ── 5. Check for shadow agents ────────────────────────────────────
+def list_shadow_items():
+    """Pull all unregistered agents/tools the tenant has seen."""
+    r = shield.get(f"{SHIELD_URL}/v1/agents/unregistered").json()
+    if r.get("agents"):
+        print("Shadow agents:", json.dumps(r["agents"], indent=2))
+    if r.get("tools"):
+        print("Shadow tools:", json.dumps(r["tools"], indent=2))
+    return r
+
 
 if __name__ == "__main__":
-    main()</code></pre>
+    # register_crew()  # Uncomment on first run
+    print(run_crew("Analyze Q1 2026 market trends in AI"))
+    list_shadow_items()</code></pre>
             </div>
           </div>
         </div>
 
         <div class="sdk-section">
-          <div class="sdk-section-title">4. Multi-Agent Team Registration</div>
-          <div class="sdk-section-desc">How multiple agents are registered as a coordinated team</div>
+          <div class="sdk-section-title">3. Shadow Discovery for Crews</div>
+          <div class="sdk-section-desc">Detect crew members deployed without proper registration</div>
+          <div style="background:rgba(245,158,11,0.06);border:1px solid var(--warn);border-radius:8px;padding:1rem;margin:0.5rem 0;">
+            <div style="font-size:12px;color:var(--text);line-height:1.6;">
+              <strong style="color:var(--warn);">Multi-agent shadow detection:</strong><br>
+              1. Each CrewAI agent maps to a separate <code>agent_id</code> in Shield<br>
+              2. If any crew member is not registered, it is tracked as a shadow agent<br>
+              3. Tools used by unregistered agents are tracked as shadow tools<br>
+              4. <code>GET /v1/agents/unregistered</code> returns all shadow items<br>
+              5. Admin can register missing agents or dismiss false positives
+            </div>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">4. Multi-Agent Architecture</div>
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:1rem;margin:0.5rem 0;">
+            <div style="font-size:12px;color:var(--text);line-height:1.8;font-family:var(--font-mono);">
+              CrewAI Kickoff<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/input</span> ── validate crew task description<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <strong>Agent 1: Researcher</strong> (agent_key=research-agent)<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:var(--accent-hover);">Shield /v1/shield/chat/agent</span> ── RBAC per tool<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span style="color:var(--warn);">unregistered? → shadow discovery</span><br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <strong>Agent 2: Writer</strong> (agent_key=writer-agent)<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:var(--accent-hover);">Shield /v1/shield/chat/agent</span> ── RBAC per tool<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span style="color:var(--warn);">unregistered? → shadow discovery</span><br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/output</span> ── validate final output<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;└─▶ Result
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OpenAI Agents SDK -->
+      <div id="api-tab-openai-agents" class="api-tab-content hidden">
+        <div class="card" style="margin-bottom:1rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">OpenAI Agents SDK + LLM Shield</div>
+              <div class="card-subtitle">Wrap OpenAI function-calling agents with Shield guardrails, RBAC, and shadow discovery</div>
+            </div>
+          </div>
+          <div style="padding:0 1.25rem 1.25rem;">
+            <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Input/Output Guardrails</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Tool RBAC</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">1. Install</div>
+          <div style="background:var(--bg-2);padding:1rem;border-radius:6px;margin:0.5rem 0;">
+            <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
+pip install openai requests
+            </code>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">2. Complete Integration</div>
+          <div class="sdk-section-desc">ShieldedAgent wraps OpenAI function calling with pre/post guardrails and RBAC enforcement</div>
           <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
+            <div style="background:var(--border);padding:0.5rem 1rem;font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border);">
+              openai_shield_agent.py
+              <button onclick="copyToClipboard('openai-agents-code')" style="float:right;background:none;border:none;color:var(--accent-hover);cursor:pointer;font-size:11px;">Copy</button>
+            </div>
             <div style="padding:1rem;overflow-x:auto;">
-              <pre style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code># Team registration payload
-{
-    "team_id": "financial_advisory_team_v1",
-    "coordination_rules": {
-        "max_concurrent_agents": 3,
-        "information_sharing_rules": {
-            "allowed_data_types": ["market_data", "portfolio_metrics"],
-            "forbidden_data_types": ["personal_identifiers"],
-            "encryption_required": true
-        }
-    },
-    "agents": [
-        {
-            "id": "financial_researcher_crew",
-            "role": "market_researcher",
-            "responsibilities": ["market_analysis", "company_research"],
-            "data_access_level": "public_only"
+              <pre id="openai-agents-code" style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text);"><code>"""
+OpenAI Agents SDK + LLM Shield Integration
+Guardrails, RBAC, data policies, and shadow agent discovery
+"""
+import os, json, requests
+from openai import OpenAI
+
+SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+API_KEY    = os.getenv("API_KEY")           # Tenant API key
+AGENT_ID   = os.getenv("AGENT_ID", "my-openai-agent")  # Register this!
+USER_ROLE  = os.getenv("USER_ROLE", "user")
+
+client = OpenAI()
+shield = requests.Session()
+shield.headers.update({
+    "X-API-Key":   API_KEY,
+    "X-Agent-Key": AGENT_ID,
+    "X-User-Role": USER_ROLE,
+    "Content-Type": "application/json",
+})
+
+
+# ── 1. Register Agent (do this once) ──────────────────────────────
+def register_agent():
+    """Register the agent + its tools so Shield knows about it.
+    If you skip this, the agent appears as a SHADOW AGENT."""
+    resp = shield.post(f"{SHIELD_URL}/v1/agents/registry", json={
+        "agent_id": AGENT_ID,
+        "name": "My OpenAI Agent",
+        "description": "Customer support agent built with OpenAI SDK",
+        "tools": ["lookup_order", "cancel_order", "get_refund_status"],
+        "role_permissions": {
+            "user":    ["lookup_order", "get_refund_status"],
+            "admin":   ["lookup_order", "cancel_order", "get_refund_status"],
+            "viewer":  ["lookup_order"],
         },
-        {
-            "id": "financial_analyst_crew",
-            "role": "investment_analyst",
-            "responsibilities": ["investment_analysis", "recommendations"],
-            "data_access_level": "client_confidential"
-        }
+    })
+    print("Registered:", resp.json())
+
+
+# ── 2. Define tools (OpenAI function calling format) ──────────────
+tools = [
+    {"type": "function", "function": {
+        "name": "lookup_order",
+        "description": "Look up order details by order ID",
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}},
+            "required": ["order_id"],
+            "additionalProperties": False,
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "cancel_order",
+        "description": "Cancel an existing order",
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}, "reason": {"type": "string"}},
+            "required": ["order_id", "reason"],
+            "additionalProperties": False,
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "get_refund_status",
+        "description": "Check refund status for an order",
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}},
+            "required": ["order_id"],
+            "additionalProperties": False,
+        },
+    }},
+]
+
+
+# ── 3. Shield helpers ─────────────────────────────────────────────
+def check_input_guardrails(message: str) -> dict:
+    """Run input through Shield guardrails BEFORE sending to LLM."""
+    resp = shield.post(f"{SHIELD_URL}/guardrails/input",
+                       json={"message": message})
+    return resp.json()
+
+def check_output_guardrails(output: str) -> dict:
+    """Run LLM output through Shield guardrails BEFORE returning to user."""
+    resp = shield.post(f"{SHIELD_URL}/guardrails/output",
+                       json={"output": output})
+    return resp.json()
+
+def check_rbac(tool_name: str) -> dict:
+    """Check if the current agent+role can use this tool."""
+    # Shield's agent_chat does this automatically,
+    # but for custom flows you can call the policy endpoint:
+    resp = shield.get(f"{SHIELD_URL}/v1/agents/tools/policies/{tool_name}")
+    return resp.json()
+
+
+# ── 4. Shielded agent loop ────────────────────────────────────────
+def run_agent(user_message: str):
+    # Step 1: Input guardrails
+    guard_in = check_input_guardrails(user_message)
+    if guard_in.get("action") == "block":
+        blocked = [r for r in guard_in.get("guardrail_results", [])
+                   if r.get("action") == "block"]
+        print(f"BLOCKED by input guardrails: {blocked[0]['guardrail']}")
+        return f"Sorry, your message was blocked: {blocked[0]['message']}"
+
+    # Step 2: Call OpenAI with tools
+    messages = [
+        {"role": "system", "content": "You are a helpful support agent."},
+        {"role": "user", "content": user_message},
     ]
-}</code></pre>
+    response = client.chat.completions.create(
+        model="gpt-4o-mini", messages=messages,
+        tools=tools, tool_choice="auto",
+    )
+    msg = response.choices[0].message
+
+    # Step 3: If tool calls, enforce RBAC via Shield
+    if msg.tool_calls:
+        for tc in msg.tool_calls:
+            # Option A: Use Shield's agent_chat (handles RBAC + data policies)
+            chat_resp = shield.post(f"{SHIELD_URL}/v1/shield/chat/agent",
+                json={
+                    "messages": messages,
+                    "agent_key": AGENT_ID,
+                    "user_role": USER_ROLE,
+                    "llm_api_key": os.getenv("OPENAI_API_KEY"),
+                    "tools": tools,
+                })
+            result = chat_resp.json()
+
+            for tool_result in result.get("tool_calls", []):
+                name = tool_result["tool_name"]
+                if tool_result["rbac"]["allowed"]:
+                    print(f"  ALLOWED: {name}")
+                else:
+                    print(f"  BLOCKED: {name} — {tool_result['rbac']['message']}")
+
+            # Check for shadow warnings
+            if result.get("unregistered"):
+                unreg = result["unregistered"]
+                if unreg.get("agents"):
+                    print(f"  SHADOW AGENT detected: {unreg['agents']}")
+                if unreg.get("tools"):
+                    print(f"  SHADOW TOOLS detected: {unreg['tools']}")
+
+            return result.get("text", "")
+
+    # Step 4: Output guardrails on plain text responses
+    if msg.content:
+        guard_out = check_output_guardrails(msg.content)
+        if guard_out.get("action") == "block":
+            return "Sorry, the response was blocked by content policy."
+        return msg.content
+
+
+# ── 5. Run it ─────────────────────────────────────────────────────
+if __name__ == "__main__":
+    # register_agent()  # Uncomment on first run
+
+    # Normal request — allowed
+    print(run_agent("What's the status of order ORD-12345?"))
+
+    # This triggers RBAC block if role=user
+    print(run_agent("Cancel order ORD-12345, I changed my mind"))
+
+    # Shadow discovery: if AGENT_ID is not registered,
+    # Shield tracks it and shows it in the tenant portal
+</code></pre>
             </div>
           </div>
         </div>
 
         <div class="sdk-section">
-          <div class="sdk-section-title">5. Crew Tool Policies</div>
-          <div class="sdk-section-desc">Team-wide policies for tool usage and data access</div>
+          <div class="sdk-section-title">3. Shadow Discovery</div>
+          <div class="sdk-section-desc">What happens when a developer deploys an agent WITHOUT registering it</div>
+          <div style="background:rgba(245,158,11,0.06);border:1px solid var(--warn);border-radius:8px;padding:1rem;margin:0.5rem 0;">
+            <div style="font-size:12px;color:var(--text);line-height:1.6;">
+              <strong style="color:var(--warn);">If <code>AGENT_ID</code> is not registered:</strong><br>
+              1. Every API call with that <code>X-Agent-Key</code> is tracked by the middleware<br>
+              2. Any tools the LLM calls are flagged as shadow tools<br>
+              3. The tenant portal Agents tab shows a "Shadow Discovery" panel<br>
+              4. Metadata captured: call count, endpoints hit, roles used, first/last seen<br>
+              5. Admin can dismiss or register the agent from the UI
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Anthropic / Claude -->
+      <div id="api-tab-anthropic" class="api-tab-content hidden">
+        <div class="card" style="margin-bottom:1rem;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Anthropic Claude + LLM Shield</div>
+              <div class="card-subtitle">Protect Claude tool-use agents with Shield guardrails and RBAC</div>
+            </div>
+          </div>
+          <div style="padding:0 1.25rem 1.25rem;">
+            <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Claude Tool Use</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Guardrails</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">1. Install</div>
+          <div style="background:var(--bg-2);padding:1rem;border-radius:6px;margin:0.5rem 0;">
+            <code style="color:var(--accent-hover);font-family:var(--font-mono);font-size:12px;">
+pip install anthropic requests
+            </code>
+          </div>
+        </div>
+
+        <div class="sdk-section">
+          <div class="sdk-section-title">2. Complete Integration</div>
+          <div class="sdk-section-desc">Anthropic Claude with tool use, wrapped by Shield guardrails and RBAC</div>
           <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
+            <div style="background:var(--border);padding:0.5rem 1rem;font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border);">
+              anthropic_shield_agent.py
+              <button onclick="copyToClipboard('anthropic-code')" style="float:right;background:none;border:none;color:var(--accent-hover);cursor:pointer;font-size:11px;">Copy</button>
+            </div>
             <div style="padding:1rem;overflow-x:auto;">
-              <pre style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text);"><code># Crew tool policies
-{
-    "serper_search": {
-        "allowed_domains": ["finance.yahoo.com", "bloomberg.com", "reuters.com"],
-        "rate_limit": {"requests_per_minute": 20},
-        "content_filters": ["financial_news_only", "no_personal_data"],
-        "audit_required": true,
-        "team_access": {
-            "financial_researcher_crew": "full_access",
-            "financial_analyst_crew": "read_only"
-        }
-    },
-    "website_search": {
-        "allowed_domains": ["sec.gov", "investor.gov", "finra.org"],
-        "max_pages": 5,
-        "content_filters": ["regulatory_content_only"],
-        "timeout": 30,
-        "requires_approval": ["high_volume_requests"]
-    }
-}</code></pre>
+              <pre id="anthropic-code" style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text);"><code>"""
+Anthropic Claude + LLM Shield Integration
+Claude tool use with guardrails, RBAC, and shadow agent discovery
+"""
+import os, json, requests
+import anthropic
+
+SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+API_KEY    = os.getenv("API_KEY")
+AGENT_ID   = os.getenv("AGENT_ID", "my-claude-agent")
+USER_ROLE  = os.getenv("USER_ROLE", "user")
+
+claude = anthropic.Anthropic()
+shield = requests.Session()
+shield.headers.update({
+    "X-API-Key":   API_KEY,
+    "X-Agent-Key": AGENT_ID,
+    "X-User-Role": USER_ROLE,
+    "Content-Type": "application/json",
+})
+
+
+# ── 1. Register Agent ─────────────────────────────────────────────
+def register_agent():
+    """Register so Shield knows this agent. Skip = shadow agent."""
+    shield.post(f"{SHIELD_URL}/v1/agents/registry", json={
+        "agent_id": AGENT_ID,
+        "name": "Claude Support Agent",
+        "tools": ["search_knowledge_base", "create_ticket", "escalate_to_human"],
+        "role_permissions": {
+            "user":    ["search_knowledge_base"],
+            "support": ["search_knowledge_base", "create_ticket"],
+            "admin":   ["search_knowledge_base", "create_ticket", "escalate_to_human"],
+        },
+    })
+
+
+# ── 2. Define tools (Anthropic format) ────────────────────────────
+claude_tools = [
+    {"name": "search_knowledge_base",
+     "description": "Search the support knowledge base for answers",
+     "input_schema": {
+         "type": "object",
+         "properties": {"query": {"type": "string", "description": "Search query"}},
+         "required": ["query"],
+     }},
+    {"name": "create_ticket",
+     "description": "Create a support ticket",
+     "input_schema": {
+         "type": "object",
+         "properties": {
+             "subject": {"type": "string"},
+             "description": {"type": "string"},
+             "priority": {"type": "string", "enum": ["low", "medium", "high"]},
+         },
+         "required": ["subject", "description", "priority"],
+     }},
+    {"name": "escalate_to_human",
+     "description": "Escalate conversation to a human agent",
+     "input_schema": {
+         "type": "object",
+         "properties": {"reason": {"type": "string"}},
+         "required": ["reason"],
+     }},
+]
+
+
+# ── 3. Shield-wrapped Claude agent ────────────────────────────────
+def run_claude_agent(user_message: str):
+    # Pre-flight: input guardrails
+    guard_in = shield.post(f"{SHIELD_URL}/guardrails/input",
+                           json={"message": user_message}).json()
+    if guard_in.get("action") == "block":
+        blocked = next(r for r in guard_in["guardrail_results"]
+                       if r["action"] == "block")
+        return f"Blocked: {blocked['message']}"
+
+    # Call Claude with tools
+    response = claude.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1024,
+        system="You are a helpful support agent. Use tools when needed.",
+        messages=[{"role": "user", "content": user_message}],
+        tools=claude_tools,
+    )
+
+    # Process response blocks
+    results = []
+    for block in response.content:
+        if block.type == "text":
+            # Output guardrails on text
+            guard_out = shield.post(f"{SHIELD_URL}/guardrails/output",
+                                    json={"output": block.text}).json()
+            if guard_out.get("action") == "block":
+                results.append("Response blocked by output policy.")
+            else:
+                results.append(block.text)
+
+        elif block.type == "tool_use":
+            # RBAC check via Shield's chat endpoint
+            # Convert Claude tool format to OpenAI format for Shield
+            openai_tools = [{"type": "function", "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "strict": True,
+                "parameters": {**t["input_schema"], "additionalProperties": False},
+            }} for t in claude_tools]
+
+            chat_resp = shield.post(f"{SHIELD_URL}/v1/shield/chat/agent",
+                json={
+                    "messages": [
+                        {"role": "system", "content": "You are a support agent."},
+                        {"role": "user", "content": user_message},
+                    ],
+                    "agent_key": AGENT_ID,
+                    "user_role": USER_ROLE,
+                    "llm_api_key": os.getenv("OPENAI_API_KEY"),
+                    "tools": openai_tools,
+                }).json()
+
+            for tc in chat_resp.get("tool_calls", []):
+                if tc["rbac"]["allowed"]:
+                    results.append(f"Executing {tc['tool_name']}...")
+                    # Execute your actual tool logic here
+                else:
+                    results.append(f"BLOCKED: {tc['tool_name']} — "
+                                   f"{tc['rbac']['message']}")
+
+            # Shadow discovery feedback
+            if chat_resp.get("unregistered"):
+                u = chat_resp["unregistered"]
+                if u.get("agents"):
+                    results.append(f"[Shadow agent detected: {u['agents']}]")
+
+    return "\n".join(results)
+
+
+if __name__ == "__main__":
+    # register_agent()  # Uncomment on first run
+    print(run_claude_agent("Search for how to reset my password"))
+    print(run_claude_agent("Create an urgent ticket: billing error"))
+    print(run_claude_agent("Escalate this to a manager immediately"))
+</code></pre>
             </div>
           </div>
         </div>
 
-        <div class="card" style="margin-top:1.5rem;">
-          <div class="card-header">
-            <div>
-              <div class="card-title">🚀 CrewAI Benefits</div>
-              <div class="card-subtitle">Why use CrewAI with LLM Shield</div>
-            </div>
-          </div>
-          <div style="padding:1.25rem;">
-            <ul style="margin:0;padding-left:1.5rem;color:var(--text-dim);line-height:1.6;">
-              <li><strong>Multi-Agent Coordination:</strong> Multiple specialized agents working together</li>
-              <li><strong>Unified Governance:</strong> Single policy framework across all crew members</li>
-              <li><strong>Task Orchestration:</strong> Sequential and hierarchical workflows</li>
-              <li><strong>Team Memory:</strong> Shared context and learning across agents</li>
-              <li><strong>Role Specialization:</strong> Each agent has specific expertise and responsibilities</li>
-              <li><strong>Scalable Architecture:</strong> Easy to add new agents and capabilities</li>
-            </ul>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:1rem;">
-          <div class="card-header">
-            <div>
-              <div class="card-title">☁️ RunPod Deployment Benefits</div>
-              <div class="card-subtitle">Enterprise-grade hosting for multi-agent systems</div>
-            </div>
-          </div>
-          <div style="padding:1.25rem;">
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1rem;">
-              <div>
-                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">⚡ High-Performance Computing</h4>
-                <p style="margin:0;font-size:12px;color:var(--text-dim);">GPU clusters optimized for concurrent multi-agent workloads</p>
-              </div>
-              <div>
-                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">🔄 Auto-Scaling Crews</h4>
-                <p style="margin:0;font-size:12px;color:var(--text-dim);">Dynamically scale agent crews based on demand and complexity</p>
-              </div>
-              <div>
-                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">🌐 Global Deployment</h4>
-                <p style="margin:0;font-size:12px;color:var(--text-dim);">Deploy crews across multiple regions for reduced latency</p>
-              </div>
-              <div>
-                <h4 style="font-size:13px;color:var(--text);margin:0 0 0.5rem 0;">📊 Advanced Monitoring</h4>
-                <p style="margin:0;font-size:12px;color:var(--text-dim);">Real-time crew performance metrics and resource utilization</p>
-              </div>
+        <div class="sdk-section">
+          <div class="sdk-section-title">3. Integration Architecture</div>
+          <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:1rem;margin:0.5rem 0;">
+            <div style="font-size:12px;color:var(--text);line-height:1.8;font-family:var(--font-mono);">
+              User Message<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/input</span> ── block toxic/adversarial/PII<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--text-dim);">Claude API</span> (tool_use) ── LLM decides which tools<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/chat/agent</span> ── RBAC + data policies<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── allowed → execute tool<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── blocked → deny + log<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span style="color:var(--warn);">unregistered → shadow discovery</span><br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/output</span> ── block competitors/PII/bias<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;└─▶ Response to User
             </div>
           </div>
         </div>
@@ -2597,35 +2605,50 @@ function displayAgents(agents, unreg) {
     <div style="background:rgba(245,158,11,0.08);border:1px solid var(--warn);border-radius:8px;padding:1rem;margin-bottom:1rem;">
       <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;">
         <span style="font-size:16px;">⚠</span>
-        <span style="font-size:13px;font-weight:700;color:var(--warn);">Unregistered Usage Detected</span>
-        <span style="font-size:11px;color:var(--text-muted);margin-left:auto;">These were used via API but are not in your registry</span>
+        <span style="font-size:13px;font-weight:700;color:var(--warn);">Shadow Discovery</span>
+        <span style="font-size:11px;color:var(--text-muted);margin-left:auto;">Agents &amp; tools used via API but not in your registry</span>
       </div>`;
 
     if (unregAgentKeys.length > 0) {
-      html += `<div style="font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px;">Unregistered Agents</div>`;
-      html += `<div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:${unregToolKeys.length > 0 ? '0.75rem' : '0'};">`;
+      html += `<div style="font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px;">Shadow Agents (${unregAgentKeys.length})</div>`;
+      html += `<div style="display:flex;flex-direction:column;gap:0.4rem;margin-bottom:${unregToolKeys.length > 0 ? '0.75rem' : '0'};">`;
       for (const [agentId, meta] of Object.entries(unreg.agents)) {
         const ago = _timeAgo(meta.last_seen);
+        const endpoints = (meta.endpoints || []).map(e => e.split('/').pop()).join(', ');
+        const roles = (meta.roles || []).join(', ');
+        const source = meta.source === 'middleware_discovery' ? 'API' : 'chat';
         html += `
-        <div style="display:flex;align-items:center;gap:0.5rem;background:var(--bg-3);border:1px solid var(--warn);border-radius:6px;padding:0.4rem 0.65rem;">
-          <span style="font-family:monospace;font-size:12px;color:var(--warn);font-weight:600;">${agentId}</span>
-          <span style="font-size:10px;color:var(--text-muted);">${meta.call_count || 1} call${(meta.call_count||1)>1?'s':''} · ${ago}</span>
-          <button onclick="dismissUnregistered('agents','${agentId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:0 2px;" title="Dismiss">✕</button>
+        <div style="background:var(--bg-3);border:1px solid var(--warn);border-radius:6px;padding:0.5rem 0.75rem;">
+          <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;">
+            <span style="font-family:monospace;font-size:12px;color:var(--warn);font-weight:700;">${agentId}</span>
+            <span style="font-size:9px;padding:1px 6px;border-radius:10px;background:rgba(245,158,11,0.15);color:var(--warn);font-weight:600;">${source}</span>
+            <span style="font-size:10px;color:var(--text-muted);margin-left:auto;">${meta.call_count || 1} call${(meta.call_count||1)>1?'s':''} · ${ago}</span>
+            <button onclick="dismissUnregistered('agents','${agentId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:0 2px;" title="Dismiss">✕</button>
+          </div>
+          <div style="display:flex;gap:1rem;font-size:10px;color:var(--text-muted);">
+            ${endpoints ? `<span>Endpoints: <span style="color:var(--text-dim);">${endpoints}</span></span>` : ''}
+            ${roles ? `<span>Roles: <span style="color:var(--text-dim);">${roles}</span></span>` : ''}
+            ${meta.first_seen ? `<span>First seen: <span style="color:var(--text-dim);">${_timeAgo(meta.first_seen)}</span></span>` : ''}
+          </div>
         </div>`;
       }
       html += `</div>`;
     }
 
     if (unregToolKeys.length > 0) {
-      html += `<div style="font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px;">Unregistered Tools</div>`;
-      html += `<div style="display:flex;flex-wrap:wrap;gap:0.4rem;">`;
+      html += `<div style="font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px;">Shadow Tools (${unregToolKeys.length})</div>`;
+      html += `<div style="display:flex;flex-direction:column;gap:0.4rem;">`;
       for (const [toolId, meta] of Object.entries(unreg.tools)) {
         const ago = _timeAgo(meta.last_seen);
         html += `
-        <div style="display:flex;align-items:center;gap:0.5rem;background:var(--bg-3);border:1px solid var(--warn);border-radius:6px;padding:0.4rem 0.65rem;">
-          <span style="font-family:monospace;font-size:12px;color:var(--warn);font-weight:600;">${toolId}</span>
-          <span style="font-size:10px;color:var(--text-muted);">${meta.call_count || 1} call${(meta.call_count||1)>1?'s':''} · ${ago}${meta.seen_from_agent ? ' · via '+meta.seen_from_agent : ''}</span>
-          <button onclick="dismissUnregistered('tools','${toolId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:0 2px;" title="Dismiss">✕</button>
+        <div style="background:var(--bg-3);border:1px solid var(--warn);border-radius:6px;padding:0.5rem 0.75rem;">
+          <div style="display:flex;align-items:center;gap:0.5rem;">
+            <span style="font-family:monospace;font-size:12px;color:var(--warn);font-weight:700;">${toolId}</span>
+            <span style="font-size:10px;color:var(--text-muted);">${meta.call_count || 1} call${(meta.call_count||1)>1?'s':''} · ${ago}</span>
+            ${meta.seen_from_agent ? `<span style="font-size:10px;color:var(--text-muted);">via <span style="color:var(--text-dim);">${meta.seen_from_agent}</span></span>` : ''}
+            <span style="margin-left:auto;"></span>
+            <button onclick="dismissUnregistered('tools','${toolId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:0 2px;" title="Dismiss">✕</button>
+          </div>
         </div>`;
       }
       html += `</div>`;
@@ -4057,6 +4080,34 @@ const API_ENDPOINTS = [
         method: 'DELETE', path: '/v1/agents/registry/{agent_id}',
         desc: 'Delete an agent',
         example_response: { success: true, message: 'Agent deleted successfully' }
+      },
+      {
+        method: 'GET', path: '/v1/agents/roles',
+        desc: 'Get all distinct roles across registered agents',
+        example_response: { success: true, roles: ['doctor','nurse','admin','patient'], count: 4 }
+      }
+    ]
+  },
+  {
+    section: 'Shadow Discovery',
+    desc: 'Track unregistered agents and tools that call Shield without being in the registry.',
+    endpoints: [
+      {
+        method: 'GET', path: '/v1/agents/unregistered',
+        desc: 'List all unregistered (shadow) agents and tools detected by Shield',
+        example_response: {
+          agents: {
+            'unknown-bot': { type: 'agent', source: 'middleware', endpoints: ['/v1/shield/chat/agent','/guardrails/input'], roles: ['user'], call_count: 14, first_seen: '2026-04-10T08:22:00Z', last_seen: '2026-04-12T14:05:00Z' }
+          },
+          tools: {
+            'secret_scraper': { type: 'tool', source: 'chat_tool_call', seen_from_agent: 'unknown-bot', call_count: 3, first_seen: '2026-04-11T10:00:00Z', last_seen: '2026-04-12T14:05:00Z' }
+          }
+        }
+      },
+      {
+        method: 'DELETE', path: '/v1/agents/unregistered/{item_type}/{item_id}',
+        desc: 'Dismiss a shadow item (item_type = "agent" or "tool")',
+        example_response: { success: true, message: "Dismissed shadow agent 'unknown-bot'" }
       }
     ]
   },
@@ -4203,13 +4254,34 @@ const API_ENDPOINTS = [
   },
   {
     section: 'Agent Chat',
-    desc: 'LLM-powered chat with RBAC-enforced function calling. Requires an LLM API key.',
+    desc: 'LLM-powered chat with RBAC-enforced function calling, data policies, and shadow detection.',
     endpoints: [
       {
         method: 'POST', path: '/v1/shield/chat/agent',
-        desc: 'Send a chat message; LLM decides tool calls, RBAC enforces permissions',
-        example_body: { messages: [{ role: 'user', content: 'Look up patient P-1234' }], agent_key: 'healthcare-doctor', user_role: 'nurse', llm_api_key: 'sk-...', llm_model: 'gpt-4o-mini' },
-        example_response: { assistant_message: '...', tool_results: [{ tool_name: 'patient_lookup', arguments: { patient_id: 'P-1234' }, rbac: { allowed: false, action: 'block', message: "Tool 'patient_lookup' blocked" } }] }
+        desc: 'Send a chat message; LLM decides tool calls, RBAC enforces permissions, detects shadow items',
+        example_body: {
+          messages: [{ role: 'user', content: 'Look up patient P-1234' }],
+          agent_key: 'healthcare-doctor',
+          user_role: 'nurse',
+          llm_api_key: 'sk-...',
+          llm_model: 'gpt-4o-mini',
+          user_supplied_tools: ['patient_lookup', 'custom_unregistered_tool']
+        },
+        example_response: {
+          assistant_message: '...',
+          tool_calls: [
+            {
+              tool_name: 'patient_lookup',
+              arguments: { patient_id: 'P-1234' },
+              rbac: { allowed: false, action: 'block', message: "Tool 'patient_lookup' blocked for role 'nurse'" },
+              data_rule_violations: []
+            }
+          ],
+          unregistered: {
+            agents: [],
+            tools: ['custom_unregistered_tool']
+          }
+        }
       }
     ]
   },
@@ -5489,26 +5561,11 @@ function copyToClipboard(elementId) {
   }
 }
 
-// Update base URLs in examples when API key is loaded
+// Update dynamic base URLs in integration examples
 function updateExampleBaseUrls() {
   const baseUrl = window.location.origin;
-  const langchainUrl = document.getElementById('langchain-base-url');
-  const crewaicUrl = document.getElementById('crewai-base-url');
-
-  if (langchainUrl) {
-    langchainUrl.textContent = baseUrl;
-  }
-  if (crewaicUrl) {
-    crewaicUrl.textContent = baseUrl;
-  }
+  document.querySelectorAll('.shield-base-url').forEach(el => { el.textContent = baseUrl; });
 }
-
-// Call updateExampleBaseUrls when API tab is shown
-const originalRenderAllApiTabs = window.renderAllApiTabs || function() {};
-window.renderAllApiTabs = function() {
-  originalRenderAllApiTabs();
-  updateExampleBaseUrls();
-};
 
 // ── Playground ────────────────────────────
 let PG_MODE = 'runpod';
