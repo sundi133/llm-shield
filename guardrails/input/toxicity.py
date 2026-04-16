@@ -1,11 +1,13 @@
 """Input toxicity classifier — detects toxic, abusive, and hateful content using LLM."""
 
+import asyncio
 import time
 from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
+from core.text_utils import estimate_tokens, chunk_text, build_history_messages, trim_history_to_budget
 
 _SYSTEM_PROMPT = (
     "You are a toxicity classifier for user messages sent to AI agents.\n\n"
@@ -30,6 +32,13 @@ _USER_PREFIX = (
 
 _CSV_FIELDS = ["is_toxic", "toxicity_score", "category", "severity"]
 
+# ---------------------------------------------------------------------------
+# Token budget helpers
+# ---------------------------------------------------------------------------
+
+_RESERVED_TOKENS = 350  # system prompt (~280) + output (20) + overhead (~50)
+_DEFAULT_SLOT_CONTEXT = 4096  # 8196 max-model-len / 2 (conservative)
+
 
 class ToxicityGuardrail(BaseGuardrail):
     """Detect toxic, abusive, and hateful content in user input.
@@ -43,28 +52,14 @@ class ToxicityGuardrail(BaseGuardrail):
     tier = "slow"
     stage = "input"
 
-    async def check(
-        self, content: str, context: Optional[dict] = None
+    async def _check_single(
+        self, content: str, history_messages: list[dict], threshold: float
     ) -> GuardrailResult:
-        threshold = self.settings.get("threshold", 0.7)
+        """Check a single chunk of content for toxicity."""
         start = time.perf_counter()
 
-        # Build messages with conversation history for multi-turn awareness
-        messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-        ]
-
-        conversation_history = (context or {}).get("conversation_history", [])
-        if conversation_history:
-            prior_turns = conversation_history[:-1][-6:]
-            for turn in prior_turns:
-                messages.append(
-                    {
-                        "role": turn.get("role", "user"),
-                        "content": turn.get("content", ""),
-                    }
-                )
-
+        messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+        messages.extend(history_messages)
         messages.append({"role": "user", "content": f"{_USER_PREFIX}{content}"})
 
         try:
@@ -116,5 +111,55 @@ class ToxicityGuardrail(BaseGuardrail):
             guardrail_name=self.name,
             message="No toxic content detected",
             details=result,
+            latency_ms=elapsed,
+        )
+
+    async def check(
+        self, content: str, context: Optional[dict] = None
+    ) -> GuardrailResult:
+        threshold = self.settings.get("threshold", 0.7)
+        start = time.perf_counter()
+
+        # Build conversation history for context
+        history_messages = build_history_messages(context)
+
+        # Calculate token budgets for chunking
+        slot_context = self.settings.get("slot_context", _DEFAULT_SLOT_CONTEXT)
+        available_tokens = slot_context - _RESERVED_TOKENS
+
+        # Trim history to fit within budget
+        history_messages, history_tokens = trim_history_to_budget(
+            history_messages, available_tokens
+        )
+        content_budget = available_tokens - history_tokens
+        content_tokens = estimate_tokens(content)
+
+        # Single call if content fits (most common path)
+        if content_tokens <= content_budget:
+            result = await self._check_single(content, history_messages, threshold)
+            result.latency_ms = (time.perf_counter() - start) * 1000
+            return result
+
+        # Chunk and check in parallel for large inputs
+        chunks = chunk_text(content, content_budget)
+        tasks = [
+            self._check_single(chunk, history_messages, threshold)
+            for chunk in chunks
+        ]
+        results = await asyncio.gather(*tasks)
+
+        for r in results:
+            if not r.passed:
+                r.latency_ms = (time.perf_counter() - start) * 1000
+                r.message = f"[chunked {len(chunks)} parts] {r.message}"
+                return r
+
+        elapsed = (time.perf_counter() - start) * 1000
+        return GuardrailResult(
+            passed=True,
+            action="pass",
+            guardrail_name=self.name,
+            message=f"No toxic content detected (checked {len(chunks)} chunks)",
+            details={"chunks_checked": len(chunks)},
             latency_ms=elapsed,
         )
