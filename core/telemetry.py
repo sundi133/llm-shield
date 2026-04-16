@@ -428,6 +428,16 @@ def init_telemetry(config: Optional[dict] = None):
 
     _flush_interval = config.get("flush_interval_seconds", 5.0)
 
+    # File exporter — only if explicitly enabled in config
+    file_cfg = config.get("file", {})
+    if file_cfg.get("enabled", False):
+        _exporters.append(FileExporter(
+            path=file_cfg.get("path", "logs/votal-shield.json"),
+            max_size_mb=file_cfg.get("max_size_mb", 100),
+            max_files=file_cfg.get("max_files", 10),
+        ))
+        logger.info(f"File exporter: {file_cfg.get('path', 'logs/votal-shield.json')}")
+
     # Elasticsearch — env vars override yaml
     es_cfg = config.get("elasticsearch", {})
     es_url = os.environ.get("VOTAL_ES_URL", es_cfg.get("url", ""))
