@@ -365,10 +365,15 @@ class FileExporter(BaseExporter):
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     async def export(self, events: list[dict]):
+        unsafe = [e for e in events
+                  if e.get("votal.safe") is False
+                  or e.get("event.kind") == "alert"]
+        if not unsafe:
+            return
         self._rotate_if_needed()
         try:
             with open(self.path, "a") as f:
-                for event in events:
+                for event in unsafe:
                     f.write(json.dumps(event, default=str) + "\n")
         except Exception as e:
             logger.error(f"File export failed: {e}")
