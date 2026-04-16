@@ -78,7 +78,9 @@ python3 -m vllm.entrypoints.openai.api_server \
   --max-num-batched-tokens 8196 \
   --max-num-seqs 24 \
   --gpu-memory-utilization 0.85 \
-  --enable-prefix-caching &
+  --enable-prefix-caching \
+  --language-model-only \
+  --performance-mode throughput &
 
 VLLM_PID=$!
 
