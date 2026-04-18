@@ -46,7 +46,6 @@ ENV LLM_BACKEND_TYPE=vllm
 
 # Optional LiteLLM support (disabled by default to maintain existing behavior)
 ENV ENABLE_LITELLM=false
-ENV LITELLM_PORT=4000
 ENV FORCE_GENERATE_CONFIG=false
 
 # Provider-specific model selection (optional, uses defaults if not specified)
@@ -90,8 +89,8 @@ RUN echo '#!/usr/bin/env python3' > /generate-litellm-config.py && \
 
 RUN chmod +x /generate-litellm-config.py
 
-# Expose ports for vLLM server, LiteLLM server (when enabled), and main application
-EXPOSE 8000 4000 80
+# Expose ports for vLLM/LiteLLM server (port 8000) and main application (port 80)
+EXPOSE 8000 80
 
 # Create startup script - vLLM by default, LiteLLM if enabled
 #
@@ -107,7 +106,7 @@ RUN echo '#!/bin/bash' > /start-services.sh && \
     echo '  echo "🌩️ LiteLLM enabled - starting cloud model support..."' >> /start-services.sh && \
     echo '  python3 /generate-litellm-config.py' >> /start-services.sh && \
     echo '  echo "Starting LiteLLM server..."' >> /start-services.sh && \
-    echo '  litellm --port $LITELLM_PORT --config /runpod/config/litellm_config.yaml --host 0.0.0.0 &' >> /start-services.sh && \
+    echo '  litellm --port $VLLM_PORT --config /runpod/config/litellm_config.yaml --host 0.0.0.0 &' >> /start-services.sh && \
     echo '  sleep 10' >> /start-services.sh && \
     echo '  echo "✅ LiteLLM server started!"' >> /start-services.sh && \
     echo 'else' >> /start-services.sh && \
