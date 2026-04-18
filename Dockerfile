@@ -12,8 +12,8 @@ WORKDIR /runpod
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install LiteLLM for optional cloud model support (disabled by default)
-RUN pip install --no-cache-dir litellm[proxy] pyyaml backoff jinja2 openai anthropic google-generativeai boto3
+# Install minimal LiteLLM for optional cloud model support (disabled by default)
+RUN pip install --no-cache-dir litellm==1.45.0 pyyaml
 
 # Copy application code
 COPY handler.py .
