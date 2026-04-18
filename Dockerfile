@@ -12,8 +12,8 @@ WORKDIR /runpod
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install minimal LiteLLM for optional cloud model support (disabled by default)
-RUN pip install --no-cache-dir litellm==1.45.0 pyyaml
+# Install LiteLLM with essential dependencies for optional cloud model support (disabled by default)
+RUN pip install --no-cache-dir litellm==1.45.0 pyyaml backoff jinja2
 
 # Copy application code
 COPY handler.py .
