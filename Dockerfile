@@ -47,6 +47,15 @@ ENV LLM_BACKEND_TYPE=vllm
 # Optional LiteLLM support (disabled by default to maintain existing behavior)
 ENV ENABLE_LITELLM=false
 ENV LITELLM_PORT=4000
+ENV FORCE_GENERATE_CONFIG=false
+
+# Provider-specific model selection (optional, uses defaults if not specified)
+ENV OPENAI_MODEL=""
+ENV ANTHROPIC_MODEL=""
+ENV OPENROUTER_MODEL=""
+ENV GOOGLE_MODEL=""
+ENV AZURE_MODEL=""
+ENV AWS_MODEL=""
 
 # vLLM Performance Optimizations - Cache Directories
 ENV CACHE=/tmp/cache
@@ -71,98 +80,175 @@ RUN cat > /generate-litellm-config.py << 'EOF'
 
 import os
 import yaml
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
-def get_available_providers() -> Dict[str, Dict]:
-    """Detect which providers are configured via environment variables"""
-    providers = {}
+def get_available_models() -> Tuple[List[Dict], str]:
+    """Generate model list based on available environment variables"""
+    model_list = []
+    default_model = None
 
-    # OpenAI
+    # OpenRouter models (prioritized for default)
+    if os.getenv('OPENROUTER_API_KEY'):
+        openrouter_model = os.getenv('OPENROUTER_MODEL', 'qwen/qwen-2.5-72b-instruct').strip()
+
+        # Create model name from OpenRouter path
+        model_name = openrouter_model.split('/')[-1].replace('-', '_').replace('.', '_')
+
+        openrouter_config = {
+            'model_name': model_name,
+            'litellm_params': {
+                'model': f'openrouter/{openrouter_model}',
+                'api_base': 'https://openrouter.ai/api/v1',
+                'api_key': 'os.environ/OPENROUTER_API_KEY',
+                'timeout': 120,
+                'max_retries': 3
+            }
+        }
+        model_list.append(openrouter_config)
+        if not default_model:
+            default_model = model_name
+
+    # OpenAI direct
     if os.getenv('OPENAI_API_KEY'):
-        providers['openai'] = {
-            'api_key': 'OPENAI_API_KEY',
-            'models': ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo']
-        }
+        openai_model = os.getenv('OPENAI_MODEL', 'gpt-4o-mini').strip()
 
-    # Anthropic
-    if os.getenv('ANTHROPIC_API_KEY'):
-        providers['anthropic'] = {
-            'api_key': 'ANTHROPIC_API_KEY',
-            'models': ['claude-3-sonnet-20240229', 'claude-3-haiku-20240307']
+        # Create clean model name
+        model_name = openai_model.replace('-', '_').replace('.', '_')
+
+        openai_config = {
+            'model_name': model_name,
+            'litellm_params': {
+                'model': f'openai/{openai_model}',
+                'api_key': 'os.environ/OPENAI_API_KEY',
+                'timeout': 120,
+                'max_retries': 3
+            }
         }
+        model_list.append(openai_config)
+        if not default_model:
+            default_model = model_name
+
+    # Anthropic direct
+    if os.getenv('ANTHROPIC_API_KEY'):
+        anthropic_model = os.getenv('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022').strip()
+
+        # Create clean model name
+        model_name = anthropic_model.replace('-', '_').replace('.', '_')
+
+        anthropic_config = {
+            'model_name': model_name,
+            'litellm_params': {
+                'model': f'anthropic/{anthropic_model}',
+                'api_key': 'os.environ/ANTHROPIC_API_KEY',
+                'timeout': 120,
+                'max_retries': 3
+            }
+        }
+        model_list.append(anthropic_config)
+        if not default_model:
+            default_model = model_name
+
+    # Google Gemini
+    if os.getenv('GOOGLE_API_KEY'):
+        google_model = os.getenv('GOOGLE_MODEL', 'gemini-1.5-pro').strip()
+
+        # Create clean model name
+        model_name = google_model.replace('-', '_').replace('.', '_')
+
+        google_config = {
+            'model_name': model_name,
+            'litellm_params': {
+                'model': f'gemini/{google_model}',
+                'api_key': 'os.environ/GOOGLE_API_KEY',
+                'timeout': 120,
+                'max_retries': 3
+            }
+        }
+        model_list.append(google_config)
+        if not default_model:
+            default_model = model_name
 
     # Azure OpenAI
     if os.getenv('AZURE_OPENAI_KEY') and os.getenv('AZURE_OPENAI_ENDPOINT'):
-        providers['azure'] = {
-            'api_key': 'AZURE_OPENAI_KEY',
-            'api_base': 'AZURE_OPENAI_ENDPOINT',
-            'api_version': '2023-12-01-preview',
-            'models': ['azure/gpt-4', 'azure/gpt-35-turbo']
-        }
+        azure_model = os.getenv('AZURE_MODEL', 'gpt-4').strip()
 
-    # Google
-    if os.getenv('GOOGLE_API_KEY'):
-        providers['google'] = {
-            'api_key': 'GOOGLE_API_KEY',
-            'models': ['gemini/gemini-pro', 'gemini/gemini-1.5-pro']
-        }
+        # Create clean model name
+        model_name = f"azure_{azure_model}".replace('-', '_').replace('.', '_')
 
-    # OpenRouter
-    if os.getenv('OPENROUTER_API_KEY'):
-        providers['openrouter'] = {
-            'api_key': 'OPENROUTER_API_KEY',
-            'api_base': 'https://openrouter.ai/api/v1',
-            'models': ['openrouter/openai/gpt-4', 'openrouter/anthropic/claude-3-sonnet']
+        azure_config = {
+            'model_name': model_name,
+            'litellm_params': {
+                'model': f'azure/{azure_model}',
+                'api_key': 'os.environ/AZURE_OPENAI_KEY',
+                'api_base': 'os.environ/AZURE_OPENAI_ENDPOINT',
+                'api_version': '2024-02-01',
+                'timeout': 120,
+                'max_retries': 3
+            }
         }
+        model_list.append(azure_config)
+        if not default_model:
+            default_model = model_name
 
     # AWS Bedrock
     if os.getenv('AWS_ACCESS_KEY_ID') and os.getenv('AWS_SECRET_ACCESS_KEY'):
-        providers['aws'] = {
-            'aws_access_key_id': 'AWS_ACCESS_KEY_ID',
-            'aws_secret_access_key': 'AWS_SECRET_ACCESS_KEY',
-            'aws_region_name': os.getenv('AWS_REGION', 'us-east-1'),
-            'models': ['bedrock/anthropic.claude-3-sonnet-20240229-v1:0']
-        }
+        aws_model = os.getenv('AWS_MODEL', 'anthropic.claude-3-sonnet-20240229-v1:0').strip()
 
-    return providers
+        # Create clean model name
+        model_name = f"bedrock_{aws_model}".replace('.', '_').replace(':', '_').replace('-', '_')
+
+        bedrock_config = {
+            'model_name': model_name,
+            'litellm_params': {
+                'model': f'bedrock/{aws_model}',
+                'aws_access_key_id': 'os.environ/AWS_ACCESS_KEY_ID',
+                'aws_secret_access_key': 'os.environ/AWS_SECRET_ACCESS_KEY',
+                'aws_region_name': os.getenv('AWS_REGION', 'us-east-1'),
+                'timeout': 120,
+                'max_retries': 3
+            }
+        }
+        model_list.append(bedrock_config)
+        if not default_model:
+            default_model = model_name
+
+    return model_list, default_model
 
 def generate_litellm_config() -> Dict:
     """Generate complete LiteLLM configuration"""
-    providers = get_available_providers()
+    model_list, default_model = get_available_models()
 
-    if not providers:
+    if not model_list:
         print("⚠️ No provider API keys found. Using minimal config.")
         return {
             "model_list": [],
             "general_settings": {"cost_tracking": True}
         }
 
-    model_list = []
-    model_groups = {}
+    # Build model group aliases for common routing patterns
+    model_names = [m['model_name'] for m in model_list]
+    model_group_alias = {}
 
-    for provider_name, provider_config in providers.items():
-        models = provider_config.pop('models', [])
-        model_groups[provider_name] = []
+    if default_model:
+        model_group_alias['default'] = default_model
+        model_group_alias['gpt-4'] = default_model  # Route gpt-4 requests to default
+        model_group_alias['claude'] = default_model  # Route claude requests to default
 
-        for model in models:
-            model_name = f"{provider_name}-{model.split('/')[-1].replace(':', '-')}"
-            model_groups[provider_name].append(model_name)
-
-            litellm_params = {
-                'model': model,
-                **{k: f"os.environ/{v}" for k, v in provider_config.items()}
-            }
-
-            model_list.append({
-                'model_name': model_name,
-                'litellm_params': litellm_params
-            })
+    # Add specific routing for available models
+    if 'qwen3.5-27b' in model_names:
+        model_group_alias['qwen'] = 'qwen3.5-27b'
+    if any('claude' in name for name in model_names):
+        claude_model = next(name for name in model_names if 'claude' in name)
+        model_group_alias['claude'] = claude_model
+    if any('gpt' in name for name in model_names):
+        gpt_model = next(name for name in model_names if 'gpt' in name)
+        model_group_alias['gpt-4'] = gpt_model
 
     config = {
         'model_list': model_list,
         'router_settings': {
             'routing_strategy': 'simple-shuffle',
-            'model_group_alias': model_groups
+            'model_group_alias': model_group_alias
         },
         'general_settings': {
             'cost_tracking': True,
@@ -193,6 +279,18 @@ RUN chmod +x /generate-litellm-config.py
 EXPOSE 8000 4000 80
 
 # Create startup script - vLLM by default, LiteLLM if enabled
+#
+# LiteLLM Configuration Options:
+# 1. Auto-generated (default): Set API keys via env vars, config auto-generated
+# 2. Custom config: Mount your own litellm_config.yaml to /runpod/config/
+# 3. Force regenerate: Set FORCE_GENERATE_CONFIG=true to override existing custom config
+#
+# Examples:
+# Auto-generated: -e OPENROUTER_API_KEY=sk-or-...
+# Specify models: -e ANTHROPIC_API_KEY=sk-ant-... -e ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+# Multiple:       -e OPENAI_API_KEY=sk-... -e OPENAI_MODEL=gpt-4o-mini -e OPENROUTER_API_KEY=sk-or-... -e OPENROUTER_MODEL=qwen/qwen-2.5-72b-instruct
+# Custom config:  -v ./my-config.yaml:/runpod/config/litellm_config.yaml
+# Force regen:    -e FORCE_GENERATE_CONFIG=true -e OPENAI_API_KEY=sk-...
 RUN cat > /start-services.sh << 'EOF'
 #!/bin/bash
 set -e
@@ -200,9 +298,20 @@ set -e
 if [ "$ENABLE_LITELLM" = "true" ]; then
     echo "🌩️ LiteLLM enabled - starting cloud model support..."
 
-    # Generate dynamic config based on environment variables
-    echo "Generating LiteLLM configuration..."
-    python3 /generate-litellm-config.py
+    # Check if custom config exists, otherwise generate dynamic one
+    if [ -f "/runpod/config/litellm_config.yaml" ] && [ "$FORCE_GENERATE_CONFIG" != "true" ]; then
+        echo "📋 Using existing custom litellm_config.yaml"
+        echo "   To regenerate: set FORCE_GENERATE_CONFIG=true"
+    else
+        echo "🔧 Generating dynamic LiteLLM configuration..."
+        python3 /generate-litellm-config.py
+    fi
+
+    # Validate config exists
+    if [ ! -f "/runpod/config/litellm_config.yaml" ]; then
+        echo "❌ No litellm_config.yaml found and generation failed"
+        exit 1
+    fi
 
     # Start LiteLLM server in background
     echo "Starting LiteLLM server..."
