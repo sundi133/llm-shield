@@ -13,7 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install LiteLLM for optional cloud model support (disabled by default)
-RUN pip install --no-cache-dir litellm pyyaml
+RUN pip install --no-cache-dir litellm[proxy] pyyaml backoff jinja2 openai anthropic google-generativeai boto3
 
 # Copy application code
 COPY handler.py .
