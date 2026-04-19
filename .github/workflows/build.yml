@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build and Push Docker Images
 
 on:
   push:
@@ -10,6 +10,18 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: vllm
+            dockerfile: Dockerfile
+            image: llm-shield
+          - name: litellm
+            dockerfile: Dockerfile.litellm
+            image: llm-shield-litellm
+
+    name: Build ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,15 +34,16 @@ jobs:
           username: ${{ env.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Push
+      - name: Build and Push ${{ matrix.name }}
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
           tags: |
-            ${{ env.DOCKERHUB_USER }}/llm-shield:v2
-            ${{ env.DOCKERHUB_USER }}/llm-shield:latest
-            ${{ env.DOCKERHUB_USER }}/llm-shield:${{ github.sha }}
+            ${{ env.DOCKERHUB_USER }}/${{ matrix.image }}:v2
+            ${{ env.DOCKERHUB_USER }}/${{ matrix.image }}:latest
+            ${{ env.DOCKERHUB_USER }}/${{ matrix.image }}:${{ github.sha }}

@@ -1,0 +1,110 @@
+FROM python:3.11-slim
+
+# Install system tools needed at runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /runpod
+
+# App dependencies + LiteLLM proxy.
+# LiteLLM brings in its own httpx/openai/etc — no version conflicts here because
+# this image has no vLLM/transformers stack to clash with.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir "litellm[proxy]>=1.50.0" pyyaml orjson
+
+# Copy application code
+COPY handler.py .
+COPY config/ config/
+COPY core/ core/
+COPY guardrails/ guardrails/
+COPY api/ api/
+COPY storage/ storage/
+COPY static/ static/
+COPY scripts/ scripts/
+
+# Create logs directory for telemetry file logging
+RUN mkdir -p logs && chmod 755 logs
+
+# Telemetry / SIEM defaults (non-secret). Inject secrets at RUNTIME.
+ENV VOTAL_ES_ENABLED=true
+ENV VOTAL_ES_INDEX=votal-shield-logs
+
+# LiteLLM proxy serves on this port; the Shield app talks to it locally.
+ENV VLLM_HOST=0.0.0.0
+ENV VLLM_PORT=8000
+ENV LLM_BACKEND_TYPE=litellm
+
+# Always LiteLLM mode in this image.
+ENV ENABLE_LITELLM=true
+ENV FORCE_GENERATE_CONFIG=false
+
+# Provider-specific model selection (optional — defaults baked into the
+# config generator). Provide credentials for ONE provider at runtime:
+#   OpenAI:     OPENAI_API_KEY     (+ optional OPENAI_MODEL)
+#   Anthropic:  ANTHROPIC_API_KEY  (+ optional ANTHROPIC_MODEL)
+#   Azure:      AZURE_API_KEY + AZURE_API_BASE  (+ optional AZURE_MODEL, AZURE_API_VERSION)
+#   Bedrock:    AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (+ AWS_REGION_NAME, AWS_MODEL)
+#   OpenRouter: OPENROUTER_API_KEY (+ optional OPENROUTER_MODEL)
+#   Google:     GEMINI_API_KEY     (+ optional GOOGLE_MODEL)
+ENV OPENAI_MODEL=""
+ENV ANTHROPIC_MODEL=""
+ENV OPENROUTER_MODEL=""
+ENV GOOGLE_MODEL=""
+ENV AZURE_MODEL=""
+ENV AWS_MODEL=""
+
+# Multi-provider config generator
+RUN cp /runpod/scripts/generate_litellm_config.py /generate-litellm-config.py \
+    && chmod +x /generate-litellm-config.py
+
+EXPOSE 8000 80
+
+# Startup: generate LiteLLM config from env vars, start LiteLLM proxy, then app.
+RUN cat > /start-services.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "LiteLLM mode: detecting provider from environment..."
+python3 /generate-litellm-config.py
+
+export LLM_MODEL_NAME=$(python3 -c "import yaml; print(yaml.safe_load(open('/runpod/config/litellm_config.yaml'))['model_list'][0]['model_name'])")
+echo "Using model alias: $LLM_MODEL_NAME"
+
+echo "Starting LiteLLM proxy on port $VLLM_PORT..."
+litellm --port $VLLM_PORT --config /runpod/config/litellm_config.yaml --host 0.0.0.0 &
+LITELLM_PID=$!
+
+echo "Waiting for LiteLLM proxy to be ready..."
+timeout=60
+while ! curl -s http://localhost:$VLLM_PORT/health > /dev/null 2>&1 \
+   && ! curl -s http://localhost:$VLLM_PORT/v1/models > /dev/null 2>&1; do
+  if ! kill -0 $LITELLM_PID 2>/dev/null; then
+    echo "LiteLLM process died unexpectedly"
+    exit 1
+  fi
+  sleep 1
+  timeout=$((timeout - 1))
+  if [ $timeout -le 0 ]; then
+    echo "Timeout waiting for LiteLLM to start"
+    exit 1
+  fi
+done
+
+echo "LiteLLM proxy is ready. Starting Python application..."
+
+cleanup() {
+  echo "Shutting down services..."
+  kill $LITELLM_PID 2>/dev/null || true
+  wait $LITELLM_PID 2>/dev/null || true
+}
+trap cleanup EXIT
+
+exec python3 handler.py
+EOF
+
+RUN chmod +x /start-services.sh
+
+ENTRYPOINT []
+CMD ["/start-services.sh"]

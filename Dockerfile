@@ -12,9 +12,6 @@ WORKDIR /runpod
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install LiteLLM with proxy dependencies for optional cloud model support (disabled by default)
-RUN pip install --no-cache-dir "litellm[proxy]>=1.50.0" pyyaml orjson
-
 # Copy application code
 COPY handler.py .
 COPY config/ config/
@@ -23,7 +20,6 @@ COPY guardrails/ guardrails/
 COPY api/ api/
 COPY storage/ storage/
 COPY static/ static/
-COPY scripts/ scripts/
 
 # Create logs directory for telemetry file logging
 RUN mkdir -p logs && chmod 755 logs
@@ -45,18 +41,6 @@ ENV VLLM_HOST=0.0.0.0
 ENV VLLM_PORT=8000
 ENV LLM_BACKEND_TYPE=vllm
 
-# Optional LiteLLM support (disabled by default to maintain existing behavior)
-ENV ENABLE_LITELLM=false
-ENV FORCE_GENERATE_CONFIG=false
-
-# Provider-specific model selection (optional, uses defaults if not specified)
-ENV OPENAI_MODEL=""
-ENV ANTHROPIC_MODEL=""
-ENV OPENROUTER_MODEL=""
-ENV GOOGLE_MODEL=""
-ENV AZURE_MODEL=""
-ENV AWS_MODEL=""
-
 # vLLM Performance Optimizations - Cache Directories
 ENV CACHE=/tmp/cache
 ENV PIP_CACHE_DIR=$CACHE/pip
@@ -73,44 +57,60 @@ ENV VLLM_ATTENTION_BACKEND=FLASHINFER
 # Create cache directories
 RUN mkdir -p $CACHE/pip $CACHE/huggingface/hub $CACHE/vllm $CACHE/inductor $CACHE/flashinfer $CACHE/triton
 
-# Multi-provider LiteLLM config generator (auto-detects provider from env vars).
-# Supports OpenAI, Anthropic, Azure, AWS Bedrock, OpenRouter, and Google.
-# Provide credentials for exactly ONE provider at runtime; see scripts/generate_litellm_config.py.
-RUN cp /runpod/scripts/generate_litellm_config.py /generate-litellm-config.py && \
-    chmod +x /generate-litellm-config.py
-
-# Expose ports for vLLM/LiteLLM server (port 8000) and main application (port 80)
+# Expose ports for both vLLM server (port 8000) and main application (port 80)
 EXPOSE 8000 80
 
-# Create startup script - vLLM by default, LiteLLM if enabled
-#
-# LiteLLM Configuration Options:
-# 1. Auto-generated (default): Set API keys via env vars, config auto-generated
-# 2. Custom config: Mount your own litellm_config.yaml to /runpod/config/
-# 3. Force regenerate: Set FORCE_GENERATE_CONFIG=true to override existing custom config
-#
-# Create startup script using echo commands to avoid heredoc issues
-RUN echo '#!/bin/bash' > /start-services.sh && \
-    echo 'set -e' >> /start-services.sh && \
-    echo 'if [ "$ENABLE_LITELLM" = "true" ]; then' >> /start-services.sh && \
-    echo '  echo "🌩️ LiteLLM enabled - starting cloud model support..."' >> /start-services.sh && \
-    echo '  python3 /generate-litellm-config.py' >> /start-services.sh && \
-    echo '  export LLM_MODEL_NAME=$(python3 -c "import yaml; print(yaml.safe_load(open(\"/runpod/config/litellm_config.yaml\"))[\"model_list\"][0][\"model_name\"])")' >> /start-services.sh && \
-    echo '  echo "Using model: $LLM_MODEL_NAME"' >> /start-services.sh && \
-    echo '  echo "Starting LiteLLM server..."' >> /start-services.sh && \
-    echo '  litellm --port $VLLM_PORT --config /runpod/config/litellm_config.yaml --host 0.0.0.0 &' >> /start-services.sh && \
-    echo '  sleep 10' >> /start-services.sh && \
-    echo '  echo "✅ LiteLLM server started!"' >> /start-services.sh && \
-    echo 'else' >> /start-services.sh && \
-    echo '  echo "🏠 Starting vLLM server (default behavior)..."' >> /start-services.sh && \
-    echo '  python3 -m vllm.entrypoints.openai.api_server --model $MODEL_NAME --host $VLLM_HOST --port $VLLM_PORT --dtype bfloat16 --quantization fp8 --kv-cache-dtype fp8 --max-model-len 8196 --max-num-batched-tokens 8196 --max-num-seqs 24 --gpu-memory-utilization 0.85 --enable-prefix-caching --language-model-only --performance-mode throughput &' >> /start-services.sh && \
-    echo '  sleep 20' >> /start-services.sh && \
-    echo '  echo "✅ vLLM server started!"' >> /start-services.sh && \
-    echo 'fi' >> /start-services.sh && \
-    echo 'exec python3 handler.py' >> /start-services.sh
+# Create startup script for vLLM + app
+RUN cat > /start-services.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "Starting vLLM server in background..."
+python3 -m vllm.entrypoints.openai.api_server \
+  --model $MODEL_NAME \
+  --host $VLLM_HOST \
+  --port $VLLM_PORT \
+  --dtype bfloat16 \
+  --quantization fp8 \
+  --kv-cache-dtype fp8 \
+  --max-model-len 8196 \
+  --max-num-batched-tokens 8196 \
+  --max-num-seqs 24 \
+  --gpu-memory-utilization 0.85 \
+  --enable-prefix-caching \
+  --language-model-only \
+  --performance-mode throughput &
+
+VLLM_PID=$!
+
+echo "Waiting for vLLM server to be ready..."
+timeout=300
+while ! curl -s http://localhost:$VLLM_PORT/v1/models > /dev/null 2>&1; do
+  if ! kill -0 $VLLM_PID 2>/dev/null; then
+    echo "vLLM process died unexpectedly"
+    exit 1
+  fi
+  sleep 2
+  timeout=$((timeout - 2))
+  if [ $timeout -le 0 ]; then
+    echo "Timeout waiting for vLLM to start"
+    exit 1
+  fi
+done
+
+echo "vLLM server is ready! Starting Python application..."
+
+cleanup() {
+  echo "Shutting down services..."
+  kill $VLLM_PID 2>/dev/null || true
+  wait $VLLM_PID 2>/dev/null || true
+}
+trap cleanup EXIT
+
+exec python3 handler.py
+EOF
 
 RUN chmod +x /start-services.sh
 
-# Use the vLLM optimized startup
 ENTRYPOINT []
 CMD ["/start-services.sh"]
