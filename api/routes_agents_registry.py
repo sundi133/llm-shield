@@ -292,6 +292,10 @@ async def seed_test_data():
                     "admin": ["patient_lookup"],
                     "patient": []
                 },
+                "agent_permissions": {
+                    "healthcare-nurse": ["patient_lookup", "view_records"],
+                    "healthcare-triage": ["patient_lookup"]
+                },
                 "created_at": 1775632429,
                 "updated_at": 1775632429
             },
@@ -305,6 +309,10 @@ async def seed_test_data():
                     "doctor": ["patient_lookup", "schedule_appointment"],
                     "admin": ["patient_lookup"],
                     "patient": []
+                },
+                "agent_permissions": {
+                    "healthcare-doctor": ["patient_lookup", "schedule_appointment", "update_vitals", "view_basic_records"],
+                    "healthcare-triage": ["patient_lookup", "schedule_appointment"]
                 },
                 "created_at": 1775632479,
                 "updated_at": 1775632479
@@ -428,6 +436,7 @@ async def create_agent(request: Request):
             "description": _sanitize_string(body.get("description", "")),
             "tools": body.get("tools", []),
             "role_permissions": body.get("role_permissions", {}),
+            "agent_permissions": body.get("agent_permissions", {}),
             "status": body.get("status", "active"),
             "created_at": now,
             "updated_at": now,

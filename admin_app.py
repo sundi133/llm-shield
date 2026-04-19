@@ -486,12 +486,14 @@ def _infer_params(name: str, verb: str = "") -> dict:
 
 def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
                 tenant_config: dict | None,
-                registry: dict | None = None) -> dict:
+                registry: dict | None = None,
+                calling_agent: str | None = None) -> dict:
     """Check tool permission using agent registry first, then tenant policy.
 
     Priority:
       1. Agent registry role_permissions — most specific (per-agent per-role)
-      2. Tenant policy per_agent + per_role — broader intersection model
+      2. Agent registry agent_permissions — agent-to-agent RBAC
+      3. Tenant policy per_agent + per_role — broader intersection model
     """
     def _matches(name: str, patterns: list) -> bool:
         return any(fnmatch.fnmatch(name, p) for p in patterns)
@@ -501,6 +503,7 @@ def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
     if agent_entry:
         agent_tools = agent_entry.get("tools") or []
         role_perms = agent_entry.get("role_permissions") or {}
+        agent_perms = agent_entry.get("agent_permissions") or {}
 
         agent_ok = _matches(tool_name, agent_tools)
         agent_msg = (f"Registry agent '{agent_key}' permits '{tool_name}'" if agent_ok
@@ -517,10 +520,35 @@ def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
             role_ok = True
             role_msg = "No role provided, skipping role check"
 
-        allowed = agent_ok and role_ok
-        message = f"Tool '{tool_name}' {'allowed' if allowed else 'blocked'}: {agent_msg} AND {role_msg}"
-        return {"allowed": allowed, "action": "pass" if allowed else "block",
-                "message": message, "source": "agent_registry"}
+        # Agent-to-agent RBAC: if calling_agent is provided and
+        # agent_permissions is configured, enforce it.
+        caller_ok = True
+        caller_msg = ""
+        if calling_agent and agent_perms:
+            if calling_agent in agent_perms:
+                caller_ok = _matches(tool_name, agent_perms[calling_agent])
+                caller_msg = (
+                    f"Calling agent '{calling_agent}' permits '{tool_name}'"
+                    if caller_ok else
+                    f"Calling agent '{calling_agent}' does not allow '{tool_name}' on '{agent_key}'"
+                )
+            else:
+                caller_ok = False
+                caller_msg = f"Calling agent '{calling_agent}' not in agent_permissions for '{agent_key}'"
+        elif calling_agent:
+            caller_msg = "No agent_permissions configured, caller allowed by default"
+
+        allowed = agent_ok and role_ok and caller_ok
+        parts = [agent_msg, role_msg]
+        if caller_msg:
+            parts.append(caller_msg)
+        message = f"Tool '{tool_name}' {'allowed' if allowed else 'blocked'}: {' AND '.join(parts)}"
+        result = {"allowed": allowed, "action": "pass" if allowed else "block",
+                  "message": message, "source": "agent_registry"}
+        if calling_agent:
+            result["calling_agent"] = calling_agent
+            result["caller_allowed"] = caller_ok
+        return result
 
     # --- 2. Fall back to tenant policy ---
     per_agent: dict = {}
@@ -763,6 +791,7 @@ def create_admin_app() -> FastAPI:
         messages = body.get("messages", [])
         agent_key = body.get("agent_key", "") or request.headers.get("X-Agent-Key", "")
         user_role = body.get("user_role") or request.headers.get("X-User-Role")
+        calling_agent = body.get("calling_agent", "") or request.headers.get("X-Calling-Agent", "")
         llm_api_key = body.get("llm_api_key")
         llm_model = body.get("llm_model", "gpt-4o-mini")
         shield_endpoint = body.get("shield_endpoint", "").strip().rstrip("/")
@@ -897,7 +926,8 @@ def create_admin_app() -> FastAPI:
                 except json.JSONDecodeError:
                     args = {"_raw": args}
 
-            rbac = _check_rbac(name, agent_key, user_role, tenant_config, registry=registry)
+            rbac = _check_rbac(name, agent_key, user_role, tenant_config,
+                              registry=registry, calling_agent=calling_agent or None)
             data_policy = _get_data_policy(tool_policies, name, user_role,
                                            data_policies=data_policies)
             entry = {

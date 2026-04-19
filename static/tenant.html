@@ -1718,12 +1718,17 @@ if __name__ == "__main__":
     </div>
     <div class="field">
       <label>Tools <span class="muted">(comma-separated)</span></label>
-      <input type="text" id="agent-modal-tools" placeholder="e.g. patient_lookup, prescribe_medication, view_records" oninput="updateRoleCheckboxes()">
+      <input type="text" id="agent-modal-tools" placeholder="e.g. patient_lookup, prescribe_medication, view_records" oninput="updateRoleCheckboxes(); updateAgentPermCheckboxes()">
     </div>
     <div class="field">
       <label>Role Permissions</label>
       <div id="agent-modal-roles"></div>
       <button class="small" onclick="addRoleRow()" style="margin-top: 0.5rem;">+ Add Role</button>
+    </div>
+    <div class="field" style="margin-top: 0.75rem;">
+      <label>Agent-to-Agent Permissions <span class="muted">(which calling agents can invoke tools on this agent)</span></label>
+      <div id="agent-modal-agent-perms"></div>
+      <button class="small" onclick="addAgentPermRow()" style="margin-top: 0.5rem;">+ Add Calling Agent</button>
     </div>
     <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
       <button onclick="closeAgentModal()">Cancel</button>
@@ -2772,6 +2777,7 @@ function createAgentCard(agentId, agent) {
         <div style="font-size: 12px; font-weight: 600; margin-bottom: 0.75rem; color: var(--text-dim);">Role → Tool Permissions</div>
         ${createPermissionsMatrix(agent)}
       </div>
+      ${createAgentPermissionsMatrix(agent)}
     </div>
   `;
 }
@@ -2817,6 +2823,40 @@ function createPermissionsMatrix(agent) {
   return matrix;
 }
 
+function createAgentPermissionsMatrix(agent) {
+  const tools = agent.tools || [];
+  const agentPerms = agent.agent_permissions || {};
+  const callers = Object.keys(agentPerms);
+
+  if (callers.length === 0) return '';
+
+  let html = '<div style="padding: 0 1rem 1rem; border-top: 1px solid var(--border);">';
+  html += '<div style="font-size: 12px; font-weight: 600; margin: 0.75rem 0; color: var(--text-dim);">Agent → Agent Permissions</div>';
+  html += '<div class="permissions-matrix" style="overflow-x: auto;">';
+  html += '<table style="width: 100%; font-size: 11px; border-collapse: separate; border-spacing: 2px;">';
+
+  html += '<thead><tr><th style="text-align: left; padding: 0.5rem; font-weight: 600; color: var(--text-dim);">Tool</th>';
+  callers.forEach(caller => {
+    html += `<th style="text-align: center; padding: 0.5rem; font-weight: 500; color: var(--text-dim); min-width: 80px;">${caller}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  tools.forEach(tool => {
+    html += `<tr><td style="padding: 0.5rem; font-weight: 500; white-space: nowrap;">${tool.replace(/_/g, ' ')}</td>`;
+    callers.forEach(caller => {
+      const hasAccess = (agentPerms[caller] || []).includes(tool);
+      const cellStyle = hasAccess
+        ? 'background: rgba(59, 130, 246, 0.1); color: #3b82f6;'
+        : 'background: rgba(239, 68, 68, 0.1); color: #ef4444;';
+      html += `<td style="text-align: center; padding: 0.5rem; ${cellStyle} border-radius: 4px;">${hasAccess ? '✓' : '✗'}</td>`;
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table></div></div>';
+  return html;
+}
+
 // Agent Management Functions
 async function toggleAgent(agentId, enabled) {
   try {
@@ -2850,6 +2890,9 @@ async function editAgent(agentId) {
     document.getElementById('agent-modal-roles').innerHTML = '';
     const perms = agent.role_permissions || {};
     Object.entries(perms).forEach(([role, tools]) => addRoleRow(role, tools));
+    document.getElementById('agent-modal-agent-perms').innerHTML = '';
+    const agentPerms = agent.agent_permissions || {};
+    Object.entries(agentPerms).forEach(([caller, tools]) => addAgentPermRow(caller, tools));
     document.getElementById('agent-modal').classList.remove('hidden');
   } catch (e) {
     showToast('Failed to load agent: ' + e.message, 'error');
@@ -2865,6 +2908,7 @@ function showAddAgentModal() {
   document.getElementById('agent-modal-desc').value = '';
   document.getElementById('agent-modal-tools').value = '';
   document.getElementById('agent-modal-roles').innerHTML = '';
+  document.getElementById('agent-modal-agent-perms').innerHTML = '';
   document.getElementById('agent-modal').classList.remove('hidden');
 }
 
@@ -2926,17 +2970,68 @@ function getRolePermissionsFromUI() {
   return perms;
 }
 
+function addAgentPermRow(callerAgentId, allowedTools) {
+  callerAgentId = callerAgentId || '';
+  allowedTools = allowedTools || [];
+  const tools = getToolsFromInput();
+  const allowed = new Set(allowedTools);
+  const container = document.getElementById('agent-modal-agent-perms');
+  const row = document.createElement('div');
+  row.className = 'agent-perm-row';
+  row.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.5rem;align-items:flex-start;padding:0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:0.5rem;';
+  row.innerHTML = `
+    <div style="flex:0 0 160px;">
+      <input type="text" class="caller-agent-input" value="${callerAgentId}" placeholder="Calling agent ID" style="width:100%;font-size:12px;padding:0.4rem 0.6rem;">
+    </div>
+    <div class="agent-perm-checkboxes" style="flex:1;display:flex;flex-wrap:wrap;gap:0.25rem 0;align-items:center;">
+      ${tools.map(t =>
+        `<label style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:0.75rem;font-size:12px;color:var(--text);cursor:pointer;">
+          <input type="checkbox" value="${t}" ${allowed.has(t) ? 'checked' : ''}> ${t.replace(/_/g, ' ')}
+        </label>`
+      ).join('')}
+    </div>
+    <button class="danger small" onclick="this.closest('.agent-perm-row').remove()" style="flex-shrink:0;">&times;</button>
+  `;
+  container.appendChild(row);
+}
+
+function updateAgentPermCheckboxes() {
+  const tools = getToolsFromInput();
+  document.querySelectorAll('#agent-modal-agent-perms .agent-perm-row').forEach(row => {
+    const checked = new Set();
+    row.querySelectorAll('.agent-perm-checkboxes input[type=checkbox]:checked').forEach(cb => checked.add(cb.value));
+    row.querySelector('.agent-perm-checkboxes').innerHTML = tools.map(t =>
+      `<label style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:0.75rem;font-size:12px;color:var(--text);cursor:pointer;">
+        <input type="checkbox" value="${t}" ${checked.has(t) ? 'checked' : ''}> ${t.replace(/_/g, ' ')}
+      </label>`
+    ).join('');
+  });
+}
+
+function getAgentPermissionsFromUI() {
+  const perms = {};
+  document.querySelectorAll('#agent-modal-agent-perms .agent-perm-row').forEach(row => {
+    const name = row.querySelector('.caller-agent-input').value.trim();
+    if (!name) return;
+    const checked = [];
+    row.querySelectorAll('.agent-perm-checkboxes input[type=checkbox]:checked').forEach(cb => checked.push(cb.value));
+    perms[name] = checked;
+  });
+  return perms;
+}
+
 async function saveAgentFromModal() {
   const agentId = EDITING_AGENT_ID || document.getElementById('agent-modal-id').value.trim();
   const name = document.getElementById('agent-modal-name').value.trim();
   const description = document.getElementById('agent-modal-desc').value.trim();
   const tools = getToolsFromInput();
   const rolePermissions = getRolePermissionsFromUI();
+  const agentPermissions = getAgentPermissionsFromUI();
 
   if (!agentId) return showToast('Agent ID is required', 'error');
   if (!name) return showToast('Agent name is required', 'error');
 
-  const agentData = { agent_id: agentId, name, description, tools, role_permissions: rolePermissions, status: 'active' };
+  const agentData = { agent_id: agentId, name, description, tools, role_permissions: rolePermissions, agent_permissions: agentPermissions, status: 'active' };
 
   try {
     const method = EDITING_AGENT_ID ? 'PUT' : 'POST';

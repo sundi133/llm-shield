@@ -72,20 +72,58 @@ ENV VLLM_ATTENTION_BACKEND=FLASHINFER
 # Create cache directories
 RUN mkdir -p $CACHE/pip $CACHE/huggingface/hub $CACHE/vllm $CACHE/inductor $CACHE/flashinfer $CACHE/triton
 
-# Create a separate Python script for LiteLLM config generation
+# Create multi-provider LiteLLM config generation script
 RUN echo '#!/usr/bin/env python3' > /generate-litellm-config.py && \
     echo 'import os, yaml' >> /generate-litellm-config.py && \
     echo 'model_list = []' >> /generate-litellm-config.py && \
     echo 'default_model = None' >> /generate-litellm-config.py && \
+    echo '' >> /generate-litellm-config.py && \
+    echo '# OpenAI' >> /generate-litellm-config.py && \
     echo 'if os.getenv("OPENAI_API_KEY"):' >> /generate-litellm-config.py && \
-    echo '    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")' >> /generate-litellm-config.py && \
-    echo '    model_name = openai_model.replace("-", "_")' >> /generate-litellm-config.py && \
-    echo '    model_list.append({"model_name": model_name, "litellm_params": {"model": f"openai/{openai_model}", "api_key": "os.environ/OPENAI_API_KEY", "timeout": 120, "max_retries": 3}})' >> /generate-litellm-config.py && \
-    echo '    default_model = model_name' >> /generate-litellm-config.py && \
-    echo 'config = {"model_list": model_list, "router_settings": {"model_group_alias": {"default": default_model or "gpt_4o_mini"}}, "general_settings": {"cost_tracking": True}}' >> /generate-litellm-config.py && \
+    echo '    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")' >> /generate-litellm-config.py && \
+    echo '    name = model.replace("-", "_").replace(".", "_")' >> /generate-litellm-config.py && \
+    echo '    model_list.append({"model_name": name, "litellm_params": {"model": f"openai/{model}", "api_key": "os.environ/OPENAI_API_KEY", "timeout": 120, "max_retries": 3}})' >> /generate-litellm-config.py && \
+    echo '    default_model = name' >> /generate-litellm-config.py && \
+    echo '' >> /generate-litellm-config.py && \
+    echo '# Anthropic' >> /generate-litellm-config.py && \
+    echo 'if os.getenv("ANTHROPIC_API_KEY"):' >> /generate-litellm-config.py && \
+    echo '    model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")' >> /generate-litellm-config.py && \
+    echo '    name = model.replace("-", "_").replace(".", "_")' >> /generate-litellm-config.py && \
+    echo '    model_list.append({"model_name": name, "litellm_params": {"model": f"anthropic/{model}", "api_key": "os.environ/ANTHROPIC_API_KEY", "timeout": 120, "max_retries": 3}})' >> /generate-litellm-config.py && \
+    echo '    default_model = default_model or name' >> /generate-litellm-config.py && \
+    echo '' >> /generate-litellm-config.py && \
+    echo '# OpenRouter' >> /generate-litellm-config.py && \
+    echo 'if os.getenv("OPENROUTER_API_KEY"):' >> /generate-litellm-config.py && \
+    echo '    model = os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")' >> /generate-litellm-config.py && \
+    echo '    name = model.split("/")[-1].replace("-", "_").replace(".", "_")' >> /generate-litellm-config.py && \
+    echo '    model_list.append({"model_name": name, "litellm_params": {"model": f"openrouter/{model}", "api_base": "https://openrouter.ai/api/v1", "api_key": "os.environ/OPENROUTER_API_KEY", "timeout": 120, "max_retries": 3}})' >> /generate-litellm-config.py && \
+    echo '    default_model = default_model or name' >> /generate-litellm-config.py && \
+    echo '' >> /generate-litellm-config.py && \
+    echo '# Google Gemini' >> /generate-litellm-config.py && \
+    echo 'if os.getenv("GOOGLE_API_KEY"):' >> /generate-litellm-config.py && \
+    echo '    model = os.getenv("GOOGLE_MODEL", "gemini-1.5-pro")' >> /generate-litellm-config.py && \
+    echo '    name = model.replace("-", "_").replace(".", "_")' >> /generate-litellm-config.py && \
+    echo '    model_list.append({"model_name": name, "litellm_params": {"model": f"gemini/{model}", "api_key": "os.environ/GOOGLE_API_KEY", "timeout": 120, "max_retries": 3}})' >> /generate-litellm-config.py && \
+    echo '    default_model = default_model or name' >> /generate-litellm-config.py && \
+    echo '' >> /generate-litellm-config.py && \
+    echo '# Azure OpenAI' >> /generate-litellm-config.py && \
+    echo 'if os.getenv("AZURE_OPENAI_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):' >> /generate-litellm-config.py && \
+    echo '    model = os.getenv("AZURE_MODEL", "gpt-4")' >> /generate-litellm-config.py && \
+    echo '    name = f"azure_{model}".replace("-", "_").replace(".", "_")' >> /generate-litellm-config.py && \
+    echo '    model_list.append({"model_name": name, "litellm_params": {"model": f"azure/{model}", "api_key": "os.environ/AZURE_OPENAI_KEY", "api_base": "os.environ/AZURE_OPENAI_ENDPOINT", "api_version": "2024-02-01", "timeout": 120, "max_retries": 3}})' >> /generate-litellm-config.py && \
+    echo '    default_model = default_model or name' >> /generate-litellm-config.py && \
+    echo '' >> /generate-litellm-config.py && \
+    echo '# AWS Bedrock' >> /generate-litellm-config.py && \
+    echo 'if os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"):' >> /generate-litellm-config.py && \
+    echo '    model = os.getenv("AWS_MODEL", "anthropic.claude-3-sonnet-20240229-v1:0")' >> /generate-litellm-config.py && \
+    echo '    name = f"bedrock_{model}".replace(".", "_").replace(":", "_").replace("-", "_")' >> /generate-litellm-config.py && \
+    echo '    model_list.append({"model_name": name, "litellm_params": {"model": f"bedrock/{model}", "aws_access_key_id": "os.environ/AWS_ACCESS_KEY_ID", "aws_secret_access_key": "os.environ/AWS_SECRET_ACCESS_KEY", "aws_region_name": os.getenv("AWS_REGION", "us-east-1"), "timeout": 120, "max_retries": 3}})' >> /generate-litellm-config.py && \
+    echo '    default_model = default_model or name' >> /generate-litellm-config.py && \
+    echo '' >> /generate-litellm-config.py && \
+    echo 'config = {"model_list": model_list, "router_settings": {"model_group_alias": {"default": default_model}}, "general_settings": {"cost_tracking": True}}' >> /generate-litellm-config.py && \
     echo 'os.makedirs("/runpod/config", exist_ok=True)' >> /generate-litellm-config.py && \
     echo 'with open("/runpod/config/litellm_config.yaml", "w") as f: yaml.dump(config, f)' >> /generate-litellm-config.py && \
-    echo 'print(f"Generated config with {len(model_list)} models")' >> /generate-litellm-config.py
+    echo 'print(f"Generated config with {len(model_list)} models for provider: {list(model_list[0]["litellm_params"].keys())[0] if model_list else \"none\"}")' >> /generate-litellm-config.py
 
 RUN chmod +x /generate-litellm-config.py
 
@@ -105,6 +143,8 @@ RUN echo '#!/bin/bash' > /start-services.sh && \
     echo 'if [ "$ENABLE_LITELLM" = "true" ]; then' >> /start-services.sh && \
     echo '  echo "🌩️ LiteLLM enabled - starting cloud model support..."' >> /start-services.sh && \
     echo '  python3 /generate-litellm-config.py' >> /start-services.sh && \
+    echo '  export LLM_MODEL_NAME=$(python3 -c "import yaml; print(yaml.safe_load(open(\"/runpod/config/litellm_config.yaml\"))[\"model_list\"][0][\"model_name\"])")' >> /start-services.sh && \
+    echo '  echo "Using model: $LLM_MODEL_NAME"' >> /start-services.sh && \
     echo '  echo "Starting LiteLLM server..."' >> /start-services.sh && \
     echo '  litellm --port $VLLM_PORT --config /runpod/config/litellm_config.yaml --host 0.0.0.0 &' >> /start-services.sh && \
     echo '  sleep 10' >> /start-services.sh && \

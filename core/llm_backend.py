@@ -322,14 +322,23 @@ def _build_payload(
     temperature: float,
     response_format: Optional[dict],
 ) -> dict:
-    """Build the request payload for llama-server."""
+    """Build the request payload for llama-server or LiteLLM."""
     messages = _ensure_no_think(messages)
     payload = {
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
-        "chat_template_kwargs": {"enable_thinking": False},
     }
+
+    # Add model field for LiteLLM mode
+    if os.getenv("ENABLE_LITELLM") == "true":
+        # Use the model name from LiteLLM config - default to first available model
+        model_name = os.getenv("LLM_MODEL_NAME", "gpt_4o_mini")
+        payload["model"] = model_name
+    else:
+        # vLLM mode - add chat template kwargs
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+
     if response_format:
         payload["response_format"] = {
             "type": "json_schema",
