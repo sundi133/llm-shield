@@ -332,8 +332,10 @@ def _build_payload(
 
     # Add model field for LiteLLM mode
     if os.getenv("ENABLE_LITELLM") == "true":
-        # Use the model name from LiteLLM config - default to first available model
-        model_name = os.getenv("LLM_MODEL_NAME", "gpt_4o_mini")
+        # Use the model name from LiteLLM config; "default" is the alias
+        # set in router_settings.model_group_alias by the config generator,
+        # and works regardless of which provider was selected.
+        model_name = os.getenv("LLM_MODEL_NAME", "default")
         payload["model"] = model_name
     else:
         # vLLM mode - add chat template kwargs

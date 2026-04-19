@@ -23,6 +23,7 @@ COPY guardrails/ guardrails/
 COPY api/ api/
 COPY storage/ storage/
 COPY static/ static/
+COPY scripts/ scripts/
 
 # Create logs directory for telemetry file logging
 RUN mkdir -p logs && chmod 755 logs
@@ -72,21 +73,11 @@ ENV VLLM_ATTENTION_BACKEND=FLASHINFER
 # Create cache directories
 RUN mkdir -p $CACHE/pip $CACHE/huggingface/hub $CACHE/vllm $CACHE/inductor $CACHE/flashinfer $CACHE/triton
 
-# Create simple OpenAI config generation (works reliably)
-RUN echo '#!/usr/bin/env python3' > /generate-litellm-config.py && \
-    echo 'import os, yaml' >> /generate-litellm-config.py && \
-    echo 'model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")' >> /generate-litellm-config.py && \
-    echo 'name = model.replace("-", "_")' >> /generate-litellm-config.py && \
-    echo 'config = {' >> /generate-litellm-config.py && \
-    echo '  "model_list": [{"model_name": name, "litellm_params": {"model": f"openai/{model}", "api_key": "os.environ/OPENAI_API_KEY", "timeout": 120, "max_retries": 3}}],' >> /generate-litellm-config.py && \
-    echo '  "router_settings": {"model_group_alias": {"default": name}},' >> /generate-litellm-config.py && \
-    echo '  "general_settings": {"cost_tracking": True}' >> /generate-litellm-config.py && \
-    echo '}' >> /generate-litellm-config.py && \
-    echo 'os.makedirs("/runpod/config", exist_ok=True)' >> /generate-litellm-config.py && \
-    echo 'with open("/runpod/config/litellm_config.yaml", "w") as f: yaml.dump(config, f)' >> /generate-litellm-config.py && \
-    echo 'print(f"Generated OpenAI config: {name}")' >> /generate-litellm-config.py
-
-RUN chmod +x /generate-litellm-config.py
+# Multi-provider LiteLLM config generator (auto-detects provider from env vars).
+# Supports OpenAI, Anthropic, Azure, AWS Bedrock, OpenRouter, and Google.
+# Provide credentials for exactly ONE provider at runtime; see scripts/generate_litellm_config.py.
+RUN cp /runpod/scripts/generate_litellm_config.py /generate-litellm-config.py && \
+    chmod +x /generate-litellm-config.py
 
 # Expose ports for vLLM/LiteLLM server (port 8000) and main application (port 80)
 EXPOSE 8000 80
