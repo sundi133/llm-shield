@@ -1,4 +1,4 @@
-FROM vllm/vllm-openai:v0.4.2
+FROM vllm/vllm-openai:v0.6.6
 
 # Install additional tools and dependencies for the application
 RUN apt-get update && apt-get install -y \
