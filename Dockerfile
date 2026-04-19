@@ -20,6 +20,7 @@ COPY guardrails/ guardrails/
 COPY api/ api/
 COPY storage/ storage/
 COPY static/ static/
+COPY scripts/ scripts/
 
 # Create logs directory for telemetry file logging
 RUN mkdir -p logs && chmod 755 logs
@@ -60,57 +61,9 @@ RUN mkdir -p $CACHE/pip $CACHE/huggingface/hub $CACHE/vllm $CACHE/inductor $CACH
 # Expose ports for both vLLM server (port 8000) and main application (port 80)
 EXPOSE 8000 80
 
-# Create startup script for vLLM + app
-RUN cat > /start-services.sh << 'EOF'
-#!/bin/bash
-set -e
-
-echo "Starting vLLM server in background..."
-python3 -m vllm.entrypoints.openai.api_server \
-  --model $MODEL_NAME \
-  --host $VLLM_HOST \
-  --port $VLLM_PORT \
-  --dtype bfloat16 \
-  --quantization fp8 \
-  --kv-cache-dtype fp8 \
-  --max-model-len 8196 \
-  --max-num-batched-tokens 8196 \
-  --max-num-seqs 24 \
-  --gpu-memory-utilization 0.85 \
-  --enable-prefix-caching \
-  --language-model-only \
-  --performance-mode throughput &
-
-VLLM_PID=$!
-
-echo "Waiting for vLLM server to be ready..."
-timeout=300
-while ! curl -s http://localhost:$VLLM_PORT/v1/models > /dev/null 2>&1; do
-  if ! kill -0 $VLLM_PID 2>/dev/null; then
-    echo "vLLM process died unexpectedly"
-    exit 1
-  fi
-  sleep 2
-  timeout=$((timeout - 2))
-  if [ $timeout -le 0 ]; then
-    echo "Timeout waiting for vLLM to start"
-    exit 1
-  fi
-done
-
-echo "vLLM server is ready! Starting Python application..."
-
-cleanup() {
-  echo "Shutting down services..."
-  kill $VLLM_PID 2>/dev/null || true
-  wait $VLLM_PID 2>/dev/null || true
-}
-trap cleanup EXIT
-
-exec python3 handler.py
-EOF
-
-RUN chmod +x /start-services.sh
+# Startup script lives in scripts/ and is copied above; install it as the entrypoint.
+RUN cp /runpod/scripts/start_vllm.sh /start-services.sh \
+    && chmod +x /start-services.sh
 
 ENTRYPOINT []
 CMD ["/start-services.sh"]
