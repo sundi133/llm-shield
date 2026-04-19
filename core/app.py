@@ -5,7 +5,6 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from config.schema import load_config
-from core.llm_backend import start_server
 from core.auth import AuthMiddleware
 from core.middleware import ShieldMiddleware
 from core.telemetry_middleware import TelemetryMiddleware
@@ -97,12 +96,9 @@ def create_app() -> FastAPI:
         import config.schema as _cfg
         init_telemetry(_cfg.config.telemetry if _cfg.config else None)
         asyncio.create_task(flush_loop())
-        # Start LLM backend server (skip if using external vLLM)
-        import os
-        if os.getenv("LLM_BACKEND_TYPE") != "vllm":
-            start_server()
-        else:
-            print("Skipping llama-server startup - using external vLLM backend")
+        # LLM backend (vLLM or LiteLLM) is started by the container entrypoint
+        # as a separate process; the Shield app only talks to it over HTTP.
+        print(f"LLM backend type: {os.getenv('LLM_BACKEND_TYPE', 'vllm')} (started externally)")
 
     @app.on_event("shutdown")
     async def shutdown_event():
