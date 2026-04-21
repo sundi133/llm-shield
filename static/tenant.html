@@ -3921,31 +3921,6 @@ function openDataPolicyModal(toolName) {
       <div style="font-size:16px;font-weight:700;margin-bottom:0.25rem;">Data Policy: ${toolName.replace(/_/g, ' ')}</div>
       <div style="font-size:11px;color:var(--text-muted);margin-bottom:1rem;">Configure per-role data access, sanitization rules, and compliance</div>
 
-      <!-- Compliance -->
-      <div style="margin-bottom:1rem;">
-        <label style="font-size:11px;font-weight:600;color:var(--text-dim);display:block;margin-bottom:4px;">Compliance Framework</label>
-        <select id="dp-compliance" style="width:100%;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:12px;">
-          <option value="">None</option>
-          <option value="hipaa" ${dp.compliance_framework === 'hipaa' ? 'selected' : ''}>HIPAA</option>
-          <option value="pci_dss" ${dp.compliance_framework === 'pci_dss' ? 'selected' : ''}>PCI-DSS</option>
-          <option value="gdpr" ${dp.compliance_framework === 'gdpr' ? 'selected' : ''}>GDPR</option>
-        </select>
-      </div>
-
-      <!-- Audit -->
-      <div style="margin-bottom:1rem;">
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
-          <input type="checkbox" id="dp-audit" ${dp.audit_required ? 'checked' : ''}>
-          <span style="font-weight:600;">Audit Required</span>
-        </label>
-      </div>
-
-      <!-- Retention -->
-      <div style="margin-bottom:1rem;">
-        <label style="font-size:11px;font-weight:600;color:var(--text-dim);display:block;margin-bottom:4px;">Retention (days)</label>
-        <input type="number" id="dp-retention" value="${dp.retention_days || ''}" placeholder="e.g. 90" style="width:100%;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:12px;">
-      </div>
-
       <!-- Per-Role Policies -->
       <div style="margin-bottom:1rem;">
         <div style="font-size:13px;font-weight:700;margin-bottom:0.5rem;">Per-Role Data Access</div>

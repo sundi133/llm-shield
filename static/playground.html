@@ -319,7 +319,9 @@ function addToolCards(toolCalls) {
   container.style.animation = 'fadeIn 0.2s ease';
 
   for (const tc of toolCalls) {
-    const allowed = tc.rbac && tc.rbac.allowed;
+    const rbacAllowed = tc.rbac && tc.rbac.allowed;
+    const sanBlocked = !!tc.sanitization_blocked;
+    const allowed = rbacAllowed && !sanBlocked;
     const isUnreg = tc.unregistered;
     const card = document.createElement('div');
     card.className = 'tool-card ' + (isUnreg ? 'tool-card-unregistered' : allowed ? 'tool-card-allowed' : 'tool-card-blocked');
@@ -327,19 +329,40 @@ function addToolCards(toolCalls) {
     const argsStr = JSON.stringify(tc.arguments || {}, null, 2);
     const rbacMsg = tc.rbac ? tc.rbac.message : '';
 
+    // Sanitization pill + reason construction
+    let sanPill = '';
+    let sanReason = '';
+    const san = tc.sanitization;
+    if (san && (san.input_modified || san.output_modified)) {
+      const inCount = (san.input_violations || []).reduce((n, v) => n + (v.count || 1), 0);
+      const outCount = (san.output_violations || []).reduce((n, v) => n + (v.count || 1), 0);
+      const parts = [];
+      if (san.input_modified) parts.push(`${inCount} input`);
+      if (san.output_modified) parts.push(`${outCount} output`);
+      const allIds = [...(san.input_violations || []), ...(san.output_violations || [])]
+        .map(v => `${v.pattern_id}${v.severity ? ' [' + v.severity + ']' : ''}`)
+        .join(', ');
+      sanPill = `<span title="${esc(allIds)}" style="padding:1px 6px;border-radius:3px;font-weight:600;background:#1d4ed818;color:#93c5fd;">🧹 sanitized: ${esc(parts.join(' · '))}</span>`;
+    }
+    if (sanBlocked) {
+      sanReason = tc.sanitization_block_reason || 'Blocked by sanitization policy';
+    }
+
     card.innerHTML = `
       <div class="tool-card-header">
         <span class="icon">${isUnreg ? '⚠' : allowed ? '✅' : '🚫'}</span>
         <span class="name">${esc(tc.tool_name)}</span>
         ${isUnreg ? '<span class="badge" style="background:#92400e;color:#fbbf24;">UNREGISTERED</span>' : ''}
         <span class="badge ${allowed ? 'badge-allowed' : 'badge-blocked'}">${allowed ? 'ALLOWED' : 'BLOCKED'}</span>
+        ${sanBlocked ? '<span class="badge badge-blocked" title="Critical sanitization pattern matched">SANITIZATION</span>' : ''}
       </div>
       <div class="tool-card-args">${esc(argsStr)}</div>
-      <div class="tool-card-reason">${esc(rbacMsg)}</div>
-      ${tc.data_policy && (tc.data_policy.input || tc.data_policy.output) ? `<div style="margin-top:4px;font-size:0.7rem;color:var(--text-muted);display:flex;gap:8px;">
-        <span>Data policy:</span>
-        ${tc.data_policy.input ? `<span style="padding:1px 6px;border-radius:3px;font-weight:600;background:${tc.data_policy.input==='allow'?'#23863618':tc.data_policy.input==='block'?'#da363318':'#d2992218'};color:${tc.data_policy.input==='allow'?'#3fb950':tc.data_policy.input==='block'?'#f85149':'#d29922'};">in: ${tc.data_policy.input}</span>` : ''}
-        ${tc.data_policy.output ? `<span style="padding:1px 6px;border-radius:3px;font-weight:600;background:${tc.data_policy.output==='allow'?'#23863618':tc.data_policy.output==='block'?'#da363318':'#d2992218'};color:${tc.data_policy.output==='allow'?'#3fb950':tc.data_policy.output==='block'?'#f85149':'#d29922'};">out: ${tc.data_policy.output}</span>` : ''}
+      <div class="tool-card-reason">${esc(sanReason || rbacMsg)}</div>
+      ${(tc.data_policy && (tc.data_policy.input || tc.data_policy.output)) || sanPill ? `<div style="margin-top:4px;font-size:0.7rem;color:var(--text-muted);display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        ${tc.data_policy && (tc.data_policy.input || tc.data_policy.output) ? '<span>Data policy:</span>' : ''}
+        ${tc.data_policy && tc.data_policy.input ? `<span style="padding:1px 6px;border-radius:3px;font-weight:600;background:${tc.data_policy.input==='allow'?'#23863618':tc.data_policy.input==='block'?'#da363318':'#d2992218'};color:${tc.data_policy.input==='allow'?'#3fb950':tc.data_policy.input==='block'?'#f85149':'#d29922'};">in: ${tc.data_policy.input}</span>` : ''}
+        ${tc.data_policy && tc.data_policy.output ? `<span style="padding:1px 6px;border-radius:3px;font-weight:600;background:${tc.data_policy.output==='allow'?'#23863618':tc.data_policy.output==='block'?'#da363318':'#d2992218'};color:${tc.data_policy.output==='allow'?'#3fb950':tc.data_policy.output==='block'?'#f85149':'#d29922'};">out: ${tc.data_policy.output}</span>` : ''}
+        ${sanPill}
       </div>` : ''}
     `;
     container.appendChild(card);
@@ -910,15 +933,20 @@ async function sendMessage() {
 
         const lines = [];
         for (const tc of data.tool_calls) {
-          const ok = tc.rbac?.allowed;
+          const rbacOk = tc.rbac?.allowed;
+          const sanBlocked = !!tc.sanitization_blocked;
           const readable = tc.tool_name.replace(/_/g, ' ');
           if (tc.unregistered) {
             lines.push(`⚠ Tool <strong>${esc(readable)}</strong> is not registered — it was blocked. Register it in your agent registry to enable access.`);
-          } else if (ok) {
+          } else if (sanBlocked) {
+            const reason = tc.sanitization_block_reason || 'critical sanitization pattern matched';
+            lines.push(`🚫 Tool <strong>${esc(readable)}</strong> blocked — ${esc(reason)}.`);
+          } else if (rbacOk) {
             const argSummary = Object.entries(tc.arguments || {})
               .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
               .join(', ');
-            lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}`);
+            const sanitizedNote = tc.sanitization && tc.sanitization.input_modified ? ' <em style="color:#93c5fd;">(sanitized)</em>' : '';
+            lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}${sanitizedNote}`);
           } else {
             lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong> with your current role.`);
           }

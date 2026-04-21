@@ -145,6 +145,67 @@ def _load_data_policies(tenant_id: str | None) -> dict:
     return {}
 
 
+# Sanitization helpers — apply regex-based `sanitization_rules` stored in the
+# tool's data policy. Used by the agent-chat flow on both tool arguments and
+# simulated tool outputs. Severity == "critical" escalates to a block.
+
+def _apply_sanitization(text: str, rules: list[dict]) -> tuple[str, list[dict]]:
+    """Run enabled regex rules as substitutions over `text`.
+
+    Returns (sanitized_text, violations). Invalid regexes are skipped
+    silently so one bad rule cannot break a request.
+    """
+    import re as _re
+
+    if not text or not rules:
+        return text, []
+
+    sanitized = text
+    violations: list[dict] = []
+    for rule in rules:
+        if not isinstance(rule, dict) or not rule.get("enabled", True):
+            continue
+        pattern = rule.get("regex")
+        if not pattern:
+            continue
+        try:
+            compiled = _re.compile(pattern)
+        except _re.error:
+            continue
+        matches = compiled.findall(sanitized)
+        if not matches:
+            continue
+        replacement = rule.get("replacement", "[REDACTED]")
+        sanitized = compiled.sub(replacement, sanitized)
+        violations.append({
+            "pattern_id": rule.get("pattern_id", "unknown"),
+            "description": rule.get("description", ""),
+            "severity": rule.get("severity", "medium"),
+            "count": len(matches),
+        })
+    return sanitized, violations
+
+
+def _sanitize_json(payload, rules: list[dict]):
+    """Sanitize a JSON-serializable `payload` by serializing → substituting →
+    re-parsing. If re-parse fails (rare, e.g. replacement contains a quote),
+    returns the sanitized string. Returns (payload, violations).
+    """
+    if payload is None or not rules:
+        return payload, []
+    try:
+        serialized = json.dumps(payload, default=str)
+    except Exception:
+        return payload, []
+    sanitized, violations = _apply_sanitization(serialized, rules)
+    if not violations:
+        return payload, []
+    try:
+        return json.loads(sanitized), violations
+    except Exception:
+        return sanitized, violations
+
+
 def _get_registered_tool_names(registry: dict, tool_policies: dict,
                                tenant_config: dict | None) -> set[str]:
     """Collect all known/registered tool names across registry, policies, and tenant config."""
@@ -916,6 +977,7 @@ def create_admin_app() -> FastAPI:
 
         tool_results = []
         data_rule_results = []
+        sanitization_results = []
         for tc in raw_calls:
             func = tc.get("function", {})
             name = func.get("name", "unknown")
@@ -930,20 +992,62 @@ def create_admin_app() -> FastAPI:
                               registry=registry, calling_agent=calling_agent or None)
             data_policy = _get_data_policy(tool_policies, name, user_role,
                                            data_policies=data_policies)
+
+            tool_sanitization_rules = (
+                (data_policies.get(name) or {}).get("sanitization_rules", [])
+                if data_policies else []
+            )
+
+            # Step 1: sanitize arguments BEFORE anything else sees them.
+            # Severity "critical" escalates to a block, matching RBAC's contract.
+            original_args = args
+            sanitized_args, input_violations = _sanitize_json(args, tool_sanitization_rules)
+            input_modified = bool(input_violations)
+            input_has_critical = any(v.get("severity") == "critical" for v in input_violations)
+
             entry = {
                 "tool_call_id": tc.get("id", ""),
                 "tool_name": name,
-                "arguments": args,
+                "arguments": sanitized_args,
                 "rbac": rbac,
                 "data_policy": data_policy,
             }
-            if rbac["allowed"]:
-                entry["simulated_output"] = _simulate_tool(name, args)
+            if input_modified:
+                entry["original_arguments"] = original_args
+
+            # If a critical pattern hit the arguments, block the call outright.
+            if input_has_critical:
+                entry["sanitization_blocked"] = True
+                entry["sanitization_block_reason"] = (
+                    "Critical sanitization pattern detected in tool arguments"
+                )
+
+            if rbac["allowed"] and not input_has_critical:
+                simulated = _simulate_tool(name, sanitized_args)
+                sanitized_output, output_violations = _sanitize_json(
+                    simulated, tool_sanitization_rules,
+                )
+                output_modified = bool(output_violations)
+                output_has_critical = any(
+                    v.get("severity") == "critical" for v in output_violations
+                )
+
+                entry["simulated_output"] = sanitized_output
+                if output_modified:
+                    entry["simulated_output_original"] = simulated
+                if output_has_critical:
+                    entry["sanitization_blocked"] = True
+                    entry["sanitization_block_reason"] = (
+                        "Critical sanitization pattern detected in tool output"
+                    )
+
+                # LLM-validated data rules run on the SANITIZED payloads so the
+                # Shield LLM never sees raw PII either.
                 if shield_endpoint and data_policy.get("input_rules"):
                     async with httpx.AsyncClient(timeout=30) as rule_client:
                         input_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
-                            json.dumps(args), data_policy["input_rules"],
+                            json.dumps(sanitized_args), data_policy["input_rules"],
                             name, "input", api_key, shield_token,
                         )
                     if input_check and not input_check["passed"]:
@@ -960,9 +1064,30 @@ def create_admin_app() -> FastAPI:
                     if output_check and not output_check["passed"]:
                         entry["data_rule_violation"] = output_check
                         data_rule_results.append(output_check)
+            else:
+                output_violations = []
+                output_modified = False
+
+            if input_modified or output_modified:
+                sanitization_meta = {
+                    "applied": True,
+                    "input_modified": input_modified,
+                    "output_modified": output_modified,
+                    "input_violations": input_violations,
+                    "output_violations": output_violations,
+                }
+                entry["sanitization"] = sanitization_meta
+                sanitization_results.append({
+                    "tool_name": name,
+                    **sanitization_meta,
+                })
+
             tool_results.append(entry)
 
-        has_blocked = any(not t["rbac"]["allowed"] for t in tool_results)
+        has_blocked = any(
+            not t["rbac"]["allowed"] or t.get("sanitization_blocked")
+            for t in tool_results
+        )
 
         # --- Step 3b: Track unregistered agents/tools ---
         called_tool_names = [t["tool_name"] for t in tool_results]
@@ -1003,6 +1128,8 @@ def create_admin_app() -> FastAPI:
         }
         if data_rule_results:
             result["data_rule_violations"] = data_rule_results
+        if sanitization_results:
+            result["sanitization_violations"] = sanitization_results
         if unreg["agents"] or unreg["tools"]:
             result["unregistered"] = unreg
 
