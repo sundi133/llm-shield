@@ -193,6 +193,636 @@
     .guardrail-row { flex-wrap: wrap; }
     .guardrail-controls { width: 100%; justify-content: flex-end; margin-top: 0.5rem; }
   }
+
+  /* ===== Data Policy modal =============================================== */
+  .dp-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(6, 8, 15, 0.72);
+    backdrop-filter: blur(6px) saturate(140%);
+    -webkit-backdrop-filter: blur(6px) saturate(140%);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 4vh 1rem;
+    animation: dp-fade 0.15s ease-out;
+  }
+  @keyframes dp-fade { from { opacity: 0; } to { opacity: 1; } }
+  .dp-sheet {
+    width: min(860px, 100%); max-height: 92vh;
+    background: linear-gradient(180deg, #12121a 0%, #0e0e16 100%);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.02) inset;
+    display: flex; flex-direction: column; overflow: hidden;
+    animation: dp-pop 0.18s cubic-bezier(.2,.8,.2,1);
+  }
+  @keyframes dp-pop {
+    from { transform: translateY(6px) scale(0.985); opacity: 0; }
+    to   { transform: translateY(0) scale(1); opacity: 1; }
+  }
+  .dp-header {
+    position: relative; flex-shrink: 0;
+    padding: 1.1rem 1.5rem 0.95rem;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(99,102,241,0.07) 0%, transparent 100%);
+  }
+  .dp-eyebrow {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.8px;
+    text-transform: uppercase; color: var(--accent-hover);
+    display: inline-flex; align-items: center; gap: 0.45rem;
+  }
+  .dp-eyebrow::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.2);
+  }
+  .dp-title {
+    font-size: 20px; font-weight: 700; letter-spacing: -0.2px;
+    margin-top: 0.35rem; display: flex; align-items: center; gap: 0.55rem;
+    color: var(--text);
+  }
+  .dp-title code {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    background: rgba(255,255,255,0.04); color: var(--text-dim);
+    border: 1px solid var(--border); padding: 2px 8px; border-radius: 5px;
+    font-weight: 500;
+  }
+  .dp-subtitle { font-size: 13px; color: var(--text-dim); margin-top: 0.3rem; }
+  .dp-close {
+    position: absolute; top: 0.85rem; right: 0.9rem;
+    width: 30px; height: 30px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid transparent;
+    color: var(--text-muted); font-size: 18px; cursor: pointer;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+  }
+  .dp-close:hover { background: var(--bg-hover); color: var(--text); border-color: var(--border); }
+  .dp-summary {
+    flex-shrink: 0;
+    display: flex; flex-wrap: wrap; gap: 1.5rem;
+    padding: 0.75rem 1.5rem;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+  }
+  .dp-summary-item { display: flex; flex-direction: column; gap: 2px; }
+  .dp-summary-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+    text-transform: uppercase; color: var(--text-muted);
+  }
+  .dp-summary-value { font-size: 13px; font-weight: 600; color: var(--text); }
+  .dp-body { flex: 1 1 auto; overflow-y: auto; padding: 1.25rem 1.5rem 1.5rem; }
+  .dp-section { margin-bottom: 1.85rem; }
+  .dp-section:last-child { margin-bottom: 0.5rem; }
+  .dp-section-head {
+    display: flex; align-items: flex-start; gap: 0.85rem; margin-bottom: 0.85rem;
+  }
+  .dp-step-num {
+    flex-shrink: 0;
+    width: 26px; height: 26px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+    background: var(--accent-dim); color: var(--accent-hover);
+    border: 1px solid rgba(99,102,241,0.35);
+  }
+  .dp-section-title-block { flex: 1; min-width: 0; }
+  .dp-section-title {
+    display: flex; align-items: center; gap: 0.6rem;
+    font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: -0.1px;
+  }
+  .dp-count-pill {
+    font-size: 11px; font-weight: 600;
+    padding: 1px 8px; border-radius: 10px;
+    background: var(--bg-3); color: var(--text-dim);
+    border: 1px solid var(--border);
+  }
+  .dp-section-desc {
+    font-size: 12.5px; color: var(--text-muted);
+    margin-top: 0.2rem; line-height: 1.5;
+  }
+  .dp-section-actions { display: flex; gap: 0.4rem; align-items: center; flex-shrink: 0; }
+
+  .dp-tip {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 0.75rem 0.9rem 0.85rem 1rem;
+    margin-bottom: 0.85rem;
+    font-size: 12px; line-height: 1.55; color: var(--text-dim);
+  }
+  .dp-tip-title {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px;
+    text-transform: uppercase; color: var(--text);
+    margin-bottom: 0.35rem;
+  }
+  .dp-tip ul { margin: 0; padding-left: 1.1rem; }
+  .dp-tip li { margin: 0.18rem 0; }
+  .dp-tip code {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg); color: var(--text-dim);
+    padding: 1px 5px; border-radius: 3px; font-size: 11px;
+  }
+  .dp-kbd {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.2px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .dp-kbd.detect  { background: rgba(210,153,34,0.15); color: #e6b850; border: 1px solid rgba(210,153,34,0.3); }
+  .dp-kbd.redact  { background: rgba(59,130,246,0.15); color: #93c5fd; border: 1px solid rgba(59,130,246,0.3); }
+  .dp-kbd.block   { background: rgba(248,81,73,0.15); color: #fca5a5; border: 1px solid rgba(248,81,73,0.3); }
+  .dp-kbd.allow   { background: rgba(16,185,129,0.15); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.3); }
+  .dp-kbd.mask    { background: rgba(139,92,246,0.15); color: #c4b5fd; border: 1px solid rgba(139,92,246,0.3); }
+  .dp-kbd.critical{ background: rgba(248,81,73,0.2);  color: #fecaca; border: 1px solid rgba(248,81,73,0.4); }
+
+  .dp-presets { display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.7rem; }
+  .dp-presets-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase; color: var(--text-muted);
+  }
+  .dp-preset-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .dp-preset {
+    display: inline-flex; align-items: center; gap: 0.45rem;
+    padding: 0.3rem 0.7rem; border-radius: 999px;
+    background: var(--bg); color: var(--text-dim);
+    border: 1px solid var(--border);
+    font-family: inherit; font-size: 11.5px; font-weight: 500;
+    cursor: pointer; transition: background 0.1s, color 0.1s, border-color 0.1s;
+  }
+  .dp-preset:hover { background: var(--bg-hover); color: var(--text); border-color: var(--border-strong); }
+  .dp-preset-plus { color: var(--accent-hover); font-weight: 700; font-size: 12px; }
+  .dp-preset-tag {
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+    padding: 1px 5px; border-radius: 3px;
+  }
+  .dp-preset-tag.auto  { background: rgba(99,102,241,0.18); color: #a5b4fc; }
+  .dp-preset-tag.detect{ background: rgba(210,153,34,0.18); color: #e6b850; }
+  .dp-preset-tag.redact{ background: rgba(59,130,246,0.18); color: #93c5fd; }
+  .dp-preset-tag.block { background: rgba(248,81,73,0.18); color: #fca5a5; }
+
+  .dp-rule-card {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 0.85rem;
+    margin-bottom: 0.55rem;
+    transition: border-color 0.1s;
+  }
+  .dp-rule-card:hover { border-color: var(--border-strong); }
+  .dp-rule-row {
+    display: grid; gap: 0.55rem;
+    grid-template-columns: minmax(170px, 1fr) minmax(180px, 2fr) auto;
+    align-items: end;
+  }
+  .dp-rule-row--regex { grid-template-columns: 1fr 1fr; margin-top: 0.55rem; }
+  .dp-field-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.4px;
+    color: var(--text-muted); text-transform: uppercase;
+    margin-bottom: 4px; display: block;
+  }
+  .dp-rule-card input, .dp-rule-card select {
+    width: 100%; padding: 6px 9px; font-size: 12px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px;
+    font-family: inherit;
+  }
+  .dp-rule-card input.mono { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+  .dp-rule-card input:focus, .dp-rule-card select:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  .dp-rule-footer {
+    display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;
+    margin-top: 0.6rem; padding-top: 0.55rem;
+    border-top: 1px dashed var(--border);
+    font-size: 11px; color: var(--text-muted);
+    flex-wrap: wrap;
+  }
+  .dp-rule-meta { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .dp-rule-meta-group { display: inline-flex; align-items: center; gap: 0.5rem; }
+  .dp-rule-meta-group label { margin: 0; font-size: 10px; letter-spacing: 0.4px; }
+  .dp-icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 6px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-muted); cursor: pointer; font-size: 13px;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+  }
+  .dp-icon-btn:hover { background: rgba(248,81,73,0.1); color: #fca5a5; border-color: rgba(248,81,73,0.35); }
+
+  .dp-empty {
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    text-align: center;
+    font-size: 12.5px; color: var(--text-muted);
+    background: rgba(255,255,255,0.01);
+  }
+
+  .dp-role-card {
+    position: relative;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.85rem 1rem 0.85rem 1.1rem;
+    margin-bottom: 0.65rem;
+    transition: border-color 0.1s;
+  }
+  .dp-role-card::before {
+    content: ""; position: absolute; left: 0; top: 10px; bottom: 10px;
+    width: 3px; border-radius: 0 3px 3px 0;
+    background: var(--role-stripe, var(--border-strong));
+    transition: background 0.1s;
+  }
+  .dp-role-card:hover { border-color: var(--border-strong); }
+  .dp-role-card[data-action="allow"]  { --role-stripe: #10b981; }
+  .dp-role-card[data-action="redact"] { --role-stripe: #f59e0b; }
+  .dp-role-card[data-action="mask"]   { --role-stripe: #8b5cf6; }
+  .dp-role-card[data-action="block"]  { --role-stripe: #ef4444; }
+  .dp-role-head {
+    display: flex; align-items: center; gap: 0.55rem;
+    margin-bottom: 0.65rem; flex-wrap: wrap;
+  }
+  .dp-role-name {
+    font-weight: 700; font-size: 14px; color: var(--text);
+    min-width: 90px;
+  }
+  .dp-role-controls {
+    display: flex; align-items: center; gap: 0.4rem;
+    flex: 1; flex-wrap: wrap; min-width: 0;
+  }
+  .dp-role-card select, .dp-role-card input[type="text"] {
+    padding: 5px 9px; font-size: 12px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px;
+    font-family: inherit;
+  }
+  .dp-role-card input.dp-role-scope { flex: 1; min-width: 180px; }
+  .dp-role-card select:focus, .dp-role-card input:focus, .dp-role-card textarea:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  .dp-role-template {
+    border-style: dashed !important;
+    color: var(--text-muted) !important;
+    font-size: 11px !important;
+    background: transparent !important;
+    margin-left: auto;
+  }
+  .dp-role-template:hover { color: var(--text) !important; border-color: var(--border-strong) !important; }
+  .dp-role-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+  .dp-role-field-label {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.4px;
+    text-transform: uppercase; color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .dp-role-hint { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-dim); font-size: 10.5px; }
+  .dp-ghost-btn {
+    background: transparent; border: 1px dashed var(--border);
+    color: var(--text-muted); font-family: inherit; font-size: 10.5px;
+    padding: 2px 8px; border-radius: 4px; cursor: pointer;
+    transition: color 0.1s, border-color 0.1s, background 0.1s;
+  }
+  .dp-ghost-btn:hover { color: var(--accent-hover); border-color: var(--accent); background: var(--accent-dim); }
+  .dp-role-card textarea {
+    width: 100%; padding: 7px 9px; font-size: 12px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px;
+    font-family: inherit; resize: vertical; line-height: 1.5;
+  }
+
+  .dp-compliance-grid { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 0.75rem; }
+  .dp-compliance-field label {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.4px;
+    text-transform: uppercase; color: var(--text-muted);
+    margin-bottom: 4px; display: block;
+  }
+  .dp-compliance-field select, .dp-compliance-field input[type="number"] {
+    width: 100%; padding: 6px 9px; font-size: 12px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px;
+    font-family: inherit;
+  }
+  .dp-compliance-field select:focus, .dp-compliance-field input:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  .dp-switch {
+    display: inline-flex; align-items: center; gap: 0.55rem;
+    padding: 6px 9px; font-size: 12px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px;
+    cursor: pointer; width: 100%;
+    margin: 0;
+  }
+  .dp-switch input { margin: 0; accent-color: var(--accent); }
+
+  .dp-footer {
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: 0.85rem 1.5rem;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+  }
+  .dp-footer-hint { font-size: 11.5px; color: var(--text-muted); }
+  .dp-footer-actions { display: flex; gap: 0.5rem; }
+
+  /* ===== Data Policy — Test / Preview panel ============================= */
+  .dp-testbench {
+    margin-top: 0.85rem;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    background: rgba(99,102,241,0.03);
+  }
+  .dp-testbench-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem;
+    margin-bottom: 0.55rem; flex-wrap: wrap;
+  }
+  .dp-testbench-title {
+    font-size: 13px; font-weight: 700; color: var(--text);
+    display: inline-flex; align-items: center; gap: 0.5rem;
+  }
+  .dp-testbench-title::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.2);
+  }
+  .dp-testbench-sub {
+    font-size: 11.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.5;
+  }
+  .dp-testbench-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
+  #dp-test-input {
+    width: 100%; padding: 8px 10px; font-size: 12px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace; resize: vertical; line-height: 1.55;
+  }
+  #dp-test-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .dp-testbench-run {
+    display: flex; align-items: center; gap: 0.5rem;
+    margin-top: 0.5rem; flex-wrap: wrap;
+  }
+  .dp-test-verdict {
+    margin-left: auto;
+    font-size: 11.5px; font-weight: 600;
+    padding: 3px 11px; border-radius: 999px;
+    background: var(--bg-3); color: var(--text-muted);
+    border: 1px solid var(--border);
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    transition: all 0.15s;
+  }
+  .dp-test-verdict.pass      { background: rgba(16,185,129,0.15); color: #6ee7b7; border-color: rgba(16,185,129,0.3); }
+  .dp-test-verdict.sanitized { background: rgba(59,130,246,0.15); color: #93c5fd; border-color: rgba(59,130,246,0.3); }
+  .dp-test-verdict.blocked   { background: rgba(248,81,73,0.15); color: #fca5a5; border-color: rgba(248,81,73,0.3); }
+  .dp-test-result { margin-top: 0.65rem; }
+  .dp-test-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+  .dp-test-panel-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+    text-transform: uppercase; color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .dp-test-payload {
+    margin: 0; padding: 9px 11px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.55;
+    color: var(--text-dim); white-space: pre-wrap; word-break: break-word;
+    max-height: 200px; overflow: auto;
+  }
+  .dp-test-payload .dp-hit {
+    background: rgba(59,130,246,0.2); color: #93c5fd;
+    padding: 1px 4px; border-radius: 3px; border: 1px solid rgba(59,130,246,0.4);
+  }
+  .dp-test-payload.blocked {
+    color: #fca5a5; font-style: italic;
+    border-color: rgba(248,81,73,0.3); background: rgba(248,81,73,0.05);
+  }
+  .dp-test-violation-row {
+    display: flex; align-items: center; gap: 0.45rem;
+    padding: 5px 8px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+    margin-bottom: 4px;
+    font-size: 11.5px; color: var(--text-dim);
+  }
+  .dp-test-violation-row code {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--text); background: transparent; padding: 0;
+  }
+  .dp-test-v-count { color: var(--text-muted); font-weight: 600; font-size: 10.5px; }
+  .dp-test-v-samples {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  }
+  .dp-test-violation-row.error {
+    border-color: rgba(248,81,73,0.3); background: rgba(248,81,73,0.05);
+  }
+  .dp-test-empty {
+    font-size: 12px; color: var(--text-muted);
+    text-align: center; padding: 0.75rem;
+    background: var(--bg); border: 1px dashed var(--border); border-radius: 6px;
+  }
+
+  /* Loud warning banner shown inside the preview when there are no rules
+     to test against — makes the "nothing happened" case impossible to miss. */
+  .dp-test-warn {
+    display: flex; align-items: flex-start; gap: 0.7rem;
+    padding: 0.75rem 0.9rem;
+    background: rgba(234,179,8,0.08);
+    border: 1px solid rgba(234,179,8,0.35);
+    border-radius: 8px;
+    color: var(--text-dim); font-size: 12.5px; line-height: 1.5;
+  }
+  .dp-test-warn-icon {
+    flex-shrink: 0;
+    width: 22px; height: 22px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(234,179,8,0.25); color: #fbbf24;
+    font-weight: 700; font-size: 13px; line-height: 1;
+  }
+  .dp-test-warn-body { flex: 1; min-width: 0; }
+  .dp-test-warn-title {
+    color: #fbbf24; font-weight: 700; font-size: 12.5px;
+    margin-bottom: 2px;
+  }
+  .dp-test-warn-actions {
+    margin-top: 0.55rem;
+    display: flex; flex-wrap: wrap; gap: 0.35rem;
+  }
+
+  /* Disabled look + pointer feedback for the Test buttons when there are
+     no rules on the form. We stop pointer-events so clicks don't fire, but
+     keep the tooltip readable. */
+  .dp-test-btn[disabled] {
+    opacity: 0.55; cursor: not-allowed;
+    filter: grayscale(0.4);
+  }
+
+  /* ===== AI-reasoning sanitization card ================================= */
+  .dp-ai-card {
+    background: linear-gradient(180deg, rgba(139,92,246,0.06) 0%, rgba(99,102,241,0.03) 100%);
+    border: 1px solid rgba(139,92,246,0.25);
+    border-radius: 10px;
+    padding: 0.95rem 1rem;
+    margin-bottom: 0.85rem;
+  }
+  .dp-ai-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.55rem;
+  }
+  .dp-ai-title {
+    display: inline-flex; align-items: center; gap: 0.45rem;
+    font-size: 13px; font-weight: 700; color: var(--text);
+  }
+  .dp-ai-title::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: #a855f7; box-shadow: 0 0 0 4px rgba(168,85,247,0.2);
+  }
+  .dp-ai-badge {
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase; padding: 2px 7px; border-radius: 10px;
+    background: rgba(168,85,247,0.18); color: #d8b4fe;
+    border: 1px solid rgba(168,85,247,0.35);
+  }
+  .dp-ai-sub {
+    font-size: 12px; color: var(--text-dim); line-height: 1.5; margin-bottom: 0.7rem;
+  }
+  .dp-ai-sub code {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    background: var(--bg); color: var(--text-dim);
+    padding: 1px 5px; border-radius: 3px;
+  }
+
+  .dp-mode-toggle {
+    display: inline-flex; align-items: stretch;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 3px; gap: 2px;
+  }
+  .dp-mode-option {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 5px 11px; border-radius: 6px;
+    font-family: inherit; font-size: 11.5px; font-weight: 600;
+    color: var(--text-muted); background: transparent; border: none;
+    cursor: pointer; transition: background 0.1s, color 0.1s;
+  }
+  .dp-mode-option:hover { color: var(--text); }
+  .dp-mode-option.active {
+    background: var(--accent-dim); color: var(--accent-hover);
+    box-shadow: inset 0 0 0 1px rgba(99,102,241,0.35);
+  }
+  .dp-mode-option .dp-mode-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; opacity: 0.7;
+  }
+
+  .dp-intent-controls {
+    display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;
+    margin-bottom: 0.45rem;
+  }
+  .dp-intent-controls select {
+    padding: 5px 9px; font-size: 11.5px;
+    background: var(--bg); color: var(--text-dim);
+    border: 1px dashed var(--border); border-radius: 5px;
+    font-family: inherit;
+  }
+  .dp-intent-controls select:focus { outline: none; border-color: var(--accent); color: var(--text); }
+  #dp-intent {
+    width: 100%; min-height: 96px; padding: 9px 11px;
+    font-size: 12px; line-height: 1.55;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-family: inherit; resize: vertical;
+  }
+  #dp-intent:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .dp-intent-helper {
+    margin-top: 0.4rem;
+    font-size: 11px; color: var(--text-muted);
+    display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
+  }
+  .dp-intent-helper code {
+    font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+    background: var(--bg-3); padding: 1px 5px; border-radius: 3px;
+  }
+
+  /* Hide/show rule / intent blocks based on selected mode. */
+  .dp-regex-block.hidden, .dp-ai-block.hidden { display: none; }
+
+  /* Educational "regex can be tricked" callout — shown only when the user
+     is on regex-only mode so we don't nag AI users. Amber-ish so it reads
+     as "heads up", not "error". */
+  .dp-warn-callout {
+    display: flex; align-items: flex-start; gap: 0.6rem;
+    background: rgba(234,179,8,0.06);
+    border: 1px solid rgba(234,179,8,0.28);
+    border-radius: 8px;
+    padding: 0.65rem 0.8rem;
+    margin-bottom: 0.75rem;
+    font-size: 11.5px; line-height: 1.55; color: var(--text-dim);
+  }
+  .dp-warn-callout strong { color: var(--text); }
+  .dp-warn-callout .dp-warn-icon {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: rgba(234,179,8,0.2); color: #fbbf24;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 11px; line-height: 1; flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  /* AI review result panel inside the testbench. */
+  .dp-ai-result {
+    margin-top: 0.65rem;
+    background: var(--bg-3); border: 1px solid var(--border);
+    border-left: 3px solid #a855f7;
+    border-radius: 8px; padding: 0.7rem 0.85rem;
+    font-size: 12px; line-height: 1.55; color: var(--text-dim);
+  }
+  .dp-ai-result.loading { border-left-color: var(--accent); }
+  .dp-ai-result.error   { border-left-color: #f85149; }
+  .dp-ai-result-head {
+    display: flex; align-items: center; gap: 0.5rem;
+    margin-bottom: 0.45rem; flex-wrap: wrap;
+  }
+  .dp-ai-verdict {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 2px 9px; border-radius: 999px;
+  }
+  .dp-ai-verdict.allow  { background: rgba(16,185,129,0.15); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.35); }
+  .dp-ai-verdict.redact { background: rgba(59,130,246,0.15); color: #93c5fd; border: 1px solid rgba(59,130,246,0.35); }
+  .dp-ai-verdict.block  { background: rgba(248,81,73,0.15);  color: #fca5a5; border: 1px solid rgba(248,81,73,0.35); }
+  .dp-ai-stage {
+    font-size: 10px; font-weight: 600; color: var(--text-muted);
+    letter-spacing: 0.5px; text-transform: uppercase;
+  }
+  .dp-ai-reasoning {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; margin-bottom: 0.55rem;
+    color: var(--text); font-size: 12px; line-height: 1.55;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .dp-ai-redact-list { display: flex; flex-direction: column; gap: 4px; }
+  .dp-ai-redact-row {
+    display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+    padding: 5px 8px; font-size: 11.5px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+    color: var(--text-dim);
+  }
+  .dp-ai-redact-row .orig {
+    font-family: 'JetBrains Mono', monospace;
+    color: #fca5a5;
+    text-decoration: line-through;
+    background: rgba(248,81,73,0.08);
+    padding: 1px 5px; border-radius: 3px;
+    max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .dp-ai-redact-row .arrow { color: var(--text-muted); }
+  .dp-ai-redact-row .repl {
+    font-family: 'JetBrains Mono', monospace;
+    color: #93c5fd;
+    background: rgba(59,130,246,0.1);
+    padding: 1px 5px; border-radius: 3px;
+  }
+  .dp-ai-redact-row .reason { color: var(--text-muted); font-size: 11px; }
+
+  @media (max-width: 760px) {
+    .dp-role-grid, .dp-compliance-grid { grid-template-columns: 1fr; }
+    .dp-rule-row { grid-template-columns: 1fr; }
+    .dp-rule-row--regex { grid-template-columns: 1fr; }
+    .dp-test-grid { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -3913,104 +4543,1134 @@ function openDataPolicyModal(toolName) {
   const rolePolicies = {};
   (dp.role_policies || []).forEach(rp => { rolePolicies[rp.role] = rp; });
 
-  const actionOpts = (selected) => ['allow','redact','mask','block'].map(a => `<option value="${a}" ${a === selected ? 'selected' : ''}>${a}</option>`).join('');
+  const actionOpts = (selected) => ['allow','redact','mask','block']
+    .map(a => `<option value="${a}" ${a === selected ? 'selected' : ''}>${a}</option>`).join('');
 
-  let html = `
-  <div style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);" id="dp-modal-overlay" onclick="if(event.target===this)this.remove()">
-    <div style="background:var(--bg-2);border:1px solid var(--border-strong);border-radius:12px;padding:1.5rem;width:650px;max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-lg);">
-      <div style="font-size:16px;font-weight:700;margin-bottom:0.25rem;">Data Policy: ${toolName.replace(/_/g, ' ')}</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-bottom:1rem;">Configure per-role data access, sanitization rules, and compliance</div>
+  const prettyName = toolName.replace(/_/g, ' ');
+  const sanCount   = (dp.sanitization_rules || []).length;
+  const compliance = (dp.compliance_framework || '').toLowerCase();
+  const auditOn    = !!dp.audit_required;
+  const retention  = dp.retention_days || '';
 
-      <!-- Per-Role Policies -->
-      <div style="margin-bottom:1rem;">
-        <div style="font-size:13px;font-weight:700;margin-bottom:0.5rem;">Per-Role Data Access</div>
-        <div id="dp-roles-body">
-          ${roles.map(r => {
-            const rp = rolePolicies[r] || {};
-            const inputRules = (rp.input_rules || []).join('\\n');
-            const outputRules = (rp.output_rules || []).join('\\n');
-            return `<div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;margin-bottom:0.5rem;" data-role="${r}">
-              <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem;">
-                <span style="font-weight:700;font-size:13px;min-width:80px;">${r}</span>
-                <select class="dp-role-action" style="padding:3px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;">
-                  ${actionOpts(rp.action || 'block')}
-                </select>
-                <input type="text" class="dp-role-scope" value="${(rp.data_scope || []).join(', ')}" placeholder="Data scope: medical, personal, contact" style="flex:1;padding:3px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;">
-                <select class="dp-role-redaction" style="padding:3px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;">
-                  <option value="none" ${rp.redaction_level === 'none' ? 'selected' : ''}>none</option>
-                  <option value="partial" ${(!rp.redaction_level || rp.redaction_level === 'partial') ? 'selected' : ''}>partial</option>
-                  <option value="full" ${rp.redaction_level === 'full' ? 'selected' : ''}>full</option>
-                </select>
-              </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
-                <div>
-                  <label style="font-size:11px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:3px;">Input Rules <span style="font-weight:400;color:var(--text-dim);">(LLM-validated)</span></label>
-                  <textarea class="dp-role-input-rules" rows="2" placeholder="One rule per line, e.g.:\\nMust include a valid ID\\nDo not accept amounts over 10000" style="width:100%;padding:6px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;resize:vertical;font-family:inherit;">${inputRules}</textarea>
-                </div>
-                <div>
-                  <label style="font-size:11px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:3px;">Output Rules <span style="font-weight:400;color:var(--text-dim);">(LLM-validated)</span></label>
-                  <textarea class="dp-role-output-rules" rows="2" placeholder="One rule per line, e.g.:\\nRedact SSN from response\\nDo not include internal account numbers" style="width:100%;padding:6px 8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px;resize:vertical;font-family:inherit;">${outputRules}</textarea>
-                </div>
-              </div>
-            </div>`;
-          }).join('')}
+  const rolesHtml = roles.length ? roles.map(r => {
+    const rp = rolePolicies[r] || {};
+    const currentAction = rp.action || 'block';
+    const inputRules  = (rp.input_rules  || []).join('\n');
+    const outputRules = (rp.output_rules || []).join('\n');
+    return `
+      <div class="dp-role-card" data-role="${r}" data-action="${currentAction}">
+        <div class="dp-role-head">
+          <span class="dp-role-name">${r}</span>
+          <div class="dp-role-controls">
+            <select class="dp-role-action" title="What happens when this role calls the tool"
+                    onchange="this.closest('.dp-role-card').setAttribute('data-action', this.value)">
+              ${actionOpts(currentAction)}
+            </select>
+            <input type="text" class="dp-role-scope" value="${(rp.data_scope || []).join(', ')}"
+                   placeholder="personal, contact, medical, financial"
+                   title="Comma-separated data categories visible to this role">
+            <select class="dp-role-redaction" title="How aggressively to mask scoped fields">
+              <option value="none"    ${rp.redaction_level === 'none'    ? 'selected' : ''}>redaction: none</option>
+              <option value="partial" ${(!rp.redaction_level || rp.redaction_level === 'partial') ? 'selected' : ''}>redaction: partial</option>
+              <option value="full"    ${rp.redaction_level === 'full'    ? 'selected' : ''}>redaction: full</option>
+            </select>
+            <select class="dp-role-template" onchange="applyDPRoleTemplate(this)"
+                    title="Apply a ready-made policy to this role">
+              <option value="">Apply template…</option>
+              <option value="full_access">Full access (allow, no redaction)</option>
+              <option value="read_only">Read-only + PII masked</option>
+              <option value="pii_safe">Strict PII-safe</option>
+              <option value="audit">Audit / summary-only</option>
+              <option value="blocked">Blocked (no access)</option>
+            </select>
+          </div>
+        </div>
+        <div class="dp-role-grid">
+          <div>
+            <div class="dp-role-field-label">
+              <span>Input rules <span class="dp-role-hint">· LLM-validated</span></span>
+              <button type="button" class="dp-ghost-btn" onclick="insertDPRoleExample(this, 'input')" title="Insert an example rule">+ example</button>
+            </div>
+            <textarea class="dp-role-input-rules" rows="3"
+                      placeholder="One rule per line, e.g.&#10;Must include a valid account_id&#10;Reject transfers over 10,000 without approval&#10;Reject calls that pass raw SSN or credit-card data">${inputRules}</textarea>
+          </div>
+          <div>
+            <div class="dp-role-field-label">
+              <span>Output rules <span class="dp-role-hint">· LLM-validated</span></span>
+              <button type="button" class="dp-ghost-btn" onclick="insertDPRoleExample(this, 'output')" title="Insert an example rule">+ example</button>
+            </div>
+            <textarea class="dp-role-output-rules" rows="3"
+                      placeholder="One rule per line, e.g.&#10;Redact SSN and DOB from the response&#10;Do not include internal account numbers&#10;Return only the fields the user asked about">${outputRules}</textarea>
+          </div>
+        </div>
+      </div>`;
+  }).join('') : `<div class="dp-empty">No agent roles registered yet. Register agents &amp; roles first, then return here to configure per-role access.</div>`;
+
+  const sanRulesHtml = sanCount
+    ? (dp.sanitization_rules || []).map((sr, i) => dpSanRuleRow(sr, i)).join('')
+    : `<div class="dp-empty">No rules yet. Start from a template above, or click <strong>+ Add rule</strong>.</div>`;
+
+  const complianceOpt = (val, label) => `<option value="${val}" ${compliance === val ? 'selected' : ''}>${label}</option>`;
+
+  const html = `
+  <div class="dp-overlay" id="dp-modal-overlay" onclick="if(event.target===this)this.remove()">
+    <div class="dp-sheet" role="dialog" aria-modal="true" aria-labelledby="dp-title">
+      <div class="dp-header">
+        <div class="dp-eyebrow">Data Policy</div>
+        <h2 class="dp-title" id="dp-title">
+          <span>${prettyName}</span>
+          <code>${toolName}</code>
+        </h2>
+        <div class="dp-subtitle">Define how this tool handles sensitive data — by pattern, by role, and by compliance framework.</div>
+        <button class="dp-close" type="button" onclick="document.getElementById('dp-modal-overlay').remove()" aria-label="Close">×</button>
+      </div>
+
+      <div class="dp-summary">
+        <div class="dp-summary-item">
+          <span class="dp-summary-label">Roles</span>
+          <span class="dp-summary-value">${roles.length}</span>
+        </div>
+        <div class="dp-summary-item">
+          <span class="dp-summary-label">Sanitization rules</span>
+          <span class="dp-summary-value">${sanCount}</span>
+        </div>
+        <div class="dp-summary-item">
+          <span class="dp-summary-label">Compliance</span>
+          <span class="dp-summary-value">${compliance ? compliance.toUpperCase() : '—'}</span>
+        </div>
+        <div class="dp-summary-item">
+          <span class="dp-summary-label">Audit</span>
+          <span class="dp-summary-value" style="color:${auditOn ? '#6ee7b7' : 'var(--text-muted)'};">${auditOn ? 'On' : 'Off'}</span>
         </div>
       </div>
 
-      <!-- Sanitization Rules -->
-      <div style="margin-bottom:1rem;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-          <div style="font-size:12px;font-weight:700;">Sanitization Rules</div>
-          <button class="small" onclick="addDPSanitizationRule()" style="font-size:10px;padding:2px 8px;">+ Add Rule</button>
-        </div>
-        <div id="dp-san-rules">
-          ${(dp.sanitization_rules || []).map((sr, i) => dpSanRuleRow(sr, i)).join('')}
-        </div>
+      <div class="dp-body">
+
+        <!-- Step 1 — Sanitization (AI reasoning + regex fast-path) -->
+        <section class="dp-section">
+          <div class="dp-section-head">
+            <div class="dp-step-num">1</div>
+            <div class="dp-section-title-block">
+              <div class="dp-section-title">
+                Sanitization
+                <span class="dp-count-pill" id="dp-san-count">${sanCount} ${sanCount === 1 ? 'rule' : 'rules'}</span>
+              </div>
+              <div class="dp-section-desc">Protect sensitive data in tool arguments and responses. Pick the mode that fits — AI reasoning (robust to obfuscation), regex (fast &amp; deterministic), or both.</div>
+            </div>
+          </div>
+
+          <!-- ── Mode toggle + AI policy intent ─────────────────────── -->
+          <div class="dp-ai-card">
+            <div class="dp-ai-head">
+              <div class="dp-ai-title">Enforcement mode <span class="dp-ai-badge">NEW</span></div>
+              <div class="dp-mode-toggle" role="tablist" aria-label="Sanitization mode">
+                <button type="button" class="dp-mode-option" id="dp-mode-ai"    data-mode="ai"    onclick="dpSelectMode('ai')"    title="LLM reads your intent and reasons about every payload">
+                  <span class="dp-mode-dot"></span> AI reasoning
+                </button>
+                <button type="button" class="dp-mode-option" id="dp-mode-both"  data-mode="both"  onclick="dpSelectMode('both')"  title="Regex as a fast pre-filter, then AI reasoning on what's left">
+                  <span class="dp-mode-dot"></span> Both
+                </button>
+                <button type="button" class="dp-mode-option" id="dp-mode-regex" data-mode="regex" onclick="dpSelectMode('regex')" title="Regex patterns only — deterministic but can be bypassed">
+                  <span class="dp-mode-dot"></span> Regex
+                </button>
+              </div>
+            </div>
+
+            <div class="dp-ai-sub">
+              Regex is deterministic and fast but easy to trick with spacing, unicode, or paraphrasing — e.g. <code>1 2 3 4 5 6 7 8 9</code> slips past an SSN regex. AI reasoning reads your plain-English intent and evaluates the payload semantically, catching obfuscated and context-based leaks.
+            </div>
+
+            <div id="dp-ai-block" class="dp-ai-block">
+              <div class="dp-intent-controls">
+                <select onchange="dpApplyIntentTemplate(this)" title="Drop a starter policy into the intent textarea">
+                  <option value="">Start from a template…</option>
+                  <option value="hipaa">HIPAA — Protected Health Information</option>
+                  <option value="pci">PCI DSS — Cardholder data</option>
+                  <option value="gdpr">GDPR — EU personal data</option>
+                  <option value="secrets">Internal secrets &amp; credentials</option>
+                  <option value="minors">Minors &amp; guardianship</option>
+                  <option value="finance">Financial account &amp; transfer data</option>
+                  <option value="custom">Custom (clear)</option>
+                </select>
+                <span style="font-size:10.5px;color:var(--text-muted);">or write your own below</span>
+              </div>
+              <textarea id="dp-intent" rows="5" placeholder="Describe, in plain English, what this tool must NEVER expose. Examples:&#10;• Never expose SSN, credit card, CVV, bearer tokens, API keys, or AWS access keys, even if obfuscated, paraphrased, spaced out, or partially disclosed.&#10;• Block outputs that pair a patient name with any diagnosis, medication, or insurance ID.&#10;• Redact addresses down to city + state, phone numbers down to the area code."></textarea>
+              <div class="dp-intent-helper">
+                <strong style="color:var(--text);">Tip:</strong>
+                Write intent the way you'd brief a careful colleague. Be specific about what to <code>block</code> vs <code>redact</code>, and mention obfuscation you've seen before.
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Regex fast-path ─────────────────────────────────────── -->
+          <div id="dp-regex-block" class="dp-regex-block">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;margin-bottom:0.5rem;flex-wrap:wrap;">
+              <div style="font-size:12.5px;font-weight:600;color:var(--text);">Regex patterns <span style="font-weight:500;color:var(--text-muted);">· fast path</span></div>
+              <button class="small" type="button" onclick="addDPSanitizationRule()">+ Add rule</button>
+            </div>
+
+            <div class="dp-warn-callout" id="dp-regex-warn">
+              <span class="dp-warn-icon" aria-hidden="true">!</span>
+              <div>
+                <strong>Regex alone is easy to bypass.</strong> It catches well-formatted values like <code>123-45-6789</code> but misses <code>1 2 3 4 5 6 7 8 9</code>, unicode-dashed <code>123‒45‒6789</code>, or "my social is one-two-three…". For production policies use <strong>AI reasoning</strong> or <strong>Both</strong>, which layers AI on top.
+              </div>
+            </div>
+
+            <div class="dp-tip">
+              <div class="dp-tip-title">How regex rules work</div>
+              <ul>
+                <li><span class="dp-kbd detect">detect</span> log the match but pass the real value to the tool <em>(safe for arguments)</em>.</li>
+                <li><span class="dp-kbd redact">redact</span> replace matches with the <em>Replacement</em> text.</li>
+                <li><span class="dp-kbd block">block</span> refuse the tool call or response entirely.</li>
+                <li><strong>auto</strong> = detect on input, redact on output.</li>
+                <li>Severity <span class="dp-kbd critical">critical</span> always escalates to block.</li>
+              </ul>
+              <div class="dp-presets">
+                <div class="dp-presets-label">Start from a template</div>
+                <div class="dp-preset-row">
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('ssn')"><span class="dp-preset-plus">+</span> SSN <span class="dp-preset-tag auto">auto</span></button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('email')"><span class="dp-preset-plus">+</span> Email <span class="dp-preset-tag auto">auto</span></button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('phone')"><span class="dp-preset-plus">+</span> Phone <span class="dp-preset-tag auto">auto</span></button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('credit_card')"><span class="dp-preset-plus">+</span> Credit card <span class="dp-preset-tag block">block</span></button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('api_key')"><span class="dp-preset-plus">+</span> API key <span class="dp-preset-tag block">block</span></button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('aws_key')"><span class="dp-preset-plus">+</span> AWS key <span class="dp-preset-tag block">block</span></button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('ip')"><span class="dp-preset-plus">+</span> IPv4 <span class="dp-preset-tag detect">detect</span></button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('dob')"><span class="dp-preset-plus">+</span> DOB <span class="dp-preset-tag redact">redact</span></button>
+                </div>
+              </div>
+            </div>
+
+            <div id="dp-san-rules">${sanRulesHtml}</div>
+          </div>
+
+          <!-- ── Preview / test sandbox ──────────────────────────────── -->
+          <div class="dp-testbench">
+            <div class="dp-testbench-head">
+              <div>
+                <div class="dp-testbench-title">Preview sanitization</div>
+                <div class="dp-testbench-sub">Run your policy against a sample payload before saving. Regex runs locally; <strong>AI review</strong> calls the Shield LLM.</div>
+              </div>
+              <div class="dp-testbench-actions">
+                <button type="button" class="dp-ghost-btn" onclick="dpLoadTestSample()" title="Cycle through example payloads">Load sample</button>
+                <button type="button" class="dp-ghost-btn" onclick="dpClearTest()" title="Clear input and results">Clear</button>
+              </div>
+            </div>
+            <textarea id="dp-test-input" rows="4" placeholder='Paste any text or JSON. Try obfuscated forms too — the AI pass should catch them.&#10;Examples:&#10;{"ssn":"123-45-6789","email":"alex@acme.com"}&#10;"my social is one two three four five six seven eight nine"'></textarea>
+            <div class="dp-testbench-run">
+              <button id="dp-test-btn-input"  class="primary small dp-test-btn" type="button" onclick="dpTestSanitization('input')"  title="Regex: evaluate as tool arguments (default: detect)">Regex · input</button>
+              <button id="dp-test-btn-output" class="small dp-test-btn"         type="button" onclick="dpTestSanitization('output')" title="Regex: evaluate as tool response (default: redact)">Regex · output</button>
+              <button id="dp-test-btn-ai-in"  class="small dp-test-btn dp-test-btn-ai" type="button" onclick="dpRunAIReview('input',  ${JSON.stringify(toolName)})" title="Run AI reasoning sanitizer on this as a tool input"  style="background:rgba(168,85,247,0.15);border-color:rgba(168,85,247,0.35);color:#d8b4fe;">AI review · input</button>
+              <button id="dp-test-btn-ai-out" class="small dp-test-btn dp-test-btn-ai" type="button" onclick="dpRunAIReview('output', ${JSON.stringify(toolName)})" title="Run AI reasoning sanitizer on this as a tool output" style="background:rgba(168,85,247,0.15);border-color:rgba(168,85,247,0.35);color:#d8b4fe;">AI review · output</button>
+              <span id="dp-test-verdict" class="dp-test-verdict" style="display:none;"></span>
+            </div>
+            <div id="dp-test-result" class="dp-test-result"></div>
+          </div>
+        </section>
+
+        <!-- Step 2 — Per-Role Access -->
+        <section class="dp-section">
+          <div class="dp-section-head">
+            <div class="dp-step-num">2</div>
+            <div class="dp-section-title-block">
+              <div class="dp-section-title">
+                Per-role access
+                <span class="dp-count-pill">${roles.length} ${roles.length === 1 ? 'role' : 'roles'}</span>
+              </div>
+              <div class="dp-section-desc">What each role is allowed to do with this tool, and what fields they can see.</div>
+            </div>
+          </div>
+
+          <div class="dp-tip">
+            <div class="dp-tip-title">Quick reference</div>
+            <ul>
+              <li><strong>Action</strong>: <span class="dp-kbd allow">allow</span> pass through · <span class="dp-kbd redact">redact</span> mask sensitive fields · <span class="dp-kbd mask">mask</span> partial mask · <span class="dp-kbd block">block</span> refuse the call.</li>
+              <li><strong>Data scope</strong>: comma-separated categories visible to this role — e.g. <code>personal, contact, medical, financial</code>.</li>
+              <li><strong>Redaction level</strong>: how aggressively to mask scoped fields — <code>none</code> · <code>partial</code> (keep last 4 / hash) · <code>full</code>.</li>
+              <li><strong>Input / Output rules</strong>: plain-English instructions an LLM checks against the arguments / response.</li>
+              <li>Use <em>Apply template</em> on any row for a one-click preset.</li>
+            </ul>
+          </div>
+
+          <div id="dp-roles-body">${rolesHtml}</div>
+        </section>
+
+        <!-- Step 3 — Compliance & Retention -->
+        <section class="dp-section">
+          <div class="dp-section-head">
+            <div class="dp-step-num">3</div>
+            <div class="dp-section-title-block">
+              <div class="dp-section-title">Compliance &amp; retention</div>
+              <div class="dp-section-desc">Tag this policy with a framework and set audit logging &amp; retention.</div>
+            </div>
+          </div>
+          <div class="dp-compliance-grid">
+            <div class="dp-compliance-field">
+              <label>Compliance framework</label>
+              <select id="dp-compliance">
+                ${complianceOpt('', '— none —')}
+                ${complianceOpt('hipaa', 'HIPAA')}
+                ${complianceOpt('gdpr', 'GDPR')}
+                ${complianceOpt('pci', 'PCI DSS')}
+                ${complianceOpt('sox', 'SOX')}
+                ${complianceOpt('ccpa', 'CCPA')}
+              </select>
+            </div>
+            <div class="dp-compliance-field">
+              <label>Audit logging</label>
+              <label class="dp-switch">
+                <input type="checkbox" id="dp-audit" ${auditOn ? 'checked' : ''}>
+                <span>Log every invocation</span>
+              </label>
+            </div>
+            <div class="dp-compliance-field">
+              <label>Retention (days)</label>
+              <input type="number" id="dp-retention" min="0" value="${retention}" placeholder="e.g. 90">
+            </div>
+          </div>
+        </section>
+
       </div>
 
-      <!-- Buttons -->
-      <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem;">
-        <button class="small" onclick="document.getElementById('dp-modal-overlay').remove()">Cancel</button>
-        <button class="primary small" onclick="saveDataPolicy('${toolName}')">Save Data Policy</button>
+      <div class="dp-footer">
+        <div class="dp-footer-hint">Esc to close · changes aren't saved until you click Save.</div>
+        <div class="dp-footer-actions">
+          <button type="button" onclick="document.getElementById('dp-modal-overlay').remove()">Cancel</button>
+          <button class="primary" type="button" onclick="saveDataPolicy('${toolName}')">Save data policy</button>
+        </div>
       </div>
     </div>
   </div>`;
 
   document.body.insertAdjacentHTML('beforeend', html);
+
+  // Initialise state that depends on the current rule count (Test button
+  // enabled/disabled, count pill). Must run after the modal is in the DOM.
+  dpUpdateSanCount();
+
+  // Hydrate the AI policy fields from the stored policy (or defaults) and
+  // apply the initial mode so the right blocks are visible.
+  //
+  // Mode selection precedence:
+  //   1. Explicit `sanitization_mode` from the stored policy wins.
+  //   2. Intent present but no mode   → "both" (they want AI; keep regex too).
+  //   3. Legacy policy with regex rules only → "regex" (don't surprise users).
+  //   4. Brand-new policy              → "both" (our recommended default —
+  //      matches the messaging that regex alone is easy to bypass).
+  const intentEl = document.getElementById('dp-intent');
+  if (intentEl) intentEl.value = dp.sanitization_intent || '';
+  const initialMode =
+    dp.sanitization_mode
+    || (dp.sanitization_intent ? 'both' : null)
+    || ((dp.sanitization_rules && dp.sanitization_rules.length) ? 'regex' : 'both');
+  dpSelectMode(initialMode);
+
+  // Dismiss on Escape — bound once, cleaned up when the overlay goes away.
+  const onEsc = (e) => {
+    if (e.key === 'Escape') {
+      const o = document.getElementById('dp-modal-overlay');
+      if (o) { o.remove(); document.removeEventListener('keydown', onEsc); }
+    }
+  };
+  document.addEventListener('keydown', onEsc);
 }
 
 let _dpSanIdx = 0;
+
+function _dpEffectiveKinds(action, severity) {
+  // Mirrors the server-side resolution: critical always blocks; otherwise
+  // the explicit action wins; otherwise input=detect, output=redact.
+  if (severity === 'critical') return { input: 'block', output: 'block' };
+  if (action === 'detect' || action === 'redact' || action === 'block') {
+    return { input: action, output: action };
+  }
+  return { input: 'detect', output: 'redact' };
+}
+
+function dpUpdateEffective(el) {
+  const card = el.closest('.dp-rule-card');
+  if (!card) return;
+  const action   = (card.querySelector('.dp-san-action')?.value || '').trim();
+  const severity = (card.querySelector('.dp-san-severity')?.value || 'medium').trim();
+  const eff      = _dpEffectiveKinds(action, severity);
+  const inEl  = card.querySelector('[data-dp-eff="input"]');
+  const outEl = card.querySelector('[data-dp-eff="output"]');
+  if (inEl)  { inEl.textContent  = eff.input;  inEl.className  = `dp-kbd ${eff.input}`; }
+  if (outEl) { outEl.textContent = eff.output; outEl.className = `dp-kbd ${eff.output}`; }
+}
+
+function dpUpdateSanCount() {
+  const n = document.querySelectorAll('#dp-san-rules .dp-san-row').length;
+  const el = document.getElementById('dp-san-count');
+  if (el) el.textContent = `${n} ${n === 1 ? 'rule' : 'rules'}`;
+
+  // Keep the Test buttons' enabled state in lockstep with the rule count.
+  // When there are no rules, clicking Test can't produce anything meaningful,
+  // so we disable the buttons and tell the user why via tooltip.
+  const btnIn  = document.getElementById('dp-test-btn-input');
+  const btnOut = document.getElementById('dp-test-btn-output');
+  const tip = n === 0
+    ? 'Add at least one sanitization rule above to enable testing'
+    : '';
+  [btnIn, btnOut].forEach(b => {
+    if (!b) return;
+    if (n === 0) { b.setAttribute('disabled', ''); }
+    else         { b.removeAttribute('disabled'); }
+    if (tip) b.title = tip;
+    else if (b.id === 'dp-test-btn-input')  b.title = "Evaluate as if this were a tool's arguments (default: detect)";
+    else if (b.id === 'dp-test-btn-output') b.title = "Evaluate as if this were a tool's response (default: redact)";
+  });
+
+  // If the preview panel is showing the "no rules" warning and rules now
+  // exist, clear it so the user sees fresh output on their next click.
+  if (n > 0) {
+    const result = document.getElementById('dp-test-result');
+    if (result && result.querySelector('.dp-test-warn')) {
+      result.innerHTML = '';
+      const verdict = document.getElementById('dp-test-verdict');
+      if (verdict) { verdict.style.display = 'none'; verdict.textContent = ''; verdict.className = 'dp-test-verdict'; }
+    }
+  }
+}
+
+function dpRemoveSanRule(btn) {
+  const row = btn.closest('.dp-san-row');
+  if (!row) return;
+  row.remove();
+  dpUpdateSanCount();
+}
+
 function dpSanRuleRow(sr, idx) {
-  sr = sr || { pattern_id: '', regex: '', replacement: '', description: '', enabled: true, severity: 'medium' };
-  const id = `dp-san-${idx || _dpSanIdx++}`;
-  return `<div class="dp-san-row" style="border:1px solid var(--border);border-radius:6px;padding:0.5rem;margin-bottom:0.5rem;font-size:11px;">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.3rem;">
-      <input type="text" class="dp-san-id" value="${sr.pattern_id}" placeholder="pattern_id (e.g. ssn_redaction)" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">
-      <input type="text" class="dp-san-desc" value="${sr.description}" placeholder="Description" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;">
+  sr = sr || { pattern_id: '', regex: '', replacement: '', description: '', enabled: true, severity: 'medium', action: '' };
+  const action = sr.action || '';
+  const severity = sr.severity || 'medium';
+  const eff = _dpEffectiveKinds(action, severity);
+  const regexAttr = (sr.regex || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const replAttr  = (sr.replacement || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+  return `<div class="dp-rule-card dp-san-row">
+    <div class="dp-rule-row">
+      <div>
+        <label class="dp-field-label">Pattern ID</label>
+        <input type="text" class="dp-san-id mono" value="${(sr.pattern_id || '').replace(/"/g,'&quot;')}" placeholder="ssn_redaction">
+      </div>
+      <div>
+        <label class="dp-field-label">Description</label>
+        <input type="text" class="dp-san-desc" value="${(sr.description || '').replace(/"/g,'&quot;')}" placeholder="US Social Security Number">
+      </div>
+      <div>
+        <label class="dp-field-label" style="visibility:hidden;">.</label>
+        <button class="dp-icon-btn" type="button" onclick="dpRemoveSanRule(this)" title="Remove rule" aria-label="Remove rule">×</button>
+      </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:0.4rem;align-items:center;">
-      <input type="text" class="dp-san-regex" value="${sr.regex.replace(/"/g, '&quot;')}" placeholder="Regex" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;font-family:monospace;">
-      <input type="text" class="dp-san-replacement" value="${sr.replacement}" placeholder="Replacement" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;font-family:monospace;">
-      <select class="dp-san-severity" style="padding:2px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:10px;">
-        <option value="low" ${sr.severity === 'low' ? 'selected' : ''}>low</option>
-        <option value="medium" ${sr.severity === 'medium' ? 'selected' : ''}>medium</option>
-        <option value="high" ${sr.severity === 'high' ? 'selected' : ''}>high</option>
-        <option value="critical" ${sr.severity === 'critical' ? 'selected' : ''}>critical</option>
-      </select>
-      <button class="danger small" onclick="this.closest('.dp-san-row').remove()" style="font-size:9px;padding:2px 6px;">✕</button>
+    <div class="dp-rule-row dp-rule-row--regex">
+      <div>
+        <label class="dp-field-label">Regex pattern</label>
+        <input type="text" class="dp-san-regex mono" value="${regexAttr}" placeholder="\\b\\d{3}-\\d{2}-\\d{4}\\b">
+      </div>
+      <div>
+        <label class="dp-field-label">Replacement <span style="font-weight:500;color:var(--text-muted);text-transform:none;letter-spacing:0;">(for redact)</span></label>
+        <input type="text" class="dp-san-replacement mono" value="${replAttr}" placeholder="[REDACTED_SSN]">
+      </div>
+    </div>
+    <div class="dp-rule-footer">
+      <div class="dp-rule-meta">
+        On input <span class="dp-kbd ${eff.input}" data-dp-eff="input">${eff.input}</span>
+        <span style="opacity:0.5;">·</span>
+        On output <span class="dp-kbd ${eff.output}" data-dp-eff="output">${eff.output}</span>
+      </div>
+      <div class="dp-rule-meta-group">
+        <label>Action</label>
+        <select class="dp-san-action" onchange="dpUpdateEffective(this)"
+                title="auto = detect on input, redact on output. critical severity always overrides to block.">
+          <option value=""        ${!action            ? 'selected' : ''}>auto</option>
+          <option value="detect"  ${action === 'detect'? 'selected' : ''}>detect</option>
+          <option value="redact"  ${action === 'redact'? 'selected' : ''}>redact</option>
+          <option value="block"   ${action === 'block' ? 'selected' : ''}>block</option>
+        </select>
+        <label>Severity</label>
+        <select class="dp-san-severity" onchange="dpUpdateEffective(this)">
+          <option value="low"      ${severity === 'low'      ? 'selected' : ''}>low</option>
+          <option value="medium"   ${severity === 'medium'   ? 'selected' : ''}>medium</option>
+          <option value="high"     ${severity === 'high'     ? 'selected' : ''}>high</option>
+          <option value="critical" ${severity === 'critical' ? 'selected' : ''}>critical</option>
+        </select>
+      </div>
     </div>
   </div>`;
 }
 
 function addDPSanitizationRule() {
   const container = document.getElementById('dp-san-rules');
+  // If the empty-state placeholder is showing, clear it before inserting the first real rule.
+  const empty = container.querySelector('.dp-empty');
+  if (empty) empty.remove();
   container.insertAdjacentHTML('beforeend', dpSanRuleRow(null, _dpSanIdx++));
+  dpUpdateSanCount();
+}
+
+// ── Per-role Data Access templates ─────────────────────────────────────
+// Clicking "Apply template…" fills every field of a role row with a
+// ready-made combination so users don't have to think about the shape.
+
+const DP_ROLE_TEMPLATES = {
+  full_access: {
+    action: 'allow',
+    data_scope: ['personal','contact','medical','financial'],
+    redaction_level: 'none',
+    input_rules: [
+      'Must include a valid request id or entity id',
+    ],
+    output_rules: [
+      'Return the complete record as the tool produced it',
+    ],
+  },
+  read_only: {
+    action: 'redact',
+    data_scope: ['contact','personal'],
+    redaction_level: 'partial',
+    input_rules: [
+      'Read-only role — do not allow update, delete, transfer, or write operations',
+      'Reject arguments that pass raw SSN, credit card, or API tokens',
+    ],
+    output_rules: [
+      'Mask SSN, full DOB, and full account numbers — keep only last 4 digits',
+      'Do not include internal system ids or audit metadata',
+    ],
+  },
+  pii_safe: {
+    action: 'redact',
+    data_scope: ['personal'],
+    redaction_level: 'partial',
+    input_rules: [
+      'Arguments must not contain raw SSN, credit card, bearer token, or AWS keys',
+      'Must include the business justification in the request context',
+    ],
+    output_rules: [
+      'Redact SSN, email, phone number, and date of birth',
+      'Do not reveal full address — city and state are acceptable',
+    ],
+  },
+  audit: {
+    action: 'allow',
+    data_scope: ['personal','contact'],
+    redaction_level: 'full',
+    input_rules: [
+      'Log the full request including agent id, user role, and arguments',
+    ],
+    output_rules: [
+      'Return only counts, timestamps, and high-level summaries — no raw record fields',
+    ],
+  },
+  blocked: {
+    action: 'block',
+    data_scope: [],
+    redaction_level: 'full',
+    input_rules: [
+      'This role is not authorized to invoke this tool',
+    ],
+    output_rules: [
+      'This role must not receive any data produced by this tool',
+    ],
+  },
+};
+
+function applyDPRoleTemplate(selectEl) {
+  const templateId = selectEl.value;
+  if (!templateId) return;
+  const row = selectEl.closest('[data-role]');
+  const tpl = DP_ROLE_TEMPLATES[templateId];
+  if (!row || !tpl) return;
+
+  const action = row.querySelector('.dp-role-action');
+  const scope = row.querySelector('.dp-role-scope');
+  const redaction = row.querySelector('.dp-role-redaction');
+  const inEl = row.querySelector('.dp-role-input-rules');
+  const outEl = row.querySelector('.dp-role-output-rules');
+
+  if (action) action.value = tpl.action;
+  if (scope) scope.value = (tpl.data_scope || []).join(', ');
+  if (redaction) redaction.value = tpl.redaction_level;
+  if (inEl) inEl.value = (tpl.input_rules || []).join('\n');
+  if (outEl) outEl.value = (tpl.output_rules || []).join('\n');
+
+  // Reset the dropdown to its placeholder so the user can re-apply or pick another.
+  selectEl.value = '';
+}
+
+// Appends an example line to the Input/Output rules textarea of the role row
+// that contains the "+ example" button. Cycles through a small catalog so
+// repeated clicks add variety instead of the same line.
+const DP_ROLE_RULE_EXAMPLES = {
+  input: [
+    'Must include a valid account_id or customer_id',
+    'Reject arguments containing raw SSN, credit card, or API tokens',
+    'Do not accept transfer amounts over 10,000 without an approval_token',
+    'Reject requests that ask for data outside this role\'s data scope',
+    'Arguments must reference an entity owned by the calling user',
+  ],
+  output: [
+    'Redact SSN, email, and phone number from the response',
+    'Do not include internal account numbers or audit ids',
+    'Mask full card numbers — keep only last 4 digits',
+    'Return only the fields the user explicitly asked about',
+    'If the response contains financial data, add a disclosure banner',
+  ],
+};
+const _dpExampleCursor = { input: 0, output: 0 };
+function insertDPRoleExample(btn, kind) {
+  const row = btn.closest('[data-role]');
+  if (!row) return;
+  const el = row.querySelector(kind === 'input' ? '.dp-role-input-rules' : '.dp-role-output-rules');
+  if (!el) return;
+  const list = DP_ROLE_RULE_EXAMPLES[kind] || [];
+  if (!list.length) return;
+  const example = list[_dpExampleCursor[kind] % list.length];
+  _dpExampleCursor[kind]++;
+  const current = el.value.trim();
+  el.value = current ? `${current}\n${example}` : example;
+  el.focus();
+}
+
+// Preset library for the "Quick examples" buttons in the Sanitization Rules
+// section. Each preset mirrors the shape persisted by /v1/data-policies.
+// severity="critical" always escalates to block; action="" uses the context
+// default (detect on input, redact on output).
+const DP_SANITIZATION_PRESETS = {
+  ssn: {
+    pattern_id: 'ssn',
+    description: 'US Social Security Number',
+    regex: '\\b\\d{3}-\\d{2}-\\d{4}\\b',
+    replacement: '[REDACTED_SSN]',
+    severity: 'high',
+    action: '',
+  },
+  email: {
+    pattern_id: 'email',
+    description: 'Email address',
+    regex: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}',
+    replacement: '[REDACTED_EMAIL]',
+    severity: 'medium',
+    action: '',
+  },
+  phone: {
+    pattern_id: 'phone_us',
+    description: 'US phone number',
+    regex: '\\b(?:\\+?1[-. ]?)?\\(?\\d{3}\\)?[-. ]?\\d{3}[-. ]?\\d{4}\\b',
+    replacement: '[REDACTED_PHONE]',
+    severity: 'medium',
+    action: '',
+  },
+  credit_card: {
+    pattern_id: 'credit_card',
+    description: 'Credit card number (any major brand, 13–19 digits)',
+    regex: '\\b(?:\\d[ -]*?){13,19}\\b',
+    replacement: '[BLOCKED_CARD]',
+    severity: 'critical',
+    action: 'block',
+  },
+  api_key: {
+    pattern_id: 'api_key_generic',
+    description: 'Generic API key / bearer token (sk-…, long alnum)',
+    regex: '\\b(?:sk-[A-Za-z0-9_-]{20,}|[A-Za-z0-9]{32,})\\b',
+    replacement: '[BLOCKED_TOKEN]',
+    severity: 'critical',
+    action: 'block',
+  },
+  aws_key: {
+    pattern_id: 'aws_access_key_id',
+    description: 'AWS access key id (AKIA / ASIA prefix)',
+    regex: '\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b',
+    replacement: '[BLOCKED_AWS_KEY]',
+    severity: 'critical',
+    action: 'block',
+  },
+  ip: {
+    pattern_id: 'ipv4',
+    description: 'IPv4 address',
+    regex: '\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d?\\d)\\b',
+    replacement: '[REDACTED_IP]',
+    severity: 'low',
+    action: 'detect',
+  },
+  dob: {
+    pattern_id: 'date_of_birth',
+    description: 'Date of birth (YYYY-MM-DD or MM/DD/YYYY)',
+    regex: '\\b(?:\\d{4}-\\d{2}-\\d{2}|\\d{2}/\\d{2}/\\d{4})\\b',
+    replacement: '[REDACTED_DOB]',
+    severity: 'high',
+    action: 'redact',
+  },
+};
+
+function addDPSanitizationExample(kind) {
+  const preset = DP_SANITIZATION_PRESETS[kind];
+  if (!preset) return;
+  // Clone so successive inserts don't share state with the library entry.
+  const rule = Object.assign({ enabled: true }, preset);
+  const container = document.getElementById('dp-san-rules');
+  const empty = container.querySelector('.dp-empty');
+  if (empty) empty.remove();
+  container.insertAdjacentHTML('beforeend', dpSanRuleRow(rule, _dpSanIdx++));
+  dpUpdateSanCount();
+}
+
+// ── Client-side policy preview ─────────────────────────────────────────
+// Runs the sanitization rules currently on the form against a sample
+// payload so the user can verify behavior without a save → reload cycle.
+// The logic mirrors the server-side resolution:
+//   - severity="critical" always blocks
+//   - explicit action ("detect" | "redact" | "block") wins
+//   - otherwise kind="input" defaults to detect, "output" to redact
+
+const _DP_TEST_SAMPLES = [
+  'Customer Alex Reyes — alex.reyes@acme.com, phone (415) 555-0199,\nSSN 123-45-6789. Card 4242 4242 4242 4242, exp 09/2027, DOB 1989-04-12.',
+  '{\n  "user": {"email": "jamie@corp.io", "dob": "1989-04-12", "phone": "+1-202-555-0173"},\n  "account": {"number": "AC-998877", "ssn": "987-65-4321", "balance": 12500.43}\n}',
+  'Auth: Bearer sk-abc123DEF456ghiJKL789mnoPQR — requested from 10.20.30.40.\nAWS key AKIAIOSFODNN7EXAMPLE used to read the customer record.',
+  'Our support rep Morgan (morgan@support.example) called customer at (650) 555-0142.\nThey read card 5555-5555-5555-4444 over the phone. Ticket #A-8823.',
+];
+let _dpTestSampleIdx = 0;
+
+function dpLoadTestSample() {
+  const el = document.getElementById('dp-test-input');
+  if (!el) return;
+  el.value = _DP_TEST_SAMPLES[_dpTestSampleIdx % _DP_TEST_SAMPLES.length];
+  _dpTestSampleIdx++;
+  el.focus();
+}
+
+function dpClearTest() {
+  const input   = document.getElementById('dp-test-input');
+  const result  = document.getElementById('dp-test-result');
+  const verdict = document.getElementById('dp-test-verdict');
+  if (input)   input.value = '';
+  if (result)  result.innerHTML = '';
+  if (verdict) { verdict.textContent = ''; verdict.className = 'dp-test-verdict'; verdict.style.display = 'none'; }
+}
+
+// ── Mode toggle & AI intent templates ─────────────────────────────────
+// Sanitization has three modes:
+//   regex → deterministic but easy to bypass
+//   ai    → LLM reasons about a plain-English intent (robust to obfuscation)
+//   both  → regex fast-path, then AI on the remainder
+// The mode controls which editor blocks are visible AND which verdicts the
+// backend runs at enforcement time.
+
+const DP_MODE_DEFAULT = 'both';
+let _dpCurrentMode = DP_MODE_DEFAULT;
+
+function dpSelectMode(mode) {
+  if (!['ai','both','regex'].includes(mode)) mode = DP_MODE_DEFAULT;
+  _dpCurrentMode = mode;
+  ['ai','both','regex'].forEach(m => {
+    const btn = document.getElementById('dp-mode-' + m);
+    if (btn) btn.classList.toggle('active', m === mode);
+  });
+  const aiBlock    = document.getElementById('dp-ai-block');
+  const regexBlock = document.getElementById('dp-regex-block');
+  const regexWarn  = document.getElementById('dp-regex-warn');
+  if (aiBlock)    aiBlock.classList.toggle('hidden',    mode === 'regex');
+  if (regexBlock) regexBlock.classList.toggle('hidden', mode === 'ai');
+  // Show the "regex is tricky" warning only when regex-only — on AI or Both
+  // the user is already covered semantically.
+  if (regexWarn)  regexWarn.style.display = (mode === 'regex') ? '' : 'none';
+
+  // Enable AI test buttons only when AI is part of the mode, and the same
+  // for regex buttons — reduces UX surface area and mis-clicks.
+  const aiIn  = document.getElementById('dp-test-btn-ai-in');
+  const aiOut = document.getElementById('dp-test-btn-ai-out');
+  [aiIn, aiOut].forEach(b => {
+    if (!b) return;
+    if (mode === 'regex') { b.setAttribute('disabled',''); b.title = 'Switch to AI or Both mode to run AI review'; }
+    else                  { b.removeAttribute('disabled'); b.title = (b.id === 'dp-test-btn-ai-in' ? 'Run AI reasoning sanitizer on this as a tool input' : 'Run AI reasoning sanitizer on this as a tool output'); }
+  });
+  const rIn  = document.getElementById('dp-test-btn-input');
+  const rOut = document.getElementById('dp-test-btn-output');
+  [rIn, rOut].forEach(b => {
+    if (!b) return;
+    if (mode === 'ai') { b.setAttribute('disabled',''); b.title = 'Switch to Regex or Both mode to run regex tests'; }
+    else                { /* dpUpdateSanCount() owns the rule-count-based state */ }
+  });
+  if (mode !== 'ai') dpUpdateSanCount();
+}
+
+// Starter intent templates — opinionated phrasings that cover common
+// compliance scenarios. Users can edit freely after applying.
+const DP_INTENT_TEMPLATES = {
+  hipaa: `Never expose Protected Health Information (PHI) in any form — direct, paraphrased, obfuscated, unicode-spaced, or partially disclosed. PHI includes:
+• Patient name paired with any diagnosis, medication, procedure, or provider.
+• SSN, medical record number, insurance member ID, account number.
+• Date of birth more precise than year, or any DOB paired with location.
+• Lab results, imaging findings, clinical notes, genetic data.
+
+Redact identifiers to opaque placeholders like [PATIENT] or [MRN]. Block any tool response that would let the caller infer a specific patient's condition, even without an explicit identifier.`,
+
+  pci: `Never expose payment card data or anything that reconstructs it, in any form — including spaced (4242 4242 4242 4242), paraphrased ("my card starts with four two four two"), unicode-substituted, or partially disclosed across turns. Specifically:
+• Full PAN (13–19 digit card number) — BLOCK the call/response.
+• CVV / CVC / CVV2 — BLOCK.
+• Magnetic stripe / track data — BLOCK.
+• Expiration date paired with PAN — BLOCK.
+• Cardholder name paired with PAN — REDACT the PAN to ****last4.
+
+Allow last-4-only references (e.g. "card ending in 4242"). Never echo a full PAN back, even if the user provided it.`,
+
+  gdpr: `Redact personal data of EU data subjects unless the caller has documented lawful basis. Treat the following as personal data — even if obfuscated or paraphrased:
+• Full name combined with contact info (email, phone, address).
+• Date of birth, national ID (BSN, NIN, CPF, etc.), tax ID.
+• Precise location (lat/lon, street address) or device identifiers.
+• Biometric, health, sexual orientation, political/religious belief, union membership data → BLOCK unless explicit consent token present.
+
+Prefer redaction ([NAME], [EMAIL], [ADDRESS]). Block any response that combines an identifier with special-category data.`,
+
+  secrets: `Block any content that looks like a credential or secret, even if obfuscated, split by whitespace/newlines, base64-encoded, or paraphrased. This includes:
+• API keys (sk-…, pk_live_…, xoxb-…, long alphanumeric entropy).
+• Bearer / OAuth tokens, refresh tokens, session cookies, JWTs.
+• AWS access key IDs (AKIA/ASIA…) and secret access keys.
+• SSH/TLS private keys (BEGIN PRIVATE KEY blocks).
+• Database connection strings with embedded passwords.
+• Plaintext passwords under any label.
+
+Do not silently redact — always BLOCK the tool call or response, because partial disclosure is still a compromise.`,
+
+  minors: `Block any tool call or response that could identify a specific minor (under 18) or reveal their location. Treat the following as blocking signals, even in combination or obfuscated form:
+• Full name + school, home address, or daily route.
+• Photos, photo URLs, or physical descriptions paired with a name.
+• Date of birth + current location or contact info.
+• Guardian names, phone, or workplace when tied to the minor.
+
+When the subject is a minor, prefer to block rather than redact. Never store, echo, or derive new identifiers from these fields.`,
+
+  finance: `Protect account and transaction data. Block or redact:
+• Full bank account numbers, routing numbers, IBAN — BLOCK on output, REDACT to last-4 on input.
+• Wire transfer amounts over 10,000 without an approval_token in the args — BLOCK.
+• Credit-line numbers, account balances combined with an identifier — REDACT.
+• Internal ledger / audit IDs — REDACT.
+
+Allow aggregate or rounded statistics ("approximately $50k"). Always block responses that combine an account number with a balance or transaction history.`,
+
+  custom: '',
+};
+
+function dpApplyIntentTemplate(selectEl) {
+  const key = selectEl.value;
+  if (!key) return;
+  const intentEl = document.getElementById('dp-intent');
+  if (!intentEl) return;
+  const template = DP_INTENT_TEMPLATES[key] || '';
+  const existing = intentEl.value.trim();
+  // If the user already wrote something, confirm before overwriting.
+  if (existing && !confirm('Replace the current intent with the ' + key.toUpperCase() + ' template?')) {
+    selectEl.value = '';
+    return;
+  }
+  intentEl.value = template;
+  intentEl.focus();
+  selectEl.value = '';
+}
+
+// Scroll to the sanitization rules, briefly flash the container, and
+// optionally insert a starter template in one click. Used from the
+// empty-state warning so there is always an obvious next step.
+function dpJumpToRules(presetKind) {
+  if (presetKind && typeof addDPSanitizationExample === 'function') {
+    addDPSanitizationExample(presetKind);
+  }
+  const el = document.getElementById('dp-san-rules');
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.animate(
+    [
+      { boxShadow: '0 0 0 0 rgba(99,102,241,0)' },
+      { boxShadow: '0 0 0 6px rgba(99,102,241,0.35)' },
+      { boxShadow: '0 0 0 0 rgba(99,102,241,0)' },
+    ],
+    { duration: 900, easing: 'ease-out' }
+  );
+}
+
+function _dpEscapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function _dpCollectFormRules() {
+  const rules = [];
+  document.querySelectorAll('#dp-san-rules .dp-san-row').forEach(row => {
+    const regex = (row.querySelector('.dp-san-regex')?.value || '').trim();
+    if (!regex) return;
+    rules.push({
+      pattern_id:  (row.querySelector('.dp-san-id')?.value || '').trim() || '(unnamed)',
+      regex:       regex,
+      replacement: row.querySelector('.dp-san-replacement')?.value || '[REDACTED]',
+      description: row.querySelector('.dp-san-desc')?.value || '',
+      action:      row.querySelector('.dp-san-action')?.value || '',
+      severity:    row.querySelector('.dp-san-severity')?.value || 'medium',
+    });
+  });
+  return rules;
+}
+
+function _dpSetVerdict(kind, label) {
+  const el = document.getElementById('dp-test-verdict');
+  if (!el) return;
+  el.style.display = 'inline-flex';
+  el.className = `dp-test-verdict ${kind}`;
+  el.textContent = label;
+}
+
+function dpTestSanitization(kind) {
+  const resultEl = document.getElementById('dp-test-result');
+  const inputEl  = document.getElementById('dp-test-input');
+  if (!resultEl || !inputEl) return;
+  const input = inputEl.value;
+
+  if (!input.trim()) {
+    resultEl.innerHTML = '<div class="dp-test-empty">Paste a sample payload above, or click <strong>Load sample</strong>.</div>';
+    _dpSetVerdict('', '—');
+    return;
+  }
+
+  const rules = _dpCollectFormRules();
+  if (!rules.length) {
+    resultEl.innerHTML = `
+      <div class="dp-test-warn">
+        <span class="dp-test-warn-icon" aria-hidden="true">!</span>
+        <div class="dp-test-warn-body">
+          <div class="dp-test-warn-title">No sanitization rules to test</div>
+          <div>Testing runs the rules above against your sample text. Add at least one rule first — either from a template or with <strong>+ Add rule</strong>.</div>
+          <div class="dp-test-warn-actions">
+            <button type="button" class="small" onclick="dpJumpToRules('ssn')">Insert SSN template</button>
+            <button type="button" class="small" onclick="dpJumpToRules('email')">Insert Email template</button>
+            <button type="button" class="small" onclick="dpJumpToRules()">Go to rules</button>
+          </div>
+        </div>
+      </div>`;
+    _dpSetVerdict('blocked', 'No rules yet');
+    return;
+  }
+
+  // Evaluate every rule against the original text and bucket matches by
+  // effective action so we can render a diff plus a violation summary.
+  const evaluated = rules.map(rule => {
+    const eff = _dpEffectiveKinds(rule.action, rule.severity);
+    const effectiveAction = kind === 'input' ? eff.input : eff.output;
+    let re;
+    try { re = new RegExp(rule.regex, 'g'); }
+    catch (e) { return { rule, effectiveAction, error: e.message, matches: [] }; }
+    const matches = [];
+    let m;
+    while ((m = re.exec(input)) !== null) {
+      if (!m[0]) { re.lastIndex++; continue; } // guard against zero-width loops
+      matches.push({ start: m.index, end: m.index + m[0].length, text: m[0] });
+    }
+    return { rule, effectiveAction, matches };
+  });
+
+  const blocker = evaluated.find(r => r.effectiveAction === 'block' && r.matches.length);
+  const redactSpans = [];
+  const detectSpans = [];
+
+  evaluated.forEach(r => {
+    if (r.error || !r.matches.length) return;
+    r.matches.forEach(m => {
+      if (r.effectiveAction === 'redact') redactSpans.push({ ...m, replacement: r.rule.replacement });
+      else if (r.effectiveAction === 'detect') detectSpans.push({ ...m });
+    });
+  });
+
+  // Apply redactions right-to-left on the original text so indices stay valid.
+  let sanitized = input;
+  [...redactSpans].sort((a, b) => b.start - a.start).forEach(m => {
+    sanitized = sanitized.slice(0, m.start) + m.replacement + sanitized.slice(m.end);
+  });
+
+  // Build a highlighted "detected only" preview against the original input so
+  // the user can *see* what matched even when the action is detect (which
+  // doesn't change the payload the tool sees).
+  let detectedPreview = '';
+  if (kind === 'input' && detectSpans.length && !blocker) {
+    const spans = [...detectSpans].sort((a, b) => a.start - b.start);
+    let cursor = 0;
+    spans.forEach(s => {
+      if (s.start < cursor) return; // overlapping — skip
+      detectedPreview += _dpEscapeHtml(input.slice(cursor, s.start));
+      detectedPreview += `<span class="dp-hit">${_dpEscapeHtml(s.text)}</span>`;
+      cursor = s.end;
+    });
+    detectedPreview += _dpEscapeHtml(input.slice(cursor));
+  }
+
+  // Verdict pill
+  if (blocker) {
+    _dpSetVerdict('blocked', `Blocked — rule “${blocker.rule.pattern_id}”`);
+  } else if (redactSpans.length || detectSpans.length) {
+    _dpSetVerdict('sanitized', kind === 'input' ? 'Sanitized (input)' : 'Sanitized (output)');
+  } else {
+    _dpSetVerdict('pass', 'No matches');
+  }
+
+  // Violation rows (grouped per rule)
+  const violationRows = evaluated
+    .filter(r => r.error || r.matches.length)
+    .map(r => {
+      if (r.error) {
+        return `<div class="dp-test-violation-row error">
+          <span class="dp-kbd block">regex error</span>
+          <code>${_dpEscapeHtml(r.rule.pattern_id)}</code>
+          <span class="dp-test-v-samples">${_dpEscapeHtml(r.error)}</span>
+        </div>`;
+      }
+      const samples = r.matches.slice(0, 3).map(m => `"${_dpEscapeHtml(m.text)}"`).join(', ');
+      const more = r.matches.length > 3 ? ` +${r.matches.length - 3} more` : '';
+      return `<div class="dp-test-violation-row">
+        <span class="dp-kbd ${r.effectiveAction}">${r.effectiveAction}</span>
+        <code>${_dpEscapeHtml(r.rule.pattern_id)}</code>
+        <span class="dp-test-v-count">${r.matches.length}×</span>
+        <span class="dp-test-v-samples">${samples}${more}</span>
+      </div>`;
+    }).join('');
+
+  // Compose the right-hand "what would happen" payload pane.
+  let payloadHtml;
+  if (blocker) {
+    payloadHtml = '(blocked — tool would refuse this payload)';
+  } else if (kind === 'input' && detectSpans.length && !redactSpans.length) {
+    // Pure detect on input: show highlighted original (tool still sees raw text).
+    payloadHtml = detectedPreview || _dpEscapeHtml(input);
+  } else {
+    payloadHtml = _dpEscapeHtml(sanitized);
+  }
+
+  const payloadLabel = kind === 'input'
+    ? (blocker ? 'Input (blocked)'
+       : detectSpans.length && !redactSpans.length ? 'Input sent to tool (detected matches highlighted)'
+       : 'Input sent to tool')
+    : (blocker ? 'Output (blocked)' : 'Output returned to LLM / user');
+
+  resultEl.innerHTML = `
+    <div class="dp-test-grid">
+      <div>
+        <div class="dp-test-panel-label">${_dpEscapeHtml(payloadLabel)}</div>
+        <pre class="dp-test-payload${blocker ? ' blocked' : ''}">${payloadHtml}</pre>
+      </div>
+      <div>
+        <div class="dp-test-panel-label">Rule matches</div>
+        ${violationRows || '<div class="dp-test-empty">No rules matched.</div>'}
+      </div>
+    </div>
+  `;
+}
+
+// ── AI reasoning preview ─────────────────────────────────────────────
+// Calls the backend preview endpoint with the current intent + sample
+// payload. Unlike the regex test (client-side), this actually exercises
+// the Shield LLM so users see the same verdict they'll get at runtime.
+async function dpRunAIReview(stage, toolName) {
+  const intentEl   = document.getElementById('dp-intent');
+  const inputEl    = document.getElementById('dp-test-input');
+  const resultEl   = document.getElementById('dp-test-result');
+  if (!intentEl || !inputEl || !resultEl) return;
+  const intent  = intentEl.value.trim();
+  const payload = inputEl.value;
+
+  if (!payload.trim()) {
+    _dpSetVerdict('blocked', 'Empty payload');
+    resultEl.innerHTML = '<div class="dp-test-warn"><span class="dp-test-warn-icon">!</span><div class="dp-test-warn-body"><div class="dp-test-warn-title">Nothing to review</div><div>Paste or load a sample payload to run the AI sanitizer.</div></div></div>';
+    return;
+  }
+  if (!intent) {
+    _dpSetVerdict('blocked', 'No policy intent');
+    resultEl.innerHTML = `
+      <div class="dp-test-warn">
+        <span class="dp-test-warn-icon">!</span>
+        <div class="dp-test-warn-body">
+          <div class="dp-test-warn-title">Add a policy intent first</div>
+          <div>The AI sanitizer needs a plain-English description of what this tool must never expose. Pick a starter template from the dropdown above, or write your own.</div>
+          <div class="dp-test-warn-actions">
+            <button type="button" class="small" onclick="document.getElementById('dp-intent').focus({preventScroll:false})">Go to policy intent</button>
+          </div>
+        </div>
+      </div>`;
+    return;
+  }
+
+  _dpSetVerdict('pass', 'Running AI review…');
+  resultEl.innerHTML = `<div class="dp-ai-result loading"><div class="dp-ai-result-head"><span class="dp-ai-stage">${_dpEscapeHtml(stage)}</span><span style="color:var(--text-muted);font-size:11.5px;">Calling Shield LLM — this may take a few seconds…</span></div></div>`;
+
+  try {
+    const res = await fetch('/v1/data-policies/preview-sanitization', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+      body: JSON.stringify({ payload, intent, stage, tool_name: toolName || '' }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      _dpSetVerdict('blocked', 'AI review failed');
+      resultEl.innerHTML = `<div class="dp-ai-result error"><div class="dp-ai-result-head"><span class="dp-ai-verdict block">error</span></div><div class="dp-ai-reasoning">${_dpEscapeHtml(data.detail || data.error || 'Unknown error')}</div></div>`;
+      return;
+    }
+
+    const verdict    = (data.verdict || 'allow').toLowerCase();
+    const reasoning  = data.reasoning || '';
+    const redactions = Array.isArray(data.redactions) ? data.redactions : [];
+    const sanitized  = data.sanitized || payload;
+    const blocked    = data.blocked || verdict === 'block';
+
+    // Top pill mirrors the AI verdict so the header is consistent.
+    if (blocked)                       _dpSetVerdict('blocked',   'AI: blocked');
+    else if (verdict === 'redact')     _dpSetVerdict('sanitized', 'AI: redact');
+    else                               _dpSetVerdict('pass',      'AI: allow');
+
+    const redactRows = redactions.map(r => `
+      <div class="dp-ai-redact-row">
+        <span class="orig" title="${_dpEscapeHtml(r.original || '')}">${_dpEscapeHtml(r.original || '')}</span>
+        <span class="arrow">→</span>
+        <span class="repl">${_dpEscapeHtml(r.replacement || '[REDACTED]')}</span>
+        <span class="reason">${_dpEscapeHtml(r.reason || '')}</span>
+      </div>`).join('');
+
+    const payloadLabel = blocked
+      ? (stage === 'input' ? 'Input (blocked — tool would refuse)' : 'Output (blocked — response suppressed)')
+      : (stage === 'input' ? 'Input sent to tool' : 'Output returned to LLM / user');
+    const payloadHtml = blocked ? '(blocked by AI policy)' : _dpEscapeHtml(sanitized);
+
+    resultEl.innerHTML = `
+      <div class="dp-ai-result">
+        <div class="dp-ai-result-head">
+          <span class="dp-ai-verdict ${verdict}">${_dpEscapeHtml(verdict)}</span>
+          <span class="dp-ai-stage">${_dpEscapeHtml(stage)}</span>
+          <span style="font-size:11px;color:var(--text-muted);">model reasoned semantically — not pattern-matched</span>
+        </div>
+        <div class="dp-ai-reasoning">${_dpEscapeHtml(reasoning || '(no reasoning returned)')}</div>
+        ${redactions.length ? `<div class="dp-ai-redact-list">${redactRows}</div>` : ''}
+      </div>
+      <div class="dp-test-grid" style="margin-top:0.7rem;">
+        <div>
+          <div class="dp-test-panel-label">${_dpEscapeHtml(payloadLabel)}</div>
+          <pre class="dp-test-payload${blocked ? ' blocked' : ''}">${payloadHtml}</pre>
+        </div>
+        <div>
+          <div class="dp-test-panel-label">What the AI found</div>
+          ${redactions.length
+              ? redactions.map(r => `<div class="dp-test-violation-row"><span class="dp-kbd ${blocked ? 'block' : 'redact'}">${blocked ? 'block' : 'redact'}</span><code>${_dpEscapeHtml((r.original || '').slice(0,24))}</code><span class="dp-test-v-samples">${_dpEscapeHtml(r.reason || '')}</span></div>`).join('')
+              : (verdict === 'allow' ? '<div class="dp-test-empty">Policy allows this payload.</div>' : '<div class="dp-test-empty">No specific spans flagged — see reasoning above.</div>')}
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    _dpSetVerdict('blocked', 'Network error');
+    resultEl.innerHTML = `<div class="dp-ai-result error"><div class="dp-ai-result-head"><span class="dp-ai-verdict block">error</span></div><div class="dp-ai-reasoning">Network error calling AI review: ${_dpEscapeHtml(e.message || String(e))}</div></div>`;
+  }
 }
 
 async function saveDataPolicy(toolName) {
   const compliance = document.getElementById('dp-compliance').value || null;
   const audit = document.getElementById('dp-audit').checked;
   const retention = parseInt(document.getElementById('dp-retention').value) || null;
+  const intent = (document.getElementById('dp-intent')?.value || '').trim() || null;
+  const mode = _dpCurrentMode || 'regex';
 
   // Collect role policies
   const rolePolicies = [];
@@ -4031,14 +5691,17 @@ async function saveDataPolicy(toolName) {
   // Collect sanitization rules
   const sanRules = [];
   document.querySelectorAll('#dp-san-rules .dp-san-row').forEach(row => {
-    sanRules.push({
+    const actionVal = row.querySelector('.dp-san-action')?.value || '';
+    const rule = {
       pattern_id: row.querySelector('.dp-san-id').value.trim(),
       regex: row.querySelector('.dp-san-regex').value,
       replacement: row.querySelector('.dp-san-replacement').value,
       description: row.querySelector('.dp-san-desc').value.trim(),
       enabled: true,
       severity: row.querySelector('.dp-san-severity').value,
-    });
+    };
+    if (actionVal) rule.action = actionVal;
+    sanRules.push(rule);
   });
 
   const policy = {
@@ -4048,6 +5711,8 @@ async function saveDataPolicy(toolName) {
     compliance_framework: compliance,
     audit_required: audit,
     retention_days: retention,
+    sanitization_intent: intent,
+    sanitization_mode: mode,
   };
 
   try {

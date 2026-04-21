@@ -329,20 +329,25 @@ function addToolCards(toolCalls) {
     const argsStr = JSON.stringify(tc.arguments || {}, null, 2);
     const rbacMsg = tc.rbac ? tc.rbac.message : '';
 
-    // Sanitization pill + reason construction
+    // Sanitization pill + reason construction.
+    // A violation can have action=detect (log-only, no mutation),
+    // redact (substituted), or block (tool refused).
     let sanPill = '';
     let sanReason = '';
     const san = tc.sanitization;
-    if (san && (san.input_modified || san.output_modified)) {
-      const inCount = (san.input_violations || []).reduce((n, v) => n + (v.count || 1), 0);
-      const outCount = (san.output_violations || []).reduce((n, v) => n + (v.count || 1), 0);
-      const parts = [];
-      if (san.input_modified) parts.push(`${inCount} input`);
-      if (san.output_modified) parts.push(`${outCount} output`);
-      const allIds = [...(san.input_violations || []), ...(san.output_violations || [])]
-        .map(v => `${v.pattern_id}${v.severity ? ' [' + v.severity + ']' : ''}`)
+    if (san && ((san.input_violations || []).length || (san.output_violations || []).length)) {
+      const allViolations = [...(san.input_violations || []), ...(san.output_violations || [])];
+      const redactCount = allViolations.filter(v => v.action === 'redact').reduce((n, v) => n + (v.count || 1), 0);
+      const detectCount = allViolations.filter(v => v.action === 'detect').reduce((n, v) => n + (v.count || 1), 0);
+      const pills = [];
+      if (redactCount) pills.push({ icon: '🧹', label: `sanitized: ${redactCount}`, bg: '#1d4ed818', fg: '#93c5fd' });
+      if (detectCount) pills.push({ icon: '🔍', label: `detected: ${detectCount}`, bg: '#d2992218', fg: '#d29922' });
+      const allIds = allViolations
+        .map(v => `${v.pattern_id} [${v.action || '?'}/${v.severity || '?'}]`)
         .join(', ');
-      sanPill = `<span title="${esc(allIds)}" style="padding:1px 6px;border-radius:3px;font-weight:600;background:#1d4ed818;color:#93c5fd;">🧹 sanitized: ${esc(parts.join(' · '))}</span>`;
+      sanPill = pills.map(p =>
+        `<span title="${esc(allIds)}" style="padding:1px 6px;border-radius:3px;font-weight:600;background:${p.bg};color:${p.fg};">${p.icon} ${esc(p.label)}</span>`
+      ).join('');
     }
     if (sanBlocked) {
       sanReason = tc.sanitization_block_reason || 'Blocked by sanitization policy';

@@ -146,14 +146,43 @@ def _load_data_policies(tenant_id: str | None) -> dict:
 
 
 # Sanitization helpers — apply regex-based `sanitization_rules` stored in the
-# tool's data policy. Used by the agent-chat flow on both tool arguments and
-# simulated tool outputs. Severity == "critical" escalates to a block.
+# tool's data policy. Used by the agent-chat flow on both tool arguments
+# (context="input") and simulated tool outputs (context="output").
+#
+# Effective action per rule-match is resolved in this order:
+#   1. severity == "critical"            → block   (never mutate)
+#   2. rule["action"] in {"detect","redact","block"} → use it
+#   3. default_action for the context   → "detect" on input / "redact" on output
+#
+# Mutation (regex substitution) happens ONLY for action="redact". "detect"
+# records the violation and leaves the payload untouched so the tool still
+# functions; "block" records the violation and signals the caller to refuse.
 
-def _apply_sanitization(text: str, rules: list[dict]) -> tuple[str, list[dict]]:
-    """Run enabled regex rules as substitutions over `text`.
+_VALID_ACTIONS = {"detect", "redact", "block"}
 
-    Returns (sanitized_text, violations). Invalid regexes are skipped
-    silently so one bad rule cannot break a request.
+
+def _resolve_action(rule: dict, default_action: str) -> str:
+    severity = (rule.get("severity") or "medium").lower()
+    if severity == "critical":
+        return "block"
+    explicit = (rule.get("action") or "").strip().lower()
+    if explicit in _VALID_ACTIONS:
+        return explicit
+    return default_action if default_action in _VALID_ACTIONS else "detect"
+
+
+def _apply_sanitization(text: str, rules: list[dict],
+                        default_action: str = "redact") -> tuple[str, list[dict]]:
+    """Run enabled regex rules over `text`.
+
+    `default_action` controls what a rule without an explicit `action` does.
+    Typical usage:
+      - tool-input  context → default_action="detect" (tool gets raw args)
+      - tool-output context → default_action="redact" (LLM/user see sanitized)
+
+    Returns (maybe_sanitized_text, violations). Invalid regexes are skipped.
+    Each violation records the effective action that was taken so callers
+    know whether to block, show a "redacted" pill, or just surface detection.
     """
     import re as _re
 
@@ -175,21 +204,29 @@ def _apply_sanitization(text: str, rules: list[dict]) -> tuple[str, list[dict]]:
         matches = compiled.findall(sanitized)
         if not matches:
             continue
-        replacement = rule.get("replacement", "[REDACTED]")
-        sanitized = compiled.sub(replacement, sanitized)
+
+        effective = _resolve_action(rule, default_action)
+        if effective == "redact":
+            replacement = rule.get("replacement", "[REDACTED]")
+            sanitized = compiled.sub(replacement, sanitized)
+
         violations.append({
             "pattern_id": rule.get("pattern_id", "unknown"),
             "description": rule.get("description", ""),
             "severity": rule.get("severity", "medium"),
             "count": len(matches),
+            "action": effective,
         })
     return sanitized, violations
 
 
-def _sanitize_json(payload, rules: list[dict]):
-    """Sanitize a JSON-serializable `payload` by serializing → substituting →
-    re-parsing. If re-parse fails (rare, e.g. replacement contains a quote),
-    returns the sanitized string. Returns (payload, violations).
+def _sanitize_json(payload, rules: list[dict], default_action: str = "redact"):
+    """Sanitize a JSON-serializable `payload` by serializing → running rules →
+    re-parsing. If re-parse fails (e.g. replacement contains a quote),
+    returns the sanitized string. Returns (payload_or_sanitized, violations).
+
+    If no rule had action="redact", the payload is returned unchanged even
+    when violations exist (detect / block modes do not mutate).
     """
     if payload is None or not rules:
         return payload, []
@@ -197,9 +234,11 @@ def _sanitize_json(payload, rules: list[dict]):
         serialized = json.dumps(payload, default=str)
     except Exception:
         return payload, []
-    sanitized, violations = _apply_sanitization(serialized, rules)
+    sanitized, violations = _apply_sanitization(serialized, rules, default_action)
     if not violations:
         return payload, []
+    if sanitized == serialized:
+        return payload, violations
     try:
         return json.loads(sanitized), violations
     except Exception:
@@ -993,17 +1032,61 @@ def create_admin_app() -> FastAPI:
             data_policy = _get_data_policy(tool_policies, name, user_role,
                                            data_policies=data_policies)
 
-            tool_sanitization_rules = (
-                (data_policies.get(name) or {}).get("sanitization_rules", [])
-                if data_policies else []
-            )
+            tool_data_policy_raw  = (data_policies.get(name) or {}) if data_policies else {}
+            tool_sanitization_rules = tool_data_policy_raw.get("sanitization_rules", []) or []
+            tool_san_intent = (tool_data_policy_raw.get("sanitization_intent") or "").strip()
+            tool_san_mode   = (tool_data_policy_raw.get("sanitization_mode") or "regex").strip().lower()
+            # Dual-mode: the monolith image runs async_llm_call in-process
+            # (same path as topic_restriction et al.); the slim admin image
+            # falls back to an HTTP call and will pick up the caller's
+            # shield_endpoint / auth — or the SHIELD_LLM_URL / RUNPOD_*
+            # env vars if the caller didn't supply anything.
+            ai_enabled = bool(tool_san_intent) and tool_san_mode in ("ai", "both")
+            regex_enabled = tool_san_mode in ("regex", "both")
 
-            # Step 1: sanitize arguments BEFORE anything else sees them.
-            # Severity "critical" escalates to a block, matching RBAC's contract.
+            # Step 1 (INPUT): default is DETECT. The tool needs real values to
+            # function — we only mutate args if a rule *explicitly* sets
+            # action="redact". critical severity always escalates to block.
             original_args = args
-            sanitized_args, input_violations = _sanitize_json(args, tool_sanitization_rules)
-            input_modified = bool(input_violations)
-            input_has_critical = any(v.get("severity") == "critical" for v in input_violations)
+            if regex_enabled:
+                sanitized_args, input_violations = _sanitize_json(
+                    args, tool_sanitization_rules, default_action="detect",
+                )
+            else:
+                sanitized_args, input_violations = args, []
+            input_modified = sanitized_args is not args and sanitized_args != original_args
+            input_block = any(v.get("action") == "block" for v in input_violations)
+            input_detected = bool(input_violations)
+
+            # Step 1b (INPUT, AI pass): run the reasoning sanitizer over whatever
+            # the regex pass produced. Catches obfuscated/paraphrased/unicode-
+            # spaced forms that regex misses. Gated on sanitization_intent
+            # being set and mode including "ai". The LLM is dispatched
+            # in-process via async_llm_call — same path every other
+            # LLM-backed guardrail (topic_restriction, toxicity, …) uses.
+            ai_input_result: dict | None = None
+            if ai_enabled and not input_block:
+                from api.routes_data_policies import _run_ai_sanitization
+                ai_input_result = await _run_ai_sanitization(
+                    payload=json.dumps(sanitized_args, ensure_ascii=False),
+                    intent=tool_san_intent, stage="input",
+                    tool_name=name,
+                    # Forward endpoint + auth so the HTTP-fallback path
+                    # (admin-only image) has something to call. These are
+                    # ignored by the in-process path.
+                    shield_endpoint=shield_endpoint,
+                    api_key=api_key,
+                    shield_token=shield_token,
+                )
+                if ai_input_result.get("blocked"):
+                    input_block = True
+                elif ai_input_result.get("verdict") == "redact":
+                    # On input we *record* but don't overwrite the tool's
+                    # arguments — tools almost always need the real values.
+                    # The AI verdict is surfaced so operators can tighten
+                    # the policy or switch the tool to AI-block for this
+                    # class of data.
+                    input_detected = True
 
             entry = {
                 "tool_call_id": tc.get("id", ""),
@@ -1015,34 +1098,76 @@ def create_admin_app() -> FastAPI:
             if input_modified:
                 entry["original_arguments"] = original_args
 
-            # If a critical pattern hit the arguments, block the call outright.
-            if input_has_critical:
+            if input_block:
                 entry["sanitization_blocked"] = True
                 entry["sanitization_block_reason"] = (
-                    "Critical sanitization pattern detected in tool arguments"
+                    ai_input_result.get("reasoning", "Sanitization policy blocked tool arguments")
+                    if ai_input_result and ai_input_result.get("blocked")
+                    else "Sanitization policy blocked tool arguments"
                 )
 
-            if rbac["allowed"] and not input_has_critical:
+            output_violations: list[dict] = []
+            output_modified = False
+            ai_output_result: dict | None = None
+
+            if rbac["allowed"] and not input_block:
+                # Step 2 (OUTPUT): default is REDACT. The LLM/user never need
+                # the raw payload — a presentation copy is fine. critical still
+                # blocks, and an explicit action="detect" rule just records.
                 simulated = _simulate_tool(name, sanitized_args)
-                sanitized_output, output_violations = _sanitize_json(
-                    simulated, tool_sanitization_rules,
-                )
-                output_modified = bool(output_violations)
-                output_has_critical = any(
-                    v.get("severity") == "critical" for v in output_violations
-                )
+                if regex_enabled:
+                    sanitized_output, output_violations = _sanitize_json(
+                        simulated, tool_sanitization_rules, default_action="redact",
+                    )
+                else:
+                    sanitized_output, output_violations = simulated, []
+                output_modified = sanitized_output is not simulated and sanitized_output != simulated
+                output_block = any(v.get("action") == "block" for v in output_violations)
+
+                # Step 2b (OUTPUT, AI pass): reasoning sanitizer on the tool
+                # response before it goes back to the caller. On output we
+                # DO apply the LLM's redactions — the user/LLM never need
+                # raw PII, only what they asked for.
+                if ai_enabled and not output_block:
+                    from api.routes_data_policies import _run_ai_sanitization
+                    try:
+                        out_payload = json.dumps(sanitized_output, ensure_ascii=False)
+                    except Exception:
+                        out_payload = str(sanitized_output)
+                    ai_output_result = await _run_ai_sanitization(
+                        payload=out_payload,
+                        intent=tool_san_intent, stage="output",
+                        tool_name=name,
+                        shield_endpoint=shield_endpoint,
+                        api_key=api_key,
+                        shield_token=shield_token,
+                    )
+                    if ai_output_result.get("blocked"):
+                        output_block = True
+                    elif ai_output_result.get("verdict") == "redact" and ai_output_result.get("sanitized"):
+                        # Best-effort reattach of JSON structure — if the
+                        # sanitized text is valid JSON, use the object form;
+                        # otherwise drop to a string payload.
+                        try:
+                            sanitized_output = json.loads(ai_output_result["sanitized"])
+                        except Exception:
+                            sanitized_output = ai_output_result["sanitized"]
+                        output_modified = True
 
                 entry["simulated_output"] = sanitized_output
                 if output_modified:
                     entry["simulated_output_original"] = simulated
-                if output_has_critical:
+                if output_block:
                     entry["sanitization_blocked"] = True
                     entry["sanitization_block_reason"] = (
-                        "Critical sanitization pattern detected in tool output"
+                        ai_output_result.get("reasoning", "Sanitization policy blocked tool output")
+                        if ai_output_result and ai_output_result.get("blocked")
+                        else "Sanitization policy blocked tool output"
                     )
 
-                # LLM-validated data rules run on the SANITIZED payloads so the
-                # Shield LLM never sees raw PII either.
+                # LLM-validated data rules run on whatever the downstream will
+                # actually see (sanitized_args for input, sanitized_output for
+                # output) so the Shield LLM doesn't need to see raw PII either.
                 if shield_endpoint and data_policy.get("input_rules"):
                     async with httpx.AsyncClient(timeout=30) as rule_client:
                         input_check = await _validate_data_rules(
@@ -1064,11 +1189,8 @@ def create_admin_app() -> FastAPI:
                     if output_check and not output_check["passed"]:
                         entry["data_rule_violation"] = output_check
                         data_rule_results.append(output_check)
-            else:
-                output_violations = []
-                output_modified = False
 
-            if input_modified or output_modified:
+            if input_detected or output_violations or ai_input_result or ai_output_result:
                 sanitization_meta = {
                     "applied": True,
                     "input_modified": input_modified,
@@ -1076,6 +1198,21 @@ def create_admin_app() -> FastAPI:
                     "input_violations": input_violations,
                     "output_violations": output_violations,
                 }
+                # Surface the AI reasoning verdicts when present so the
+                # playground and audit log can render them alongside the
+                # regex findings.
+                if ai_input_result:
+                    sanitization_meta["ai_input"] = {
+                        "verdict":     ai_input_result.get("verdict"),
+                        "reasoning":   ai_input_result.get("reasoning", ""),
+                        "redactions":  ai_input_result.get("redactions", []),
+                    }
+                if ai_output_result:
+                    sanitization_meta["ai_output"] = {
+                        "verdict":     ai_output_result.get("verdict"),
+                        "reasoning":   ai_output_result.get("reasoning", ""),
+                        "redactions":  ai_output_result.get("redactions", []),
+                    }
                 entry["sanitization"] = sanitization_meta
                 sanitization_results.append({
                     "tool_name": name,

@@ -1,5 +1,7 @@
 """Classify-output endpoint — runs output guardrails on LLM-generated content."""
 
+import json
+import re as _re
 from datetime import datetime
 from typing import Optional
 
@@ -13,6 +15,221 @@ from storage.policy_store import check_tool_authorization, get_tool_policies
 from core.llm_backend import llm_call
 
 router = APIRouter()
+
+
+# ── Data-policy sanitization on the production hot path ──────────────────
+# The tool-call flavour of /guardrails/output is what real agents call
+# before handing off a tool response (or before executing a tool call).
+# The tenant-portal lets operators configure per-tool sanitization — both
+# regex rules (fast, deterministic) and a natural-language "intent" the
+# Shield LLM reasons about (robust to obfuscation). Both need to run here,
+# or the whole feature is just a playground toy.
+
+_VALID_ACTIONS = {"detect", "redact", "block"}
+
+
+def _resolve_rule_action(rule: dict, default_action: str) -> str:
+    severity = (rule.get("severity") or "medium").lower()
+    if severity == "critical":
+        return "block"
+    explicit = (rule.get("action") or "").strip().lower()
+    if explicit in _VALID_ACTIONS:
+        return explicit
+    return default_action if default_action in _VALID_ACTIONS else "detect"
+
+
+def _apply_regex_sanitization(text: str, rules: list[dict],
+                              default_action: str = "redact") -> tuple[str, list[dict], bool]:
+    """Run the tenant's regex rules over `text`.
+
+    Mirrors the helper in admin_app.py so we don't create a circular
+    import between admin_app and the API routers. Returns
+    (sanitized_text, violations, had_block).
+    """
+    if not text or not rules:
+        return text, [], False
+
+    sanitized = text
+    violations: list[dict] = []
+    had_block = False
+    for rule in rules:
+        if not isinstance(rule, dict) or not rule.get("enabled", True):
+            continue
+        pattern = rule.get("regex")
+        if not pattern:
+            continue
+        try:
+            compiled = _re.compile(pattern)
+        except _re.error:
+            continue
+        matches = compiled.findall(sanitized)
+        if not matches:
+            continue
+
+        effective = _resolve_rule_action(rule, default_action)
+        if effective == "redact":
+            replacement = rule.get("replacement", "[REDACTED]")
+            sanitized = compiled.sub(replacement, sanitized)
+        if effective == "block":
+            had_block = True
+
+        violations.append({
+            "pattern_id": rule.get("pattern_id", "unknown"),
+            "description": rule.get("description", ""),
+            "severity": rule.get("severity", "medium"),
+            "count": len(matches),
+            "action": effective,
+        })
+    return sanitized, violations, had_block
+
+
+def _load_tool_data_policy(tenant_id: str, tool_name: str) -> dict:
+    """Best-effort load of the tool's data policy from Redis.
+    Returns an empty dict when no policy / no Redis is available so the
+    caller can treat the policy as absent."""
+    try:
+        from storage.tenant_store import _get_redis
+        r = _get_redis()
+        if not r:
+            return {}
+        raw = r.get(f"data_policies:{tenant_id}")
+        if not raw:
+            return {}
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(data, dict):
+            return data.get(tool_name) or {}
+    except Exception:
+        pass
+    return {}
+
+
+async def _apply_tool_sanitization(
+    tenant_id: str,
+    tool_name: str,
+    output: str,
+    stage: str,
+    request: Optional[Request] = None,
+) -> tuple[Optional[dict], Optional[str], dict]:
+    """Apply regex + AI-reasoning sanitization to a tool-call payload.
+
+    Returns a tuple ``(block_info, sanitized_text, meta)`` where:
+      * ``block_info`` is None when the call should continue, or a dict
+        describing why enforcement refused the payload.
+      * ``sanitized_text`` is the post-sanitization string when the
+        payload was modified (callers should forward this instead of the
+        original). None when no modifications happened.
+      * ``meta`` contains the full audit detail (violations, AI verdict,
+        timings) for logging / client display.
+    """
+    meta: dict = {"applied": False, "stage": stage,
+                  "mode": None, "regex_violations": [], "ai": None}
+    policy = _load_tool_data_policy(tenant_id, tool_name)
+    if not policy:
+        return None, None, meta
+
+    rules = policy.get("sanitization_rules") or []
+    intent = (policy.get("sanitization_intent") or "").strip()
+    mode = (policy.get("sanitization_mode") or "regex").strip().lower()
+    meta["mode"] = mode
+
+    if not (rules or intent):
+        return None, None, meta
+
+    stage = stage if stage in ("input", "output") else "output"
+    default_action = "detect" if stage == "input" else "redact"
+
+    sanitized = output
+    regex_enabled = mode in ("regex", "both")
+    ai_enabled = bool(intent) and mode in ("ai", "both")
+
+    # ---- Regex fast-path ----------------------------------------------
+    if regex_enabled and rules:
+        sanitized, regex_violations, had_block = _apply_regex_sanitization(
+            sanitized, rules, default_action=default_action,
+        )
+        meta["regex_violations"] = regex_violations
+        if regex_violations:
+            meta["applied"] = True
+        if had_block:
+            # A critical / explicit-block rule hit — stop before burning
+            # an LLM call. Report the highest-severity match.
+            offender = next((v for v in regex_violations if v.get("action") == "block"),
+                            regex_violations[0])
+            return (
+                {
+                    "reason": f"Sanitization rule '{offender.get('pattern_id')}' "
+                              f"blocked the {stage} payload.",
+                    "stage": stage,
+                    "regex_violations": regex_violations,
+                    "source": "regex",
+                },
+                None,
+                meta,
+            )
+
+    # ---- AI reasoning pass -------------------------------------------
+    if ai_enabled:
+        # Late import keeps the module graph clean at startup.
+        # Dual-mode: the monolith image dispatches in-process via
+        # `async_llm_call`, same as every other LLM-backed guardrail. The
+        # slim admin-only image has no in-process LLM, so we fall back to
+        # an HTTP call — forward the caller's headers so auth reaches the
+        # remote Shield, with SHIELD_LLM_URL / RUNPOD_* env as backstop.
+        from api.routes_data_policies import _run_ai_sanitization
+
+        fallback_endpoint = None
+        fallback_api_key = None
+        fallback_shield_token = None
+        if request is not None:
+            fallback_api_key = request.headers.get("X-API-Key") or None
+            auth_header = request.headers.get("Authorization") or ""
+            if auth_header.lower().startswith("bearer "):
+                fallback_shield_token = auth_header[7:] or None
+            # Don't default the endpoint to request.base_url — the admin
+            # image is typically proxied and its base_url is NOT where
+            # the Shield LLM lives. Let the helper's env-based resolver
+            # pick SHIELD_LLM_URL / RUNPOD_ENDPOINT instead.
+
+        ai_result = await _run_ai_sanitization(
+            payload=sanitized,
+            intent=intent,
+            stage=stage,
+            tool_name=tool_name,
+            shield_endpoint=fallback_endpoint,
+            api_key=fallback_api_key,
+            shield_token=fallback_shield_token,
+        )
+        meta["ai"] = {
+            "verdict":    ai_result.get("verdict"),
+            "reasoning":  ai_result.get("reasoning", ""),
+            "redactions": ai_result.get("redactions", []),
+            "error":      ai_result.get("error"),
+        }
+        if ai_result.get("error"):
+            # Fail-open for infra errors (Shield LLM unreachable, etc.):
+            # we surface the failure in the response so operators can
+            # alert on it, rather than silently break every tool call.
+            meta["ai"]["fail_open"] = True
+        elif ai_result.get("blocked"):
+            meta["applied"] = True
+            return (
+                {
+                    "reason": ai_result.get("reasoning",
+                                            "AI policy blocked the payload"),
+                    "stage": stage,
+                    "ai": meta["ai"],
+                    "source": "ai",
+                },
+                None,
+                meta,
+            )
+        elif ai_result.get("verdict") == "redact" and ai_result.get("sanitized"):
+            sanitized = ai_result["sanitized"]
+            meta["applied"] = True
+
+    modified = sanitized != output
+    meta["output_modified"] = modified
+    return None, (sanitized if modified else None), meta
 
 # Mapping from request keys to internal guardrail names
 _NAME_MAP = {
@@ -163,7 +380,26 @@ async def classify_output(request: Request, body: dict):
     1. Checks role-based authorization for tool use
     2. Validates tool call via LLM if configured
     3. Applies tool-specific data sanitization policies
-    4. Runs standard output guardrails
+       - Regex rules   (mode: regex | both) — fast pre-filter
+       - AI reasoning  (mode: ai    | both) — LLM evaluates the payload
+         against the plain-English `sanitization_intent` stored on the
+         tool's data policy. Robust to obfuscation, unicode tricks,
+         paraphrased disclosures, etc.
+    4. Runs standard output guardrails on the sanitized payload
+
+    Stage semantics:
+    - context.stage = "output" (default): treat `output` as a tool's
+      response going back to the LLM / user. Default action is redact.
+    - context.stage = "input": treat `output` as a tool's arguments
+      about to be executed. Default action is detect — tools need real
+      values — but critical severity / explicit block still refuse.
+
+    Response additions for tool-call sanitization:
+    - `sanitization`      : full audit — mode, regex hits, AI verdict,
+                            reasoning, redactions.
+    - `sanitized_output`  : present only when the pipeline modified the
+                            payload. Callers SHOULD forward this to the
+                            end user instead of the original `output`.
 
     Headers:
     - X-User-Role: User's role (admin, nurse, patient, etc.)
@@ -184,6 +420,11 @@ async def classify_output(request: Request, body: dict):
     agent_id = request.headers.get("X-Agent-ID") or context.get("agent_id")
     tool_name = context.get("tool_name")
     tool_input = context.get("tool_input")
+    # Stage lets the caller tell us whether `output` is the tool's input
+    # (pre-exec check) or its response (post-exec check). Default "output"
+    # to preserve back-compat — that's what callers meant before this
+    # field existed.
+    stage = (context.get("stage") or "output").lower()
 
     # Enhanced context for downstream processing
     enhanced_context = {
@@ -193,6 +434,7 @@ async def classify_output(request: Request, body: dict):
         "agent_id": agent_id,
         "tool_name": tool_name,
         "tool_input": tool_input,
+        "stage": stage,
     }
 
     # 1. If this is a tool call, validate authorization first
@@ -218,16 +460,62 @@ async def classify_output(request: Request, body: dict):
         # Add LLM validation result to context for downstream guardrails
         enhanced_context["tool_validation"] = auth_result.get("llm_validation")
 
+    # 1b. Data-policy sanitization (regex fast-path + optional AI
+    # reasoning) — this is the production enforcement the tenant
+    # configured in the portal's Data Policy modal. Runs for any request
+    # that names a tool, even without the full agent_id path, because
+    # operators often call this endpoint just to scrub tool output.
+    sanitization_meta: Optional[dict] = None
+    if tool_name and tenant_id:
+        block_info, sanitized_output, sanitization_meta = await _apply_tool_sanitization(
+            tenant_id=tenant_id,
+            tool_name=tool_name,
+            output=output,
+            stage=stage,
+            request=request,
+        )
+        enhanced_context["sanitization"] = sanitization_meta
+        if block_info:
+            latency_ms = (datetime.now() - start).total_seconds() * 1000
+            return {
+                "safe": False,
+                "action": "block",
+                "guardrail_results": [{
+                    "guardrail": "data_sanitization",
+                    "passed": False,
+                    "action": "block",
+                    "message": block_info["reason"],
+                    "details": block_info,
+                    "latency_ms": latency_ms,
+                }],
+                "sanitization": sanitization_meta,
+                "inference_time_ms": latency_ms,
+            }
+        # When the AI / regex pass only redacted, forward the sanitized
+        # text to the rest of the pipeline so downstream guardrails
+        # operate on the scrubbed version — and the caller receives it
+        # back under `sanitized_output`.
+        if sanitized_output is not None:
+            output = sanitized_output
+
     # 2. Run standard output guardrails with enhanced context
     tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
 
     if tenant_config and "output_guardrails" in tenant_config:
-        return await _classify_tenant(output, tenant_config["output_guardrails"], enhanced_context, start)
+        response = await _classify_tenant(output, tenant_config["output_guardrails"], enhanced_context, start)
+    elif not guardrail_overrides:
+        response = await _classify_with_defaults(output, enhanced_context, start)
+    else:
+        response = await _classify_with_overrides(output, guardrail_overrides, enhanced_context, start)
 
-    if not guardrail_overrides:
-        return await _classify_with_defaults(output, enhanced_context, start)
-
-    return await _classify_with_overrides(output, guardrail_overrides, enhanced_context, start)
+    # Attach sanitization details + the sanitized payload so callers can
+    # forward the scrubbed text to the end user / LLM instead of re-using
+    # the raw `output` they sent in.
+    if sanitization_meta:
+        response["sanitization"] = sanitization_meta
+        if sanitization_meta.get("output_modified"):
+            response["sanitized_output"] = output
+    return response
 
 
 def _build_response(pipeline_result: PipelineResult, start: datetime) -> dict:
