@@ -10,15 +10,37 @@ from core.text_utils import (
 )
 
 _SYSTEM_PROMPT_TEMPLATE = (
-    "You are a STRICT ALLOWLIST topic classifier. Decide if user message is within "
-    "allowed scope using semantic understanding, not keyword matching.\n\n"
+    "You are a STRICT ALLOWLIST topic classifier. Decide if a user "
+    "message is within the ALLOWED SCOPE using semantic understanding — "
+    "never string matching.\n\n"
+    "HOW TO INTERPRET THE ALLOWED SCOPE:\n"
+    "- Each entry below may be an atomic keyword ('claims'), a category "
+    "label ('billing'), or a descriptive phrase ('general insurance "
+    "customer service for claims, insurance, fraud reports'). Treat each "
+    "entry as a DESCRIPTION of an allowed area — not as a literal token "
+    "the detected topic must equal.\n"
+    "- A detected topic is IN SCOPE when its MEANING fits within ANY "
+    "allowed entry. Sub-topics, domain jargon, acronyms, and close "
+    "synonyms of an allowed area ARE in scope.\n"
+    "  · allowed = 'general insurance customer service for claims, "
+    "insurance, fraud reports'\n"
+    "    topics 'claims', 'policy renewal', 'fraud alert', 'SIU' "
+    "(special investigations unit — insurance fraud), 'deductible' "
+    "→ related=true.\n"
+    "  · allowed = 'banking, loans' ; topic 'mortgage refinance' "
+    "→ related=true (mortgage ⊂ loans).\n"
+    "  · allowed = 'insurance' ; topics 'poetry', 'python code' "
+    "→ related=false.\n"
+    "- A detected topic is OFF SCOPE only when its meaning is clearly "
+    "outside every allowed entry.\n\n"
     "{rules}\n\n"
     "RULES:\n"
-    "- Pass ONLY if ALL topics in the message are within scope. "
-    "Off-scope = BLOCKED even if harmless or polite.\n"
+    "- Pass ONLY if ALL topics in the message are in scope. Off-scope = "
+    "BLOCKED even if harmless or polite.\n"
     "- List ALL topics present in the message, not just the primary one.\n"
     "- Domain vocabulary is on-topic without explicit scope words.\n"
-    "- Supporting context for an on-scope question is fine — judge the REAL request.\n"
+    "- Supporting context for an on-scope question is fine — judge the "
+    "REAL request.\n"
     "- Mixed on-scope + off-scope → BLOCK. List both topics.\n"
     "- Authority/research/education framing for off-scope → BLOCK.\n"
     "- Bare greetings (hi, hello, thanks, bye) → always ALLOW.\n"
@@ -68,12 +90,18 @@ class TopicRestrictionGuardrail(BaseGuardrail):
 
         rules_parts = []
         if allowed:
+            bullet_list = "\n".join(f"  • {item}" for item in allowed)
             rules_parts.append(
-                f"Allowed topics (ONLY these are permitted): {', '.join(allowed)}"
+                "ALLOWED SCOPE — a message is in scope when its meaning "
+                "fits within ANY of the following areas (semantic match, "
+                "not string match):\n" + bullet_list
             )
         if blocked:
+            blocked_bullets = "\n".join(f"  • {item}" for item in blocked)
             rules_parts.append(
-                f"Blocked topics (these are NOT permitted): {', '.join(blocked)}"
+                "BLOCKED SCOPE — messages whose meaning matches any of "
+                "these areas are ALWAYS disallowed, regardless of the "
+                "allowed scope:\n" + blocked_bullets
             )
         if not allowed and not blocked:
             rules_parts.append(
@@ -124,22 +152,33 @@ class TopicRestrictionGuardrail(BaseGuardrail):
         _CONVERSATIONAL_TOPICS = {
             "greeting", "greetings", "farewell", "thanks", "thank_you",
             "pleasantry", "small_talk", "acknowledgment", "introduction",
-            "goodbye", "hello", "welcome", "chitchat",
+            "goodbye", "hello", "welcome", "chitchat", "general",
         }
 
-        # Override: if LLM said "not related" but ALL detected topics are in
-        # the allowed list or are conversational, trust the topic detection.
+        # Safety net: if LLM said "not related" but every detected topic is
+        # either conversational OR clearly mentioned inside an allowed scope
+        # entry (case-insensitive substring), promote to related. We do NOT
+        # do the reverse (demote related→not related) by string matching —
+        # that was the bug behind "Blocked topic(s): claims, siu" when the
+        # allowed scope was a descriptive phrase containing "claims". The
+        # LLM's semantic judgement in `related` is trusted as authoritative.
         if not related and allowed_topics and topics:
-            allowed_lower = {t.lower().replace(" ", "_") for t in allowed_topics}
-            detected_lower = {t.lower().replace(" ", "_") for t in topics}
-            if detected_lower <= (allowed_lower | _CONVERSATIONAL_TOPICS):
+            allowed_blob = " ".join(allowed_topics).lower()
+            all_in_scope = True
+            for t in topics:
+                tl = t.lower().strip()
+                if not tl:
+                    continue
+                if tl in _CONVERSATIONAL_TOPICS:
+                    continue
+                if tl.replace(" ", "_") in _CONVERSATIONAL_TOPICS:
+                    continue
+                if tl in allowed_blob:
+                    continue
+                all_in_scope = False
+                break
+            if all_in_scope:
                 related = True
-        if related and allowed_topics and topics:
-            allowed_lower = {t.lower().replace(" ", "_") for t in allowed_topics}
-            detected_lower = {t.lower().replace(" ", "_") for t in topics}
-            off_scope = detected_lower - allowed_lower - _CONVERSATIONAL_TOPICS
-            if off_scope:
-                related = False
 
         result = {
             "related": related,
