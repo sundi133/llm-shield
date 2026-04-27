@@ -10,6 +10,7 @@ examples/
 ├── openai_agents/     # OpenAI function-calling agent with Shield
 ├── crewai/            # Multi-agent CrewAI crew with per-agent RBAC
 ├── anthropic/         # Anthropic Claude tool-use agent with Shield
+├── idp/               # Identity Provider integration guide (Okta, Auth0, Azure AD, Keycloak)
 ├── deep_agent_shield.py   # Advanced async integration (httpx)
 └── policy_management_example.py
 ```
