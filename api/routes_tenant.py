@@ -11,10 +11,15 @@ from storage.tenant_store import (
     list_tenants,
     add_api_key,
     remove_api_key,
+    set_tenant_parent,
+    get_tenant_parent,
+    clear_tenant_parent,
+    get_tenant_ancestors,
 )
 from storage.tenant_models import TenantCreateRequest, TenantUpdateRequest
 from storage.admin_audit import log_admin_action, query_admin_audit
 from storage.rate_limiter import get_usage
+from core.policy_inheritance import get_effective_policies
 
 router = APIRouter(prefix="/v1/admin/tenants", tags=["tenants"])
 
@@ -188,6 +193,104 @@ async def get_tenant_audit_log(
     """Get admin audit log for a specific tenant."""
     entries = query_admin_audit(tenant_id=tenant_id, action=action, limit=limit, offset=offset)
     return {"tenant_id": tenant_id, "entries": entries}
+
+
+# ============================================================================
+# Tenant Hierarchy (Cross-Tenant Policy Inheritance)
+# ============================================================================
+
+from pydantic import BaseModel, Field
+
+
+class SetParentRequest(BaseModel):
+    parent_tenant_id: str = Field(..., description="Parent tenant ID for inheritance")
+
+
+@router.put("/{tenant_id}/parent")
+async def set_parent(tenant_id: str, body: SetParentRequest, request: Request):
+    """Set parent tenant for policy inheritance.
+
+    Child tenants inherit parent policies. Child can add restrictions but cannot
+    weaken parent policies (e.g., cannot change block → allow).
+    """
+    # Verify both tenants exist
+    tenant = get_tenant(tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
+
+    parent = get_tenant(body.parent_tenant_id)
+    if not parent:
+        raise HTTPException(status_code=404, detail=f"Parent tenant '{body.parent_tenant_id}' not found")
+
+    success = set_tenant_parent(tenant_id, body.parent_tenant_id)
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot set parent: would create circular dependency or self-reference"
+        )
+
+    log_admin_action(
+        action="set_tenant_parent",
+        actor=_actor_from_request(request),
+        tenant_id=tenant_id,
+        source_ip=request.client.host if request.client else "",
+        after={"parent_tenant_id": body.parent_tenant_id},
+    )
+
+    return {
+        "status": "parent_set",
+        "tenant_id": tenant_id,
+        "parent_tenant_id": body.parent_tenant_id,
+    }
+
+
+@router.get("/{tenant_id}/parent")
+async def get_parent(tenant_id: str):
+    """Get parent tenant and full ancestry chain."""
+    parent_id = get_tenant_parent(tenant_id)
+    ancestors = get_tenant_ancestors(tenant_id)
+
+    return {
+        "tenant_id": tenant_id,
+        "parent_tenant_id": parent_id,
+        "ancestors": ancestors,
+    }
+
+
+@router.delete("/{tenant_id}/parent")
+async def remove_parent(tenant_id: str, request: Request):
+    """Remove parent tenant relationship (stop inheriting)."""
+    removed = clear_tenant_parent(tenant_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' has no parent")
+
+    log_admin_action(
+        action="remove_tenant_parent",
+        actor=_actor_from_request(request),
+        tenant_id=tenant_id,
+        source_ip=request.client.host if request.client else "",
+    )
+
+    return {"status": "parent_removed", "tenant_id": tenant_id}
+
+
+@router.get("/{tenant_id}/effective-policies")
+async def get_effective_policies_endpoint(tenant_id: str):
+    """Get the effective policy set including inherited policies from parent tenants."""
+    tenant = get_tenant(tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
+
+    policies = get_effective_policies(tenant_id)
+    parent_id = get_tenant_parent(tenant_id)
+
+    return {
+        "tenant_id": tenant_id,
+        "parent_tenant_id": parent_id,
+        "policies": policies,
+        "count": len(policies),
+        "inherited_count": sum(1 for p in policies if "inherited_from" in p),
+    }
 
 
 # Global admin audit log (not scoped to a tenant)

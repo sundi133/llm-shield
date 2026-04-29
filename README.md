@@ -315,6 +315,24 @@ python core/keygen.py
 | `data_access_guard` | Clearance level enforcement |
 | `mcp_guard` | MCP server validation and trust scoring |
 | `action_guard` | Per-session action limits and approval gates |
+| `data_taint_tracking` | Track sensitive data flow across tool chains, block unauthorized propagation |
+| `goal_drift_detection` | Detect when agents deviate from assigned goals (LLM-based) |
+| `cert_identity` | Certificate-based agent identity with trust-level gated tool access |
+
+### Enterprise Controls
+
+All enterprise features are **opt-in** — disabled by default. Enable via config. Zero impact on existing deployments.
+
+| Feature | What It Does |
+|---|---|
+| Tool Kill Switch | Instantly disable a tool globally — one API call, immediate effect |
+| Runtime Decision Audit | Query every guardrail enforcement decision (who/what/when/why) |
+| Webhook Notifications | Push events to Slack/PagerDuty/SIEM on blocks, tool disables, policy changes |
+| Policy Versioning | Auto-version every policy change, rollback to any version |
+| Policy Export/Import | Export all policies as JSON bundle, import via CI/CD (policy-as-code) |
+| Cross-Tenant Inheritance | Org-level baseline policies that child tenants cannot weaken |
+
+See [docs/enterprise-features.md](docs/enterprise-features.md) for setup and usage.
 
 ## Project Structure
 
@@ -338,14 +356,20 @@ llm-shield/
 │   ├── registry.py             # Auto-discovery and registration
 │   ├── input/                  # 10 input guardrails
 │   ├── output/                 # 5 output guardrails
-│   └── agentic/                # 4 agentic guardrails
+│   └── agentic/                # 7 agentic guardrails + enterprise modules
+│       ├── taint/              # Data taint tracking (P0-B)
+│       ├── intent/             # Goal drift detection (P0-A)
+│       └── identity/           # Cert-based agent identity (P1-A)
 ├── api/                        # FastAPI route handlers
 ├── storage/
 │   ├── audit_log.py            # Async SQLite audit logging
+│   ├── decision_audit.py       # Runtime decision audit trail
+│   ├── webhook_store.py        # Webhook configuration store
+│   ├── tool_killswitch.py      # Tool kill switch state
 │   └── state_store.py          # In-memory state with TTL
 ├── static/
 │   └── playground.html         # Interactive testing UI
-├── tests/                      # 53 tests
+├── tests/                      # 201 tests
 ├── docs/
 │   └── integration-guide.md    # Full developer integration guide
 ├── Dockerfile

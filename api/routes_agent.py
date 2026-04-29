@@ -1,6 +1,6 @@
 """Agent checking routes — classification, scope, loops, budgets, delegation, monitoring."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from typing import Optional
 
@@ -11,6 +11,9 @@ from guardrails.agentic.scope.budget_controls import BudgetControlsGuardrail
 from guardrails.agentic.scope.delegation_control import DelegationControlGuardrail
 from guardrails.agentic.monitoring.chain_of_thought_monitoring import ChainOfThoughtMonitoringGuardrail
 from guardrails.agentic.monitoring.context_window_guardrails import ContextWindowGuardrailsGuardrail
+from guardrails.agentic.intent.goal_drift_detection import GoalDriftDetectionGuardrail
+from guardrails.agentic.intent.intent_store import register_goal as _register_goal, get_goal as _get_goal
+from storage.decision_audit import log_decision
 
 router = APIRouter(prefix="/v1/shield/agent", tags=["agent"])
 
@@ -22,6 +25,7 @@ _GUARDS = [
     ("delegation_control", DelegationControlGuardrail),
     ("chain_of_thought_monitoring", ChainOfThoughtMonitoringGuardrail),
     ("context_window_guardrails", ContextWindowGuardrailsGuardrail),
+    ("goal_drift_detection", GoalDriftDetectionGuardrail),
 ]
 
 
@@ -46,6 +50,8 @@ class AgentCheckRequest(BaseModel):
     cost_usd: Optional[float] = None
     api_calls: Optional[int] = None
     guardrails: Optional[list[str]] = None
+    goal: Optional[str] = None
+    current_action_summary: Optional[str] = None
 
 
 class BudgetRequest(BaseModel):
@@ -75,12 +81,19 @@ def _should_run(name: str, body: AgentCheckRequest) -> bool:
         return bool(body.chain_of_thought)
     if name == "context_window_guardrails":
         return bool(body.messages or body.total_tokens)
+    if name == "goal_drift_detection":
+        return bool(body.session_id)
     return True
 
 
 @router.post("/check")
-async def check_agent(body: AgentCheckRequest):
+async def check_agent(body: AgentCheckRequest, request: Request):
     context = body.model_dump(exclude_none=True)
+    tenant_id = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
+    context["tenant_id"] = tenant_id
+    if hasattr(request, "state"):
+        context.setdefault("trust_level", getattr(request.state, "trust_level", None))
+        context.setdefault("identity_method", getattr(request.state, "identity_method", None))
 
     results = []
     for name, cls in _GUARDS:
@@ -103,7 +116,56 @@ async def check_agent(body: AgentCheckRequest):
             action = r["action"]
             break
 
+    # Log enforcement decisions for non-pass actions
+    if tenant_id and action != "pass":
+        for r in results:
+            if not r["passed"]:
+                log_decision(
+                    tenant_id=tenant_id,
+                    action=r["action"],
+                    guardrail=r["guardrail"],
+                    agent_key=body.agent_key,
+                    tool_name=body.tool_name or "",
+                    session_id=body.session_id,
+                    reason=r.get("message", ""),
+                    source_ip=request.client.host if request.client else "",
+                    metadata=r.get("details"),
+                )
+
     return {"allowed": allowed, "action": action, "guardrail_results": results}
+
+
+class GoalRequest(BaseModel):
+    session_id: str
+    agent_key: str
+    goal: str
+
+
+@router.post("/goal")
+async def register_agent_goal(body: GoalRequest, request: Request):
+    """Explicitly register an agent's goal for a session.
+
+    The goal is used by the goal_drift_detection guardrail to detect
+    when the agent deviates from its assigned mission.
+    """
+    tenant_id = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id") or ""
+    record = _register_goal(
+        session_id=body.session_id,
+        agent_key=body.agent_key,
+        goal=body.goal,
+        tenant_id=tenant_id,
+    )
+    return {"registered": True, "session_id": body.session_id, "goal": record}
+
+
+@router.get("/goal")
+async def get_agent_goal(session_id: str, request: Request):
+    """Get the registered goal for a session."""
+    tenant_id = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id") or ""
+    goal = _get_goal(session_id, tenant_id=tenant_id)
+    if not goal:
+        return {"session_id": session_id, "goal": None}
+    return {"session_id": session_id, "goal": goal}
 
 
 @router.post("/budget")

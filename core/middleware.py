@@ -204,6 +204,36 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             if not agent_key:
                 agent_key = request.query_params.get("api_key")
 
+            # Certificate-based identity: resolve fingerprint → agent_key
+            cert_fingerprint = request.headers.get("X-Client-Cert-Fingerprint")
+            request.state.trust_level = None
+            request.state.identity_method = None
+
+            if cert_fingerprint:
+                # Cert fingerprint takes precedence — resolve to agent_key
+                tenant_id_for_cert = getattr(request.state, "tenant_id", None)
+                if not tenant_id_for_cert:
+                    # Try resolving tenant first from API key
+                    _api_key = _extract_api_key(request)
+                    if _api_key:
+                        _tid, _ = _get_cached_tenant(_api_key)
+                        tenant_id_for_cert = _tid
+
+                if tenant_id_for_cert:
+                    try:
+                        from guardrails.agentic.identity.cert_registry import resolve_agent_by_cert
+                        cert_agent = resolve_agent_by_cert(tenant_id_for_cert, cert_fingerprint)
+                        if cert_agent:
+                            agent_key = cert_agent
+                            request.state.trust_level = "high"
+                            request.state.identity_method = "cert"
+                    except Exception:
+                        pass
+
+            if not request.state.trust_level:
+                request.state.trust_level = "medium" if agent_key else "low"
+                request.state.identity_method = "string_key" if agent_key else "anonymous"
+
             request.state.agent_key = agent_key
 
             # Resolve role if agent key is present
