@@ -14,6 +14,10 @@ from guardrails.agentic.taint.taint_tracking import DataTaintTrackingGuardrail
 from guardrails.agentic.identity.cert_identity import CertIdentityGuardrail
 from guardrails.base import _request_configs
 import asyncio
+from core.feature_flags import (
+    KILLSWITCH_ENABLED, DECISION_AUDIT_ENABLED, WEBHOOKS_ENABLED, TAINT_TRACKING_ENABLED,
+    CERT_IDENTITY_ENABLED,
+)
 from storage.tool_killswitch import is_tool_disabled
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
@@ -26,9 +30,12 @@ _CHECK_GUARDS = [
     ("tool_call_rate_limiting", ToolCallRateLimitingGuardrail),
     ("tool_call_validation", ToolCallValidationGuardrail),
     ("sensitive_action_confirmation", SensitiveActionConfirmationGuardrail),
-    ("data_taint_tracking", DataTaintTrackingGuardrail),
-    ("cert_identity", CertIdentityGuardrail),
 ]
+# Enterprise guardrails — only added when feature flags are enabled
+if TAINT_TRACKING_ENABLED:
+    _CHECK_GUARDS.append(("data_taint_tracking", DataTaintTrackingGuardrail))
+if CERT_IDENTITY_ENABLED:
+    _CHECK_GUARDS.append(("cert_identity", CertIdentityGuardrail))
 
 
 class ToolCheckRequest(BaseModel):
@@ -74,8 +81,8 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         or request.headers.get("x-user-role")
     )
 
-    # Kill switch check — immediate block if tool is globally disabled
-    if tenant_id and is_tool_disabled(tenant_id, body.tool_name):
+    # Kill switch check — immediate block if tool is globally disabled (enterprise feature)
+    if KILLSWITCH_ENABLED and tenant_id and is_tool_disabled(tenant_id, body.tool_name):
         if tenant_id:
             log_decision(
                 tenant_id=tenant_id,
@@ -155,8 +162,8 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 action = r["action"]
                 break
 
-        # Log enforcement decisions for non-pass actions
-        if tenant_id and action != "pass":
+        # Log enforcement decisions for non-pass actions (enterprise feature)
+        if DECISION_AUDIT_ENABLED and tenant_id and action != "pass":
             for r in results:
                 if not r["passed"]:
                     log_decision(
@@ -172,8 +179,8 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                         metadata=r.get("details"),
                     )
 
-            # Fire webhook for block events
-            if action == "block":
+            # Fire webhook for block events (enterprise feature)
+            if WEBHOOKS_ENABLED and action == "block":
                 asyncio.create_task(dispatch_event(
                     tenant_id=tenant_id,
                     event_type="guardrail_blocked",
@@ -213,8 +220,8 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
     r = await guard.check(body.tool_output, context)
     sanitized = (r.details or {}).get("sanitized_output", body.tool_output)
 
-    # Record taint if sensitive data was detected and session/tool_call_id provided
-    if body.session_id and body.tool_call_id:
+    # Record taint if sensitive data was detected and session/tool_call_id provided (enterprise feature)
+    if TAINT_TRACKING_ENABLED and body.session_id and body.tool_call_id:
         findings = (r.details or {}).get("findings", [])
         if findings:
             from guardrails.agentic.taint.taint_store import record_taint

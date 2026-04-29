@@ -57,12 +57,14 @@ async def disable_tool_endpoint(tool_name: str, body: DisableToolRequest, reques
         after={"tool_name": tool_name, "reason": body.reason},
     )
 
-    # Fire webhook event
-    asyncio.create_task(dispatch_event(
-        tenant_id=body.tenant_id,
-        event_type="tool_disabled",
-        payload={"tool_name": tool_name, "reason": body.reason, "actor": actor},
-    ))
+    # Fire webhook event (only if webhooks enabled)
+    from core.feature_flags import WEBHOOKS_ENABLED
+    if WEBHOOKS_ENABLED:
+        asyncio.create_task(dispatch_event(
+            tenant_id=body.tenant_id,
+            event_type="tool_disabled",
+            payload={"tool_name": tool_name, "reason": body.reason, "actor": actor},
+        ))
 
     return {
         "status": "disabled",

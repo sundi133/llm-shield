@@ -14,6 +14,7 @@ from guardrails.agentic.monitoring.context_window_guardrails import ContextWindo
 from guardrails.agentic.intent.goal_drift_detection import GoalDriftDetectionGuardrail
 from guardrails.agentic.intent.intent_store import register_goal as _register_goal, get_goal as _get_goal
 from storage.decision_audit import log_decision
+from core.feature_flags import GOAL_DRIFT_ENABLED, DECISION_AUDIT_ENABLED
 
 router = APIRouter(prefix="/v1/shield/agent", tags=["agent"])
 
@@ -25,8 +26,9 @@ _GUARDS = [
     ("delegation_control", DelegationControlGuardrail),
     ("chain_of_thought_monitoring", ChainOfThoughtMonitoringGuardrail),
     ("context_window_guardrails", ContextWindowGuardrailsGuardrail),
-    ("goal_drift_detection", GoalDriftDetectionGuardrail),
 ]
+if GOAL_DRIFT_ENABLED:
+    _GUARDS.append(("goal_drift_detection", GoalDriftDetectionGuardrail))
 
 
 class AgentCheckRequest(BaseModel):
@@ -116,8 +118,8 @@ async def check_agent(body: AgentCheckRequest, request: Request):
             action = r["action"]
             break
 
-    # Log enforcement decisions for non-pass actions
-    if tenant_id and action != "pass":
+    # Log enforcement decisions for non-pass actions (enterprise feature)
+    if DECISION_AUDIT_ENABLED and tenant_id and action != "pass":
         for r in results:
             if not r["passed"]:
                 log_decision(

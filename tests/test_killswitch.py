@@ -109,6 +109,7 @@ class TestKillswitchRouteIntegration:
         from starlette.testclient import TestClient
         return TestClient(app)
 
+    @patch("api.routes_tool.KILLSWITCH_ENABLED", True)
     @patch("storage.tool_killswitch._get_redis", return_value=None)
     def test_tool_check_blocked_by_killswitch(self, mock_redis, client):
         # Disable a tool

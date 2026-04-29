@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse, Response
 from core.rbac import enforcer
 from storage.tenant_store import resolve_tenant_by_api_key, get_tenant
 from storage.rate_limiter import check_and_increment
+from core.feature_flags import CERT_IDENTITY_ENABLED
 
 # In-memory cache for tenant lookups to reduce Redis hits
 _tenant_cache: dict[str, tuple[Optional[str], Optional[dict], float]] = {}
@@ -204,10 +205,10 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             if not agent_key:
                 agent_key = request.query_params.get("api_key")
 
-            # Certificate-based identity: resolve fingerprint → agent_key
-            cert_fingerprint = request.headers.get("X-Client-Cert-Fingerprint")
+            # Certificate-based identity: resolve fingerprint → agent_key (enterprise feature)
             request.state.trust_level = None
             request.state.identity_method = None
+            cert_fingerprint = request.headers.get("X-Client-Cert-Fingerprint") if CERT_IDENTITY_ENABLED else None
 
             if cert_fingerprint:
                 # Cert fingerprint takes precedence — resolve to agent_key

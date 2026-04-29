@@ -322,19 +322,29 @@ class TestGoalDriftRouteIntegration:
 
     @patch("guardrails.agentic.intent.intent_store._get_redis", return_value=None)
     def test_agent_check_registers_goal_inline(self, mock_redis, client):
-        resp = client.post("/v1/shield/agent/check", json={
-            "agent_key": "agent1",
-            "session_id": "inline_sess",
-            "goal": "Process refunds",
-        }, headers={"X-Tenant-ID": "t1"})
-        assert resp.status_code == 200
-        data = resp.json()
-        # Should have goal_drift_detection in results
-        drift_results = [r for r in data["guardrail_results"]
-                         if r["guardrail"] == "goal_drift_detection"]
-        assert len(drift_results) == 1
-        assert drift_results[0]["passed"] is True
-        assert "Goal registered" in drift_results[0]["message"]
+        # Temporarily add goal_drift_detection to _GUARDS
+        from api.routes_agent import _GUARDS
+        from guardrails.agentic.intent.goal_drift_detection import GoalDriftDetectionGuardrail
+        entry = ("goal_drift_detection", GoalDriftDetectionGuardrail)
+        was_present = any(n == "goal_drift_detection" for n, _ in _GUARDS)
+        if not was_present:
+            _GUARDS.append(entry)
+        try:
+            resp = client.post("/v1/shield/agent/check", json={
+                "agent_key": "agent1",
+                "session_id": "inline_sess",
+                "goal": "Process refunds",
+            }, headers={"X-Tenant-ID": "t1"})
+            assert resp.status_code == 200
+            data = resp.json()
+            drift_results = [r for r in data["guardrail_results"]
+                             if r["guardrail"] == "goal_drift_detection"]
+            assert len(drift_results) == 1
+            assert drift_results[0]["passed"] is True
+            assert "Goal registered" in drift_results[0]["message"]
+        finally:
+            if not was_present:
+                _GUARDS.remove(entry)
 
     @patch("guardrails.agentic.intent.intent_store._get_redis", return_value=None)
     def test_agent_check_no_session_skips_drift(self, mock_redis, client):
