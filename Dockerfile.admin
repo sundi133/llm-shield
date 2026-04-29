@@ -32,6 +32,7 @@ COPY core/__init__.py core/
 COPY core/auth.py core/
 COPY core/middleware.py core/
 COPY core/rbac.py core/
+COPY core/feature_flags.py core/
 COPY core/policy_inheritance.py core/
 COPY core/webhook_dispatcher.py core/
 COPY core/models.py core/
