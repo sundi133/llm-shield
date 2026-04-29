@@ -2707,6 +2707,13 @@ if __name__ == "__main__":
       </div>
       <div class="card">
         <div class="card-header">
+          <div><div class="card-title">All Registered Tools</div><div class="card-subtitle">Click a tool to disable it instantly</div></div>
+          <button class="small" onclick="loadKillSwitchTools()">Refresh</button>
+        </div>
+        <div id="ks-all-tools">Loading tools...</div>
+      </div>
+      <div class="card">
+        <div class="card-header">
           <div><div class="card-title">Currently Disabled Tools</div></div>
           <button class="small" onclick="loadDisabledTools()">Refresh</button>
         </div>
@@ -8096,7 +8103,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'policies') loadPolicies();
     if (tab === 'apis') renderAllApiTabs();
     if (tab === 'playground') initPlayground();
-    if (tab === 'kill-switch') loadDisabledTools();
+    if (tab === 'kill-switch') { loadKillSwitchTools(); loadDisabledTools(); }
     if (tab === 'decisions') {} // manual search
     if (tab === 'webhooks') loadWebhooks();
     if (tab === 'taint-tracking') {} // manual search
@@ -8846,6 +8853,72 @@ async function runQuickRbacTests() {
 }
 
 // ── Enterprise: Kill Switch ─────────────────────
+async function loadKillSwitchTools() {
+  try {
+    const tid = (TENANT_INFO && TENANT_INFO.tenant_id) || 'default';
+    // Load agent registry to get all tool names
+    const regData = await apiCall('/v1/agents/registry');
+    const agents = (regData.success && regData.agents) ? regData.agents : {};
+
+    // Load disabled tools
+    const disData = await apiCall(`/v1/shield/tools/disabled?tenant_id=${tid}`);
+    const disabledSet = new Set((disData.disabled_tools || []).map(t => t.tool_name));
+
+    // Collect all unique tool names across all agents
+    const toolAgentMap = {};  // tool_name -> [agent_ids]
+    for (const [agentId, agentData] of Object.entries(agents)) {
+      for (const tool of (agentData.tools || [])) {
+        if (tool === '*') continue;
+        if (!toolAgentMap[tool]) toolAgentMap[tool] = [];
+        toolAgentMap[tool].push(agentId);
+      }
+    }
+
+    const toolNames = Object.keys(toolAgentMap).sort();
+    if (!toolNames.length) {
+      document.getElementById('ks-all-tools').innerHTML = '<div class="muted">No tools registered in agent registry. Register agents with tools first.</div>';
+      return;
+    }
+
+    document.getElementById('ks-all-tools').innerHTML = `
+      <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+        ${toolNames.map(name => {
+          const isDisabled = disabledSet.has(name);
+          const agents = toolAgentMap[name];
+          return `
+            <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid ${isDisabled ? 'var(--danger)' : 'var(--border)'};border-radius:var(--radius-sm);min-width:200px;flex:0 0 auto;">
+              <div style="flex:1;">
+                <div class="mono" style="font-size:13px;font-weight:600;color:${isDisabled ? 'var(--danger)' : 'var(--text)'};">${name}</div>
+                <div style="font-size:11px;color:var(--text-muted);">${agents.length} agent${agents.length > 1 ? 's' : ''}: ${agents.slice(0, 3).join(', ')}${agents.length > 3 ? '...' : ''}</div>
+              </div>
+              ${isDisabled
+                ? `<button class="small" style="border-color:var(--success);color:var(--success);white-space:nowrap;" onclick="enableTool('${name}')">Enable</button>`
+                : `<button class="small" style="border-color:var(--danger);color:var(--danger);white-space:nowrap;" onclick="quickDisableTool('${name}')">Disable</button>`
+              }
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('ks-all-tools').innerHTML = `<div class="toast error">${e.message}</div>`;
+  }
+}
+
+async function quickDisableTool(toolName) {
+  const reason = prompt(`Reason for disabling "${toolName}":`);
+  if (reason === null) return;  // cancelled
+  try {
+    const tid = (TENANT_INFO && TENANT_INFO.tenant_id) || 'default';
+    await apiCall(`/v1/shield/tools/${toolName}/disable`, {
+      method: 'POST', body: JSON.stringify({ tenant_id: tid, reason: reason || '' })
+    });
+    showToast(`Tool "${toolName}" disabled`, 'success');
+    loadKillSwitchTools();
+    loadDisabledTools();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
 async function loadDisabledTools() {
   try {
     const tid = (TENANT_INFO && TENANT_INFO.tenant_id) || 'default';
@@ -8893,6 +8966,7 @@ async function enableTool(toolName) {
       method: 'POST', body: JSON.stringify({ tenant_id: (TENANT_INFO && TENANT_INFO.tenant_id) || 'default' })
     });
     showToast(`Tool "${toolName}" re-enabled`, 'success');
+    loadKillSwitchTools();
     loadDisabledTools();
   } catch (e) { showToast(e.message, 'error'); }
 }
