@@ -24,6 +24,146 @@ from storage.tenant_store import _get_redis, _cache_get, _cache_set, _cache_dele
 logger = logging.getLogger("votal.policy_store")
 
 
+_MAX_VERSIONS = 50  # maximum version history per policy
+
+
+def _save_policy_version(tenant_id: str, policy_id: str, policy_snapshot: dict) -> int:
+    """Save a policy snapshot as a version entry.
+
+    Args:
+        tenant_id: Tenant identifier
+        policy_id: Policy identifier
+        policy_snapshot: Full policy state to snapshot
+
+    Returns:
+        The version number assigned.
+    """
+    versions_key = f"policy_versions:{tenant_id}:{policy_id}"
+
+    # Determine version number
+    r = _get_redis()
+    if r:
+        current_len = r.llen(versions_key) or 0
+    else:
+        existing = _fallback_store.get(versions_key, "[]")
+        current_len = len(json.loads(existing))
+
+    version_number = current_len + 1
+    version_entry = {
+        "version": version_number,
+        "snapshot": policy_snapshot,
+        "versioned_at": int(time.time()),
+    }
+    version_json = json.dumps(version_entry)
+
+    if r:
+        r.rpush(versions_key, version_json)
+        # Cap at max versions (remove oldest)
+        excess = r.llen(versions_key) - _MAX_VERSIONS
+        if excess > 0:
+            for _ in range(excess):
+                r.lpop(versions_key)
+    else:
+        existing = _fallback_store.get(versions_key, "[]")
+        versions = json.loads(existing)
+        versions.append(version_entry)
+        if len(versions) > _MAX_VERSIONS:
+            versions = versions[-_MAX_VERSIONS:]
+        _fallback_store[versions_key] = json.dumps(versions)
+
+    return version_number
+
+
+def list_policy_versions(tenant_id: str, policy_id: str, limit: int = 20) -> list[dict]:
+    """List version history for a policy (newest first).
+
+    Args:
+        tenant_id: Tenant identifier
+        policy_id: Policy identifier
+        limit: Max versions to return
+
+    Returns:
+        List of version entries with version number, snapshot, and timestamp.
+    """
+    versions_key = f"policy_versions:{tenant_id}:{policy_id}"
+
+    r = _get_redis()
+    if r:
+        raw = r.lrange(versions_key, 0, -1) or []
+        versions = []
+        for item in raw:
+            if isinstance(item, bytes):
+                item = item.decode()
+            versions.append(json.loads(item))
+    else:
+        existing = _fallback_store.get(versions_key, "[]")
+        versions = json.loads(existing)
+
+    # Return newest first, limited
+    versions.reverse()
+    return versions[:limit]
+
+
+def get_policy_version(tenant_id: str, policy_id: str, version: int) -> Optional[dict]:
+    """Get a specific version snapshot.
+
+    Args:
+        tenant_id: Tenant identifier
+        policy_id: Policy identifier
+        version: Version number (1-based)
+
+    Returns:
+        Version entry dict or None.
+    """
+    versions = list_policy_versions(tenant_id, policy_id, limit=_MAX_VERSIONS)
+    for v in versions:
+        if v.get("version") == version:
+            return v
+    return None
+
+
+def rollback_policy(tenant_id: str, policy_id: str, version: int) -> Optional[dict]:
+    """Rollback a policy to a previous version.
+
+    Creates a new version entry for the rollback action, then restores the old state.
+
+    Args:
+        tenant_id: Tenant identifier
+        policy_id: Policy identifier
+        version: Version number to rollback to
+
+    Returns:
+        The restored policy config, or None if version not found.
+    """
+    target_version = get_policy_version(tenant_id, policy_id, version)
+    if not target_version:
+        return None
+
+    snapshot = target_version["snapshot"]
+
+    # Save current state as a version before rollback
+    current = get_policy(tenant_id, policy_id)
+    if current:
+        _save_policy_version(tenant_id, policy_id, current)
+
+    # Restore the snapshot
+    snapshot["updated_at"] = int(time.time())
+    snapshot["rolled_back_from_version"] = version
+
+    policy_json = json.dumps(snapshot)
+    policy_key = f"policy:{tenant_id}:{policy_id}"
+
+    r = _get_redis()
+    if r:
+        r.set(policy_key, policy_json)
+    else:
+        _fallback_store[policy_key] = policy_json
+
+    _cache_set(policy_key, snapshot)
+    logger.info(f"Rolled back policy {tenant_id}:{policy_id} to version {version}")
+    return snapshot
+
+
 def create_policy(tenant_id: str, policy_id: str, policy_config: dict) -> dict:
     """Create a new data protection policy for a tenant.
 
@@ -62,6 +202,10 @@ def create_policy(tenant_id: str, policy_id: str, policy_config: dict) -> dict:
         _fallback_store[policies_key] = json.dumps(policy_ids)
 
     _cache_set(policy_key, policy_config)
+
+    # Save initial version
+    _save_policy_version(tenant_id, policy_id, policy_config)
+
     logger.info(f"Created policy: {tenant_id}:{policy_id}")
     return policy_config
 
@@ -124,6 +268,9 @@ def update_policy(tenant_id: str, policy_id: str, updates: dict) -> Optional[dic
     policy = get_policy(tenant_id, policy_id)
     if policy is None:
         return None
+
+    # Save current state as a version before update
+    _save_policy_version(tenant_id, policy_id, dict(policy))
 
     # Merge updates into existing config
     policy.update(updates)

@@ -396,3 +396,115 @@ def remove_api_key(api_key: str):
         _fallback_store.pop(f"apikey:{key_hash}", None)
 
     _cache_delete(f"apikey:{key_hash}")
+
+
+# ============================================================================
+# Tenant Hierarchy (Cross-Tenant Policy Inheritance)
+# ============================================================================
+
+
+def set_tenant_parent(tenant_id: str, parent_tenant_id: str) -> bool:
+    """Set parent tenant for policy inheritance.
+
+    Args:
+        tenant_id: Child tenant identifier
+        parent_tenant_id: Parent tenant identifier
+
+    Returns:
+        True if set successfully.
+    """
+    # Prevent self-reference
+    if tenant_id == parent_tenant_id:
+        return False
+
+    # Prevent circular dependency
+    if _would_create_cycle(tenant_id, parent_tenant_id):
+        return False
+
+    key = f"tenant_hierarchy:{tenant_id}"
+
+    r = _get_redis()
+    if r:
+        r.set(key, parent_tenant_id)
+    else:
+        _fallback_store[key] = parent_tenant_id
+
+    logger.info(f"Set tenant parent: {tenant_id} → {parent_tenant_id}")
+    return True
+
+
+def get_tenant_parent(tenant_id: str) -> Optional[str]:
+    """Get parent tenant ID for inheritance.
+
+    Returns:
+        Parent tenant ID, or None if no parent.
+    """
+    key = f"tenant_hierarchy:{tenant_id}"
+
+    r = _get_redis()
+    if r:
+        data = r.get(key)
+        if isinstance(data, bytes):
+            data = data.decode()
+    else:
+        data = _fallback_store.get(key)
+
+    return data if data else None
+
+
+def clear_tenant_parent(tenant_id: str) -> bool:
+    """Remove parent tenant relationship.
+
+    Returns:
+        True if a parent was removed, False if no parent existed.
+    """
+    key = f"tenant_hierarchy:{tenant_id}"
+
+    r = _get_redis()
+    if r:
+        existed = r.exists(key)
+        r.delete(key)
+        return bool(existed)
+    else:
+        existed = key in _fallback_store
+        _fallback_store.pop(key, None)
+        return existed
+
+
+def _would_create_cycle(child_id: str, proposed_parent_id: str) -> bool:
+    """Check if setting proposed_parent_id as parent of child_id would create a cycle.
+
+    Walks up the ancestry chain from proposed_parent_id; if we ever reach child_id,
+    that's a cycle.
+    """
+    visited = set()
+    current = proposed_parent_id
+    while current:
+        if current == child_id:
+            return True
+        if current in visited:
+            return False  # Already a cycle in the data, but not involving us
+        visited.add(current)
+        current = get_tenant_parent(current)
+    return False
+
+
+def get_tenant_ancestors(tenant_id: str, max_depth: int = 10) -> list[str]:
+    """Get the full ancestor chain for a tenant (immediate parent first).
+
+    Args:
+        tenant_id: Starting tenant
+        max_depth: Maximum depth to traverse (prevents infinite loops)
+
+    Returns:
+        List of ancestor tenant IDs [parent, grandparent, ...].
+    """
+    ancestors = []
+    current = tenant_id
+    for _ in range(max_depth):
+        parent = get_tenant_parent(current)
+        if not parent:
+            break
+        ancestors.append(parent)
+        current = parent
+    return ancestors
