@@ -32,6 +32,9 @@ COPY core/__init__.py core/
 COPY core/auth.py core/
 COPY core/middleware.py core/
 COPY core/rbac.py core/
+COPY core/policy_inheritance.py core/
+COPY core/webhook_dispatcher.py core/
+COPY core/models.py core/
 COPY api/__init__.py api/
 COPY api/routes_tenant.py api/
 COPY api/routes_tenant_self.py api/
@@ -39,6 +42,10 @@ COPY api/routes_agents_registry.py api/
 COPY api/routes_data_policies.py api/
 COPY api/routes_audit.py api/
 COPY api/routes_policy.py api/
+COPY api/routes_killswitch.py api/
+COPY api/routes_decisions.py api/
+COPY api/routes_webhooks.py api/
+COPY api/routes_agent_identity.py api/
 COPY storage/__init__.py storage/
 COPY storage/tenant_store.py storage/
 COPY storage/tenant_models.py storage/
@@ -46,6 +53,16 @@ COPY storage/admin_audit.py storage/
 COPY storage/rate_limiter.py storage/
 COPY storage/policy_store.py storage/
 COPY storage/audit_log.py storage/
+COPY storage/state_store.py storage/
+COPY storage/decision_audit.py storage/
+COPY storage/tool_killswitch.py storage/
+COPY storage/webhook_store.py storage/
+COPY guardrails/__init__.py guardrails/
+COPY guardrails/base.py guardrails/
+COPY guardrails/agentic/__init__.py guardrails/agentic/
+COPY guardrails/agentic/identity/ guardrails/agentic/identity/
+COPY guardrails/agentic/intent/ guardrails/agentic/intent/
+COPY guardrails/agentic/taint/ guardrails/agentic/taint/
 COPY static/ static/
 
 EXPOSE 8080

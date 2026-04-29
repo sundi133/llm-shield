@@ -41,6 +41,29 @@ from api.routes_data_policies import router as data_policies_router
 from core.auth import AuthMiddleware
 from core.middleware import ShieldMiddleware
 
+# Enterprise feature routers (graceful import — admin image may lack some deps)
+_killswitch_router = None
+_decisions_router = None
+_webhooks_router = None
+_agent_identity_router = None
+
+try:
+    from api.routes_killswitch import router as _killswitch_router
+except Exception:
+    pass
+try:
+    from api.routes_decisions import router as _decisions_router
+except Exception:
+    pass
+try:
+    from api.routes_webhooks import router as _webhooks_router
+except Exception:
+    pass
+try:
+    from api.routes_agent_identity import router as _agent_identity_router
+except Exception:
+    pass
+
 # Graceful imports for routers that may have heavier dependencies
 _audit_router = None
 _policy_router = None
@@ -785,6 +808,16 @@ def create_admin_app() -> FastAPI:
         app.include_router(_policy_router)      # /v1/shield/policies/*
     if _config_router:
         app.include_router(_config_router)      # /v1/shield/config, /v1/shield/guardrails
+
+    # Enterprise feature routers
+    if _killswitch_router:
+        app.include_router(_killswitch_router)      # /v1/shield/tools/*/disable|enable
+    if _decisions_router:
+        app.include_router(_decisions_router)        # /v1/shield/decisions/*
+    if _webhooks_router:
+        app.include_router(_webhooks_router)         # /v1/shield/webhooks/*
+    if _agent_identity_router:
+        app.include_router(_agent_identity_router)   # /v1/shield/agent/identity/*
 
     # Static files
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
