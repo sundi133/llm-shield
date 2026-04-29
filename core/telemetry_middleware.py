@@ -45,12 +45,31 @@ async def _record_request_async(
 async def _process_response_telemetry_async(
     trace_id: str, endpoint: str, status_code: int, latency_ms: float,
     response_dict: dict, agent_key: str, tenant_id: str, session_id: str,
-    role_name: str, source_ip: str, input_text: str
+    role_name: str, source_ip: str, input_text: str, body_dict: dict
 ):
     """Process response telemetry asynchronously."""
     try:
         rd = response_dict or {}
+        bd = body_dict or {}
         guardrail_results = rd.get("guardrail_results", [])
+
+        # Extract conversation history and prompt chain for SIEM
+        conversation_history = None
+        prompt_chain = None
+
+        # Get conversation history from request body
+        if "conversation_history" in bd:
+            conversation_history = bd["conversation_history"]
+        elif "messages" in bd and isinstance(bd["messages"], list):
+            # Build conversation history from messages (exclude system messages)
+            conversation_history = [
+                msg for msg in bd["messages"]
+                if isinstance(msg, dict) and msg.get("role") in ("user", "assistant")
+            ]
+
+        # Build prompt chain (full message sequence including system messages)
+        if "messages" in bd and isinstance(bd["messages"], list):
+            prompt_chain = bd["messages"]
 
         # Extract blocked guardrails and attack type
         blocked_guardrails = []
@@ -93,6 +112,8 @@ async def _process_response_telemetry_async(
             role_name=role_name,
             source_ip=source_ip,
             input_text=input_text,
+            conversation_history=conversation_history,
+            prompt_chain=prompt_chain,
             attack_type=attack_type,
             blocked_guardrails=blocked_guardrails,
             guardrail_results=guardrail_results,
@@ -185,7 +206,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
             _process_response_telemetry_async(
                 trace_id, request.url.path, response.status_code, latency_ms,
                 response_dict, agent_key, tenant_id, session_id, role_name,
-                source_ip, input_text
+                source_ip, input_text, body_dict
             )
         )
 

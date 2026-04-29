@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
 import time
 
+from enum import Enum
+
 from storage.policy_store import (
     create_policy,
     get_policy,
@@ -12,7 +14,14 @@ from storage.policy_store import (
     delete_policy,
     get_tenant_policies,
     test_policy_against_content,
-    clear_policy_cache
+    clear_policy_cache,
+    list_policy_versions,
+    get_policy_version,
+    rollback_policy,
+    get_agent_registry,
+    get_tool_policies,
+    register_agent,
+    set_tool_policies,
 )
 from storage.tenant_store import get_tenant
 from storage.admin_audit import log_admin_action
@@ -341,4 +350,234 @@ async def clear_tenant_policy_cache(tenant_id: str, request: Request):
         "status": "cleared",
         "tenant_id": tenant_id,
         "message": "Policy cache cleared for tenant"
+    }
+
+
+# ============================================================================
+# Policy Versioning Endpoints
+# ============================================================================
+
+
+@router.get("/{tenant_id}/{policy_id}/versions")
+async def list_versions(
+    tenant_id: str,
+    policy_id: str,
+    limit: int = Query(20, ge=1, le=50, description="Max versions to return"),
+):
+    """List version history for a policy (newest first)."""
+    policy = get_policy(tenant_id, policy_id)
+    if not policy:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Policy '{policy_id}' not found for tenant '{tenant_id}'"
+        )
+
+    versions = list_policy_versions(tenant_id, policy_id, limit=limit)
+    return {
+        "tenant_id": tenant_id,
+        "policy_id": policy_id,
+        "versions": versions,
+        "count": len(versions),
+    }
+
+
+@router.get("/{tenant_id}/{policy_id}/versions/{version}")
+async def get_version(tenant_id: str, policy_id: str, version: int):
+    """Get a specific version snapshot of a policy."""
+    version_entry = get_policy_version(tenant_id, policy_id, version)
+    if not version_entry:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Version {version} not found for policy '{policy_id}'"
+        )
+
+    return {
+        "tenant_id": tenant_id,
+        "policy_id": policy_id,
+        "version": version_entry,
+    }
+
+
+class RollbackRequest(BaseModel):
+    version: int = Field(..., description="Version number to rollback to")
+
+
+@router.post("/{tenant_id}/{policy_id}/rollback")
+async def rollback_policy_endpoint(
+    tenant_id: str, policy_id: str, body: RollbackRequest, request: Request
+):
+    """Rollback a policy to a previous version."""
+    # Check policy exists
+    existing = get_policy(tenant_id, policy_id)
+    if not existing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Policy '{policy_id}' not found for tenant '{tenant_id}'"
+        )
+
+    restored = rollback_policy(tenant_id, policy_id, body.version)
+    if not restored:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Version {body.version} not found for policy '{policy_id}'"
+        )
+
+    log_admin_action(
+        action="rollback_policy",
+        actor=_actor_from_request(request),
+        tenant_id=tenant_id,
+        source_ip=_source_ip(request),
+        before={"policy_id": policy_id, "version_before": "current"},
+        after={"policy_id": policy_id, "rolled_back_to_version": body.version},
+    )
+
+    clear_policy_cache(tenant_id, policy_id)
+
+    return {
+        "status": "rolled_back",
+        "tenant_id": tenant_id,
+        "policy_id": policy_id,
+        "rolled_back_to_version": body.version,
+        "policy": restored,
+    }
+
+
+# ============================================================================
+# Policy Export/Import Endpoints
+# ============================================================================
+
+
+class ImportConflictMode(str, Enum):
+    skip = "skip"
+    overwrite = "overwrite"
+    error = "error"
+
+
+class PolicyBundle(BaseModel):
+    version: str = Field("1.0", description="Bundle format version")
+    tenant_id: str = Field(..., description="Source tenant ID")
+    exported_at: Optional[str] = Field(None, description="ISO timestamp of export")
+    policies: List[Dict[str, Any]] = Field(default_factory=list)
+    agent_configs: Dict[str, Any] = Field(default_factory=dict)
+    tool_policies: Dict[str, Any] = Field(default_factory=dict)
+
+
+@router.get("/{tenant_id}/bundle/export")
+async def export_policies(tenant_id: str):
+    """Export all policies, agent configs, and tool policies as a single bundle.
+
+    Use this for policy-as-code workflows: export → commit to git → import via CI/CD.
+    """
+    from datetime import datetime, timezone
+
+    tenant = get_tenant(tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
+
+    policies = get_tenant_policies(tenant_id, include_deleted=False)
+    agents = get_agent_registry(tenant_id)
+    tool_pols = get_tool_policies(tenant_id)
+
+    bundle = {
+        "version": "1.0",
+        "tenant_id": tenant_id,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "policies": policies,
+        "agent_configs": agents,
+        "tool_policies": tool_pols,
+    }
+
+    return bundle
+
+
+@router.post("/{tenant_id}/bundle/import")
+async def import_policies(
+    tenant_id: str,
+    request: Request,
+    bundle: PolicyBundle,
+    conflict_mode: ImportConflictMode = Query("error", description="How to handle conflicts"),
+):
+    """Import a policy bundle into a tenant.
+
+    Conflict modes:
+    - skip: Skip policies that already exist
+    - overwrite: Overwrite existing policies
+    - error: Return error if any policy already exists
+    """
+    tenant = get_tenant(tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
+
+    imported = []
+    skipped = []
+    errors = []
+
+    # Import policies
+    for policy_data in bundle.policies:
+        pid = policy_data.get("policy_id")
+        if not pid:
+            errors.append("Policy missing policy_id field")
+            continue
+
+        existing = get_policy(tenant_id, pid)
+        if existing and not existing.get("deleted_at"):
+            if conflict_mode == ImportConflictMode.error:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Policy '{pid}' already exists. Use conflict_mode=skip or overwrite."
+                )
+            elif conflict_mode == ImportConflictMode.skip:
+                skipped.append(pid)
+                continue
+            elif conflict_mode == ImportConflictMode.overwrite:
+                # Update existing
+                policy_data.pop("created_at", None)
+                update_policy(tenant_id, pid, policy_data)
+                imported.append(pid)
+                continue
+
+        # Create new
+        policy_data["tenant_id"] = tenant_id
+        create_policy(tenant_id, pid, policy_data)
+        imported.append(pid)
+
+    # Import agent configs
+    agents_imported = 0
+    for agent_id, agent_config in bundle.agent_configs.items():
+        agent_config["agent_id"] = agent_id
+        register_agent(tenant_id, agent_config)
+        agents_imported += 1
+
+    # Import tool policies
+    tool_policies_imported = False
+    if bundle.tool_policies:
+        set_tool_policies(tenant_id, bundle.tool_policies)
+        tool_policies_imported = True
+
+    log_admin_action(
+        action="import_policies",
+        actor=_actor_from_request(request),
+        tenant_id=tenant_id,
+        source_ip=_source_ip(request),
+        after={
+            "policies_imported": len(imported),
+            "policies_skipped": len(skipped),
+            "agents_imported": agents_imported,
+            "tool_policies_imported": tool_policies_imported,
+            "conflict_mode": conflict_mode.value,
+        },
+    )
+
+    return {
+        "status": "completed",
+        "tenant_id": tenant_id,
+        "summary": {
+            "policies_imported": len(imported),
+            "policies_skipped": len(skipped),
+            "agents_imported": agents_imported,
+            "tool_policies_imported": tool_policies_imported,
+            "errors": errors,
+        },
+        "imported_policy_ids": imported,
+        "skipped_policy_ids": skipped,
     }

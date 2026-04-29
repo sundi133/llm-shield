@@ -89,6 +89,8 @@ def build_response_event(
     role_name: str = "",
     source_ip: str = "",
     input_text: str = "",
+    conversation_history: Optional[list] = None,
+    prompt_chain: Optional[list] = None,
     attack_type: str = "",
     blocked_guardrails: Optional[list[str]] = None,
     guardrail_results: Optional[list] = None,
@@ -104,6 +106,24 @@ def build_response_event(
         risk_score = 50
     elif action == "pending_confirmation":
         risk_score = 30
+
+    # Process conversation history for SIEM
+    conversation_context = {}
+    if conversation_history:
+        conversation_context = {
+            "votal.conversation.turn_count": len(conversation_history),
+            "votal.conversation.history": _truncate(conversation_history, 5000),
+            "votal.conversation.last_user_message": _get_last_user_message(conversation_history),
+            "votal.conversation.message_pattern": _analyze_conversation_pattern(conversation_history),
+        }
+
+    # Build full prompt chain if available
+    prompt_chain_context = {}
+    if prompt_chain:
+        prompt_chain_context = {
+            "votal.prompt_chain": _truncate(prompt_chain, 3000),
+            "votal.prompt_chain.length": len(prompt_chain) if isinstance(prompt_chain, list) else 1,
+        }
 
     return {
         "event.kind": "alert" if action == "block" else "event",
@@ -132,6 +152,8 @@ def build_response_event(
         "votal.guardrail_results": guardrail_results,
         "votal.latency_ms": round(latency_ms, 2),
         "response.body": _truncate(body),
+        **conversation_context,
+        **prompt_chain_context,
     }
 
 
@@ -561,3 +583,64 @@ def _safe_headers(headers: Optional[dict]) -> Optional[dict]:
         else:
             safe[k] = v
     return safe
+
+
+def _get_last_user_message(conversation: list) -> str:
+    """Extract the last user message from conversation history."""
+    if not conversation:
+        return ""
+
+    # Find most recent user message
+    for msg in reversed(conversation):
+        if isinstance(msg, dict) and msg.get("role") == "user":
+            content = msg.get("content", "")
+            return _truncate_str(content, 500)
+    return ""
+
+
+def _analyze_conversation_pattern(conversation: list) -> str:
+    """Analyze conversation for attack patterns."""
+    if not conversation or len(conversation) < 2:
+        return "single_turn"
+
+    user_messages = [msg for msg in conversation if isinstance(msg, dict) and msg.get("role") == "user"]
+    assistant_messages = [msg for msg in conversation if isinstance(msg, dict) and msg.get("role") == "assistant"]
+
+    patterns = []
+
+    # Multi-turn pattern detection
+    if len(user_messages) > 3:
+        patterns.append("multi_turn")
+
+    # Rapid succession (short time between messages could indicate automation)
+    if len(conversation) > 5:
+        patterns.append("rapid_succession")
+
+    # Escalation pattern (increasingly complex requests)
+    if len(user_messages) > 2:
+        msg_lengths = [len(msg.get("content", "")) for msg in user_messages]
+        if all(msg_lengths[i] <= msg_lengths[i+1] for i in range(len(msg_lengths)-1)):
+            patterns.append("escalating_complexity")
+
+    # Role confusion attempts
+    for msg in user_messages:
+        content = msg.get("content", "").lower()
+        if any(keyword in content for keyword in ["you are now", "forget previous", "ignore instructions", "new role"]):
+            patterns.append("role_confusion")
+            break
+
+    # Context switching attempts
+    for msg in user_messages:
+        content = msg.get("content", "").lower()
+        if any(keyword in content for keyword in ["let's start over", "new conversation", "different topic"]):
+            patterns.append("context_switching")
+            break
+
+    # Encoding/obfuscation patterns
+    for msg in user_messages:
+        content = msg.get("content", "")
+        if any(pattern in content for pattern in ["base64", "rot13", "caesar", "\\x", "%20"]):
+            patterns.append("encoding_obfuscation")
+            break
+
+    return ",".join(patterns) if patterns else "normal_conversation"
