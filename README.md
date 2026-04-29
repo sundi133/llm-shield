@@ -425,34 +425,60 @@ curl -X POST http://localhost:8080/v1/shield/agent/check \
 #    "passed": false, "message": "Goal drift detected: adversarial_redirect (confidence: 0.92)"}]}
 ```
 
-#### Certificate Identity — Strong Auth for High-Value Tools
+#### Framework Integration (LangChain / CrewAI / OpenAI)
+
+Shield integrates with any framework via HTTP callbacks — call `/tool/check` before and `/tool/output` after each tool execution:
+
+```python
+# LangChain — add ShieldCallbackHandler to your agent
+from langchain.callbacks.base import BaseCallbackHandler
+import httpx
+
+class ShieldCallbackHandler(BaseCallbackHandler):
+    def on_tool_start(self, serialized, input_str, **kwargs):
+        resp = httpx.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
+            "agent_key": "my-agent",
+            "tool_name": serialized["name"],
+            "tool_params": {"input": input_str},
+            "session_id": SESSION_ID,           # ties tool calls together
+            "input_sources": prior_tool_ids,    # enables taint tracking
+        }, headers={"X-API-Key": API_KEY, "X-Tenant-ID": TENANT_ID})
+        if not resp.json()["allowed"]:
+            raise Exception(f"Blocked: {resp.json()['action']}")
+
+    def on_tool_end(self, output, **kwargs):
+        resp = httpx.post(f"{SHIELD_URL}/v1/shield/tool/output", json={
+            "tool_name": kwargs.get("name"), "tool_output": str(output),
+            "session_id": SESSION_ID, "tool_call_id": current_tc_id,
+        }, headers={"X-API-Key": API_KEY, "X-Tenant-ID": TENANT_ID})
+        return resp.json().get("sanitized_output", output)  # PII redacted
+
+agent = initialize_agent(tools=[...], callbacks=[ShieldCallbackHandler()])
+```
+
+Full LangChain, CrewAI, and OpenAI SDK examples: [docs/enterprise-features.md](docs/enterprise-features.md#framework-integration-examples)
+
+#### Certificate Identity (Optional — Infrastructure Only)
+
+For Kubernetes/service mesh deployments with Nginx/Envoy/Istio doing mTLS termination. Not needed for Python framework integrations.
 
 ```bash
-# Register agent's certificate fingerprint
+# Register cert fingerprint → agent gets "high" trust
 curl -X POST http://localhost:8080/v1/shield/agent/identity/register \
   -H "X-Admin-Key: $ADMIN_KEY" \
-  -d '{"agent_key": "payment-bot", "fingerprint": "sha256:a1b2c3d4e5f6...", "tenant_id": "acme"}'
+  -d '{"agent_key": "payment-bot", "fingerprint": "sha256:a1b2c3...", "tenant_id": "acme"}'
 
-# Agent with cert → trust_level=high → can access payment tools
+# With cert header (set by proxy after mTLS) → high trust → payment tools allowed
 curl -X POST http://localhost:8080/v1/shield/tool/check \
-  -H "X-Client-Cert-Fingerprint: sha256:a1b2c3d4e5f6..." \
-  -H "X-Tenant-ID: acme" \
+  -H "X-Client-Cert-Fingerprint: sha256:a1b2c3..." \
   -d '{"agent_key": "payment-bot", "tool_name": "payment_execute"}'
-# → {"allowed": true} (trust_level=high meets requirement)
+# → allowed: true
 
-# Same agent without cert → trust_level=medium → blocked for payment tools
+# Without cert → medium trust → blocked for high-trust tools
 curl -X POST http://localhost:8080/v1/shield/tool/check \
   -H "X-Agent-Key: payment-bot" \
-  -H "X-Tenant-ID: acme" \
   -d '{"agent_key": "payment-bot", "tool_name": "payment_execute"}'
-# → {"allowed": false, "guardrail_results": [{"guardrail": "cert_identity",
-#    "message": "Agent 'payment-bot' trust level 'medium' (string_key) is insufficient
-#    for tool 'payment_execute' (requires 'high')"}]}
-
-# Revoke cert if compromised — agent drops to medium trust
-curl -X POST http://localhost:8080/v1/shield/agent/identity/revoke \
-  -H "X-Admin-Key: $ADMIN_KEY" \
-  -d '{"agent_key": "payment-bot", "tenant_id": "acme"}'
+# → allowed: false (requires high trust)
 ```
 
 ## Authentication

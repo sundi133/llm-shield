@@ -379,7 +379,250 @@ guardrails:
 
 ---
 
-## 9. Certificate-Based Agent Identity
+## Framework Integration Examples
+
+Shield integrates with any agentic framework via HTTP callbacks. The agent framework calls Shield before/after each tool execution.
+
+### LangChain
+
+```python
+import httpx
+from uuid import uuid4
+from langchain.callbacks.base import BaseCallbackHandler
+
+SHIELD_URL = "https://shield.yourcompany.com"
+SHIELD_API_KEY = "sk-your-tenant-key"
+TENANT_ID = "your-tenant"
+AGENT_KEY = "langchain-support-bot"
+SESSION_ID = f"session-{uuid4()}"
+
+class ShieldCallbackHandler(BaseCallbackHandler):
+    """Hooks into LangChain tool lifecycle for Shield guardrails."""
+    
+    def __init__(self):
+        self._tool_call_counter = 0
+        self._last_tool_call_ids = []  # for taint tracking input_sources
+
+    def on_tool_start(self, serialized, input_str, *, run_id, **kwargs):
+        """Pre-execution: check RBAC, kill switch, taint clearance."""
+        tool_name = serialized.get("name", "unknown")
+        self._tool_call_counter += 1
+        tool_call_id = f"tc-{self._tool_call_counter}"
+        
+        resp = httpx.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
+            "agent_key": AGENT_KEY,
+            "tool_name": tool_name,
+            "tool_params": {"input": input_str},
+            "session_id": SESSION_ID,
+            "tool_call_id": tool_call_id,
+            "input_sources": self._last_tool_call_ids,  # taint propagation
+        }, headers={
+            "X-API-Key": SHIELD_API_KEY,
+            "X-Tenant-ID": TENANT_ID,
+            "X-User-Role": "member",
+        })
+        result = resp.json()
+        if not result["allowed"]:
+            raise Exception(f"Shield blocked {tool_name}: {result['action']}")
+
+    def on_tool_end(self, output, *, run_id, **kwargs):
+        """Post-execution: sanitize output, record taint."""
+        tool_call_id = f"tc-{self._tool_call_counter}"
+        
+        resp = httpx.post(f"{SHIELD_URL}/v1/shield/tool/output", json={
+            "tool_name": kwargs.get("name", "unknown"),
+            "tool_output": str(output),
+            "session_id": SESSION_ID,
+            "tool_call_id": tool_call_id,
+            "agent_key": AGENT_KEY,
+        }, headers={
+            "X-API-Key": SHIELD_API_KEY,
+            "X-Tenant-ID": TENANT_ID,
+        })
+        result = resp.json()
+        self._last_tool_call_ids = [tool_call_id]
+        
+        # Use sanitized output (PII redacted)
+        if result.get("sanitized_output") and result["sanitized_output"] != str(output):
+            return result["sanitized_output"]
+
+# Usage
+from langchain.agents import initialize_agent
+agent = initialize_agent(
+    tools=[patient_lookup, send_email],
+    llm=ChatOpenAI(model="gpt-4o"),
+    callbacks=[ShieldCallbackHandler()],
+)
+agent.run("Look up patient John Doe and email the summary")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import BaseTool
+import httpx
+from uuid import uuid4
+
+SHIELD_URL = "https://shield.yourcompany.com"
+SHIELD_API_KEY = "sk-your-tenant-key"
+
+class ShieldProtectedTool(BaseTool):
+    """Wraps any CrewAI tool with Shield guardrails."""
+    
+    name: str
+    description: str
+    inner_tool: BaseTool
+    session_id: str
+    agent_key: str
+    tenant_id: str
+    _call_count: int = 0
+    
+    def _run(self, **kwargs) -> str:
+        self._call_count += 1
+        tool_call_id = f"tc-{self._call_count}"
+        headers = {
+            "X-API-Key": SHIELD_API_KEY,
+            "X-Tenant-ID": self.tenant_id,
+            "X-User-Role": "member",
+        }
+        
+        # Pre-check
+        resp = httpx.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
+            "agent_key": self.agent_key,
+            "tool_name": self.name,
+            "tool_params": kwargs,
+            "session_id": self.session_id,
+            "tool_call_id": tool_call_id,
+        }, headers=headers)
+        
+        if not resp.json()["allowed"]:
+            return f"Blocked by security policy: {resp.json()['action']}"
+        
+        # Execute real tool
+        result = self.inner_tool._run(**kwargs)
+        
+        # Post-check (sanitize output, record taint)
+        resp = httpx.post(f"{SHIELD_URL}/v1/shield/tool/output", json={
+            "tool_name": self.name,
+            "tool_output": str(result),
+            "session_id": self.session_id,
+            "tool_call_id": tool_call_id,
+            "agent_key": self.agent_key,
+        }, headers=headers)
+        
+        return resp.json().get("sanitized_output", str(result))
+
+
+# Usage
+session_id = f"crew-{uuid4()}"
+safe_lookup = ShieldProtectedTool(
+    name="patient_lookup",
+    description="Look up patient records",
+    inner_tool=raw_patient_lookup,
+    session_id=session_id,
+    agent_key="healthcare-agent",
+    tenant_id="Hospital",
+)
+
+agent = Agent(
+    role="Medical Assistant",
+    goal="Help nurses look up patient information",
+    tools=[safe_lookup],
+    llm=ChatOpenAI(model="gpt-4o"),
+)
+```
+
+### OpenAI Agents SDK / Function Calling
+
+```python
+from openai import OpenAI
+import httpx, json
+
+client = OpenAI()
+SHIELD_URL = "https://shield.yourcompany.com"
+HEADERS = {"X-API-Key": "sk-tenant-key", "X-Tenant-ID": "your-tenant"}
+
+def shield_check_tool(tool_name, args, session_id, tool_call_id, input_sources=None):
+    """Call Shield before executing a tool."""
+    resp = httpx.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
+        "agent_key": "openai-agent",
+        "tool_name": tool_name,
+        "tool_params": json.loads(args) if isinstance(args, str) else args,
+        "session_id": session_id,
+        "tool_call_id": tool_call_id,
+        "input_sources": input_sources or [],
+    }, headers={**HEADERS, "X-User-Role": "member"})
+    return resp.json()
+
+def shield_check_output(tool_name, output, session_id, tool_call_id):
+    """Call Shield after tool execution to sanitize output."""
+    resp = httpx.post(f"{SHIELD_URL}/v1/shield/tool/output", json={
+        "tool_name": tool_name,
+        "tool_output": output,
+        "session_id": session_id,
+        "tool_call_id": tool_call_id,
+        "agent_key": "openai-agent",
+    }, headers=HEADERS)
+    return resp.json().get("sanitized_output", output)
+
+# In your tool execution loop
+session_id = "openai-session-1"
+prior_tool_ids = []
+
+for tool_call in response.choices[0].message.tool_calls:
+    tc_id = tool_call.id
+    
+    # Pre-check
+    check = shield_check_tool(
+        tool_call.function.name,
+        tool_call.function.arguments,
+        session_id, tc_id,
+        input_sources=prior_tool_ids,
+    )
+    
+    if not check["allowed"]:
+        messages.append({"role": "tool", "tool_call_id": tc_id,
+                         "content": "Error: blocked by security policy"})
+        continue
+    
+    # Execute tool
+    raw_result = execute_tool(tool_call)
+    
+    # Post-check (sanitize)
+    safe_result = shield_check_output(
+        tool_call.function.name, raw_result, session_id, tc_id
+    )
+    prior_tool_ids.append(tc_id)
+    
+    messages.append({"role": "tool", "tool_call_id": tc_id, "content": safe_result})
+```
+
+### What Each Shield Call Does
+
+```
+Agent decides to call a tool
+    │
+    ▼
+POST /v1/shield/tool/check          ← Kill switch, RBAC, taint clearance,
+    │                                   rate limiting, input validation
+    │ allowed=true
+    ▼
+Execute the actual tool
+    │
+    ▼
+POST /v1/shield/tool/output         ← PII detection, sanitization,
+    │                                   taint label recording
+    │ sanitized_output
+    ▼
+Return sanitized output to LLM      ← LLM never sees raw PII
+```
+
+---
+
+## 9. Certificate-Based Agent Identity (Optional — Infrastructure Only)
+
+> **Note**: This feature is for infrastructure teams deploying agents in Kubernetes/service mesh with Istio, Envoy, or Nginx doing real mTLS termination. For most customers integrating via Python (LangChain, CrewAI, OpenAI SDK), the API key + RBAC + taint tracking described above is the right security model.
 
 **Problem**: Agent identity is a plain string (`X-Agent-Key: my-bot`). Anyone can impersonate any agent. High-value operations (payments, data deletion) need stronger identity.
 
