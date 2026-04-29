@@ -907,14 +907,6 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
         Kill Switch
       </div>
-      <div class="nav-item" data-tab="decisions">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
-        Decision Audit
-      </div>
-      <div class="nav-item" data-tab="webhooks">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        Webhooks
-      </div>
       <div class="nav-item" data-tab="taint-tracking">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
         Taint Tracking
@@ -2679,32 +2671,29 @@ if __name__ == "__main__":
     <!-- ── Enterprise: Kill Switch ──────────────────── -->
     <div id="tab-kill-switch" class="tab-pane hidden">
       <div class="page-header">
-        <div class="page-title">Tool Kill Switch</div>
-        <div class="page-desc">Instantly disable tools across all agents. One click, immediate effect, zero latency.</div>
-      </div>
-      <div class="card">
-        <div class="card-header">
-          <div><div class="card-title">Disable a Tool</div><div class="card-subtitle">Blocked tools return immediately without running any guardrails</div></div>
-        </div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
-          <input id="ks-tool-name" type="text" placeholder="Tool name (e.g. patient_lookup)" style="flex:1;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-          <input id="ks-reason" type="text" placeholder="Reason" style="flex:1;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-          <button class="primary" onclick="disableTool()">Disable</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div class="page-title">Tool Kill Switch</div>
+            <div class="page-desc">All registered tools in one view. Disable instantly, re-enable when safe.</div>
+          </div>
+          <button class="primary" onclick="loadKillSwitchTools()">Refresh</button>
         </div>
       </div>
-      <div class="card">
-        <div class="card-header">
-          <div><div class="card-title">All Registered Tools</div><div class="card-subtitle">Click a tool to disable it instantly</div></div>
-          <button class="small" onclick="loadKillSwitchTools()">Refresh</button>
-        </div>
-        <div id="ks-all-tools">Loading tools...</div>
-      </div>
-      <div class="card">
-        <div class="card-header">
-          <div><div class="card-title">Currently Disabled Tools</div></div>
-          <button class="small" onclick="loadDisabledTools()">Refresh</button>
-        </div>
-        <div id="ks-disabled-list">Loading...</div>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:var(--bg-3);text-align:left;">
+              <th style="padding:0.65rem 1rem;font-weight:600;color:var(--text-dim);font-size:11.5px;text-transform:uppercase;letter-spacing:0.4px;">Tool</th>
+              <th style="padding:0.65rem 1rem;font-weight:600;color:var(--text-dim);font-size:11.5px;text-transform:uppercase;letter-spacing:0.4px;">Agents</th>
+              <th style="padding:0.65rem 1rem;font-weight:600;color:var(--text-dim);font-size:11.5px;text-transform:uppercase;letter-spacing:0.4px;">Status</th>
+              <th style="padding:0.65rem 1rem;font-weight:600;color:var(--text-dim);font-size:11.5px;text-transform:uppercase;letter-spacing:0.4px;">Reason</th>
+              <th style="padding:0.65rem 1rem;font-weight:600;color:var(--text-dim);font-size:11.5px;text-transform:uppercase;letter-spacing:0.4px;text-align:right;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="ks-table-body">
+            <tr><td colspan="5" style="padding:1.5rem;text-align:center;color:var(--text-muted);">Loading tools...</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -8090,9 +8079,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'policies') loadPolicies();
     if (tab === 'apis') renderAllApiTabs();
     if (tab === 'playground') initPlayground();
-    if (tab === 'kill-switch') { loadKillSwitchTools(); loadDisabledTools(); }
-    if (tab === 'decisions') {} // manual search
-    if (tab === 'webhooks') loadWebhooks();
+    if (tab === 'kill-switch') loadKillSwitchTools();
     if (tab === 'taint-tracking') {} // manual search
     if (tab === 'goal-drift') {} // manual actions
     if (tab === 'agent-identity') {} // manual actions
@@ -8843,16 +8830,15 @@ async function runQuickRbacTests() {
 async function loadKillSwitchTools() {
   try {
     const tid = (TENANT_INFO && TENANT_INFO.tenant_id) || 'default';
-    // Load agent registry to get all tool names
     const regData = await apiCall('/v1/agents/registry');
     const agents = (regData.success && regData.agents) ? regData.agents : {};
-
-    // Load disabled tools
     const disData = await apiCall(`/v1/shield/tools/disabled?tenant_id=${tid}`);
-    const disabledSet = new Set((disData.disabled_tools || []).map(t => t.tool_name));
+    const disabledMap = {};
+    for (const t of (disData.disabled_tools || [])) {
+      disabledMap[t.tool_name] = t;
+    }
 
-    // Collect all unique tool names across all agents
-    const toolAgentMap = {};  // tool_name -> [agent_ids]
+    const toolAgentMap = {};
     for (const [agentId, agentData] of Object.entries(agents)) {
       for (const tool of (agentData.tools || [])) {
         if (tool === '*') continue;
@@ -8863,32 +8849,40 @@ async function loadKillSwitchTools() {
 
     const toolNames = Object.keys(toolAgentMap).sort();
     if (!toolNames.length) {
-      document.getElementById('ks-all-tools').innerHTML = '<div class="muted">No tools registered in agent registry. Register agents with tools first.</div>';
+      document.getElementById('ks-table-body').innerHTML = '<tr><td colspan="5" style="padding:1.5rem;text-align:center;color:var(--text-muted);">No tools registered. Register agents with tools first.</td></tr>';
       return;
     }
 
-    document.getElementById('ks-all-tools').innerHTML = `
-      <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
-        ${toolNames.map(name => {
-          const isDisabled = disabledSet.has(name);
-          const agents = toolAgentMap[name];
-          return `
-            <div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid ${isDisabled ? 'var(--danger)' : 'var(--border)'};border-radius:var(--radius-sm);min-width:200px;flex:0 0 auto;">
-              <div style="flex:1;">
-                <div class="mono" style="font-size:13px;font-weight:600;color:${isDisabled ? 'var(--danger)' : 'var(--text)'};">${name}</div>
-                <div style="font-size:11px;color:var(--text-muted);">${agents.length} agent${agents.length > 1 ? 's' : ''}: ${agents.slice(0, 3).join(', ')}${agents.length > 3 ? '...' : ''}</div>
-              </div>
-              ${isDisabled
-                ? `<button class="small" style="border-color:var(--success);color:var(--success);white-space:nowrap;" onclick="enableTool('${name}')">Enable</button>`
-                : `<button class="small" style="border-color:var(--danger);color:var(--danger);white-space:nowrap;" onclick="quickDisableTool('${name}')">Disable</button>`
-              }
-            </div>
-          `;
-        }).join('')}
-      </div>
-    `;
+    document.getElementById('ks-table-body').innerHTML = toolNames.map(name => {
+      const isDisabled = name in disabledMap;
+      const meta = disabledMap[name] || {};
+      const agentList = toolAgentMap[name];
+      return `
+        <tr style="border-top:1px solid var(--border);${isDisabled ? 'background:rgba(239,68,68,0.05);' : ''}">
+          <td style="padding:0.6rem 1rem;">
+            <span class="mono" style="font-weight:600;color:${isDisabled ? 'var(--danger)' : 'var(--text)'};">${name}</span>
+          </td>
+          <td style="padding:0.6rem 1rem;color:var(--text-dim);font-size:12px;">
+            ${agentList.slice(0, 3).join(', ')}${agentList.length > 3 ? ` +${agentList.length - 3}` : ''}
+          </td>
+          <td style="padding:0.6rem 1rem;">
+            ${isDisabled
+              ? '<span class="badge badge-danger">disabled</span>'
+              : '<span class="badge badge-success">active</span>'}
+          </td>
+          <td style="padding:0.6rem 1rem;color:var(--text-muted);font-size:12px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            ${isDisabled ? (meta.reason || '-') : '-'}
+          </td>
+          <td style="padding:0.6rem 1rem;text-align:right;">
+            ${isDisabled
+              ? `<button class="small" style="border-color:var(--success);color:var(--success);" onclick="enableTool('${name}')">Re-enable</button>`
+              : `<button class="small" style="border-color:var(--danger);color:var(--danger);" onclick="quickDisableTool('${name}')">Disable</button>`}
+          </td>
+        </tr>
+      `;
+    }).join('');
   } catch (e) {
-    document.getElementById('ks-all-tools').innerHTML = `<div class="toast error">${e.message}</div>`;
+    document.getElementById('ks-table-body').innerHTML = `<tr><td colspan="5" style="padding:1rem;color:var(--danger);">${e.message}</td></tr>`;
   }
 }
 
