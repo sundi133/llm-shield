@@ -1025,6 +1025,7 @@
       <!-- Sub-tab: Tools & Role Access (existing) -->
       <div id="tp-sub-tools" class="tp-subtab-pane">
         <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
+          <input id="tools-search" type="text" placeholder="Search tools by name..." oninput="filterTools()" style="flex:1;padding:0.45rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
           <button class="small" onclick="loadToolPolicyData()">Refresh</button>
           <button class="primary" onclick="showAddToolPolicyModal()">+ Add Tool Policy</button>
         </div>
@@ -1057,7 +1058,7 @@
 
     <!-- Agents -->
     <div id="tab-agents" class="tab-pane hidden">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
         <div>
           <div style="font-size:22px;font-weight:700;letter-spacing:-0.3px;color:var(--text);">Agent Registry</div>
           <div style="color:var(--text-dim);font-size:13px;margin-top:0.2rem;">Register AI agents and configure role-based tool permissions</div>
@@ -1066,6 +1067,9 @@
           <button class="small" onclick="loadAgentData()" style="font-size:12px;">Refresh</button>
           <button class="primary" onclick="showAddAgentModal()" style="font-size:12px;">+ Add Agent</button>
         </div>
+      </div>
+      <div style="margin-bottom:1rem;">
+        <input id="agents-search" type="text" placeholder="Search agents by name, key, or tool..." oninput="filterAgents()" style="width:100%;padding:0.55rem 0.85rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
       </div>
       <div id="agents-shadow-agents"></div>
       <div id="agents-content">Loading agents...</div>
@@ -1161,6 +1165,9 @@
       <div class="page-header">
         <div class="page-title">Activity</div>
         <div class="page-desc">Recent changes to your tenant configuration</div>
+      </div>
+      <div style="margin-bottom:0.75rem;">
+        <input id="activity-search" type="text" placeholder="Filter activity by action, actor..." oninput="filterActivity()" style="width:100%;padding:0.55rem 0.85rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
       </div>
       <div class="card">
         <pre id="activity-log" class="mono">Loading…</pre>
@@ -2679,6 +2686,9 @@ if __name__ == "__main__":
           <button class="primary" onclick="loadKillSwitchTools()">Refresh</button>
         </div>
       </div>
+      <div style="margin-bottom:0.75rem;">
+        <input id="ks-search" type="text" placeholder="Filter tools by name..." oninput="filterKillSwitchTable()" style="width:100%;padding:0.55rem 0.85rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
+      </div>
       <div class="card" style="padding:0;overflow:hidden;">
         <table style="width:100%;border-collapse:collapse;font-size:13px;">
           <thead>
@@ -3879,15 +3889,52 @@ async function loadActivity() {
       document.getElementById('activity-log').textContent = 'No recent activity';
       return;
     }
-    document.getElementById('activity-log').textContent = entries.map(e =>
+    const text = entries.map(e =>
       `${(e.timestamp || '').slice(0,19)}  ${(e.action || '').padEnd(30)}  ${e.actor || ''}`
     ).join('\n');
+    const pre = document.getElementById('activity-log');
+    pre.textContent = text;
+    pre._allLines = text;
+    document.getElementById('activity-search').value = '';
   } catch (e) {
     document.getElementById('activity-log').textContent = 'Error: ' + e.message;
   }
 }
 
 // ── Agents ────────────────────────────────
+function filterAgents() {
+  const q = (document.getElementById('agents-search').value || '').toLowerCase();
+  document.querySelectorAll('#agents-content .card').forEach(card => {
+    const text = card.textContent.toLowerCase();
+    card.style.display = text.includes(q) ? '' : 'none';
+  });
+}
+
+function filterTools() {
+  const q = (document.getElementById('tools-search').value || '').toLowerCase();
+  document.querySelectorAll('#tp-sub-tools .card').forEach(card => {
+    const text = card.textContent.toLowerCase();
+    card.style.display = text.includes(q) ? '' : 'none';
+  });
+}
+
+function filterKillSwitchTable() {
+  const q = (document.getElementById('ks-search').value || '').toLowerCase();
+  document.querySelectorAll('#ks-table-body tr').forEach(row => {
+    const text = row.textContent.toLowerCase();
+    row.style.display = text.includes(q) ? '' : 'none';
+  });
+}
+
+function filterActivity() {
+  const q = (document.getElementById('activity-search').value || '').toLowerCase();
+  const pre = document.getElementById('activity-log');
+  if (!pre._allLines) pre._allLines = pre.textContent;
+  if (!q) { pre.textContent = pre._allLines; return; }
+  const lines = pre._allLines.split('\n');
+  pre.textContent = lines.filter(l => l.toLowerCase().includes(q)).join('\n') || 'No matching entries';
+}
+
 async function loadAgentData() {
   try {
     const [regResponse, unregResponse] = await Promise.all([
