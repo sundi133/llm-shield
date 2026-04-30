@@ -11,10 +11,11 @@ from guardrails.agentic.scope.budget_controls import BudgetControlsGuardrail
 from guardrails.agentic.scope.delegation_control import DelegationControlGuardrail
 from guardrails.agentic.monitoring.chain_of_thought_monitoring import ChainOfThoughtMonitoringGuardrail
 from guardrails.agentic.monitoring.context_window_guardrails import ContextWindowGuardrailsGuardrail
-from guardrails.agentic.intent.goal_drift_detection import GoalDriftDetectionGuardrail
 from guardrails.agentic.intent.intent_store import register_goal as _register_goal, get_goal as _get_goal
+from guardrails.base import _request_configs
 from storage.decision_audit import log_decision
-from core.feature_flags import GOAL_DRIFT_ENABLED, DECISION_AUDIT_ENABLED
+from core.feature_flags import DECISION_AUDIT_ENABLED
+from storage.agentic_control_plane import get_control_plane_config
 
 router = APIRouter(prefix="/v1/shield/agent", tags=["agent"])
 
@@ -27,8 +28,6 @@ _GUARDS = [
     ("chain_of_thought_monitoring", ChainOfThoughtMonitoringGuardrail),
     ("context_window_guardrails", ContextWindowGuardrailsGuardrail),
 ]
-if GOAL_DRIFT_ENABLED:
-    _GUARDS.append(("goal_drift_detection", GoalDriftDetectionGuardrail))
 
 
 class AgentCheckRequest(BaseModel):
@@ -83,33 +82,61 @@ def _should_run(name: str, body: AgentCheckRequest) -> bool:
         return bool(body.chain_of_thought)
     if name == "context_window_guardrails":
         return bool(body.messages or body.total_tokens)
-    if name == "goal_drift_detection":
-        return bool(body.session_id)
     return True
 
 
 @router.post("/check")
 async def check_agent(body: AgentCheckRequest, request: Request):
     context = body.model_dump(exclude_none=True)
-    tenant_id = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
+    tenant_id = (
+        getattr(request.state, "tenant_id", None)
+        if hasattr(request, "state")
+        else None
+    ) or request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
     context["tenant_id"] = tenant_id
     if hasattr(request, "state"):
         context.setdefault("trust_level", getattr(request.state, "trust_level", None))
         context.setdefault("identity_method", getattr(request.state, "identity_method", None))
 
+    cp_config = get_control_plane_config(tenant_id) if tenant_id else None
+    request_configs = {}
+    if cp_config:
+        request_configs["delegation_control"] = {
+            "enabled": True,
+            "action": "block",
+            "settings": cp_config.get("delegation_controls", {}),
+        }
+        workflow_budget_settings = {}
+        workflow_default = (cp_config.get("workflow_policies", {}) or {}).get("default") or {}
+        if workflow_default.get("max_estimated_tokens") is not None:
+            workflow_budget_settings.setdefault("per_session", {})["max_tokens"] = workflow_default.get("max_estimated_tokens")
+        if workflow_default.get("max_tool_calls") is not None:
+            workflow_budget_settings.setdefault("per_session", {})["max_api_calls"] = workflow_default.get("max_tool_calls")
+        if workflow_budget_settings:
+            request_configs["budget_controls"] = {
+                "enabled": True,
+                "action": "block",
+                "settings": workflow_budget_settings,
+            }
+
+    token = _request_configs.set(request_configs) if request_configs else None
     results = []
-    for name, cls in _GUARDS:
-        if body.guardrails and name not in body.guardrails:
-            continue
-        if not _should_run(name, body):
-            continue
-        guard = cls()
-        if not guard.enabled:
-            continue
-        r = await guard.check("", context)
-        results.append(_format(r))
-        if not r.passed and r.action == "block":
-            break
+    try:
+        for name, cls in _GUARDS:
+            if body.guardrails and name not in body.guardrails:
+                continue
+            if not _should_run(name, body):
+                continue
+            guard = cls()
+            if not guard.enabled:
+                continue
+            r = await guard.check("", context)
+            results.append(_format(r))
+            if not r.passed and r.action == "block":
+                break
+    finally:
+        if token is not None:
+            _request_configs.reset(token)
 
     allowed = all(r["passed"] or r["action"] not in ("block",) for r in results)
     action = "pass"
