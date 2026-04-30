@@ -13,6 +13,7 @@ from core.telemetry import (
     build_request_event,
     build_response_event,
     build_guardrail_event,
+    build_tool_execution_event,
 )
 
 
