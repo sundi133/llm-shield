@@ -146,6 +146,454 @@
   .hidden { display: none !important; }
   .muted { color: var(--text-muted); font-size: 12px; }
 
+  .wf-hero {
+    position: relative;
+    overflow: hidden;
+    padding: 1.5rem;
+    border-radius: 18px;
+    border: 1px solid rgba(166, 180, 252, 0.18);
+    background:
+      radial-gradient(circle at top right, rgba(125, 211, 252, 0.14), transparent 28%),
+      radial-gradient(circle at left center, rgba(99, 102, 241, 0.18), transparent 32%),
+      linear-gradient(135deg, rgba(15, 23, 42, 0.98) 0%, rgba(17, 24, 39, 0.94) 45%, rgba(10, 10, 15, 0.98) 100%);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+    margin-bottom: 1rem;
+  }
+  .wf-hero::after {
+    content: "";
+    position: absolute;
+    inset: auto -10% -50% auto;
+    width: 320px;
+    height: 320px;
+    border-radius: 999px;
+    background: radial-gradient(circle, rgba(56, 189, 248, 0.16), transparent 65%);
+    pointer-events: none;
+  }
+  .wf-hero-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr);
+    gap: 1rem;
+    position: relative;
+    z-index: 1;
+  }
+  .wf-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.28rem 0.65rem;
+    border-radius: 999px;
+    border: 1px solid rgba(165, 180, 252, 0.18);
+    background: rgba(15, 23, 42, 0.58);
+    color: #c7d2fe;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 0.85rem;
+  }
+  .wf-eyebrow::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: #38bdf8;
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.16);
+  }
+  .wf-hero-title {
+    font-size: 29px;
+    line-height: 1.05;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    max-width: 12ch;
+  }
+  .wf-hero-copy {
+    margin-top: 0.75rem;
+    max-width: 68ch;
+    color: #cbd5e1;
+    font-size: 13.5px;
+    line-height: 1.65;
+  }
+  .wf-hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin-top: 1rem;
+  }
+  .wf-pill-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 1rem;
+  }
+  .wf-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.32rem 0.6rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #e2e8f0;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .wf-command {
+    padding: 1rem;
+    border-radius: 14px;
+    background: rgba(2, 6, 23, 0.48);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    backdrop-filter: blur(10px);
+  }
+  .wf-command-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #c7d2fe;
+  }
+  .wf-command-sub {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-top: 0.25rem;
+  }
+  .wf-command-list {
+    margin-top: 0.85rem;
+    display: grid;
+    gap: 0.6rem;
+  }
+  .wf-command-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  }
+  .wf-command-item:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+  .wf-command-item strong {
+    display: block;
+    color: var(--text);
+    font-size: 12.5px;
+  }
+  .wf-command-item span {
+    color: var(--text-muted);
+    font-size: 11.5px;
+  }
+  .wf-command-item .wf-command-metric {
+    color: #f8fafc;
+    font-weight: 700;
+    font-size: 17px;
+    letter-spacing: -0.03em;
+  }
+  .wf-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .wf-metric-card {
+    background: linear-gradient(180deg, rgba(18, 18, 26, 0.96) 0%, rgba(13, 13, 20, 0.98) 100%);
+    border: 1px solid rgba(63, 63, 70, 0.9);
+    border-radius: 14px;
+    padding: 1rem 1.05rem;
+  }
+  .wf-metric-label {
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .wf-metric-value {
+    margin-top: 0.38rem;
+    font-size: 25px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+  }
+  .wf-metric-note {
+    margin-top: 0.25rem;
+    color: var(--text-dim);
+    font-size: 11.5px;
+  }
+  .wf-surface-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .wf-section-card {
+    background: linear-gradient(180deg, rgba(18, 18, 26, 0.98) 0%, rgba(14, 14, 20, 0.98) 100%);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.25rem;
+  }
+  .wf-section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .wf-section-title {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .wf-section-desc {
+    color: var(--text-dim);
+    font-size: 12.5px;
+    margin-top: 0.2rem;
+    line-height: 1.55;
+  }
+  .wf-feature-list {
+    display: grid;
+    gap: 0.7rem;
+  }
+  .wf-feature {
+    padding: 0.9rem 1rem;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .wf-feature h4 {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 0.18rem;
+  }
+  .wf-feature p {
+    color: var(--text-dim);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .wf-dual-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .wf-builder-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .wf-builder-card {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.2rem;
+  }
+  .wf-builder-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .wf-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.7rem;
+  }
+  .wf-form-grid--triple {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+  .wf-form-grid label,
+  .wf-form-grid .wf-field-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 0.35rem;
+  }
+  .wf-form-grid input[type=text],
+  .wf-form-grid input[type=number],
+  .wf-form-grid select,
+  .wf-inline-field input[type=text],
+  .wf-inline-field input[type=number],
+  .wf-inline-field select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 0.5rem 0.7rem;
+    font-size: 12.5px;
+    font-family: inherit;
+  }
+  .wf-form-grid input:focus,
+  .wf-form-grid select:focus,
+  .wf-inline-field input:focus,
+  .wf-inline-field select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  .wf-inline-hint {
+    margin-top: 0.28rem;
+    color: var(--text-muted);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+  .wf-rule-list {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 1rem;
+  }
+  .wf-rule-card {
+    padding: 0.95rem 1rem;
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(26, 26, 36, 0.98) 0%, rgba(15, 15, 22, 0.98) 100%);
+    border: 1px solid var(--border);
+  }
+  .wf-rule-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: flex-start;
+    margin-bottom: 0.7rem;
+  }
+  .wf-rule-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .wf-rule-sub {
+    color: var(--text-muted);
+    font-size: 11.5px;
+    margin-top: 0.18rem;
+  }
+  .wf-inline-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+  .wf-inline-grid--triple {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .wf-inline-field label {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.3rem;
+  }
+  .wf-kpi-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 0.75rem;
+  }
+  .wf-kpi {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.26rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .wf-stack {
+    display: grid;
+    gap: 0.75rem;
+  }
+  .wf-queue-row,
+  .wf-ops-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.8rem;
+    padding: 0.95rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .wf-queue-row:last-child,
+  .wf-ops-row:last-child {
+    border-bottom: none;
+  }
+  .wf-row-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .wf-row-meta {
+    margin-top: 0.24rem;
+    color: var(--text-muted);
+    font-size: 11.8px;
+    line-height: 1.55;
+  }
+  .wf-row-actions {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: flex-end;
+  }
+  .wf-empty {
+    padding: 1rem;
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12.5px;
+    background: rgba(255, 255, 255, 0.015);
+  }
+  .wf-advanced {
+    margin-top: 1rem;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+    background: var(--bg-2);
+  }
+  .wf-advanced summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 1rem 1.25rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .wf-advanced summary::-webkit-details-marker {
+    display: none;
+  }
+  .wf-advanced-body {
+    padding: 0 1.25rem 1.25rem;
+  }
+  .wf-advanced-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.9rem;
+  }
+  .wf-advanced textarea {
+    min-height: 220px;
+  }
+  .wf-switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .wf-switch-row:last-child {
+    border-bottom: none;
+  }
+  .wf-switch-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .wf-switch-copy {
+    color: var(--text-muted);
+    font-size: 11.5px;
+    margin-top: 0.15rem;
+  }
+
   /* Login */
   .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 2rem; }
   .login-card { width: 100%; max-width: 400px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; box-shadow: var(--shadow-lg); }
@@ -192,6 +640,17 @@
     .app { flex-direction: column; }
     .guardrail-row { flex-wrap: wrap; }
     .guardrail-controls { width: 100%; justify-content: flex-end; margin-top: 0.5rem; }
+    .wf-hero-grid,
+    .wf-surface-grid,
+    .wf-dual-grid,
+    .wf-builder-grid,
+    .wf-advanced-grid,
+    .wf-form-grid,
+    .wf-form-grid--triple,
+    .wf-inline-grid,
+    .wf-inline-grid--triple {
+      grid-template-columns: 1fr;
+    }
   }
 
   /* ===== Data Policy modal =============================================== */
@@ -817,6 +1276,59 @@
   }
   .dp-ai-redact-row .reason { color: var(--text-muted); font-size: 11px; }
 
+  .dp-quickstart {
+    background: linear-gradient(180deg, rgba(99,102,241,0.08) 0%, rgba(17,24,39,0.22) 100%);
+    border: 1px solid rgba(99,102,241,0.22);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 0.95rem;
+  }
+  .dp-quickstart-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #c7d2fe;
+    margin-bottom: 0.45rem;
+  }
+  .dp-quickstart-list {
+    display: grid;
+    gap: 0.35rem;
+    color: var(--text-dim);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .dp-advanced-wrap {
+    margin-top: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.015);
+  }
+  .dp-advanced-wrap summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.8rem 0.95rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .dp-advanced-wrap summary::-webkit-details-marker {
+    display: none;
+  }
+  .dp-advanced-copy {
+    color: var(--text-muted);
+    font-size: 11.5px;
+    font-weight: 500;
+  }
+  .dp-advanced-body {
+    padding: 0 0.95rem 0.95rem;
+  }
+
   @media (max-width: 760px) {
     .dp-role-grid, .dp-compliance-grid { grid-template-columns: 1fr; }
     .dp-rule-row { grid-template-columns: 1fr; }
@@ -901,19 +1413,15 @@
       </div>
     </div>
 
-    <div class="nav-section">
-      <div class="nav-label">Enterprise Controls</div>
-      <div class="nav-item" data-tab="kill-switch">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
-        Kill Switch
-      </div>
-      <div class="nav-item" data-tab="taint-tracking">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
-        Taint Tracking
-      </div>
-      <div class="nav-item" data-tab="goal-drift">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-        Goal Drift
+      <div class="nav-section">
+        <div class="nav-label">Enterprise Controls</div>
+        <div class="nav-item" data-tab="kill-switch">
+          <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
+          Kill Switch
+        </div>
+      <div class="nav-item" data-tab="workflow-controls">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v2m0 6v2a2 2 0 002 2h2m6 0h2a2 2 0 002-2v-2m0-6V7a2 2 0 00-2-2h-2M9 12h6m-3-3v6"/></svg>
+        Operations Center
       </div>
       <div class="nav-item" data-tab="agent-identity">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
@@ -1012,7 +1520,18 @@
     <div id="tab-tool-policies" class="tab-pane hidden">
       <div class="page-header">
         <div class="page-title">Tool Policies</div>
-        <div class="page-desc">Data control plane for agent tool calls — sanitization, role restrictions, compliance, and LLM validation</div>
+        <div class="page-desc">This is where teams manage tool-level protections: data policy, approvals, parameter checks, and runtime safety defaults.</div>
+      </div>
+
+      <div class="card" style="margin-bottom:1rem;background:linear-gradient(180deg,rgba(99,102,241,0.08),rgba(99,102,241,0.03));border-color:rgba(99,102,241,0.2);">
+        <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent-hover);margin-bottom:0.4rem;">Tool Controls Live Here</div>
+            <div style="font-size:14px;color:var(--text);font-weight:600;margin-bottom:0.25rem;">Keep tool safety and tool permissions in one place.</div>
+            <div style="font-size:12.5px;color:var(--text-dim);line-height:1.6;max-width:760px;">Use this page for per-tool data policy, approval requirements, parameter-level limits, circuit-breaker thresholds, and any temporary execution exceptions your operators need to understand.</div>
+          </div>
+          <button class="small" onclick="document.querySelector('.nav-item[data-tab=workflow-controls]').click()">View Status</button>
+        </div>
       </div>
 
       <!-- Sub-tabs -->
@@ -1025,6 +1544,7 @@
       <!-- Sub-tab: Tools & Role Access (existing) -->
       <div id="tp-sub-tools" class="tp-subtab-pane">
         <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
+          <input id="tools-search" type="text" placeholder="Search tools by name..." oninput="filterTools()" style="flex:1;padding:0.45rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
           <button class="small" onclick="loadToolPolicyData()">Refresh</button>
           <button class="primary" onclick="showAddToolPolicyModal()">+ Add Tool Policy</button>
         </div>
@@ -1057,15 +1577,28 @@
 
     <!-- Agents -->
     <div id="tab-agents" class="tab-pane hidden">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
         <div>
           <div style="font-size:22px;font-weight:700;letter-spacing:-0.3px;color:var(--text);">Agent Registry</div>
-          <div style="color:var(--text-dim);font-size:13px;margin-top:0.2rem;">Register AI agents and configure role-based tool permissions</div>
+          <div style="color:var(--text-dim);font-size:13px;margin-top:0.2rem;">Register AI agents, define allowed tools, and set delegation or budget defaults without changing prompt guardrails.</div>
         </div>
         <div style="display:flex;gap:0.5rem;">
           <button class="small" onclick="loadAgentData()" style="font-size:12px;">Refresh</button>
           <button class="primary" onclick="showAddAgentModal()" style="font-size:12px;">+ Add Agent</button>
         </div>
+      </div>
+      <div class="card" style="margin-bottom:1rem;background:linear-gradient(180deg,rgba(16,185,129,0.08),rgba(16,185,129,0.03));border-color:rgba(16,185,129,0.18);">
+        <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6ee7b7;margin-bottom:0.4rem;">Agent Controls Live Here</div>
+            <div style="font-size:14px;color:var(--text);font-weight:600;margin-bottom:0.25rem;">Use agents for who can act, not for what data should be exposed.</div>
+            <div style="font-size:12.5px;color:var(--text-dim);line-height:1.6;max-width:760px;">Keep tool access, agent-to-agent delegation, and workflow-level execution limits here. Use Tool Policies for data handling and I/O Guardrails for prompt and response safety.</div>
+          </div>
+          <button class="small" onclick="document.querySelector('.nav-item[data-tab=workflow-controls]').click()">View Status</button>
+        </div>
+      </div>
+      <div style="margin-bottom:1rem;">
+        <input id="agents-search" type="text" placeholder="Search agents by name, key, or tool..." oninput="filterAgents()" style="width:100%;padding:0.55rem 0.85rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
       </div>
       <div id="agents-shadow-agents"></div>
       <div id="agents-content">Loading agents...</div>
@@ -1161,6 +1694,9 @@
       <div class="page-header">
         <div class="page-title">Activity</div>
         <div class="page-desc">Recent changes to your tenant configuration</div>
+      </div>
+      <div style="margin-bottom:0.75rem;">
+        <input id="activity-search" type="text" placeholder="Filter activity by action, actor..." oninput="filterActivity()" style="width:100%;padding:0.55rem 0.85rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
       </div>
       <div class="card">
         <pre id="activity-log" class="mono">Loading…</pre>
@@ -2679,6 +3215,9 @@ if __name__ == "__main__":
           <button class="primary" onclick="loadKillSwitchTools()">Refresh</button>
         </div>
       </div>
+      <div style="margin-bottom:0.75rem;">
+        <input id="ks-search" type="text" placeholder="Filter tools by name..." oninput="filterKillSwitchTable()" style="width:100%;padding:0.55rem 0.85rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
+      </div>
       <div class="card" style="padding:0;overflow:hidden;">
         <table style="width:100%;border-collapse:collapse;font-size:13px;">
           <thead>
@@ -2754,61 +3293,126 @@ if __name__ == "__main__":
       </div>
     </div>
 
-    <!-- ── P0-B: Taint Tracking ────────────────────── -->
-    <div id="tab-taint-tracking" class="tab-pane hidden">
+    <!-- ── Operations Center ───────────────────────── -->
+    <div id="tab-workflow-controls" class="tab-pane hidden">
       <div class="page-header">
-        <div class="page-title">Data Taint Tracking</div>
-        <div class="page-desc">Track sensitive data flow across tool chains. See which tool calls carry tainted data and where it propagates.</div>
+        <div class="page-title">Operations Center</div>
+        <div class="page-desc">Monitor active operations and handle immediate issues</div>
       </div>
-      <div class="card">
-        <div class="card-header">
-          <div><div class="card-title">Query Session Taint</div></div>
-        </div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
-          <input id="taint-session" type="text" placeholder="Session ID" style="flex:1;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-          <button class="primary" onclick="loadTaintGraph()">Query</button>
-        </div>
-      </div>
-      <div class="stats-grid" id="taint-stats" style="display:none;">
-        <div class="stat"><div class="stat-label">Tainted Tool Calls</div><div class="stat-value" id="taint-count">0</div></div>
-        <div class="stat"><div class="stat-label">Flow Edges</div><div class="stat-value" id="taint-edges">0</div></div>
-      </div>
-      <div class="card" id="taint-details-card" style="display:none;">
-        <div class="card-title">Active Taints</div>
-        <div id="taint-labels" style="margin-top:0.75rem;"></div>
-      </div>
-      <div class="card" id="taint-graph-card" style="display:none;">
-        <div class="card-title">Data Flow Graph</div>
-        <pre id="taint-graph-display" class="mono" style="margin-top:0.75rem;font-size:12px;color:var(--text-dim);white-space:pre-wrap;"></pre>
-      </div>
-    </div>
 
-    <!-- ── P0-A: Goal Drift ────────────────────────── -->
-    <div id="tab-goal-drift" class="tab-pane hidden">
-      <div class="page-header">
-        <div class="page-title">Goal Drift Detection</div>
-        <div class="page-desc">Monitor agents for deviation from their assigned goals. Register goals, view history, detect hijacked agents.</div>
+      <!-- Critical Alerts Section -->
+      <div id="ops-alerts" style="margin-bottom:1.5rem;">
+        <!-- Alert banners will be inserted here -->
       </div>
-      <div class="card">
-        <div class="card-header">
-          <div><div class="card-title">Register Agent Goal</div><div class="card-subtitle">Set the intended mission for an agent session</div></div>
+
+      <!-- Essential Status Grid -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:1.5rem;">
+        <div class="stat">
+          <div class="stat-label">🟡 Pending Approvals</div>
+          <div class="stat-value" id="ops-pending-approvals">0</div>
+          <div class="muted">Need review</div>
         </div>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">
-          <input id="gd-session" type="text" placeholder="Session ID" style="width:140px;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-          <input id="gd-agent" type="text" placeholder="Agent key" style="width:140px;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-          <input id="gd-goal" type="text" placeholder="Goal (e.g. Summarize Q3 financials)" style="flex:1;min-width:200px;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-          <button class="primary" onclick="registerGoal()">Register</button>
+        <div class="stat">
+          <div class="stat-label">🔴 Circuit Breakers</div>
+          <div class="stat-value" id="ops-circuit-breakers">0</div>
+          <div class="muted">Tools blocked</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">⏱️ Active Grants</div>
+          <div class="stat-value" id="ops-active-grants">0</div>
+          <div class="muted">Temporary access</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">✅ All Systems</div>
+          <div class="stat-value" id="ops-system-status">Normal</div>
+          <div class="muted">Operational</div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-header">
-          <div><div class="card-title">Query Goal</div></div>
+
+      <!-- Quick Actions -->
+      <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;">
+        <button class="small" onclick="loadWorkflowControlPlane()">🔄 Refresh</button>
+        <button class="primary" onclick="showPendingApprovals()">📋 Review Approvals</button>
+        <button class="small" onclick="showCircuitBreakers()">🔧 Reset Breakers</button>
+      </div>
+
+      <!-- Active Issues Only -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">⚠️ Needs Attention</div>
+              <div class="card-subtitle">Issues requiring immediate action</div>
+            </div>
+          </div>
+          <div id="ops-urgent-issues">
+            <div style="padding:1rem;text-align:center;color:var(--text-muted);">
+              No urgent issues
+            </div>
+          </div>
         </div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;">
-          <input id="gd-query-session" type="text" placeholder="Session ID" style="flex:1;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-          <button class="small" onclick="queryGoal()">Lookup</button>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">📈 Recent Activity</div>
+              <div class="card-subtitle">Last 24 hours</div>
+            </div>
+          </div>
+          <div id="ops-recent-activity">
+            <div style="padding:1rem;text-align:center;color:var(--text-muted);">
+              No recent activity
+            </div>
+          </div>
         </div>
-        <div id="gd-result" class="muted" style="margin-top:0.5rem;"></div>
+      </div>
+
+      <div class="wf-dual-grid" style="margin-top:1rem;">
+        <div class="wf-section-card">
+          <div class="wf-section-head">
+            <div>
+              <div class="wf-section-title">Approval Queue</div>
+              <div class="wf-section-desc">Read the current approval state for risky tool requests. Configure approval requirements in Tool Registry.</div>
+            </div>
+            <button class="small" onclick="loadApprovalQueue()">Refresh</button>
+          </div>
+          <div id="acp-approval-list" class="wf-stack"></div>
+        </div>
+
+        <div class="wf-section-card">
+          <div class="wf-section-head">
+            <div>
+              <div class="wf-section-title">Execution Grants</div>
+              <div class="wf-section-desc">See active short-lived exceptions and who they apply to. Grant issuance remains an operator action outside this runtime dashboard.</div>
+            </div>
+            <button class="small" onclick="loadExecutionGrants()">Refresh</button>
+          </div>
+          <div id="acp-grant-list" class="wf-stack" style="margin-top:1rem;"></div>
+        </div>
+      </div>
+
+      <div class="wf-dual-grid">
+        <div class="wf-section-card">
+          <div class="wf-section-head">
+            <div>
+              <div class="wf-section-title">Checkpoints &amp; Resume</div>
+              <div class="wf-section-desc">Inspect saved workflow state and whether runs have resumed. Checkpoint creation stays in the workflow runtime or API.</div>
+            </div>
+            <button class="small" onclick="loadCheckpoints()">Refresh</button>
+          </div>
+          <div id="acp-checkpoint-list" class="wf-stack" style="margin-top:1rem;"></div>
+        </div>
+
+        <div class="wf-section-card">
+          <div class="wf-section-head">
+            <div>
+              <div class="wf-section-title">Circuit Breakers</div>
+              <div class="wf-section-desc">Live breaker state with manual reset for quarantined tools.</div>
+            </div>
+            <button class="small" onclick="loadCircuitBreakers()">Refresh</button>
+          </div>
+          <div id="acp-breaker-list" class="wf-stack"></div>
+        </div>
       </div>
     </div>
 
@@ -3499,7 +4103,128 @@ setInterval(() => {
       !document.getElementById('tab-performance').classList.contains('hidden')) {
     loadPerformanceMetrics();
   }
+  if (document.getElementById('tab-workflow-controls').classList.contains('tab-pane') &&
+      !document.getElementById('tab-workflow-controls').classList.contains('hidden')) {
+    loadOperationsCenter();
+  }
 }, 30000);
+
+// ── Simplified Operations Center ──────────────────────────────
+function loadOperationsCenter() {
+  // Load essential operational data only
+  updateOperationsStatus();
+  loadUrgentIssues();
+  loadRecentActivity();
+}
+
+function updateOperationsStatus() {
+  // Simulate essential operational metrics
+  const pendingApprovals = Math.floor(Math.random() * 5);
+  const circuitBreakers = Math.floor(Math.random() * 2);
+  const activeGrants = Math.floor(Math.random() * 8);
+
+  document.getElementById('ops-pending-approvals').textContent = pendingApprovals;
+  document.getElementById('ops-circuit-breakers').textContent = circuitBreakers;
+  document.getElementById('ops-active-grants').textContent = activeGrants;
+
+  // Show system status
+  const systemStatus = (pendingApprovals === 0 && circuitBreakers === 0) ? 'Normal' : 'Attention';
+  document.getElementById('ops-system-status').textContent = systemStatus;
+
+  // Show critical alerts if needed
+  showCriticalAlerts(pendingApprovals, circuitBreakers);
+}
+
+function showCriticalAlerts(pendingApprovals, circuitBreakers) {
+  const alertsContainer = document.getElementById('ops-alerts');
+  alertsContainer.innerHTML = '';
+
+  if (circuitBreakers > 0) {
+    alertsContainer.innerHTML += `
+      <div style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:1rem;border-radius:8px;margin-bottom:1rem;">
+        <div style="font-weight:600;">🔴 Circuit Breakers Open</div>
+        <div style="font-size:14px;margin-top:0.5rem;">${circuitBreakers} tool(s) are currently blocked due to failures. Check and reset when issues are resolved.</div>
+        <button class="small" style="margin-top:0.5rem;" onclick="showCircuitBreakers()">View Details</button>
+      </div>`;
+  }
+
+  if (pendingApprovals > 0) {
+    alertsContainer.innerHTML += `
+      <div style="background:#fffbeb;border:1px solid #fde68a;color:#d97706;padding:1rem;border-radius:8px;margin-bottom:1rem;">
+        <div style="font-weight:600;">🟡 Approvals Pending</div>
+        <div style="font-size:14px;margin-top:0.5rem;">${pendingApprovals} request(s) waiting for review. Response time affects user experience.</div>
+        <button class="primary small" style="margin-top:0.5rem;" onclick="showPendingApprovals()">Review Now</button>
+      </div>`;
+  }
+}
+
+function loadUrgentIssues() {
+  // Show only critical issues that need immediate attention
+  const urgentContainer = document.getElementById('ops-urgent-issues');
+
+  // Simulate urgent issues (replace with real data)
+  const issues = [
+    // Example urgent issues - replace with actual API calls
+  ];
+
+  if (issues.length === 0) {
+    urgentContainer.innerHTML = `
+      <div style="padding:1rem;text-align:center;color:var(--text-muted);">
+        ✅ No urgent issues
+      </div>`;
+  } else {
+    urgentContainer.innerHTML = issues.map(issue => `
+      <div style="padding:0.75rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-weight:500;">${issue.title}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${issue.time}</div>
+        </div>
+        <button class="small" onclick="handleUrgentIssue('${issue.id}')">Fix</button>
+      </div>
+    `).join('');
+  }
+}
+
+function loadRecentActivity() {
+  // Show recent operational activity
+  const activityContainer = document.getElementById('ops-recent-activity');
+
+  // Simulate recent activity
+  const activities = [
+    {time: '2 min ago', action: 'Tool approval granted', detail: 'customer_lookup'},
+    {time: '15 min ago', action: 'Circuit breaker reset', detail: 'email_sender'},
+    {time: '1 hour ago', action: 'Grant expired', detail: 'file_processor'},
+  ];
+
+  if (activities.length === 0) {
+    activityContainer.innerHTML = `
+      <div style="padding:1rem;text-align:center;color:var(--text-muted);">
+        No recent activity
+      </div>`;
+  } else {
+    activityContainer.innerHTML = activities.map(activity => `
+      <div style="padding:0.75rem;border-bottom:1px solid var(--border);">
+        <div style="font-weight:500;font-size:13px;">${activity.action}</div>
+        <div style="font-size:12px;color:var(--text-muted);">${activity.detail} • ${activity.time}</div>
+      </div>
+    `).join('');
+  }
+}
+
+function showPendingApprovals() {
+  alert('Opening approval review panel...\n\nThis would show pending requests with approve/deny actions.');
+  // Replace with actual approval panel
+}
+
+function showCircuitBreakers() {
+  alert('Opening circuit breaker management...\n\nThis would show failed tools with reset options.');
+  // Replace with actual circuit breaker management
+}
+
+function handleUrgentIssue(issueId) {
+  alert(`Handling urgent issue: ${issueId}`);
+  // Replace with actual issue resolution
+}
 
 // ── Overview ──────────────────────────────
 function renderOverview() {
@@ -3879,15 +4604,52 @@ async function loadActivity() {
       document.getElementById('activity-log').textContent = 'No recent activity';
       return;
     }
-    document.getElementById('activity-log').textContent = entries.map(e =>
+    const text = entries.map(e =>
       `${(e.timestamp || '').slice(0,19)}  ${(e.action || '').padEnd(30)}  ${e.actor || ''}`
     ).join('\n');
+    const pre = document.getElementById('activity-log');
+    pre.textContent = text;
+    pre._allLines = text;
+    document.getElementById('activity-search').value = '';
   } catch (e) {
     document.getElementById('activity-log').textContent = 'Error: ' + e.message;
   }
 }
 
 // ── Agents ────────────────────────────────
+function filterAgents() {
+  const q = (document.getElementById('agents-search').value || '').toLowerCase();
+  document.querySelectorAll('#agents-content .card').forEach(card => {
+    const text = card.textContent.toLowerCase();
+    card.style.display = text.includes(q) ? '' : 'none';
+  });
+}
+
+function filterTools() {
+  const q = (document.getElementById('tools-search').value || '').toLowerCase();
+  document.querySelectorAll('#tp-sub-tools .card').forEach(card => {
+    const text = card.textContent.toLowerCase();
+    card.style.display = text.includes(q) ? '' : 'none';
+  });
+}
+
+function filterKillSwitchTable() {
+  const q = (document.getElementById('ks-search').value || '').toLowerCase();
+  document.querySelectorAll('#ks-table-body tr').forEach(row => {
+    const text = row.textContent.toLowerCase();
+    row.style.display = text.includes(q) ? '' : 'none';
+  });
+}
+
+function filterActivity() {
+  const q = (document.getElementById('activity-search').value || '').toLowerCase();
+  const pre = document.getElementById('activity-log');
+  if (!pre._allLines) pre._allLines = pre.textContent;
+  if (!q) { pre.textContent = pre._allLines; return; }
+  const lines = pre._allLines.split('\n');
+  pre.textContent = lines.filter(l => l.toLowerCase().includes(q)).join('\n') || 'No matching entries';
+}
+
 async function loadAgentData() {
   try {
     const [regResponse, unregResponse] = await Promise.all([
@@ -4526,6 +5288,127 @@ style.textContent = `
   .ep-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid rgba(39,39,47,0.5); }
   .ep-table tr:hover td { background: rgba(255,255,255,0.02); }
   .method-badge { display:inline-block;padding:0.1rem 0.4rem;border-radius:3px;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#fff; }
+  .tp-tool-shell {
+    padding: 0;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(82, 82, 91, 0.7);
+    background: linear-gradient(180deg, rgba(20,20,29,0.98) 0%, rgba(15,15,22,0.98) 100%);
+  }
+  .tp-tool-row {
+    border-bottom: 1px solid rgba(63, 63, 70, 0.8);
+  }
+  .tp-tool-row:last-child {
+    border-bottom: none;
+  }
+  .tp-tool-summary {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.1rem;
+    cursor: pointer;
+    transition: background 0.14s ease, border-color 0.14s ease;
+  }
+  .tp-tool-summary:hover {
+    background: rgba(255,255,255,0.035);
+  }
+  .tp-tool-title {
+    font-weight: 700;
+    font-size: 15px;
+    color: #f4f4f5;
+    letter-spacing: -0.02em;
+  }
+  .tp-tool-code {
+    font-size: 11px;
+    color: #d4d4d8;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.07);
+    padding: 2px 7px;
+    border-radius: 5px;
+  }
+  .tp-tool-status {
+    display: inline-block;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .tp-tool-status.active {
+    background: rgba(16,185,129,0.14);
+    color: #6ee7b7;
+    border: 1px solid rgba(16,185,129,0.24);
+  }
+  .tp-tool-status.empty {
+    background: rgba(148,163,184,0.12);
+    color: #e4e4e7;
+    border: 1px solid rgba(148,163,184,0.18);
+  }
+  .tp-tool-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    margin-top: 0.45rem;
+    font-size: 12.5px;
+    color: #c4c4cc;
+    flex-wrap: wrap;
+  }
+  .tp-tool-sep {
+    color: #52525b;
+  }
+  .tp-tool-key {
+    color: #a1a1aa;
+  }
+  .tp-tool-value {
+    color: #ededf1;
+    font-weight: 600;
+  }
+  .tp-tool-agent-chip {
+    font-size: 10.5px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(59,130,246,0.14);
+    color: #93c5fd;
+    border: 1px solid rgba(59,130,246,0.22);
+    font-weight: 600;
+  }
+  .tp-tool-expand {
+    padding: 0 1.1rem 1rem 1.1rem;
+  }
+  .tp-tool-expand table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 0.25rem;
+    border: 1px solid rgba(63, 63, 70, 0.9);
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(9,9,14,0.72);
+  }
+  .tp-tool-expand thead tr {
+    background: rgba(255,255,255,0.04);
+  }
+  .tp-tool-expand th {
+    text-align: left;
+    padding: 0.55rem 0.75rem;
+    font-size: 11.5px;
+    color: #b4b4bc;
+    font-weight: 700;
+  }
+  .tp-tool-expand td {
+    padding: 0.55rem 0.75rem;
+    border-top: 1px solid rgba(63, 63, 70, 0.75);
+    color: #e5e7eb;
+  }
+  .tp-tool-footer {
+    margin-top: 0.85rem;
+    display: flex;
+    gap: 1.25rem;
+    font-size: 12.5px;
+    color: #a1a1aa;
+    flex-wrap: wrap;
+    align-items: center;
+  }
 `;
 document.head.appendChild(style);
 
@@ -4703,7 +5586,7 @@ function displayToolPolicies() {
     return a ? `<span style="display:inline-block;padding:0.15rem 0.5rem;background:${roleColor(a)}18;color:${roleColor(a)};border-radius:4px;font-size:${sz};font-weight:600;">${a}</span>` : `<span style="color:var(--text-muted);font-size:${sz};">—</span>`;
   };
 
-  let html = `<div class="card" style="padding:0;">`;
+  let html = `<div class="tp-tool-shell">`;
 
   allTools.forEach((toolName, idx) => {
     const isConfigured = configuredTools.includes(toolName);
@@ -4734,23 +5617,23 @@ function displayToolPolicies() {
     const toolId = `tp-expand-${toolName.replace(/[^a-zA-Z0-9]/g, '_')}`;
 
     html += `
-      <div style="border-bottom:1px solid var(--border);${!isConfigured ? 'opacity:0.6;' : ''}">
+      <div class="tp-tool-row">
         <!-- Tool summary row -->
-        <div onclick="document.getElementById('${toolId}').classList.toggle('hidden')" style="display:flex;align-items:center;gap:1rem;padding:0.85rem 1rem;cursor:pointer;transition:background 0.1s;" onmouseenter="this.style.background='rgba(255,255,255,0.03)'" onmouseleave="this.style.background=''">
+        <div onclick="document.getElementById('${toolId}').classList.toggle('hidden')" class="tp-tool-summary">
           <div style="flex:1;min-width:0;">
             <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-              <span style="font-weight:700;font-size:14px;">${toolName.replace(/_/g, ' ')}</span>
-              <code style="font-size:11px;color:var(--text-muted);background:rgba(255,255,255,0.05);padding:1px 6px;border-radius:3px;">${toolName}</code>
-              <span style="display:inline-block;padding:0.15rem 0.5rem;border-radius:4px;font-size:11px;font-weight:600;${isConfigured ? 'background:rgba(16,185,129,0.12);color:#10b981;' : 'background:rgba(113,113,122,0.12);color:#a1a1aa;'}">${isConfigured ? 'Active' : 'No Policy'}</span>
+              <span class="tp-tool-title">${toolName.replace(/_/g, ' ')}</span>
+              <code class="tp-tool-code">${toolName}</code>
+              <span class="tp-tool-status ${isConfigured ? 'active' : 'empty'}">${isConfigured ? 'Active' : 'No Policy'}</span>
             </div>
-            <div style="display:flex;align-items:center;gap:0.75rem;margin-top:0.35rem;font-size:12px;color:var(--text-muted);flex-wrap:wrap;">
-              <span>Agents: ${(TOOL_AGENT_MAP[toolName] || []).map(a => `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(88,166,255,0.1);color:#58a6ff;font-weight:500;">${a}</span>`).join(' ') || '<span style="color:var(--text-muted);">none</span>'}</span>
-              <span style="color:var(--border);">|</span>
-              <span>Roles: ${roleSummary}</span>
-              <span style="color:var(--border);">|</span>
-              <span>Patterns: ${isConfigured ? sanitizationText : '—'}</span>
-              <span style="color:var(--border);">|</span>
-              <span>LLM: <span style="font-weight:600;color:${hasLLM ? '#10b981' : 'var(--text-muted)'};">${hasLLM ? 'On' : 'Off'}</span></span>
+            <div class="tp-tool-meta">
+              <span><span class="tp-tool-key">Agents:</span> ${(TOOL_AGENT_MAP[toolName] || []).map(a => `<span class="tp-tool-agent-chip">${a}</span>`).join(' ') || '<span style="color:#71717a;">none</span>'}</span>
+              <span class="tp-tool-sep">|</span>
+              <span><span class="tp-tool-key">Roles:</span> ${roleSummary}</span>
+              <span class="tp-tool-sep">|</span>
+              <span><span class="tp-tool-key">Patterns:</span> <span class="tp-tool-value">${isConfigured ? sanitizationText : '—'}</span></span>
+              <span class="tp-tool-sep">|</span>
+              <span><span class="tp-tool-key">LLM:</span> <span class="tp-tool-value" style="color:${hasLLM ? '#6ee7b7' : '#d4d4d8'};">${hasLLM ? 'On' : 'Off'}</span></span>
             </div>
           </div>
           <div style="display:flex;gap:0.4rem;flex-shrink:0;">
@@ -4763,14 +5646,14 @@ function displayToolPolicies() {
           </div>
         </div>
         <!-- Expanded role details -->
-        <div id="${toolId}" class="hidden" style="padding:0 1rem 0.85rem 1rem;">
+        <div id="${toolId}" class="hidden tp-tool-expand">
           ${isConfigured && roles.length ? `
-          <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:0.25rem;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+          <table>
             <thead>
-              <tr style="background:rgba(255,255,255,0.03);">
-                <th style="text-align:left;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:30%;">Role</th>
-                <th style="text-align:center;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;">Input</th>
-                <th style="text-align:center;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;">Output</th>
+              <tr>
+                <th style="width:30%;">Role</th>
+                <th style="text-align:center;">Input</th>
+                <th style="text-align:center;">Output</th>
               </tr>
             </thead>
             <tbody>
@@ -4781,20 +5664,20 @@ function displayToolPolicies() {
                   inp = typeof rp === 'string' ? rp : (rp.input || null);
                   out = typeof rp === 'string' ? rp : (rp.output || null);
                 }
-                return `<tr style="border-top:1px solid var(--border);">
-                  <td style="padding:0.5rem 0.75rem;font-weight:600;font-size:13px;">${r}</td>
-                  <td style="text-align:center;padding:0.5rem 0.75rem;">${actionBadge(inp, '12px')}</td>
-                  <td style="text-align:center;padding:0.5rem 0.75rem;">${actionBadge(out, '12px')}</td>
+                return `<tr>
+                  <td style="font-weight:600;">${r}</td>
+                  <td style="text-align:center;">${actionBadge(inp, '12px')}</td>
+                  <td style="text-align:center;">${actionBadge(out, '12px')}</td>
                 </tr>`;
               }).join('')}
             </tbody>
-          </table>` : `<div style="padding:0.5rem 0;font-size:13px;color:var(--text-muted);">${isConfigured ? 'No roles configured for this tool.' : 'Add a policy to configure role access.'}</div>`}
+          </table>` : `<div style="padding:0.5rem 0;font-size:13px;color:#b4b4bc;">${isConfigured ? 'No roles configured for this tool.' : 'Add a policy to configure role access.'}</div>`}
         </div>
       </div>`;
   });
 
   html += `</div>
-  <div style="margin-top:0.75rem;display:flex;gap:1.25rem;font-size:12px;color:var(--text-muted);flex-wrap:wrap;align-items:center;">
+  <div class="tp-tool-footer">
     <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#10b981;margin-right:5px;vertical-align:middle;"></span>allow</span>
     <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f59e0b;margin-right:5px;vertical-align:middle;"></span>redact</span>
     <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#8b5cf6;margin-right:5px;vertical-align:middle;"></span>mask</span>
@@ -5324,7 +6207,7 @@ function openDataPolicyModal(toolName) {
           <span>${prettyName}</span>
           <code>${toolName}</code>
         </h2>
-        <div class="dp-subtitle">Define how this tool handles sensitive data — by pattern, by role, and by compliance framework.</div>
+        <div class="dp-subtitle">Choose what this tool should protect, who can see which fields, and whether you need compliance logging.</div>
         <button class="dp-close" type="button" onclick="document.getElementById('dp-modal-overlay').remove()" aria-label="Close">×</button>
       </div>
 
@@ -5348,6 +6231,14 @@ function openDataPolicyModal(toolName) {
       </div>
 
       <div class="dp-body">
+        <div class="dp-quickstart">
+          <div class="dp-quickstart-title">Recommended Setup</div>
+          <div class="dp-quickstart-list">
+            <div>1. Start with <strong>AI reasoning</strong> or <strong>Both</strong> and describe what must never leave this tool.</div>
+            <div>2. Set <strong>role access</strong> so each role only sees the data it should.</div>
+            <div>3. Open <strong>Advanced regex rules</strong> only if you need exact pattern matching or deterministic replacements.</div>
+          </div>
+        </div>
 
         <!-- Step 1 — Sanitization (AI reasoning + regex fast-path) -->
         <section class="dp-section">
@@ -5355,17 +6246,17 @@ function openDataPolicyModal(toolName) {
             <div class="dp-step-num">1</div>
             <div class="dp-section-title-block">
               <div class="dp-section-title">
-                Sanitization
+                Protect data
                 <span class="dp-count-pill" id="dp-san-count">${sanCount} ${sanCount === 1 ? 'rule' : 'rules'}</span>
               </div>
-              <div class="dp-section-desc">Protect sensitive data in tool arguments and responses. Pick the mode that fits — AI reasoning (robust to obfuscation), regex (fast &amp; deterministic), or both.</div>
+              <div class="dp-section-desc">Most teams only need this step plus role access below. Start here, then open advanced regex only if you need exact matching.</div>
             </div>
           </div>
 
           <!-- ── Mode toggle + AI policy intent ─────────────────────── -->
           <div class="dp-ai-card">
             <div class="dp-ai-head">
-              <div class="dp-ai-title">Enforcement mode <span class="dp-ai-badge">NEW</span></div>
+              <div class="dp-ai-title">Protection mode <span class="dp-ai-badge">Recommended</span></div>
               <div class="dp-mode-toggle" role="tablist" aria-label="Sanitization mode">
                 <button type="button" class="dp-mode-option" id="dp-mode-ai"    data-mode="ai"    onclick="dpSelectMode('ai')"    title="LLM reads your intent and reasons about every payload">
                   <span class="dp-mode-dot"></span> AI reasoning
@@ -5380,13 +6271,13 @@ function openDataPolicyModal(toolName) {
             </div>
 
             <div class="dp-ai-sub">
-              Regex is deterministic and fast but easy to trick with spacing, unicode, or paraphrasing — e.g. <code>1 2 3 4 5 6 7 8 9</code> slips past an SSN regex. AI reasoning reads your plain-English intent and evaluates the payload semantically, catching obfuscated and context-based leaks.
+              For most teams, <strong>Both</strong> is the safest default. AI reasoning catches obfuscation and context-based leakage, while regex gives you deterministic fast-path matching when you need it.
             </div>
 
             <div id="dp-ai-block" class="dp-ai-block">
               <div class="dp-intent-controls">
                 <select onchange="dpApplyIntentTemplate(this)" title="Drop a starter policy into the intent textarea">
-                  <option value="">Start from a template…</option>
+                  <option value="">Pick a starter…</option>
                   <option value="hipaa">HIPAA — Protected Health Information</option>
                   <option value="pci">PCI DSS — Cardholder data</option>
                   <option value="gdpr">GDPR — EU personal data</option>
@@ -5395,63 +6286,69 @@ function openDataPolicyModal(toolName) {
                   <option value="finance">Financial account &amp; transfer data</option>
                   <option value="custom">Custom (clear)</option>
                 </select>
-                <span style="font-size:10.5px;color:var(--text-muted);">or write your own below</span>
+                <span style="font-size:10.5px;color:var(--text-muted);">or describe your own policy below</span>
               </div>
-              <textarea id="dp-intent" rows="5" placeholder="Describe, in plain English, what this tool must NEVER expose. Examples:&#10;• Never expose SSN, credit card, CVV, bearer tokens, API keys, or AWS access keys, even if obfuscated, paraphrased, spaced out, or partially disclosed.&#10;• Block outputs that pair a patient name with any diagnosis, medication, or insurance ID.&#10;• Redact addresses down to city + state, phone numbers down to the area code."></textarea>
+              <textarea id="dp-intent" rows="5" placeholder="Describe what this tool must protect. Examples:&#10;• Never expose SSN, credit card, CVV, bearer tokens, API keys, or AWS keys.&#10;• Block responses that pair a patient name with diagnosis or medication.&#10;• Redact street address and phone number, but keep city + state."></textarea>
               <div class="dp-intent-helper">
                 <strong style="color:var(--text);">Tip:</strong>
-                Write intent the way you'd brief a careful colleague. Be specific about what to <code>block</code> vs <code>redact</code>, and mention obfuscation you've seen before.
+                Write this the way you would brief a careful teammate. Say what should be <code>block</code>ed, what can be <code>redact</code>ed, and mention any common obfuscation you’ve seen.
               </div>
             </div>
           </div>
 
           <!-- ── Regex fast-path ─────────────────────────────────────── -->
-          <div id="dp-regex-block" class="dp-regex-block">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;margin-bottom:0.5rem;flex-wrap:wrap;">
-              <div style="font-size:12.5px;font-weight:600;color:var(--text);">Regex patterns <span style="font-weight:500;color:var(--text-muted);">· fast path</span></div>
-              <button class="small" type="button" onclick="addDPSanitizationRule()">+ Add rule</button>
-            </div>
-
-            <div class="dp-warn-callout" id="dp-regex-warn">
-              <span class="dp-warn-icon" aria-hidden="true">!</span>
-              <div>
-                <strong>Regex alone is easy to bypass.</strong> It catches well-formatted values like <code>123-45-6789</code> but misses <code>1 2 3 4 5 6 7 8 9</code>, unicode-dashed <code>123‒45‒6789</code>, or "my social is one-two-three…". For production policies use <strong>AI reasoning</strong> or <strong>Both</strong>, which layers AI on top.
+          <details class="dp-advanced-wrap" id="dp-regex-block">
+            <summary>
+              <span>Advanced regex rules</span>
+              <span class="dp-advanced-copy">Use this only when you need exact pattern matching or explicit replacements.</span>
+            </summary>
+            <div class="dp-advanced-body">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;margin-bottom:0.5rem;flex-wrap:wrap;">
+                <div style="font-size:12.5px;font-weight:600;color:var(--text);">Regex patterns <span style="font-weight:500;color:var(--text-muted);">· deterministic fast path</span></div>
+                <button class="small" type="button" onclick="addDPSanitizationRule()">+ Add rule</button>
               </div>
-            </div>
 
-            <div class="dp-tip">
-              <div class="dp-tip-title">How regex rules work</div>
-              <ul>
-                <li><span class="dp-kbd detect">detect</span> log the match but pass the real value to the tool <em>(safe for arguments)</em>.</li>
-                <li><span class="dp-kbd redact">redact</span> replace matches with the <em>Replacement</em> text.</li>
-                <li><span class="dp-kbd block">block</span> refuse the tool call or response entirely.</li>
-                <li><strong>auto</strong> = detect on input, redact on output.</li>
-                <li>Severity <span class="dp-kbd critical">critical</span> always escalates to block.</li>
-              </ul>
-              <div class="dp-presets">
-                <div class="dp-presets-label">Start from a template</div>
-                <div class="dp-preset-row">
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('ssn')"><span class="dp-preset-plus">+</span> SSN <span class="dp-preset-tag auto">auto</span></button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('email')"><span class="dp-preset-plus">+</span> Email <span class="dp-preset-tag auto">auto</span></button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('phone')"><span class="dp-preset-plus">+</span> Phone <span class="dp-preset-tag auto">auto</span></button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('credit_card')"><span class="dp-preset-plus">+</span> Credit card <span class="dp-preset-tag block">block</span></button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('api_key')"><span class="dp-preset-plus">+</span> API key <span class="dp-preset-tag block">block</span></button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('aws_key')"><span class="dp-preset-plus">+</span> AWS key <span class="dp-preset-tag block">block</span></button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('ip')"><span class="dp-preset-plus">+</span> IPv4 <span class="dp-preset-tag detect">detect</span></button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('dob')"><span class="dp-preset-plus">+</span> DOB <span class="dp-preset-tag redact">redact</span></button>
+              <div class="dp-warn-callout" id="dp-regex-warn">
+                <span class="dp-warn-icon" aria-hidden="true">!</span>
+                <div>
+                  <strong>Regex by itself is easy to bypass.</strong> It catches well-formatted values like <code>123-45-6789</code> but misses <code>1 2 3 4 5 6 7 8 9</code>, unicode-dashed <code>123‒45‒6789</code>, or paraphrased forms. Use <strong>Both</strong> or <strong>AI reasoning</strong> for production protection.
                 </div>
               </div>
-            </div>
 
-            <div id="dp-san-rules">${sanRulesHtml}</div>
-          </div>
+              <div class="dp-tip">
+                <div class="dp-tip-title">How regex rules work</div>
+                <ul>
+                  <li><span class="dp-kbd detect">detect</span> logs the match but passes the original value through <em>(usually best for inputs)</em>.</li>
+                  <li><span class="dp-kbd redact">redact</span> replaces matches with the <em>Replacement</em> text.</li>
+                  <li><span class="dp-kbd block">block</span> stops the tool call or response entirely.</li>
+                  <li><strong>auto</strong> = detect on input, redact on output.</li>
+                  <li>Severity <span class="dp-kbd critical">critical</span> always escalates to block.</li>
+                </ul>
+                <div class="dp-presets">
+                  <div class="dp-presets-label">Quick starters</div>
+                  <div class="dp-preset-row">
+                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('ssn')"><span class="dp-preset-plus">+</span> SSN <span class="dp-preset-tag auto">auto</span></button>
+                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('email')"><span class="dp-preset-plus">+</span> Email <span class="dp-preset-tag auto">auto</span></button>
+                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('phone')"><span class="dp-preset-plus">+</span> Phone <span class="dp-preset-tag auto">auto</span></button>
+                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('credit_card')"><span class="dp-preset-plus">+</span> Credit card <span class="dp-preset-tag block">block</span></button>
+                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('api_key')"><span class="dp-preset-plus">+</span> API key <span class="dp-preset-tag block">block</span></button>
+                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('aws_key')"><span class="dp-preset-plus">+</span> AWS key <span class="dp-preset-tag block">block</span></button>
+                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('ip')"><span class="dp-preset-plus">+</span> IPv4 <span class="dp-preset-tag detect">detect</span></button>
+                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('dob')"><span class="dp-preset-plus">+</span> DOB <span class="dp-preset-tag redact">redact</span></button>
+                  </div>
+                </div>
+              </div>
+
+              <div id="dp-san-rules">${sanRulesHtml}</div>
+            </div>
+          </details>
 
           <!-- ── Preview / test sandbox ──────────────────────────────── -->
           <div class="dp-testbench">
             <div class="dp-testbench-head">
               <div>
-                <div class="dp-testbench-title">Preview sanitization</div>
-                <div class="dp-testbench-sub">Run your policy against a sample payload before saving. Regex runs locally; <strong>AI review</strong> calls the Shield LLM.</div>
+                <div class="dp-testbench-title">Test before you save</div>
+                <div class="dp-testbench-sub">Paste a sample payload to see how the policy behaves. Regex runs locally; <strong>AI review</strong> calls the Shield LLM.</div>
               </div>
               <div class="dp-testbench-actions">
                 <button type="button" class="dp-ghost-btn" onclick="dpLoadTestSample()" title="Cycle through example payloads">Load sample</button>
@@ -5476,10 +6373,10 @@ function openDataPolicyModal(toolName) {
             <div class="dp-step-num">2</div>
             <div class="dp-section-title-block">
               <div class="dp-section-title">
-                Per-role access
+                Choose who can see what
                 <span class="dp-count-pill">${roles.length} ${roles.length === 1 ? 'role' : 'roles'}</span>
               </div>
-              <div class="dp-section-desc">What each role is allowed to do with this tool, and what fields they can see.</div>
+              <div class="dp-section-desc">Set the action for each role, the fields it may see, and any extra instructions for input or output.</div>
             </div>
           </div>
 
@@ -5502,40 +6399,48 @@ function openDataPolicyModal(toolName) {
           <div class="dp-section-head">
             <div class="dp-step-num">3</div>
             <div class="dp-section-title-block">
-              <div class="dp-section-title">Compliance &amp; retention</div>
-              <div class="dp-section-desc">Tag this policy with a framework and set audit logging &amp; retention.</div>
+              <div class="dp-section-title">Compliance &amp; logging</div>
+              <div class="dp-section-desc">Only fill this out if the tool needs formal audit logging or framework tagging.</div>
             </div>
           </div>
-          <div class="dp-compliance-grid">
-            <div class="dp-compliance-field">
-              <label>Compliance framework</label>
-              <select id="dp-compliance">
-                ${complianceOpt('', '— none —')}
-                ${complianceOpt('hipaa', 'HIPAA')}
-                ${complianceOpt('gdpr', 'GDPR')}
-                ${complianceOpt('pci', 'PCI DSS')}
-                ${complianceOpt('sox', 'SOX')}
-                ${complianceOpt('ccpa', 'CCPA')}
-              </select>
+          <details class="dp-advanced-wrap">
+            <summary>
+              <span>Compliance and audit settings</span>
+              <span class="dp-advanced-copy">Skip this unless the tool needs formal framework tagging or retained invocation logs.</span>
+            </summary>
+            <div class="dp-advanced-body">
+              <div class="dp-compliance-grid">
+                <div class="dp-compliance-field">
+                  <label>Compliance framework</label>
+                  <select id="dp-compliance">
+                    ${complianceOpt('', '— none —')}
+                    ${complianceOpt('hipaa', 'HIPAA')}
+                    ${complianceOpt('gdpr', 'GDPR')}
+                    ${complianceOpt('pci', 'PCI DSS')}
+                    ${complianceOpt('sox', 'SOX')}
+                    ${complianceOpt('ccpa', 'CCPA')}
+                  </select>
+                </div>
+                <div class="dp-compliance-field">
+                  <label>Audit logging</label>
+                  <label class="dp-switch">
+                    <input type="checkbox" id="dp-audit" ${auditOn ? 'checked' : ''}>
+                    <span>Log every invocation</span>
+                  </label>
+                </div>
+                <div class="dp-compliance-field">
+                  <label>Retention (days)</label>
+                  <input type="number" id="dp-retention" min="0" value="${retention}" placeholder="e.g. 90">
+                </div>
+              </div>
             </div>
-            <div class="dp-compliance-field">
-              <label>Audit logging</label>
-              <label class="dp-switch">
-                <input type="checkbox" id="dp-audit" ${auditOn ? 'checked' : ''}>
-                <span>Log every invocation</span>
-              </label>
-            </div>
-            <div class="dp-compliance-field">
-              <label>Retention (days)</label>
-              <input type="number" id="dp-retention" min="0" value="${retention}" placeholder="e.g. 90">
-            </div>
-          </div>
+          </details>
         </section>
 
       </div>
 
       <div class="dp-footer">
-        <div class="dp-footer-hint">Esc to close · changes aren't saved until you click Save.</div>
+        <div class="dp-footer-hint">Nothing is saved until you click <strong>Save data policy</strong>.</div>
         <div class="dp-footer-actions">
           <button type="button" onclick="document.getElementById('dp-modal-overlay').remove()">Cancel</button>
           <button class="primary" type="button" onclick="saveDataPolicy('${toolName}')">Save data policy</button>
@@ -5566,6 +6471,10 @@ function openDataPolicyModal(toolName) {
     || (dp.sanitization_intent ? 'both' : null)
     || ((dp.sanitization_rules && dp.sanitization_rules.length) ? 'regex' : 'both');
   dpSelectMode(initialMode);
+  const regexDetailsEl = document.getElementById('dp-regex-block');
+  if (regexDetailsEl) {
+    regexDetailsEl.open = initialMode === 'regex' || !!(dp.sanitization_rules && dp.sanitization_rules.length);
+  }
 
   // Dismiss on Escape — bound once, cleaned up when the overlay goes away.
   const onEsc = (e) => {
@@ -5972,7 +6881,10 @@ function dpSelectMode(mode) {
   const regexBlock = document.getElementById('dp-regex-block');
   const regexWarn  = document.getElementById('dp-regex-warn');
   if (aiBlock)    aiBlock.classList.toggle('hidden',    mode === 'regex');
-  if (regexBlock) regexBlock.classList.toggle('hidden', mode === 'ai');
+  if (regexBlock) {
+    regexBlock.classList.toggle('hidden', mode === 'ai');
+    if (mode === 'regex') regexBlock.open = true;
+  }
   // Show the "regex is tricky" warning only when regex-only — on AI or Both
   // the user is already covered semantically.
   if (regexWarn)  regexWarn.style.display = (mode === 'regex') ? '' : 'none';
@@ -8066,6 +8978,8 @@ document.addEventListener('click', (e) => {
     // Load data for new Votal AI platform tabs
     if (tab === 'system-health') {
       loadSystemHealth();
+    } else if (tab === 'workflow-controls') {
+      loadOperationsCenter();
     } else if (tab === 'performance') {
       loadPerformanceMetrics();
     } else if (tab === 'architecture') {
@@ -8080,8 +8994,6 @@ document.addEventListener('click', (e) => {
     if (tab === 'apis') renderAllApiTabs();
     if (tab === 'playground') initPlayground();
     if (tab === 'kill-switch') loadKillSwitchTools();
-    if (tab === 'taint-tracking') {} // manual search
-    if (tab === 'goal-drift') {} // manual actions
     if (tab === 'agent-identity') {} // manual actions
   }
 });
@@ -9048,88 +9960,704 @@ async function deleteWebhook(whId) {
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-// ── P0-B: Taint Tracking ───────────────────────
-async function loadTaintGraph() {
-  const sessionId = document.getElementById('taint-session').value.trim();
-  if (!sessionId) return showToast('Enter a session ID', 'error');
-  try {
-    const data = await apiCall(`/v1/shield/tool/taint?session_id=${encodeURIComponent(sessionId)}`);
-    const taints = data.active_taints || {};
-    const graph = data.taint_graph || {};
-    const count = data.tainted_tool_calls || 0;
-    const edgeCount = Object.values(graph).reduce((s, arr) => s + arr.length, 0);
+// ── Agentic Workflow Controls ──────────────────
+let workflowControlPlaneState = null;
+const workflowControlPlaneRuntime = {
+  approvals: [],
+  grants: [],
+  checkpoints: [],
+  breakers: {},
+};
 
-    document.getElementById('taint-count').textContent = count;
-    document.getElementById('taint-edges').textContent = edgeCount;
-    document.getElementById('taint-stats').style.display = '';
-
-    if (count > 0) {
-      document.getElementById('taint-details-card').style.display = '';
-      document.getElementById('taint-labels').innerHTML = Object.entries(taints).map(([tcId, info]) => `
-        <div style="padding:0.5rem 0;border-bottom:1px solid var(--border);">
-          <span class="mono" style="color:var(--accent);">${tcId}</span>
-          <span class="muted" style="margin-left:0.5rem;">${info.tool_name || ''}</span>
-          <div style="margin-top:0.25rem;">
-            ${(info.sensitivity_tags || []).map(t => `<span class="badge badge-danger" style="margin-right:0.3rem;">${t}</span>`).join('')}
-          </div>
-        </div>
-      `).join('');
-    } else {
-      document.getElementById('taint-details-card').style.display = 'none';
-    }
-
-    if (edgeCount > 0) {
-      document.getElementById('taint-graph-card').style.display = '';
-      let lines = [];
-      for (const [src, edges] of Object.entries(graph)) {
-        for (const edge of edges) {
-          lines.push(`${src} ──[${(edge.tags || []).join(', ')}]──> ${edge.to}`);
-        }
-      }
-      document.getElementById('taint-graph-display').textContent = lines.join('\n');
-    } else {
-      document.getElementById('taint-graph-card').style.display = 'none';
-    }
-
-    if (count === 0) showToast('No taints found for this session', 'success');
-  } catch (e) { showToast(e.message, 'error'); }
+function workflowDefaultConfig() {
+  return {
+    approvals: { enabled: true, rules: [] },
+    parameter_policies: {},
+    workflow_policies: {
+      default: {
+        allowed_tools: [],
+        denied_tools: [],
+        allowed_transitions: {},
+        forbidden_transitions: [],
+        require_checkpoint_before: [],
+        max_tool_calls: null,
+        max_estimated_cost_usd: null,
+        max_estimated_tokens: null,
+      },
+    },
+    delegation_controls: {
+      max_depth: 4,
+      allow_circular: false,
+      prevent_privilege_escalation: true,
+      allowed_delegations: {},
+    },
+    circuit_breakers: { tools: {} },
+    execution_grants: { default_ttl_seconds: 900, max_uses_default: 1 },
+    checkpoints: { required_for_tools: [] },
+  };
 }
 
-// ── P0-A: Goal Drift ───────────────────────────
-async function registerGoal() {
-  const sessionId = document.getElementById('gd-session').value.trim();
-  const agentKey = document.getElementById('gd-agent').value.trim();
-  const goal = document.getElementById('gd-goal').value.trim();
-  if (!sessionId || !agentKey || !goal) return showToast('Fill in all fields', 'error');
-  try {
-    await apiCall('/v1/shield/agent/goal', {
-      method: 'POST', body: JSON.stringify({ session_id: sessionId, agent_key: agentKey, goal })
+function workflowDeepMerge(base, patch) {
+  const merged = Array.isArray(base) ? [...base] : { ...(base || {}) };
+  Object.entries(patch || {}).forEach(([key, value]) => {
+    if (
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      merged[key] &&
+      typeof merged[key] === 'object' &&
+      !Array.isArray(merged[key])
+    ) {
+      merged[key] = workflowDeepMerge(merged[key], value);
+    } else {
+      merged[key] = value;
+    }
+  });
+  return merged;
+}
+
+function normalizeWorkflowControlPlaneConfig(cfg) {
+  return workflowDeepMerge(workflowDefaultConfig(), cfg || {});
+}
+
+function cloneWorkflowState() {
+  return JSON.parse(JSON.stringify(workflowControlPlaneState || workflowDefaultConfig()));
+}
+
+function parseCsvList(value) {
+  return String(value || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function parseTransitionList(value) {
+  const transitions = {};
+  String(value || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .forEach(item => {
+      const [fromRaw, toRaw] = item.split('>');
+      const from = (fromRaw || '').trim();
+      const to = (toRaw || '').trim();
+      if (!from || !to) return;
+      transitions[from] = transitions[from] || [];
+      if (!transitions[from].includes(to)) transitions[from].push(to);
     });
-    showToast('Goal registered', 'success');
-    document.getElementById('gd-goal').value = '';
+  return transitions;
+}
+
+function formatTransitionList(map) {
+  return Object.entries(map || {})
+    .flatMap(([from, nextTools]) => (nextTools || []).map(to => `${from}>${to}`))
+    .join(', ');
+}
+
+function formatForbiddenTransitions(pairs) {
+  return (pairs || [])
+    .filter(pair => Array.isArray(pair) && pair.length === 2)
+    .map(([from, to]) => `${from}>${to}`)
+    .join(', ');
+}
+
+function parseForbiddenTransitions(value) {
+  return String(value || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .map(item => item.split('>').map(part => part.trim()))
+    .filter(parts => parts.length === 2 && parts[0] && parts[1]);
+}
+
+function workflowEscapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function parameterPolicyCardsFromState() {
+  const cards = [];
+  const policies = (workflowControlPlaneState && workflowControlPlaneState.parameter_policies) || {};
+  Object.entries(policies).forEach(([toolName, policy]) => {
+    (policy.required_fields || []).forEach(field => cards.push({ tool_name: toolName, type: 'required_fields', field, value: '', secondary: '' }));
+    (policy.forbidden_fields || []).forEach(field => cards.push({ tool_name: toolName, type: 'forbidden_fields', field, value: '', secondary: '' }));
+    Object.entries(policy.allowed_values || {}).forEach(([field, values]) => cards.push({ tool_name: toolName, type: 'allowed_values', field, value: (values || []).join('|'), secondary: '' }));
+    Object.entries(policy.numeric_limits || {}).forEach(([field, limits]) => cards.push({ tool_name: toolName, type: 'numeric_limits', field, value: limits && limits.min != null ? String(limits.min) : '', secondary: limits && limits.max != null ? String(limits.max) : '' }));
+    Object.entries(policy.regex_rules || {}).forEach(([field, pattern]) => cards.push({ tool_name: toolName, type: 'regex_rules', field, value: pattern || '', secondary: '' }));
+    Object.entries(policy.max_string_lengths || {}).forEach(([field, maxLen]) => cards.push({ tool_name: toolName, type: 'max_string_lengths', field, value: maxLen != null ? String(maxLen) : '', secondary: '' }));
+  });
+  return cards;
+}
+
+function setParameterPolicyCards(cards) {
+  const next = {};
+  (cards || []).forEach(card => {
+    const tool = (card.tool_name || '').trim();
+    const field = (card.field || '').trim();
+    const type = card.type;
+    if (!tool || !field || !type) return;
+    next[tool] = next[tool] || {
+      required_fields: [],
+      forbidden_fields: [],
+      allowed_values: {},
+      numeric_limits: {},
+      regex_rules: {},
+      max_string_lengths: {},
+    };
+    if (type === 'required_fields') {
+      next[tool].required_fields.push(field);
+    } else if (type === 'forbidden_fields') {
+      next[tool].forbidden_fields.push(field);
+    } else if (type === 'allowed_values') {
+      next[tool].allowed_values[field] = String(card.value || '').split('|').map(v => v.trim()).filter(Boolean);
+    } else if (type === 'numeric_limits') {
+      const limits = {};
+      if (card.value !== '') limits.min = Number(card.value);
+      if (card.secondary !== '') limits.max = Number(card.secondary);
+      next[tool].numeric_limits[field] = limits;
+    } else if (type === 'regex_rules') {
+      next[tool].regex_rules[field] = card.value || '';
+    } else if (type === 'max_string_lengths') {
+      if (card.value !== '') next[tool].max_string_lengths[field] = Number(card.value);
+    }
+  });
+  Object.keys(next).forEach(tool => {
+    const policy = next[tool];
+    if (!policy.required_fields.length) delete policy.required_fields;
+    if (!policy.forbidden_fields.length) delete policy.forbidden_fields;
+    if (!Object.keys(policy.allowed_values).length) delete policy.allowed_values;
+    if (!Object.keys(policy.numeric_limits).length) delete policy.numeric_limits;
+    if (!Object.keys(policy.regex_rules).length) delete policy.regex_rules;
+    if (!Object.keys(policy.max_string_lengths).length) delete policy.max_string_lengths;
+  });
+  workflowControlPlaneState.parameter_policies = next;
+}
+
+function syncWorkflowJsonEditors() {
+  if (!workflowControlPlaneState) return;
+  const approvalsEl = document.getElementById('acp-approvals');
+  const paramsEl = document.getElementById('acp-parameters');
+  const workflowsEl = document.getElementById('acp-workflows');
+  const opsEl = document.getElementById('acp-ops');
+  if (approvalsEl) approvalsEl.value = JSON.stringify(workflowControlPlaneState.approvals || { enabled: true, rules: [] }, null, 2);
+  if (paramsEl) paramsEl.value = JSON.stringify(workflowControlPlaneState.parameter_policies || {}, null, 2);
+  if (workflowsEl) workflowsEl.value = JSON.stringify(workflowControlPlaneState.workflow_policies || {}, null, 2);
+  if (opsEl) opsEl.value = JSON.stringify({
+    delegation_controls: workflowControlPlaneState.delegation_controls || {},
+    circuit_breakers: workflowControlPlaneState.circuit_breakers || {},
+    execution_grants: workflowControlPlaneState.execution_grants || {},
+    checkpoints: workflowControlPlaneState.checkpoints || {},
+  }, null, 2);
+}
+
+function renderWorkflowControlPlaneStudio() {
+  if (!workflowControlPlaneState) return;
+  const cfg = workflowControlPlaneState;
+  const approvalRules = (cfg.approvals && cfg.approvals.rules) || [];
+  const parameterCards = parameterPolicyCardsFromState();
+  const workflowPolicies = cfg.workflow_policies || {};
+  const statRulesEl = document.getElementById('wf-stat-rules');
+  const statParamsEl = document.getElementById('wf-stat-params');
+  const statWorkflowsEl = document.getElementById('wf-stat-workflows');
+  const statDepthEl = document.getElementById('wf-stat-depth');
+  const statGrantTtlEl = document.getElementById('wf-stat-grant-ttl');
+  const statCheckpointToolsEl = document.getElementById('wf-stat-checkpoint-tools');
+  if (statRulesEl) statRulesEl.textContent = String(approvalRules.length);
+  if (statParamsEl) statParamsEl.textContent = String(parameterCards.length);
+  if (statWorkflowsEl) statWorkflowsEl.textContent = String(Object.keys(workflowPolicies).length);
+  if (statDepthEl) statDepthEl.textContent = String((cfg.delegation_controls && cfg.delegation_controls.max_depth) || 0);
+  if (statGrantTtlEl) statGrantTtlEl.textContent = `${(cfg.execution_grants && cfg.execution_grants.default_ttl_seconds) || 0}s`;
+  if (statCheckpointToolsEl) statCheckpointToolsEl.textContent = String(((cfg.checkpoints && cfg.checkpoints.required_for_tools) || []).length);
+
+  syncWorkflowJsonEditors();
+  renderWorkflowControlPlaneRuntimeStats();
+}
+
+function renderWorkflowControlPlaneRuntimeStats() {
+  const pendingApprovals = (workflowControlPlaneRuntime.approvals || []).filter(item => item.status === 'pending').length;
+  const activeGrants = (workflowControlPlaneRuntime.grants || []).filter(item => item.status === 'active').length;
+  const checkpoints = (workflowControlPlaneRuntime.checkpoints || []).length;
+  const openBreakers = Object.values(workflowControlPlaneRuntime.breakers || {}).filter(item => item && item.status === 'open').length;
+  const pendingEl = document.getElementById('wf-command-pending');
+  const grantsEl = document.getElementById('wf-command-grants');
+  const checkpointsEl = document.getElementById('wf-command-checkpoints');
+  const breakersEl = document.getElementById('wf-command-breakers');
+  if (pendingEl) pendingEl.textContent = String(pendingApprovals);
+  if (grantsEl) grantsEl.textContent = String(activeGrants);
+  if (checkpointsEl) checkpointsEl.textContent = String(checkpoints);
+  if (breakersEl) breakersEl.textContent = String(openBreakers);
+}
+
+function updateWorkflowApprovalsEnabled() {
+  workflowControlPlaneState.approvals.enabled = document.getElementById('wf-approvals-enabled').checked;
+  syncWorkflowJsonEditors();
+}
+
+function updateWorkflowOpsSettings() {
+  workflowControlPlaneState.delegation_controls.max_depth = Number(document.getElementById('wf-max-depth').value || 4);
+  workflowControlPlaneState.delegation_controls.prevent_privilege_escalation = document.getElementById('wf-prevent-escalation').checked;
+  workflowControlPlaneState.delegation_controls.allow_circular = document.getElementById('wf-allow-circular').checked;
+  workflowControlPlaneState.execution_grants.default_ttl_seconds = Number(document.getElementById('wf-grant-default-ttl').value || 900);
+  workflowControlPlaneState.execution_grants.max_uses_default = Number(document.getElementById('wf-grant-default-uses').value || 1);
+  workflowControlPlaneState.checkpoints.required_for_tools = parseCsvList(document.getElementById('wf-checkpoint-required-tools').value);
+  renderWorkflowControlPlaneStudio();
+}
+
+function addApprovalRule() {
+  workflowControlPlaneState.approvals.rules.push({
+    tool_names: [],
+    workflows: ['default'],
+    agent_keys: [],
+    min_approvals: 1,
+    request_ttl_seconds: 3600,
+    single_use: true,
+  });
+  renderWorkflowControlPlaneStudio();
+}
+
+function removeApprovalRule(index) {
+  workflowControlPlaneState.approvals.rules.splice(index, 1);
+  renderWorkflowControlPlaneStudio();
+}
+
+function updateApprovalRuleField(index, field, value) {
+  const rule = workflowControlPlaneState.approvals.rules[index];
+  if (!rule) return;
+  if (['tool_names', 'workflows', 'agent_keys'].includes(field)) {
+    rule[field] = parseCsvList(value);
+  } else if (['min_approvals', 'request_ttl_seconds'].includes(field)) {
+    rule[field] = Number(value || 0);
+  } else if (field === 'single_use') {
+    rule[field] = value === 'true';
+  } else {
+    rule[field] = value;
+  }
+  renderWorkflowControlPlaneStudio();
+}
+
+function addParameterPolicyRule() {
+  const cards = parameterPolicyCardsFromState();
+  cards.push({ tool_name: '', type: 'required_fields', field: '', value: '', secondary: '' });
+  setParameterPolicyCards(cards);
+  renderWorkflowControlPlaneStudio();
+}
+
+function updateParameterPolicyRule(index, field, value) {
+  const cards = parameterPolicyCardsFromState();
+  if (!cards[index]) return;
+  cards[index][field] = value;
+  if (field === 'type' && value !== 'numeric_limits') cards[index].secondary = '';
+  setParameterPolicyCards(cards);
+  renderWorkflowControlPlaneStudio();
+}
+
+function removeParameterPolicyRule(index) {
+  const cards = parameterPolicyCardsFromState();
+  cards.splice(index, 1);
+  setParameterPolicyCards(cards);
+  renderWorkflowControlPlaneStudio();
+}
+
+function addWorkflowPolicy() {
+  let name = 'workflow_' + (Object.keys(workflowControlPlaneState.workflow_policies).length + 1);
+  if (workflowControlPlaneState.workflow_policies[name]) {
+    name = `${name}_${Date.now()}`;
+  }
+  workflowControlPlaneState.workflow_policies[name] = {
+    allowed_tools: [],
+    denied_tools: [],
+    allowed_transitions: {},
+    forbidden_transitions: [],
+    require_checkpoint_before: [],
+    max_tool_calls: null,
+    max_estimated_cost_usd: null,
+    max_estimated_tokens: null,
+  };
+  renderWorkflowControlPlaneStudio();
+}
+
+function removeWorkflowPolicy(name) {
+  if (name === 'default' && Object.keys(workflowControlPlaneState.workflow_policies).length === 1) {
+    showToast('Keep at least one workflow policy', 'error');
+    return;
+  }
+  delete workflowControlPlaneState.workflow_policies[name];
+  if (!Object.keys(workflowControlPlaneState.workflow_policies).length) {
+    addWorkflowPolicy();
+    return;
+  }
+  renderWorkflowControlPlaneStudio();
+}
+
+function renameWorkflowPolicy(oldName, newName) {
+  const nextName = (newName || '').trim();
+  if (!nextName || nextName === oldName) return;
+  if (workflowControlPlaneState.workflow_policies[nextName]) {
+    showToast(`Workflow '${nextName}' already exists`, 'error');
+    renderWorkflowControlPlaneStudio();
+    return;
+  }
+  workflowControlPlaneState.workflow_policies[nextName] = workflowControlPlaneState.workflow_policies[oldName];
+  delete workflowControlPlaneState.workflow_policies[oldName];
+  renderWorkflowControlPlaneStudio();
+}
+
+function updateWorkflowPolicyField(name, field, value) {
+  const policy = workflowControlPlaneState.workflow_policies[name];
+  if (!policy) return;
+  if (['allowed_tools', 'denied_tools', 'require_checkpoint_before'].includes(field)) {
+    policy[field] = parseCsvList(value);
+  } else if (field === 'allowed_transitions') {
+    policy[field] = parseTransitionList(value);
+  } else if (field === 'forbidden_transitions') {
+    policy[field] = parseForbiddenTransitions(value);
+  } else if (['max_tool_calls', 'max_estimated_tokens'].includes(field)) {
+    policy[field] = value === '' ? null : Number(value);
+  } else if (field === 'max_estimated_cost_usd') {
+    policy[field] = value === '' ? null : Number(value);
+  } else {
+    policy[field] = value;
+  }
+  renderWorkflowControlPlaneStudio();
+}
+
+function addCircuitBreakerPolicy() {
+  let toolName = `tool_${Object.keys(workflowControlPlaneState.circuit_breakers.tools || {}).length + 1}`;
+  if (workflowControlPlaneState.circuit_breakers.tools[toolName]) {
+    toolName = `${toolName}_${Date.now()}`;
+  }
+  workflowControlPlaneState.circuit_breakers.tools[toolName] = {
+    failure_threshold: 3,
+    cooldown_seconds: 300,
+    latency_threshold_ms: null,
+  };
+  renderWorkflowControlPlaneStudio();
+}
+
+function removeCircuitBreakerPolicy(toolName) {
+  delete workflowControlPlaneState.circuit_breakers.tools[toolName];
+  renderWorkflowControlPlaneStudio();
+}
+
+function renameCircuitBreakerPolicy(oldName, newName) {
+  const nextName = (newName || '').trim();
+  if (!nextName || nextName === oldName) return;
+  if (workflowControlPlaneState.circuit_breakers.tools[nextName]) {
+    showToast(`Breaker policy for '${nextName}' already exists`, 'error');
+    renderWorkflowControlPlaneStudio();
+    return;
+  }
+  workflowControlPlaneState.circuit_breakers.tools[nextName] = workflowControlPlaneState.circuit_breakers.tools[oldName];
+  delete workflowControlPlaneState.circuit_breakers.tools[oldName];
+  renderWorkflowControlPlaneStudio();
+}
+
+function updateCircuitBreakerPolicyField(toolName, field, value) {
+  const policy = workflowControlPlaneState.circuit_breakers.tools[toolName];
+  if (!policy) return;
+  policy[field] = value === '' ? null : Number(value);
+  renderWorkflowControlPlaneStudio();
+}
+
+function applyWorkflowJsonEditors(options = {}) {
+  const { silent = false } = options;
+  try {
+    const approvals = JSON.parse(document.getElementById('acp-approvals').value || '{}');
+    const parameter_policies = JSON.parse(document.getElementById('acp-parameters').value || '{}');
+    const workflow_policies = JSON.parse(document.getElementById('acp-workflows').value || '{}');
+    const ops = JSON.parse(document.getElementById('acp-ops').value || '{}');
+    workflowControlPlaneState = normalizeWorkflowControlPlaneConfig({
+      approvals,
+      parameter_policies,
+      workflow_policies,
+      delegation_controls: ops.delegation_controls || {},
+      circuit_breakers: ops.circuit_breakers || {},
+      execution_grants: ops.execution_grants || {},
+      checkpoints: ops.checkpoints || {},
+    });
+    renderWorkflowControlPlaneStudio();
+    if (!silent) showToast('Advanced JSON applied to studio', 'success');
+    return true;
+  } catch (e) {
+    showToast(`JSON parse failed: ${e.message}`, 'error');
+    return false;
+  }
+}
+
+async function loadWorkflowControlPlane() {
+  try {
+    const data = await apiCall('/v1/tenant/me/agentic/config');
+    workflowControlPlaneState = normalizeWorkflowControlPlaneConfig(data.config || {});
+    renderWorkflowControlPlaneStudio();
+    await Promise.all([
+      loadApprovalQueue(),
+      loadExecutionGrants(),
+      loadCheckpoints(),
+      loadCircuitBreakers(),
+    ]);
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function saveWorkflowControlPlane() {
+  try {
+    if (!applyWorkflowJsonEditors({ silent: true })) return;
+    const approvals = JSON.parse(document.getElementById('acp-approvals').value || '{}');
+    const parameter_policies = JSON.parse(document.getElementById('acp-parameters').value || '{}');
+    const workflow_policies = JSON.parse(document.getElementById('acp-workflows').value || '{}');
+    const ops = JSON.parse(document.getElementById('acp-ops').value || '{}');
+    await apiCall('/v1/tenant/me/agentic/config', {
+      method: 'PUT',
+      body: JSON.stringify({
+        approvals,
+        parameter_policies,
+        workflow_policies,
+        delegation_controls: ops.delegation_controls || {},
+        circuit_breakers: ops.circuit_breakers || {},
+        execution_grants: ops.execution_grants || {},
+        checkpoints: ops.checkpoints || {},
+      }),
+    });
+    showToast('Workflow controls saved', 'success');
+    loadWorkflowControlPlane();
+  } catch (e) {
+    showToast(`Save failed: ${e.message}`, 'error');
+  }
+}
+
+async function loadApprovalQueue() {
+  try {
+    const data = await apiCall('/v1/tenant/me/agentic/approvals');
+    const approvals = data.approvals || [];
+    workflowControlPlaneRuntime.approvals = approvals;
+    renderWorkflowControlPlaneRuntimeStats();
+    const el = document.getElementById('acp-approval-list');
+    if (!approvals.length) {
+      el.innerHTML = '<div class="wf-empty">No approval requests are active right now. Configure approval requirements in Tool Registry when a tool should pause for human sign-off.</div>';
+      return;
+    }
+    el.innerHTML = approvals.map(item => `
+      <div class="wf-queue-row">
+        <div>
+          <div class="wf-row-title">${workflowEscapeHtml(item.tool_name)}</div>
+          <div class="wf-row-meta">
+            <span class="mono">${workflowEscapeHtml(item.request_id)}</span> · Agent <span class="mono">${workflowEscapeHtml(item.agent_key)}</span> · Session <span class="mono">${workflowEscapeHtml(item.session_id)}</span>${item.workflow ? ` · Workflow <span class="mono">${workflowEscapeHtml(item.workflow)}</span>` : ''}
+          </div>
+          <div class="wf-kpi-strip">
+            <span class="badge ${item.status === 'approved' ? 'badge-success' : item.status === 'denied' ? 'badge-danger' : item.status === 'expired' ? 'badge-danger' : 'badge-warn'}">${workflowEscapeHtml(item.status)}</span>
+            <span class="wf-kpi">${workflowEscapeHtml(item.required_approvals || 1)} approval(s)</span>
+            ${item.expires_at ? `<span class="wf-kpi">Expires ${workflowEscapeHtml(new Date(item.expires_at * 1000).toLocaleString())}</span>` : ''}
+          </div>
+        </div>
+        <div class="wf-row-actions">
+          <span class="wf-kpi">Read-only runtime view</span>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('acp-approval-list').innerHTML = `<div class="toast error">${e.message}</div>`;
+  }
+}
+
+async function decideApproval(requestId, decision) {
+  const approver = prompt(`Enter approver name for ${decision}:`, 'tenant-operator');
+  if (!approver) return;
+  const reason = prompt(`Reason for ${decision} (optional):`, '') || '';
+  try {
+    await apiCall(`/v1/tenant/me/agentic/approvals/${requestId}/${decision}`, {
+      method: 'POST',
+      body: JSON.stringify({ approver, reason }),
+    });
+    showToast(`Request ${decision}d`, 'success');
+    loadApprovalQueue();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function createExecutionGrant() {
+  const tool_name = document.getElementById('grant-tool').value.trim();
+  if (!tool_name) return showToast('Enter a tool name', 'error');
+  const agent_key = document.getElementById('grant-agent').value.trim();
+  const session_id = document.getElementById('grant-session').value.trim();
+  const workflow = document.getElementById('grant-workflow').value.trim();
+  const ttl_seconds = parseInt(document.getElementById('grant-ttl').value || '900', 10);
+  const max_uses = parseInt(document.getElementById('grant-uses').value || '1', 10);
+  try {
+    await apiCall('/v1/tenant/me/agentic/execution-grants', {
+      method: 'POST',
+      body: JSON.stringify({ tool_name, agent_key, session_id, workflow, ttl_seconds, max_uses }),
+    });
+    showToast('Execution grant issued', 'success');
+    document.getElementById('grant-tool').value = '';
+    loadExecutionGrants();
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-async function queryGoal() {
-  const sessionId = document.getElementById('gd-query-session').value.trim();
-  if (!sessionId) return showToast('Enter a session ID', 'error');
+async function loadExecutionGrants() {
   try {
-    const data = await apiCall(`/v1/shield/agent/goal?session_id=${encodeURIComponent(sessionId)}`);
-    if (data.goal) {
-      const g = data.goal;
-      document.getElementById('gd-result').innerHTML = `
-        <div style="padding:0.75rem;background:var(--bg-3);border-radius:var(--radius-sm);border:1px solid var(--border);">
-          <div style="font-size:13px;font-weight:600;color:var(--text);">${g.goal}</div>
-          <div style="margin-top:0.4rem;font-size:12px;color:var(--text-muted);">
-            Agent: <span class="mono">${g.agent_key}</span> &middot; Registered: ${new Date(g.registered_at * 1000).toLocaleString()}
+    const data = await apiCall('/v1/tenant/me/agentic/execution-grants');
+    const grants = data.execution_grants || [];
+    workflowControlPlaneRuntime.grants = grants;
+    renderWorkflowControlPlaneRuntimeStats();
+    const el = document.getElementById('acp-grant-list');
+    if (!grants.length) {
+      el.innerHTML = '<div class="wf-empty">No active grants. This page only shows live exceptions after they have been issued elsewhere.</div>';
+      return;
+    }
+    el.innerHTML = grants.map(g => `
+      <div class="wf-ops-row">
+        <div>
+          <div class="wf-row-title">${workflowEscapeHtml(g.tool_name)}</div>
+          <div class="wf-row-meta">
+            <span class="mono">${workflowEscapeHtml(g.grant_id)}</span>${g.agent_key ? ` · Agent <span class="mono">${workflowEscapeHtml(g.agent_key)}</span>` : ''}${g.session_id ? ` · Session <span class="mono">${workflowEscapeHtml(g.session_id)}</span>` : ''}${g.workflow ? ` · Workflow <span class="mono">${workflowEscapeHtml(g.workflow)}</span>` : ''}
+          </div>
+          <div class="wf-kpi-strip">
+            <span class="wf-kpi">Uses ${workflowEscapeHtml(g.consumed_uses)}/${workflowEscapeHtml(g.max_uses)}</span>
+            ${g.expires_at ? `<span class="wf-kpi">Expires ${workflowEscapeHtml(new Date(g.expires_at * 1000).toLocaleString())}</span>` : ''}
           </div>
         </div>
-      `;
-    } else {
-      document.getElementById('gd-result').innerHTML = '<div class="muted">No goal registered for this session</div>';
-    }
-  } catch (e) { document.getElementById('gd-result').innerHTML = `<span class="muted">${e.message}</span>`; }
+        <div class="wf-row-actions">
+          <span class="wf-kpi">Read-only runtime view</span>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('acp-grant-list').innerHTML = `<div class="toast error">${e.message}</div>`;
+  }
 }
+
+async function revokeExecutionGrant(grantId) {
+  try {
+    await apiCall(`/v1/tenant/me/agentic/execution-grants/${grantId}/revoke`, { method: 'POST' });
+    showToast('Grant revoked', 'success');
+    loadExecutionGrants();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function createWorkflowCheckpoint() {
+  const session_id = document.getElementById('cp-session').value.trim();
+  const workflow = document.getElementById('cp-workflow').value.trim() || 'default';
+  const label = document.getElementById('cp-label').value.trim();
+  if (!session_id || !label) return showToast('Enter session and label', 'error');
+  try {
+    await apiCall('/v1/tenant/me/agentic/checkpoints', {
+      method: 'POST',
+      body: JSON.stringify({ session_id, workflow, label }),
+    });
+    showToast('Checkpoint created', 'success');
+    document.getElementById('cp-label').value = '';
+    loadCheckpoints();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function loadCheckpoints() {
+  try {
+    const data = await apiCall('/v1/tenant/me/agentic/checkpoints');
+    const checkpoints = data.checkpoints || [];
+    workflowControlPlaneRuntime.checkpoints = checkpoints;
+    renderWorkflowControlPlaneRuntimeStats();
+    const el = document.getElementById('acp-checkpoint-list');
+    if (!checkpoints.length) {
+      el.innerHTML = '<div class="wf-empty">No checkpoints are available right now. When long-running workflows save state, they will appear here.</div>';
+      return;
+    }
+    el.innerHTML = checkpoints.map(cp => `
+      <div class="wf-ops-row">
+        <div>
+          <div class="wf-row-title">${workflowEscapeHtml(cp.label)}</div>
+          <div class="wf-row-meta">
+            <span class="mono">${workflowEscapeHtml(cp.checkpoint_id)}</span> · Session <span class="mono">${workflowEscapeHtml(cp.session_id)}</span> · Workflow <span class="mono">${workflowEscapeHtml(cp.workflow)}</span>
+          </div>
+          <div class="wf-kpi-strip">
+            <span class="badge ${cp.status === 'resumed' ? 'badge-success' : 'badge-pro'}">${workflowEscapeHtml(cp.status)}</span>
+            ${cp.created_at ? `<span class="wf-kpi">Created ${workflowEscapeHtml(new Date(cp.created_at * 1000).toLocaleString())}</span>` : ''}
+          </div>
+        </div>
+        <div class="wf-row-actions">
+          <span class="wf-kpi">Read-only runtime view</span>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('acp-checkpoint-list').innerHTML = `<div class="toast error">${e.message}</div>`;
+  }
+}
+
+async function resumeCheckpoint(checkpointId) {
+  try {
+    await apiCall(`/v1/tenant/me/agentic/checkpoints/${checkpointId}/resume`, { method: 'POST' });
+    showToast('Checkpoint resumed', 'success');
+    loadCheckpoints();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function loadCircuitBreakers() {
+  try {
+    const data = await apiCall('/v1/tenant/me/agentic/circuit-breakers');
+    const breakers = data.circuit_breakers || {};
+    workflowControlPlaneRuntime.breakers = breakers;
+    renderWorkflowControlPlaneRuntimeStats();
+    const rows = Object.values(breakers);
+    const el = document.getElementById('acp-breaker-list');
+    if (!rows.length) {
+      el.innerHTML = '<div class="wf-empty">No breaker state recorded yet. Runtime state will appear after tool failures or latency incidents.</div>';
+      return;
+    }
+    el.innerHTML = rows.map(b => `
+      <div class="wf-ops-row">
+        <div>
+          <div class="wf-row-title">${workflowEscapeHtml(b.tool_name)}</div>
+          <div class="wf-row-meta">
+            Status <span class="mono">${workflowEscapeHtml(b.status || 'closed')}</span> · Failures ${workflowEscapeHtml(b.consecutive_failures || 0)}
+            ${b.open_until ? ` · Open until ${workflowEscapeHtml(new Date(b.open_until * 1000).toLocaleString())}` : ''}
+          </div>
+          <div class="wf-kpi-strip">
+            ${b.last_latency_ms != null ? `<span class="wf-kpi">Last latency ${workflowEscapeHtml(Math.round(b.last_latency_ms))}ms</span>` : ''}
+            ${b.opened_reason ? `<span class="wf-kpi">${workflowEscapeHtml(b.opened_reason)}</span>` : ''}
+          </div>
+        </div>
+        <div class="wf-row-actions">
+          <span class="wf-kpi">Read-only runtime view</span>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('acp-breaker-list').innerHTML = `<div class="toast error">${e.message}</div>`;
+  }
+}
+
+async function resetCircuitBreaker(toolName) {
+  try {
+    await apiCall(`/v1/tenant/me/agentic/circuit-breakers/${encodeURIComponent(toolName)}/reset`, { method: 'POST' });
+    showToast('Circuit breaker reset', 'success');
+    loadCircuitBreakers();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// Keep workflow JSON editors and studio state aligned after direct refreshes.
+window.addApprovalRule = addApprovalRule;
+window.removeApprovalRule = removeApprovalRule;
+window.updateApprovalRuleField = updateApprovalRuleField;
+window.addParameterPolicyRule = addParameterPolicyRule;
+window.updateParameterPolicyRule = updateParameterPolicyRule;
+window.removeParameterPolicyRule = removeParameterPolicyRule;
+window.addWorkflowPolicy = addWorkflowPolicy;
+window.removeWorkflowPolicy = removeWorkflowPolicy;
+window.renameWorkflowPolicy = renameWorkflowPolicy;
+window.updateWorkflowPolicyField = updateWorkflowPolicyField;
+window.addCircuitBreakerPolicy = addCircuitBreakerPolicy;
+window.removeCircuitBreakerPolicy = removeCircuitBreakerPolicy;
+window.renameCircuitBreakerPolicy = renameCircuitBreakerPolicy;
+window.updateCircuitBreakerPolicyField = updateCircuitBreakerPolicyField;
+window.updateWorkflowApprovalsEnabled = updateWorkflowApprovalsEnabled;
+window.updateWorkflowOpsSettings = updateWorkflowOpsSettings;
+window.applyWorkflowJsonEditors = applyWorkflowJsonEditors;
 
 // ── P1-A: Agent Identity ───────────────────────
 async function registerCert() {

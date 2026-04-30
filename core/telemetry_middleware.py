@@ -6,13 +6,14 @@ import time
 import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 
 from core.telemetry import (
     record_event,
     build_request_event,
     build_response_event,
     build_guardrail_event,
+    build_tool_execution_event,
 )
 
 
@@ -189,6 +190,24 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         # Execute the request
         response = await call_next(request)
         latency_ms = (time.perf_counter() - start) * 1000
+
+        content_type = response.headers.get("content-type", "")
+        is_streaming = (
+            isinstance(response, StreamingResponse)
+            or content_type.startswith("text/event-stream")
+        )
+
+        if is_streaming:
+            asyncio.create_task(
+                _process_response_telemetry_async(
+                    trace_id, request.url.path, response.status_code, latency_ms,
+                    {"action": "stream"}, agent_key, tenant_id, session_id, role_name,
+                    source_ip, input_text, body_dict
+                )
+            )
+            response.headers["x-trace-id"] = trace_id
+            response.headers["x-latency-ms"] = str(round(latency_ms, 2))
+            return response
 
         # Efficiently read and parse response body
         response_body = b""

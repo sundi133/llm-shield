@@ -10,17 +10,27 @@ from guardrails.agentic.tool.tool_call_rate_limiting import ToolCallRateLimiting
 from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuardrail
 from guardrails.agentic.tool.tool_output_sanitization import ToolOutputSanitizationGuardrail
 from guardrails.agentic.tool.sensitive_action_confirmation import SensitiveActionConfirmationGuardrail
-from guardrails.agentic.taint.taint_tracking import DataTaintTrackingGuardrail
 from guardrails.agentic.identity.cert_identity import CertIdentityGuardrail
 from guardrails.base import _request_configs
 import asyncio
 from core.feature_flags import (
-    KILLSWITCH_ENABLED, DECISION_AUDIT_ENABLED, WEBHOOKS_ENABLED, TAINT_TRACKING_ENABLED,
+    KILLSWITCH_ENABLED, DECISION_AUDIT_ENABLED, WEBHOOKS_ENABLED,
     CERT_IDENTITY_ENABLED,
 )
 from storage.tool_killswitch import is_tool_disabled
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
+from storage.agentic_control_plane import (
+    get_control_plane_config,
+    find_matching_approval_rule,
+    create_approval_request,
+    consume_approval_request,
+    validate_execution_grant,
+    evaluate_parameter_policy,
+    evaluate_workflow_constraints,
+    record_workflow_step,
+    is_circuit_breaker_open,
+)
 
 router = APIRouter(prefix="/v1/shield/tool", tags=["tool"])
 
@@ -31,9 +41,6 @@ _CHECK_GUARDS = [
     ("tool_call_validation", ToolCallValidationGuardrail),
     ("sensitive_action_confirmation", SensitiveActionConfirmationGuardrail),
 ]
-# Enterprise guardrails — only added when feature flags are enabled
-if TAINT_TRACKING_ENABLED:
-    _CHECK_GUARDS.append(("data_taint_tracking", DataTaintTrackingGuardrail))
 if CERT_IDENTITY_ENABLED:
     _CHECK_GUARDS.append(("cert_identity", CertIdentityGuardrail))
 
@@ -50,6 +57,11 @@ class ToolCheckRequest(BaseModel):
     guardrails: Optional[list[str]] = None
     tool_call_id: Optional[str] = None
     input_sources: Optional[list[str]] = None
+    workflow_step: Optional[str] = None
+    estimated_cost_usd: Optional[float] = None
+    estimated_tokens: Optional[int] = None
+    approval_request_id: Optional[str] = None
+    execution_grant_id: Optional[str] = None
 
 
 class ToolOutputRequest(BaseModel):
@@ -72,9 +84,24 @@ def _format(result):
             "details": result.details, "latency_ms": round(result.latency_ms, 2)}
 
 
+def _cp_result(name: str, passed: bool, action: str, message: str, details: Optional[dict] = None):
+    return {
+        "guardrail": name,
+        "passed": passed,
+        "action": action,
+        "message": message,
+        "details": details or {},
+        "latency_ms": 0.0,
+    }
+
+
 @router.post("/check")
 async def check_tool(body: ToolCheckRequest, request: Request):
-    tenant_id = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
+    tenant_id = (
+        getattr(request.state, "tenant_id", None)
+        if hasattr(request, "state")
+        else None
+    ) or request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
     user_role = (
         body.user_role
         or request.headers.get("X-User-Role")
@@ -122,6 +149,11 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         "X-User-Role": user_role,
         "tool_call_id": body.tool_call_id,
         "input_sources": body.input_sources,
+        "workflow_step": body.workflow_step,
+        "estimated_cost_usd": body.estimated_cost_usd,
+        "estimated_tokens": body.estimated_tokens,
+        "approval_request_id": body.approval_request_id,
+        "execution_grant_id": body.execution_grant_id,
         "trust_level": getattr(request.state, "trust_level", None) if hasattr(request, "state") else None,
         "identity_method": getattr(request.state, "identity_method", None) if hasattr(request, "state") else None,
     }
@@ -144,6 +176,120 @@ async def check_tool(body: ToolCheckRequest, request: Request):
     token = _request_configs.set(configs) if configs else None
     try:
         results = []
+
+        cp_config = get_control_plane_config(tenant_id) if tenant_id else None
+
+        if tenant_id:
+            breaker_open, breaker_state = is_circuit_breaker_open(tenant_id, body.tool_name)
+            if breaker_open:
+                results.append(_cp_result(
+                    "circuit_breaker",
+                    False,
+                    "block",
+                    f"Tool '{body.tool_name}' is temporarily blocked by an open circuit breaker",
+                    breaker_state or {},
+                ))
+                return {"allowed": False, "action": "block", "guardrail_results": results}
+
+        if tenant_id and cp_config:
+            tool_param_policy = (cp_config.get("parameter_policies", {}) or {}).get(body.tool_name)
+            if tool_param_policy:
+                ok, msg, details = evaluate_parameter_policy(body.tool_name, body.tool_params or {}, tool_param_policy)
+                results.append(_cp_result(
+                    "parameter_policy",
+                    ok,
+                    "pass" if ok else "block",
+                    msg,
+                    details,
+                ))
+                if not ok:
+                    return {"allowed": False, "action": "block", "guardrail_results": results}
+
+            if body.session_id:
+                ok, msg, details = evaluate_workflow_constraints(
+                    tenant_id,
+                    session_id=body.session_id,
+                    workflow=body.workflow or "default",
+                    tool_name=body.tool_name,
+                    workflow_step=body.workflow_step,
+                    estimated_cost_usd=body.estimated_cost_usd or 0.0,
+                    estimated_tokens=body.estimated_tokens or 0,
+                )
+                results.append(_cp_result(
+                    "workflow_constraints",
+                    ok,
+                    "pass" if ok else "block",
+                    msg,
+                    details,
+                ))
+                if not ok:
+                    return {"allowed": False, "action": "block", "guardrail_results": results}
+
+            if body.execution_grant_id:
+                ok, msg, grant = validate_execution_grant(
+                    tenant_id,
+                    body.execution_grant_id,
+                    tool_name=body.tool_name,
+                    agent_key=body.agent_key,
+                    session_id=body.session_id or "",
+                )
+                results.append(_cp_result(
+                    "scoped_execution_grant",
+                    ok,
+                    "pass" if ok else "block",
+                    msg,
+                    grant or {},
+                ))
+                if not ok:
+                    return {"allowed": False, "action": "block", "guardrail_results": results}
+
+            approval_rule = find_matching_approval_rule(
+                cp_config,
+                tool_name=body.tool_name,
+                workflow=body.workflow or "default",
+                agent_key=body.agent_key,
+            )
+            if approval_rule:
+                if body.approval_request_id:
+                    ok, msg, approval = consume_approval_request(
+                        tenant_id,
+                        body.approval_request_id,
+                        agent_key=body.agent_key,
+                        tool_name=body.tool_name,
+                        session_id=body.session_id or "",
+                    )
+                    results.append(_cp_result(
+                        "approval_lifecycle",
+                        ok,
+                        "pass" if ok else "block",
+                        msg,
+                        approval or {},
+                    ))
+                    if not ok:
+                        return {"allowed": False, "action": "block", "guardrail_results": results}
+                else:
+                    approval = create_approval_request(
+                        tenant_id,
+                        agent_key=body.agent_key,
+                        tool_name=body.tool_name,
+                        session_id=body.session_id or "",
+                        workflow=body.workflow or "default",
+                        tool_params=body.tool_params,
+                        rule=approval_rule,
+                    )
+                    results.append(_cp_result(
+                        "approval_lifecycle",
+                        False,
+                        "pending_confirmation",
+                        f"Tool '{body.tool_name}' requires approval before execution",
+                        {
+                            "request_id": approval["request_id"],
+                            "required_approvals": approval["required_approvals"],
+                            "expires_at": approval["expires_at"],
+                        },
+                    ))
+                    return {"allowed": False, "action": "pending_confirmation", "guardrail_results": results}
+
         for name, cls in _CHECK_GUARDS:
             if body.guardrails and name not in body.guardrails:
                 continue
@@ -192,6 +338,17 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                     },
                 ))
 
+        if allowed and tenant_id and body.session_id:
+            record_workflow_step(
+                tenant_id,
+                session_id=body.session_id,
+                workflow=body.workflow or "default",
+                tool_name=body.tool_name,
+                estimated_cost_usd=body.estimated_cost_usd or 0.0,
+                estimated_tokens=body.estimated_tokens or 0,
+                workflow_step=body.workflow_step,
+            )
+
         return {"allowed": allowed, "action": action, "guardrail_results": results}
     finally:
         # Reset the contextvar
@@ -219,29 +376,6 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
     }
     r = await guard.check(body.tool_output, context)
     sanitized = (r.details or {}).get("sanitized_output", body.tool_output)
-
-    # Record taint if sensitive data was detected and session/tool_call_id provided (enterprise feature)
-    if TAINT_TRACKING_ENABLED and body.session_id and body.tool_call_id:
-        findings = (r.details or {}).get("findings", [])
-        if findings:
-            from guardrails.agentic.taint.taint_store import record_taint
-            # Extract sensitivity tags from findings
-            tags = []
-            for finding in findings:
-                if isinstance(finding, str):
-                    # Format: "SSN (blocked by policy_id)" or just "SSN"
-                    tag = finding.split(" ")[0] if " " in finding else finding
-                    tags.append(tag)
-                elif isinstance(finding, dict):
-                    tags.append(finding.get("data_type", finding.get("type", "unknown")))
-            if tags:
-                record_taint(
-                    session_id=body.session_id,
-                    tool_call_id=body.tool_call_id,
-                    tool_name=body.tool_name,
-                    sensitivity_tags=tags,
-                    tenant_id=tenant_id or "",
-                )
 
     return {
         "allowed": r.passed,

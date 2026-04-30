@@ -157,6 +157,61 @@ def build_response_event(
     }
 
 
+def build_tool_execution_event(
+    *,
+    trace_id: str,
+    tool_name: str,
+    success: bool,
+    latency_ms: float = 0,
+    error_type: str = "",
+    tool_input: str = "",
+    tool_output: str = "",
+    conversation_history: Optional[list] = None,
+    session_id: str = "",
+    agent_key: str = "",
+    tenant_id: str = "",
+    role_name: str = "",
+    source_ip: str = "",
+    agentic_decisions: Optional[dict] = None,
+) -> dict:
+    """Build tool execution event for SIEM logging."""
+
+    # Process conversation context for tool execution
+    conversation_context = {}
+    if conversation_history:
+        conversation_context = {
+            "votal.conversation.turn_count": len(conversation_history),
+            "votal.conversation.history": _truncate(conversation_history, 3000),
+            "votal.conversation.last_user_message": _get_last_user_message(conversation_history),
+            "votal.conversation.message_pattern": _analyze_conversation_pattern(conversation_history),
+        }
+
+    return {
+        "event.kind": "alert" if not success else "event",
+        "event.category": "process",
+        "event.type": "end",
+        "event.action": f"tool.{tool_name}.execution",
+        "event.outcome": "success" if success else "failure",
+        "event.risk_score": 20 if not success else 5,
+        "event.severity": "medium" if not success else "informational",
+        "trace.id": trace_id,
+        "host.name": _HOSTNAME,
+        "source.ip": source_ip,
+        "agent.key": agent_key,
+        "votal.tenant_id": tenant_id,
+        "votal.session_id": session_id,
+        "votal.role_name": role_name,
+        "votal.tool.name": tool_name,
+        "votal.tool.success": success,
+        "votal.tool.latency_ms": round(latency_ms, 2) if latency_ms else 0,
+        "votal.tool.error_type": error_type,
+        "votal.tool.input": _truncate_str(tool_input, 1000),
+        "votal.tool.output": _truncate_str(tool_output, 2000),
+        "votal.agentic_decisions": agentic_decisions,
+        **conversation_context,
+    }
+
+
 def build_guardrail_event(
     *,
     trace_id: str,
