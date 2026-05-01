@@ -1,36 +1,50 @@
 """Storage operations for tenant-specific custom policies.
 
 Custom policies are LLM-based policies defined by tenants in natural language.
-Max 10 policies per tenant, stored in Redis with versioning.
+Stored within the existing tenant guardrail configuration structure.
+Max 10 policies per tenant per stage (input/output).
 """
 
-import json
 import logging
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from storage.tenant_store import _get_redis
+from storage.tenant_store import get_tenant, update_tenant
 
 logger = logging.getLogger(__name__)
 
-# Redis key patterns
-TENANT_POLICIES_KEY = "custom_policies:tenant:{tenant_id}"
-POLICY_KEY = "custom_policy:{tenant_id}:{policy_id}"
-POLICY_INDEX_KEY = "custom_policies:index"
+MAX_POLICIES_PER_STAGE = 10
 
-MAX_POLICIES_PER_TENANT = 10
+
+def _ensure_custom_policy_guardrail(tenant_config: Dict, stage: str) -> Dict:
+    """Ensure custom policy guardrail exists in tenant config."""
+    guardrail_key = f"custom_policy_{stage}"
+    stage_key = f"{stage}_guardrails"
+
+    if stage_key not in tenant_config:
+        tenant_config[stage_key] = {}
+
+    if guardrail_key not in tenant_config[stage_key]:
+        tenant_config[stage_key][guardrail_key] = {
+            "enabled": True,
+            "action": "pass",  # Custom policies manage their own actions
+            "settings": {
+                "policies": []
+            }
+        }
+
+    return tenant_config
 
 
 def save_custom_policy(
     tenant_id: str,
     policy_data: Dict,
-    created_by: str = "system"
+    created_by: str = "system",
+    stage: str = "input"
 ) -> Dict:
     """Save a new custom policy for a tenant."""
     try:
-        redis = _get_redis()
-
         # Validate required fields
         required_fields = ["name", "description", "prompt", "action"]
         for field in required_fields:
@@ -42,10 +56,21 @@ def save_custom_policy(
         if policy_data["action"] not in valid_actions:
             raise ValueError(f"Invalid action. Must be one of: {valid_actions}")
 
-        # Check tenant policy limit
-        existing_policies = get_tenant_custom_policies(tenant_id, enabled_only=False)
-        if len(existing_policies) >= MAX_POLICIES_PER_TENANT:
-            raise ValueError(f"Maximum {MAX_POLICIES_PER_TENANT} policies per tenant exceeded")
+        # Get tenant config
+        tenant_config = get_tenant(tenant_id)
+        if not tenant_config:
+            raise ValueError(f"Tenant {tenant_id} not found")
+
+        # Ensure custom policy guardrail exists
+        tenant_config = _ensure_custom_policy_guardrail(tenant_config, stage)
+
+        # Get existing policies
+        guardrail_key = f"custom_policy_{stage}"
+        existing_policies = tenant_config[f"{stage}_guardrails"][guardrail_key]["settings"]["policies"]
+
+        # Check policy limit
+        if len(existing_policies) >= MAX_POLICIES_PER_STAGE:
+            raise ValueError(f"Maximum {MAX_POLICIES_PER_STAGE} policies per {stage} stage exceeded")
 
         # Generate policy ID and set defaults
         policy_id = str(uuid.uuid4())
@@ -53,11 +78,11 @@ def save_custom_policy(
 
         policy = {
             "policy_id": policy_id,
-            "tenant_id": tenant_id,
             "name": policy_data["name"],
             "description": policy_data["description"],
             "prompt": policy_data["prompt"],
             "action": policy_data["action"],
+            "stage": stage,
             "enabled": policy_data.get("enabled", True),
             "confidence_threshold": policy_data.get("confidence_threshold", 0.8),
             "priority": policy_data.get("priority", 100),
@@ -68,19 +93,16 @@ def save_custom_policy(
             "version": 1
         }
 
-        # Store individual policy
-        policy_key = POLICY_KEY.format(tenant_id=tenant_id, policy_id=policy_id)
-        redis.setex(policy_key, 86400 * 30, json.dumps(policy))  # 30 day TTL
+        # Add policy to the list
+        existing_policies.append(policy)
 
-        # Add to tenant's policy list
-        tenant_key = TENANT_POLICIES_KEY.format(tenant_id=tenant_id)
-        redis.sadd(tenant_key, policy_id)
-        redis.expire(tenant_key, 86400 * 30)  # 30 day TTL
+        # Sort by priority (lower number = higher priority)
+        existing_policies.sort(key=lambda p: p.get("priority", 100))
 
-        # Update global index for monitoring
-        redis.hset(POLICY_INDEX_KEY, f"{tenant_id}:{policy_id}", now.isoformat())
+        # Save back to tenant config
+        update_tenant(tenant_id, tenant_config)
 
-        logger.info(f"Created custom policy {policy_id} for tenant {tenant_id}")
+        logger.info(f"Created custom {stage} policy {policy_id} for tenant {tenant_id}")
         return policy
 
     except Exception as e:
@@ -88,51 +110,66 @@ def save_custom_policy(
         raise
 
 
-def get_custom_policy(tenant_id: str, policy_id: str) -> Optional[Dict]:
+def get_custom_policy(tenant_id: str, policy_id: str, stage: Optional[str] = None) -> Optional[Dict]:
     """Get a specific custom policy by ID."""
     try:
-        redis = _get_redis()
-        policy_key = POLICY_KEY.format(tenant_id=tenant_id, policy_id=policy_id)
-
-        policy_data = redis.get(policy_key)
-        if not policy_data:
+        tenant_config = get_tenant(tenant_id)
+        if not tenant_config:
             return None
 
-        policy = json.loads(policy_data)
+        # Search both stages if stage not specified
+        stages_to_search = [stage] if stage else ["input", "output"]
 
-        # Verify tenant ownership
-        if policy.get("tenant_id") != tenant_id:
-            logger.warning(f"Tenant {tenant_id} attempted to access policy {policy_id} owned by {policy.get('tenant_id')}")
-            return None
+        for search_stage in stages_to_search:
+            guardrail_key = f"custom_policy_{search_stage}"
+            stage_key = f"{search_stage}_guardrails"
 
-        return policy
+            if (stage_key in tenant_config and
+                guardrail_key in tenant_config[stage_key] and
+                "settings" in tenant_config[stage_key][guardrail_key]):
+
+                policies = tenant_config[stage_key][guardrail_key]["settings"].get("policies", [])
+                for policy in policies:
+                    if policy.get("policy_id") == policy_id:
+                        return policy
+
+        return None
 
     except Exception as e:
         logger.error(f"Error retrieving custom policy {policy_id} for tenant {tenant_id}: {e}")
         return None
 
 
-def get_tenant_custom_policies(tenant_id: str, enabled_only: bool = True) -> List[Dict]:
+def get_tenant_custom_policies(tenant_id: str, enabled_only: bool = True, stage: Optional[str] = None) -> List[Dict]:
     """Get all custom policies for a tenant."""
     try:
-        redis = _get_redis()
-        tenant_key = TENANT_POLICIES_KEY.format(tenant_id=tenant_id)
-
-        policy_ids = redis.smembers(tenant_key)
-        if not policy_ids:
+        tenant_config = get_tenant(tenant_id)
+        if not tenant_config:
             return []
 
-        policies = []
-        for policy_id in policy_ids:
-            policy = get_custom_policy(tenant_id, policy_id.decode())
-            if policy:
-                if not enabled_only or policy.get("enabled", True):
-                    policies.append(policy)
+        all_policies = []
+        stages_to_check = [stage] if stage else ["input", "output"]
+
+        for check_stage in stages_to_check:
+            guardrail_key = f"custom_policy_{check_stage}"
+            stage_key = f"{check_stage}_guardrails"
+
+            if (stage_key in tenant_config and
+                guardrail_key in tenant_config[stage_key] and
+                "settings" in tenant_config[stage_key][guardrail_key]):
+
+                policies = tenant_config[stage_key][guardrail_key]["settings"].get("policies", [])
+                for policy in policies:
+                    if not enabled_only or policy.get("enabled", True):
+                        # Ensure stage is set
+                        if "stage" not in policy:
+                            policy["stage"] = check_stage
+                        all_policies.append(policy)
 
         # Sort by priority (lower number = higher priority)
-        policies.sort(key=lambda p: p.get("priority", 100))
+        all_policies.sort(key=lambda p: p.get("priority", 100))
 
-        return policies
+        return all_policies
 
     except Exception as e:
         logger.error(f"Error retrieving custom policies for tenant {tenant_id}: {e}")
@@ -147,30 +184,56 @@ def update_custom_policy(
 ) -> Optional[Dict]:
     """Update an existing custom policy."""
     try:
-        # Get existing policy
-        policy = get_custom_policy(tenant_id, policy_id)
-        if not policy:
+        # Get tenant config
+        tenant_config = get_tenant(tenant_id)
+        if not tenant_config:
             return None
 
-        # Validate updates
-        if "action" in updates:
-            valid_actions = ["pass", "warn", "redact", "block"]
-            if updates["action"] not in valid_actions:
-                raise ValueError(f"Invalid action. Must be one of: {valid_actions}")
+        # Find the policy and its stage
+        policy_found = False
+        target_stage = None
 
-        # Apply updates
-        policy.update(updates)
-        policy["updated_at"] = datetime.utcnow().isoformat()
-        policy["updated_by"] = updated_by
-        policy["version"] = policy.get("version", 1) + 1
+        for stage in ["input", "output"]:
+            guardrail_key = f"custom_policy_{stage}"
+            stage_key = f"{stage}_guardrails"
 
-        # Save updated policy
-        redis = _get_redis()
-        policy_key = POLICY_KEY.format(tenant_id=tenant_id, policy_id=policy_id)
-        redis.setex(policy_key, 86400 * 30, json.dumps(policy))
+            if (stage_key in tenant_config and
+                guardrail_key in tenant_config[stage_key] and
+                "settings" in tenant_config[stage_key][guardrail_key]):
 
-        logger.info(f"Updated custom policy {policy_id} for tenant {tenant_id}")
-        return policy
+                policies = tenant_config[stage_key][guardrail_key]["settings"]["policies"]
+                for i, policy in enumerate(policies):
+                    if policy.get("policy_id") == policy_id:
+                        # Validate updates
+                        if "action" in updates:
+                            valid_actions = ["pass", "warn", "redact", "block"]
+                            if updates["action"] not in valid_actions:
+                                raise ValueError(f"Invalid action. Must be one of: {valid_actions}")
+
+                        # Apply updates
+                        policy.update(updates)
+                        policy["updated_at"] = datetime.utcnow().isoformat()
+                        policy["updated_by"] = updated_by
+                        policy["version"] = policy.get("version", 1) + 1
+
+                        # Re-sort by priority
+                        policies.sort(key=lambda p: p.get("priority", 100))
+
+                        policy_found = True
+                        target_stage = stage
+                        break
+
+            if policy_found:
+                break
+
+        if not policy_found:
+            return None
+
+        # Save updated config
+        update_tenant(tenant_id, tenant_config)
+
+        logger.info(f"Updated custom {target_stage} policy {policy_id} for tenant {tenant_id}")
+        return get_custom_policy(tenant_id, policy_id, target_stage)
 
     except Exception as e:
         logger.error(f"Error updating custom policy {policy_id} for tenant {tenant_id}: {e}")
@@ -180,25 +243,41 @@ def update_custom_policy(
 def delete_custom_policy(tenant_id: str, policy_id: str) -> bool:
     """Delete a custom policy."""
     try:
-        # Verify policy exists and belongs to tenant
-        policy = get_custom_policy(tenant_id, policy_id)
-        if not policy:
+        # Get tenant config
+        tenant_config = get_tenant(tenant_id)
+        if not tenant_config:
             return False
 
-        redis = _get_redis()
+        # Find and remove the policy
+        policy_found = False
+        target_stage = None
 
-        # Remove from tenant's policy list
-        tenant_key = TENANT_POLICIES_KEY.format(tenant_id=tenant_id)
-        redis.srem(tenant_key, policy_id)
+        for stage in ["input", "output"]:
+            guardrail_key = f"custom_policy_{stage}"
+            stage_key = f"{stage}_guardrails"
 
-        # Delete individual policy
-        policy_key = POLICY_KEY.format(tenant_id=tenant_id, policy_id=policy_id)
-        redis.delete(policy_key)
+            if (stage_key in tenant_config and
+                guardrail_key in tenant_config[stage_key] and
+                "settings" in tenant_config[stage_key][guardrail_key]):
 
-        # Remove from global index
-        redis.hdel(POLICY_INDEX_KEY, f"{tenant_id}:{policy_id}")
+                policies = tenant_config[stage_key][guardrail_key]["settings"]["policies"]
+                for i, policy in enumerate(policies):
+                    if policy.get("policy_id") == policy_id:
+                        policies.pop(i)
+                        policy_found = True
+                        target_stage = stage
+                        break
 
-        logger.info(f"Deleted custom policy {policy_id} for tenant {tenant_id}")
+            if policy_found:
+                break
+
+        if not policy_found:
+            return False
+
+        # Save updated config
+        update_tenant(tenant_id, tenant_config)
+
+        logger.info(f"Deleted custom {target_stage} policy {policy_id} for tenant {tenant_id}")
         return True
 
     except Exception as e:
@@ -221,19 +300,24 @@ def disable_custom_policy(tenant_id: str, policy_id: str) -> bool:
 def get_policy_stats(tenant_id: str) -> Dict:
     """Get statistics about tenant's custom policies."""
     try:
-        policies = get_tenant_custom_policies(tenant_id, enabled_only=False)
+        all_policies = get_tenant_custom_policies(tenant_id, enabled_only=False)
+        input_policies = get_tenant_custom_policies(tenant_id, enabled_only=False, stage="input")
+        output_policies = get_tenant_custom_policies(tenant_id, enabled_only=False, stage="output")
 
         stats = {
-            "total_policies": len(policies),
-            "enabled_policies": len([p for p in policies if p.get("enabled", True)]),
-            "disabled_policies": len([p for p in policies if not p.get("enabled", True)]),
-            "max_allowed": MAX_POLICIES_PER_TENANT,
-            "remaining_slots": MAX_POLICIES_PER_TENANT - len(policies),
+            "total_policies": len(all_policies),
+            "enabled_policies": len([p for p in all_policies if p.get("enabled", True)]),
+            "disabled_policies": len([p for p in all_policies if not p.get("enabled", True)]),
+            "input_policies": len(input_policies),
+            "output_policies": len(output_policies),
+            "max_allowed_per_stage": MAX_POLICIES_PER_STAGE,
+            "remaining_input_slots": MAX_POLICIES_PER_STAGE - len(input_policies),
+            "remaining_output_slots": MAX_POLICIES_PER_STAGE - len(output_policies),
             "actions": {}
         }
 
         # Count by action type
-        for policy in policies:
+        for policy in all_policies:
             action = policy.get("action", "unknown")
             stats["actions"][action] = stats["actions"].get(action, 0) + 1
 
@@ -245,8 +329,11 @@ def get_policy_stats(tenant_id: str) -> Dict:
             "total_policies": 0,
             "enabled_policies": 0,
             "disabled_policies": 0,
-            "max_allowed": MAX_POLICIES_PER_TENANT,
-            "remaining_slots": MAX_POLICIES_PER_TENANT,
+            "input_policies": 0,
+            "output_policies": 0,
+            "max_allowed_per_stage": MAX_POLICIES_PER_STAGE,
+            "remaining_input_slots": MAX_POLICIES_PER_STAGE,
+            "remaining_output_slots": MAX_POLICIES_PER_STAGE,
             "actions": {}
         }
 

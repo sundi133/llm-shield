@@ -28,10 +28,11 @@ class CustomPolicyInputGuardrail(BaseGuardrail):
         tenant_id = context.get("tenant_id", "default")
 
         try:
-            # Get enabled custom policies for tenant (max 10)
-            policies = get_tenant_custom_policies(tenant_id, enabled_only=True)
+            # Get enabled custom policies from guardrail settings
+            policies = self.settings.get("policies", [])
+            enabled_policies = [p for p in policies if p.get("enabled", True) and p.get("stage", "input") == "input"]
 
-            if not policies:
+            if not enabled_policies:
                 return GuardrailResult(
                     passed=True,
                     action="pass",
@@ -45,7 +46,7 @@ class CustomPolicyInputGuardrail(BaseGuardrail):
             start_time = datetime.now()
             violations = []
 
-            for policy in policies:
+            for policy in enabled_policies:
                 try:
                     result = await self._evaluate_policy_with_llm(text, policy, context)
                     if not result["passed"]:
@@ -62,7 +63,7 @@ class CustomPolicyInputGuardrail(BaseGuardrail):
             latency_ms = (end_time - start_time).total_seconds() * 1000
 
             # Return worst violation or pass
-            final_result = self._aggregate_policy_results(violations, policies)
+            final_result = self._aggregate_policy_results(violations, enabled_policies)
             final_result["latency_ms"] = round(latency_ms, 2)
 
             return GuardrailResult(

@@ -17,7 +17,7 @@ from storage.custom_policies import (
     disable_custom_policy,
     get_policy_stats,
     validate_policy_prompt,
-    MAX_POLICIES_PER_TENANT,
+    MAX_POLICIES_PER_STAGE,
 )
 
 router = APIRouter(prefix="/v1/tenant/me/custom-policies", tags=["tenant-custom-policies"])
@@ -44,9 +44,17 @@ class CustomPolicyRequest(BaseModel):
     description: str = Field(..., min_length=1, max_length=500, description="Policy description")
     prompt: str = Field(..., min_length=20, max_length=2000, description="Natural language policy definition")
     action: str = Field(..., description="Action to take when policy is violated")
+    stage: str = Field("input", description="Policy stage: input or output")
     enabled: Optional[bool] = Field(True, description="Whether policy is enabled")
     confidence_threshold: Optional[float] = Field(0.8, ge=0.5, le=1.0, description="Minimum confidence for violation")
     priority: Optional[int] = Field(100, ge=1, le=1000, description="Policy priority (lower = higher priority)")
+
+    @validator("stage")
+    def validate_stage(cls, v):
+        valid_stages = ["input", "output"]
+        if v not in valid_stages:
+            raise ValueError(f"Stage must be one of: {valid_stages}")
+        return v
 
     @validator("action")
     def validate_action(cls, v):
@@ -73,9 +81,18 @@ class CustomPolicyUpdateRequest(BaseModel):
     description: Optional[str] = Field(None, min_length=1, max_length=500)
     prompt: Optional[str] = Field(None, min_length=20, max_length=2000)
     action: Optional[str] = Field(None)
+    stage: Optional[str] = Field(None)
     enabled: Optional[bool] = Field(None)
     confidence_threshold: Optional[float] = Field(None, ge=0.5, le=1.0)
     priority: Optional[int] = Field(None, ge=1, le=1000)
+
+    @validator("stage")
+    def validate_stage(cls, v):
+        if v is not None:
+            valid_stages = ["input", "output"]
+            if v not in valid_stages:
+                raise ValueError(f"Stage must be one of: {valid_stages}")
+        return v
 
     @validator("action")
     def validate_action(cls, v):
@@ -142,7 +159,8 @@ async def create_custom_policy(request: Request, body: CustomPolicyRequest):
         policy = save_custom_policy(
             tenant_id=tenant_id,
             policy_data=body.dict(),
-            created_by=f"tenant:{tenant_id}"
+            created_by=f"tenant:{tenant_id}",
+            stage=body.stage
         )
 
         _audit_log(
@@ -336,7 +354,8 @@ async def get_policy_limits(request: Request):
     return {
         "tenant_id": tenant_id,
         "limits": {
-            "max_policies_per_tenant": MAX_POLICIES_PER_TENANT,
+            "max_policies_per_stage": MAX_POLICIES_PER_STAGE,
+            "valid_stages": ["input", "output"],
             "min_prompt_length": 20,
             "max_prompt_length": 2000,
             "min_name_length": 1,
