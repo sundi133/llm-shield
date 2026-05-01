@@ -1,6 +1,5 @@
 """Custom Policy Output Guardrail - Tenant-specific LLM-based policy evaluation for output."""
 
-import json
 import logging
 from datetime import datetime
 from typing import Dict, Optional
@@ -8,7 +7,6 @@ from typing import Dict, Optional
 from guardrails.base import BaseGuardrail
 from core.llm_backend import async_llm_call, parse_llm_json
 from core.models import GuardrailResult
-from storage.custom_policies import get_tenant_custom_policies
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +23,6 @@ class CustomPolicyOutputGuardrail(BaseGuardrail):
     async def check(self, text: str, context: Optional[dict] = None) -> GuardrailResult:
         """Check output text against tenant's custom policies."""
         context = context or {}
-        tenant_id = context.get("tenant_id", "default")
 
         try:
             # Get enabled custom policies from guardrail settings
@@ -191,7 +188,7 @@ Respond with ONLY a JSON object in this exact format:
             }
 
         # Find the most severe action
-        action_severity = {"pass": 0, "warn": 1, "redact": 2, "block": 3}
+        action_severity = {"pass": 0, "log": 1, "warn": 2, "redact": 3, "block": 4}
         worst_violation = max(violations, key=lambda v: action_severity.get(v["action"], 0))
 
         # Collect all violation details
