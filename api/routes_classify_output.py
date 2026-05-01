@@ -233,6 +233,8 @@ async def _apply_tool_sanitization(
 
 # Mapping from request keys to internal guardrail names
 _NAME_MAP = {
+    "custom-policy-output": "custom_policy_output",
+    "custom_policy_output": "custom_policy_output",
     "hallucinated-links": "hallucinated_links",
     "hallucinated_links": "hallucinated_links",
     "hallucinated-weblink-detection": "hallucinated_links",
