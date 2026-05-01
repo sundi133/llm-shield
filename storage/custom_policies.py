@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from storage.redis_client import get_redis_client
+from storage.tenant_store import _get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def save_custom_policy(
 ) -> Dict:
     """Save a new custom policy for a tenant."""
     try:
-        redis = get_redis_client()
+        redis = _get_redis()
 
         # Validate required fields
         required_fields = ["name", "description", "prompt", "action"]
@@ -91,7 +91,7 @@ def save_custom_policy(
 def get_custom_policy(tenant_id: str, policy_id: str) -> Optional[Dict]:
     """Get a specific custom policy by ID."""
     try:
-        redis = get_redis_client()
+        redis = _get_redis()
         policy_key = POLICY_KEY.format(tenant_id=tenant_id, policy_id=policy_id)
 
         policy_data = redis.get(policy_key)
@@ -115,7 +115,7 @@ def get_custom_policy(tenant_id: str, policy_id: str) -> Optional[Dict]:
 def get_tenant_custom_policies(tenant_id: str, enabled_only: bool = True) -> List[Dict]:
     """Get all custom policies for a tenant."""
     try:
-        redis = get_redis_client()
+        redis = _get_redis()
         tenant_key = TENANT_POLICIES_KEY.format(tenant_id=tenant_id)
 
         policy_ids = redis.smembers(tenant_key)
@@ -165,7 +165,7 @@ def update_custom_policy(
         policy["version"] = policy.get("version", 1) + 1
 
         # Save updated policy
-        redis = get_redis_client()
+        redis = _get_redis()
         policy_key = POLICY_KEY.format(tenant_id=tenant_id, policy_id=policy_id)
         redis.setex(policy_key, 86400 * 30, json.dumps(policy))
 
@@ -185,7 +185,7 @@ def delete_custom_policy(tenant_id: str, policy_id: str) -> bool:
         if not policy:
             return False
 
-        redis = get_redis_client()
+        redis = _get_redis()
 
         # Remove from tenant's policy list
         tenant_key = TENANT_POLICIES_KEY.format(tenant_id=tenant_id)
