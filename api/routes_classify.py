@@ -14,6 +14,8 @@ router = APIRouter()
 
 # Mapping from request kebab-case keys to internal guardrail names
 _NAME_MAP = {
+    "custom-policy-input": "custom_policy_input",
+    "custom_policy_input": "custom_policy_input",
     "keyword-blocklist": "keyword_blocklist",
     "keyword_blocklist": "keyword_blocklist",
     "topic-restriction": "topic_restriction",

@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 
 from guardrails.base import BaseGuardrail
 from core.llm_backend import async_llm_call, parse_llm_json
@@ -22,9 +22,9 @@ class CustomPolicyOutputGuardrail(BaseGuardrail):
         self.tier = "slow"  # Custom policies use LLM evaluation
         self.stage = "output"
 
-    async def check(self, text: str, **kwargs) -> GuardrailResult:
+    async def check(self, text: str, context: Optional[dict] = None) -> GuardrailResult:
         """Check output text against tenant's custom policies."""
-        context = kwargs.get("context", {})
+        context = context or {}
         tenant_id = context.get("tenant_id", "default")
 
         try:
