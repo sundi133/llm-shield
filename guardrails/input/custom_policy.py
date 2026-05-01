@@ -61,6 +61,7 @@ class CustomPolicyInputGuardrail(BaseGuardrail):
 
             # Return worst violation or pass
             final_result = self._aggregate_policy_results(violations, enabled_policies)
+            final_result["action"] = self._apply_guardrail_action(final_result["action"])
             final_result["latency_ms"] = round(latency_ms, 2)
 
             return GuardrailResult(
@@ -172,6 +173,22 @@ Respond with ONLY a JSON object in this exact format:
                     "error": str(e)
                 }
             }
+
+    def _apply_guardrail_action(self, policy_action: str) -> str:
+        """Let the parent custom_policy_input action escalate policy violations.
+
+        The per-policy action is the default. If the tenant sets the wrapper
+        guardrail action to warn/redact/block, use the stricter of the two.
+        action=pass keeps per-policy actions unchanged.
+        """
+        action_severity = {"pass": 0, "log": 1, "warn": 2, "redact": 3, "block": 4}
+        wrapper_action = self.configured_action
+        if wrapper_action == "pass":
+            return policy_action
+        return max(
+            [policy_action, wrapper_action],
+            key=lambda action: action_severity.get(action, 0),
+        )
 
     def _aggregate_policy_results(self, violations: list[Dict], all_policies: list[Dict]) -> Dict:
         """Aggregate results from multiple policy violations."""
