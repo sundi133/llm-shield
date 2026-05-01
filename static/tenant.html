@@ -1855,6 +1855,68 @@
           <div id="policies-msg"></div>
         </div>
       </div>
+
+      <!-- Custom Policy Modal -->
+      <div id="custom-policy-modal" class="modal hidden">
+        <div class="modal-overlay" onclick="hideCustomPolicyModal()"></div>
+        <div class="modal-content" style="max-width: 600px;">
+          <div class="modal-header">
+            <h3 id="custom-policy-modal-title">Create Custom Policy</h3>
+            <button onclick="hideCustomPolicyModal()">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="field">
+              <label for="custom-policy-name">Policy Name *</label>
+              <input type="text" id="custom-policy-name" placeholder="e.g., Competitor Information Block" maxlength="100">
+            </div>
+            <div class="field">
+              <label for="custom-policy-description">Description *</label>
+              <input type="text" id="custom-policy-description" placeholder="Brief description of what this policy does" maxlength="500">
+            </div>
+            <div class="field">
+              <label for="custom-policy-prompt">Policy Definition *</label>
+              <textarea id="custom-policy-prompt" placeholder="Describe in natural language what content should be blocked, warned, or redacted. For example:
+
+Block any input asking about competitor companies, their pricing strategies, or internal business information. This includes requests for competitive analysis, market positioning, or confidential data about other organizations in our industry." style="min-height: 150px;" maxlength="2000"></textarea>
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
+                <span id="custom-policy-prompt-count">0</span>/2000 characters
+              </div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+              <div class="field">
+                <label for="custom-policy-action">Action *</label>
+                <select id="custom-policy-action" style="width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); padding: 0.55rem 0.75rem; font-family: inherit; font-size: 13px;">
+                  <option value="warn">Warn - Log violation but allow content</option>
+                  <option value="block">Block - Prevent content processing</option>
+                  <option value="redact">Redact - Remove violating content</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="custom-policy-confidence">Confidence Threshold</label>
+                <input type="range" id="custom-policy-confidence" min="0.5" max="1.0" step="0.1" value="0.8" style="width: 100%;">
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
+                  <span id="custom-policy-confidence-value">0.8</span> - Higher = stricter detection
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <label for="custom-policy-priority">Priority (1-1000)</label>
+              <input type="number" id="custom-policy-priority" value="100" min="1" max="1000" placeholder="100">
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
+                Lower numbers = higher priority (evaluated first)
+              </div>
+            </div>
+            <div class="field">
+              <button type="button" onclick="validateCustomPolicyPrompt()" class="small">Test Policy Prompt</button>
+              <div id="custom-policy-validation" style="margin-top: 0.5rem;"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button onclick="hideCustomPolicyModal()">Cancel</button>
+            <button class="primary" onclick="saveCustomPolicy()" id="save-custom-policy-btn">Create Policy</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Custom Policies -->
