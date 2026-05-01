@@ -10,11 +10,27 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from storage.tenant_store import get_tenant, update_tenant
+from storage.tenant_store import get_tenant, set_tenant_policies
 
 logger = logging.getLogger(__name__)
 
 MAX_POLICIES_PER_STAGE = 10
+
+
+def _persist_policy_stage(tenant_id: str, tenant_config: Dict, stage: str) -> None:
+    """Persist only the guardrail stage touched by a custom policy change."""
+    if stage == "input":
+        set_tenant_policies(
+            tenant_id,
+            input_guardrails=tenant_config.get("input_guardrails", {}),
+        )
+    elif stage == "output":
+        set_tenant_policies(
+            tenant_id,
+            output_guardrails=tenant_config.get("output_guardrails", {}),
+        )
+    else:
+        raise ValueError("stage must be 'input' or 'output'")
 
 
 def _ensure_custom_policy_guardrail(tenant_config: Dict, stage: str) -> Dict:
@@ -100,7 +116,7 @@ def save_custom_policy(
         existing_policies.sort(key=lambda p: p.get("priority", 100))
 
         # Save back to tenant config
-        update_tenant(tenant_id, tenant_config)
+        _persist_policy_stage(tenant_id, tenant_config, stage)
 
         logger.info(f"Created custom {stage} policy {policy_id} for tenant {tenant_id}")
         return policy
@@ -230,7 +246,7 @@ def update_custom_policy(
             return None
 
         # Save updated config
-        update_tenant(tenant_id, tenant_config)
+        _persist_policy_stage(tenant_id, tenant_config, target_stage)
 
         logger.info(f"Updated custom {target_stage} policy {policy_id} for tenant {tenant_id}")
         return get_custom_policy(tenant_id, policy_id, target_stage)
@@ -275,7 +291,7 @@ def delete_custom_policy(tenant_id: str, policy_id: str) -> bool:
             return False
 
         # Save updated config
-        update_tenant(tenant_id, tenant_config)
+        _persist_policy_stage(tenant_id, tenant_config, target_stage)
 
         logger.info(f"Deleted custom {target_stage} policy {policy_id} for tenant {tenant_id}")
         return True

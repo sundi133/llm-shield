@@ -1199,6 +1199,45 @@
   /* Hide/show rule / intent blocks based on selected mode. */
   .dp-regex-block.hidden, .dp-ai-block.hidden { display: none; }
 
+  /* Modern range slider styles */
+  #custom-policy-confidence {
+    -webkit-appearance: none;
+    appearance: none;
+    background: #e5e7eb;
+    border-radius: 3px;
+    height: 6px;
+    outline: none;
+  }
+
+  #custom-policy-confidence::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    background: #6366f1;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
+    transition: all 0.2s;
+  }
+
+  #custom-policy-confidence::-webkit-slider-thumb:hover {
+    background: #5855eb;
+    box-shadow: 0 4px 8px rgba(99, 102, 241, 0.4);
+    transform: scale(1.1);
+  }
+
+  #custom-policy-confidence::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    background: #6366f1;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
+    transition: all 0.2s;
+  }
+
   /* Educational "regex can be tricked" callout — shown only when the user
      is on regex-only mode so we don't nag AI users. Amber-ish so it reads
      as "heads up", not "error". */
@@ -1512,11 +1551,6 @@
       <div class="nav-item" data-tab="policies">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
         I/O Guardrails
-      </div>
-      <div class="nav-item" data-tab="custom-policies">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h2m3 0h10a2 2 0 002-2V9a2 2 0 00-2-2h-4m-5 3v4m0 0v4m0-4h.01M16 7l-3-3m0 0l-3 3m3-3v6"/></svg>
-        Custom Policies
-        <span id="nav-badge-custom-policies" class="nav-badge"></span>
       </div>
       <div class="nav-item" data-tab="agents">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
@@ -1859,175 +1893,96 @@
       <!-- Custom Policy Modal -->
       <div id="custom-policy-modal" class="modal hidden">
         <div class="modal-overlay" onclick="hideCustomPolicyModal()"></div>
-        <div class="modal-content" style="max-width: 600px;">
-          <div class="modal-header">
-            <h3 id="custom-policy-modal-title">Create Custom Policy</h3>
-            <button onclick="hideCustomPolicyModal()">×</button>
+        <div class="modal-content" style="width: 860px; max-width: 90vw; max-height: 80vh; background: #ffffff; border: none; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05); overflow: hidden; position: relative; display: flex; flex-direction: column;">
+          <div class="modal-header" style="background: var(--bg-2); border-bottom: 1px solid var(--border); padding: 1rem 1.5rem; position: relative; flex-shrink: 0;">
+            <h3 id="custom-policy-modal-title" style="margin: 0; font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.025em;">Create Custom Policy</h3>
+            <button onclick="hideCustomPolicyModal()" style="position: absolute; top: 1rem; right: 1.5rem; background: var(--bg-3); border: none; font-size: 18px; color: var(--text-muted); cursor: pointer; padding: 0; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 8px; transition: all 0.2s;" onmouseover="this.style.background='var(--bg)'; this.style.color='var(--text)'" onmouseout="this.style.background='var(--bg-3)'; this.style.color='var(--text-muted)'">×</button>
           </div>
-          <div class="modal-body">
-            <div class="field">
-              <label for="custom-policy-name">Policy Name *</label>
-              <input type="text" id="custom-policy-name" placeholder="e.g., Competitor Information Block" maxlength="100">
+          <div class="modal-body" style="padding: 1.25rem 1.5rem; flex: 1; overflow-y: auto; min-height: 0;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+              <div class="field">
+                <label for="custom-policy-name" style="display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 0.375rem; text-transform: uppercase; letter-spacing: 0.025em;">Policy Name *</label>
+                <input type="text" id="custom-policy-name" placeholder="e.g., Competitor Block" maxlength="100" style="width: 100%; padding: 0.75rem 0.875rem; background: #f9fafb; border: 2px solid #e5e7eb; border-radius: 8px; color: #111827; font-family: inherit; font-size: 14px; font-weight: 500; transition: all 0.2s; box-sizing: border-box;" onfocus="this.style.borderColor='#6366f1'; this.style.background='#ffffff'; this.style.boxShadow='0 0 0 3px rgba(99, 102, 241, 0.1)'" onblur="this.style.borderColor='#e5e7eb'; this.style.background='#f9fafb'; this.style.boxShadow='none'">
+              </div>
+              <div class="field">
+                <label for="custom-policy-action" style="display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 0.375rem; text-transform: uppercase; letter-spacing: 0.025em;">Action *</label>
+                <select id="custom-policy-action" style="width: 100%; background: #f9fafb; border: 2px solid #e5e7eb; border-radius: 8px; color: #111827; padding: 0.75rem 0.875rem; font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; box-sizing: border-box;" onfocus="this.style.borderColor='#6366f1'; this.style.background='#ffffff'" onblur="this.style.borderColor='#e5e7eb'; this.style.background='#f9fafb'">
+                  <option value="warn">⚠️ Warn & Log</option>
+                  <option value="block">🚫 Block</option>
+                  <option value="redact">✂️ Redact</option>
+                </select>
+              </div>
             </div>
-            <div class="field">
-              <label for="custom-policy-description">Description *</label>
-              <input type="text" id="custom-policy-description" placeholder="Brief description of what this policy does" maxlength="500">
+            <div class="field" style="margin-bottom: 1rem;">
+              <label for="custom-policy-description" style="display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 0.375rem; text-transform: uppercase; letter-spacing: 0.025em;">Description</label>
+              <input type="text" id="custom-policy-description" placeholder="Brief description of what this policy does" maxlength="200" style="width: 100%; padding: 0.75rem 0.875rem; background: #f9fafb; border: 2px solid #e5e7eb; border-radius: 8px; color: #111827; font-family: inherit; font-size: 14px; font-weight: 500; transition: all 0.2s; box-sizing: border-box;" onfocus="this.style.borderColor='#6366f1'; this.style.background='#ffffff'; this.style.boxShadow='0 0 0 3px rgba(99, 102, 241, 0.1)'" onblur="this.style.borderColor='#e5e7eb'; this.style.background='#f9fafb'; this.style.boxShadow='none'">
             </div>
-            <div class="field">
-              <label for="custom-policy-prompt">Policy Definition *</label>
-              <textarea id="custom-policy-prompt" placeholder="Describe in natural language what content should be blocked, warned, or redacted. For example:
 
-Block any input asking about competitor companies, their pricing strategies, or internal business information. This includes requests for competitive analysis, market positioning, or confidential data about other organizations in our industry." style="min-height: 150px;" maxlength="2000"></textarea>
-              <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
+            <div class="field" style="margin-bottom: 1rem;">
+              <div style="display: flex; align-items: center; justify-content: between; margin-bottom: 0.5rem;">
+                <label style="font-size: 12px; font-weight: 600; color: #374151; text-transform: uppercase; letter-spacing: 0.025em;">Policy Definition *</label>
+                <select id="policy-examples" onchange="fillExamplePolicy()" style="background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; color: #6b7280; padding: 0.375rem 0.5rem; font-size: 11px; cursor: pointer; margin-left: auto;">
+                  <option value="">💡 Examples</option>
+                  <option value="competitor-block">🔒 Competitive Intel</option>
+                  <option value="pii-detection">🛡️ PII Detection</option>
+                  <option value="financial-data">💰 Financial Data</option>
+                  <option value="toxic-language">🚫 Toxic Language</option>
+                  <option value="medical-advice">🏥 Medical Advice</option>
+                  <option value="brand-safety">🏷️ Brand Safety</option>
+                </select>
+              </div>
+              <textarea id="custom-policy-prompt" placeholder="Describe what content should be flagged. Be specific and clear..." style="width: 100%; height: 120px; padding: 0.875rem; background: #f9fafb; border: 2px solid #e5e7eb; border-radius: 8px; color: #111827; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.5; resize: vertical; transition: all 0.2s; box-sizing: border-box;" onfocus="this.style.borderColor='#6366f1'; this.style.background='#ffffff'; this.style.boxShadow='0 0 0 3px rgba(99, 102, 241, 0.1)'" onblur="this.style.borderColor='#e5e7eb'; this.style.background='#f9fafb'; this.style.boxShadow='none'" maxlength="2000"></textarea>
+              <div style="font-size: 11px; color: #9ca3af; margin-top: 0.375rem; text-align: right;">
                 <span id="custom-policy-prompt-count">0</span>/2000 characters
               </div>
             </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; margin-bottom: 1rem;">
               <div class="field">
-                <label for="custom-policy-action">Action *</label>
-                <select id="custom-policy-action" style="width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); padding: 0.55rem 0.75rem; font-family: inherit; font-size: 13px;">
-                  <option value="warn">Warn - Log violation but allow content</option>
-                  <option value="block">Block - Prevent content processing</option>
-                  <option value="redact">Redact - Remove violating content</option>
-                </select>
+                <label style="display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 0.375rem; text-transform: uppercase; letter-spacing: 0.025em;">Confidence Threshold</label>
+                <div style="background: #f9fafb; border: 2px solid #e5e7eb; border-radius: 8px; padding: 0.875rem; transition: all 0.2s;" onfocus="this.style.borderColor='#6366f1'" tabindex="0">
+                  <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+                    <span style="font-size: 11px; color: #9ca3af; min-width: 24px; text-align: center; font-weight: 600;">50%</span>
+                    <input type="range" id="custom-policy-confidence" min="0.5" max="1.0" step="0.1" value="0.8" style="flex: 1; height: 6px; background: #e5e7eb; border-radius: 3px; outline: none; cursor: pointer; appearance: none; -webkit-appearance: none;">
+                    <span style="font-size: 11px; color: #9ca3af; min-width: 32px; text-align: center; font-weight: 600;">100%</span>
+                  </div>
+                  <div style="font-size: 12px; color: #6b7280; text-align: center; font-weight: 500;">
+                    Current: <span id="custom-policy-confidence-value" style="font-weight: 700; color: #6366f1;">80%</span>
+                  </div>
+                </div>
               </div>
               <div class="field">
-                <label for="custom-policy-confidence">Confidence Threshold</label>
-                <input type="range" id="custom-policy-confidence" min="0.5" max="1.0" step="0.1" value="0.8" style="width: 100%;">
-                <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
-                  <span id="custom-policy-confidence-value">0.8</span> - Higher = stricter detection
+                <label style="display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 0.375rem; text-transform: uppercase; letter-spacing: 0.025em;">Priority</label>
+                <div style="background: #f9fafb; border: 2px solid #e5e7eb; border-radius: 8px; padding: 0.875rem; height: 100%; display: flex; flex-direction: column; justify-content: space-between;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span style="font-size: 11px; color: #9ca3af; font-weight: 600;">1</span>
+                    <span style="font-size: 11px; color: #9ca3af; font-weight: 600;">High Priority</span>
+                    <span style="font-size: 11px; color: #9ca3af; font-weight: 600;">1000</span>
+                  </div>
+                  <input type="number" id="custom-policy-priority" value="100" min="1" max="1000" style="width: 100%; padding: 0.625rem 0.75rem; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 6px; color: #111827; font-family: inherit; font-size: 14px; font-weight: 600; transition: all 0.2s; box-sizing: border-box; text-align: center;" onfocus="this.style.borderColor='#6366f1'; this.style.boxShadow='0 0 0 2px rgba(99, 102, 241, 0.1)'" onblur="this.style.borderColor='#e5e7eb'; this.style.boxShadow='none'">
+                  <div style="font-size: 12px; color: #6b7280; text-align: center; margin-top: 0.5rem; font-weight: 500;">
+                    Current Priority: <span style="font-weight: 700; color: #6366f1;">Standard</span>
+                  </div>
                 </div>
               </div>
             </div>
-            <div class="field">
-              <label for="custom-policy-priority">Priority (1-1000)</label>
-              <input type="number" id="custom-policy-priority" value="100" min="1" max="1000" placeholder="100">
-              <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
-                Lower numbers = higher priority (evaluated first)
-              </div>
-            </div>
-            <div class="field">
-              <button type="button" onclick="validateCustomPolicyPrompt()" class="small">Test Policy Prompt</button>
-              <div id="custom-policy-validation" style="margin-top: 0.5rem;"></div>
-            </div>
+            <div id="custom-policy-validation" style="margin-top: 0.75rem;"></div>
           </div>
-          <div class="modal-footer">
-            <button onclick="hideCustomPolicyModal()">Cancel</button>
-            <button class="primary" onclick="saveCustomPolicy()" id="save-custom-policy-btn">Create Policy</button>
+          <div class="modal-footer" style="background: #f9fafb; border-top: 1px solid #e5e7eb; padding: 1rem 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
+            <button type="button" onclick="validateCustomPolicyPrompt()" style="background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db; padding: 0.625rem 1rem; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 0.375rem; transition: all 0.2s;" onmouseover="this.style.background='#e5e7eb'; this.style.color='#374151'" onmouseout="this.style.background='#f3f4f6'; this.style.color='#6b7280'">
+              <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              Test Policy
+            </button>
+            <div style="display: flex; gap: 0.75rem;">
+              <button onclick="hideCustomPolicyModal()" style="background: #ffffff; border: 1px solid #d1d5db; color: #6b7280; padding: 0.75rem 1.5rem; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#f9fafb'; this.style.color='#374151'" onmouseout="this.style.background='#ffffff'; this.style.color='#6b7280'">Cancel</button>
+              <button class="primary" onclick="saveCustomPolicy()" id="save-custom-policy-btn" style="background: var(--accent); color: white; border: none; padding: 0.75rem 2rem; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);" onmouseover="this.style.transform='translateY(-1px)'; this.style.background='var(--accent-hover)'; this.style.boxShadow='0 6px 12px -2px rgba(0, 0, 0, 0.15)'" onmouseout="this.style.transform='translateY(0)'; this.style.background='var(--accent)'; this.style.boxShadow='0 4px 6px -1px rgba(0, 0, 0, 0.1)'">Create Policy</button>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Custom Policies -->
-    <div id="tab-custom-policies" class="tab-pane hidden">
-      <div class="page-header">
-        <div class="page-title">Custom Policies</div>
-        <div class="page-desc">Create tenant-specific policies using natural language. Policies are evaluated by LLM after built-in guardrails run.</div>
-        <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
-          <button class="small" onclick="loadCustomPolicies()">Refresh</button>
-          <button class="primary small" onclick="showCreateCustomPolicyModal()">+ Create Policy</button>
-        </div>
-      </div>
-
-      <!-- Policy Stats -->
-      <div class="stats-grid" style="margin-bottom: 1.5rem;">
-        <div class="stat">
-          <div class="stat-label">Active Policies</div>
-          <div class="stat-value" id="custom-policies-active">0</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Total Policies</div>
-          <div class="stat-value" id="custom-policies-total">0</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Remaining Slots</div>
-          <div class="stat-value" id="custom-policies-remaining">10</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Policy Limit</div>
-          <div class="stat-value">10</div>
-        </div>
-      </div>
-
-      <!-- Policies List -->
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Your Custom Policies</div>
-            <div class="card-subtitle">Natural language policies evaluated by LLM for both input and output content</div>
-          </div>
-        </div>
-        <div id="custom-policies-list" class="policy-grid">
-          <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
-            <p>No custom policies configured yet.</p>
-            <button class="primary small" onclick="showCreateCustomPolicyModal()" style="margin-top: 0.5rem;">Create Your First Policy</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Custom Policy Modal -->
-      <div id="custom-policy-modal" class="modal hidden">
-        <div class="modal-overlay" onclick="hideCustomPolicyModal()"></div>
-        <div class="modal-content" style="max-width: 600px;">
-          <div class="modal-header">
-            <h3 id="custom-policy-modal-title">Create Custom Policy</h3>
-            <button onclick="hideCustomPolicyModal()">×</button>
-          </div>
-          <div class="modal-body">
-            <div class="field">
-              <label for="custom-policy-name">Policy Name *</label>
-              <input type="text" id="custom-policy-name" placeholder="e.g., Competitor Information Block" maxlength="100">
-            </div>
-            <div class="field">
-              <label for="custom-policy-description">Description *</label>
-              <input type="text" id="custom-policy-description" placeholder="Brief description of what this policy does" maxlength="500">
-            </div>
-            <div class="field">
-              <label for="custom-policy-prompt">Policy Definition *</label>
-              <textarea id="custom-policy-prompt" placeholder="Describe in natural language what content should be blocked, warned, or redacted. For example:
-
-Block any input asking about competitor companies, their pricing strategies, or internal business information. This includes requests for competitive analysis, market positioning, or confidential data about other organizations in our industry." style="min-height: 150px;" maxlength="2000"></textarea>
-              <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
-                <span id="custom-policy-prompt-count">0</span>/2000 characters
-              </div>
-            </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-              <div class="field">
-                <label for="custom-policy-action">Action *</label>
-                <select id="custom-policy-action" style="width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); padding: 0.55rem 0.75rem; font-family: inherit; font-size: 13px;">
-                  <option value="warn">Warn - Log violation but allow content</option>
-                  <option value="block">Block - Prevent content processing</option>
-                  <option value="redact">Redact - Remove violating content</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="custom-policy-confidence">Confidence Threshold</label>
-                <input type="range" id="custom-policy-confidence" min="0.5" max="1.0" step="0.1" value="0.8" style="width: 100%;">
-                <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
-                  <span id="custom-policy-confidence-value">0.8</span> - Higher = stricter detection
-                </div>
-              </div>
-            </div>
-            <div class="field">
-              <label for="custom-policy-priority">Priority (1-1000)</label>
-              <input type="number" id="custom-policy-priority" value="100" min="1" max="1000" placeholder="100">
-              <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
-                Lower numbers = higher priority (evaluated first)
-              </div>
-            </div>
-            <div class="field">
-              <button type="button" onclick="validateCustomPolicyPrompt()" class="small">Test Policy Prompt</button>
-              <div id="custom-policy-validation" style="margin-top: 0.5rem;"></div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button onclick="hideCustomPolicyModal()">Cancel</button>
-            <button class="primary" onclick="saveCustomPolicy()" id="save-custom-policy-btn">Create Policy</button>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- Usage -->
     <div id="tab-usage" class="tab-pane hidden">
@@ -3993,6 +3948,10 @@ let TENANT_INFO = null;
 let POLICIES = { input_guardrails: {}, output_guardrails: {} };
 let POLICIES_DIRTY = false;
 let ADD_POLICY_STAGE = 'input';
+const CUSTOM_POLICY_GUARDRAIL_KEYS = {
+  input: 'custom_policy_input',
+  output: 'custom_policy_output',
+};
 
 const INPUT_GUARDRAILS = [
   'adversarial_detection', 'keyword_blocklist', 'topic_restriction',
@@ -4657,6 +4616,13 @@ async function loadPolicies() {
     POLICIES = hasData
       ? { input_guardrails: apiInput, output_guardrails: apiOutput }
       : JSON.parse(JSON.stringify(DEFAULT_POLICIES));
+    if (data.custom_policies) {
+      const customPolicies = [
+        ...(data.custom_policies.input || []),
+        ...(data.custom_policies.output || []),
+      ];
+      syncCustomPoliciesIntoPolicyJson(customPolicies);
+    }
     POLICIES_DIRTY = false;
     document.getElementById('edit-banner').classList.add('hidden');
     renderPolicies();
@@ -4673,6 +4639,37 @@ function renderPolicies() {
   renderPolicyStage('input');
   renderPolicyStage('output');
   updateFullJsonPreview();
+}
+
+function syncCustomPoliciesIntoPolicyJson(customPolicies = CUSTOM_POLICIES) {
+  if (!POLICIES.input_guardrails) POLICIES.input_guardrails = {};
+  if (!POLICIES.output_guardrails) POLICIES.output_guardrails = {};
+
+  ['input', 'output'].forEach(stage => {
+    const guardrailsKey = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
+    const guardrailName = CUSTOM_POLICY_GUARDRAIL_KEYS[stage];
+    const stagePolicies = (customPolicies || [])
+      .filter(policy => (policy.stage || 'input') === stage)
+      .map(policy => ({ ...policy }))
+      .sort((a, b) => (a.priority || 100) - (b.priority || 100));
+
+    if (!stagePolicies.length) {
+      if (POLICIES[guardrailsKey][guardrailName]?.settings?.policies) {
+        delete POLICIES[guardrailsKey][guardrailName];
+      }
+      return;
+    }
+
+    const existing = POLICIES[guardrailsKey][guardrailName] || {};
+    POLICIES[guardrailsKey][guardrailName] = {
+      enabled: stagePolicies.some(policy => policy.enabled !== false),
+      action: existing.action || 'pass',
+      settings: {
+        ...(existing.settings || {}),
+        policies: stagePolicies,
+      },
+    };
+  });
 }
 
 function updateFullJsonPreview() {
@@ -11074,7 +11071,7 @@ async function loadCustomPolicies() {
   if (!API_KEY) return;
 
   try {
-    const response = await fetch(`${BASE_URL}/v1/tenant/me/custom-policies/`, {
+    const response = await fetch(`${BASE_URL}/v1/tenant/me/policies/custom`, {
       headers: { 'X-API-Key': API_KEY }
     });
 
@@ -11082,10 +11079,14 @@ async function loadCustomPolicies() {
 
     const data = await response.json();
     CUSTOM_POLICIES = data.policies || [];
+    syncCustomPoliciesIntoPolicyJson(CUSTOM_POLICIES);
 
     updateCustomPolicyStats(data.stats);
     renderCustomPolicies();
     updateCustomPolicyBadge();
+    updateFullJsonPreview();
+    const policiesJson = document.getElementById('policies-json');
+    if (policiesJson) policiesJson.value = JSON.stringify(POLICIES, null, 2);
 
   } catch (error) {
     console.error('Error loading custom policies:', error);
@@ -11096,13 +11097,19 @@ async function loadCustomPolicies() {
 function updateCustomPolicyStats(stats) {
   if (!stats) return;
 
-  document.getElementById('custom-policies-active').textContent = stats.enabled_policies || 0;
-  document.getElementById('custom-policies-total').textContent = stats.total_policies || 0;
-  document.getElementById('custom-policies-remaining').textContent = stats.remaining_slots || 10;
+  // Update stats if elements exist (for backward compatibility)
+  const activeEl = document.getElementById('custom-policies-active');
+  const totalEl = document.getElementById('custom-policies-total');
+  const remainingEl = document.getElementById('custom-policies-remaining');
+
+  if (activeEl) activeEl.textContent = stats.enabled_policies || 0;
+  if (totalEl) totalEl.textContent = stats.total_policies || 0;
+  if (remainingEl) remainingEl.textContent = stats.remaining_slots || 10;
 }
 
 function updateCustomPolicyBadge() {
   const badge = document.getElementById('nav-badge-custom-policies');
+  if (!badge) return; // Element doesn't exist anymore
   const activeCount = CUSTOM_POLICIES.filter(p => p.enabled).length;
 
   if (activeCount > 0) {
@@ -11248,6 +11255,84 @@ function hideCustomPolicyModal() {
   EDITING_POLICY_ID = null;
 }
 
+function fillExamplePolicy() {
+  const exampleType = document.getElementById('policy-examples').value;
+  if (!exampleType) return;
+
+  const examples = {
+    'competitor-block': {
+      name: 'Competitive Intelligence Block',
+      description: 'Prevents requests for competitor information, pricing strategies, and confidential business data',
+      prompt: 'Block any input that requests information about competitor companies, their pricing strategies, internal business operations, financial performance, or confidential market data. This includes requests for competitive analysis, market positioning comparisons, or any proprietary information about organizations in our industry. Allow general industry trends and publicly available information.',
+      action: 'block',
+      priority: 50
+    },
+    'pii-detection': {
+      name: 'Personal Information Detection',
+      description: 'Detects and protects personally identifiable information in conversations',
+      prompt: 'Identify and flag content that contains personally identifiable information (PII) such as social security numbers, credit card numbers, phone numbers, email addresses, home addresses, or other personal identifiers. Focus on protecting individual privacy while allowing general demographic discussions.',
+      action: 'redact',
+      priority: 10
+    },
+    'financial-data': {
+      name: 'Financial Data Protection',
+      description: 'Protects sensitive financial information and prevents unauthorized financial advice',
+      prompt: 'Block or flag content that includes specific financial account numbers, investment portfolio details, salary information, or requests for personalized financial advice. Allow general financial education and publicly available market information.',
+      action: 'warn',
+      priority: 30
+    },
+    'code-review': {
+      name: 'Code Security Review',
+      description: 'Reviews code for potential security vulnerabilities and sensitive information',
+      prompt: 'Analyze code snippets for potential security vulnerabilities including hardcoded passwords, API keys, SQL injection risks, or other security flaws. Flag code that contains sensitive credentials or implements insecure practices. Allow educational code examples and secure coding patterns.',
+      action: 'warn',
+      priority: 40
+    },
+    'legal-content': {
+      name: 'Legal Content Filter',
+      description: 'Prevents generation of specific legal advice and disclaimers',
+      prompt: 'Block content that provides specific legal advice, creates legal documents, or makes definitive legal recommendations without appropriate disclaimers. Allow general legal information and educational content about legal processes.',
+      action: 'block',
+      priority: 20
+    },
+    'toxic-language': {
+      name: 'Toxic Language Detection',
+      description: 'Detects and filters offensive, harmful, or inappropriate language',
+      prompt: 'Identify and flag content containing hate speech, personal attacks, discriminatory language, threats, or other toxic communication. Focus on maintaining respectful dialogue while preserving legitimate debate and discussion.',
+      action: 'block',
+      priority: 5
+    },
+    'medical-advice': {
+      name: 'Medical Advice Prevention',
+      description: 'Prevents generation of specific medical diagnoses or treatment recommendations',
+      prompt: 'Block content that provides specific medical diagnoses, treatment recommendations, or medication advice for individual cases. Allow general health information, wellness tips, and educational content about medical conditions with appropriate disclaimers.',
+      action: 'warn',
+      priority: 15
+    },
+    'brand-safety': {
+      name: 'Brand Safety Guidelines',
+      description: 'Ensures content aligns with brand values and safety standards',
+      prompt: 'Review content for alignment with brand safety standards, checking for controversial topics, inappropriate associations, or content that could negatively impact brand reputation. Consider context and intent while maintaining brand integrity.',
+      action: 'warn',
+      priority: 60
+    }
+  };
+
+  const example = examples[exampleType];
+  if (example) {
+    document.getElementById('custom-policy-name').value = example.name;
+    document.getElementById('custom-policy-description').value = example.description;
+    document.getElementById('custom-policy-prompt').value = example.prompt;
+    document.getElementById('custom-policy-action').value = example.action;
+    document.getElementById('custom-policy-priority').value = example.priority;
+
+    updatePromptCharacterCount();
+
+    // Reset the dropdown
+    document.getElementById('policy-examples').value = '';
+  }
+}
+
 async function saveCustomPolicy() {
   const name = document.getElementById('custom-policy-name').value.trim();
   const description = document.getElementById('custom-policy-description').value.trim();
@@ -11275,8 +11360,8 @@ async function saveCustomPolicy() {
 
   try {
     const url = EDITING_POLICY_ID
-      ? `${BASE_URL}/v1/tenant/me/custom-policies/${EDITING_POLICY_ID}`
-      : `${BASE_URL}/v1/tenant/me/custom-policies/`;
+      ? `${BASE_URL}/v1/tenant/me/policies/custom/${EDITING_POLICY_ID}`
+      : `${BASE_URL}/v1/tenant/me/policies/custom`;
 
     const method = EDITING_POLICY_ID ? 'PUT' : 'POST';
 
@@ -11295,9 +11380,17 @@ async function saveCustomPolicy() {
     }
 
     const result = await response.json();
+    console.log('Policy save result:', result);
     showToast(EDITING_POLICY_ID ? 'Policy updated successfully' : 'Policy created successfully', 'success');
     hideCustomPolicyModal();
-    loadCustomPolicies();
+
+    // Reload both custom policies and main policies to update JSON view
+    setTimeout(() => {
+      loadCustomPolicies();
+      if (typeof loadPolicies === 'function') {
+        loadPolicies();
+      }
+    }, 500);
 
   } catch (error) {
     console.error('Error saving policy:', error);
@@ -11311,7 +11404,7 @@ async function deleteCustomPolicy(policyId, policyName) {
   }
 
   try {
-    const response = await fetch(`${BASE_URL}/v1/tenant/me/custom-policies/${policyId}`, {
+    const response = await fetch(`${BASE_URL}/v1/tenant/me/policies/custom/${policyId}`, {
       method: 'DELETE',
       headers: { 'X-API-Key': API_KEY }
     });
@@ -11320,6 +11413,9 @@ async function deleteCustomPolicy(policyId, policyName) {
 
     showToast('Policy deleted successfully', 'success');
     loadCustomPolicies();
+    if (typeof loadPolicies === 'function') {
+      loadPolicies();
+    }
 
   } catch (error) {
     console.error('Error deleting policy:', error);
@@ -11330,8 +11426,8 @@ async function deleteCustomPolicy(policyId, policyName) {
 async function toggleCustomPolicy(policyId, enabled) {
   try {
     const url = enabled
-      ? `${BASE_URL}/v1/tenant/me/custom-policies/${policyId}/enable`
-      : `${BASE_URL}/v1/tenant/me/custom-policies/${policyId}/disable`;
+      ? `${BASE_URL}/v1/tenant/me/policies/custom/${policyId}/enable`
+      : `${BASE_URL}/v1/tenant/me/policies/custom/${policyId}/disable`;
 
     const response = await fetch(url, {
       method: 'POST',
@@ -11342,6 +11438,9 @@ async function toggleCustomPolicy(policyId, enabled) {
 
     showToast(`Policy ${enabled ? 'enabled' : 'disabled'} successfully`, 'success');
     loadCustomPolicies();
+    if (typeof loadPolicies === 'function') {
+      loadPolicies();
+    }
 
   } catch (error) {
     console.error('Error toggling policy:', error);
@@ -11364,7 +11463,7 @@ async function validateCustomPolicyPrompt() {
   try {
     validationDiv.innerHTML = '<div style="color: var(--text-muted); font-size: 12px;">Validating prompt...</div>';
 
-    const response = await fetch(`${BASE_URL}/v1/tenant/me/custom-policies/validate-prompt`, {
+    const response = await fetch(`${BASE_URL}/v1/tenant/me/policies/custom/validate`, {
       method: 'POST',
       headers: {
         'X-API-Key': API_KEY,
@@ -11436,7 +11535,8 @@ function updateConfidenceDisplay() {
   const slider = document.getElementById('custom-policy-confidence');
   const display = document.getElementById('custom-policy-confidence-value');
   if (slider && display) {
-    display.textContent = slider.value;
+    const percentage = Math.round(slider.value * 100);
+    display.textContent = percentage + '%';
   }
 }
 
@@ -11460,9 +11560,9 @@ document.addEventListener('click', function(e) {
 // Update existing loadPolicies function to also load custom policies
 const originalLoadPolicies = window.loadPolicies;
 if (originalLoadPolicies) {
-  window.loadPolicies = function() {
-    originalLoadPolicies();
-    loadCustomPolicies();
+  window.loadPolicies = async function() {
+    await originalLoadPolicies();
+    await loadCustomPolicies();
   };
 }
 
