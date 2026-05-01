@@ -798,7 +798,7 @@ def create_admin_app() -> FastAPI:
     # Mount admin + tenant routers
     app.include_router(tenant_router)           # /v1/admin/tenants/*
     app.include_router(tenant_audit_router)     # /v1/admin/audit, /v1/admin/dashboard
-    app.include_router(tenant_self_router)      # /v1/tenant/*
+    app.include_router(tenant_self_router)      # /v1/tenant/* (includes policies and custom policy CRUD)
     app.include_router(agents_registry_router)  # /v1/agents/* (registry, roles, tool policies)
     app.include_router(data_policies_router)    # /v1/data-policies/*
 

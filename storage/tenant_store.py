@@ -198,6 +198,7 @@ def update_tenant(tenant_id: str, updates: dict) -> Optional[dict]:
     config = get_tenant(tenant_id)
     if config is None:
         return None
+    updates = dict(updates)
 
     # Deep merge guardrail configs
     for section in ("input_guardrails", "output_guardrails", "rbac"):
