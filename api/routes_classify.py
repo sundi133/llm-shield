@@ -249,13 +249,14 @@ async def classify(request: Request, body: dict):
 def _build_response(pipeline_result: PipelineResult, start: datetime) -> dict:
     """Build the standard API response from a PipelineResult."""
     total_ms = (datetime.now() - start).total_seconds() * 1000
-    has_block = any(
-        not r.passed and r.action == "block" for r in pipeline_result.results
-    )
-    has_warn = any(not r.passed and r.action == "warn" for r in pipeline_result.results)
+    action_severity = {"pass": 0, "log": 1, "warn": 2, "redact": 3, "block": 4}
+    violations = [r for r in pipeline_result.results if not r.passed]
+    root_action = "pass"
+    if violations:
+        root_action = max(violations, key=lambda r: action_severity.get(r.action, 0)).action
     return {
-        "safe": pipeline_result.allowed,
-        "action": "block" if has_block else ("warn" if has_warn else "pass"),
+        "safe": root_action != "block",
+        "action": root_action,
         "guardrail_results": [_format_result(r) for r in pipeline_result.results],
         "inference_time_ms": round(total_ms, 2),
     }
