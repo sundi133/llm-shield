@@ -539,6 +539,14 @@ def _build_response(pipeline_result: PipelineResult, start: datetime) -> dict:
 async def _classify_with_defaults(output: str, context: dict, start: datetime) -> dict:
     """Run the full output pipeline using server-default guardrail config."""
     output_guardrails = get_by_stage("output")
+
+    # Ensure role-based policy guardrail is prioritized when role context is available
+    if context.get("user_role") and context.get("tenant_id"):
+        # Move role-based policy guardrail to the front if it exists
+        role_based_guardrail = get_guardrail("role_based_policy")
+        if role_based_guardrail and role_based_guardrail in output_guardrails:
+            output_guardrails = [role_based_guardrail] + [g for g in output_guardrails if g != role_based_guardrail]
+
     pipeline_result = await run_pipeline(output_guardrails, output, context)
     return _build_response(pipeline_result, start)
 
@@ -556,6 +564,8 @@ async def _classify_tenant(
     """
     configs: dict[str, dict] = {}
     singletons = []
+
+    # Process configured tenant guardrails
     for name, gcfg in tenant_guardrails.items():
         if not gcfg.get("enabled", True):
             continue
@@ -565,6 +575,18 @@ async def _classify_tenant(
             "settings": gcfg.get("settings", {}),
         }
         g = get_guardrail(name)
+        if g:
+            singletons.append(g)
+
+    # Auto-enable role-based policy guardrail when role context is available
+    if (context.get("user_role") and context.get("tenant_id") and
+        "role_based_policy" not in configs):
+        configs["role_based_policy"] = {
+            "enabled": True,
+            "action": "warn",  # Default to warn for safety
+            "settings": {},
+        }
+        g = get_guardrail("role_based_policy")
         if g:
             singletons.append(g)
 
