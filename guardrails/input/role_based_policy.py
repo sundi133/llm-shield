@@ -90,6 +90,43 @@ class RoleBasedInputPolicyGuardrail(BaseGuardrail):
                 latency_ms=0.0
             )
 
+    async def _load_role_policies(self, tenant_id: str, user_role: str) -> List[Dict]:
+        """Load data policies that apply to this user role."""
+        try:
+            from storage.tenant_store import _get_redis
+            r = _get_redis()
+            if not r:
+                return []
+
+            data_policies_key = f"data_policies:{tenant_id}"
+            policies_data = r.get(data_policies_key)
+            if not policies_data:
+                return []
+
+            import json
+            all_policies = json.loads(policies_data)
+            role_applicable_policies = []
+
+            # Extract policies that apply to this role
+            for tool_name, policy in all_policies.items():
+                role_policies = policy.get("role_policies", [])
+                for role_policy in role_policies:
+                    if role_policy.get("role") == user_role:
+                        role_applicable_policies.append({
+                            "tool_name": tool_name,
+                            "role": user_role,
+                            "action": role_policy.get("action", "allow"),
+                            "data_scope": role_policy.get("data_scope", []),
+                            "input_rules": role_policy.get("input_rules", []),
+                            "output_rules": role_policy.get("output_rules", []),
+                        })
+
+            return role_applicable_policies
+
+        except Exception as e:
+            logger.error(f"Error loading role policies for {tenant_id}/{user_role}: {e}")
+            return []
+
     async def _analyze_input_for_role_violations(
         self,
         input_text: str,
@@ -99,45 +136,46 @@ class RoleBasedInputPolicyGuardrail(BaseGuardrail):
     ) -> Dict:
         """Analyze if user input violates role-based access policies."""
 
-        # Define role-based restrictions
-        role_restrictions = {
-            "nurse": [
-                "Cannot request diagnosis changes or prescription modifications",
-                "Cannot access financial/billing information",
-                "Cannot request patient discharge decisions",
-                "Cannot access mental health records without explicit authorization"
-            ],
-            "admin": [
-                "Cannot request clinical medical decisions",
-                "Cannot modify patient treatment plans",
-                "Should focus on operational/administrative tasks"
-            ],
-            "patient": [
-                "Can only access their own medical information",
-                "Cannot request other patients' data",
-                "Cannot request operational/staff information"
-            ],
-            "guest": [
-                "Cannot access any patient information",
-                "Cannot request medical procedures or diagnoses",
-                "Limited to general information requests only"
+        # Load tenant-specific role restrictions from data policies
+        role_policies = await self._load_role_policies(tenant_id, user_role)
+
+        # Extract restrictions and allowed actions for this role
+        restrictions = []
+        allowed_actions = []
+
+        for policy in role_policies:
+            # Get role-specific rules
+            role_rules = policy.get("input_rules", [])
+            restrictions.extend(role_rules)
+
+            # Get allowed data scope
+            data_scope = policy.get("data_scope", [])
+            if data_scope:
+                allowed_actions.append(f"Can access {', '.join(data_scope)} data")
+
+        # Fallback to generic restrictions if no tenant-specific policies
+        if not restrictions:
+            restrictions = [
+                "Follow organizational data access policies",
+                "Request only information appropriate for role level",
+                "Do not attempt unauthorized data access"
             ]
-        }
 
-        restrictions = role_restrictions.get(user_role, [])
-
-        evaluation_prompt = f"""You are a healthcare access control analyzer. Determine if this user input violates role-based access policies.
+        evaluation_prompt = f"""You are an access control analyzer. Determine if this user input violates role-based access policies for this organization.
 
 USER ROLE: {user_role}
 
 ROLE RESTRICTIONS FOR {user_role.upper()}:
 {chr(10).join(f"- {restriction}" for restriction in restrictions)}
 
+ALLOWED ACTIONS FOR {user_role.upper()}:
+{chr(10).join(f"- {action}" for action in allowed_actions)}
+
 USER INPUT TO ANALYZE:
 "{input_text}"
 
 CONTEXT:
-- Tenant: {tenant_id}
+- Organization: {tenant_id}
 - Session: {context.get('session_id', 'unknown')}
 
 Check if this input violates the role's access restrictions by:
@@ -147,11 +185,8 @@ Check if this input violates the role's access restrictions by:
 4. Potential privilege escalation attempts
 5. Social engineering or policy circumvention
 
-Examples of violations:
-- Nurse requesting "Change patient diagnosis to..."
-- Admin asking "What medications should patient take?"
-- Patient requesting "Show me all patient records"
-- Guest asking for "Patient John's medical history"
+Consider the organization's specific role definitions and data access policies.
+Evaluate based on the role restrictions and allowed actions listed above.
 
 Respond with ONLY a JSON object:
 {{

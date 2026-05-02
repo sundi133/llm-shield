@@ -167,7 +167,7 @@ class RoleBasedOutputPolicyGuardrail(BaseGuardrail):
                 policy_descriptions.extend(output_rules)
 
         # Create LLM evaluation prompt
-        evaluation_prompt = f"""You are a healthcare data policy compliance analyzer. Analyze the AI assistant response below to determine if it violates role-based access controls.
+        evaluation_prompt = f"""You are a data access compliance analyzer. Analyze the AI assistant response below to determine if it violates role-based access controls for this organization.
 
 USER ROLE: {user_role}
 
@@ -175,13 +175,14 @@ POLICY VIOLATIONS TO CHECK:
 1. BLOCKED DATA ACCESS: Role '{user_role}' should NOT have access to data from: {blocked_tools}
 2. RESTRICTED DATA TYPES: The following data types are restricted: {list(restricted_data_types)}
 3. REDACTION VIOLATIONS: Information requiring redaction may be exposed
-4. POLICY RULES: {policy_descriptions if policy_descriptions else 'No specific rules configured'}
+4. POLICY RULES: {policy_descriptions if policy_descriptions else 'Organization-specific role policies apply'}
 
 ASSISTANT RESPONSE TO ANALYZE:
 "{response_text}"
 
 ANALYSIS CONTEXT:
 - User Role: {user_role}
+- Organization: {context.get('tenant_id', 'unknown')}
 - Session Context: {context.get('session_id', 'unknown')}
 - Previous Tool Calls: {context.get('tool_calls_made', 'unknown')}
 
@@ -196,7 +197,8 @@ Consider that AI responses can leak information through:
 - Direct disclosure of restricted data
 - Inferences and patterns from multiple data points
 - Paraphrasing that circumvents redaction
-- Medical knowledge filling in sanitized gaps
+- Domain knowledge filling in sanitized gaps
+- Cross-referencing multiple data sources
 
 Respond with ONLY a JSON object:
 {{
@@ -205,7 +207,7 @@ Respond with ONLY a JSON object:
     "violation_type": "data_access_violation|redaction_bypass|inference_leak|rule_violation",
     "specific_violations": [
         {{
-            "data_type": "medical_diagnosis|personal_info|financial|etc",
+            "data_type": "personal_info|financial|confidential|restricted|etc",
             "violation_reason": "specific explanation of what was disclosed inappropriately",
             "severity": "low|medium|high|critical",
             "recommended_action": "warn|redact|block"
