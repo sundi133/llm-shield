@@ -30,7 +30,7 @@ class RoleBasedOutputPolicyGuardrail(BaseGuardrail):
         """Check LLM response against role-based data policies."""
         context = context or {}
         tenant_id = context.get("tenant_id")
-        user_role = context.get("user_role")
+        user_role = context.get("user_role") or context.get("role")  # Support both formats
 
         # Skip if we don't have the required context
         if not tenant_id or not user_role:

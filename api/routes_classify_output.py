@@ -541,7 +541,7 @@ async def _classify_with_defaults(output: str, context: dict, start: datetime) -
     output_guardrails = get_by_stage("output")
 
     # Ensure role-based policy guardrail is prioritized when role context is available
-    if context.get("user_role") and context.get("tenant_id"):
+    if (context.get("user_role") or context.get("role")) and context.get("tenant_id"):
         # Move role-based policy guardrail to the front if it exists
         role_based_guardrail = get_guardrail("role_based_policy")
         if role_based_guardrail and role_based_guardrail in output_guardrails:
@@ -579,7 +579,7 @@ async def _classify_tenant(
             singletons.append(g)
 
     # Auto-enable role-based policy guardrail when role context is available
-    if (context.get("user_role") and context.get("tenant_id") and
+    if ((context.get("user_role") or context.get("role")) and context.get("tenant_id") and
         "role_based_policy" not in configs):
         configs["role_based_policy"] = {
             "enabled": True,

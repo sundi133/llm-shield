@@ -240,7 +240,7 @@ async def classify(request: Request, body: dict):
 
     # If no per-request guardrail config, run with server defaults
     if not input_overrides:
-        return await _classify_with_defaults(message, start)
+        return await _classify_with_defaults(message, context, start)
 
     # Apply per-request overrides (external callers may use kebab-case names)
     return await _classify_with_overrides(message, input_overrides, context, start)
@@ -262,10 +262,17 @@ def _build_response(pipeline_result: PipelineResult, start: datetime) -> dict:
     }
 
 
-async def _classify_with_defaults(message: str, start: datetime) -> dict:
+async def _classify_with_defaults(message: str, context: dict, start: datetime) -> dict:
     """Run the full input pipeline using server-default guardrail config."""
     input_guardrails = get_by_stage("input")
-    pipeline_result = await run_pipeline(input_guardrails, message)
+
+    # Ensure role-based input policy guardrail is prioritized when role context is available
+    if (context.get("user_role") or context.get("role")) and context.get("tenant_id"):
+        role_based_guardrail = get_guardrail("role_based_input_policy")
+        if role_based_guardrail and role_based_guardrail in input_guardrails:
+            input_guardrails = [role_based_guardrail] + [g for g in input_guardrails if g != role_based_guardrail]
+
+    pipeline_result = await run_pipeline(input_guardrails, message, context)
     return _build_response(pipeline_result, start)
 
 
@@ -284,6 +291,8 @@ async def _classify_tenant(
     """
     configs: dict[str, dict] = {}
     singletons = []
+
+    # Process configured tenant guardrails
     for name, gcfg in tenant_guardrails.items():
         if not gcfg.get("enabled", True):
             continue
@@ -293,6 +302,18 @@ async def _classify_tenant(
             "settings": gcfg.get("settings", {}),
         }
         g = get_guardrail(name)
+        if g:
+            singletons.append(g)
+
+    # Auto-enable role-based input policy guardrail when role context is available
+    if ((context.get("user_role") or context.get("role")) and context.get("tenant_id") and
+        "role_based_input_policy" not in configs):
+        configs["role_based_input_policy"] = {
+            "enabled": True,
+            "action": "block",  # Block unauthorized input by default
+            "settings": {},
+        }
+        g = get_guardrail("role_based_input_policy")
         if g:
             singletons.append(g)
 
