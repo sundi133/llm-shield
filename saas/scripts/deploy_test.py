@@ -76,7 +76,7 @@ def test_chat_endpoint(api_key):
         if response.status_code == 200:
             data = response.json()
             print("✅ Chat endpoint working")
-            print(f"✅ DevGuard metadata present: {'devguard' in data}")
+            print(f"✅ LLM Shield metadata present: {'llmshield' in data}")
             return True
         else:
             print(f"❌ Chat endpoint failed: {response.status_code}")
@@ -112,7 +112,7 @@ def test_guardrails(api_key):
             return True
         elif response.status_code == 200:
             data = response.json()
-            if 'devguard' in data and data['devguard'].get('safe'):
+            if 'llmshield' in data and data['llmshield'].get('safe'):
                 print("✅ Guardrails allowing safe content")
                 return True
 
@@ -125,7 +125,7 @@ def test_guardrails(api_key):
 
 def main():
     """Run deployment verification"""
-    print("🚀 DevGuard SaaS Deployment Test")
+    print("🚀 LLM Shield SaaS Deployment Test")
     print("=" * 50)
 
     # Test 1: Health
@@ -163,7 +163,7 @@ def main():
     print("🎉 Deployment verification successful!")
     print(f"🔑 Test API key: {api_key}")
     print("\n📋 Quick Start:")
-    print(f"export DEVGUARD_API_KEY={api_key}")
+    print(f"export SHIELD_API_KEY={api_key}")
     print("pip install requests")
     print("python -c \"import requests; print(requests.post('http://localhost:8000/v1/chat/completions', headers={'Authorization': 'Bearer " + api_key + "'}, json={'messages': [{'role': 'user', 'content': 'Hello!'}]}).json())\"")
 

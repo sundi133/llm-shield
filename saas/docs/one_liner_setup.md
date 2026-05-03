@@ -1,11 +1,11 @@
-# DevGuard One-Liner Setup for Small Teams
+# LLM Shield One-Liner Setup for Small Teams
 
 ## 🚀 Super Quick Start (30 seconds)
 
 ### Copy-Paste Team Setup:
 
 ```bash
-curl -s https://raw.githubusercontent.com/your-repo/devguard-setup/main/quick_setup.sh | bash -s "Your Team Name" "admin@yourcompany.com"
+curl -s https://raw.githubusercontent.com/your-repo/llmshield-setup/main/quick_setup.sh | bash -s "Your Team Name" "admin@yourcompany.com"
 ```
 
 ### Manual Quick Setup:
@@ -52,10 +52,10 @@ curl -s -X POST "https://shield.votal.ai/v1/data-policies/tools/general_ai/polic
   }'
 
 # 4. Save config for your team
-echo "export DEVGUARD_API_KEY=\"$API_KEY\"" > .devguard_config
-echo "export DEVGUARD_USER_ROLE=\"senior_dev\"  # Change to your role" >> .devguard_config
+echo "export SHIELD_API_KEY=\"$API_KEY\"" > .llmshield_config
+echo "export SHIELD_USER_ROLE=\"senior_dev\"  # Change to your role" >> .llmshield_config
 echo ""
-echo "✅ Setup complete! Run: source .devguard_config"
+echo "✅ Setup complete! Run: source .llmshield_config"
 echo "📖 Test with: curl -X POST https://shield.votal.ai/v1/chat/completions -H \"Authorization: Bearer $API_KEY\" -H \"X-User-Role: senior_dev\" -d '{\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'"
 ```
 
@@ -67,10 +67,10 @@ Share this with each team member:
 
 ```bash
 # 1. Get your team's API key from admin
-export DEVGUARD_API_KEY="dg_team_abc_xyz789"
+export SHIELD_API_KEY="ls_team_abc_xyz789"
 
 # 2. Set your role  
-export DEVGUARD_USER_ROLE="senior_dev"  # or junior_dev, intern, founder
+export SHIELD_USER_ROLE="senior_dev"  # or junior_dev, intern, founder
 
 # 3. Test AI chat with guardrails
 python -c "
@@ -78,14 +78,14 @@ import requests, os
 response = requests.post(
     'https://shield.votal.ai/v1/chat/completions',
     headers={
-        'Authorization': f'Bearer {os.getenv(\"DEVGUARD_API_KEY\")}',
-        'X-User-Role': os.getenv('DEVGUARD_USER_ROLE'),
+        'Authorization': f'Bearer {os.getenv(\"SHIELD_API_KEY\")}',
+        'X-User-Role': os.getenv('SHIELD_USER_ROLE'),
         'Content-Type': 'application/json'
     },
     json={'messages': [{'role': 'user', 'content': 'Help me write a Python function'}]}
 )
 print('AI Response:', response.json()['choices'][0]['message']['content'])
-print('Safety Status:', response.json()['devguard']['safe'])
+print('Safety Status:', response.json()['llmshield']['safe'])
 "
 ```
 
@@ -93,9 +93,9 @@ print('Safety Status:', response.json()['devguard']['safe'])
 
 ```bash
 # .env file for your project
-DEVGUARD_API_KEY=dg_team_abc_xyz789
-DEVGUARD_USER_ROLE=senior_dev
-DEVGUARD_BASE_URL=https://shield.votal.ai
+SHIELD_API_KEY=ls_team_abc_xyz789
+SHIELD_USER_ROLE=senior_dev
+SHIELD_BASE_URL=https://shield.votal.ai
 ```
 
 ## 🎯 Role Examples
@@ -114,7 +114,7 @@ DEVGUARD_BASE_URL=https://shield.votal.ai
 ```bash
 # Check team usage
 curl -X GET "https://shield.votal.ai/v1/saas/teams/$TEAM_ID" \
-  -H "X-API-Key: $DEVGUARD_API_KEY"
+  -H "X-API-Key: $SHIELD_API_KEY"
 
 # Response shows:
 # {
@@ -130,11 +130,11 @@ curl -X GET "https://shield.votal.ai/v1/saas/teams/$TEAM_ID" \
 ### With Existing OpenAI Code:
 
 ```python
-# Before DevGuard
+# Before LLM Shield
 import openai
 client = openai.OpenAI(api_key="sk-...")
 
-# After DevGuard (minimal change!)
+# After LLM Shield (minimal change!)
 import requests
 import os
 
@@ -142,8 +142,8 @@ def openai_compatible_chat(**kwargs):
     response = requests.post(
         "https://shield.votal.ai/v1/chat/completions",
         headers={
-            "Authorization": f"Bearer {os.getenv('DEVGUARD_API_KEY')}",
-            "X-User-Role": os.getenv('DEVGUARD_USER_ROLE', 'developer')",
+            "Authorization": f"Bearer {os.getenv('SHIELD_API_KEY')}",
+            "X-User-Role": os.getenv('SHIELD_USER_ROLE', 'developer')",
             "Content-Type": "application/json"
         },
         json=kwargs
@@ -162,11 +162,11 @@ result = openai_compatible_chat(
 ```python
 from langchain_community.llms import OpenAI
 
-# Point LangChain to DevGuard
+# Point LangChain to LLM Shield
 llm = OpenAI(
     openai_api_base="https://shield.votal.ai/v1",
-    openai_api_key=os.getenv('DEVGUARD_API_KEY'),
-    headers={"X-User-Role": os.getenv('DEVGUARD_USER_ROLE')}
+    openai_api_key=os.getenv('SHIELD_API_KEY'),
+    headers={"X-User-Role": os.getenv('SHIELD_USER_ROLE')}
 )
 ```
 
@@ -177,7 +177,7 @@ llm = OpenAI(
 {
   "cursor.ai.provider": "openai",
   "cursor.ai.baseUrl": "https://shield.votal.ai/v1", 
-  "cursor.ai.apiKey": "dg_team_abc_xyz789",
+  "cursor.ai.apiKey": "ls_team_abc_xyz789",
   "cursor.ai.headers": {
     "X-User-Role": "senior_dev"
   }

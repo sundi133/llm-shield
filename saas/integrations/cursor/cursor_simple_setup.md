@@ -1,4 +1,4 @@
-# DevGuard + Cursor: 2-Minute Setup
+# LLM Shield + Cursor: 2-Minute Setup
 
 **Add role-based AI guardrails to your team's Cursor setup**
 
@@ -7,7 +7,7 @@
 ### Option 1: One-Liner Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-repo/devguard/main/setup_cursor_devguard.sh | bash
+curl -fsSL https://raw.githubusercontent.com/your-repo/llmshield/main/setup_cursor_llmshield.sh | bash
 ```
 
 ### Option 2: Manual Setup (2 minutes)
@@ -19,7 +19,7 @@ curl -X POST "https://shield.votal.ai/v1/saas/teams/create" \
   -H "Content-Type: application/json" \
   -d '{"team_name": "My Team", "admin_email": "you@company.com", "plan": "free"}'
 
-# Copy the API key from response: dg_team_abc_xyz
+# Copy the API key from response: ls_team_abc_xyz
 ```
 
 #### Step 2: Configure Cursor (30 seconds)
@@ -28,7 +28,7 @@ curl -X POST "https://shield.votal.ai/v1/saas/teams/create" \
 
 ```json
 {
-  "cursor.apiKey": "dg_team_abc_xyz",
+  "cursor.apiKey": "ls_team_abc_xyz",
   "cursor.apiBase": "https://shield.votal.ai/v1",
   "cursor.headers": {
     "X-User-Role": "senior_dev"
@@ -105,7 +105,7 @@ AI: "That's an advanced topic! Let me explain web applications first..."
 ### Test 1: Basic Functionality
 In Cursor chat, type: **"Help me write a Python function to reverse a string"**
 
-**Expected result**: Response appropriate to your role + DevGuard metadata
+**Expected result**: Response appropriate to your role + LLM Shield metadata
 
 ### Test 2: Safety Check
 In Cursor chat, type: **"My password is 123456, help me debug"**
@@ -174,15 +174,15 @@ Some projects need different access levels. Create `.vscode/settings.json` in yo
 ### Environment Variables (Team-Wide)
 ```bash
 # .env file  
-DEVGUARD_API_KEY=dg_team_abc_xyz
-DEVGUARD_USER_ROLE=senior_dev
-DEVGUARD_BASE_URL=https://shield.votal.ai/v1
+SHIELD_API_KEY=ls_team_abc_xyz
+SHIELD_USER_ROLE=senior_dev
+SHIELD_BASE_URL=https://shield.votal.ai/v1
 
 # Then in Cursor settings:
 {
-  "cursor.apiKey": "${env:DEVGUARD_API_KEY}",
+  "cursor.apiKey": "${env:SHIELD_API_KEY}",
   "cursor.headers": {
-    "X-User-Role": "${env:DEVGUARD_USER_ROLE}"
+    "X-User-Role": "${env:SHIELD_USER_ROLE}"
   }
 }
 ```
@@ -193,11 +193,11 @@ DEVGUARD_BASE_URL=https://shield.votal.ai/v1
 #!/bin/bash
 # Auto-detect role based on branch or project
 if [[ $(git branch --show-current) == *"intern"* ]]; then
-  export DEVGUARD_USER_ROLE="intern"
+  export SHIELD_USER_ROLE="intern"
 elif [[ $(git branch --show-current) == *"junior"* ]]; then
-  export DEVGUARD_USER_ROLE="junior_dev"  
+  export SHIELD_USER_ROLE="junior_dev"  
 else
-  export DEVGUARD_USER_ROLE="senior_dev"
+  export SHIELD_USER_ROLE="senior_dev"
 fi
 ```
 
@@ -214,7 +214,7 @@ fi
 A: No impact on speed. Same AI models, just with safety checks.
 
 **Q: Can I use my own OpenAI key?**  
-A: Not needed! DevGuard includes AI access with guardrails.
+A: Not needed! LLM Shield includes AI access with guardrails.
 
 **Q: What if I need a custom role?**
 A: Pro plans support custom role definitions.

@@ -1,6 +1,6 @@
 # 📁 SaaS Structure Overview
 
-This folder contains the complete DevGuard SaaS offering for small development teams.
+This folder contains the complete LLM Shield SaaS offering for small development teams.
 
 ## 🗂️ Directory Structure
 
@@ -15,7 +15,7 @@ saas/
 │
 ├── sdk/                               # Client SDKs
 │   └── python/                        # Python SDK
-│       ├── devguard/
+│       ├── llmshield/
 │       │   └── __init__.py            # Main SDK implementation
 │       ├── setup.py                   # Package setup
 │       └── README.md                  # SDK documentation
@@ -25,7 +25,7 @@ saas/
 │       ├── README.md                  # Main Cursor setup guide
 │       ├── cursor_integration.md      # Detailed integration docs
 │       ├── cursor_simple_setup.md     # Quick reference
-│       └── setup_cursor_devguard.sh   # Automated setup script
+│       └── setup_cursor_llmshield.sh   # Automated setup script
 │
 ├── examples/                          # Configuration templates
 │   ├── startup_template.json          # Startup team roles (2-10 people)

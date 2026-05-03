@@ -70,8 +70,8 @@ async def create_team(request: CreateTeamRequest):
         "api_key": api_key,
         "message": f"Team '{request.team_name}' created successfully",
         "setup_instructions": {
-            "python": f"pip install devguard && export DEVGUARD_API_KEY={api_key}",
-            "javascript": f"npm install devguard && DEVGUARD_API_KEY={api_key}"
+            "python": f"pip install llm-shield && export SHIELD_API_KEY={api_key}",
+            "javascript": f"npm install llmshield && SHIELD_API_KEY={api_key}"
         }
     }
 

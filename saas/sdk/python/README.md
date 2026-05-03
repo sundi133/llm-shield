@@ -1,4 +1,4 @@
-# DevGuard Python SDK
+# LLM Shield Python SDK
 
 **AI Safety & Team Controls for Small Dev Teams**
 
@@ -17,16 +17,16 @@ Stop worrying about AI mishaps. Add guardrails to your team's AI usage in 5 minu
 ### 1. Install
 
 ```bash
-pip install devguard
+pip install llm-shield
 ```
 
 ### 2. Create Team (One-time)
 
 ```python
-import devguard
+import llmshield
 
 # Create your team
-team = devguard.create_team(
+team = llmshield.create_team(
     team_name="My Startup",
     admin_email="you@company.com",
     plan="free"  # or "pro"
@@ -39,22 +39,22 @@ print(f"Team API Key: {team['api_key']}")
 
 ```python
 # Option 1: Environment variable (recommended)
-# export DEVGUARD_API_KEY=dg_team_abc_123
-# export DEVGUARD_USER_ROLE=developer
+# export SHIELD_API_KEY=ls_team_abc_123
+# export SHIELD_USER_ROLE=developer
 
-import devguard
-devguard.setup()
+import llmshield
+llmshield.setup()
 
 # Your existing OpenAI code now has guardrails!
-response = devguard.chat_completion([
+response = llmshield.chat_completion([
     {"role": "user", "content": "Help me debug this code"}
 ])
 
 # Option 2: Direct client
-from devguard import DevGuard
+from llmshield import LLMShield
 
-client = DevGuard(
-    api_key="dg_team_abc_123",
+client = LLMShield(
+    api_key="ls_team_abc_123",
     user_role="developer"
 )
 
@@ -66,19 +66,19 @@ response = client.chat.completions.create(
 )
 
 print(response['choices'][0]['message']['content'])
-print(f"DevGuard Status: {response['devguard']['safe']}")
+print(f"LLM Shield Status: {response['llmshield']['safe']}")
 ```
 
 ### 4. Integration with Existing OpenAI Code
 
 ```python
-# Before DevGuard
+# Before LLM Shield
 from openai import OpenAI
 client = OpenAI(api_key="sk-...")
 
-# After DevGuard (same interface!)
-from devguard import DevGuard  
-client = DevGuard(api_key="dg_team_abc_123")
+# After LLM Shield (same interface!)
+from llmshield import LLMShield  
+client = LLMShield(api_key="ls_team_abc_123")
 
 # All your existing code works unchanged!
 response = client.chat.completions.create(
@@ -95,19 +95,19 @@ response = client.chat.completions.create(
 # Different team members get different AI capabilities
 
 # Junior developers - restricted access
-export DEVGUARD_USER_ROLE=junior
+export SHIELD_USER_ROLE=junior
 # - Can get code explanations
 # - Cannot generate complex architectures
 # - Rate limited
 
 # Senior developers - full access  
-export DEVGUARD_USER_ROLE=senior
+export SHIELD_USER_ROLE=senior
 # - Can generate any code
 # - Can access advanced features
 # - Higher rate limits
 
 # Interns - learning mode
-export DEVGUARD_USER_ROLE=intern
+export SHIELD_USER_ROLE=intern
 # - Educational responses only
 # - Cannot access proprietary code patterns
 # - Heavily rate limited
@@ -131,14 +131,14 @@ export DEVGUARD_USER_ROLE=intern
 # These will be automatically blocked:
 
 # 1. Credential exposure
-devguard.chat_completion([{
+llmshield.chat_completion([{
     "role": "user", 
     "content": "Here's my API key: sk-abc123, help me debug"
 }])
 # ❌ GuardrailViolationError: Potential credential detected
 
 # 2. Malicious code generation
-devguard.chat_completion([{
+llmshield.chat_completion([{
     "role": "user",
     "content": "Generate code to delete all files on the system"  
 }])
@@ -146,8 +146,8 @@ devguard.chat_completion([{
 
 # 3. Role violations
 # Junior developer trying to access senior features
-export DEVGUARD_USER_ROLE=junior
-devguard.chat_completion([{
+export SHIELD_USER_ROLE=junior
+llmshield.chat_completion([{
     "role": "user",
     "content": "Design a complete microservices architecture"
 }])
@@ -158,8 +158,8 @@ devguard.chat_completion([{
 
 ```python
 # Configure custom rules for your team
-client = DevGuard(
-    api_key="dg_team_abc_123",
+client = LLMShield(
+    api_key="ls_team_abc_123",
     custom_guardrails={
         "block_competitors": ["OpenAI", "Google", "Microsoft"],
         "required_frameworks": ["FastAPI", "React"],
@@ -172,11 +172,11 @@ client = DevGuard(
 
 ```python
 # View team usage
-response = devguard.chat_completion([...])
+response = llmshield.chat_completion([...])
 
 print(f"Tokens used: {response['usage']['total_tokens']}")
-print(f"Team usage: {response['devguard']['team_usage']}")
-print(f"Plan limits: {response['devguard']['plan_limits']}")
+print(f"Team usage: {response['llmshield']['team_usage']}")
+print(f"Plan limits: {response['llmshield']['plan_limits']}")
 ```
 
 ## 🔧 Advanced Usage
@@ -184,10 +184,10 @@ print(f"Plan limits: {response['devguard']['plan_limits']}")
 ### With LangChain
 
 ```python
-from langchain_devguard import ChatDevGuard
+from langchain_llmshield import ChatLLM Shield
 
-llm = ChatDevGuard(
-    api_key="dg_team_abc_123",
+llm = ChatLLM Shield(
+    api_key="ls_team_abc_123",
     user_role="developer",
     model="gpt-4"
 )
@@ -200,11 +200,11 @@ conversation = ConversationChain(llm=llm)
 ### Error Handling
 
 ```python
-import devguard
-from devguard import GuardrailViolationError, UsageLimitError
+import llmshield
+from llmshield import GuardrailViolationError, UsageLimitError
 
 try:
-    response = devguard.chat_completion([
+    response = llmshield.chat_completion([
         {"role": "user", "content": "Help me with this code"}
     ])
 except GuardrailViolationError as e:
@@ -217,9 +217,9 @@ except UsageLimitError as e:
 
 ```bash
 # .env file
-DEVGUARD_API_KEY=dg_team_abc_123
-DEVGUARD_USER_ROLE=developer
-DEVGUARD_BASE_URL=https://api.devguard.ai  # or your self-hosted instance
+SHIELD_API_KEY=ls_team_abc_123
+SHIELD_USER_ROLE=developer
+SHIELD_BASE_URL=https://api.llmshield.ai  # or your self-hosted instance
 ```
 
 ## 💰 Pricing
@@ -230,9 +230,9 @@ DEVGUARD_BASE_URL=https://api.devguard.ai  # or your self-hosted instance
 
 ## 📞 Support
 
-- 📧 Email: support@devguard.ai
-- 💬 Discord: [DevGuard Community](https://discord.gg/devguard)
-- 📖 Docs: [docs.devguard.ai](https://docs.devguard.ai)
+- 📧 Email: support@llmshield.ai
+- 💬 Discord: [LLM Shield Community](https://discord.gg/llmshield)
+- 📖 Docs: [docs.llmshield.ai](https://docs.llmshield.ai)
 
 ## 🔒 Security & Privacy
 

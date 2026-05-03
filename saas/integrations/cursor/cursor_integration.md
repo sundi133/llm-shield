@@ -1,8 +1,8 @@
-# Cursor Integration with DevGuard
+# Cursor Integration with LLM Shield
 
 ## 🎯 Method 1: Direct API Override (Recommended)
 
-### Step 1: Get Your DevGuard API Key
+### Step 1: Get Your LLM Shield API Key
 ```bash
 # Create team (if you haven't already)
 curl -X POST "https://shield.votal.ai/v1/saas/teams/create" \
@@ -10,7 +10,7 @@ curl -X POST "https://shield.votal.ai/v1/saas/teams/create" \
   -d '{"team_name": "Your Team", "admin_email": "you@company.com"}'
 
 # Save the API key from response
-export DEVGUARD_API_KEY="dg_team_abc_xyz789"
+export SHIELD_API_KEY="ls_team_abc_xyz789"
 ```
 
 ### Step 2: Configure Cursor Settings
@@ -20,7 +20,7 @@ export DEVGUARD_API_KEY="dg_team_abc_xyz789"
 ```json
 {
   "cursor.aiProvider": "openai",
-  "cursor.apiKey": "dg_team_abc_xyz789",
+  "cursor.apiKey": "ls_team_abc_xyz789",
   "cursor.apiBase": "https://shield.votal.ai/v1",
   "cursor.headers": {
     "X-User-Role": "senior_dev",
@@ -61,13 +61,13 @@ Each team member configures their role:
 
 ### Step 1: Team Environment Setup
 
-Create `.devguard.env` in your project root:
+Create `.llmshield.env` in your project root:
 
 ```bash
-# .devguard.env
-DEVGUARD_API_KEY=dg_team_abc_xyz789
-DEVGUARD_BASE_URL=https://shield.votal.ai/v1
-DEVGUARD_USER_ROLE=senior_dev  # Each developer changes this
+# .llmshield.env
+SHIELD_API_KEY=ls_team_abc_xyz789
+SHIELD_BASE_URL=https://shield.votal.ai/v1
+SHIELD_USER_ROLE=senior_dev  # Each developer changes this
 ```
 
 ### Step 2: Cursor Workspace Settings
@@ -76,10 +76,10 @@ In your project's `.vscode/settings.json`:
 
 ```json
 {
-  "cursor.apiKey": "${env:DEVGUARD_API_KEY}",
-  "cursor.apiBase": "${env:DEVGUARD_BASE_URL}",
+  "cursor.apiKey": "${env:SHIELD_API_KEY}",
+  "cursor.apiBase": "${env:SHIELD_BASE_URL}",
   "cursor.headers": {
-    "X-User-Role": "${env:DEVGUARD_USER_ROLE}"
+    "X-User-Role": "${env:SHIELD_USER_ROLE}"
   }
 }
 ```
@@ -89,16 +89,16 @@ In your project's `.vscode/settings.json`:
 Each team member runs:
 ```bash
 # Source the environment
-source .devguard.env
+source .llmshield.env
 
 # Override their role
-export DEVGUARD_USER_ROLE="junior_dev"  # or senior_dev, intern, etc.
+export SHIELD_USER_ROLE="junior_dev"  # or senior_dev, intern, etc.
 
 # Launch Cursor
 cursor .
 ```
 
-## 🔧 Method 3: DevGuard Cursor Extension (Advanced)
+## 🔧 Method 3: LLM Shield Cursor Extension (Advanced)
 
 ### Custom Extension for Automatic Role Detection
 
@@ -106,14 +106,14 @@ cursor .
 // extension.ts
 import * as vscode from 'vscode';
 
-interface DevGuardConfig {
+interface LLM ShieldConfig {
   apiKey: string;
   userRole: string;
   teamId: string;
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  console.log('DevGuard Cursor extension activated');
+  console.log('LLM Shield Cursor extension activated');
 
   // Auto-detect user role from git config or workspace
   const userRole = detectUserRole();
@@ -126,7 +126,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.StatusBarAlignment.Right, 
     100
   );
-  statusBarItem.text = `🛡️ DevGuard: ${userRole}`;
+  statusBarItem.text = `🛡️ LLM Shield: ${userRole}`;
   statusBarItem.show();
 
   context.subscriptions.push(statusBarItem);
@@ -137,7 +137,7 @@ function detectUserRole(): string {
   const gitUser = execSync('git config user.email').toString().trim();
   
   // Method 2: Check workspace role mapping
-  const workspaceConfig = vscode.workspace.getConfiguration('devguard');
+  const workspaceConfig = vscode.workspace.getConfiguration('llmshield');
   const roleMapping = workspaceConfig.get('roleMapping', {});
   
   return roleMapping[gitUser] || 'developer';
@@ -149,7 +149,7 @@ function updateCursorSettings(role: string) {
   config.update('apiBase', 'https://shield.votal.ai/v1', true);
   config.update('headers', {
     'X-User-Role': role,
-    'X-Team-ID': process.env.DEVGUARD_TEAM_ID
+    'X-Team-ID': process.env.SHIELD_TEAM_ID
   }, true);
 }
 ```
@@ -164,7 +164,7 @@ In each project, create `.cursorrules`:
 # .cursorrules
 You are an AI assistant with role-based access control.
 
-Current user role: {DEVGUARD_USER_ROLE}
+Current user role: {SHIELD_USER_ROLE}
 
 Role-specific guidelines:
 
@@ -186,20 +186,20 @@ INTERN:
 - Provide basic examples only
 - Include lots of explanatory comments
 
-Always route requests through DevGuard API for safety checks.
+Always route requests through LLM Shield API for safety checks.
 ```
 
 ## 🚀 Quick Setup Script for Teams
 
-Create `setup_cursor_devguard.sh`:
+Create `setup_cursor_llmshield.sh`:
 
 ```bash
 #!/bin/bash
 
-echo "🛡️ Setting up Cursor with DevGuard..."
+echo "🛡️ Setting up Cursor with LLM Shield..."
 
 # Get team info
-read -p "DevGuard API Key: " API_KEY
+read -p "LLM Shield API Key: " API_KEY
 read -p "Your role (senior_dev/junior_dev/intern): " USER_ROLE
 read -p "Team ID: " TEAM_ID
 
@@ -229,7 +229,7 @@ cat > .vscode/settings.json << EOF
 }
 EOF
 
-echo "✅ Cursor configured with DevGuard!"
+echo "✅ Cursor configured with LLM Shield!"
 echo "🔄 Restart Cursor to apply changes"
 echo "🛡️ Your AI requests now have role-based guardrails"
 ```
@@ -274,7 +274,7 @@ curl -X GET "https://shield.votal.ai/v1/saas/teams/$TEAM_ID/audit" \
 ## 📋 Team Rollout Checklist
 
 ### For Team Admin:
-- [ ] Create DevGuard team account
+- [ ] Create LLM Shield team account
 - [ ] Set up role-based policies  
 - [ ] Share API key with team
 - [ ] Create setup script

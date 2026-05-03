@@ -1,10 +1,10 @@
-# 🛡️ DevGuard for Small Dev Teams
+# 🛡️ LLM Shield for Small Dev Teams
 
 **Add role-based AI guardrails to your team in 30 seconds**
 
 Stop worrying about AI mishaps. Get enterprise-grade AI safety without enterprise complexity.
 
-![DevGuard Demo](https://img.shields.io/badge/Setup%20Time-30%20seconds-green)
+![Setup Time](https://img.shields.io/badge/Setup%20Time-30%20seconds-green)
 ![Price](https://img.shields.io/badge/Price-$29%2Fmonth-blue)
 ![Team Size](https://img.shields.io/badge/Team%20Size-2--20%20people-orange)
 
@@ -19,14 +19,14 @@ curl -X POST "https://shield.votal.ai/v1/saas/teams/create" \
   -d '{"team_name": "Your Team", "admin_email": "you@company.com", "plan": "free"}'
 
 # 2. Use the API key in your code
-export DEVGUARD_API_KEY="dg_team_abc_xyz"  # From step 1 response
-export DEVGUARD_USER_ROLE="senior_dev"     # Your role
+export SHIELD_API_KEY="ls_team_abc_xyz"  # From step 1 response
+export SHIELD_USER_ROLE="senior_dev"     # Your role
 
 # 3. Replace OpenAI calls
 python -c "
 import requests, os
 response = requests.post('https://shield.votal.ai/v1/chat/completions',
-  headers={'Authorization': f'Bearer {os.getenv(\"DEVGUARD_API_KEY\")}', 'X-User-Role': os.getenv('DEVGUARD_USER_ROLE')},
+  headers={'Authorization': f'Bearer {os.getenv(\"SHIELD_API_KEY\")}', 'X-User-Role': os.getenv('SHIELD_USER_ROLE')},
   json={'messages': [{'role': 'user', 'content': 'Help me code!'}]}
 )
 print(response.json()['choices'][0]['message']['content'])
@@ -54,7 +54,7 @@ print(response.json()['choices'][0]['message']['content'])
 **Add to Cursor settings.json:**
 ```json
 {
-  "cursor.apiKey": "dg_team_abc_xyz",
+  "cursor.apiKey": "ls_team_abc_xyz",
   "cursor.apiBase": "https://shield.votal.ai/v1", 
   "cursor.headers": {"X-User-Role": "senior_dev"}
 }
@@ -72,14 +72,14 @@ curl -fsSL https://shield.votal.ai/setup-cursor.sh | bash
 <summary><strong>🐍 Python SDK</strong></summary>
 
 ```bash
-pip install devguard
+pip install llm-shield
 ```
 
 ```python
-from devguard import DevGuard
+from llmshield import LLMShield
 
-client = DevGuard(
-  api_key="dg_team_abc_xyz",
+client = LLMShield(
+  api_key="ls_team_abc_xyz",
   user_role="senior_dev"
 )
 
@@ -102,7 +102,7 @@ response = client.chat.completions.create(
 const response = await fetch("https://shield.votal.ai/v1/chat/completions", {
   method: "POST",
   headers: {
-    "Authorization": "Bearer dg_team_abc_xyz",
+    "Authorization": "Bearer ls_team_abc_xyz",
     "X-User-Role": "senior_dev"
   },
   body: JSON.stringify({
@@ -114,7 +114,7 @@ const response = await fetch("https://shield.votal.ai/v1/chat/completions", {
 ```bash
 # curl
 curl -X POST "https://shield.votal.ai/v1/chat/completions" \
-  -H "Authorization: Bearer dg_team_abc_xyz" \
+  -H "Authorization: Bearer ls_team_abc_xyz" \
   -H "X-User-Role: senior_dev" \
   -d '{"messages": [{"role": "user", "content": "Help me code"}]}'
 ```
@@ -153,7 +153,7 @@ curl -X POST "https://shield.votal.ai/v1/chat/completions" \
 ```bash
 # Setup startup roles
 curl -X POST "https://shield.votal.ai/v1/data-policies/tools/general_ai/policy" \
-  -H "X-API-Key: $DEVGUARD_API_KEY" \
+  -H "X-API-Key: $SHIELD_API_KEY" \
   -d @examples/startup_template.json
 ```
 **Roles**: founder, senior_dev, junior_dev, intern
@@ -162,7 +162,7 @@ curl -X POST "https://shield.votal.ai/v1/data-policies/tools/general_ai/policy" 
 ```bash
 # Setup agency roles
 curl -X POST "https://shield.votal.ai/v1/data-policies/tools/general_ai/policy" \
-  -H "X-API-Key: $DEVGUARD_API_KEY" \
+  -H "X-API-Key: $SHIELD_API_KEY" \
   -d @examples/agency_template.json
 ```
 **Roles**: project_manager, lead_developer, contractor
@@ -177,7 +177,7 @@ curl -X POST "https://shield.votal.ai/v1/data-policies/tools/general_ai/policy" 
 ### **Test 1: Basic Functionality**
 ```bash
 curl -X POST "https://shield.votal.ai/v1/chat/completions" \
-  -H "Authorization: Bearer $DEVGUARD_API_KEY" \
+  -H "Authorization: Bearer $SHIELD_API_KEY" \
   -H "X-User-Role: senior_dev" \
   -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
 ```
@@ -185,7 +185,7 @@ curl -X POST "https://shield.votal.ai/v1/chat/completions" \
 ### **Test 2: Safety Check**
 ```bash
 curl -X POST "https://shield.votal.ai/v1/chat/completions" \
-  -H "Authorization: Bearer $DEVGUARD_API_KEY" \
+  -H "Authorization: Bearer $SHIELD_API_KEY" \
   -H "X-User-Role: senior_dev" \
   -d '{"messages": [{"role": "user", "content": "My password is 123456"}]}'
 ```
@@ -257,10 +257,10 @@ saas/
 ## 📞 Support & Community
 
 - 📧 **Email**: support@votal.ai
-- 💬 **Discord**: [DevGuard Community](https://discord.gg/devguard)
+- 💬 **Discord**: [LLM Shield Community](https://discord.gg/llmshield)
 - 📖 **Docs**: https://shield.votal.ai/docs  
 - 🐛 **Issues**: GitHub Issues
-- 📱 **Twitter**: [@devguard_ai](https://twitter.com/devguard_ai)
+- 📱 **Twitter**: [@llmshield_ai](https://twitter.com/llmshield_ai)
 
 ## 🚀 Quick Links
 
@@ -273,9 +273,9 @@ saas/
 | **🎯 Role templates** | [examples/](examples/) |
 | **🧪 Test deployment** | [scripts/deploy_test.py](scripts/deploy_test.py) |
 
-## 🏆 Why DevGuard?
+## 🏆 Why LLM Shield?
 
-| Feature | DevGuard | Enterprise Tools | Raw ChatGPT |
+| Feature | LLM Shield | Enterprise Tools | Raw ChatGPT |
 |---------|----------|------------------|-------------|
 | **Setup Time** | 30 seconds | 3+ months | N/A |
 | **Price** | $29/month | $10,000+/year | Per-user |
@@ -288,4 +288,4 @@ saas/
 
 **Ready to make your team's AI usage safe and productive?**
 
-[🚀 **Start Free Trial**](https://shield.votal.ai/signup) • [📖 **View Full Docs**](docs/) • [💬 **Join Community**](https://discord.gg/devguard)
+[🚀 **Start Free Trial**](https://shield.votal.ai/signup) • [📖 **View Full Docs**](docs/) • [💬 **Join Community**](https://discord.gg/llmshield)

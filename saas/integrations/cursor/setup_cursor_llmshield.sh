@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# DevGuard + Cursor Setup Script
+# LLM Shield + Cursor Setup Script
 # Automatically configures Cursor to use shield.votal.ai with role-based guardrails
 
 set -e
 
-echo "🛡️ DevGuard + Cursor Integration Setup"
+echo "🛡️ LLM Shield + Cursor Integration Setup"
 echo "======================================"
 echo ""
 
@@ -37,12 +37,12 @@ get_team_config() {
     echo "📋 Step 1: Team Configuration"
     echo "----------------------------"
 
-    # Check if they have a DevGuard team
-    read -p "Do you already have a DevGuard team? (y/n): " has_team
+    # Check if they have a LLM Shield team
+    read -p "Do you already have a LLM Shield team? (y/n): " has_team
 
     if [[ $has_team == "n" || $has_team == "N" ]]; then
         echo ""
-        echo "Creating new DevGuard team..."
+        echo "Creating new LLM Shield team..."
         read -p "Team name: " team_name
         read -p "Admin email: " admin_email
 
@@ -62,7 +62,7 @@ get_team_config() {
             exit 1
         fi
     else
-        read -p "DevGuard API Key: " API_KEY
+        read -p "LLM Shield API Key: " API_KEY
         read -p "Team ID (optional): " TEAM_ID
     fi
 }
@@ -126,7 +126,7 @@ setup_global_config() {
   },
   "cursor.model": "gpt-4",
   "cursor.temperature": 0.1,
-  "devguard.enabled": true
+  "llmshield.enabled": true
 }
 EOF
 
@@ -160,9 +160,9 @@ EOF
 
         # Create .cursorrules for role-specific behavior
         cat > .cursorrules << EOF
-# DevGuard Role-Based AI Assistant Rules
+# LLM Shield Role-Based AI Assistant Rules
 
-You are an AI assistant with role-based access control through DevGuard.
+You are an AI assistant with role-based access control through LLM Shield.
 Current user role: $USER_ROLE
 
 Role-specific behavior:
@@ -193,33 +193,33 @@ INTERN:
 - Include explanations of basic programming concepts
 
 Always ensure responses are appropriate for the user's experience level.
-All requests are automatically filtered through DevGuard safety checks.
+All requests are automatically filtered through LLM Shield safety checks.
 EOF
 
         # Create environment file
-        cat > .devguard.env << EOF
-# DevGuard Configuration
-DEVGUARD_API_KEY=$API_KEY
-DEVGUARD_USER_ROLE=$USER_ROLE
-DEVGUARD_BASE_URL=https://shield.votal.ai/v1$([ ! -z "$TEAM_ID" ] && echo "
-DEVGUARD_TEAM_ID=$TEAM_ID")
+        cat > .llmshield.env << EOF
+# LLM Shield Configuration
+SHIELD_API_KEY=$API_KEY
+SHIELD_USER_ROLE=$USER_ROLE
+SHIELD_BASE_URL=https://shield.votal.ai/v1$([ ! -z "$TEAM_ID" ] && echo "
+SHIELD_TEAM_ID=$TEAM_ID")
 EOF
 
         echo -e "${GREEN}✅ Project configuration created${NC}"
         echo "📁 Files created:"
         echo "   - .vscode/settings.json (Cursor project settings)"
         echo "   - .cursorrules (Role-specific AI behavior)"
-        echo "   - .devguard.env (Environment variables)"
+        echo "   - .llmshield.env (Environment variables)"
 
         # Add to .gitignore
         if [ -f .gitignore ]; then
-            if ! grep -q ".devguard.env" .gitignore; then
-                echo ".devguard.env" >> .gitignore
-                echo "📝 Added .devguard.env to .gitignore"
+            if ! grep -q ".llmshield.env" .gitignore; then
+                echo ".llmshield.env" >> .gitignore
+                echo "📝 Added .llmshield.env to .gitignore"
             fi
         else
-            echo ".devguard.env" > .gitignore
-            echo "📝 Created .gitignore with .devguard.env"
+            echo ".llmshield.env" > .gitignore
+            echo "📝 Created .gitignore with .llmshield.env"
         fi
     fi
 }
@@ -230,9 +230,9 @@ test_integration() {
     echo "🧪 Step 5: Testing Integration"
     echo "-----------------------------"
 
-    echo "Testing DevGuard API connection..."
+    echo "Testing LLM Shield API connection..."
 
-    test_response=$(curl -s -w "%{http_code}" -o /tmp/devguard_test.json \
+    test_response=$(curl -s -w "%{http_code}" -o /tmp/llmshield_test.json \
         -X POST "https://shield.votal.ai/v1/chat/completions" \
         -H "Authorization: Bearer $API_KEY" \
         -H "X-User-Role: $USER_ROLE" \
@@ -245,19 +245,19 @@ test_integration() {
         # Show test response
         if command -v jq &> /dev/null; then
             echo "📄 Test response:"
-            jq -r '.choices[0].message.content // "No content"' /tmp/devguard_test.json
+            jq -r '.choices[0].message.content // "No content"' /tmp/llmshield_test.json
             echo ""
-            echo "🛡️ DevGuard status:"
-            jq -r '.devguard // "No devguard info"' /tmp/devguard_test.json
+            echo "🛡️ LLM Shield status:"
+            jq -r '.llmshield // "No llmshield info"' /tmp/llmshield_test.json
         fi
 
-        rm -f /tmp/devguard_test.json
+        rm -f /tmp/llmshield_test.json
     else
         echo -e "${RED}❌ API test failed (HTTP $test_response)${NC}"
-        if [ -f /tmp/devguard_test.json ]; then
+        if [ -f /tmp/llmshield_test.json ]; then
             echo "Error response:"
-            cat /tmp/devguard_test.json
-            rm -f /tmp/devguard_test.json
+            cat /tmp/llmshield_test.json
+            rm -f /tmp/llmshield_test.json
         fi
         echo ""
         echo "Please check your API key and try again."
@@ -271,10 +271,10 @@ show_instructions() {
     echo "🎉 Setup Complete!"
     echo "=================="
     echo ""
-    echo -e "${GREEN}✅ Cursor is now configured with DevGuard role-based AI guardrails!${NC}"
+    echo -e "${GREEN}✅ Cursor is now configured with LLM Shield role-based AI guardrails!${NC}"
     echo ""
     echo "📋 What happens now:"
-    echo "• Your AI requests go through DevGuard safety checks"
+    echo "• Your AI requests go through LLM Shield safety checks"
     echo "• Responses are tailored to your role ($USER_ROLE)"
     echo "• Automatic credential leak prevention"
     echo "• Team usage tracking and audit logs"

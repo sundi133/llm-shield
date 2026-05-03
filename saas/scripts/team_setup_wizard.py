@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DevGuard Team Setup Wizard
+LLM Shield Team Setup Wizard
 
 Interactive script for small dev teams to set up role-based AI guardrails
 in under 5 minutes using shield.votal.ai
@@ -15,7 +15,7 @@ SHIELD_API = "https://shield.votal.ai"
 
 def print_header():
     print("🛡️" + "=" * 50)
-    print("   DevGuard Team Setup Wizard")
+    print("   LLM Shield Team Setup Wizard")
     print("   AI Safety & Role-Based Guardrails")
     print("=" * 52)
     print()
@@ -286,8 +286,8 @@ def generate_usage_instructions(api_key, available_roles):
     # Environment setup
     print("🔧 SETUP (one-time per developer):")
     print("-" * 35)
-    print(f'export DEVGUARD_API_KEY="{api_key}"')
-    print('export DEVGUARD_USER_ROLE="your_role"  # Replace with actual role')
+    print(f'export SHIELD_API_KEY="{api_key}"')
+    print('export SHIELD_USER_ROLE="your_role"  # Replace with actual role')
     print()
 
     # Python example
@@ -297,12 +297,12 @@ def generate_usage_instructions(api_key, available_roles):
 import requests
 
 def ai_chat(message, role=None):
-    role = role or os.getenv('DEVGUARD_USER_ROLE', 'developer')
+    role = role or os.getenv('SHIELD_USER_ROLE', 'developer')
 
     response = requests.post(
         "https://shield.votal.ai/v1/chat/completions",
         headers={
-            "Authorization": f"Bearer {os.getenv('DEVGUARD_API_KEY')}",
+            "Authorization": f"Bearer {os.getenv('SHIELD_API_KEY')}",
             "X-User-Role": role,
             "Content-Type": "application/json"
         },
@@ -325,13 +325,13 @@ def ai_chat(message, role=None):
     # JavaScript example
     print("🟨 JAVASCRIPT USAGE:")
     print("-" * 18)
-    print(f"""const DEVGUARD_API_KEY = "{api_key}";
+    print(f"""const SHIELD_API_KEY = "{api_key}";
 
 async function aiChat(message, role = "developer") {{
   const response = await fetch("https://shield.votal.ai/v1/chat/completions", {{
     method: "POST",
     headers: {{
-      "Authorization": `Bearer ${{DEVGUARD_API_KEY}}`,
+      "Authorization": `Bearer ${{SHIELD_API_KEY}}`,
       "X-User-Role": role,
       "Content-Type": "application/json"
     }},

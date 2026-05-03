@@ -1,4 +1,4 @@
-"""DevGuard Python SDK Setup"""
+"""LLM Shield Python SDK Setup"""
 
 from setuptools import setup, find_packages
 
@@ -6,14 +6,14 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="devguard",
+    name="llm-shield",
     version="0.1.0",
-    author="DevGuard",
-    author_email="support@devguard.ai",
+    author="LLM Shield",
+    author_email="support@votal.ai",
     description="AI Safety & Team Controls for Small Dev Teams",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/devguard/devguard-python",
+    url="https://github.com/sundi133/llm-shield",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -48,7 +48,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "devguard=devguard.cli:main",
+            "shield=llmshield.cli:main",
         ],
     },
 )

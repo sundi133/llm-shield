@@ -1,4 +1,4 @@
-# DevGuard for Small Teams - Marketing Copy
+# LLM Shield for Small Teams - Marketing Copy
 
 ## 🎯 Hero Section
 
@@ -11,7 +11,7 @@ Your team is using AI. Are you sure it's safe?
 - ❌ Intern asks for complex architecture they shouldn't see
 - ❌ Team hits rate limits, work stops
 
-**DevGuard fixes this in 30 seconds.**
+**LLM Shield fixes this in 30 seconds.**
 
 Role-based AI guardrails for teams that actually want to ship fast and safe.
 
@@ -43,7 +43,7 @@ Role-based AI guardrails for teams that actually want to ship fast and safe.
 
 ## 🏆 Competitive Advantages
 
-| Feature | DevGuard | Enterprise Tools | ChatGPT/Claude |
+| Feature | LLM Shield | Enterprise Tools | ChatGPT/Claude |
 |---------|----------|------------------|-----------------|
 | **Setup time** | 30 seconds | 3+ months | N/A |
 | **Price** | $29/month | $10,000+/year | Per-user costs |
@@ -84,7 +84,7 @@ Role-based AI guardrails for teams that actually want to ship fast and safe.
 - **Before**: Senior dev spends 2 hours/day helping juniors
 - **After**: Juniors get AI help appropriate to their level
 - **Savings**: 10 hours/week × $100/hour = $1,000/week
-- **DevGuard cost**: $29/month
+- **LLM Shield cost**: $29/month
 - **ROI**: 3,400% monthly return
 
 ### **Agency Example:**
@@ -185,7 +185,7 @@ Role-based AI guardrails for teams that actually want to ship fast and safe.
 
 ### **Anchor High, Land Low:**
 - Lead with "Enterprise tools cost $10,000+/year"
-- Follow with "DevGuard: $29/month" 
+- Follow with "LLM Shield: $29/month" 
 - Emphasize "Same protection, 300x less expensive"
 
 ### **Free Tier Strategy:**
@@ -196,7 +196,7 @@ Role-based AI guardrails for teams that actually want to ship fast and safe.
 ### **Value Framing:**
 - "$29/month = $1/day for your entire team's AI safety"
 - "Less than a coffee per team member per month"
-- "One prevented incident pays for years of DevGuard"
+- "One prevented incident pays for years of LLM Shield"
 
 ---
 
@@ -228,4 +228,4 @@ Game changer for team productivity and safety."
 
 ---
 
-This positions DevGuard as the **simple, fast, affordable** alternative to complex enterprise solutions, perfect for teams that want to move fast but stay safe.
+This positions LLM Shield as the **simple, fast, affordable** alternative to complex enterprise solutions, perfect for teams that want to move fast but stay safe.

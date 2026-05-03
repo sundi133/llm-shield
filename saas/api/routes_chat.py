@@ -36,7 +36,7 @@ class ChatCompletionResponse(BaseModel):
     model: str
     choices: List[Dict[str, Any]]
     usage: Usage
-    devguard: Optional[Dict[str, Any]] = None  # Our guardrails info
+    llmshield: Optional[Dict[str, Any]] = None  # Our guardrails info
 
 @router.post("/completions")
 async def chat_completions(
@@ -44,16 +44,16 @@ async def chat_completions(
     authorization: str = Header(None),
     x_user_role: Optional[str] = Header(None),
     x_team_id: Optional[str] = Header(None),
-    devguard_api_key: Optional[str] = Header(None)
+    llmshield_api_key: Optional[str] = Header(None)
 ):
     """OpenAI-compatible chat completions with team-based guardrails"""
 
-    # Extract API key from Authorization header or DevGuard header
+    # Extract API key from Authorization header or LLM Shield header
     api_key = None
     if authorization and authorization.startswith("Bearer "):
         api_key = authorization[7:]
-    elif devguard_api_key:
-        api_key = devguard_api_key
+    elif llmshield_api_key:
+        api_key = llmshield_api_key
     else:
         raise HTTPException(status_code=401, detail="API key required")
 
@@ -100,8 +100,8 @@ async def chat_completions(
         # Update usage tracking
         await update_usage(team_id, llm_response.get("usage", {}).get("total_tokens", 0))
 
-        # Add DevGuard metadata
-        llm_response["devguard"] = {
+        # Add LLM Shield metadata
+        llm_response["llmshield"] = {
             "team_id": team_id,
             "user_role": x_user_role,
             "plan": team_config.get("plan"),

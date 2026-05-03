@@ -1,4 +1,4 @@
-# 🔥 Cursor + DevGuard Integration
+# 🔥 Cursor + LLM Shield Integration
 
 **Add role-based AI guardrails to Cursor in 30 seconds**
 
@@ -12,7 +12,7 @@ curl -fsSL https://shield.votal.ai/setup-cursor.sh | bash
 ```
 
 ### Option 2: Manual Setup
-1. **Get DevGuard API key**:
+1. **Get LLM Shield API key**:
    ```bash
    curl -X POST "https://shield.votal.ai/v1/saas/teams/create" \
      -H "Content-Type: application/json" \
@@ -22,7 +22,7 @@ curl -fsSL https://shield.votal.ai/setup-cursor.sh | bash
 2. **Configure Cursor** (`Cmd/Ctrl + ,` → Open Settings JSON):
    ```json
    {
-     "cursor.apiKey": "dg_team_abc_xyz",
+     "cursor.apiKey": "ls_team_abc_xyz",
      "cursor.apiBase": "https://shield.votal.ai/v1",
      "cursor.headers": {
        "X-User-Role": "senior_dev"
@@ -73,7 +73,7 @@ curl -fsSL https://shield.votal.ai/setup-cursor.sh | bash
    ```bash
    # Use startup template
    curl -X POST "https://shield.votal.ai/v1/data-policies/tools/general_ai/policy" \
-     -H "X-API-Key: $DEVGUARD_API_KEY" \
+     -H "X-API-Key: $SHIELD_API_KEY" \
      -d @../../examples/startup_template.json
    ```
 
@@ -127,20 +127,20 @@ Each team member sets their role in Cursor settings:
 
 ### **Environment-Based Setup:**
 
-Create `.devguard.env` in your project:
+Create `.llmshield.env` in your project:
 ```bash
-DEVGUARD_API_KEY=dg_team_abc_xyz
-DEVGUARD_USER_ROLE=senior_dev
-DEVGUARD_BASE_URL=https://shield.votal.ai/v1
+SHIELD_API_KEY=ls_team_abc_xyz
+SHIELD_USER_ROLE=senior_dev
+SHIELD_BASE_URL=https://shield.votal.ai/v1
 ```
 
 Cursor settings with environment variables:
 ```json
 {
-  "cursor.apiKey": "${env:DEVGUARD_API_KEY}",
-  "cursor.apiBase": "${env:DEVGUARD_BASE_URL}",
+  "cursor.apiKey": "${env:SHIELD_API_KEY}",
+  "cursor.apiBase": "${env:SHIELD_BASE_URL}",
   "cursor.headers": {
-    "X-User-Role": "${env:DEVGUARD_USER_ROLE}"
+    "X-User-Role": "${env:SHIELD_USER_ROLE}"
   }
 }
 ```
@@ -162,7 +162,7 @@ Different projects, different permissions:
 
 Create `.cursorrules` for role-specific behavior:
 ```
-# DevGuard Role: senior_dev
+# LLM Shield Role: senior_dev
 
 You are an AI assistant with role-based access control.
 Current user role: SENIOR_DEV
@@ -180,7 +180,7 @@ Focus on production-ready solutions.
 
 ### **Test 1: Basic Functionality**
 In Cursor chat: **"Help me write a Python function"**
-- **Expected**: Response appropriate to your role + DevGuard safety
+- **Expected**: Response appropriate to your role + LLM Shield safety
 
 ### **Test 2: Safety Check**
 In Cursor chat: **"My API key is sk-abc123, help debug"**
@@ -196,7 +196,7 @@ Same question with different team members:
 Check team usage:
 ```bash
 curl -X GET "https://shield.votal.ai/v1/saas/teams/$TEAM_ID" \
-  -H "X-API-Key: $DEVGUARD_API_KEY"
+  -H "X-API-Key: $SHIELD_API_KEY"
 ```
 
 ## 📊 Team Benefits
@@ -227,7 +227,7 @@ curl -X GET "https://shield.votal.ai/v1/saas/teams/$TEAM_ID" \
 ```bash
 # Test API key directly
 curl -X POST "https://shield.votal.ai/v1/chat/completions" \
-  -H "Authorization: Bearer $DEVGUARD_API_KEY" \
+  -H "Authorization: Bearer $SHIELD_API_KEY" \
   -H "X-User-Role: senior_dev" \
   -d '{"messages": [{"role": "user", "content": "test"}]}'
 ```
@@ -242,9 +242,9 @@ curl -X POST "https://shield.votal.ai/v1/chat/completions" \
 - Verify role permissions in team dashboard
 - Contact support if needed
 
-**"Cursor not using DevGuard"**
+**"Cursor not using LLM Shield"**
 - Verify `cursor.apiBase` is set to `https://shield.votal.ai/v1`
-- Check that `cursor.apiKey` contains your DevGuard API key (not OpenAI key)
+- Check that `cursor.apiKey` contains your LLM Shield API key (not OpenAI key)
 - Restart Cursor completely
 
 ## 📁 Files in This Integration
@@ -254,7 +254,7 @@ curl -X POST "https://shield.votal.ai/v1/chat/completions" \
 | `README.md` | 👈 Main setup guide |
 | `cursor_integration.md` | Detailed technical integration |
 | `cursor_simple_setup.md` | Quick reference guide |
-| `setup_cursor_devguard.sh` | Automated setup script |
+| `setup_cursor_llmshield.sh` | Automated setup script |
 
 ## 💰 Pricing
 
@@ -267,7 +267,7 @@ curl -X POST "https://shield.votal.ai/v1/chat/completions" \
 ## 📞 Support
 
 - 📧 **Email**: support@votal.ai
-- 💬 **Discord**: DevGuard Community
+- 💬 **Discord**: LLM Shield Community
 - 📖 **Docs**: https://shield.votal.ai/docs
 - 🐛 **Report Issues**: GitHub Issues
 

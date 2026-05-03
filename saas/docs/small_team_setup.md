@@ -1,4 +1,4 @@
-# DevGuard for Small Teams - 5-Minute Setup
+# LLM Shield for Small Teams - 5-Minute Setup
 
 **Turn your team's AI usage safe with role-based guardrails**
 
@@ -21,12 +21,12 @@ curl -X POST "https://shield.votal.ai/v1/saas/teams/create" \
 ```json
 {
   "team_id": "team_abc123",
-  "api_key": "dg_team_abc123_xyz789",
+  "api_key": "ls_team_abc123_xyz789",
   "message": "Team created successfully"
 }
 ```
 
-**Save your API key!** `dg_team_abc123_xyz789`
+**Save your API key!** `ls_team_abc123_xyz789`
 
 ### 2. Set Up Role-Based Policies (2 minutes)
 
@@ -34,7 +34,7 @@ Choose your team template:
 
 #### 🏢 **Startup Template** (2-10 people)
 ```bash
-export API_KEY="dg_team_abc123_xyz789"  # Your API key
+export API_KEY="ls_team_abc123_xyz789"  # Your API key
 
 curl -X POST "https://shield.votal.ai/v1/data-policies/tools/general_ai/policy" \
   -H "X-API-Key: $API_KEY" \
@@ -158,8 +158,8 @@ Share these instructions with your team:
 ```bash
 pip install requests  # or openai
 
-export DEVGUARD_API_KEY="dg_team_abc123_xyz789"
-export DEVGUARD_USER_ROLE="senior_dev"  # or junior_dev, intern, etc.
+export SHIELD_API_KEY="ls_team_abc123_xyz789"
+export SHIELD_USER_ROLE="senior_dev"  # or junior_dev, intern, etc.
 ```
 
 ```python
@@ -169,7 +169,7 @@ def safe_ai_chat(message, role="developer"):
     response = requests.post(
         "https://shield.votal.ai/v1/chat/completions",
         headers={
-            "Authorization": f"Bearer {os.getenv('DEVGUARD_API_KEY')}",
+            "Authorization": f"Bearer {os.getenv('SHIELD_API_KEY')}",
             "X-User-Role": role,
             "Content-Type": "application/json"
         },
@@ -187,14 +187,14 @@ print(result['choices'][0]['message']['content'])
 
 #### **For JavaScript Developers:**
 ```javascript
-const DEVGUARD_API_KEY = "dg_team_abc123_xyz789";
+const SHIELD_API_KEY = "ls_team_abc123_xyz789";
 const USER_ROLE = "senior_dev";
 
 async function safeAIChat(message) {
   const response = await fetch("https://shield.votal.ai/v1/chat/completions", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${DEVGUARD_API_KEY}`,
+      "Authorization": `Bearer ${SHIELD_API_KEY}`,
       "X-User-Role": USER_ROLE,
       "Content-Type": "application/json"
     },
@@ -276,7 +276,7 @@ curl -X POST "https://shield.votal.ai/v1/data-policies/tools/custom_domain/polic
 ```bash
 # Use with Cursor, VS Code, or any AI tool
 export OPENAI_API_BASE="https://shield.votal.ai/v1"
-export OPENAI_API_KEY="$DEVGUARD_API_KEY" 
+export OPENAI_API_KEY="$SHIELD_API_KEY" 
 ```
 
 ## 📞 **Support**

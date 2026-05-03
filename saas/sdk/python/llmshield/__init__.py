@@ -1,4 +1,4 @@
-"""DevGuard SDK - Simple drop-in replacement for OpenAI"""
+"""LLM Shield SDK - Simple drop-in replacement for OpenAI"""
 
 import os
 import requests
@@ -7,23 +7,23 @@ import json
 
 __version__ = "0.1.0"
 
-class DevGuardError(Exception):
-    """Base exception for DevGuard SDK"""
+class LLMShieldError(Exception):
+    """Base exception for LLM Shield SDK"""
     pass
 
-class TeamNotFoundError(DevGuardError):
+class TeamNotFoundError(LLMShieldError):
     """Team not found or invalid API key"""
     pass
 
-class UsageLimitError(DevGuardError):
+class UsageLimitError(LLMShieldError):
     """Usage limit exceeded"""
     pass
 
-class GuardrailViolationError(DevGuardError):
+class GuardrailViolationError(LLMShieldError):
     """Content blocked by guardrails"""
     pass
 
-class DevGuard:
+class LLMShield:
     """OpenAI-compatible client with team-based AI safety"""
 
     def __init__(
@@ -34,33 +34,33 @@ class DevGuard:
         team_id: str = None,
         timeout: int = 30
     ):
-        """Initialize DevGuard client
+        """Initialize LLM Shield client
 
         Args:
-            api_key: DevGuard team API key (or from DEVGUARD_API_KEY env var)
-            base_url: DevGuard API base URL (default: https://api.devguard.ai)
+            api_key: LLM Shield team API key (or from SHIELD_API_KEY env var)
+            base_url: LLM Shield API base URL (default: https://api.llmshield.ai)
             user_role: User role for RBAC (default: 'developer')
             team_id: Team ID (usually auto-detected from API key)
             timeout: Request timeout in seconds
         """
-        self.api_key = api_key or os.getenv('DEVGUARD_API_KEY')
+        self.api_key = api_key or os.getenv('SHIELD_API_KEY')
         if not self.api_key:
-            raise DevGuardError("API key required. Set DEVGUARD_API_KEY env var or pass api_key parameter.")
+            raise LLMShieldError("API key required. Set SHIELD_API_KEY env var or pass api_key parameter.")
 
-        self.base_url = base_url or os.getenv('DEVGUARD_BASE_URL', 'https://api.devguard.ai')
+        self.base_url = base_url or os.getenv('SHIELD_BASE_URL', 'https://shield.votal.ai')
         # For local development, can point to localhost:8000
         if 'localhost' in str(self.base_url) or '127.0.0.1' in str(self.base_url):
             self.base_url = self.base_url
 
-        self.user_role = user_role or os.getenv('DEVGUARD_USER_ROLE', 'developer')
-        self.team_id = team_id or os.getenv('DEVGUARD_TEAM_ID')
+        self.user_role = user_role or os.getenv('SHIELD_USER_ROLE', 'developer')
+        self.team_id = team_id or os.getenv('SHIELD_TEAM_ID')
         self.timeout = timeout
 
         # Create OpenAI-compatible interface
         self.chat = Chat(self)
 
     def _make_request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
-        """Make authenticated request to DevGuard API"""
+        """Make authenticated request to LLM Shield API"""
         headers = {
             'Authorization': f'Bearer {self.api_key}',
             'X-User-Role': self.user_role,
@@ -81,7 +81,7 @@ class DevGuard:
                 **kwargs
             )
 
-            # Handle DevGuard-specific errors
+            # Handle LLM Shield-specific errors
             if response.status_code == 401:
                 raise TeamNotFoundError("Invalid API key or team not found")
             elif response.status_code == 429:
@@ -98,19 +98,19 @@ class DevGuard:
             return response
 
         except requests.RequestException as e:
-            raise DevGuardError(f"Request failed: {str(e)}")
+            raise LLMShieldError(f"Request failed: {str(e)}")
 
 class Chat:
     """OpenAI-compatible chat interface"""
 
-    def __init__(self, client: DevGuard):
+    def __init__(self, client: 'LLMShield'):
         self.client = client
         self.completions = Completions(client)
 
 class Completions:
     """OpenAI-compatible completions interface"""
 
-    def __init__(self, client: DevGuard):
+    def __init__(self, client: 'LLMShield'):
         self.client = client
 
     def create(
@@ -133,7 +133,7 @@ class Completions:
             **kwargs: Additional OpenAI parameters
 
         Returns:
-            OpenAI-compatible response with additional 'devguard' field
+            OpenAI-compatible response with additional 'llmshield' field
         """
         if stream:
             raise NotImplementedError("Streaming not yet supported")
@@ -157,43 +157,43 @@ class Completions:
 # Global client for simple usage
 _default_client = None
 
-def setup(api_key: str = None, **kwargs) -> DevGuard:
-    """Setup global DevGuard client for simple usage
+def setup(api_key: str = None, **kwargs) -> 'LLMShield':
+    """Setup global LLM Shield client for simple usage
 
     Args:
-        api_key: DevGuard API key
+        api_key: LLM Shield API key
         **kwargs: Additional client options
 
     Returns:
-        Configured DevGuard client
+        Configured LLM Shield client
     """
     global _default_client
-    _default_client = DevGuard(api_key=api_key, **kwargs)
+    _default_client = LLMShield(api_key=api_key, **kwargs)
 
     # Try to monkey-patch OpenAI if it's installed
     try:
         import openai
         # Override OpenAI client if user wants it
-        print("🛡️ DevGuard guardrails activated! OpenAI calls will be protected.")
+        print("🛡️ LLM Shield guardrails activated! OpenAI calls will be protected.")
         print(f"🔑 Using team role: {_default_client.user_role}")
     except ImportError:
-        print("🛡️ DevGuard client ready!")
+        print("🛡️ LLM Shield client ready!")
 
     return _default_client
 
 def create_team(team_name: str, admin_email: str, plan: str = "free", base_url: str = None) -> Dict[str, Any]:
-    """Create a new DevGuard team
+    """Create a new LLM Shield team
 
     Args:
         team_name: Name for the new team
         admin_email: Admin email address
         plan: Plan type ('free', 'pro', 'enterprise')
-        base_url: DevGuard API base URL
+        base_url: LLM Shield API base URL
 
     Returns:
         Team creation response with API key and setup instructions
     """
-    base_url = base_url or os.getenv('DEVGUARD_BASE_URL', 'https://api.devguard.ai')
+    base_url = base_url or os.getenv('SHIELD_BASE_URL', 'https://api.llmshield.ai')
 
     response = requests.post(
         f"{base_url}/v1/saas/teams/create",
@@ -212,5 +212,5 @@ def create_team(team_name: str, admin_email: str, plan: str = "free", base_url: 
 def chat_completion(messages: List[Dict[str, str]], **kwargs) -> Dict[str, Any]:
     """Simple chat completion using global client"""
     if not _default_client:
-        raise DevGuardError("Call setup() first or create a DevGuard client")
+        raise LLMShieldError("Call setup() first or create an LLMShield client")
     return _default_client.chat.completions.create(messages=messages, **kwargs)
