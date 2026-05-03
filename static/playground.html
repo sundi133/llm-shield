@@ -953,7 +953,8 @@ async function sendMessage() {
             const sanitizedNote = tc.sanitization && tc.sanitization.input_modified ? ' <em style="color:#93c5fd;">(sanitized)</em>' : '';
             lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}${sanitizedNote}`);
           } else {
-            lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong> with your current role.`);
+            const userRole = cfg.userRole || 'unknown';
+            lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong> with your current role (<strong>${esc(userRole)}</strong>).`);
           }
         }
         addMessage('assistant', lines.join('<br>'), elapsed + 'ms');
