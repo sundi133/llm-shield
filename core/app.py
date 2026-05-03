@@ -34,6 +34,8 @@ from api.routes_killswitch import router as killswitch_router
 from api.routes_decisions import router as decisions_router
 from api.routes_webhooks import router as webhooks_router
 from api.routes_agent_identity import router as agent_identity_router
+from saas.api.routes_teams import router as saas_teams_router
+from saas.api.routes_chat import router as saas_chat_router
 from storage.audit_log import audit_logger
 
 
@@ -78,6 +80,8 @@ def create_app() -> FastAPI:
     app.include_router(decisions_router)
     app.include_router(webhooks_router)
     app.include_router(agent_identity_router)
+    app.include_router(saas_teams_router)
+    app.include_router(saas_chat_router)
 
     # Serve playground
     _static_dir = os.path.join(
