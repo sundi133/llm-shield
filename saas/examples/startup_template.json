@@ -1,0 +1,89 @@
+{
+  "template_name": "startup",
+  "description": "Role-based AI guardrails for startup teams (2-10 people)",
+  "role_policies": [
+    {
+      "role": "founder",
+      "action": "allow",
+      "data_scope": ["all"],
+      "input_rules": [
+        "Can ask anything related to business strategy and technical implementation",
+        "Full access to AI capabilities for strategic and operational decisions",
+        "Can request both high-level architecture and detailed technical guidance"
+      ],
+      "output_rules": [
+        "Provide comprehensive business and technical analysis",
+        "Include strategic considerations, costs, and team implications",
+        "Balance technical depth with business impact"
+      ]
+    },
+    {
+      "role": "senior_dev",
+      "action": "allow",
+      "data_scope": ["code", "architecture", "debugging", "performance"],
+      "input_rules": [
+        "Can request complex code generation and architecture design",
+        "Can ask for performance optimization and debugging help",
+        "Can access advanced programming patterns and best practices",
+        "Can request technical decision-making guidance"
+      ],
+      "output_rules": [
+        "Provide detailed technical implementations",
+        "Show advanced patterns and architectural considerations",
+        "Include performance implications and trade-offs",
+        "Discuss scalability and maintainability"
+      ]
+    },
+    {
+      "role": "junior_dev",
+      "action": "redact",
+      "data_scope": ["code", "learning"],
+      "redaction_level": "partial",
+      "input_rules": [
+        "Can ask for code explanations and learning resources",
+        "Can request step-by-step implementation guidance",
+        "Cannot request complex architecture decisions without guidance",
+        "Focus on building understanding rather than just getting solutions"
+      ],
+      "output_rules": [
+        "Provide educational explanations with context",
+        "Include learning resources and next steps",
+        "Simplify complex concepts into digestible parts",
+        "Focus on understanding principles, not just implementation",
+        "Include comments explaining the 'why' behind code"
+      ]
+    },
+    {
+      "role": "intern",
+      "action": "redact",
+      "data_scope": ["learning", "fundamentals"],
+      "redaction_level": "full",
+      "input_rules": [
+        "Can only ask basic programming and computer science questions",
+        "Cannot access advanced patterns or production-level decisions",
+        "Limited to educational content and fundamental concepts",
+        "Encouraged to ask 'why' and 'how' questions for learning"
+      ],
+      "output_rules": [
+        "Provide beginner-friendly explanations with extensive context",
+        "Focus on computer science fundamentals and basic programming concepts",
+        "Use simple examples with heavy commenting",
+        "Avoid advanced topics unless specifically educational",
+        "Include suggestions for foundational learning resources"
+      ]
+    }
+  ],
+  "default_guardrails": [
+    "prevent_credential_exposure",
+    "block_malicious_code",
+    "educational_focus_for_juniors",
+    "rate_limiting_per_role",
+    "audit_logging"
+  ],
+  "usage_guidelines": {
+    "founder": "Strategic and operational AI assistance",
+    "senior_dev": "Full technical depth and implementation guidance",
+    "junior_dev": "Learning-focused development assistance",
+    "intern": "Foundational learning and basic concept explanation"
+  }
+}

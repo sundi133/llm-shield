@@ -1,0 +1,120 @@
+{
+  "template_name": "agency",
+  "description": "Role-based AI guardrails for development agencies (5-25 people)",
+  "role_policies": [
+    {
+      "role": "project_manager",
+      "action": "allow",
+      "data_scope": ["project_planning", "client_communication", "resource_management"],
+      "input_rules": [
+        "Can ask for project planning and estimation assistance",
+        "Can request client communication templates and strategies",
+        "Can access project management methodologies and best practices",
+        "Cannot request detailed technical implementation specifics"
+      ],
+      "output_rules": [
+        "Focus on project management, timelines, and client relations",
+        "Provide planning frameworks and communication templates",
+        "Hide detailed technical implementation details",
+        "Include resource allocation and risk management considerations"
+      ]
+    },
+    {
+      "role": "lead_developer",
+      "action": "allow",
+      "data_scope": ["all_technical", "architecture", "code_review", "team_guidance"],
+      "input_rules": [
+        "Full technical access for project delivery and team leadership",
+        "Can request architecture decisions and technical strategy",
+        "Can ask for code review guidelines and team mentoring advice",
+        "Can access client-specific technical requirements and constraints"
+      ],
+      "output_rules": [
+        "Provide comprehensive technical guidance and leadership advice",
+        "Include team coordination and mentoring strategies",
+        "Show advanced architectural patterns appropriate for client needs",
+        "Balance technical excellence with project delivery requirements"
+      ]
+    },
+    {
+      "role": "senior_developer",
+      "action": "allow",
+      "data_scope": ["implementation", "debugging", "optimization"],
+      "input_rules": [
+        "Can request detailed implementation guidance for assigned projects",
+        "Can ask for debugging and optimization assistance",
+        "Can access coding standards and best practices",
+        "Limited to current project scope and general technical knowledge"
+      ],
+      "output_rules": [
+        "Provide detailed technical implementation guidance",
+        "Focus on code quality and performance optimization",
+        "Include testing strategies and debugging techniques",
+        "Maintain focus on assigned project requirements"
+      ]
+    },
+    {
+      "role": "contractor",
+      "action": "redact",
+      "data_scope": ["specific_project_only"],
+      "redaction_level": "full",
+      "input_rules": [
+        "Cannot access information about other client projects",
+        "Cannot request agency proprietary methodologies or processes",
+        "Limited to assigned project scope and general programming help",
+        "Cannot access client business information beyond project requirements"
+      ],
+      "output_rules": [
+        "Block all cross-project information and client data",
+        "Hide agency proprietary development processes and methodologies",
+        "Provide only project-specific technical guidance",
+        "Focus on implementation within defined project boundaries",
+        "No access to client business strategy or other projects"
+      ]
+    },
+    {
+      "role": "junior_developer",
+      "action": "redact",
+      "data_scope": ["learning", "basic_implementation"],
+      "redaction_level": "partial",
+      "input_rules": [
+        "Can ask for learning-focused development assistance",
+        "Can request explanation of coding standards and practices",
+        "Cannot access complex architecture decisions",
+        "Focus on skill development within project context"
+      ],
+      "output_rules": [
+        "Provide educational explanations with agency coding standards",
+        "Include learning resources and growth path suggestions",
+        "Simplify complex project requirements into learning opportunities",
+        "Hide advanced business logic and proprietary techniques"
+      ]
+    }
+  ],
+  "project_isolation": {
+    "enabled": true,
+    "description": "Contractors and project-specific roles only see information relevant to their assigned projects",
+    "implementation": "Use X-Project-Context header to limit data scope"
+  },
+  "default_guardrails": [
+    "prevent_credential_exposure",
+    "block_malicious_code",
+    "project_data_isolation",
+    "client_confidentiality_protection",
+    "proprietary_process_protection",
+    "audit_logging_per_project"
+  ],
+  "usage_guidelines": {
+    "project_manager": "Project planning and client communication assistance",
+    "lead_developer": "Technical leadership and architecture guidance",
+    "senior_developer": "Implementation and optimization support",
+    "contractor": "Project-specific development assistance only",
+    "junior_developer": "Learning-focused development guidance"
+  },
+  "client_protection": {
+    "cross_project_isolation": true,
+    "proprietary_method_protection": true,
+    "client_data_segregation": true,
+    "audit_trail_per_client": true
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "tenant_id": "tenant-20260407220546-28f6bb",
+  "data_policies": {
+    "medication_management": {
+      "role_policies": [
+        {
+          "role": "doctor",
+          "action": "allow",
+          "data_scope": ["patient_info", "medical_history", "prescriptions"],
+          "input_rules": [
+            "Can prescribe medications",
+            "Can access full patient medical records",
+            "Can modify treatment plans"
+          ],
+          "output_rules": [
+            "Show complete medical information",
+            "Can view prescription history",
+            "Can access all patient data"
+          ]
+        },
+        {
+          "role": "nurse",
+          "action": "block",
+          "data_scope": ["patient_info"],
+          "input_rules": [
+            "Cannot prescribe medications",
+            "Cannot modify prescriptions",
+            "Can only administer prescribed medications"
+          ],
+          "output_rules": [
+            "Block prescription-related requests",
+            "Cannot access medication prescription functions"
+          ]
+        },
+        {
+          "role": "pharmacist",
+          "action": "allow",
+          "data_scope": ["prescriptions", "drug_interactions"],
+          "input_rules": [
+            "Can dispense prescribed medications",
+            "Can check drug interactions",
+            "Cannot initiate new prescriptions"
+          ]
+        }
+      ]
+    },
+    "patient_lookup": {
+      "role_policies": [
+        {
+          "role": "doctor",
+          "action": "allow",
+          "data_scope": ["patient_info", "medical_history", "billing"],
+          "input_rules": [
+            "Can access all patient information",
+            "Can request medical records",
+            "Can access billing information"
+          ]
+        },
+        {
+          "role": "nurse",
+          "action": "redact",
+          "data_scope": ["patient_info", "medical_history"],
+          "input_rules": [
+            "Can access basic patient information",
+            "Can view medical history for care",
+            "Cannot access billing or financial information"
+          ],
+          "output_rules": [
+            "Show patient contact and medical info",
+            "Redact financial and billing data",
+            "Hide sensitive personal details"
+          ]
+        }
+      ]
+    }
+  }
+}
