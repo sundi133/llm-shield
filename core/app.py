@@ -1,4 +1,5 @@
 import os
+import logging
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -34,9 +35,17 @@ from api.routes_killswitch import router as killswitch_router
 from api.routes_decisions import router as decisions_router
 from api.routes_webhooks import router as webhooks_router
 from api.routes_agent_identity import router as agent_identity_router
-from saas.api.routes_teams import router as saas_teams_router
-from saas.api.routes_chat import router as saas_chat_router
 from storage.audit_log import audit_logger
+
+# Conditional SaaS imports - only load if saas module exists
+try:
+    from saas.api.routes_teams import router as saas_teams_router
+    from saas.api.routes_chat import router as saas_chat_router
+    SAAS_AVAILABLE = True
+except ImportError:
+    SAAS_AVAILABLE = False
+    saas_teams_router = None
+    saas_chat_router = None
 
 
 def create_app() -> FastAPI:
@@ -80,8 +89,14 @@ def create_app() -> FastAPI:
     app.include_router(decisions_router)
     app.include_router(webhooks_router)
     app.include_router(agent_identity_router)
-    app.include_router(saas_teams_router)
-    app.include_router(saas_chat_router)
+
+    # Include SaaS routes only if available
+    if SAAS_AVAILABLE:
+        app.include_router(saas_teams_router)
+        app.include_router(saas_chat_router)
+        logging.info("✅ SaaS features enabled - Small teams endpoints available")
+    else:
+        logging.info("ℹ️  SaaS features disabled - Enterprise-only mode")
 
     # Serve playground
     _static_dir = os.path.join(
