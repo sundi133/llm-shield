@@ -327,7 +327,14 @@ function addToolCards(toolCalls) {
     card.className = 'tool-card ' + (isUnreg ? 'tool-card-unregistered' : allowed ? 'tool-card-allowed' : 'tool-card-blocked');
 
     const argsStr = JSON.stringify(tc.arguments || {}, null, 2);
-    const rbacMsg = tc.rbac ? tc.rbac.message : '';
+    let rbacMsg = tc.rbac ? tc.rbac.message : '';
+
+    // Add role information to RBAC message when tool is blocked
+    if (!allowed && rbacMsg) {
+      const cfg = getConfig();
+      const userRole = cfg.userRole || 'unknown';
+      rbacMsg = `${rbacMsg} (your role: ${userRole})`;
+    }
 
     // Sanitization pill + reason construction.
     // A violation can have action=detect (log-only, no mutation),
@@ -953,7 +960,7 @@ async function sendMessage() {
             const sanitizedNote = tc.sanitization && tc.sanitization.input_modified ? ' <em style="color:#93c5fd;">(sanitized)</em>' : '';
             lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}${sanitizedNote}`);
           } else {
-            lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong> with your current role.`);
+            lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong>.`);
           }
         }
         addMessage('assistant', lines.join('<br>'), elapsed + 'ms');
