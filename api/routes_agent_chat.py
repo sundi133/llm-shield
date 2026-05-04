@@ -21,6 +21,7 @@ from core.llm_backend import get_server_url, _get_shared_client, _ensure_no_thin
 from core.pipeline import run_input_pipeline, run_output_pipeline
 from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
 from guardrails.base import _request_configs
+from storage.audit_log import audit_logger
 
 router = APIRouter(prefix="/v1/shield/chat", tags=["agent-chat"])
 
@@ -249,6 +250,80 @@ def _load_tenant_tools(tenant_config: dict | None) -> list[dict]:
     return HEALTHCARE_TOOLS
 
 
+def _summarize_guardrail_results(results: dict | None) -> list[dict]:
+    """Return a compact guardrail summary safe for telemetry display."""
+    if not results:
+        return []
+    compact = []
+    for item in results.get("results", []) or []:
+        compact.append({
+            "guardrail": item.get("guardrail_name"),
+            "passed": item.get("passed"),
+            "action": item.get("action"),
+            "message": item.get("message"),
+        })
+    return compact
+
+
+async def _log_agent_chat_telemetry(
+    request: Request,
+    tenant_config: dict | None,
+    agent_key: str,
+    user_role: str | None,
+    last_user_msg: str,
+    action_taken: str,
+    latency_ms: float,
+    stage: str,
+    tool_results: list[dict] | None = None,
+    input_guardrails: dict | None = None,
+    output_guardrails: dict | None = None,
+    usage: dict | None = None,
+    blocked: bool = False,
+    block_reason: str | None = None,
+):
+    """Persist normalized agent-chat telemetry in the audit log."""
+    tenant_id = ""
+    if tenant_config:
+        tenant_id = tenant_config.get("tenant_id", "") or ""
+
+    session_id = ""
+    if hasattr(request, "state"):
+        session_id = getattr(request.state, "session_id", "") or ""
+
+    metadata = {
+        "kind": "agent_chat_telemetry",
+        "tenant_id": tenant_id,
+        "user_role": user_role,
+        "stage": stage,
+        "blocked": blocked,
+        "block_reason": block_reason,
+        "session_id": session_id,
+        "tool_calls": tool_results or [],
+        "tool_call_count": len(tool_results or []),
+        "input_guardrails": _summarize_guardrail_results(input_guardrails),
+        "output_guardrails": _summarize_guardrail_results(output_guardrails),
+        "usage": usage or {},
+    }
+
+    guardrails_triggered = []
+    for bucket in (metadata["input_guardrails"], metadata["output_guardrails"]):
+        for item in bucket:
+            if item.get("passed") is False and item.get("guardrail"):
+                guardrails_triggered.append(item["guardrail"])
+
+    await audit_logger.log(
+        {
+            "agent_key": agent_key,
+            "endpoint": "/v1/shield/chat/agent",
+            "input_text": last_user_msg,
+            "action_taken": action_taken,
+            "guardrails_triggered": guardrails_triggered,
+            "latency_ms": round(latency_ms, 2),
+            "metadata": metadata,
+        }
+    )
+
+
 @router.get("/agent/tools")
 async def get_agent_tools(request: Request):
     """Return tool definitions — tenant-specific if available, else defaults."""
@@ -313,10 +388,25 @@ async def agent_chat(request: Request):
         block_reasons = [
             r.message for r in input_result.results if not r.passed and r.action == "block"
         ]
+        latency_ms = (datetime.now() - start).total_seconds() * 1000
+        block_reason = "; ".join(block_reasons) or "Blocked by guardrail"
+        await _log_agent_chat_telemetry(
+            request=request,
+            tenant_config=tenant_config,
+            agent_key=agent_key,
+            user_role=user_role,
+            last_user_msg=last_user_msg,
+            action_taken="block",
+            latency_ms=latency_ms,
+            stage="input",
+            input_guardrails=input_result.model_dump(),
+            blocked=True,
+            block_reason=block_reason,
+        )
         return JSONResponse(status_code=403, content={
             "blocked": True,
             "stage": "input",
-            "block_reason": "; ".join(block_reasons) or "Blocked by guardrail",
+            "block_reason": block_reason,
             "guardrail_results": input_result.model_dump(),
         })
 
@@ -355,10 +445,28 @@ async def agent_chat(request: Request):
             block_reasons = [
                 r.message for r in output_result.results if not r.passed and r.action == "block"
             ]
+            latency_ms = (datetime.now() - start).total_seconds() * 1000
+            block_reason = "; ".join(block_reasons)
+            await _log_agent_chat_telemetry(
+                request=request,
+                tenant_config=tenant_config,
+                agent_key=agent_key,
+                user_role=user_role,
+                last_user_msg=last_user_msg,
+                action_taken="block",
+                latency_ms=latency_ms,
+                stage="output",
+                tool_results=tool_results,
+                input_guardrails=input_result.model_dump(),
+                output_guardrails=output_guardrails,
+                usage=llm_data.get("usage"),
+                blocked=True,
+                block_reason=block_reason,
+            )
             return JSONResponse(status_code=403, content={
                 "blocked": True,
                 "stage": "output",
-                "block_reason": "; ".join(block_reasons),
+                "block_reason": block_reason,
                 "text": content,
                 "tool_calls": tool_results,
                 "guardrail_results": output_result.model_dump(),
@@ -369,6 +477,20 @@ async def agent_chat(request: Request):
 
     has_blocked = any(not t["rbac"]["allowed"] for t in tool_results)
     latency_ms = (datetime.now() - start).total_seconds() * 1000
+    await _log_agent_chat_telemetry(
+        request=request,
+        tenant_config=tenant_config,
+        agent_key=agent_key,
+        user_role=user_role,
+        last_user_msg=last_user_msg,
+        action_taken="warn" if has_blocked else "pass",
+        latency_ms=latency_ms,
+        stage="complete",
+        tool_results=tool_results,
+        input_guardrails=input_result.model_dump(),
+        output_guardrails=output_guardrails,
+        usage=llm_data.get("usage"),
+    )
 
     return {
         "text": content,
