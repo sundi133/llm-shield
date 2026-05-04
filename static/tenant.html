@@ -739,6 +739,165 @@
   .gr-arrow { cursor: pointer; color: var(--text-muted); font-size: 18px; padding: 0 0.15rem; transition: color 0.1s; }
   .gr-arrow:hover { color: var(--text); }
 
+  .telemetry-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .telemetry-table-wrap {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--bg-2);
+  }
+  .telemetry-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .telemetry-table th,
+  .telemetry-table td {
+    padding: 0.9rem 1rem;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--border);
+  }
+  .telemetry-table th {
+    font-size: var(--type-label);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--text-muted);
+    font-weight: 700;
+    background: rgba(255,255,255,0.02);
+  }
+  .telemetry-table tbody tr:hover td {
+    background: rgba(255,255,255,0.015);
+  }
+  .telemetry-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .telemetry-row-message {
+    max-width: 520px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .telemetry-row-meta {
+    display: grid;
+    gap: 0.22rem;
+  }
+  .telemetry-row-strong {
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .telemetry-row-sub {
+    color: var(--text-muted);
+    font-size: var(--type-meta);
+  }
+  .telemetry-detail-row td {
+    padding: 0;
+    background: rgba(255,255,255,0.01);
+  }
+  .telemetry-detail-inner {
+    padding: 1rem;
+    border-top: 1px solid rgba(255,255,255,0.03);
+  }
+  .telemetry-detail-grid {
+    display: grid;
+    gap: 0.85rem;
+  }
+  .telemetry-message-full {
+    padding: 0.85rem 0.95rem;
+    border-radius: 12px;
+    background: var(--bg);
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .telemetry-section-title {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 0.45rem;
+  }
+  .telemetry-tool-grid,
+  .telemetry-guardrail-grid {
+    display: grid;
+    gap: 0.55rem;
+  }
+  .telemetry-tool-row,
+  .telemetry-guardrail-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    padding: 0.8rem 0.9rem;
+    border-radius: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+  .telemetry-tool-name,
+  .telemetry-guardrail-name {
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .telemetry-tool-sub,
+  .telemetry-guardrail-sub {
+    color: var(--text-muted);
+    font-size: var(--type-meta);
+    line-height: 1.5;
+  }
+  .telemetry-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.24rem 0.56rem;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .telemetry-pill.pass,
+  .telemetry-pill.allowed {
+    color: #86efac;
+    background: rgba(34, 197, 94, 0.14);
+  }
+  .telemetry-pill.warn {
+    color: #fcd34d;
+    background: rgba(245, 158, 11, 0.14);
+  }
+  .telemetry-pill.block,
+  .telemetry-pill.blocked {
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.14);
+  }
+  .telemetry-empty {
+    padding: 1rem;
+    text-align: center;
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.02);
+  }
+  .telemetry-expand-btn {
+    border: 1px solid var(--border);
+    background: var(--bg-3);
+    color: var(--text-dim);
+    border-radius: 10px;
+    padding: 0.38rem 0.65rem;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .telemetry-expand-btn:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+
   @media (max-width: 900px) {
     .sidebar { position: relative; width: 100%; height: auto; }
     .main { margin-left: 0; padding: 1.5rem; }
@@ -755,6 +914,24 @@
     .wf-inline-grid,
     .wf-inline-grid--triple {
       grid-template-columns: 1fr;
+    }
+    .telemetry-table thead {
+      display: none;
+    }
+    .telemetry-table,
+    .telemetry-table tbody,
+    .telemetry-table tr,
+    .telemetry-table td {
+      display: block;
+      width: 100%;
+    }
+    .telemetry-table td {
+      border-bottom: none;
+      padding: 0.45rem 0.9rem;
+    }
+    .telemetry-row-message {
+      max-width: none;
+      white-space: normal;
     }
   }
 
@@ -1675,17 +1852,21 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         Activity
       </div>
+      <div class="nav-item" data-tab="telemetry">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18"/><path stroke-linecap="round" stroke-linejoin="round" d="M7 14l3-3 3 2 4-5"/></svg>
+        Telemetry
+      </div>
       <div class="nav-item" data-tab="apis">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
         APIs &amp; SDKs
       </div>
-      <div class="nav-item" data-tab="playground">
+      <!-- <div class="nav-item" data-tab="playground">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         Playground
-      </div>
+      </div> -->
       <div class="nav-item" onclick="window.open('/playground','_blank')">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
-        Agent Chat
+        Agent Playground
         <svg class="nav-item-external" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
       </div>
     </div>
@@ -2111,6 +2292,74 @@
       <div class="card">
         <pre id="activity-log" class="mono">Loading…</pre>
       </div>
+    </div>
+
+    <!-- Telemetry -->
+    <div id="tab-telemetry" class="tab-pane hidden">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Telemetry</div>
+          <div class="page-desc">Inspect agent messages, tool calls, RBAC outcomes, and guardrail stages.</div>
+        </div>
+        <div style="display:flex;gap:0.5rem;">
+          <button class="small" onclick="loadTelemetry()">Refresh</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:1rem;">
+        <div style="display:grid;grid-template-columns:minmax(0,1.3fr) repeat(3, minmax(140px,0.7fr)) auto;gap:0.75rem;align-items:end;">
+          <div class="field" style="margin-bottom:0;">
+            <label for="telemetry-search">Search</label>
+            <input id="telemetry-search" type="text" placeholder="message, tool, block reason, agent">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label for="telemetry-status-filter">Status</label>
+            <select id="telemetry-status-filter">
+              <option value="">All</option>
+              <option value="pass">Pass</option>
+              <option value="warn">Warn</option>
+              <option value="block">Block</option>
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label for="telemetry-agent-filter">Agent</label>
+            <input id="telemetry-agent-filter" type="text" placeholder="agent key">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label for="telemetry-tool-filter">Tool</label>
+            <input id="telemetry-tool-filter" type="text" placeholder="tool name">
+          </div>
+          <div>
+            <button class="primary" onclick="loadTelemetry()">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="telemetry-summary-grid">
+        <div class="stat">
+          <div class="stat-label">Messages</div>
+          <div id="telemetry-stat-messages" class="stat-value">0</div>
+          <div class="muted">logged agent-chat requests</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Blocked</div>
+          <div id="telemetry-stat-blocked" class="stat-value">0</div>
+          <div class="muted">input or output hard blocks</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Warnings</div>
+          <div id="telemetry-stat-warn" class="stat-value">0</div>
+          <div class="muted">messages with blocked tools</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Tool Calls</div>
+          <div id="telemetry-stat-tools" class="stat-value">0</div>
+          <div id="telemetry-stat-tools-note" class="muted">0 blocked</div>
+        </div>
+      </div>
+
+      <div id="telemetry-error" class="toast error hidden"></div>
+      <div id="telemetry-list"></div>
     </div>
 
     <!-- APIs & SDKs -->
@@ -5065,6 +5314,164 @@ async function loadActivity() {
     document.getElementById('activity-search').value = '';
   } catch (e) {
     document.getElementById('activity-log').textContent = 'Error: ' + e.message;
+  }
+}
+
+function telemetryPill(status) {
+  return `<span class="telemetry-pill ${escapeHtml(status || 'pass')}">${escapeHtml(status || 'pass')}</span>`;
+}
+
+function telemetryDisplayStatus(entry) {
+  if ((entry.status || '') === 'block' || entry.block_reason) return 'blocked';
+  if ((entry.tool_calls || []).some(tool => !((tool.rbac || {}).allowed))) return 'blocked';
+  if ((entry.status || '') === 'warn') return 'warn';
+  return 'pass';
+}
+
+function renderTelemetryToolRows(toolCalls) {
+  if (!toolCalls || !toolCalls.length) {
+    return '<div class="telemetry-empty">No tool calls for this message.</div>';
+  }
+  return toolCalls.map(tool => {
+    const rbac = tool.rbac || {};
+    const status = rbac.allowed ? 'allowed' : 'blocked';
+    const message = rbac.message || (rbac.allowed ? 'Allowed by RBAC' : 'Blocked by RBAC');
+    return `
+      <div class="telemetry-tool-row">
+        <div>
+          <div class="telemetry-tool-name">${escapeHtml(tool.tool_name || 'unknown_tool')}</div>
+          <div class="telemetry-tool-sub">${escapeHtml(message)}</div>
+        </div>
+        <div>${telemetryPill(status)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderTelemetryGuardrailRows(title, rows) {
+  if (!rows || !rows.length) return '';
+  return `
+    <div class="telemetry-section-title">${escapeHtml(title)}</div>
+    <div class="telemetry-guardrail-grid">
+      ${rows.map(row => `
+        <div class="telemetry-guardrail-row">
+          <div>
+            <div class="telemetry-guardrail-name">${escapeHtml(row.guardrail || 'guardrail')}</div>
+            <div class="telemetry-guardrail-sub">${escapeHtml(row.message || (row.passed ? 'Passed' : 'Triggered'))}</div>
+          </div>
+          <div>${telemetryPill(row.passed ? 'pass' : (row.action || 'warn'))}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderTelemetryEntries(entries) {
+  const container = document.getElementById('telemetry-list');
+  if (!entries || !entries.length) {
+    container.innerHTML = '<div class="telemetry-empty">No telemetry matched the current filters.</div>';
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="telemetry-table-wrap">
+      <table class="telemetry-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Agent</th>
+            <th>Message</th>
+            <th>Status</th>
+            <th>Tools</th>
+            <th>Latency</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${entries.map((entry, index) => `
+            <tr>
+              <td><div class="telemetry-row-sub">${escapeHtml(new Date(entry.timestamp).toLocaleString())}</div></td>
+              <td>
+                <div class="telemetry-row-meta">
+                  <div class="telemetry-row-strong">${escapeHtml(entry.agent_key || 'unknown-agent')}</div>
+                  <div class="telemetry-row-sub">${escapeHtml(entry.user_role || 'role unavailable')}</div>
+                </div>
+              </td>
+              <td><div class="telemetry-row-message">${escapeHtml(entry.message || '(empty message)')}</div></td>
+              <td>
+                <div class="telemetry-row-meta">
+                  <div>${telemetryPill(telemetryDisplayStatus(entry))}</div>
+                  <div class="telemetry-row-sub">${escapeHtml(entry.stage || 'complete')}</div>
+                </div>
+              </td>
+              <td><div class="telemetry-row-sub">${escapeHtml(entry.tool_call_count || 0)} call(s)</div></td>
+              <td><div class="telemetry-row-sub">${escapeHtml(entry.latency_ms || 0)} ms</div></td>
+              <td><button class="telemetry-expand-btn" onclick="toggleTelemetryDetail(${index})">Details</button></td>
+            </tr>
+            <tr id="telemetry-detail-${index}" class="telemetry-detail-row hidden">
+              <td colspan="7">
+                <div class="telemetry-detail-inner">
+                  <div class="telemetry-detail-grid">
+                    <div>
+                      <div class="telemetry-section-title">Message</div>
+                      <div class="telemetry-message-full">${escapeHtml(entry.message || '(empty message)')}</div>
+                    </div>
+                    ${entry.block_reason ? `<div><div class="telemetry-section-title">Block Reason</div><div class="telemetry-message-full" style="color:#fca5a5;">${escapeHtml(entry.block_reason)}</div></div>` : ''}
+                    <div>
+                      <div class="telemetry-section-title">Tool Calls</div>
+                      <div class="telemetry-tool-grid">${renderTelemetryToolRows(entry.tool_calls || [])}</div>
+                    </div>
+                    ${renderTelemetryGuardrailRows('Input Guardrails', entry.input_guardrails || [])}
+                    ${renderTelemetryGuardrailRows('Output Guardrails', entry.output_guardrails || [])}
+                  </div>
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function toggleTelemetryDetail(index) {
+  const row = document.getElementById(`telemetry-detail-${index}`);
+  if (!row) return;
+  row.classList.toggle('hidden');
+}
+
+function updateTelemetrySummary(summary) {
+  const byStatus = (summary && summary.by_status) || {};
+  document.getElementById('telemetry-stat-messages').textContent = summary && summary.messages || 0;
+  document.getElementById('telemetry-stat-blocked').textContent = byStatus.block || 0;
+  document.getElementById('telemetry-stat-warn').textContent = byStatus.warn || 0;
+  document.getElementById('telemetry-stat-tools').textContent = summary && summary.tool_calls || 0;
+  document.getElementById('telemetry-stat-tools-note').textContent = `${summary && summary.blocked_tool_calls || 0} blocked`;
+}
+
+async function loadTelemetry() {
+  const errorEl = document.getElementById('telemetry-error');
+  errorEl.classList.add('hidden');
+  errorEl.textContent = '';
+
+  try {
+    const params = new URLSearchParams({ limit: '100' });
+    const q = (document.getElementById('telemetry-search').value || '').trim();
+    const status = document.getElementById('telemetry-status-filter').value;
+    const agent = (document.getElementById('telemetry-agent-filter').value || '').trim();
+    const tool = (document.getElementById('telemetry-tool-filter').value || '').trim();
+    if (q) params.set('q', q);
+    if (status) params.set('status', status);
+    if (agent) params.set('agent_key', agent);
+    if (tool) params.set('tool_name', tool);
+
+    const data = await apiCall(`/v1/tenant/me/telemetry?${params.toString()}`);
+    updateTelemetrySummary(data.summary || {});
+    renderTelemetryEntries(data.entries || []);
+  } catch (e) {
+    errorEl.classList.remove('hidden');
+    errorEl.textContent = e.message;
+    document.getElementById('telemetry-list').innerHTML = '';
   }
 }
 
@@ -9442,6 +9849,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'tool-policies') loadToolPolicyData();
     if (tab === 'usage') loadUsage();
     if (tab === 'activity') loadActivity();
+    if (tab === 'telemetry') loadTelemetry();
     if (tab === 'policies') loadPolicies();
     if (tab === 'apis') renderAllApiTabs();
     if (tab === 'playground') initPlayground();
@@ -11646,6 +12054,16 @@ function updateConfidenceDisplay() {
 }
 
 function escapeHtml(unsafe) {
+  if (unsafe === null || unsafe === undefined) return "";
+  if (typeof unsafe === 'object') {
+    try {
+      unsafe = JSON.stringify(unsafe);
+    } catch (e) {
+      unsafe = String(unsafe);
+    }
+  } else {
+    unsafe = String(unsafe);
+  }
   return unsafe
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

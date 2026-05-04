@@ -115,6 +115,10 @@ def create_app() -> FastAPI:
     async def tenant_portal():
         return FileResponse(os.path.join(_static_dir, "tenant.html"))
 
+    @app.get("/telemetry")
+    async def telemetry_portal():
+        return FileResponse(os.path.join(_static_dir, "telemetry.html"))
+
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
     @app.on_event("startup")

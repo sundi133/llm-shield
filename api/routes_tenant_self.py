@@ -16,6 +16,7 @@ from storage.tenant_store import get_tenant, update_tenant, set_tenant_policies,
 from storage.tenant_models import GuardrailPolicy
 from storage.rate_limiter import get_usage
 from storage.admin_audit import log_admin_action
+from storage.audit_log import audit_logger
 from storage.custom_policies import (
     save_custom_policy,
     get_custom_policy,
@@ -243,6 +244,105 @@ async def get_my_audit_log(request: Request, limit: int = 50):
     from storage.admin_audit import query_admin_audit
     entries = query_admin_audit(tenant_id=tenant_id, limit=limit)
     return {"tenant_id": tenant_id, "entries": entries}
+
+
+@router.get("/me/telemetry")
+async def get_my_telemetry(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    agent_key: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="pass, warn, or block"),
+    tool_name: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, description="Free-text search across message, tool, and reason"),
+):
+    """Return tenant-scoped agent chat telemetry with normalized tool-call status."""
+    tenant_id = _require_tenant(request)
+
+    raw_entries = await audit_logger.query(limit=1000, offset=0)
+    telemetry_entries = []
+
+    for entry in raw_entries:
+        metadata = entry.get("metadata") or {}
+        if metadata.get("kind") != "agent_chat_telemetry":
+            continue
+        if metadata.get("tenant_id") != tenant_id:
+            continue
+        if agent_key and entry.get("agent_key") != agent_key:
+            continue
+        if status and entry.get("action_taken") != status:
+            continue
+
+        tool_calls = metadata.get("tool_calls") or []
+        if tool_name and not any(tc.get("tool_name") == tool_name for tc in tool_calls):
+            continue
+
+        if q:
+            haystacks = [
+                entry.get("input_text") or "",
+                metadata.get("block_reason") or "",
+                entry.get("agent_key") or "",
+                metadata.get("user_role") or "",
+            ]
+            for tc in tool_calls:
+                haystacks.append(tc.get("tool_name") or "")
+                haystacks.append(((tc.get("rbac") or {}).get("message")) or "")
+            blob = " ".join(haystacks).lower()
+            if q.lower() not in blob:
+                continue
+
+        statuses = []
+        for tc in tool_calls:
+            rbac = tc.get("rbac") or {}
+            statuses.append("allowed" if rbac.get("allowed") else "blocked")
+
+        telemetry_entries.append({
+            "id": entry.get("id"),
+            "timestamp": entry.get("timestamp"),
+            "agent_key": entry.get("agent_key"),
+            "message": entry.get("input_text"),
+            "status": entry.get("action_taken"),
+            "latency_ms": entry.get("latency_ms"),
+            "stage": metadata.get("stage"),
+            "blocked": metadata.get("blocked", False),
+            "block_reason": metadata.get("block_reason"),
+            "user_role": metadata.get("user_role"),
+            "session_id": metadata.get("session_id"),
+            "tool_calls": tool_calls,
+            "tool_call_count": metadata.get("tool_call_count", len(tool_calls)),
+            "tool_statuses": statuses,
+            "input_guardrails": metadata.get("input_guardrails") or [],
+            "output_guardrails": metadata.get("output_guardrails") or [],
+            "usage": metadata.get("usage") or {},
+        })
+
+    total = len(telemetry_entries)
+    page = telemetry_entries[offset:offset + limit]
+
+    by_status = {"pass": 0, "warn": 0, "block": 0}
+    total_tool_calls = 0
+    blocked_tool_calls = 0
+    for entry in telemetry_entries:
+        by_status[entry["status"]] = by_status.get(entry["status"], 0) + 1
+        total_tool_calls += len(entry["tool_calls"])
+        blocked_tool_calls += sum(
+            1 for tc in entry["tool_calls"] if not ((tc.get("rbac") or {}).get("allowed"))
+        )
+
+    return {
+        "tenant_id": tenant_id,
+        "entries": page,
+        "count": len(page),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "summary": {
+            "messages": total,
+            "by_status": by_status,
+            "tool_calls": total_tool_calls,
+            "blocked_tool_calls": blocked_tool_calls,
+        },
+    }
 
 
 # ───────────────────────────────────────────────────────────────────

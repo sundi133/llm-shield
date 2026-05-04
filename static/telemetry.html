@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Shield — Telemetry</title>
+<style>
+:root {
+  --bg: #0a0a0f;
+  --bg-2: #12121a;
+  --bg-3: #1a1a24;
+  --bg-4: #0f1014;
+  --border: #27272f;
+  --border-strong: #3a3a45;
+  --sidebar-bg: #090a0d;
+  --sidebar-border: #24262d;
+  --text: #f5f5f7;
+  --text-dim: #d4d4d8;
+  --text-muted: #8b8d97;
+  --sidebar-text-dim: #9a9ca5;
+  --sidebar-text-muted: #6d7078;
+  --accent: #9bea60;
+  --accent-dim: #6db43d;
+  --success: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --type-label: 11px;
+  --type-body: 14px;
+  --type-meta: 12.5px;
+  --type-title: 15px;
+  --tracking-label: 0.14em;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { min-height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: var(--type-body);
+  line-height: 1.5;
+}
+button, input, select { font: inherit; }
+.hidden { display: none !important; }
+.app { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+.sidebar {
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
+  padding: 1.1rem 0.8rem;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0 0.75rem 1.2rem;
+  border-bottom: 1px solid var(--sidebar-border);
+  margin-bottom: 1rem;
+}
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: rgba(155, 234, 96, 0.14);
+  border: 1px solid rgba(155, 234, 96, 0.28);
+  position: relative;
+}
+.brand-mark::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+}
+.brand-copy strong {
+  display: block;
+  font-size: 15.5px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+.brand-copy span {
+  display: block;
+  color: var(--sidebar-text-muted);
+  font-size: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  margin-top: 0.2rem;
+}
+.sidebar-section { margin-bottom: 1rem; }
+.sidebar-label {
+  padding: 0 0.8rem 0.55rem;
+  color: var(--sidebar-text-muted);
+  font-size: var(--type-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.sidebar-card {
+  padding: 0.9rem;
+  border-radius: var(--radius);
+  background: transparent;
+  border: 1px solid transparent;
+}
+.sidebar-text {
+  color: var(--sidebar-text-dim);
+  font-size: var(--type-meta);
+  line-height: 1.6;
+}
+.sidebar-link {
+  width: 100%;
+  text-align: left;
+  margin-top: 0.65rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--sidebar-border);
+  background: transparent;
+  color: var(--sidebar-text-dim);
+  cursor: pointer;
+}
+.sidebar-link:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.main {
+  padding: 2rem 2.25rem 2.5rem;
+}
+.login-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem;
+}
+.login-card, .panel, .stat, .telemetry-card {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 1.5rem;
+}
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+.page-title {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+.page-desc {
+  margin-top: 0.25rem;
+  color: var(--text-dim);
+  font-size: var(--type-body);
+}
+.field { margin-bottom: 0.8rem; }
+.field label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--text-dim);
+  font-size: var(--type-meta);
+  font-weight: 600;
+}
+.field input, .field select {
+  width: 100%;
+  padding: 0.72rem 0.85rem;
+  background: var(--bg-4);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+}
+.field input:focus, .field select:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+  box-shadow: 0 0 0 3px rgba(155, 234, 96, 0.08);
+}
+.btn-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.btn {
+  border: 1px solid var(--border);
+  background: var(--bg-3);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 0.72rem 1rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btn:hover { border-color: var(--border-strong); background: #1f1f2c; }
+.btn.primary {
+  background: rgba(155, 234, 96, 0.14);
+  color: var(--accent);
+  border-color: rgba(155, 234, 96, 0.28);
+}
+.btn.primary:hover { background: rgba(155, 234, 96, 0.22); }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.58rem;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pill.pass, .pill.allowed { color: #86efac; background: rgba(34, 197, 94, 0.14); }
+.pill.warn { color: #fcd34d; background: rgba(245, 158, 11, 0.14); }
+.pill.block, .pill.blocked { color: #fca5a5; background: rgba(239, 68, 68, 0.14); }
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+.stat { padding: 1rem 1.1rem; }
+.stat-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  font-size: var(--type-label);
+  font-weight: 700;
+}
+.stat-value {
+  margin-top: 0.28rem;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+.stat-note {
+  margin-top: 0.2rem;
+  color: var(--text-dim);
+  font-size: var(--type-meta);
+}
+.panel {
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.filters {
+  display: grid;
+  grid-template-columns: 1.1fr repeat(3, minmax(140px, 0.6fr)) auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+.telemetry-list {
+  display: grid;
+  gap: 0.85rem;
+}
+.telemetry-card { padding: 1rem 1.05rem; }
+.telemetry-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+.telemetry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+}
+.meta-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.message-block {
+  margin-top: 0.85rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 12px;
+  background: var(--bg-4);
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.section-title {
+  margin-top: 0.95rem;
+  margin-bottom: 0.5rem;
+  color: var(--text);
+  font-size: var(--type-title);
+  font-weight: 700;
+}
+.tool-grid, .guardrail-grid {
+  display: grid;
+  gap: 0.55rem;
+}
+.tool-row, .guardrail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  background: var(--bg-4);
+  border: 1px solid var(--border);
+}
+.tool-name, .guardrail-name {
+  font-weight: 700;
+  color: var(--text);
+}
+.tool-sub, .guardrail-sub {
+  margin-top: 0.18rem;
+  color: var(--text-muted);
+  font-size: var(--type-meta);
+}
+.empty {
+  padding: 1rem;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.02);
+}
+.error {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  padding: 0.75rem 0.9rem;
+  border-radius: 12px;
+  margin-bottom: 1rem;
+}
+@media (max-width: 1024px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { border-right: none; border-bottom: 1px solid var(--sidebar-border); }
+  .filters { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div id="login-view" class="login-wrap">
+  <div class="login-card">
+    <div class="page-title" style="font-size:22px;">Telemetry</div>
+    <div class="page-desc" style="margin-bottom:1rem;">Inspect agent messages, tool calls, and allow/block status for your tenant.</div>
+    <div class="field">
+      <label for="api-key-input">Tenant API Key</label>
+      <input id="api-key-input" type="password" placeholder="tenant key">
+    </div>
+    <div class="btn-row">
+      <button class="btn primary" onclick="login()">Open Telemetry</button>
+      <button class="btn" onclick="window.location.href='/tenant'">Back to Tenant</button>
+    </div>
+    <div id="login-error" class="error hidden" style="margin-top:1rem;"></div>
+  </div>
+</div>
+
+<div id="app-view" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div class="brand-copy">
+        <strong>LLM Shield</strong>
+        <span>Telemetry</span>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Tenant</div>
+      <div class="sidebar-card">
+        <div id="tenant-name" style="font-weight:700;color:var(--text);font-size:15px;">—</div>
+        <div id="tenant-meta" class="sidebar-text" style="margin-top:0.25rem;">—</div>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">About</div>
+      <div class="sidebar-card sidebar-text">
+        This view shows agent chat telemetry logged from the tool-calling endpoint, including per-message tool decisions, guardrail stages, and latency.
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Navigation</div>
+      <div class="sidebar-card">
+        <button class="sidebar-link" onclick="window.location.href='/tenant'">Tenant Portal</button>
+        <button class="sidebar-link" onclick="window.location.href='/playground'">Playground</button>
+        <button class="sidebar-link" onclick="logout()">Sign Out</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Message Telemetry</div>
+        <div class="page-desc">Every message shows tool call outcomes, guardrail stage, and request status.</div>
+      </div>
+      <div class="btn-row">
+        <button class="btn" onclick="refreshTelemetry()">Refresh</button>
+      </div>
+    </div>
+
+    <div id="page-error" class="error hidden"></div>
+
+    <div class="stats-grid">
+      <div class="stat">
+        <div class="stat-label">Messages</div>
+        <div id="stat-messages" class="stat-value">0</div>
+        <div class="stat-note">logged agent-chat requests</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Blocked</div>
+        <div id="stat-blocked" class="stat-value">0</div>
+        <div class="stat-note">input or output hard blocks</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Warnings</div>
+        <div id="stat-warn" class="stat-value">0</div>
+        <div class="stat-note">requests with blocked tools</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Tool Calls</div>
+        <div id="stat-tools" class="stat-value">0</div>
+        <div id="stat-tools-note" class="stat-note">0 blocked</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="filters">
+        <div class="field" style="margin-bottom:0;">
+          <label for="filter-q">Search</label>
+          <input id="filter-q" type="text" placeholder="message, tool, block reason, agent">
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label for="filter-status">Status</label>
+          <select id="filter-status">
+            <option value="">All</option>
+            <option value="pass">Pass</option>
+            <option value="warn">Warn</option>
+            <option value="block">Block</option>
+          </select>
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label for="filter-agent">Agent</label>
+          <input id="filter-agent" type="text" placeholder="agent key">
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label for="filter-tool">Tool</label>
+          <input id="filter-tool" type="text" placeholder="tool name">
+        </div>
+        <div class="btn-row" style="align-self:end;">
+          <button class="btn primary" onclick="refreshTelemetry()">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="telemetry-list" class="telemetry-list"></div>
+  </main>
+</div>
+
+<script>
+const BASE_URL = '';
+let API_KEY = localStorage.getItem('votal_tenant_key') || '';
+let TENANT = null;
+
+function $(id) { return document.getElementById(id); }
+function esc(value) {
+  const div = document.createElement('div');
+  div.textContent = value == null ? '' : String(value);
+  return div.innerHTML;
+}
+
+async function api(path) {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    headers: { 'X-API-Key': API_KEY }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || data.error || `HTTP ${response.status}`);
+  return data;
+}
+
+function showError(id, message) {
+  const el = $(id);
+  el.textContent = message;
+  el.classList.remove('hidden');
+}
+
+function clearError(id) {
+  $(id).classList.add('hidden');
+  $(id).textContent = '';
+}
+
+async function login() {
+  const entered = $('api-key-input').value.trim();
+  if (entered) API_KEY = entered;
+  if (!API_KEY) {
+    showError('login-error', 'Enter your tenant API key.');
+    return;
+  }
+  clearError('login-error');
+  try {
+    TENANT = await api('/v1/tenant/me');
+    localStorage.setItem('votal_tenant_key', API_KEY);
+    $('tenant-name').textContent = TENANT.name || TENANT.tenant_id;
+    $('tenant-meta').textContent = `${TENANT.tenant_id} · ${TENANT.plan || 'plan unavailable'}`;
+    $('login-view').classList.add('hidden');
+    $('app-view').classList.remove('hidden');
+    await refreshTelemetry();
+  } catch (error) {
+    showError('login-error', error.message);
+  }
+}
+
+function logout() {
+  API_KEY = '';
+  TENANT = null;
+  localStorage.removeItem('votal_tenant_key');
+  $('app-view').classList.add('hidden');
+  $('login-view').classList.remove('hidden');
+  $('api-key-input').value = '';
+}
+
+function statusPill(status) {
+  return `<span class="pill ${esc(status)}">${esc(status)}</span>`;
+}
+
+function toolRows(toolCalls) {
+  if (!toolCalls || !toolCalls.length) return '<div class="empty">No tool calls for this message.</div>';
+  return toolCalls.map((tool) => {
+    const rbac = tool.rbac || {};
+    const state = rbac.allowed ? 'allowed' : 'blocked';
+    const message = rbac.message || (rbac.allowed ? 'Allowed by RBAC' : 'Blocked by RBAC');
+    return `
+      <div class="tool-row">
+        <div>
+          <div class="tool-name">${esc(tool.tool_name || 'unknown_tool')}</div>
+          <div class="tool-sub">${esc(message)}</div>
+        </div>
+        <div>${statusPill(state)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function guardrailRows(title, rows) {
+  if (!rows || !rows.length) return '';
+  return `
+    <div class="section-title">${esc(title)}</div>
+    <div class="guardrail-grid">
+      ${rows.map((row) => `
+        <div class="guardrail-row">
+          <div>
+            <div class="guardrail-name">${esc(row.guardrail || 'guardrail')}</div>
+            <div class="guardrail-sub">${esc(row.message || (row.passed ? 'Passed' : 'Triggered'))}</div>
+          </div>
+          <div>${statusPill(row.passed ? 'pass' : (row.action || 'warn'))}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderEntries(entries) {
+  const container = $('telemetry-list');
+  if (!entries.length) {
+    container.innerHTML = '<div class="empty">No telemetry matched the current filters.</div>';
+    return;
+  }
+
+  container.innerHTML = entries.map((entry) => `
+    <div class="telemetry-card">
+      <div class="telemetry-head">
+        <div>
+          <div style="font-size:17px;font-weight:700;letter-spacing:-0.02em;">${esc(entry.agent_key || 'unknown-agent')}</div>
+          <div class="telemetry-meta">
+            <span class="meta-chip">${esc(new Date(entry.timestamp).toLocaleString())}</span>
+            <span class="meta-chip">${esc(entry.user_role || 'role unavailable')}</span>
+            <span class="meta-chip">${esc(entry.stage || 'complete')}</span>
+            <span class="meta-chip">${esc(entry.latency_ms || 0)} ms</span>
+            <span class="meta-chip">${esc(entry.tool_call_count || 0)} tool calls</span>
+          </div>
+        </div>
+        <div>${statusPill(entry.status || 'pass')}</div>
+      </div>
+      <div class="message-block">${esc(entry.message || '(empty message)')}</div>
+      ${entry.block_reason ? `<div class="section-title">Block Reason</div><div class="message-block" style="color:#fca5a5;">${esc(entry.block_reason)}</div>` : ''}
+      <div class="section-title">Tool Calls</div>
+      <div class="tool-grid">${toolRows(entry.tool_calls)}</div>
+      ${guardrailRows('Input Guardrails', entry.input_guardrails)}
+      ${guardrailRows('Output Guardrails', entry.output_guardrails)}
+    </div>
+  `).join('');
+}
+
+function updateStats(summary) {
+  $('stat-messages').textContent = summary.messages || 0;
+  $('stat-blocked').textContent = (summary.by_status && summary.by_status.block) || 0;
+  $('stat-warn').textContent = (summary.by_status && summary.by_status.warn) || 0;
+  $('stat-tools').textContent = summary.tool_calls || 0;
+  $('stat-tools-note').textContent = `${summary.blocked_tool_calls || 0} blocked`;
+}
+
+async function refreshTelemetry() {
+  clearError('page-error');
+  try {
+    const params = new URLSearchParams({ limit: '100' });
+    const q = $('filter-q').value.trim();
+    const status = $('filter-status').value;
+    const agent = $('filter-agent').value.trim();
+    const tool = $('filter-tool').value.trim();
+    if (q) params.set('q', q);
+    if (status) params.set('status', status);
+    if (agent) params.set('agent_key', agent);
+    if (tool) params.set('tool_name', tool);
+
+    const data = await api(`/v1/tenant/me/telemetry?${params.toString()}`);
+    updateStats(data.summary || {});
+    renderEntries(data.entries || []);
+  } catch (error) {
+    showError('page-error', error.message);
+  }
+}
+
+if (API_KEY) {
+  $('api-key-input').value = API_KEY;
+  login();
+}
+</script>
+</body>
+</html>

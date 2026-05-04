@@ -40,6 +40,7 @@ from api.routes_agents_registry import router as agents_registry_router
 from api.routes_data_policies import router as data_policies_router
 from core.auth import AuthMiddleware
 from core.middleware import ShieldMiddleware
+from storage.audit_log import audit_logger
 
 # Enterprise feature routers (graceful import — admin image may lack some deps)
 _killswitch_router = None
@@ -117,6 +118,74 @@ def _load_tool_policies(tenant_id: str | None) -> dict:
     except Exception:
         pass
     return {}
+
+
+def _summarize_guardrail_payload(payload: dict | None) -> list[dict]:
+    """Normalize guardrail payloads for telemetry display."""
+    if not payload:
+        return []
+    if isinstance(payload.get("results"), list):
+        return [
+            {
+                "guardrail": item.get("guardrail_name") or item.get("guardrail"),
+                "passed": item.get("passed"),
+                "action": item.get("action"),
+                "message": item.get("message"),
+            }
+            for item in payload.get("results", []) or []
+        ]
+    return [{
+        "guardrail": payload.get("guardrail") or payload.get("stage") or "guardrail",
+        "passed": payload.get("action") != "block",
+        "action": payload.get("action") or ("pass" if payload.get("allowed", True) else "block"),
+        "message": payload.get("message") or payload.get("reason") or "",
+    }]
+
+
+async def _log_agent_chat_telemetry(
+    tenant_id: str | None,
+    agent_key: str,
+    user_role: str | None,
+    user_message: str,
+    action_taken: str,
+    latency_ms: float,
+    stage: str,
+    tool_results: list[dict] | None = None,
+    input_guardrails: dict | None = None,
+    output_guardrails: dict | None = None,
+    usage: dict | None = None,
+    blocked: bool = False,
+    block_reason: str | None = None,
+):
+    metadata = {
+        "kind": "agent_chat_telemetry",
+        "tenant_id": tenant_id or "",
+        "user_role": user_role,
+        "stage": stage,
+        "blocked": blocked,
+        "block_reason": block_reason,
+        "tool_calls": tool_results or [],
+        "tool_call_count": len(tool_results or []),
+        "input_guardrails": _summarize_guardrail_payload(input_guardrails),
+        "output_guardrails": _summarize_guardrail_payload(output_guardrails),
+        "usage": usage or {},
+    }
+
+    triggered = []
+    for bucket in (metadata["input_guardrails"], metadata["output_guardrails"]):
+        for item in bucket:
+            if item.get("passed") is False and item.get("guardrail"):
+                triggered.append(item["guardrail"])
+
+    await audit_logger.log({
+        "agent_key": agent_key,
+        "endpoint": "/v1/shield/chat/agent",
+        "input_text": user_message,
+        "action_taken": action_taken,
+        "guardrails_triggered": triggered,
+        "latency_ms": round(latency_ms, 2),
+        "metadata": metadata,
+    })
 
 
 def _get_data_policy(tool_policies: dict, tool_name: str, user_role: str | None,
@@ -881,6 +950,10 @@ def create_admin_app() -> FastAPI:
     async def playground():
         return FileResponse(os.path.join(static_dir, "playground.html"))
 
+    @app.get("/telemetry")
+    async def telemetry_portal():
+        return FileResponse(os.path.join(static_dir, "telemetry.html"))
+
     # ------------------------------------------------------------------
     # Lightweight agent chat — calls OpenAI directly, checks RBAC from
     # tenant config in Redis.  Zero guardrail-module dependencies.
@@ -1011,6 +1084,18 @@ def create_admin_app() -> FastAPI:
                 )
                 if input_guardrail_result and input_guardrail_result.get("action") == "block":
                     latency_ms = (datetime.now() - start).total_seconds() * 1000
+                    await _log_agent_chat_telemetry(
+                        tenant_id=tenant_id,
+                        agent_key=agent_key,
+                        user_role=user_role,
+                        user_message=user_message,
+                        action_taken="block",
+                        latency_ms=latency_ms,
+                        stage="input_guardrails",
+                        input_guardrails=input_guardrail_result,
+                        blocked=True,
+                        block_reason=_extract_block_reason(input_guardrail_result),
+                    )
                     return JSONResponse(status_code=403, content={
                         "blocked": True,
                         "stage": "input_guardrails",
@@ -1310,6 +1395,22 @@ def create_admin_app() -> FastAPI:
             if output_guardrail_result.get("action") == "block":
                 result["output_blocked"] = True
                 result["output_block_reason"] = _extract_block_reason(output_guardrail_result)
+
+        await _log_agent_chat_telemetry(
+            tenant_id=tenant_id,
+            agent_key=agent_key,
+            user_role=user_role,
+            user_message=user_message,
+            action_taken="block" if result.get("output_blocked") else ("warn" if has_blocked else "pass"),
+            latency_ms=latency_ms,
+            stage="output_guardrails" if result.get("output_blocked") else "complete",
+            tool_results=tool_results,
+            input_guardrails=input_guardrail_result,
+            output_guardrails=output_guardrail_result,
+            usage=llm_data.get("usage"),
+            blocked=bool(result.get("output_blocked")),
+            block_reason=result.get("output_block_reason"),
+        )
 
         return result
 
