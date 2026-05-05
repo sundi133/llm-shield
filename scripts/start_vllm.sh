@@ -21,18 +21,12 @@ python3 -m vllm.entrypoints.openai.api_server \
 VLLM_PID=$!
 
 echo "Waiting for vLLM server to be ready..."
-timeout=300
 while ! curl -s "http://localhost:$VLLM_PORT/v1/models" > /dev/null 2>&1; do
   if ! kill -0 "$VLLM_PID" 2>/dev/null; then
     echo "vLLM process died unexpectedly"
     exit 1
   fi
   sleep 2
-  timeout=$((timeout - 2))
-  if [ "$timeout" -le 0 ]; then
-    echo "Timeout waiting for vLLM to start"
-    exit 1
-  fi
 done
 
 echo "vLLM server is ready! Starting Python application..."
