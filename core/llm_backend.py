@@ -366,6 +366,17 @@ def _build_payload(
     return payload
 
 
+def _print_llm_request(endpoint_url: str, payload: dict):
+    """Print the exact LLM endpoint and request payload for debugging."""
+    print("\n" + "=" * 60, flush=True)
+    print("LLM REQUEST", flush=True)
+    print("=" * 60, flush=True)
+    print(f"URL: {endpoint_url}", flush=True)
+    print("PAYLOAD:", flush=True)
+    print(json.dumps(payload, indent=2, ensure_ascii=False), flush=True)
+    print("=" * 60 + "\n", flush=True)
+
+
 def llm_call(
     messages: list,
     max_tokens: int = 10,
@@ -376,9 +387,11 @@ def llm_call(
     """Synchronous LLM call routed to the correct server."""
     url = get_server_url(guardrail_name)
     payload = _build_payload(messages, max_tokens, temperature, response_format)
+    endpoint_url = f"{url}/v1/chat/completions"
+    _print_llm_request(endpoint_url, payload)
     session = _get_shared_session()
     res = session.post(
-        f"{url}/v1/chat/completions",
+        endpoint_url,
         json=payload,
         timeout=300,
     )
@@ -400,8 +413,10 @@ async def async_llm_call(
 
     llm_start = time.perf_counter()
     client = _get_shared_client()
+    endpoint_url = f"{url}/v1/chat/completions"
+    _print_llm_request(endpoint_url, payload)
     res = await client.post(
-        f"{url}/v1/chat/completions",
+        endpoint_url,
         json=payload,
     )
     result = res.json()
