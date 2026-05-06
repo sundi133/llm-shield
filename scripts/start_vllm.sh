@@ -3,31 +3,31 @@
 set -e
 
 echo "Starting vLLM server in background..."
-python3 -m vllm.entrypoints.openai.api_server \
-  --model "$MODEL_NAME" \
-  --host "$VLLM_HOST" \
-  --port "$VLLM_PORT" \
-  --dtype bfloat16 \
-  --quantization fp8 \
-  --kv-cache-dtype fp8 \
-  --max-model-len 8196 \
-  --max-num-batched-tokens 8196 \
-  --max-num-seqs 24 \
-  --gpu-memory-utilization 0.85 \
-  --enable-prefix-caching \
-  --language-model-only \
-  --performance-mode throughput &
+# python3 -m vllm.entrypoints.openai.api_server \
+#   --model "$MODEL_NAME" \
+#   --host "$VLLM_HOST" \
+#   --port "$VLLM_PORT" \
+#   --dtype bfloat16 \
+#   --quantization fp8 \
+#   --kv-cache-dtype fp8 \
+#   --max-model-len 8196 \
+#   --max-num-batched-tokens 8196 \
+#   --max-num-seqs 24 \
+#   --gpu-memory-utilization 0.85 \
+#   --enable-prefix-caching \
+#   --language-model-only \
+#   --performance-mode throughput &
 
-VLLM_PID=$!
+# VLLM_PID=$!
 
-echo "Waiting for vLLM server to be ready..."
-while ! curl -s "http://localhost:$VLLM_PORT/v1/models" > /dev/null 2>&1; do
-  if ! kill -0 "$VLLM_PID" 2>/dev/null; then
-    echo "vLLM process died unexpectedly"
-    exit 1
-  fi
-  sleep 2
-done
+# echo "Waiting for vLLM server to be ready..."
+# while ! curl -s "http://localhost:$VLLM_PORT/v1/models" > /dev/null 2>&1; do
+#   if ! kill -0 "$VLLM_PID" 2>/dev/null; then
+#     echo "vLLM process died unexpectedly"
+#     exit 1
+#   fi
+#   sleep 2
+# done
 
 echo "vLLM server is ready! Starting Python application..."
 
