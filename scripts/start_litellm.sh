@@ -2,6 +2,8 @@
 # LiteLLM image startup: generate proxy config from env vars, start LiteLLM, then app.
 set -e
 
+echo "LLM_BACKEND_URL=${LLM_BACKEND_URL:-<unset>}"
+echo "LLM_BACKEND_TYPE=${LLM_BACKEND_TYPE:-litellm}"
 echo "LiteLLM mode: detecting provider from environment..."
 python3 /generate-litellm-config.py
 
