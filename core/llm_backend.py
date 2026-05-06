@@ -127,8 +127,18 @@ _guardrail_server_map: dict[str, str] = {}
 _default_server_url: str = "http://127.0.0.1:8000"
 
 
+def _get_env_backend_url() -> Optional[str]:
+    """Return an explicit backend URL override from the environment."""
+    url = os.getenv("LLM_BACKEND_URL", "").strip()
+    return url or None
+
+
 def _get_servers_config() -> list[dict]:
     """Get server configs from yaml. Falls back to single-server default."""
+    env_url = _get_env_backend_url()
+    if env_url:
+        return [{"url": env_url, "gpu": 0, "guardrails": ["all"]}]
+
     if _config_module.config and _config_module.config.llm_backend:
         servers = _config_module.config.llm_backend.get("servers")
         if servers:
@@ -296,6 +306,9 @@ def get_server_url(guardrail_name: Optional[str] = None) -> str:
     If the guardrail has a dedicated server, returns that URL.
     Otherwise returns the default server URL.
     """
+    env_url = _get_env_backend_url()
+    if env_url:
+        return env_url
     if guardrail_name and guardrail_name in _guardrail_server_map:
         return _guardrail_server_map[guardrail_name]
     return _default_server_url

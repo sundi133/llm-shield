@@ -2,6 +2,8 @@
 # vLLM image startup: launch vLLM OpenAI-compatible server, wait for it, then run app.
 set -e
 
+echo "LLM_BACKEND_URL=${LLM_BACKEND_URL:-<unset>}"
+echo "LLM_BACKEND_TYPE=${LLM_BACKEND_TYPE:-vllm}"
 echo "Starting vLLM server in background..."
 # python3 -m vllm.entrypoints.openai.api_server \
 #   --model "$MODEL_NAME" \
