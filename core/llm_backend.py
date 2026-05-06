@@ -127,9 +127,14 @@ _guardrail_server_map: dict[str, str] = {}
 _default_server_url: str = "http://127.0.0.1:8000"
 
 
+def _normalize_server_url(url: str) -> str:
+    """Normalize server base URLs before appending endpoint paths."""
+    return url.strip().rstrip("/")
+
+
 def _get_env_backend_url() -> Optional[str]:
     """Return an explicit backend URL override from the environment."""
-    url = os.getenv("LLM_BACKEND_URL", "").strip()
+    url = _normalize_server_url(os.getenv("LLM_BACKEND_URL", ""))
     return url or None
 
 
@@ -142,9 +147,19 @@ def _get_servers_config() -> list[dict]:
     if _config_module.config and _config_module.config.llm_backend:
         servers = _config_module.config.llm_backend.get("servers")
         if servers:
-            return servers
+            normalized_servers = []
+            for server in servers:
+                normalized_server = dict(server)
+                if "url" in normalized_server:
+                    normalized_server["url"] = _normalize_server_url(
+                        normalized_server["url"]
+                    )
+                normalized_servers.append(normalized_server)
+            return normalized_servers
         # Legacy single-server config
-        url = _config_module.config.llm_backend.get("url", "http://127.0.0.1:8000")
+        url = _normalize_server_url(
+            _config_module.config.llm_backend.get("url", "http://127.0.0.1:8000")
+        )
         return [{"url": url, "gpu": 0, "guardrails": ["all"]}]
     return [{"url": "http://127.0.0.1:8000", "gpu": 0, "guardrails": ["all"]}]
 
@@ -377,6 +392,22 @@ def _print_llm_request(endpoint_url: str, payload: dict):
     print("=" * 60 + "\n", flush=True)
 
 
+def _print_llm_response(endpoint_url: str, status_code: int, body: str):
+    """Print upstream LLM response details when debugging failures."""
+    print("\n" + "=" * 60, flush=True)
+    print("LLM RESPONSE", flush=True)
+    print("=" * 60, flush=True)
+    print(f"URL: {endpoint_url}", flush=True)
+    print(f"STATUS: {status_code}", flush=True)
+    print("BODY:", flush=True)
+    print(body, flush=True)
+    print("=" * 60 + "\n", flush=True)
+
+
+def _chat_completions_url(server_url: str) -> str:
+    return f"{_normalize_server_url(server_url)}/v1/chat/completions"
+
+
 def llm_call(
     messages: list,
     max_tokens: int = 10,
@@ -387,7 +418,7 @@ def llm_call(
     """Synchronous LLM call routed to the correct server."""
     url = get_server_url(guardrail_name)
     payload = _build_payload(messages, max_tokens, temperature, response_format)
-    endpoint_url = f"{url}/v1/chat/completions"
+    endpoint_url = _chat_completions_url(url)
     _print_llm_request(endpoint_url, payload)
     session = _get_shared_session()
     res = session.post(
@@ -395,6 +426,8 @@ def llm_call(
         json=payload,
         timeout=300,
     )
+    if res.status_code >= 400:
+        _print_llm_response(endpoint_url, res.status_code, res.text)
     return res.json()
 
 
@@ -413,12 +446,14 @@ async def async_llm_call(
 
     llm_start = time.perf_counter()
     client = _get_shared_client()
-    endpoint_url = f"{url}/v1/chat/completions"
+    endpoint_url = _chat_completions_url(url)
     _print_llm_request(endpoint_url, payload)
     res = await client.post(
         endpoint_url,
         json=payload,
     )
+    if res.status_code >= 400:
+        _print_llm_response(endpoint_url, res.status_code, res.text)
     result = res.json()
     llm_ms = (time.perf_counter() - llm_start) * 1000
 
