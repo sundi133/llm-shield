@@ -31,7 +31,7 @@ from datetime import datetime
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.routes_tenant import router as tenant_router, global_router as tenant_audit_router
@@ -891,8 +891,7 @@ def create_admin_app() -> FastAPI:
     # Static files
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
-    @app.get("/")
-    async def root():
+    def _service_index() -> dict:
         available = {
             "portals": {
                 "admin": "/admin",
@@ -930,6 +929,14 @@ def create_admin_app() -> FastAPI:
 
         return {"service": "votal-shield-admin", "endpoints": available}
 
+    @app.get("/")
+    async def root():
+        return FileResponse(os.path.join(static_dir, "index.html"))
+
+    @app.get("/service-info")
+    async def service_info():
+        return _service_index()
+
     @app.get("/health")
     async def health():
         return {"status": "ok"}
@@ -945,6 +952,10 @@ def create_admin_app() -> FastAPI:
     @app.get("/tenant")
     async def tenant_portal():
         return FileResponse(os.path.join(static_dir, "tenant.html"))
+
+    @app.get("/tenat")
+    async def tenant_typo_redirect():
+        return RedirectResponse(url="/tenant", status_code=307)
 
     @app.get("/playground")
     async def playground():
