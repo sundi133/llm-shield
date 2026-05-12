@@ -1,5 +1,7 @@
 """Tool checking routes — pre-execution validation, output sanitization, confirmation."""
 
+import time
+import uuid
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -20,6 +22,7 @@ from core.feature_flags import (
 from storage.tool_killswitch import is_tool_disabled
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
+from core.telemetry import record_event, build_guardrail_event, build_response_event
 from storage.agentic_control_plane import (
     get_control_plane_config,
     find_matching_approval_rule,
@@ -95,8 +98,63 @@ def _cp_result(name: str, passed: bool, action: str, message: str, details: Opti
     }
 
 
+def _emit_tool_check_telemetry(
+    *,
+    trace_id: str,
+    tool_name: str,
+    agent_key: str,
+    tenant_id: str,
+    user_role: str,
+    session_id: str,
+    source_ip: str,
+    action: str,
+    allowed: bool,
+    results: list[dict],
+    latency_ms: float,
+):
+    """Emit per-guardrail and summary SIEM events for a /tool/check call."""
+    blocked_guardrails = []
+    for gr in results:
+        if not gr.get("passed") and gr.get("action") == "block":
+            blocked_guardrails.append(gr.get("guardrail", ""))
+        record_event(build_guardrail_event(
+            trace_id=trace_id,
+            guardrail_name=gr.get("guardrail", "unknown"),
+            passed=gr.get("passed", True),
+            action=gr.get("action", "pass"),
+            message=gr.get("message", ""),
+            latency_ms=gr.get("latency_ms", 0),
+            details={**(gr.get("details") or {}), "tool_name": tool_name},
+            agent_key=agent_key,
+            tenant_id=tenant_id,
+            source_ip=source_ip,
+            input_text=f"tool_check:{tool_name}",
+        ))
+
+    record_event(build_response_event(
+        trace_id=trace_id,
+        endpoint="/v1/shield/tool/check",
+        status_code=403 if action == "block" else 200,
+        latency_ms=latency_ms,
+        action=action,
+        safe=allowed,
+        agent_key=agent_key,
+        tenant_id=tenant_id or "",
+        session_id=session_id or "",
+        role_name=user_role or "",
+        source_ip=source_ip,
+        input_text=f"tool_check:{tool_name}",
+        blocked_guardrails=blocked_guardrails,
+        guardrail_results=results,
+    ))
+
+
 @router.post("/check")
 async def check_tool(body: ToolCheckRequest, request: Request):
+    start = time.perf_counter()
+    trace_id = request.headers.get("x-trace-id", uuid.uuid4().hex[:16])
+    source_ip = request.client.host if request.client else ""
+
     tenant_id = (
         getattr(request.state, "tenant_id", None)
         if hasattr(request, "state")
@@ -120,20 +178,30 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 user_role=user_role,
                 session_id=body.session_id,
                 reason=f"Tool '{body.tool_name}' is globally disabled via kill switch",
-                source_ip=request.client.host if request.client else "",
+                source_ip=source_ip,
             )
-        return {
-            "allowed": False,
+        ks_results = [{
+            "guardrail": "tool_killswitch",
+            "passed": False,
             "action": "block",
-            "guardrail_results": [{
-                "guardrail": "tool_killswitch",
-                "passed": False,
-                "action": "block",
-                "message": f"Tool '{body.tool_name}' is globally disabled via kill switch",
-                "details": {"tool_name": body.tool_name, "tenant_id": tenant_id},
-                "latency_ms": 0.0,
-            }],
-        }
+            "message": f"Tool '{body.tool_name}' is globally disabled via kill switch",
+            "details": {"tool_name": body.tool_name, "tenant_id": tenant_id},
+            "latency_ms": 0.0,
+        }]
+        _emit_tool_check_telemetry(
+            trace_id=trace_id,
+            tool_name=body.tool_name,
+            agent_key=body.agent_key,
+            tenant_id=tenant_id or "",
+            user_role=user_role or "",
+            session_id=body.session_id or "",
+            source_ip=source_ip,
+            action="block",
+            allowed=False,
+            results=ks_results,
+            latency_ms=(time.perf_counter() - start) * 1000,
+        )
+        return {"allowed": False, "action": "block", "guardrail_results": ks_results}
 
     context = {
         "agent_key": body.agent_key,
@@ -174,6 +242,7 @@ async def check_tool(body: ToolCheckRequest, request: Request):
 
     # Set contextvar for tenant-specific policy
     token = _request_configs.set(configs) if configs else None
+    _final_result = None  # captured for SIEM emission in finally block
     try:
         results = []
 
@@ -189,7 +258,8 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                     f"Tool '{body.tool_name}' is temporarily blocked by an open circuit breaker",
                     breaker_state or {},
                 ))
-                return {"allowed": False, "action": "block", "guardrail_results": results}
+                _final_result = {"allowed": False, "action": "block", "guardrail_results": results}
+                return _final_result
 
         if tenant_id and cp_config:
             tool_param_policy = (cp_config.get("parameter_policies", {}) or {}).get(body.tool_name)
@@ -203,7 +273,8 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                     details,
                 ))
                 if not ok:
-                    return {"allowed": False, "action": "block", "guardrail_results": results}
+                    _final_result = {"allowed": False, "action": "block", "guardrail_results": results}
+                    return _final_result
 
             if body.session_id:
                 ok, msg, details = evaluate_workflow_constraints(
@@ -223,7 +294,8 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                     details,
                 ))
                 if not ok:
-                    return {"allowed": False, "action": "block", "guardrail_results": results}
+                    _final_result = {"allowed": False, "action": "block", "guardrail_results": results}
+                    return _final_result
 
             if body.execution_grant_id:
                 ok, msg, grant = validate_execution_grant(
@@ -241,7 +313,8 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                     grant or {},
                 ))
                 if not ok:
-                    return {"allowed": False, "action": "block", "guardrail_results": results}
+                    _final_result = {"allowed": False, "action": "block", "guardrail_results": results}
+                    return _final_result
 
             approval_rule = find_matching_approval_rule(
                 cp_config,
@@ -266,7 +339,8 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                         approval or {},
                     ))
                     if not ok:
-                        return {"allowed": False, "action": "block", "guardrail_results": results}
+                        _final_result = {"allowed": False, "action": "block", "guardrail_results": results}
+                        return _final_result
                 else:
                     approval = create_approval_request(
                         tenant_id,
@@ -288,7 +362,8 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                             "expires_at": approval["expires_at"],
                         },
                     ))
-                    return {"allowed": False, "action": "pending_confirmation", "guardrail_results": results}
+                    _final_result = {"allowed": False, "action": "pending_confirmation", "guardrail_results": results}
+                    return _final_result
 
         for name, cls in _CHECK_GUARDS:
             if body.guardrails and name not in body.guardrails:
@@ -321,7 +396,7 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                         user_role=user_role,
                         session_id=body.session_id,
                         reason=r.get("message", ""),
-                        source_ip=request.client.host if request.client else "",
+                        source_ip=source_ip,
                         metadata=r.get("details"),
                     )
 
@@ -349,8 +424,24 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 workflow_step=body.workflow_step,
             )
 
-        return {"allowed": allowed, "action": action, "guardrail_results": results}
+        _final_result = {"allowed": allowed, "action": action, "guardrail_results": results}
+        return _final_result
     finally:
+        # Emit SIEM telemetry for every tool check decision (all paths)
+        if _final_result is not None:
+            _emit_tool_check_telemetry(
+                trace_id=trace_id,
+                tool_name=body.tool_name,
+                agent_key=body.agent_key,
+                tenant_id=tenant_id or "",
+                user_role=user_role or "",
+                session_id=body.session_id or "",
+                source_ip=source_ip,
+                action=_final_result["action"],
+                allowed=_final_result["allowed"],
+                results=_final_result["guardrail_results"],
+                latency_ms=(time.perf_counter() - start) * 1000,
+            )
         # Reset the contextvar
         if token is not None:
             _request_configs.reset(token)
