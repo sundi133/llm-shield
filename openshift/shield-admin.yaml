@@ -46,7 +46,7 @@ spec:
       initContainers:
         - name: init-permissions
           image: busybox:latest
-          command: ["sh", "-c", "mkdir -p /app/data /app/log && chmod 777 /app/data /app/log"]
+          command: ["sh", "-c", "mkdir -p /app/data /app/log"]
           volumeMounts:
             - name: storage-data
               mountPath: /app/data
