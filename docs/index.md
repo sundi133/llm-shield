@@ -6,43 +6,86 @@ description: "AI guardrails platform — input safety, output validation, and ag
 permalink: /
 ---
 
-# LLM Shield
-{: .fs-9 }
+<div class="hero">
+  <span class="hero__eyebrow">Production AI Guardrails</span>
+  <h1 class="hero__title">Security for every LLM call.</h1>
+  <p class="hero__subtitle">
+    LLM Shield sits between your application and your LLM. Inspects inputs, enforces policies,
+    scans outputs, and secures agentic tool-calling workflows — with per-tenant isolation,
+    runtime audit, and compliance mappings out of the box.
+  </p>
+  <div class="hero__cta">
+    <a href="{{ '/quickstart/' | relative_url }}" class="btn btn-primary">Get started →</a>
+    <a href="{{ '/faq/' | relative_url }}" class="btn">Read the FAQ</a>
+    <a href="https://github.com/sundi133/llm-shield" class="btn">View on GitHub</a>
+  </div>
+</div>
 
-AI guardrails platform that sits between your application and your LLM. Inspects inputs, enforces policies, scans outputs, secures agentic tool-calling workflows, and provides **multi-tenant isolation** with per-tenant policies stored in Redis.
-{: .fs-6 .fw-300 }
+<div class="stats">
+  <div class="stats__item">
+    <div class="stats__number">19</div>
+    <div class="stats__label">Guardrails</div>
+  </div>
+  <div class="stats__item">
+    <div class="stats__number">13</div>
+    <div class="stats__label">Industry suites</div>
+  </div>
+  <div class="stats__item">
+    <div class="stats__number">~26K</div>
+    <div class="stats__label">Red-team prompts</div>
+  </div>
+  <div class="stats__item">
+    <div class="stats__number">&lt;250ms</div>
+    <div class="stats__label">Inspection budget</div>
+  </div>
+</div>
 
-[Quickstart]({{ "/quickstart/" | relative_url }}){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
-[FAQ]({{ "/faq/" | relative_url }}){: .btn .fs-5 .mb-4 .mb-md-0 .mr-2 }
-[GitHub](https://github.com/sundi133/llm-shield){: .btn .fs-5 .mb-4 .mb-md-0 }
+## Why LLM Shield
 
----
-
-## What it is
-
-LLM Shield is a drop-in guardrails layer for production AI apps. One HTTP gateway in front of your model + a tenant-aware policy engine behind it.
-
-- **19 guardrails** across input safety, output quality, and agentic security
-- **Two-tier parallel pipeline** — fast CPU guardrails first; LLM-based guardrails only when needed
-- **Multi-tenant** — per-tenant policies, rate limiting, quotas, and audit logging in Redis
-- **Admin + Tenant portals** — dark-mode UIs for tenant CRUD, policy editing, and a guardrail playground
-- **Agentic security** — role-based tool authorization, MCP server validation, data taint tracking, and goal-drift detection
-- **Compliance** — NIST AI RMF, OWASP LLM Top 10, ISO 42001 mappings included
+<div class="feature-grid">
+  <div class="feature-card">
+    <span class="feature-card__icon">🛡️</span>
+    <h3>Defense in depth</h3>
+    <p>19 guardrails across input safety, output quality, and agentic security — composed into a two-tier parallel pipeline.</p>
+  </div>
+  <div class="feature-card">
+    <span class="feature-card__icon">🏢</span>
+    <h3>Built for multi-tenant</h3>
+    <p>Per-tenant policies, rate limits, quotas, and audit logs persisted in Redis. Drop-in for SaaS or enterprise.</p>
+  </div>
+  <div class="feature-card">
+    <span class="feature-card__icon">⚡</span>
+    <h3>Fast where it matters</h3>
+    <p>CPU guardrails run first under a 250ms budget. LLM-based checks fire only when needed.</p>
+  </div>
+  <div class="feature-card">
+    <span class="feature-card__icon">🤖</span>
+    <h3>Agent-native security</h3>
+    <p>Role-based tool authorization, MCP server validation, data taint tracking, and goal-drift detection.</p>
+  </div>
+  <div class="feature-card">
+    <span class="feature-card__icon">📋</span>
+    <h3>Compliance-ready</h3>
+    <p>Mappings for NIST AI RMF, OWASP LLM Top 10, and ISO 42001 — ship audits, not spreadsheets.</p>
+  </div>
+  <div class="feature-card">
+    <span class="feature-card__icon">🔌</span>
+    <h3>Framework agnostic</h3>
+    <p>LangChain, CrewAI, OpenAI SDK, Anthropic, or a plain OpenAI-compatible HTTP gateway — wire it in once.</p>
+  </div>
+</div>
 
 ## Where to start
 
 | If you want to… | Go to |
 |---|---|
-| Understand how it answers common buyer questions | [FAQ]({{ "/faq/" | relative_url }}) |
 | Spin it up in 5 minutes | [Quickstart]({{ "/quickstart/" | relative_url }}) |
+| Understand how it answers common buyer questions | [FAQ]({{ "/faq/" | relative_url }}) |
 | See every endpoint | [API Reference]({{ "/api-reference/" | relative_url }}) |
 | Pick the right deployment shape | [Installation Guide]({{ "/installation-guide/" | relative_url }}) |
 | Run on-prem with HA | [On-Premises Deployment]({{ "/on-premises-deployment-guide/" | relative_url }}) |
-| Understand the architecture | [Architecture]({{ "/architecture-diagram/" | relative_url }}) |
 | Wire up agents (LangChain / CrewAI / OpenAI) | [Agentic Integration]({{ "/agentic-integration-guide/" | relative_url }}) |
 | Map to NIST / OWASP / ISO controls | [Compliance Mapping]({{ "/compliance-mapping/" | relative_url }}) |
-
----
 
 ## Two deployment modes
 

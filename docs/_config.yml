@@ -30,8 +30,9 @@ aux_links_new_tab: true
 # Footer
 footer_content: "&copy; 2025 LLM Shield contributors. <a href=\"https://github.com/sundi133/llm-shield\">GitHub</a>. Distributed under the MIT License."
 
-# Color scheme
-color_scheme: dark
+# Color scheme — custom light palette defined in _sass/color_schemes/shield.scss
+color_scheme: shield
+logo: "/assets/images/votalai-logo.svg"
 
 # Code copy button
 enable_copy_code_button: true
