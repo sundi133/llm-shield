@@ -32,7 +32,7 @@ footer_content: "&copy; 2025 LLM Shield contributors. <a href=\"https://github.c
 
 # Color scheme — custom light palette defined in _sass/color_schemes/shield.scss
 color_scheme: shield
-logo: "/assets/images/logo.svg"
+logo: "/assets/images/votalai-logo.svg"
 
 # Code copy button
 enable_copy_code_button: true

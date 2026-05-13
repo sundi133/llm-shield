@@ -210,6 +210,15 @@
   font-size: 1.25rem;
 }
 
+.site-logo {
+  background-size: contain !important;
+  background-repeat: no-repeat !important;
+  background-position: left center !important;
+  height: 40px !important;
+  width: 180px !important;
+  margin: 0.5rem 0;
+}
+
 .nav-list .nav-list-item .nav-list-link {
   font-size: 0.92rem;
 
