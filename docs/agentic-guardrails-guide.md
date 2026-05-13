@@ -1,3 +1,10 @@
+---
+title: Agentic Guardrails Guide
+layout: default
+nav_order: 12
+permalink: /agentic-guardrails-guide/
+---
+
 # Agentic AI Guardrails — Developer Integration Guide
 
 Votal Shield provides guardrails that protect AI agents at every stage of execution: input validation, tool call control, output sanitization, memory safety, and budget enforcement. These work with **any agentic framework** — LangChain, CrewAI, OpenAI Agents SDK, AutoGen, Semantic Kernel, or your own custom agents.

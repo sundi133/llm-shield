@@ -1,3 +1,10 @@
+---
+title: Installation Guide
+layout: default
+nav_order: 8
+permalink: /installation-guide/
+---
+
 # LLM Shield Guardrails - Installation Guide
 ## RedHat Enterprise + H200 GPU + Network Storage
 

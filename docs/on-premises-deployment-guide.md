@@ -1,3 +1,10 @@
+---
+title: On-Premises Deployment
+layout: default
+nav_order: 9
+permalink: /on-premises-deployment-guide/
+---
+
 # LLM Shield Guardrails - On-Premises Deployment Guide
 ## RedHat Enterprise + H200 GPU Infrastructure
 

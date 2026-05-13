@@ -1,3 +1,10 @@
+---
+title: Architecture
+layout: default
+nav_order: 6
+permalink: /architecture-diagram/
+---
+
 # Votal Shield — Architecture Diagram
 
 This document provides visual diagrams of the Votal Shield multi-tenant architecture for customers and integrators.

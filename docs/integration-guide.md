@@ -1,3 +1,10 @@
+---
+title: Integration Guide
+layout: default
+nav_order: 10
+permalink: /integration-guide/
+---
+
 # LLM Shield — Developer Integration Guide
 
 LLM Shield is a guardrails gateway that sits between your application and your LLM. It inspects inputs before they reach the model, inspects outputs before they reach the user, and enforces security policies for agentic tool-calling workflows.

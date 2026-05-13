@@ -1,3 +1,10 @@
+---
+title: Policy Management
+layout: default
+nav_order: 15
+permalink: /policy-management-integration/
+---
+
 # Policy Management through Function Calling
 
 This guide shows how to integrate LLM Shield's policy management capabilities with your LiteLLM setup, allowing customers to manage data protection policies through natural language.

@@ -1,3 +1,10 @@
+---
+title: Enterprise RBAC Configuration
+layout: default
+nav_order: 14
+permalink: /enterprise-role-configuration/
+---
+
 # Enterprise Role-Based Access Control Configuration
 
 ## Overview

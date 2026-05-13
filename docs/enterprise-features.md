@@ -1,3 +1,10 @@
+---
+title: Enterprise Features
+layout: default
+nav_order: 13
+permalink: /enterprise-features/
+---
+
 # Enterprise Features — Setup & Usage Guide
 
 Votal Shield includes enterprise-grade controls for SOC2/ISO compliance, incident response, and advanced agentic AI governance. **All features are opt-in** — they are disabled by default and have zero impact on existing deployments. Enable only what you need.
