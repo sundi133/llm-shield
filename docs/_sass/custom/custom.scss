@@ -1,0 +1,227 @@
+// Web fonts
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+// ─── Hero section ──────────────────────────────────────────────────────────
+.hero {
+  padding: 4rem 0 3rem;
+  border-bottom: 1px solid $border-color;
+  margin-bottom: 3rem;
+
+  &__eyebrow {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: $link-color;
+    background: $purple-000;
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    margin-bottom: 1.25rem;
+  }
+
+  &__title {
+    font-size: 3.25rem;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+    margin: 0 0 1.25rem;
+    background: linear-gradient(135deg, #0f172a 0%, #4f46e5 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  &__subtitle {
+    font-size: 1.25rem;
+    line-height: 1.55;
+    color: #475569;
+    max-width: 42rem;
+    margin: 0 0 2rem;
+    font-weight: 400;
+  }
+
+  &__cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+}
+
+// ─── Buttons ───────────────────────────────────────────────────────────────
+.btn {
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  border-radius: 8px;
+  padding: 0.6rem 1.25rem;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  border: 1px solid $border-color;
+  background: #ffffff;
+  color: $body-text-color;
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    text-decoration: none;
+  }
+}
+
+.btn-primary {
+  background: #4f46e5;
+  color: #ffffff !important;
+  border-color: #4f46e5;
+
+  &:hover {
+    background: #4338ca;
+    border-color: #4338ca;
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
+  }
+}
+
+// ─── Feature grid ──────────────────────────────────────────────────────────
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+  margin: 2rem 0 3rem;
+}
+
+.feature-card {
+  border: 1px solid $border-color;
+  border-radius: 12px;
+  padding: 1.5rem;
+  background: #ffffff;
+  transition: border-color 0.15s ease, transform 0.15s ease,
+    box-shadow 0.15s ease;
+
+  &:hover {
+    border-color: $purple-200;
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
+  }
+
+  h3 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.5rem;
+    color: $body-heading-color;
+  }
+
+  p {
+    font-size: 0.95rem;
+    color: #475569;
+    margin: 0;
+    line-height: 1.55;
+  }
+
+  &__icon {
+    font-size: 1.5rem;
+    margin-bottom: 0.75rem;
+    display: block;
+  }
+}
+
+// ─── Stats strip ───────────────────────────────────────────────────────────
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1.5rem;
+  padding: 2rem 0;
+  margin: 0 0 3rem;
+  border-top: 1px solid $border-color;
+  border-bottom: 1px solid $border-color;
+
+  &__item {
+    text-align: center;
+  }
+
+  &__number {
+    font-size: 2.25rem;
+    font-weight: 700;
+    color: $body-heading-color;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+
+  &__label {
+    font-size: 0.85rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 0.5rem;
+  }
+}
+
+// ─── Typography polish ─────────────────────────────────────────────────────
+.main-content {
+  h1,
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.015em;
+  }
+
+  h2 {
+    font-size: 1.75rem;
+    margin-top: 3rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid $border-color;
+  }
+
+  h3 {
+    font-size: 1.25rem;
+    margin-top: 2rem;
+  }
+
+  p {
+    color: #334155;
+  }
+
+  table {
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid $border-color;
+
+    th {
+      background: $grey-lt-000;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+    }
+  }
+
+  code {
+    font-size: 0.9em;
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+  }
+
+  pre.highlight,
+  div.highlighter-rouge {
+    border-radius: 8px;
+    border: 1px solid $border-color;
+  }
+}
+
+// ─── Sidebar polish ────────────────────────────────────────────────────────
+.site-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-size: 1.25rem;
+}
+
+.nav-list .nav-list-item .nav-list-link {
+  font-size: 0.92rem;
+
+  &.active {
+    font-weight: 600;
+  }
+}
+
+// ─── Footer ────────────────────────────────────────────────────────────────
+.site-footer {
+  border-top: 1px solid $border-color;
+  padding-top: 1.5rem;
+  font-size: 0.85rem;
+  color: #64748b;
+}

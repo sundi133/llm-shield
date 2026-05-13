@@ -1,0 +1,52 @@
+// LLM Shield — custom color scheme on top of just-the-docs `light`
+@import "./light";
+
+// Brand palette — indigo/violet accent like the wb-red-team site
+$link-color: #4f46e5;
+$btn-primary-color: #4f46e5;
+$base-button-color: #ffffff;
+
+// Typography — Inter for body, JetBrains Mono for code
+$body-font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+  Roboto, "Helvetica Neue", Arial, sans-serif;
+$mono-font-family: "JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace;
+$root-font-size: 16px;
+$body-line-height: 1.65;
+$body-heading-line-height: 1.25;
+
+// Refined surface colors
+$body-background-color: #ffffff;
+$sidebar-color: #f8fafc;
+$border-color: #e5e7eb;
+$body-text-color: #1f2937;
+$body-heading-color: #0f172a;
+$nav-child-link-color: #475569;
+$search-background-color: #ffffff;
+$search-result-preview-color: #64748b;
+
+// Code blocks
+$code-background-color: #f8fafc;
+$base-code-background-color: #f1f5f9;
+
+// Buttons — flatter, more startup-y
+$grey-dk-000: #475569;
+$grey-dk-100: #334155;
+$grey-dk-200: #1e293b;
+$grey-dk-250: #0f172a;
+$grey-dk-300: #020617;
+
+$grey-lt-000: #f8fafc;
+$grey-lt-100: #f1f5f9;
+$grey-lt-200: #e2e8f0;
+$grey-lt-300: #cbd5e1;
+
+// Purple accent (was: blue) to match the brand
+$purple-000: #ede9fe;
+$purple-100: #c4b5fd;
+$purple-200: #a78bfa;
+$purple-300: #8b5cf6;
+
+$blue-000: #eef2ff;
+$blue-100: #c7d2fe;
+$blue-200: #a5b4fc;
+$blue-300: #4f46e5;
