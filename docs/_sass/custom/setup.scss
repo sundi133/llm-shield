@@ -1,0 +1,19 @@
+// _sass/custom/setup.scss
+// just-the-docs loads this BEFORE its variables/defaults — perfect place to
+// override SCSS variables that are typed as `!default` in the theme.
+
+// Web fonts
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+// Typography
+$body-font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+  Roboto, "Helvetica Neue", Arial, sans-serif;
+$mono-font-family: "JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace;
+$root-font-size: 16px;
+$body-line-height: 1.65;
+$body-heading-line-height: 1.25;
+
+// Brand palette — indigo
+$link-color: #4f46e5;
+$btn-primary-color: #4f46e5;
+$base-button-color: #ffffff;
