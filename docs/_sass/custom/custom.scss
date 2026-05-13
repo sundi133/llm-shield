@@ -1,10 +1,11 @@
-// Web fonts
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+// _sass/custom/custom.scss
+// just-the-docs loads this AFTER its own styles — plain CSS rules only.
+// SCSS variable overrides belong in _sass/custom/setup.scss.
 
 // ─── Hero section ──────────────────────────────────────────────────────────
 .hero {
   padding: 4rem 0 3rem;
-  border-bottom: 1px solid $border-color;
+  border-bottom: 1px solid #e5e7eb;
   margin-bottom: 3rem;
 
   &__eyebrow {
@@ -13,8 +14,8 @@
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: $link-color;
-    background: $purple-000;
+    color: #4f46e5;
+    background: #ede9fe;
     padding: 0.35rem 0.75rem;
     border-radius: 999px;
     margin-bottom: 1.25rem;
@@ -55,9 +56,9 @@
   border-radius: 8px;
   padding: 0.6rem 1.25rem;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
-  border: 1px solid $border-color;
+  border: 1px solid #e5e7eb;
   background: #ffffff;
-  color: $body-text-color;
+  color: #1f2937;
 
   &:hover {
     transform: translateY(-1px);
@@ -87,7 +88,7 @@
 }
 
 .feature-card {
-  border: 1px solid $border-color;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
   padding: 1.5rem;
   background: #ffffff;
@@ -95,7 +96,7 @@
     box-shadow 0.15s ease;
 
   &:hover {
-    border-color: $purple-200;
+    border-color: #a78bfa;
     transform: translateY(-2px);
     box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
   }
@@ -104,7 +105,7 @@
     font-size: 1.05rem;
     font-weight: 600;
     margin: 0 0 0.5rem;
-    color: $body-heading-color;
+    color: #0f172a;
   }
 
   p {
@@ -128,8 +129,8 @@
   gap: 1.5rem;
   padding: 2rem 0;
   margin: 0 0 3rem;
-  border-top: 1px solid $border-color;
-  border-bottom: 1px solid $border-color;
+  border-top: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
 
   &__item {
     text-align: center;
@@ -138,7 +139,7 @@
   &__number {
     font-size: 2.25rem;
     font-weight: 700;
-    color: $body-heading-color;
+    color: #0f172a;
     line-height: 1;
     letter-spacing: -0.02em;
   }
@@ -166,7 +167,7 @@
     margin-top: 3rem;
     margin-bottom: 1rem;
     padding-bottom: 0.5rem;
-    border-bottom: 1px solid $border-color;
+    border-bottom: 1px solid #e5e7eb;
   }
 
   h3 {
@@ -181,10 +182,10 @@
   table {
     border-radius: 8px;
     overflow: hidden;
-    border: 1px solid $border-color;
+    border: 1px solid #e5e7eb;
 
     th {
-      background: $grey-lt-000;
+      background: #f8fafc;
       font-weight: 600;
       letter-spacing: -0.005em;
     }
@@ -199,7 +200,7 @@
   pre.highlight,
   div.highlighter-rouge {
     border-radius: 8px;
-    border: 1px solid $border-color;
+    border: 1px solid #e5e7eb;
   }
 }
 
@@ -229,7 +230,7 @@
 
 // ─── Footer ────────────────────────────────────────────────────────────────
 .site-footer {
-  border-top: 1px solid $border-color;
+  border-top: 1px solid #e5e7eb;
   padding-top: 1.5rem;
   font-size: 0.85rem;
   color: #64748b;
