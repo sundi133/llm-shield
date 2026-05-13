@@ -20,6 +20,9 @@ jobs:
           - name: litellm
             dockerfile: Dockerfile.litellm
             image: llm-shield-litellm
+          - name: admin
+            dockerfile: Dockerfile.admin
+            image: llm-shield-admin
 
     name: Build ${{ matrix.name }}
     steps:
