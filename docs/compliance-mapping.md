@@ -1,3 +1,10 @@
+---
+title: Compliance Mapping
+layout: default
+nav_order: 16
+permalink: /compliance-mapping/
+---
+
 # Compliance Mapping — Votal Shield Guardrails
 
 This document maps Votal Shield guardrails to industry compliance frameworks to help security, risk, and audit teams evidence control coverage.

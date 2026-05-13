@@ -1,3 +1,10 @@
+---
+title: Multi-Tenant Architecture
+layout: default
+nav_order: 7
+permalink: /multi-tenant-architecture/
+---
+
 # Multi-Tenant Architecture for Votal Shield
 
 This guide explains how a single Votal Shield deployment serves multiple tenants (teams, customers, or business units) with isolated guardrail policies, RBAC roles, agent identities, and telemetry — all without running separate instances.

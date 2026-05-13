@@ -1,3 +1,10 @@
+---
+title: Agentic Integration Guide
+layout: default
+nav_order: 11
+permalink: /agentic-integration-guide/
+---
+
 # Enhanced Agentic Guardrails Integration Guide
 
 Complete guide for integrating role-based tool authorization and validation into your AI applications.

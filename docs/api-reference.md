@@ -1,3 +1,10 @@
+---
+title: API Reference
+layout: default
+nav_order: 5
+permalink: /api-reference/
+---
+
 # Votal Shield — API Reference
 
 Complete API reference split by role: **Admin** (platform team) and **Tenant Developer** (end customers).
