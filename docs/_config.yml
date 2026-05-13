@@ -1,8 +1,8 @@
 title: LLM Shield
 description: AI guardrails platform — input safety, output validation, and agentic security with multi-tenant policy enforcement.
 remote_theme: just-the-docs/just-the-docs
-url: https://sundi133.github.io
-baseurl: /llm-shield
+url: https://docs.shield.votal.ai
+baseurl: ""
 
 # Search
 search_enabled: true
