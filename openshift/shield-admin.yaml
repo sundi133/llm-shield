@@ -43,6 +43,15 @@ spec:
         app: shield-admin
         app.kubernetes.io/part-of: llm-shield
     spec:
+      initContainers:
+        - name: init-permissions
+          image: busybox:latest
+          command: ["sh", "-c", "mkdir -p /app/data /app/log && chmod 777 /app/data /app/log"]
+          volumeMounts:
+            - name: storage-data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/log
       containers:
         - name: shield-admin
           image: docker.io/sundi133/llm-shield-admin:latest
@@ -52,7 +61,7 @@ spec:
               protocol: TCP
           env:
             - name: AUDIT_DB_PATH
-              value: /tmp/audit.db
+              value: /app/data/audit.db
             - name: NO_PROXY
               value: "localhost,127.0.0.1,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local,redis"
             - name: no_proxy
