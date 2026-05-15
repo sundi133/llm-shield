@@ -23,6 +23,7 @@ from storage.tool_killswitch import is_tool_disabled
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
 from core.telemetry import record_event, build_guardrail_event, build_response_event
+from storage.audit_log import audit_logger
 from storage.agentic_control_plane import (
     get_control_plane_config,
     find_matching_approval_rule,
@@ -147,6 +148,39 @@ def _emit_tool_check_telemetry(
         blocked_guardrails=blocked_guardrails,
         guardrail_results=results,
     ))
+
+    # Log to audit_logger so tool checks appear in tenant telemetry tab
+    tool_results = [{
+        "tool_name": tool_name,
+        "arguments": {},
+        "rbac": {
+            "allowed": allowed,
+            "action": action,
+            "message": results[0].get("message", "") if results else "",
+        },
+    }]
+    asyncio.get_event_loop().create_task(audit_logger.log({
+        "agent_key": agent_key,
+        "endpoint": "/v1/shield/tool/check",
+        "input_text": f"tool_check:{tool_name}",
+        "action_taken": action,
+        "guardrails_triggered": blocked_guardrails,
+        "latency_ms": round(latency_ms, 2),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id or "",
+            "user_role": user_role or "",
+            "stage": "complete",
+            "blocked": not allowed,
+            "block_reason": results[0].get("message", "") if results and not allowed else None,
+            "session_id": session_id or "",
+            "tool_calls": tool_results,
+            "tool_call_count": 1,
+            "input_guardrails": [],
+            "output_guardrails": [],
+            "usage": {},
+        },
+    }))
 
 
 @router.post("/check")
@@ -449,10 +483,15 @@ async def check_tool(body: ToolCheckRequest, request: Request):
 
 @router.post("/output")
 async def check_tool_output(body: ToolOutputRequest, request: Request):
+    start = time.perf_counter()
     guard = ToolOutputSanitizationGuardrail()
 
     # Extract tenant and user context from headers for policy enforcement
-    tenant_id = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
+    tenant_id = (
+        getattr(request.state, "tenant_id", None)
+        if hasattr(request, "state")
+        else None
+    ) or request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
     user_role = request.headers.get("X-User-Role") or request.headers.get("x-user-role", "user")
 
     context = {
@@ -467,12 +506,47 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
     }
     r = await guard.check(body.tool_output, context)
     sanitized = (r.details or {}).get("sanitized_output", body.tool_output)
+    latency_ms = (time.perf_counter() - start) * 1000
+    result = _format(r)
+
+    # Log to audit_logger so tool output sanitization shows in tenant telemetry
+    blocked_guardrails = [r.guardrail_name] if not r.passed and r.action == "block" else []
+    await audit_logger.log({
+        "agent_key": body.agent_key or "",
+        "endpoint": "/v1/shield/tool/output",
+        "input_text": f"tool_output:{body.tool_name}",
+        "action_taken": r.action,
+        "guardrails_triggered": blocked_guardrails,
+        "latency_ms": round(latency_ms, 2),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id or "",
+            "user_role": user_role or "",
+            "stage": "output_sanitization",
+            "blocked": not r.passed and r.action == "block",
+            "block_reason": r.message if not r.passed else None,
+            "session_id": body.session_id or "",
+            "tool_calls": [{
+                "tool_name": body.tool_name,
+                "arguments": {},
+                "rbac": {
+                    "allowed": r.passed,
+                    "action": r.action,
+                    "message": r.message,
+                },
+            }],
+            "tool_call_count": 1,
+            "input_guardrails": [],
+            "output_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message}],
+            "usage": {},
+        },
+    })
 
     return {
         "allowed": r.passed,
         "action": r.action,
         "sanitized_output": sanitized,
-        "guardrail_results": [_format(r)],
+        "guardrail_results": [result],
     }
 
 
