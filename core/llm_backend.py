@@ -1,10 +1,15 @@
 import json
+import logging
 import os
 import re
 import subprocess
 import requests
 import time
 from typing import Optional
+
+logger = logging.getLogger("votal.llm_backend")
+
+LLM_DEBUG = os.environ.get("LLM_DEBUG", "false").lower() in ("true", "1", "yes")
 
 
 def parse_llm_json(raw: str) -> dict:
@@ -184,12 +189,12 @@ def _wait_for_server(url: str, label: str, max_attempts: int = 60):
         try:
             r = requests.get(f"{url}/health", timeout=2)
             if r.json().get("status") == "ok":
-                print(f"{label} ready!")
+                logger.info("%s ready!", label)
                 return
         except Exception:
             pass
         time.sleep(2)
-        print(f"Waiting for {label}... {i + 1}/{max_attempts}")
+        logger.info("Waiting for %s... %d/%d", label, i + 1, max_attempts)
     raise RuntimeError(f"{label} failed to start")
 
 
@@ -256,8 +261,8 @@ def start_server():
 
     # Clear any RunPod-set GPU restriction so all GPUs are visible
     parent_cuda = os.environ.get("CUDA_VISIBLE_DEVICES", "not set")
-    print(f"Parent CUDA_VISIBLE_DEVICES: {parent_cuda}")
-    print(f"Launching {len(servers)} server(s)...")
+    logger.info("Parent CUDA_VISIBLE_DEVICES: %s", parent_cuda)
+    logger.info("Launching %d server(s)...", len(servers))
 
     for server_cfg in servers:
         url = server_cfg["url"]
@@ -281,7 +286,7 @@ def start_server():
 
         args = _build_server_args(port, model_path, draft_model_path)
         subprocess.Popen(args, env=env)
-        print(f"Started llama-server on port {port} (CUDA_VISIBLE_DEVICES={gpu}) for {guardrail_names}")
+        logger.info("Started llama-server on port %d (CUDA_VISIBLE_DEVICES=%s) for %s", port, gpu, guardrail_names)
 
     # Wait for all servers
     for server_cfg in servers:
@@ -290,29 +295,20 @@ def start_server():
         _wait_for_server(url, f"llama-server (GPU {gpu})")
 
     # Log routing summary
-    print("\n" + "=" * 60)
-    print("LLM BACKEND — SERVER ROUTING")
-    print("=" * 60)
-    print(f"  Servers started: {len(servers)}")
-    print(f"  Model: {model_path}")
-    print(f"    Repo: votal-ai/Qwen3.5-9B-guardrailed-v3-GGUF")
-    print(f"  Draft: {draft_model_path}")
-    print(f"    Repo: votal-ai/Qwen3.5-0.8B-GGUF")
-    print()
+    logger.info("LLM BACKEND — SERVER ROUTING")
+    logger.info("  Servers started: %d", len(servers))
+    logger.info("  Model: %s (votal-ai/Qwen3.5-9B-guardrailed-v3-GGUF)", model_path)
+    logger.info("  Draft: %s (votal-ai/Qwen3.5-0.8B-GGUF)", draft_model_path)
     for server_cfg in servers:
         url = server_cfg["url"]
         gpu = server_cfg.get("gpu", 0)
         names = server_cfg.get("guardrails", ["all"])
-        print(f"  GPU {gpu} → {url}")
-        print(f"    Guardrails: {', '.join(names)}")
-    print()
+        logger.info("  GPU %s → %s | Guardrails: %s", gpu, url, ", ".join(names))
     if _guardrail_server_map:
-        print("  Routing map:")
         for name, url in sorted(_guardrail_server_map.items()):
-            print(f"    {name} → {url}")
+            logger.info("  Routing: %s → %s", name, url)
     else:
-        print(f"  All guardrails → {_default_server_url}")
-    print("=" * 60 + "\n")
+        logger.info("  All guardrails → %s", _default_server_url)
 
 
 def get_server_url(guardrail_name: Optional[str] = None) -> str:
@@ -383,25 +379,16 @@ def _build_payload(
 
 def _print_llm_request(endpoint_url: str, payload: dict):
     """Print the exact LLM endpoint and request payload for debugging."""
-    print("\n" + "=" * 60, flush=True)
-    print("LLM REQUEST", flush=True)
-    print("=" * 60, flush=True)
-    print(f"URL: {endpoint_url}", flush=True)
-    print("PAYLOAD:", flush=True)
-    print(json.dumps(payload, indent=2, ensure_ascii=False), flush=True)
-    print("=" * 60 + "\n", flush=True)
+    if not LLM_DEBUG:
+        return
+    logger.debug("LLM REQUEST | URL: %s | PAYLOAD: %s", endpoint_url, json.dumps(payload, ensure_ascii=False))
 
 
 def _print_llm_response(endpoint_url: str, status_code: int, body: str):
     """Print upstream LLM response details when debugging failures."""
-    print("\n" + "=" * 60, flush=True)
-    print("LLM RESPONSE", flush=True)
-    print("=" * 60, flush=True)
-    print(f"URL: {endpoint_url}", flush=True)
-    print(f"STATUS: {status_code}", flush=True)
-    print("BODY:", flush=True)
-    print(body, flush=True)
-    print("=" * 60 + "\n", flush=True)
+    if not LLM_DEBUG:
+        return
+    logger.debug("LLM RESPONSE | URL: %s | STATUS: %d | BODY: %s", endpoint_url, status_code, body)
 
 
 def _chat_completions_url(server_url: str) -> str:
