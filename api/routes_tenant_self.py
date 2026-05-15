@@ -259,7 +259,7 @@ async def get_my_telemetry(
     """Return tenant-scoped agent chat telemetry with normalized tool-call status."""
     tenant_id = _require_tenant(request)
 
-    raw_entries = await audit_logger.query(limit=1000, offset=0)
+    raw_entries = await audit_logger.query(limit=1000, offset=0, tenant_id=tenant_id)
     telemetry_entries = []
 
     for entry in raw_entries:
