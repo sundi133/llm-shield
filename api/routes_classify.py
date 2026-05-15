@@ -9,6 +9,7 @@ from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
 from guardrails.base import _request_configs
 from guardrails.registry import get_by_stage, get_guardrail
+from storage.audit_log import audit_logger
 
 router = APIRouter()
 
@@ -234,16 +235,44 @@ async def classify(request: Request, body: dict):
     tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
 
     if tenant_config and "input_guardrails" in tenant_config:
-        # Fast path: tenant config from Redis is already in canonical format.
-        # Skips _NAME_MAP lookup and _translate_settings — no format conversion needed.
-        return await _classify_tenant(message, tenant_config["input_guardrails"], context, start)
+        result = await _classify_tenant(message, tenant_config["input_guardrails"], context, start)
+    elif not input_overrides:
+        result = await _classify_with_defaults(message, context, start)
+    else:
+        result = await _classify_with_overrides(message, input_overrides, context, start)
 
-    # If no per-request guardrail config, run with server defaults
-    if not input_overrides:
-        return await _classify_with_defaults(message, context, start)
+    # Log to audit_logger so input guardrail checks appear in tenant telemetry
+    agent_key = (getattr(request.state, "agent_key", None) if hasattr(request, "state") else None) or body.get("agent_key", "")
+    tenant_id = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
+    role_name = (getattr(request.state, "role_name", None) if hasattr(request, "state") else None) or ""
+    blocked = result.get("action") == "block"
+    guardrail_results = result.get("guardrail_results", [])
+    triggered = [gr["guardrail"] for gr in guardrail_results if not gr.get("passed")]
 
-    # Apply per-request overrides (external callers may use kebab-case names)
-    return await _classify_with_overrides(message, input_overrides, context, start)
+    await audit_logger.log({
+        "agent_key": agent_key,
+        "endpoint": "/guardrails/input",
+        "input_text": message[:500],
+        "action_taken": "block" if blocked else "pass",
+        "guardrails_triggered": triggered,
+        "latency_ms": result.get("inference_time_ms", 0),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id,
+            "user_role": role_name,
+            "stage": "input",
+            "blocked": blocked,
+            "block_reason": "; ".join(gr.get("message", "") for gr in guardrail_results if not gr.get("passed")) if blocked else None,
+            "session_id": body.get("session_id", ""),
+            "tool_calls": [],
+            "tool_call_count": 0,
+            "input_guardrails": [{"guardrail": gr["guardrail"], "passed": gr["passed"], "action": gr["action"], "message": gr.get("message", "")} for gr in guardrail_results],
+            "output_guardrails": [],
+            "usage": {},
+        },
+    })
+
+    return result
 
 
 def _build_response(pipeline_result: PipelineResult, start: datetime) -> dict:
