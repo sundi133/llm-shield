@@ -197,6 +197,9 @@ def _get_data_policy(tool_policies: dict, tool_name: str, user_role: str | None,
 
     result = {"input": None, "output": None,
               "sanitization": tp.get("data_sanitization"),
+              "action": "allow",
+              "redaction_level": None,
+              "data_scope": [],
               "input_rules": [], "output_rules": []}
 
     if user_role and user_role in role_restrictions:
@@ -212,6 +215,9 @@ def _get_data_policy(tool_policies: dict, tool_name: str, user_role: str | None,
         dp = data_policies.get(tool_name) or {}
         for rp in dp.get("role_policies", []):
             if rp.get("role") == user_role:
+                result["action"] = rp.get("action", "allow")
+                result["redaction_level"] = rp.get("redaction_level")
+                result["data_scope"] = rp.get("data_scope", [])
                 result["input_rules"] = rp.get("input_rules", [])
                 result["output_rules"] = rp.get("output_rules", [])
                 break
@@ -1009,15 +1015,12 @@ def create_admin_app() -> FastAPI:
         agent_key = body.get("agent_key", "") or request.headers.get("X-Agent-Key", "")
         user_role = body.get("user_role") or request.headers.get("X-User-Role")
         calling_agent = body.get("calling_agent", "") or request.headers.get("X-Calling-Agent", "")
-        llm_api_key = body.get("llm_api_key")
+        llm_api_key = body.get("llm_master_key", "")
         llm_model = body.get("llm_model", "gpt-4o-mini")
+        llm_base_url = body.get("llm_base_url", "https://api.openai.com/v1").strip().rstrip("/")
         shield_endpoint = body.get("shield_endpoint", "").strip().rstrip("/")
         shield_token = body.get("shield_token", "").strip()
         api_key = request.headers.get("X-API-Key", "")
-
-        if not llm_api_key:
-            return JSONResponse(status_code=400,
-                                content={"error": "llm_api_key is required for the admin playground"})
 
         default_system = (
             "You are an AI assistant with access to tools. "
@@ -1084,7 +1087,7 @@ def create_admin_app() -> FastAPI:
         input_guardrail_result = None
         output_guardrail_result = None
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=180) as client:
             # --- Step 1: Input Guardrails ---
             if shield_endpoint and user_message:
                 input_guardrail_result = await _call_guardrails(
@@ -1117,8 +1120,11 @@ def create_admin_app() -> FastAPI:
 
             # --- Step 2: Call OpenAI ---
             try:
+                llm_headers = {}
+                if llm_api_key:
+                    llm_headers["Authorization"] = f"Bearer {llm_api_key}"
                 resp = await client.post(
-                    "https://api.openai.com/v1/chat/completions",
+                    f"{llm_base_url}/chat/completions",
                     json={
                         "model": llm_model,
                         "messages": messages,
@@ -1127,7 +1133,7 @@ def create_admin_app() -> FastAPI:
                         "max_tokens": 1024,
                         "temperature": 0.3,
                     },
-                    headers={"Authorization": f"Bearer {llm_api_key}"},
+                    headers=llm_headers,
                 )
                 llm_data = resp.json()
             except Exception as e:
@@ -1319,6 +1325,21 @@ def create_admin_app() -> FastAPI:
                         entry["data_rule_violation"] = output_check
                         data_rule_results.append(output_check)
 
+                # --- Enforce data policy action per role ---
+                dp_action = data_policy.get("action", "allow")
+                has_rule_violation = entry.get("data_rule_violation") and not entry["data_rule_violation"].get("passed", True)
+
+                if dp_action == "block" and has_rule_violation:
+                    violation = entry["data_rule_violation"]
+                    reason = violation.get("reason") or violation.get("message") or "Data policy violation"
+                    entry["rbac"]["allowed"] = False
+                    entry["rbac"]["message"] = f"Data policy blocked: {reason}"
+                    entry["data_policy_blocked"] = True
+                elif dp_action == "mask" and has_rule_violation:
+                    entry["data_policy_masked"] = True
+                elif dp_action == "redact" and has_rule_violation:
+                    entry["data_policy_redacted"] = True
+
             if input_detected or output_violations or ai_input_result or ai_output_result:
                 sanitization_meta = {
                     "applied": True,
@@ -1351,7 +1372,7 @@ def create_admin_app() -> FastAPI:
             tool_results.append(entry)
 
         has_blocked = any(
-            not t["rbac"]["allowed"] or t.get("sanitization_blocked")
+            not t["rbac"]["allowed"] or t.get("sanitization_blocked") or t.get("data_policy_blocked")
             for t in tool_results
         )
 
@@ -1467,6 +1488,35 @@ def create_admin_app() -> FastAPI:
                 return JSONResponse({"error": "Upstream request timed out"}, status_code=504)
             except httpx.ConnectError as e:
                 return JSONResponse({"error": f"Cannot reach endpoint: {e}"}, status_code=502)
+
+    @app.post("/playground/llm-proxy")
+    async def playground_llm_proxy(request: Request):
+        """Proxy LLM requests from the playground so the browser never calls LiteLLM directly."""
+        body = await request.json()
+        base_url = body.get("base_url", "https://api.openai.com/v1").strip().rstrip("/")
+        master_key = body.get("master_key", "")
+        payload = body.get("payload", {})
+
+        headers = {"Content-Type": "application/json"}
+        if master_key:
+            headers["Authorization"] = f"Bearer {master_key}"
+
+        print(f"[llm-proxy] POST {base_url}/chat/completions model={payload.get('model')}", flush=True)
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            try:
+                resp = await client.post(
+                    f"{base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+                data = resp.json()
+                print(f"[llm-proxy] Status={resp.status_code}", flush=True)
+                print(f"[llm-proxy] Full response: {json.dumps(data)}", flush=True)
+                return JSONResponse(data, status_code=resp.status_code)
+            except httpx.TimeoutException:
+                return JSONResponse({"error": "LLM request timed out"}, status_code=504)
+            except httpx.ConnectError as e:
+                return JSONResponse({"error": f"Cannot reach LLM endpoint: {e}"}, status_code=502)
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
