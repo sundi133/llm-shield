@@ -484,43 +484,30 @@ async def _validate_data_rules(
         data = resp.json()
         print(f"[data-policy] Response: {json.dumps(data)[:500]}", flush=True)
 
-        # Check guardrail results for any failures
-        action = data.get("action", "pass")
+        # Only check data-policy-relevant guardrails, ignore others
+        # (topic_restriction, adversarial_detection, etc. produce false positives
+        # on the synthetic data-policy-check message).
         guardrail_results = data.get("guardrail_results", [])
+        DATA_POLICY_GUARDRAILS = {"custom_policy_input", "custom_policy_output",
+                                   "role_based_policy", "pii_leakage"}
 
-        # If the guardrail pipeline says block/flag, treat as violation
-        if action in ("block", "flag"):
-            # Find the specific guardrail that failed
-            reasons = []
-            for gr in guardrail_results:
-                if not gr.get("passed", True):
-                    msg = gr.get("message") or gr.get("reason") or gr.get("guardrail", "")
-                    if msg:
-                        reasons.append(msg)
-            return {
-                "passed": False,
-                "violated_rule": rules[0] if rules else None,
-                "reason": "; ".join(reasons) if reasons else f"Data policy violation ({action})",
-                "explanation": "; ".join(reasons) if reasons else f"Data policy violation ({action})",
-                "stage": stage,
-                "tool": tool_name,
-            }
-
-        # Also check role_based_policy guardrail specifically
         for gr in guardrail_results:
-            name_lower = (gr.get("guardrail") or gr.get("name") or "").lower()
-            if "role_based" in name_lower or "data" in name_lower:
-                if not gr.get("passed", True):
-                    reason = gr.get("message") or gr.get("reason") or "Data policy rule violated"
-                    return {
-                        "passed": False,
-                        "violated_rule": rules[0] if rules else None,
-                        "reason": reason,
-                        "explanation": reason,
-                        "stage": stage,
-                        "tool": tool_name,
-                    }
+            gr_name = (gr.get("guardrail") or gr.get("name") or "").lower()
+            if gr_name not in DATA_POLICY_GUARDRAILS:
+                continue
+            if not gr.get("passed", True):
+                reason = gr.get("message") or gr.get("reason") or "Data policy rule violated"
+                print(f"[data-policy] VIOLATION from {gr_name}: {reason[:200]}", flush=True)
+                return {
+                    "passed": False,
+                    "violated_rule": rules[0] if rules else None,
+                    "reason": reason,
+                    "explanation": reason,
+                    "stage": stage,
+                    "tool": tool_name,
+                }
 
+        print(f"[data-policy] PASSED for {tool_name}/{stage}", flush=True)
         return {"passed": True, "stage": stage, "tool": tool_name}
     except Exception as e:
         print(f"[data-policy] Exception: {e}", flush=True)
