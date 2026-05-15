@@ -452,7 +452,11 @@ async def _validate_data_rules(
     url = f"{shield_url.rstrip('/')}/guardrails/{guardrail_stage}"
 
     body = {
-        "input" if guardrail_stage == "input" else "output": content,
+        "message": (
+            f"Data policy check for tool '{tool_name}' ({stage}). "
+            f"Rules: {rules_text}. "
+            f"Content: {content}"
+        ),
         "context": {
             "tool_name": tool_name,
             "data_policy_rules": rules,
@@ -878,6 +882,53 @@ def _simulate_tool(name: str, args: dict) -> dict:
     return result
 
 
+async def _llm_simulate_tool(
+    name: str, args: dict, llm_base_url: str, llm_key: str = "",
+    llm_model: str = "gpt-4o-mini",
+) -> dict | None:
+    """Use the LLM to generate a realistic simulated tool response."""
+    base = llm_base_url.rstrip("/")
+    url = f"{base}/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if llm_key:
+        headers["Authorization"] = f"Bearer {llm_key}"
+
+    prompt = (
+        f"You are simulating the response of a tool called '{name}'.\n"
+        f"The tool was called with these arguments: {json.dumps(args)}\n\n"
+        f"Generate a realistic JSON response that this tool would return. "
+        f"Include plausible sample data (names, dates, IDs, etc.) that matches the tool's purpose. "
+        f"Return ONLY valid JSON, no markdown or explanation."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(url, json={
+                "model": llm_model,
+                "messages": [
+                    {"role": "system", "content": "You generate realistic simulated API responses. Return ONLY valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 500,
+                "temperature": 0.7,
+            }, headers=headers)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        raw = (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+        # Extract JSON from response
+        json_match = __import__("re").search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+        json_str = json_match.group(1).strip() if json_match else raw
+        start = json_str.find("{")
+        if start == -1:
+            start = json_str.find("[")
+        if start >= 0:
+            return json.loads(json_str[start:])
+        return json.loads(json_str)
+    except Exception as e:
+        print(f"[simulate] LLM simulation failed: {e}", flush=True)
+        return None
+
+
 def _extract_block_reason(guardrail_result: dict) -> str:
     """Pull a human-readable block reason from a guardrail response."""
     reasons = []
@@ -1275,10 +1326,15 @@ def create_admin_app() -> FastAPI:
             ai_output_result: dict | None = None
 
             if rbac["allowed"] and not input_block:
-                # Step 2 (OUTPUT): default is REDACT. The LLM/user never need
-                # the raw payload — a presentation copy is fine. critical still
-                # blocks, and an explicit action="detect" rule just records.
-                simulated = _simulate_tool(name, sanitized_args)
+                # Step 2 (OUTPUT): simulate tool response using LLM if available,
+                # otherwise fall back to hardcoded simulation.
+                simulated = None
+                if llm_base_url:
+                    simulated = await _llm_simulate_tool(
+                        name, sanitized_args, llm_base_url, llm_api_key, llm_model,
+                    )
+                if not simulated:
+                    simulated = _simulate_tool(name, sanitized_args)
                 if regex_enabled:
                     sanitized_output, output_violations = _sanitize_json(
                         simulated, tool_sanitization_rules, default_action="redact",

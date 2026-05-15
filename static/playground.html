@@ -244,10 +244,13 @@ input, select, textarea, button { font-family: inherit; }
 
     <div class="sidebar-section">
       <div class="generate-row">
-        <h3>Quick Prompts</h3>
+        <h3>Test Prompts</h3>
         <button class="generate-btn" id="generate-btn" onclick="generateQuickPrompts()" disabled>
           <span id="generate-icon">✦</span> Generate
         </button>
+      </div>
+      <div style="font-size:var(--type-meta);color:var(--text-muted);padding:0 0.8rem 0.5rem;line-height:1.5;">
+        Auto-generated prompts to test your policies. Click any to send it.
       </div>
       <div class="presets" id="presets">
         <div class="prompts-hint">Load policy to generate</div>
@@ -1009,11 +1012,15 @@ async function sendMessage() {
             const reason = tc.rbac?.message || 'Data policy violation';
             lines.push(`🛡️ Tool <strong>${esc(readable)}</strong> blocked by data policy — ${esc(reason)}.`);
           } else if (rbacOk) {
-            const argSummary = Object.entries(tc.arguments || {})
-              .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
-              .join(', ');
             const sanitizedNote = tc.sanitization && tc.sanitization.input_modified ? ' <em style="color:#93c5fd;">(sanitized)</em>' : '';
-            lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}${sanitizedNote}`);
+            let toolLine = `✅ <strong>${esc(readable)}</strong> executed${sanitizedNote}`;
+            if (tc.simulated_output) {
+              const outStr = typeof tc.simulated_output === 'string'
+                ? tc.simulated_output
+                : JSON.stringify(tc.simulated_output, null, 2);
+              toolLine += `<pre style="margin:6px 0 0;padding:8px 10px;background:rgba(0,0,0,0.25);border-radius:6px;font-size:0.75rem;color:var(--text-dim);white-space:pre-wrap;max-height:150px;overflow-y:auto;">${esc(outStr)}</pre>`;
+            }
+            lines.push(toolLine);
           } else {
             lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong>.`);
           }
