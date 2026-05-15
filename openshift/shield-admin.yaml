@@ -28,7 +28,7 @@ metadata:
     app: shield-admin
     app.kubernetes.io/part-of: llm-shield
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: shield-admin
@@ -47,6 +47,13 @@ spec:
         - name: init-permissions
           image: busybox:latest
           command: ["sh", "-c", "mkdir -p /app/data /app/log"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
           volumeMounts:
             - name: storage-data
               mountPath: /app/data
@@ -113,16 +120,16 @@ spec:
           emptyDir: {}
         - name: storage-data
           emptyDir:
-            sizeLimit: 8Gi
+            sizeLimit: 500Mi
         - name: logs
           emptyDir:
-            sizeLimit: 1Gi
+            sizeLimit: 500Mi
         - name: reports
           emptyDir:
-            sizeLimit: 100G
+            sizeLimit: 1Gi
         - name: guardrail-reports
           emptyDir:
-            sizeLimit: 100G
+            sizeLimit: 1Gi
 
 ---
 # Service
@@ -180,7 +187,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: shield-admin
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 6
   metrics:
     - type: Resource

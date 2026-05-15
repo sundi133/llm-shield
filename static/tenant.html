@@ -1822,6 +1822,7 @@
     <button class="primary" style="width: 100%;" onclick="login()">Sign In</button>
     <div id="login-error" class="toast error hidden"></div>
     <div class="muted" style="text-align: center; margin-top: 1.25rem;">Need a key? Contact your administrator</div>
+    <div style="text-align: center; margin-top: 0.75rem;"><a href="/" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">&larr; Back to home</a></div>
   </div>
 </div>
 
@@ -4181,7 +4182,7 @@ if __name__ == "__main__":
   </div>
 </div>
 
-<!-- Tool Policy Modal (simplified) -->
+<!-- Tool Policy Modal -->
 <div id="tool-policy-modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);z-index:100;display:flex;align-items:center;justify-content:center;padding:2rem;">
   <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:1.5rem;max-width:520px;width:100%;box-shadow:var(--shadow-lg);max-height:90vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;padding-bottom:0.75rem;border-bottom:1px solid var(--border);">
@@ -4197,8 +4198,9 @@ if __name__ == "__main__":
 
     <!-- Role access grid -->
     <div style="margin-bottom:1rem;">
-      <label style="font-size:12px;font-weight:600;display:block;margin-bottom:0.5rem;">Role Access</label>
-      <div id="tp-roles-empty" class="muted" style="font-size:11px;display:none;">No roles found.</div>
+      <label style="font-size:12px;font-weight:600;display:block;margin-bottom:0.5rem;">Role access</label>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:0.4rem;">Control what each role can do with this tool's input and output.</div>
+      <div id="tp-roles-empty" class="muted" style="font-size:11px;display:none;">No roles found. Register agents with roles first.</div>
       <table id="tp-modal-role-grid" style="width:100%;border-collapse:collapse;font-size:12px;">
         <thead>
           <tr style="border-bottom:1px solid var(--border);">
@@ -4211,10 +4213,11 @@ if __name__ == "__main__":
       </table>
     </div>
 
-    <!-- Auto-sanitize toggles -->
+    <!-- PII protection -->
     <div style="margin-bottom:1rem;">
-      <label style="font-size:12px;font-weight:600;display:block;margin-bottom:0.5rem;">Auto-Sanitize (built-in PII patterns)</label>
-      <div id="tp-modal-sanitize" style="display:grid;grid-template-columns:1fr 1fr;gap:0.3rem 1rem;">
+      <label style="font-size:12px;font-weight:600;display:block;margin-bottom:0.4rem;">PII protection</label>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:0.5rem;">Automatically detect and redact sensitive data in tool calls.</div>
+      <div id="tp-modal-sanitize" style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem 1rem;">
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" value="ssn" class="tp-san-toggle"> SSN / National ID</label>
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" value="phone" class="tp-san-toggle"> Phone numbers</label>
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" value="email" class="tp-san-toggle"> Email addresses</label>
@@ -4224,62 +4227,56 @@ if __name__ == "__main__":
       </div>
     </div>
 
-    <!-- Custom patterns -->
-    <div style="margin-bottom:1rem;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-        <label style="font-size:12px;font-weight:600;">Custom Patterns</label>
-        <button class="small" onclick="addCustomPatternRow()" style="font-size:10px;padding:2px 8px;">+ Add Pattern</button>
-      </div>
-      <div id="tp-custom-patterns"></div>
-      <div style="margin-top:0.4rem;">
-        <details style="font-size:11px;color:var(--text-muted);">
-          <summary style="cursor:pointer;user-select:none;">Examples of custom patterns</summary>
-          <div style="margin-top:0.4rem;padding:0.5rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:11px;line-height:1.6;">
-            <div style="display:grid;grid-template-columns:auto 1fr auto;gap:0.2rem 0.75rem;align-items:baseline;">
-              <strong>Medical Record #</strong><code style="font-size:10px;color:var(--text-dim);">\bMRN[:\s]*\d{6,10}\b</code><span style="color:var(--text-muted);">[MRN_REDACTED]</span>
-              <strong>DEA Number</strong><code style="font-size:10px;color:var(--text-dim);">\b[A-Z]{2}\d{7}\b</code><span style="color:var(--text-muted);">[DEA_REDACTED]</span>
-              <strong>IP Address</strong><code style="font-size:10px;color:var(--text-dim);">\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b</code><span style="color:var(--text-muted);">[IP_REDACTED]</span>
-              <strong>API Key</strong><code style="font-size:10px;color:var(--text-dim);">\b(sk|pk|api)[_-][A-Za-z0-9]{20,}\b</code><span style="color:var(--text-muted);">[KEY_REDACTED]</span>
-              <strong>Dollar Amount</strong><code style="font-size:10px;color:var(--text-dim);">\$[\d,]+\.?\d*</code><span style="color:var(--text-muted);">[AMOUNT_REDACTED]</span>
-              <strong>Passport #</strong><code style="font-size:10px;color:var(--text-dim);">\b[A-Z]{1,2}\d{6,9}\b</code><span style="color:var(--text-muted);">[PASSPORT_REDACTED]</span>
+    <!-- Advanced settings (collapsed) -->
+    <details style="margin-bottom:1rem;">
+      <summary style="font-size:12px;font-weight:600;cursor:pointer;color:var(--text-dim);user-select:none;">Advanced settings</summary>
+      <div style="margin-top:0.75rem;display:flex;flex-direction:column;gap:1rem;">
+
+        <!-- Custom patterns -->
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+            <label style="font-size:12px;font-weight:600;">Custom regex patterns</label>
+            <button class="small" onclick="addCustomPatternRow()" style="font-size:10px;padding:2px 8px;">+ Add</button>
+          </div>
+          <div id="tp-custom-patterns"></div>
+        </div>
+
+        <!-- LLM validation -->
+        <div>
+          <label style="display:flex;align-items:center;gap:0.5rem;font-size:12px;font-weight:600;cursor:pointer;">
+            <input type="checkbox" id="tp-modal-llm-enabled" onchange="document.getElementById('tp-llm-fields').classList.toggle('hidden',!this.checked)"> AI-powered validation
+          </label>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Use an LLM to detect sensitive data that regex patterns miss.</div>
+          <div id="tp-llm-fields" class="hidden" style="margin-top:0.5rem;padding:0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+              <div class="field" style="margin-bottom:0;">
+                <label style="font-size:11px;">Severity</label>
+                <select id="tp-modal-llm-severity" style="width:100%;font-size:12px;">
+                  <option value="low">Low</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+              <div class="field" style="margin-bottom:0;">
+                <label style="font-size:11px;">Threshold</label>
+                <input type="text" id="tp-modal-llm-threshold" value="0.8" style="width:100%;font-size:12px;">
+              </div>
+            </div>
+            <div class="field" style="margin-top:0.5rem;margin-bottom:0;">
+              <label style="font-size:11px;">Scan types</label>
+              <div id="tp-modal-scan-types" style="display:flex;flex-wrap:wrap;gap:0.4rem;">
+                <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="pii"> PII</label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="phi"> PHI</label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="secrets"> Secrets</label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="financial"> Financial</label>
+              </div>
             </div>
           </div>
-        </details>
-      </div>
-    </div>
+        </div>
 
-    <!-- LLM validation toggle -->
-    <div style="margin-bottom:1rem;">
-      <label style="display:flex;align-items:center;gap:0.5rem;font-size:12px;font-weight:600;cursor:pointer;">
-        <input type="checkbox" id="tp-modal-llm-enabled" onchange="document.getElementById('tp-llm-fields').classList.toggle('hidden',!this.checked)"> LLM Validation
-      </label>
-      <div id="tp-llm-fields" class="hidden" style="margin-top:0.5rem;padding:0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
-          <div class="field" style="margin-bottom:0;">
-            <label style="font-size:11px;">Severity</label>
-            <select id="tp-modal-llm-severity" style="width:100%;font-size:12px;">
-              <option value="low">Low</option>
-              <option value="medium" selected>Medium</option>
-              <option value="high">High</option>
-              <option value="critical">Critical</option>
-            </select>
-          </div>
-          <div class="field" style="margin-bottom:0;">
-            <label style="font-size:11px;">Threshold</label>
-            <input type="text" id="tp-modal-llm-threshold" value="0.8" style="width:100%;font-size:12px;">
-          </div>
-        </div>
-        <div class="field" style="margin-top:0.5rem;margin-bottom:0;">
-          <label style="font-size:11px;">Scan types</label>
-          <div id="tp-modal-scan-types" style="display:flex;flex-wrap:wrap;gap:0.4rem;">
-            <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="pii"> PII</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="phi"> PHI</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="secrets"> Secrets</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:11px;"><input type="checkbox" value="financial"> Financial</label>
-          </div>
-        </div>
       </div>
-    </div>
+    </details>
 
     <!-- Hidden fields for backward compat -->
     <input type="hidden" id="tp-modal-patterns" value="[]">
@@ -7000,45 +6997,53 @@ function openDataPolicyModal(toolName) {
         <div class="dp-role-head">
           <span class="dp-role-name">${r}</span>
           <div class="dp-role-controls">
-            <select class="dp-role-action" title="What happens when this role calls the tool"
+            <select class="dp-role-action" title="What happens when rules are violated"
                     onchange="this.closest('.dp-role-card').setAttribute('data-action', this.value)">
               ${actionOpts(currentAction)}
             </select>
-            <input type="text" class="dp-role-scope" value="${(rp.data_scope || []).join(', ')}"
-                   placeholder="personal, contact, medical, financial"
-                   title="Comma-separated data categories visible to this role">
-            <select class="dp-role-redaction" title="How aggressively to mask scoped fields">
-              <option value="none"    ${rp.redaction_level === 'none'    ? 'selected' : ''}>redaction: none</option>
-              <option value="partial" ${(!rp.redaction_level || rp.redaction_level === 'partial') ? 'selected' : ''}>redaction: partial</option>
-              <option value="full"    ${rp.redaction_level === 'full'    ? 'selected' : ''}>redaction: full</option>
+            <select class="dp-role-redaction" title="How to mask sensitive fields">
+              <option value="none"    ${rp.redaction_level === 'none'    ? 'selected' : ''}>no redaction</option>
+              <option value="partial" ${(!rp.redaction_level || rp.redaction_level === 'partial') ? 'selected' : ''}>partial redaction</option>
+              <option value="full"    ${rp.redaction_level === 'full'    ? 'selected' : ''}>full redaction</option>
             </select>
             <select class="dp-role-template" onchange="applyDPRoleTemplate(this)"
-                    title="Apply a ready-made policy to this role">
+                    title="Apply a preset">
               <option value="">Apply template…</option>
-              <option value="full_access">Full access (allow, no redaction)</option>
+              <option value="full_access">Full access</option>
               <option value="read_only">Read-only + PII masked</option>
               <option value="pii_safe">Strict PII-safe</option>
-              <option value="audit">Audit / summary-only</option>
-              <option value="blocked">Blocked (no access)</option>
+              <option value="blocked">Blocked</option>
             </select>
           </div>
         </div>
+        <details class="dp-advanced-wrap" style="margin:0;border:none;">
+          <summary style="padding:0.4rem 0;">
+            <span>Data scope</span>
+            <span class="dp-advanced-copy">${(rp.data_scope || []).join(', ') || 'not set'}</span>
+          </summary>
+          <div style="padding:0.25rem 0 0.5rem;">
+            <input type="text" class="dp-role-scope" value="${(rp.data_scope || []).join(', ')}"
+                   placeholder="personal, contact, medical, financial"
+                   title="Comma-separated data categories visible to this role"
+                   style="width:100%;font-size:12.5px;">
+          </div>
+        </details>
         <div class="dp-role-grid">
           <div>
             <div class="dp-role-field-label">
-              <span>Input rules <span class="dp-role-hint">· LLM-validated</span></span>
+              <span>Input rules</span>
               <button type="button" class="dp-ghost-btn" onclick="insertDPRoleExample(this, 'input')" title="Insert an example rule">+ example</button>
             </div>
-            <textarea class="dp-role-input-rules" rows="3"
-                      placeholder="One rule per line, e.g.&#10;Must include a valid account_id&#10;Reject transfers over 10,000 without approval&#10;Reject calls that pass raw SSN or credit-card data">${inputRules}</textarea>
+            <textarea class="dp-role-input-rules" rows="2"
+                      placeholder="One rule per line, e.g.&#10;Should only have id, avoid patient names">${inputRules}</textarea>
           </div>
           <div>
             <div class="dp-role-field-label">
-              <span>Output rules <span class="dp-role-hint">· LLM-validated</span></span>
+              <span>Output rules</span>
               <button type="button" class="dp-ghost-btn" onclick="insertDPRoleExample(this, 'output')" title="Insert an example rule">+ example</button>
             </div>
-            <textarea class="dp-role-output-rules" rows="3"
-                      placeholder="One rule per line, e.g.&#10;Redact SSN and DOB from the response&#10;Do not include internal account numbers&#10;Return only the fields the user asked about">${outputRules}</textarea>
+            <textarea class="dp-role-output-rules" rows="2"
+                      placeholder="One rule per line, e.g.&#10;Redact SSN and DOB from the response">${outputRules}</textarea>
           </div>
         </div>
       </div>`;
@@ -7059,135 +7064,77 @@ function openDataPolicyModal(toolName) {
           <span>${prettyName}</span>
           <code>${toolName}</code>
         </h2>
-        <div class="dp-subtitle">Choose what this tool should protect, who can see which fields, and whether you need compliance logging.</div>
+        <div class="dp-subtitle">Configure data protection, role access, and compliance for this tool.</div>
         <button class="dp-close" type="button" onclick="document.getElementById('dp-modal-overlay').remove()" aria-label="Close">×</button>
       </div>
 
-      <div class="dp-summary">
-        <div class="dp-summary-item">
-          <span class="dp-summary-label">Roles</span>
-          <span class="dp-summary-value">${roles.length}</span>
-        </div>
-        <div class="dp-summary-item">
-          <span class="dp-summary-label">Sanitization rules</span>
-          <span class="dp-summary-value">${sanCount}</span>
-        </div>
-        <div class="dp-summary-item">
-          <span class="dp-summary-label">Compliance</span>
-          <span class="dp-summary-value">${compliance ? compliance.toUpperCase() : '—'}</span>
-        </div>
-        <div class="dp-summary-item">
-          <span class="dp-summary-label">Audit</span>
-          <span class="dp-summary-value" style="color:${auditOn ? '#6ee7b7' : 'var(--text-muted)'};">${auditOn ? 'On' : 'Off'}</span>
-        </div>
-      </div>
-
       <div class="dp-body">
-        <div class="dp-quickstart">
-          <div class="dp-quickstart-title">Recommended Setup</div>
-          <div class="dp-quickstart-list">
-            <div>1. Start with <strong>AI reasoning</strong> or <strong>Both</strong> and describe what must never leave this tool.</div>
-            <div>2. Set <strong>role access</strong> so each role only sees the data it should.</div>
-            <div>3. Open <strong>Advanced regex rules</strong> only if you need exact pattern matching or deterministic replacements.</div>
-          </div>
-        </div>
 
-        <!-- Step 1 — Sanitization (AI reasoning + regex fast-path) -->
+        <!-- Section 1 — Data Protection -->
         <section class="dp-section">
           <div class="dp-section-head">
-            <div class="dp-step-num">1</div>
             <div class="dp-section-title-block">
               <div class="dp-section-title">
-                Protect data
+                Data protection
                 <span class="dp-count-pill" id="dp-san-count">${sanCount} ${sanCount === 1 ? 'rule' : 'rules'}</span>
               </div>
-              <div class="dp-section-desc">Most teams only need this step plus role access below. Start here, then open advanced regex only if you need exact matching.</div>
+              <div class="dp-section-desc">Describe what sensitive data this tool handles. The AI will enforce it automatically.</div>
             </div>
           </div>
 
-          <!-- ── Mode toggle + AI policy intent ─────────────────────── -->
           <div class="dp-ai-card">
             <div class="dp-ai-head">
-              <div class="dp-ai-title">Protection mode <span class="dp-ai-badge">Recommended</span></div>
+              <div class="dp-ai-title">Protection mode</div>
               <div class="dp-mode-toggle" role="tablist" aria-label="Sanitization mode">
-                <button type="button" class="dp-mode-option" id="dp-mode-ai"    data-mode="ai"    onclick="dpSelectMode('ai')"    title="LLM reads your intent and reasons about every payload">
-                  <span class="dp-mode-dot"></span> AI reasoning
+                <button type="button" class="dp-mode-option" id="dp-mode-ai"    data-mode="ai"    onclick="dpSelectMode('ai')"    title="AI reads your policy and enforces it on every call">
+                  <span class="dp-mode-dot"></span> AI
                 </button>
-                <button type="button" class="dp-mode-option" id="dp-mode-both"  data-mode="both"  onclick="dpSelectMode('both')"  title="Regex as a fast pre-filter, then AI reasoning on what's left">
-                  <span class="dp-mode-dot"></span> Both
+                <button type="button" class="dp-mode-option" id="dp-mode-both"  data-mode="both"  onclick="dpSelectMode('both')"  title="AI + regex patterns together (recommended)">
+                  <span class="dp-mode-dot"></span> AI + Regex
                 </button>
-                <button type="button" class="dp-mode-option" id="dp-mode-regex" data-mode="regex" onclick="dpSelectMode('regex')" title="Regex patterns only — deterministic but can be bypassed">
-                  <span class="dp-mode-dot"></span> Regex
+                <button type="button" class="dp-mode-option" id="dp-mode-regex" data-mode="regex" onclick="dpSelectMode('regex')" title="Regex patterns only">
+                  <span class="dp-mode-dot"></span> Regex only
                 </button>
               </div>
-            </div>
-
-            <div class="dp-ai-sub">
-              For most teams, <strong>Both</strong> is the safest default. AI reasoning catches obfuscation and context-based leakage, while regex gives you deterministic fast-path matching when you need it.
             </div>
 
             <div id="dp-ai-block" class="dp-ai-block">
               <div class="dp-intent-controls">
-                <select onchange="dpApplyIntentTemplate(this)" title="Drop a starter policy into the intent textarea">
-                  <option value="">Pick a starter…</option>
-                  <option value="hipaa">HIPAA — Protected Health Information</option>
-                  <option value="pci">PCI DSS — Cardholder data</option>
-                  <option value="gdpr">GDPR — EU personal data</option>
-                  <option value="secrets">Internal secrets &amp; credentials</option>
+                <select onchange="dpApplyIntentTemplate(this)" title="Start from a template">
+                  <option value="">Start from a template…</option>
+                  <option value="hipaa">HIPAA — Health data</option>
+                  <option value="pci">PCI — Payment cards</option>
+                  <option value="gdpr">GDPR — Personal data</option>
+                  <option value="secrets">Secrets &amp; credentials</option>
                   <option value="minors">Minors &amp; guardianship</option>
-                  <option value="finance">Financial account &amp; transfer data</option>
+                  <option value="finance">Financial data</option>
                   <option value="custom">Custom (clear)</option>
                 </select>
-                <span style="font-size:10.5px;color:var(--text-muted);">or describe your own policy below</span>
               </div>
-              <textarea id="dp-intent" rows="5" placeholder="Describe what this tool must protect. Examples:&#10;• Never expose SSN, credit card, CVV, bearer tokens, API keys, or AWS keys.&#10;• Block responses that pair a patient name with diagnosis or medication.&#10;• Redact street address and phone number, but keep city + state."></textarea>
-              <div class="dp-intent-helper">
-                <strong style="color:var(--text);">Tip:</strong>
-                Write this the way you would brief a careful teammate. Say what should be <code>block</code>ed, what can be <code>redact</code>ed, and mention any common obfuscation you’ve seen.
-              </div>
+              <textarea id="dp-intent" rows="4" placeholder="Describe what this tool must protect in plain English. For example:&#10;&#10;Never expose SSN, credit card numbers, or API keys.&#10;Block responses that pair a patient name with diagnosis.&#10;Redact phone numbers but keep city and state."></textarea>
             </div>
           </div>
 
-          <!-- ── Regex fast-path ─────────────────────────────────────── -->
           <details class="dp-advanced-wrap" id="dp-regex-block">
             <summary>
-              <span>Advanced regex rules</span>
-              <span class="dp-advanced-copy">Use this only when you need exact pattern matching or explicit replacements.</span>
+              <span>Regex rules</span>
+              <span class="dp-advanced-copy">For exact pattern matching (SSN, email, credit card formats).</span>
             </summary>
             <div class="dp-advanced-body">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;margin-bottom:0.5rem;flex-wrap:wrap;">
-                <div style="font-size:12.5px;font-weight:600;color:var(--text);">Regex patterns <span style="font-weight:500;color:var(--text-muted);">· deterministic fast path</span></div>
+                <div style="font-size:12.5px;font-weight:600;color:var(--text);">Patterns</div>
                 <button class="small" type="button" onclick="addDPSanitizationRule()">+ Add rule</button>
               </div>
 
-              <div class="dp-warn-callout" id="dp-regex-warn">
-                <span class="dp-warn-icon" aria-hidden="true">!</span>
-                <div>
-                  <strong>Regex by itself is easy to bypass.</strong> It catches well-formatted values like <code>123-45-6789</code> but misses <code>1 2 3 4 5 6 7 8 9</code>, unicode-dashed <code>123‒45‒6789</code>, or paraphrased forms. Use <strong>Both</strong> or <strong>AI reasoning</strong> for production protection.
-                </div>
-              </div>
-
-              <div class="dp-tip">
-                <div class="dp-tip-title">How regex rules work</div>
-                <ul>
-                  <li><span class="dp-kbd detect">detect</span> logs the match but passes the original value through <em>(usually best for inputs)</em>.</li>
-                  <li><span class="dp-kbd redact">redact</span> replaces matches with the <em>Replacement</em> text.</li>
-                  <li><span class="dp-kbd block">block</span> stops the tool call or response entirely.</li>
-                  <li><strong>auto</strong> = detect on input, redact on output.</li>
-                  <li>Severity <span class="dp-kbd critical">critical</span> always escalates to block.</li>
-                </ul>
-                <div class="dp-presets">
-                  <div class="dp-presets-label">Quick starters</div>
-                  <div class="dp-preset-row">
-                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('ssn')"><span class="dp-preset-plus">+</span> SSN <span class="dp-preset-tag auto">auto</span></button>
-                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('email')"><span class="dp-preset-plus">+</span> Email <span class="dp-preset-tag auto">auto</span></button>
-                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('phone')"><span class="dp-preset-plus">+</span> Phone <span class="dp-preset-tag auto">auto</span></button>
-                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('credit_card')"><span class="dp-preset-plus">+</span> Credit card <span class="dp-preset-tag block">block</span></button>
-                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('api_key')"><span class="dp-preset-plus">+</span> API key <span class="dp-preset-tag block">block</span></button>
-                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('aws_key')"><span class="dp-preset-plus">+</span> AWS key <span class="dp-preset-tag block">block</span></button>
-                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('ip')"><span class="dp-preset-plus">+</span> IPv4 <span class="dp-preset-tag detect">detect</span></button>
-                    <button class="dp-preset" type="button" onclick="addDPSanitizationExample('dob')"><span class="dp-preset-plus">+</span> DOB <span class="dp-preset-tag redact">redact</span></button>
-                  </div>
+              <div class="dp-presets" style="margin-bottom:0.75rem;">
+                <div class="dp-presets-label">Quick add</div>
+                <div class="dp-preset-row">
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('ssn')"><span class="dp-preset-plus">+</span> SSN</button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('email')"><span class="dp-preset-plus">+</span> Email</button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('phone')"><span class="dp-preset-plus">+</span> Phone</button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('credit_card')"><span class="dp-preset-plus">+</span> Credit card</button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('api_key')"><span class="dp-preset-plus">+</span> API key</button>
+                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('dob')"><span class="dp-preset-plus">+</span> DOB</button>
                 </div>
               </div>
 
@@ -7195,75 +7142,63 @@ function openDataPolicyModal(toolName) {
             </div>
           </details>
 
-          <!-- ── Preview / test sandbox ──────────────────────────────── -->
-          <div class="dp-testbench">
-            <div class="dp-testbench-head">
-              <div>
-                <div class="dp-testbench-title">Test before you save</div>
-                <div class="dp-testbench-sub">Paste a sample payload to see how the policy behaves. Regex runs locally; <strong>AI review</strong> calls the Shield LLM.</div>
-              </div>
-              <div class="dp-testbench-actions">
-                <button type="button" class="dp-ghost-btn" onclick="dpLoadTestSample()" title="Cycle through example payloads">Load sample</button>
-                <button type="button" class="dp-ghost-btn" onclick="dpClearTest()" title="Clear input and results">Clear</button>
+          <details class="dp-advanced-wrap">
+            <summary>
+              <span>Test policy</span>
+              <span class="dp-advanced-copy">Paste sample data to preview how the policy behaves before saving.</span>
+            </summary>
+            <div class="dp-advanced-body">
+              <div class="dp-testbench">
+                <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-bottom:0.5rem;">
+                  <button type="button" class="dp-ghost-btn" onclick="dpLoadTestSample()">Load sample</button>
+                  <button type="button" class="dp-ghost-btn" onclick="dpClearTest()">Clear</button>
+                </div>
+                <textarea id="dp-test-input" rows="3" placeholder='{"ssn":"123-45-6789","email":"alex@acme.com"}'></textarea>
+                <div class="dp-testbench-run">
+                  <button id="dp-test-btn-input"  class="primary small dp-test-btn" type="button" onclick="dpTestSanitization('input')">Test input</button>
+                  <button id="dp-test-btn-output" class="small dp-test-btn"         type="button" onclick="dpTestSanitization('output')">Test output</button>
+                  <button id="dp-test-btn-ai-in"  class="small dp-test-btn dp-test-btn-ai" type="button" onclick="dpRunAIReview('input',  ${JSON.stringify(toolName)})" style="background:rgba(168,85,247,0.15);border-color:rgba(168,85,247,0.35);color:#d8b4fe;">AI review</button>
+                  <span id="dp-test-verdict" class="dp-test-verdict" style="display:none;"></span>
+                </div>
+                <div id="dp-test-result" class="dp-test-result"></div>
               </div>
             </div>
-            <textarea id="dp-test-input" rows="4" placeholder='Paste any text or JSON. Try obfuscated forms too — the AI pass should catch them.&#10;Examples:&#10;{"ssn":"123-45-6789","email":"alex@acme.com"}&#10;"my social is one two three four five six seven eight nine"'></textarea>
-            <div class="dp-testbench-run">
-              <button id="dp-test-btn-input"  class="primary small dp-test-btn" type="button" onclick="dpTestSanitization('input')"  title="Regex: evaluate as tool arguments (default: detect)">Regex · input</button>
-              <button id="dp-test-btn-output" class="small dp-test-btn"         type="button" onclick="dpTestSanitization('output')" title="Regex: evaluate as tool response (default: redact)">Regex · output</button>
-              <button id="dp-test-btn-ai-in"  class="small dp-test-btn dp-test-btn-ai" type="button" onclick="dpRunAIReview('input',  ${JSON.stringify(toolName)})" title="Run AI reasoning sanitizer on this as a tool input"  style="background:rgba(168,85,247,0.15);border-color:rgba(168,85,247,0.35);color:#d8b4fe;">AI review · input</button>
-              <button id="dp-test-btn-ai-out" class="small dp-test-btn dp-test-btn-ai" type="button" onclick="dpRunAIReview('output', ${JSON.stringify(toolName)})" title="Run AI reasoning sanitizer on this as a tool output" style="background:rgba(168,85,247,0.15);border-color:rgba(168,85,247,0.35);color:#d8b4fe;">AI review · output</button>
-              <span id="dp-test-verdict" class="dp-test-verdict" style="display:none;"></span>
-            </div>
-            <div id="dp-test-result" class="dp-test-result"></div>
-          </div>
+          </details>
         </section>
 
-        <!-- Step 2 — Per-Role Access -->
+        <!-- Section 2 — Role Access -->
         <section class="dp-section">
           <div class="dp-section-head">
-            <div class="dp-step-num">2</div>
             <div class="dp-section-title-block">
               <div class="dp-section-title">
-                Choose who can see what
+                Role access
                 <span class="dp-count-pill">${roles.length} ${roles.length === 1 ? 'role' : 'roles'}</span>
               </div>
-              <div class="dp-section-desc">Set the action for each role, the fields it may see, and any extra instructions for input or output.</div>
+              <div class="dp-section-desc">Control what each role can do with this tool and what data they can see.</div>
             </div>
           </div>
 
-          <div class="dp-tip">
-            <div class="dp-tip-title">Quick reference</div>
-            <ul>
-              <li><strong>Action</strong>: <span class="dp-kbd allow">allow</span> pass through · <span class="dp-kbd redact">redact</span> mask sensitive fields · <span class="dp-kbd mask">mask</span> partial mask · <span class="dp-kbd block">block</span> refuse the call.</li>
-              <li><strong>Data scope</strong>: comma-separated categories visible to this role — e.g. <code>personal, contact, medical, financial</code>.</li>
-              <li><strong>Redaction level</strong>: how aggressively to mask scoped fields — <code>none</code> · <code>partial</code> (keep last 4 / hash) · <code>full</code>.</li>
-              <li><strong>Input / Output rules</strong>: plain-English instructions an LLM checks against the arguments / response.</li>
-              <li>Use <em>Apply template</em> on any row for a one-click preset.</li>
-            </ul>
+          <div style="font-size:12px;color:var(--text-muted);padding:0 0 0.75rem;line-height:1.6;">
+            <span class="dp-kbd allow">allow</span> = full access &nbsp;
+            <span class="dp-kbd redact">redact</span> = mask sensitive fields &nbsp;
+            <span class="dp-kbd mask">mask</span> = partial mask &nbsp;
+            <span class="dp-kbd block">block</span> = deny if rules violated
           </div>
 
           <div id="dp-roles-body">${rolesHtml}</div>
         </section>
 
-        <!-- Step 3 — Compliance & Retention -->
+        <!-- Section 3 — Compliance -->
         <section class="dp-section">
-          <div class="dp-section-head">
-            <div class="dp-step-num">3</div>
-            <div class="dp-section-title-block">
-              <div class="dp-section-title">Compliance &amp; logging</div>
-              <div class="dp-section-desc">Only fill this out if the tool needs formal audit logging or framework tagging.</div>
-            </div>
-          </div>
           <details class="dp-advanced-wrap">
             <summary>
-              <span>Compliance and audit settings</span>
-              <span class="dp-advanced-copy">Skip this unless the tool needs formal framework tagging or retained invocation logs.</span>
+              <span>Compliance &amp; audit</span>
+              <span class="dp-advanced-copy">Optional. Enable if you need framework tagging or invocation logs.</span>
             </summary>
             <div class="dp-advanced-body">
               <div class="dp-compliance-grid">
                 <div class="dp-compliance-field">
-                  <label>Compliance framework</label>
+                  <label>Framework</label>
                   <select id="dp-compliance">
                     ${complianceOpt('', '— none —')}
                     ${complianceOpt('hipaa', 'HIPAA')}
@@ -7971,7 +7906,7 @@ function dpTestSanitization(kind) {
 
   // Verdict pill
   if (blocker) {
-    _dpSetVerdict('blocked', `Blocked — rule “${blocker.rule.pattern_id}”`);
+    _dpSetVerdict('blocked', `Blocked — rule "${blocker.rule.pattern_id}"`);
   } else if (redactSpans.length || detectSpans.length) {
     _dpSetVerdict('sanitized', kind === 'input' ? 'Sanitized (input)' : 'Sanitized (output)');
   } else {

@@ -345,7 +345,7 @@ async def agent_chat(request: Request):
     messages = body.get("messages", [])
     agent_key = body.get("agent_key", "")
     user_role = body.get("user_role") or request.headers.get("X-User-Role")
-    llm_api_key = body.get("llm_api_key")
+    llm_api_key = body.get("llm_master_key") or body.get("llm_api_key")
     llm_base_url = body.get("llm_base_url")
     llm_model = body.get("llm_model")
     custom_tools = body.get("tools")

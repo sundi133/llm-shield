@@ -197,17 +197,19 @@ input, select, textarea, button { font-family: inherit; }
       <h3>LLM (for function calling)</h3>
       <div class="llm-config">
         <div class="field">
-          <label>OpenAI API Key</label>
-          <input type="password" id="llm-api-key" placeholder="sk-…">
+          <label>API Base URL</label>
+          <input type="text" id="llm-base-url" placeholder="https://api.openai.com/v1" value="https://api.openai.com/v1">
+        </div>
+        <div class="field">
+          <label>Master Key <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
+          <input type="password" id="llm-master-key" placeholder="sk-… or litellm master key">
         </div>
         <div class="field">
           <label>Model</label>
-          <select id="llm-model">
-            <option value="gpt-4o-mini">gpt-4o-mini</option>
-            <option value="gpt-4o">gpt-4o</option>
-            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-            <option value="gpt-4.1-nano">gpt-4.1-nano</option>
-          </select>
+          <input type="text" id="llm-model" placeholder="gpt-4o-mini" value="gpt-4o-mini">
+        </div>
+        <div style="font-size:var(--type-meta);color:var(--text-muted);margin:2px 0 0;padding:0 0.8rem;line-height:1.5;">
+          Works with OpenAI, LiteLLM proxy, or any OpenAI-compatible endpoint.
         </div>
       </div>
     </div>
@@ -217,12 +219,12 @@ input, select, textarea, button { font-family: inherit; }
     <div class="sidebar-section">
       <h3>Shield Guardrails</h3>
       <div class="field">
-        <label>Shield Endpoint <span style="font-weight:400;color:var(--text-muted);">(for guardrails)</span></label>
+        <label>Endpoint</label>
         <input type="text" id="shield-endpoint" placeholder="https://your-shield.api.runpod.ai">
       </div>
       <div class="field">
-        <label>Shield Auth Token <span style="font-weight:400;color:var(--text-muted);">(Bearer)</span></label>
-        <input type="password" id="shield-token" placeholder="rpa_… or Bearer token">
+        <label>Auth Token <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
+        <input type="password" id="shield-token" placeholder="Bearer token">
       </div>
       <div style="font-size:var(--type-meta);color:var(--text-muted);margin:2px 0 0;padding:0 0.8rem;line-height:1.5;">
         If set, input &amp; output guardrails run before/after LLM calls. Leave empty to skip guardrails.
@@ -242,13 +244,16 @@ input, select, textarea, button { font-family: inherit; }
 
     <div class="sidebar-section">
       <div class="generate-row">
-        <h3>Quick Prompts</h3>
+        <h3>Test Prompts</h3>
         <button class="generate-btn" id="generate-btn" onclick="generateQuickPrompts()" disabled>
           <span id="generate-icon">✦</span> Generate
         </button>
       </div>
+      <div style="font-size:var(--type-meta);color:var(--text-muted);padding:0 0.8rem 0.5rem;line-height:1.5;">
+        Auto-generated prompts to test your policies. Click any to send it.
+      </div>
       <div class="presets" id="presets">
-        <div class="prompts-hint">Load policy &amp; add OpenAI key to generate</div>
+        <div class="prompts-hint">Load policy to generate</div>
       </div>
     </div>
   </div>
@@ -285,8 +290,9 @@ function getConfig() {
     agentKey: selectedAgents[0] || '',
     selectedAgents,
     userRole: $('user-role').value,
-    llmApiKey: $('llm-api-key').value.trim(),
-    llmModel: $('llm-model').value,
+    llmBaseUrl: $('llm-base-url').value.trim() || 'https://api.openai.com/v1',
+    llmMasterKey: $('llm-master-key').value.trim(),
+    llmModel: $('llm-model').value.trim() || 'gpt-4o-mini',
     shieldEndpoint: $('shield-endpoint').value.trim(),
     shieldToken: $('shield-token').value.trim(),
   };
@@ -341,7 +347,8 @@ function addToolCards(toolCalls) {
   for (const tc of toolCalls) {
     const rbacAllowed = tc.rbac && tc.rbac.allowed;
     const sanBlocked = !!tc.sanitization_blocked;
-    const allowed = rbacAllowed && !sanBlocked;
+    const dpBlocked = !!tc.data_policy_blocked;
+    const allowed = rbacAllowed && !sanBlocked && !dpBlocked;
     const isUnreg = tc.unregistered;
     const card = document.createElement('div');
     card.className = 'tool-card ' + (isUnreg ? 'tool-card-unregistered' : allowed ? 'tool-card-allowed' : 'tool-card-blocked');
@@ -387,6 +394,7 @@ function addToolCards(toolCalls) {
         ${isUnreg ? '<span class="badge" style="background:#92400e;color:#fbbf24;">UNREGISTERED</span>' : ''}
         <span class="badge ${allowed ? 'badge-allowed' : 'badge-blocked'}">${allowed ? 'ALLOWED' : 'BLOCKED'}</span>
         ${sanBlocked ? '<span class="badge badge-blocked" title="Critical sanitization pattern matched">SANITIZATION</span>' : ''}
+        ${dpBlocked ? '<span class="badge badge-blocked" title="Data policy violation">DATA POLICY</span>' : ''}
       </div>
       <div class="tool-card-args">${esc(argsStr)}</div>
       <div class="tool-card-reason">${esc(sanReason || rbacMsg)}</div>
@@ -638,12 +646,12 @@ async function generateQuickPrompts() {
   const cfg = getConfig();
   const { allowedTools, blockedTools, role, agentName, agentDesc, guardrails, selectedAgents } = PROMPT_CTX;
 
-  if (!cfg.llmApiKey) {
+  if (!cfg.llmBaseUrl) {
     const fallback = _buildFallbackPrompts();
     if (fallback.length) {
       renderPrompts(fallback);
     } else {
-      $('presets').innerHTML = '<div class="prompts-hint">Add an OpenAI API key for AI-generated prompts</div>';
+      $('presets').innerHTML = '<div class="prompts-hint">Set an LLM base URL for AI-generated prompts</div>';
     }
     return;
   }
@@ -712,33 +720,59 @@ async function generateQuickPrompts() {
   const prompt = lines.filter(Boolean).join('\n');
 
   try {
-    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+    const resp = await fetch('/playground/llm-proxy', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.llmApiKey}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: cfg.llmModel,
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content: 'Generate the test prompts as JSON.' },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.8,
-        max_tokens: 1200,
+        base_url: cfg.llmBaseUrl,
+        master_key: cfg.llmMasterKey || '',
+        payload: {
+          model: cfg.llmModel,
+          messages: [
+            { role: 'system', content: prompt },
+            { role: 'user', content: 'Generate the test prompts as JSON. Return ONLY the JSON object, no markdown or explanation.' },
+          ],
+          temperature: 0.8,
+          max_tokens: 4096,
+        },
       }),
     });
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
-      throw new Error(err.error?.message || `HTTP ${resp.status}`);
+      throw new Error(err.error?.message || err.error || `HTTP ${resp.status}`);
     }
 
     const data = await resp.json();
-    const parsed = JSON.parse(data.choices[0].message.content);
-    const prompts = Array.isArray(parsed) ? parsed : (parsed.prompts || []);
+    console.log('[Quick Prompts] LLM proxy response:', JSON.stringify(data, null, 2));
+    const msg = data.choices?.[0]?.message || {};
+    const raw = (msg.content || '').trim();
+    console.log('[Quick Prompts] Raw content:', raw);
+    console.log('[Quick Prompts] finish_reason:', data.choices?.[0]?.finish_reason);
+
+    if (!raw && data.choices?.[0]?.finish_reason === 'length') {
+      throw new Error('Model ran out of tokens (spent on reasoning). Try a different model or retry.');
+    }
+    if (!raw) {
+      throw new Error('Model returned empty content. Check model and base URL.');
+    }
+    // Extract JSON from the response — handle markdown fences or plain JSON
+    const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, raw];
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonMatch[1].trim());
+    } catch {
+      // Last resort: find first { or [ and parse from there
+      const start = raw.search(/[\[{]/);
+      if (start === -1) throw new Error('LLM did not return valid JSON. Raw: ' + raw.substring(0, 300));
+      parsed = JSON.parse(raw.slice(start));
+    }
+    const prompts = Array.isArray(parsed) ? parsed : (parsed.prompts || parsed.data || []);
 
     PROMPT_CACHE[key] = prompts;
     renderPrompts(prompts);
   } catch (e) {
+    console.error('[Quick Prompts] Error:', e);
     $('presets').innerHTML = `<div class="prompts-hint" style="color:var(--danger);">Generation failed: ${esc(e.message)}</div>`;
   } finally {
     setGenerateLoading(false);
@@ -896,9 +930,10 @@ async function sendMessage() {
       user_role: cfg.userRole,
     };
 
-    if (cfg.llmApiKey) {
-      body.llm_api_key = cfg.llmApiKey;
+    if (cfg.llmBaseUrl) {
+      body.llm_base_url = cfg.llmBaseUrl;
       body.llm_model = cfg.llmModel;
+      if (cfg.llmMasterKey) body.llm_master_key = cfg.llmMasterKey;
     }
     if (cfg.shieldEndpoint) {
       body.shield_endpoint = cfg.shieldEndpoint;
@@ -955,7 +990,7 @@ async function sendMessage() {
     } else {
       // Assistant text (only when not blocked)
       if (data.text) {
-        addMessage('assistant', esc(data.text), elapsed + 'ms · ' + (cfg.llmApiKey ? cfg.llmModel : 'built-in'));
+        addMessage('assistant', esc(data.text), elapsed + 'ms · ' + (cfg.llmMasterKey ? cfg.llmModel : 'built-in'));
         conversationHistory.push({ role: 'assistant', content: data.text });
       }
 
@@ -973,12 +1008,19 @@ async function sendMessage() {
           } else if (sanBlocked) {
             const reason = tc.sanitization_block_reason || 'critical sanitization pattern matched';
             lines.push(`🚫 Tool <strong>${esc(readable)}</strong> blocked — ${esc(reason)}.`);
+          } else if (tc.data_policy_blocked) {
+            const reason = tc.rbac?.message || 'Data policy violation';
+            lines.push(`🛡️ Tool <strong>${esc(readable)}</strong> blocked by data policy — ${esc(reason)}.`);
           } else if (rbacOk) {
-            const argSummary = Object.entries(tc.arguments || {})
-              .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
-              .join(', ');
             const sanitizedNote = tc.sanitization && tc.sanitization.input_modified ? ' <em style="color:#93c5fd;">(sanitized)</em>' : '';
-            lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}${sanitizedNote}`);
+            let toolLine = `✅ <strong>${esc(readable)}</strong> executed${sanitizedNote}`;
+            if (tc.simulated_output) {
+              const outStr = typeof tc.simulated_output === 'string'
+                ? tc.simulated_output
+                : JSON.stringify(tc.simulated_output, null, 2);
+              toolLine += `<pre style="margin:6px 0 0;padding:8px 10px;background:rgba(0,0,0,0.25);border-radius:6px;font-size:0.75rem;color:var(--text-dim);white-space:pre-wrap;max-height:150px;overflow-y:auto;">${esc(outStr)}</pre>`;
+            }
+            lines.push(toolLine);
           } else {
             lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong>.`);
           }
@@ -1013,7 +1055,7 @@ async function sendMessage() {
 }
 
 /* --- Persist config in sessionStorage --- */
-const PERSIST_KEYS = ['api-key', 'llm-api-key', 'llm-model', 'shield-endpoint', 'shield-token'];
+const PERSIST_KEYS = ['api-key', 'llm-base-url', 'llm-master-key', 'llm-model', 'shield-endpoint', 'shield-token'];
 function saveConfig() {
   for (const k of PERSIST_KEYS) {
     sessionStorage.setItem('pg_' + k, $(k).value);

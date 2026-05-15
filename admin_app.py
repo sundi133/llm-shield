@@ -197,6 +197,9 @@ def _get_data_policy(tool_policies: dict, tool_name: str, user_role: str | None,
 
     result = {"input": None, "output": None,
               "sanitization": tp.get("data_sanitization"),
+              "action": "allow",
+              "redaction_level": None,
+              "data_scope": [],
               "input_rules": [], "output_rules": []}
 
     if user_role and user_role in role_restrictions:
@@ -212,6 +215,9 @@ def _get_data_policy(tool_policies: dict, tool_name: str, user_role: str | None,
         dp = data_policies.get(tool_name) or {}
         for rp in dp.get("role_policies", []):
             if rp.get("role") == user_role:
+                result["action"] = rp.get("action", "allow")
+                result["redaction_level"] = rp.get("redaction_level")
+                result["data_scope"] = rp.get("data_scope", [])
                 result["input_rules"] = rp.get("input_rules", [])
                 result["output_rules"] = rp.get("output_rules", [])
                 break
@@ -433,58 +439,91 @@ def _track_unregistered(tenant_id: str, agent_key: str | None,
 async def _validate_data_rules(
     client, shield_url: str, content: str, rules: list[str],
     tool_name: str, stage: str, api_key: str, auth_token: str = "",
+    llm_key: str = "",
 ) -> dict | None:
-    """Validate content against free-form rules using the Shield server's vLLM.
-    Returns {"passed": bool, "violations": [...]} or None on failure."""
+    """Validate content against free-form data policy rules via /guardrails/input or /guardrails/output.
+    Returns {"passed": bool, "reason": str, ...} or None on failure."""
     if not rules or not shield_url or not content:
         return None
-    prompt = (
-        f"You are a data policy validator for the tool '{tool_name}' ({stage} stage).\n"
-        f"Check if the following content violates ANY of these rules:\n\n"
-    )
-    for i, rule in enumerate(rules, 1):
-        prompt += f"{i}. {rule}\n"
-    prompt += (
-        f"\nContent to validate:\n{content}\n\n"
-        "Output ONLY one CSV line: violated,rule_number,explanation\n"
-        "Examples:\n"
-        "false,0,No violations found\n"
-        "true,2,Contains SSN which violates rule 2\n"
-    )
-    headers = {"Content-Type": "application/json", "X-API-Key": api_key}
+
+    # Build the guardrail input — embed the data policy rules in the context
+    rules_text = "; ".join(rules)
+    guardrail_stage = "input" if stage == "input" else "output"
+    url = f"{shield_url.rstrip('/')}/guardrails/{guardrail_stage}"
+
+    body = {
+        "message": (
+            f"Data policy check for tool '{tool_name}' ({stage}). "
+            f"Rules: {rules_text}. "
+            f"Content: {content}"
+        ),
+        "context": {
+            "tool_name": tool_name,
+            "data_policy_rules": rules,
+            "data_policy_check": True,
+            "validation_prompt": (
+                f"Check if the following content for tool '{tool_name}' violates "
+                f"any of these data policy rules: {rules_text}"
+            ),
+        },
+    }
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["X-API-Key"] = api_key
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
+
+    print(f"[data-policy] POST {url} for {tool_name}/{stage} rules={rules}", flush=True)
     try:
-        resp = await client.post(
-            f"{shield_url.rstrip('/')}/v1/chat/completions",
-            json={
-                "model": "votal-ai/vai35-4B",
-                "messages": [
-                    {"role": "system", "content": "You are a strict data policy validator. Output ONLY the CSV line."},
-                    {"role": "user", "content": prompt},
-                ],
-                "max_tokens": 60,
-                "temperature": 0,
-            },
-            headers=headers,
-        )
+        resp = await client.post(url, json=body, headers=headers)
+        print(f"[data-policy] Response status={resp.status_code}", flush=True)
         if resp.status_code != 200:
+            print(f"[data-policy] Error: {resp.text[:500]}", flush=True)
             return None
         data = resp.json()
-        raw = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        line = raw.strip().split("\n")[0].strip()
-        parts = [p.strip() for p in line.split(",", 2)]
-        violated = parts[0].lower() == "true" if parts else False
-        rule_num = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-        explanation = parts[2] if len(parts) > 2 else ""
-        return {
-            "passed": not violated,
-            "violated_rule": rules[rule_num - 1] if violated and 0 < rule_num <= len(rules) else None,
-            "explanation": explanation,
-            "stage": stage,
-            "tool": tool_name,
-        }
-    except Exception:
+        print(f"[data-policy] Response: {json.dumps(data)[:500]}", flush=True)
+
+        # Check guardrail results for any failures
+        action = data.get("action", "pass")
+        guardrail_results = data.get("guardrail_results", [])
+
+        # If the guardrail pipeline says block/flag, treat as violation
+        if action in ("block", "flag"):
+            # Find the specific guardrail that failed
+            reasons = []
+            for gr in guardrail_results:
+                if not gr.get("passed", True):
+                    msg = gr.get("message") or gr.get("reason") or gr.get("guardrail", "")
+                    if msg:
+                        reasons.append(msg)
+            return {
+                "passed": False,
+                "violated_rule": rules[0] if rules else None,
+                "reason": "; ".join(reasons) if reasons else f"Data policy violation ({action})",
+                "explanation": "; ".join(reasons) if reasons else f"Data policy violation ({action})",
+                "stage": stage,
+                "tool": tool_name,
+            }
+
+        # Also check role_based_policy guardrail specifically
+        for gr in guardrail_results:
+            name_lower = (gr.get("guardrail") or gr.get("name") or "").lower()
+            if "role_based" in name_lower or "data" in name_lower:
+                if not gr.get("passed", True):
+                    reason = gr.get("message") or gr.get("reason") or "Data policy rule violated"
+                    return {
+                        "passed": False,
+                        "violated_rule": rules[0] if rules else None,
+                        "reason": reason,
+                        "explanation": reason,
+                        "stage": stage,
+                        "tool": tool_name,
+                    }
+
+        return {"passed": True, "stage": stage, "tool": tool_name}
+    except Exception as e:
+        print(f"[data-policy] Exception: {e}", flush=True)
         return None
 
 
@@ -843,6 +882,53 @@ def _simulate_tool(name: str, args: dict) -> dict:
     return result
 
 
+async def _llm_simulate_tool(
+    name: str, args: dict, llm_base_url: str, llm_key: str = "",
+    llm_model: str = "gpt-4o-mini",
+) -> dict | None:
+    """Use the LLM to generate a realistic simulated tool response."""
+    base = llm_base_url.rstrip("/")
+    url = f"{base}/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if llm_key:
+        headers["Authorization"] = f"Bearer {llm_key}"
+
+    prompt = (
+        f"You are simulating the response of a tool called '{name}'.\n"
+        f"The tool was called with these arguments: {json.dumps(args)}\n\n"
+        f"Generate a realistic JSON response that this tool would return. "
+        f"Include plausible sample data (names, dates, IDs, etc.) that matches the tool's purpose. "
+        f"Return ONLY valid JSON, no markdown or explanation."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(url, json={
+                "model": llm_model,
+                "messages": [
+                    {"role": "system", "content": "You generate realistic simulated API responses. Return ONLY valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 500,
+                "temperature": 0.7,
+            }, headers=headers)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        raw = (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+        # Extract JSON from response
+        json_match = __import__("re").search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+        json_str = json_match.group(1).strip() if json_match else raw
+        start = json_str.find("{")
+        if start == -1:
+            start = json_str.find("[")
+        if start >= 0:
+            return json.loads(json_str[start:])
+        return json.loads(json_str)
+    except Exception as e:
+        print(f"[simulate] LLM simulation failed: {e}", flush=True)
+        return None
+
+
 def _extract_block_reason(guardrail_result: dict) -> str:
     """Pull a human-readable block reason from a guardrail response."""
     reasons = []
@@ -1009,15 +1095,12 @@ def create_admin_app() -> FastAPI:
         agent_key = body.get("agent_key", "") or request.headers.get("X-Agent-Key", "")
         user_role = body.get("user_role") or request.headers.get("X-User-Role")
         calling_agent = body.get("calling_agent", "") or request.headers.get("X-Calling-Agent", "")
-        llm_api_key = body.get("llm_api_key")
+        llm_api_key = body.get("llm_master_key", "")
         llm_model = body.get("llm_model", "gpt-4o-mini")
+        llm_base_url = body.get("llm_base_url", "https://api.openai.com/v1").strip().rstrip("/")
         shield_endpoint = body.get("shield_endpoint", "").strip().rstrip("/")
         shield_token = body.get("shield_token", "").strip()
         api_key = request.headers.get("X-API-Key", "")
-
-        if not llm_api_key:
-            return JSONResponse(status_code=400,
-                                content={"error": "llm_api_key is required for the admin playground"})
 
         default_system = (
             "You are an AI assistant with access to tools. "
@@ -1051,6 +1134,7 @@ def create_admin_app() -> FastAPI:
         registry = _load_agent_registry(tenant_id)
         tool_policies = _load_tool_policies(tenant_id)
         data_policies = _load_data_policies(tenant_id)
+        print(f"[data-policy] tenant_id={tenant_id} data_policies_keys={list(data_policies.keys()) if data_policies else 'None'}", flush=True)
         registered_tools = _get_registered_tool_names(registry, tool_policies, tenant_config)
 
         user_supplied_tools = body.get("tools")
@@ -1084,7 +1168,7 @@ def create_admin_app() -> FastAPI:
         input_guardrail_result = None
         output_guardrail_result = None
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=180) as client:
             # --- Step 1: Input Guardrails ---
             if shield_endpoint and user_message:
                 input_guardrail_result = await _call_guardrails(
@@ -1117,8 +1201,11 @@ def create_admin_app() -> FastAPI:
 
             # --- Step 2: Call OpenAI ---
             try:
+                llm_headers = {}
+                if llm_api_key:
+                    llm_headers["Authorization"] = f"Bearer {llm_api_key}"
                 resp = await client.post(
-                    "https://api.openai.com/v1/chat/completions",
+                    f"{llm_base_url}/chat/completions",
                     json={
                         "model": llm_model,
                         "messages": messages,
@@ -1127,7 +1214,7 @@ def create_admin_app() -> FastAPI:
                         "max_tokens": 1024,
                         "temperature": 0.3,
                     },
-                    headers={"Authorization": f"Bearer {llm_api_key}"},
+                    headers=llm_headers,
                 )
                 llm_data = resp.json()
             except Exception as e:
@@ -1160,6 +1247,7 @@ def create_admin_app() -> FastAPI:
                               registry=registry, calling_agent=calling_agent or None)
             data_policy = _get_data_policy(tool_policies, name, user_role,
                                            data_policies=data_policies)
+            print(f"[data-policy] tool={name} role={user_role} action={data_policy.get('action')} input_rules={data_policy.get('input_rules')} shield={shield_endpoint}", flush=True)
 
             tool_data_policy_raw  = (data_policies.get(name) or {}) if data_policies else {}
             tool_sanitization_rules = tool_data_policy_raw.get("sanitization_rules", []) or []
@@ -1240,10 +1328,15 @@ def create_admin_app() -> FastAPI:
             ai_output_result: dict | None = None
 
             if rbac["allowed"] and not input_block:
-                # Step 2 (OUTPUT): default is REDACT. The LLM/user never need
-                # the raw payload — a presentation copy is fine. critical still
-                # blocks, and an explicit action="detect" rule just records.
-                simulated = _simulate_tool(name, sanitized_args)
+                # Step 2 (OUTPUT): simulate tool response using LLM if available,
+                # otherwise fall back to hardcoded simulation.
+                simulated = None
+                if llm_base_url:
+                    simulated = await _llm_simulate_tool(
+                        name, sanitized_args, llm_base_url, llm_api_key, llm_model,
+                    )
+                if not simulated:
+                    simulated = _simulate_tool(name, sanitized_args)
                 if regex_enabled:
                     sanitized_output, output_violations = _sanitize_json(
                         simulated, tool_sanitization_rules, default_action="redact",
@@ -1294,9 +1387,7 @@ def create_admin_app() -> FastAPI:
                         else "Sanitization policy blocked tool output"
                     )
 
-                # LLM-validated data rules run on whatever the downstream will
-                # actually see (sanitized_args for input, sanitized_output for
-                # output) so the Shield LLM doesn't need to see raw PII either.
+                # LLM-validated data rules — go through the Shield/guardrail server
                 if shield_endpoint and data_policy.get("input_rules"):
                     async with httpx.AsyncClient(timeout=30) as rule_client:
                         input_check = await _validate_data_rules(
@@ -1304,6 +1395,7 @@ def create_admin_app() -> FastAPI:
                             json.dumps(sanitized_args), data_policy["input_rules"],
                             name, "input", api_key, shield_token,
                         )
+                    print(f"[data-policy] input_check for {name}: {input_check}", flush=True)
                     if input_check and not input_check["passed"]:
                         entry["data_rule_violation"] = input_check
                         data_rule_results.append(input_check)
@@ -1315,9 +1407,25 @@ def create_admin_app() -> FastAPI:
                             data_policy["output_rules"],
                             name, "output", api_key, shield_token,
                         )
+                    print(f"[data-policy] output_check for {name}: {output_check}", flush=True)
                     if output_check and not output_check["passed"]:
                         entry["data_rule_violation"] = output_check
                         data_rule_results.append(output_check)
+
+                # --- Enforce data policy action per role ---
+                dp_action = data_policy.get("action", "allow")
+                has_rule_violation = entry.get("data_rule_violation") and not entry["data_rule_violation"].get("passed", True)
+
+                if dp_action == "block" and has_rule_violation:
+                    violation = entry["data_rule_violation"]
+                    reason = violation.get("reason") or violation.get("message") or "Data policy violation"
+                    entry["rbac"]["allowed"] = False
+                    entry["rbac"]["message"] = f"Data policy blocked: {reason}"
+                    entry["data_policy_blocked"] = True
+                elif dp_action == "mask" and has_rule_violation:
+                    entry["data_policy_masked"] = True
+                elif dp_action == "redact" and has_rule_violation:
+                    entry["data_policy_redacted"] = True
 
             if input_detected or output_violations or ai_input_result or ai_output_result:
                 sanitization_meta = {
@@ -1351,7 +1459,7 @@ def create_admin_app() -> FastAPI:
             tool_results.append(entry)
 
         has_blocked = any(
-            not t["rbac"]["allowed"] or t.get("sanitization_blocked")
+            not t["rbac"]["allowed"] or t.get("sanitization_blocked") or t.get("data_policy_blocked")
             for t in tool_results
         )
 
@@ -1467,6 +1575,35 @@ def create_admin_app() -> FastAPI:
                 return JSONResponse({"error": "Upstream request timed out"}, status_code=504)
             except httpx.ConnectError as e:
                 return JSONResponse({"error": f"Cannot reach endpoint: {e}"}, status_code=502)
+
+    @app.post("/playground/llm-proxy")
+    async def playground_llm_proxy(request: Request):
+        """Proxy LLM requests from the playground so the browser never calls LiteLLM directly."""
+        body = await request.json()
+        base_url = body.get("base_url", "https://api.openai.com/v1").strip().rstrip("/")
+        master_key = body.get("master_key", "")
+        payload = body.get("payload", {})
+
+        headers = {"Content-Type": "application/json"}
+        if master_key:
+            headers["Authorization"] = f"Bearer {master_key}"
+
+        print(f"[llm-proxy] POST {base_url}/chat/completions model={payload.get('model')}", flush=True)
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            try:
+                resp = await client.post(
+                    f"{base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+                data = resp.json()
+                print(f"[llm-proxy] Status={resp.status_code}", flush=True)
+                print(f"[llm-proxy] Full response: {json.dumps(data)}", flush=True)
+                return JSONResponse(data, status_code=resp.status_code)
+            except httpx.TimeoutException:
+                return JSONResponse({"error": "LLM request timed out"}, status_code=504)
+            except httpx.ConnectError as e:
+                return JSONResponse({"error": f"Cannot reach LLM endpoint: {e}"}, status_code=502)
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
