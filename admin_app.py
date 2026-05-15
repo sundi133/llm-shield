@@ -1134,6 +1134,7 @@ def create_admin_app() -> FastAPI:
         registry = _load_agent_registry(tenant_id)
         tool_policies = _load_tool_policies(tenant_id)
         data_policies = _load_data_policies(tenant_id)
+        print(f"[data-policy] tenant_id={tenant_id} data_policies_keys={list(data_policies.keys()) if data_policies else 'None'}", flush=True)
         registered_tools = _get_registered_tool_names(registry, tool_policies, tenant_config)
 
         user_supplied_tools = body.get("tools")
@@ -1246,6 +1247,7 @@ def create_admin_app() -> FastAPI:
                               registry=registry, calling_agent=calling_agent or None)
             data_policy = _get_data_policy(tool_policies, name, user_role,
                                            data_policies=data_policies)
+            print(f"[data-policy] tool={name} role={user_role} action={data_policy.get('action')} input_rules={data_policy.get('input_rules')} shield={shield_endpoint}", flush=True)
 
             tool_data_policy_raw  = (data_policies.get(name) or {}) if data_policies else {}
             tool_sanitization_rules = tool_data_policy_raw.get("sanitization_rules", []) or []
