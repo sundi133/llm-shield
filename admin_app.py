@@ -439,17 +439,15 @@ def _track_unregistered(tenant_id: str, agent_key: str | None,
 async def _validate_data_rules(
     client, shield_url: str, content: str, rules: list[str],
     tool_name: str, stage: str, api_key: str, auth_token: str = "",
-    llm_key: str = "", llm_base_url: str = "", llm_model: str = "gpt-4o-mini",
+    llm_key: str = "", llm_base_url: str = "", llm_model: str = "",
 ) -> dict | None:
-    """Validate content against free-form data policy rules using a dedicated LLM call.
+    """Validate content against data policy rules using the Shield server's LLM.
 
-    Uses the LiteLLM proxy (llm_base_url) for a focused, deterministic check.
-    Falls back to the Shield server's /v1/chat/completions if no LLM proxy.
+    Calls /v1/chat/completions on the Shield server directly (bypasses the
+    guardrail pipeline to avoid false positives from topic_restriction etc.).
     Returns {"passed": bool, "reason": str, ...} or None on failure.
     """
-    if not rules or not content:
-        return None
-    if not llm_base_url and not shield_url:
+    if not rules or not content or not shield_url:
         return None
 
     rules_text = "\n".join(f"- {r}" for r in rules)
@@ -466,27 +464,16 @@ async def _validate_data_rules(
         f"FAIL: <brief explanation of which rule was violated and why>\n"
     )
 
-    # Prefer LiteLLM proxy, fall back to shield server
-    if llm_base_url:
-        base = llm_base_url.rstrip("/")
-        url = f"{base}/chat/completions"
-        headers = {"Content-Type": "application/json"}
-        if llm_key:
-            headers["Authorization"] = f"Bearer {llm_key}"
-    else:
-        url = f"{shield_url.rstrip('/')}/v1/chat/completions"
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["X-API-Key"] = api_key
-        if auth_token:
-            headers["Authorization"] = f"Bearer {auth_token}"
+    url = f"{shield_url.rstrip('/')}/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["X-API-Key"] = api_key
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
 
-    model = llm_model if llm_base_url else "gpt-4o-mini"
-
-    print(f"[data-policy] LLM check {url} for {tool_name}/{stage} content={content[:100]}", flush=True)
+    print(f"[data-policy] Shield LLM check {url} for {tool_name}/{stage} content={content[:100]}", flush=True)
     try:
         resp = await client.post(url, json={
-            "model": model,
             "messages": [
                 {"role": "system", "content": "You are a strict data policy validator. Answer with exactly one line: PASS or FAIL."},
                 {"role": "user", "content": prompt},
@@ -502,7 +489,7 @@ async def _validate_data_rules(
 
         data = resp.json()
         raw = (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
-        print(f"[data-policy] LLM verdict: {raw}", flush=True)
+        print(f"[data-policy] Shield LLM verdict: {raw}", flush=True)
 
         # Parse PASS/FAIL response
         first_line = raw.split("\n")[0].strip()
@@ -1383,29 +1370,25 @@ def create_admin_app() -> FastAPI:
                         else "Sanitization policy blocked tool output"
                     )
 
-                # LLM-validated data rules — dedicated LLM call via LiteLLM proxy
-                if data_policy.get("input_rules") and (llm_base_url or shield_endpoint):
+                # LLM-validated data rules — uses Shield server's LLM directly
+                if data_policy.get("input_rules") and shield_endpoint:
                     async with httpx.AsyncClient(timeout=60) as rule_client:
                         input_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
                             json.dumps(sanitized_args), data_policy["input_rules"],
                             name, "input", api_key, shield_token,
-                            llm_base_url=llm_base_url, llm_model=llm_model,
-                            llm_key=llm_api_key,
                         )
                     print(f"[data-policy] input_check for {name}: {input_check}", flush=True)
                     if input_check and not input_check["passed"]:
                         entry["data_rule_violation"] = input_check
                         data_rule_results.append(input_check)
-                if data_policy.get("output_rules") and entry.get("simulated_output") and (llm_base_url or shield_endpoint):
+                if data_policy.get("output_rules") and entry.get("simulated_output") and shield_endpoint:
                     async with httpx.AsyncClient(timeout=60) as rule_client:
                         output_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
                             json.dumps(entry["simulated_output"]),
                             data_policy["output_rules"],
                             name, "output", api_key, shield_token,
-                            llm_base_url=llm_base_url, llm_model=llm_model,
-                            llm_key=llm_api_key,
                         )
                     print(f"[data-policy] output_check for {name}: {output_check}", flush=True)
                     if output_check and not output_check["passed"]:
