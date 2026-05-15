@@ -213,11 +213,19 @@ async def _stream_chat_completion(
                                         "guardrails_triggered": [blocked_result.guardrail_name],
                                         "latency_ms": round(latency_ms, 2),
                                         "metadata": {
+                                            "kind": "agent_chat_telemetry",
+                                            "tenant_id": tenant_id,
                                             "stage": "stream_partial_output",
-                                            "role": role_name,
+                                            "user_role": role_name,
+                                            "blocked": True,
+                                            "block_reason": blocked_result.message,
+                                            "session_id": "",
+                                            "tool_calls": [],
+                                            "tool_call_count": 0,
+                                            "input_guardrails": [],
+                                            "output_guardrails": [{"guardrail": blocked_result.guardrail_name, "passed": False, "action": "block", "message": blocked_result.message}],
+                                            "usage": {},
                                             "streaming": True,
-                                            "blocked_guardrail": blocked_result.guardrail_name,
-                                            "blocked_message": blocked_result.message,
                                             "partial_output_chars": current_len,
                                         },
                                     }
@@ -253,11 +261,19 @@ async def _stream_chat_completion(
                     "guardrails_triggered": triggered,
                     "latency_ms": round(latency_ms, 2),
                     "metadata": {
+                        "kind": "agent_chat_telemetry",
+                        "tenant_id": tenant_id,
                         "stage": "stream_complete",
-                        "role": role_name,
+                        "user_role": role_name,
+                        "blocked": not output_result.allowed,
+                        "block_reason": None,
+                        "session_id": "",
+                        "tool_calls": [],
+                        "tool_call_count": 0,
+                        "input_guardrails": [],
+                        "output_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in output_result.results],
+                        "usage": usage or {},
                         "streaming": True,
-                        "output_allowed": output_result.allowed,
-                        "usage": usage,
                     },
                 }
             )
@@ -321,6 +337,7 @@ async def shield_chat_completions(request: Request):
     agent_key = getattr(request.state, "agent_key", None)
     role = getattr(request.state, "role", None)
     role_name = getattr(request.state, "role_name", None)
+    tenant_id = getattr(request.state, "tenant_id", None) or ""
 
     # Build conversation history for multi-turn awareness (exclude system messages)
     conversation_history = [
@@ -359,7 +376,20 @@ async def shield_chat_completions(request: Request):
                 "action_taken": "block",
                 "guardrails_triggered": triggered,
                 "latency_ms": round(latency_ms, 2),
-                "metadata": {"stage": "input", "role": role_name},
+                "metadata": {
+                    "kind": "agent_chat_telemetry",
+                    "tenant_id": tenant_id,
+                    "stage": "input",
+                    "user_role": role_name,
+                    "blocked": True,
+                    "block_reason": "; ".join(triggered),
+                    "session_id": "",
+                    "tool_calls": [],
+                    "tool_call_count": 0,
+                    "input_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in input_result.results],
+                    "output_guardrails": [],
+                    "usage": {},
+                },
             }
         )
 
@@ -439,7 +469,20 @@ async def shield_chat_completions(request: Request):
                 "action_taken": "block",
                 "guardrails_triggered": triggered,
                 "latency_ms": round(latency_ms, 2),
-                "metadata": {"stage": "output", "role": role_name},
+                "metadata": {
+                    "kind": "agent_chat_telemetry",
+                    "tenant_id": tenant_id,
+                    "stage": "output",
+                    "user_role": role_name,
+                    "blocked": True,
+                    "block_reason": "; ".join(triggered),
+                    "session_id": "",
+                    "tool_calls": [],
+                    "tool_call_count": 0,
+                    "input_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in input_result.results],
+                    "output_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in output_result.results],
+                    "usage": {},
+                },
             }
         )
 
@@ -480,7 +523,20 @@ async def shield_chat_completions(request: Request):
             "action_taken": "pass" if not triggered else "warn",
             "guardrails_triggered": triggered,
             "latency_ms": round(latency_ms, 2),
-            "metadata": {"stage": "complete", "role": role_name},
+            "metadata": {
+                "kind": "agent_chat_telemetry",
+                "tenant_id": tenant_id,
+                "stage": "complete",
+                "user_role": role_name,
+                "blocked": False,
+                "block_reason": None,
+                "session_id": "",
+                "tool_calls": [],
+                "tool_call_count": 0,
+                "input_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in input_result.results],
+                "output_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in output_result.results],
+                "usage": {},
+            },
         }
     )
 
