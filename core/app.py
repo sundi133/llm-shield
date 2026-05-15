@@ -123,8 +123,7 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def startup_event():
-        # Initialize audit log database
-        await audit_logger.init_db()
+        # Audit logging now uses Redis — no init needed
         # Initialize telemetry (ES, Splunk, OTLP, file)
         import asyncio
         from core.telemetry import init_telemetry, flush_loop
