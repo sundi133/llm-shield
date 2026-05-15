@@ -439,87 +439,59 @@ def _track_unregistered(tenant_id: str, agent_key: str | None,
 async def _validate_data_rules(
     client, shield_url: str, content: str, rules: list[str],
     tool_name: str, stage: str, api_key: str, auth_token: str = "",
-    llm_key: str = "",
+    user_role: str = "",
 ) -> dict | None:
-    """Validate content against free-form data policy rules via /guardrails/input or /guardrails/output.
-    Returns {"passed": bool, "reason": str, ...} or None on failure."""
-    if not rules or not shield_url or not content:
+    """Validate content against data policy rules using /v1/data-policies/validate.
+
+    Calls the Shield server's dedicated data policy validation endpoint which
+    checks regex sanitization rules, role-level access, AND free-form
+    input/output rules via the Shield's built-in LLM.
+    Returns {"passed": bool, "reason": str, ...} or None on failure.
+    """
+    if not rules or not content or not shield_url:
         return None
 
-    # Build the guardrail input — embed the data policy rules in the context
-    rules_text = "; ".join(rules)
-    guardrail_stage = "input" if stage == "input" else "output"
-    url = f"{shield_url.rstrip('/')}/guardrails/{guardrail_stage}"
-
-    body = {
-        "message": (
-            f"Data policy check for tool '{tool_name}' ({stage}). "
-            f"Rules: {rules_text}. "
-            f"Content: {content}"
-        ),
-        "context": {
-            "tool_name": tool_name,
-            "data_policy_rules": rules,
-            "data_policy_check": True,
-            "validation_prompt": (
-                f"Check if the following content for tool '{tool_name}' violates "
-                f"any of these data policy rules: {rules_text}"
-            ),
-        },
-    }
-
+    url = f"{shield_url.rstrip('/')}/v1/data-policies/validate"
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["X-API-Key"] = api_key
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
 
-    print(f"[data-policy] POST {url} for {tool_name}/{stage} rules={rules}", flush=True)
+    body = {
+        "data": content,
+        "tool_name": tool_name,
+        "user_role": user_role,
+        "stage": stage,
+    }
+
+    print(f"[data-policy] POST {url} for {tool_name}/{stage} content={content[:100]}", flush=True)
     try:
         resp = await client.post(url, json=body, headers=headers)
         print(f"[data-policy] Response status={resp.status_code}", flush=True)
         if resp.status_code != 200:
             print(f"[data-policy] Error: {resp.text[:500]}", flush=True)
             return None
+
         data = resp.json()
         print(f"[data-policy] Response: {json.dumps(data)[:500]}", flush=True)
 
-        # Check guardrail results for any failures
-        action = data.get("action", "pass")
-        guardrail_results = data.get("guardrail_results", [])
+        result = data.get("validation_result", {})
+        compliant = result.get("compliant", True)
+        violations = result.get("violations", [])
 
-        # If the guardrail pipeline says block/flag, treat as violation
-        if action in ("block", "flag"):
-            # Find the specific guardrail that failed
-            reasons = []
-            for gr in guardrail_results:
-                if not gr.get("passed", True):
-                    msg = gr.get("message") or gr.get("reason") or gr.get("guardrail", "")
-                    if msg:
-                        reasons.append(msg)
+        if not compliant and violations:
+            reasons = [v.get("pattern", "") for v in violations if v.get("pattern")]
+            reason = "; ".join(reasons) if reasons else "Data policy violation"
             return {
                 "passed": False,
                 "violated_rule": rules[0] if rules else None,
-                "reason": "; ".join(reasons) if reasons else f"Data policy violation ({action})",
-                "explanation": "; ".join(reasons) if reasons else f"Data policy violation ({action})",
+                "reason": reason,
+                "explanation": reason,
                 "stage": stage,
                 "tool": tool_name,
+                "violations": violations,
             }
-
-        # Also check role_based_policy guardrail specifically
-        for gr in guardrail_results:
-            name_lower = (gr.get("guardrail") or gr.get("name") or "").lower()
-            if "role_based" in name_lower or "data" in name_lower:
-                if not gr.get("passed", True):
-                    reason = gr.get("message") or gr.get("reason") or "Data policy rule violated"
-                    return {
-                        "passed": False,
-                        "violated_rule": rules[0] if rules else None,
-                        "reason": reason,
-                        "explanation": reason,
-                        "stage": stage,
-                        "tool": tool_name,
-                    }
 
         return {"passed": True, "stage": stage, "tool": tool_name}
     except Exception as e:
@@ -1387,25 +1359,27 @@ def create_admin_app() -> FastAPI:
                         else "Sanitization policy blocked tool output"
                     )
 
-                # LLM-validated data rules — go through the Shield/guardrail server
-                if shield_endpoint and data_policy.get("input_rules"):
-                    async with httpx.AsyncClient(timeout=30) as rule_client:
+                # Data policy validation via /v1/data-policies/validate on Shield server
+                if data_policy.get("input_rules") and shield_endpoint:
+                    async with httpx.AsyncClient(timeout=60) as rule_client:
                         input_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
                             json.dumps(sanitized_args), data_policy["input_rules"],
                             name, "input", api_key, shield_token,
+                            user_role=user_role or "",
                         )
                     print(f"[data-policy] input_check for {name}: {input_check}", flush=True)
                     if input_check and not input_check["passed"]:
                         entry["data_rule_violation"] = input_check
                         data_rule_results.append(input_check)
-                if shield_endpoint and data_policy.get("output_rules") and entry.get("simulated_output"):
-                    async with httpx.AsyncClient(timeout=30) as rule_client:
+                if data_policy.get("output_rules") and entry.get("simulated_output") and shield_endpoint:
+                    async with httpx.AsyncClient(timeout=60) as rule_client:
                         output_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
                             json.dumps(entry["simulated_output"]),
                             data_policy["output_rules"],
                             name, "output", api_key, shield_token,
+                            user_role=user_role or "",
                         )
                     print(f"[data-policy] output_check for {name}: {output_check}", flush=True)
                     if output_check and not output_check["passed"]:

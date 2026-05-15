@@ -598,15 +598,79 @@ async def validate_data_against_policies(
                 break
 
         role_action = role_policy.get("action", "allow") if role_policy else "allow"
-        if role_action == "block":
-            violations.append({
-                "violation_type": "role_restriction",
-                "data_type": "all",
-                "severity": "critical",
-                "pattern": f"Role '{user_role}' is blocked from this tool's data",
-            })
 
-        risk_level = "high" if any(v["severity"] == "critical" for v in violations) else "medium" if violations else "low"
+        # Check free-form input_rules / output_rules via LLM
+        stage = request.get("stage", "input")
+        rules = []
+        if role_policy:
+            rules = role_policy.get("input_rules", []) if stage == "input" else role_policy.get("output_rules", [])
+
+        if rules and data:
+            rules_text = "\n".join(f"- {r}" for r in rules)
+            llm_prompt = (
+                f"You are a strict data policy validator.\n\n"
+                f"Tool: {tool_name}\n"
+                f"Stage: {stage}\n\n"
+                f"Data policy rules:\n{rules_text}\n\n"
+                f"Content to validate:\n{data}\n\n"
+                f"Does the content violate ANY of the rules above?\n"
+                f"Answer with EXACTLY one line in this format:\n"
+                f"PASS: no violations found\n"
+                f"or\n"
+                f"FAIL: <brief explanation of which rule was violated and why>\n"
+            )
+            llm_messages = [
+                {"role": "system", "content": "You are a strict data policy validator. Answer with exactly one line: PASS or FAIL."},
+                {"role": "user", "content": llm_prompt},
+            ]
+
+            llm_verdict = ""
+            if _HAS_INPROC_LLM and async_llm_call is not None:
+                try:
+                    llm_verdict = await async_llm_call(
+                        messages=llm_messages, max_tokens=150, temperature=0,
+                        guardrail_name="data_policy_validate",
+                    )
+                except Exception:
+                    pass
+            else:
+                # HTTP fallback for admin-only image
+                _shield_url = os.environ.get("SHIELD_LLM_URL") or os.environ.get("RUNPOD_ENDPOINT", "")
+                _shield_token = os.environ.get("RUNPOD_TOKEN", "")
+                if _shield_url:
+                    try:
+                        async with httpx.AsyncClient(timeout=30) as _client:
+                            _resp = await _client.post(
+                                f"{_shield_url.rstrip('/')}/v1/chat/completions",
+                                json={"messages": llm_messages, "max_tokens": 150, "temperature": 0},
+                                headers={"Content-Type": "application/json",
+                                         "Authorization": f"Bearer {_shield_token}"} if _shield_token else {},
+                            )
+                            if _resp.status_code == 200:
+                                _data = _resp.json()
+                                llm_verdict = (_data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+                    except Exception:
+                        pass
+
+            if llm_verdict:
+                first_line = llm_verdict.split("\n")[0].strip()
+                if first_line.upper().startswith("FAIL"):
+                    reason = first_line[5:].strip().lstrip(":").strip() or "Data policy rule violated"
+                    violations.append({
+                        "violation_type": "input_rule_violation" if stage == "input" else "output_rule_violation",
+                        "data_type": "llm_validated",
+                        "severity": "high",
+                        "pattern": reason,
+                        "rules_checked": rules,
+                    })
+
+        # Apply role-level block after rule checks
+        if role_action == "block" and violations:
+            # Role says block when rules are violated — escalate severity
+            for v in violations:
+                v["severity"] = "critical"
+
+        risk_level = "high" if any(v["severity"] in ("critical", "high") for v in violations) else "medium" if violations else "low"
 
         return {
             "validation_result": {
