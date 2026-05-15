@@ -439,62 +439,50 @@ def _track_unregistered(tenant_id: str, agent_key: str | None,
 async def _validate_data_rules(
     client, shield_url: str, content: str, rules: list[str],
     tool_name: str, stage: str, api_key: str, auth_token: str = "",
-    llm_key: str = "", llm_base_url: str = "", llm_model: str = "",
+    user_role: str = "",
 ) -> dict | None:
-    """Validate content against data policy rules using the Shield server's LLM.
+    """Validate content against data policy rules using /v1/data-policies/validate.
 
-    Calls /v1/chat/completions on the Shield server directly (bypasses the
-    guardrail pipeline to avoid false positives from topic_restriction etc.).
+    Calls the Shield server's dedicated data policy validation endpoint which
+    checks regex sanitization rules, role-level access, AND free-form
+    input/output rules via the Shield's built-in LLM.
     Returns {"passed": bool, "reason": str, ...} or None on failure.
     """
     if not rules or not content or not shield_url:
         return None
 
-    rules_text = "\n".join(f"- {r}" for r in rules)
-    prompt = (
-        f"You are a strict data policy validator.\n\n"
-        f"Tool: {tool_name}\n"
-        f"Stage: {stage}\n\n"
-        f"Data policy rules:\n{rules_text}\n\n"
-        f"Content to validate:\n{content}\n\n"
-        f"Does the content violate ANY of the rules above?\n"
-        f"Answer with EXACTLY one line in this format:\n"
-        f"PASS: no violations found\n"
-        f"or\n"
-        f"FAIL: <brief explanation of which rule was violated and why>\n"
-    )
-
-    url = f"{shield_url.rstrip('/')}/v1/chat/completions"
+    url = f"{shield_url.rstrip('/')}/v1/data-policies/validate"
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["X-API-Key"] = api_key
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
 
-    print(f"[data-policy] Shield LLM check {url} for {tool_name}/{stage} content={content[:100]}", flush=True)
-    try:
-        resp = await client.post(url, json={
-            "messages": [
-                {"role": "system", "content": "You are a strict data policy validator. Answer with exactly one line: PASS or FAIL."},
-                {"role": "user", "content": prompt},
-            ],
-            "max_tokens": 150,
-            "temperature": 0,
-        }, headers=headers)
+    body = {
+        "data": content,
+        "tool_name": tool_name,
+        "user_role": user_role,
+        "stage": stage,
+    }
 
+    print(f"[data-policy] POST {url} for {tool_name}/{stage} content={content[:100]}", flush=True)
+    try:
+        resp = await client.post(url, json=body, headers=headers)
         print(f"[data-policy] Response status={resp.status_code}", flush=True)
         if resp.status_code != 200:
             print(f"[data-policy] Error: {resp.text[:500]}", flush=True)
             return None
 
         data = resp.json()
-        raw = (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
-        print(f"[data-policy] Shield LLM verdict: {raw}", flush=True)
+        print(f"[data-policy] Response: {json.dumps(data)[:500]}", flush=True)
 
-        # Parse PASS/FAIL response
-        first_line = raw.split("\n")[0].strip()
-        if first_line.upper().startswith("FAIL"):
-            reason = first_line[5:].strip().lstrip(":").strip() or "Data policy violation"
+        result = data.get("validation_result", {})
+        compliant = result.get("compliant", True)
+        violations = result.get("violations", [])
+
+        if not compliant and violations:
+            reasons = [v.get("pattern", "") for v in violations if v.get("pattern")]
+            reason = "; ".join(reasons) if reasons else "Data policy violation"
             return {
                 "passed": False,
                 "violated_rule": rules[0] if rules else None,
@@ -502,6 +490,7 @@ async def _validate_data_rules(
                 "explanation": reason,
                 "stage": stage,
                 "tool": tool_name,
+                "violations": violations,
             }
 
         return {"passed": True, "stage": stage, "tool": tool_name}
@@ -1370,13 +1359,14 @@ def create_admin_app() -> FastAPI:
                         else "Sanitization policy blocked tool output"
                     )
 
-                # LLM-validated data rules — uses Shield server's LLM directly
+                # Data policy validation via /v1/data-policies/validate on Shield server
                 if data_policy.get("input_rules") and shield_endpoint:
                     async with httpx.AsyncClient(timeout=60) as rule_client:
                         input_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
                             json.dumps(sanitized_args), data_policy["input_rules"],
                             name, "input", api_key, shield_token,
+                            user_role=user_role or "",
                         )
                     print(f"[data-policy] input_check for {name}: {input_check}", flush=True)
                     if input_check and not input_check["passed"]:
@@ -1389,6 +1379,7 @@ def create_admin_app() -> FastAPI:
                             json.dumps(entry["simulated_output"]),
                             data_policy["output_rules"],
                             name, "output", api_key, shield_token,
+                            user_role=user_role or "",
                         )
                     print(f"[data-policy] output_check for {name}: {output_check}", flush=True)
                     if output_check and not output_check["passed"]:
