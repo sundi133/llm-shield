@@ -12,6 +12,7 @@ from core.pipeline import run_pipeline
 from guardrails.base import _request_configs
 from guardrails.registry import get_by_stage, get_guardrail
 from storage.policy_store import check_tool_authorization, get_tool_policies
+from storage.audit_log import audit_logger
 from core.llm_backend import llm_call
 
 router = APIRouter()
@@ -517,6 +518,38 @@ async def classify_output(request: Request, body: dict):
         response["sanitization"] = sanitization_meta
         if sanitization_meta.get("output_modified"):
             response["sanitized_output"] = output
+
+    # Log to audit_logger so output guardrail checks appear in tenant telemetry
+    blocked = response.get("action") == "block"
+    guardrail_results = response.get("guardrail_results", [])
+    triggered = [gr["guardrail"] for gr in guardrail_results if not gr.get("passed")]
+    await audit_logger.log({
+        "agent_key": agent_id or "",
+        "endpoint": "/guardrails/output",
+        "input_text": f"output_check:{tool_name or 'general'}",
+        "action_taken": "block" if blocked else "pass",
+        "guardrails_triggered": triggered,
+        "latency_ms": response.get("inference_time_ms", 0),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id or "",
+            "user_role": user_role or "",
+            "stage": "output",
+            "blocked": blocked,
+            "block_reason": "; ".join(gr.get("message", "") for gr in guardrail_results if not gr.get("passed")) if blocked else None,
+            "session_id": context.get("session_id", ""),
+            "tool_calls": [{
+                "tool_name": tool_name or "general",
+                "arguments": {},
+                "rbac": {"allowed": not blocked, "action": response.get("action", "pass"), "message": ""},
+            }] if tool_name else [],
+            "tool_call_count": 1 if tool_name else 0,
+            "input_guardrails": [],
+            "output_guardrails": [{"guardrail": gr["guardrail"], "passed": gr["passed"], "action": gr["action"], "message": gr.get("message", "")} for gr in guardrail_results],
+            "usage": {},
+        },
+    })
+
     return response
 
 
