@@ -23,6 +23,7 @@ from storage.tool_killswitch import is_tool_disabled
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
 from core.telemetry import record_event, build_guardrail_event, build_response_event
+from storage.audit_log import audit_logger
 from storage.agentic_control_plane import (
     get_control_plane_config,
     find_matching_approval_rule,
@@ -147,6 +148,39 @@ def _emit_tool_check_telemetry(
         blocked_guardrails=blocked_guardrails,
         guardrail_results=results,
     ))
+
+    # Log to audit_logger so tool checks appear in tenant telemetry tab
+    tool_results = [{
+        "tool_name": tool_name,
+        "arguments": {},
+        "rbac": {
+            "allowed": allowed,
+            "action": action,
+            "message": results[0].get("message", "") if results else "",
+        },
+    }]
+    asyncio.get_event_loop().create_task(audit_logger.log({
+        "agent_key": agent_key,
+        "endpoint": "/v1/shield/tool/check",
+        "input_text": f"tool_check:{tool_name}",
+        "action_taken": action,
+        "guardrails_triggered": blocked_guardrails,
+        "latency_ms": round(latency_ms, 2),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id or "",
+            "user_role": user_role or "",
+            "stage": "complete",
+            "blocked": not allowed,
+            "block_reason": results[0].get("message", "") if results and not allowed else None,
+            "session_id": session_id or "",
+            "tool_calls": tool_results,
+            "tool_call_count": 1,
+            "input_guardrails": [],
+            "output_guardrails": [],
+            "usage": {},
+        },
+    }))
 
 
 @router.post("/check")
