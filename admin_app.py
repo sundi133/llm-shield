@@ -439,75 +439,84 @@ def _track_unregistered(tenant_id: str, agent_key: str | None,
 async def _validate_data_rules(
     client, shield_url: str, content: str, rules: list[str],
     tool_name: str, stage: str, api_key: str, auth_token: str = "",
-    llm_key: str = "",
+    llm_key: str = "", llm_base_url: str = "", llm_model: str = "gpt-4o-mini",
 ) -> dict | None:
-    """Validate content against free-form data policy rules via /guardrails/input or /guardrails/output.
-    Returns {"passed": bool, "reason": str, ...} or None on failure."""
-    if not rules or not shield_url or not content:
+    """Validate content against free-form data policy rules using a dedicated LLM call.
+
+    Uses the LiteLLM proxy (llm_base_url) for a focused, deterministic check.
+    Falls back to the Shield server's /v1/chat/completions if no LLM proxy.
+    Returns {"passed": bool, "reason": str, ...} or None on failure.
+    """
+    if not rules or not content:
+        return None
+    if not llm_base_url and not shield_url:
         return None
 
-    # Build the guardrail input — embed the data policy rules in the context
-    rules_text = "; ".join(rules)
-    guardrail_stage = "input" if stage == "input" else "output"
-    url = f"{shield_url.rstrip('/')}/guardrails/{guardrail_stage}"
+    rules_text = "\n".join(f"- {r}" for r in rules)
+    prompt = (
+        f"You are a strict data policy validator.\n\n"
+        f"Tool: {tool_name}\n"
+        f"Stage: {stage}\n\n"
+        f"Data policy rules:\n{rules_text}\n\n"
+        f"Content to validate:\n{content}\n\n"
+        f"Does the content violate ANY of the rules above?\n"
+        f"Answer with EXACTLY one line in this format:\n"
+        f"PASS: no violations found\n"
+        f"or\n"
+        f"FAIL: <brief explanation of which rule was violated and why>\n"
+    )
 
-    body = {
-        "message": (
-            f"Data policy check for tool '{tool_name}' ({stage}). "
-            f"Rules: {rules_text}. "
-            f"Content: {content}"
-        ),
-        "context": {
-            "tool_name": tool_name,
-            "data_policy_rules": rules,
-            "data_policy_check": True,
-            "validation_prompt": (
-                f"Check if the following content for tool '{tool_name}' violates "
-                f"any of these data policy rules: {rules_text}"
-            ),
-        },
-    }
+    # Prefer LiteLLM proxy, fall back to shield server
+    if llm_base_url:
+        base = llm_base_url.rstrip("/")
+        url = f"{base}/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if llm_key:
+            headers["Authorization"] = f"Bearer {llm_key}"
+    else:
+        url = f"{shield_url.rstrip('/')}/v1/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["X-API-Key"] = api_key
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
 
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["X-API-Key"] = api_key
-    if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}"
+    model = llm_model if llm_base_url else "gpt-4o-mini"
 
-    print(f"[data-policy] POST {url} for {tool_name}/{stage} rules={rules}", flush=True)
+    print(f"[data-policy] LLM check {url} for {tool_name}/{stage} content={content[:100]}", flush=True)
     try:
-        resp = await client.post(url, json=body, headers=headers)
+        resp = await client.post(url, json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a strict data policy validator. Answer with exactly one line: PASS or FAIL."},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 150,
+            "temperature": 0,
+        }, headers=headers)
+
         print(f"[data-policy] Response status={resp.status_code}", flush=True)
         if resp.status_code != 200:
             print(f"[data-policy] Error: {resp.text[:500]}", flush=True)
             return None
+
         data = resp.json()
-        print(f"[data-policy] Response: {json.dumps(data)[:500]}", flush=True)
+        raw = (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+        print(f"[data-policy] LLM verdict: {raw}", flush=True)
 
-        # Only check data-policy-relevant guardrails, ignore others
-        # (topic_restriction, adversarial_detection, etc. produce false positives
-        # on the synthetic data-policy-check message).
-        guardrail_results = data.get("guardrail_results", [])
-        DATA_POLICY_GUARDRAILS = {"custom_policy_input", "custom_policy_output",
-                                   "role_based_policy", "pii_leakage"}
+        # Parse PASS/FAIL response
+        first_line = raw.split("\n")[0].strip()
+        if first_line.upper().startswith("FAIL"):
+            reason = first_line[5:].strip().lstrip(":").strip() or "Data policy violation"
+            return {
+                "passed": False,
+                "violated_rule": rules[0] if rules else None,
+                "reason": reason,
+                "explanation": reason,
+                "stage": stage,
+                "tool": tool_name,
+            }
 
-        for gr in guardrail_results:
-            gr_name = (gr.get("guardrail") or gr.get("name") or "").lower()
-            if gr_name not in DATA_POLICY_GUARDRAILS:
-                continue
-            if not gr.get("passed", True):
-                reason = gr.get("message") or gr.get("reason") or "Data policy rule violated"
-                print(f"[data-policy] VIOLATION from {gr_name}: {reason[:200]}", flush=True)
-                return {
-                    "passed": False,
-                    "violated_rule": rules[0] if rules else None,
-                    "reason": reason,
-                    "explanation": reason,
-                    "stage": stage,
-                    "tool": tool_name,
-                }
-
-        print(f"[data-policy] PASSED for {tool_name}/{stage}", flush=True)
         return {"passed": True, "stage": stage, "tool": tool_name}
     except Exception as e:
         print(f"[data-policy] Exception: {e}", flush=True)
@@ -1374,25 +1383,29 @@ def create_admin_app() -> FastAPI:
                         else "Sanitization policy blocked tool output"
                     )
 
-                # LLM-validated data rules — go through the Shield/guardrail server
-                if shield_endpoint and data_policy.get("input_rules"):
-                    async with httpx.AsyncClient(timeout=30) as rule_client:
+                # LLM-validated data rules — dedicated LLM call via LiteLLM proxy
+                if data_policy.get("input_rules") and (llm_base_url or shield_endpoint):
+                    async with httpx.AsyncClient(timeout=60) as rule_client:
                         input_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
                             json.dumps(sanitized_args), data_policy["input_rules"],
                             name, "input", api_key, shield_token,
+                            llm_base_url=llm_base_url, llm_model=llm_model,
+                            llm_key=llm_api_key,
                         )
                     print(f"[data-policy] input_check for {name}: {input_check}", flush=True)
                     if input_check and not input_check["passed"]:
                         entry["data_rule_violation"] = input_check
                         data_rule_results.append(input_check)
-                if shield_endpoint and data_policy.get("output_rules") and entry.get("simulated_output"):
-                    async with httpx.AsyncClient(timeout=30) as rule_client:
+                if data_policy.get("output_rules") and entry.get("simulated_output") and (llm_base_url or shield_endpoint):
+                    async with httpx.AsyncClient(timeout=60) as rule_client:
                         output_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
                             json.dumps(entry["simulated_output"]),
                             data_policy["output_rules"],
                             name, "output", api_key, shield_token,
+                            llm_base_url=llm_base_url, llm_model=llm_model,
+                            llm_key=llm_api_key,
                         )
                     print(f"[data-policy] output_check for {name}: {output_check}", flush=True)
                     if output_check and not output_check["passed"]:
