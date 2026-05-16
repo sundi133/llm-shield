@@ -31,106 +31,71 @@ HEALTHCARE_TOOLS = [
         "type": "function",
         "function": {
             "name": "patient_lookup",
-            "description": "Look up patient records by ID — returns demographics, medical history, allergies, medications, and recent visits",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string", "description": "Patient identifier, e.g. P-12345"},
-                    "query": {"type": "string", "description": "Specific info: demographics, history, allergies, medications, lab_results"},
-                },
-                "required": ["patient_id"],
-            },
+            "description": "Look up patient records by ID — returns demographics, medical history, allergies, medications, and recent visits. Accepts a patient identifier (e.g. P-12345) and an optional query type (demographics, history, allergies, medications, lab_results).",
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
         "type": "function",
         "function": {
             "name": "update_vitals",
-            "description": "Record or update a patient's vital signs",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string"},
-                    "blood_pressure": {"type": "string", "description": "Systolic/diastolic, e.g. 120/80"},
-                    "heart_rate": {"type": "integer", "description": "Beats per minute"},
-                    "temperature": {"type": "number", "description": "Body temperature in °F"},
-                    "respiratory_rate": {"type": "integer", "description": "Breaths per minute"},
-                    "oxygen_saturation": {"type": "number", "description": "SpO2 percentage"},
-                },
-                "required": ["patient_id"],
-            },
+            "description": "Record or update a patient's vital signs including blood pressure, heart rate, temperature, respiratory rate, and oxygen saturation.",
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
         "type": "function",
         "function": {
             "name": "prescribe_medication",
-            "description": "Create a new prescription for a patient",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string"},
-                    "medication": {"type": "string", "description": "Drug name and strength, e.g. Lisinopril 10mg"},
-                    "dosage": {"type": "string", "description": "Dosage instructions, e.g. 1 tablet daily"},
-                    "duration": {"type": "string", "description": "Duration, e.g. 30 days"},
-                    "notes": {"type": "string", "description": "Additional prescriber notes"},
-                },
-                "required": ["patient_id", "medication", "dosage"],
-            },
+            "description": "Create a new prescription for a patient. Include the drug name and strength, dosage instructions, duration, and any prescriber notes.",
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
         "type": "function",
         "function": {
             "name": "diagnosis_update",
-            "description": "Update or add a diagnosis to a patient's medical record",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string"},
-                    "diagnosis": {"type": "string", "description": "ICD-10 code or description, e.g. E11 - Type 2 Diabetes Mellitus"},
-                    "status": {"type": "string", "enum": ["active", "resolved", "chronic"], "description": "Diagnosis status"},
-                    "notes": {"type": "string", "description": "Clinical notes"},
-                },
-                "required": ["patient_id", "diagnosis"],
-            },
+            "description": "Update or add a diagnosis to a patient's medical record. Provide an ICD-10 code or description, status (active/resolved/chronic), and clinical notes.",
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
         "type": "function",
         "function": {
             "name": "surgery_scheduling",
-            "description": "Schedule a surgical procedure for a patient",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string"},
-                    "procedure": {"type": "string", "description": "Procedure name, e.g. Appendectomy"},
-                    "date": {"type": "string", "description": "Preferred date (YYYY-MM-DD)"},
-                    "surgeon": {"type": "string", "description": "Surgeon name or ID"},
-                    "notes": {"type": "string", "description": "Pre-operative notes"},
-                },
-                "required": ["patient_id", "procedure"],
-            },
+            "description": "Schedule a surgical procedure for a patient. Provide procedure name, preferred date, surgeon, and pre-operative notes.",
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
         "type": "function",
         "function": {
             "name": "delete_patient_record",
-            "description": "Permanently delete a patient record (requires administrative justification)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string"},
-                    "reason": {"type": "string", "description": "Justification for deletion (required for audit trail)"},
-                    "confirm": {"type": "boolean", "description": "Must be true to confirm deletion"},
-                },
-                "required": ["patient_id", "reason", "confirm"],
-            },
+            "description": "Permanently delete a patient record. Requires administrative justification and explicit confirmation.",
+            "parameters": {"type": "object", "properties": {}},
         },
     },
 ]
+
+
+def _make_schemaless(tools: list[dict]) -> list[dict]:
+    """Strip fixed schemas from tool definitions — keep only name + description.
+
+    The LLM infers parameters from the description. Guardrails validate
+    whatever the LLM generates via LLM-based data policy checks.
+    """
+    out = []
+    for tool in tools:
+        func = tool.get("function", {})
+        out.append({
+            "type": "function",
+            "function": {
+                "name": func.get("name", ""),
+                "description": func.get("description", ""),
+                "parameters": {"type": "object", "properties": {}},
+            },
+        })
+    return out
 
 
 def _get_upstream_url() -> Optional[str]:
@@ -238,7 +203,12 @@ def _extract_tool_calls(llm_data: dict) -> tuple[str, list[dict]]:
 
 
 def _load_tenant_tools(tenant_config: dict | None) -> list[dict]:
-    """Load tool definitions from tenant Redis config, fall back to defaults."""
+    """Load tool definitions from tenant Redis config, fall back to defaults.
+
+    All tools are converted to schemaless format — the LLM infers parameters
+    from the description and guardrails validate via LLM-based data policies.
+    """
+    tools = None
     if tenant_config:
         tenant_id = tenant_config.get("tenant_id", "")
         try:
@@ -250,11 +220,9 @@ def _load_tenant_tools(tenant_config: dict | None) -> list[dict]:
                 raw = _fallback_store.get(f"tool_definitions:{tenant_id}")
             if raw:
                 tools = _json.loads(raw)
-                if tools:
-                    return tools
         except Exception:
             pass
-    return HEALTHCARE_TOOLS
+    return _make_schemaless(tools if tools else HEALTHCARE_TOOLS)
 
 
 def _summarize_guardrail_results(results: dict | None) -> list[dict]:
@@ -339,7 +307,7 @@ async def get_agent_tools(request: Request):
     return {
         "tools": tools,
         "tool_names": [t["function"]["name"] for t in tools if "function" in t],
-        "source": "tenant" if tools is not HEALTHCARE_TOOLS else "default",
+        "source": "tenant" if tenant_config and tenant_config.get("tenant_id") else "default",
     }
 
 
