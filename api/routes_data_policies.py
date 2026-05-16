@@ -1,10 +1,13 @@
 """Data Policies API - Advanced tool-specific data protection with Redis persistence."""
 
 import json
+import logging
 import os
 import time
 
 import httpx
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
 from typing import Dict, List, Optional
@@ -607,39 +610,43 @@ async def validate_data_against_policies(
 
         if rules and data:
             rules_text = "\n".join(f"- {r}" for r in rules)
+            _csv_fields = ["compliant", "confidence", "reason"]
+            llm_system = (
+                "You are a strict data policy enforcement engine. You MUST check every value "
+                "against every rule. If rules define an approved allowlist, ONLY those values "
+                "are allowed — anything not on the list is non-compliant.\n"
+                "Respond with ONLY one CSV line: compliant,confidence,reason\n"
+                "Example: false,0.95,recipient domain gmail.com not in approved list\n"
+                "Example: true,0.90,all values comply with policies"
+            )
             llm_prompt = (
-                f"You are a strict data policy validator.\n\n"
                 f"Tool: {tool_name}\n"
+                f"User role: {user_role}\n"
                 f"Stage: {stage}\n\n"
                 f"Data policy rules:\n{rules_text}\n\n"
                 f"Content to validate:\n{data}\n\n"
-                f"Does the content violate ANY of the rules above?\n"
-                f"Answer with EXACTLY one line in this format:\n"
-                f"PASS: no violations found\n"
-                f"or\n"
-                f"FAIL: <brief explanation of which rule was violated and why>\n"
+                f"Extract all values (emails, domains, data types, amounts) and check each against every rule."
             )
             llm_messages = [
-                {"role": "system", "content": "You are a strict data policy validator. Answer with exactly one line: PASS or FAIL."},
+                {"role": "system", "content": llm_system},
                 {"role": "user", "content": llm_prompt},
             ]
 
-            llm_verdict = ""
+            raw_content = ""
+
             if _HAS_INPROC_LLM and async_llm_call is not None:
                 try:
                     result = await async_llm_call(
-                        messages=llm_messages, max_tokens=150, temperature=0,
+                        messages=llm_messages, max_tokens=80, temperature=0,
                         guardrail_name="data_policy_validate",
                     )
-                    # async_llm_call may return a string or a dict with 'content'
                     if isinstance(result, dict):
-                        llm_verdict = result.get("content", "") or str(result)
-                    else:
-                        llm_verdict = str(result) if result else ""
-                except Exception:
-                    pass
+                        choices = result.get("choices", [])
+                        if choices:
+                            raw_content = (choices[0].get("message", {}).get("content") or "").strip()
+                except Exception as e:
+                    logger.error(f"[data-policy-validate] LLM call failed: {e}")
             else:
-                # HTTP fallback for admin-only image
                 _shield_url = os.environ.get("SHIELD_LLM_URL") or os.environ.get("RUNPOD_ENDPOINT", "")
                 _shield_token = os.environ.get("RUNPOD_TOKEN", "")
                 if _shield_url:
@@ -647,27 +654,43 @@ async def validate_data_against_policies(
                         async with httpx.AsyncClient(timeout=30) as _client:
                             _resp = await _client.post(
                                 f"{_shield_url.rstrip('/')}/v1/chat/completions",
-                                json={"messages": llm_messages, "max_tokens": 150, "temperature": 0},
+                                json={"messages": llm_messages, "max_tokens": 80, "temperature": 0},
                                 headers={"Content-Type": "application/json",
                                          "Authorization": f"Bearer {_shield_token}"} if _shield_token else {},
                             )
                             if _resp.status_code == 200:
                                 _data = _resp.json()
-                                llm_verdict = (_data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
-                    except Exception:
-                        pass
+                                raw_content = (_data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+                    except Exception as e:
+                        logger.error(f"[data-policy-validate] HTTP LLM call failed: {e}")
 
-            if llm_verdict:
-                first_line = llm_verdict.split("\n")[0].strip()
-                if first_line.upper().startswith("FAIL"):
-                    reason = first_line[5:].strip().lstrip(":").strip() or "Data policy rule violated"
-                    violations.append({
-                        "violation_type": "input_rule_violation" if stage == "input" else "output_rule_violation",
-                        "data_type": "llm_validated",
-                        "severity": "high",
-                        "pattern": reason,
-                        "rules_checked": rules,
-                    })
+            llm_result = None
+            if raw_content:
+                try:
+                    from core.llm_backend import parse_csv_response as _parse_csv
+                    llm_result = _parse_csv(raw_content, _csv_fields)
+                except Exception:
+                    llm_result = None
+
+            logger.info(
+                f"[data-policy-validate] tool={tool_name} stage={stage} role={user_role} "
+                f"raw={repr(raw_content[:150])} "
+                f"compliant={llm_result.get('compliant') if llm_result else 'NO_RESPONSE'} "
+                f"reason={repr((llm_result or {}).get('reason', '')[:100])}"
+            )
+
+            if llm_result and llm_result.get("compliant") is False:
+                reason = llm_result.get("reason", "Data policy rule violated")
+                if isinstance(reason, (int, float, bool)):
+                    reason = str(reason)
+                violations.append({
+                    "violation_type": "input_rule_violation" if stage == "input" else "output_rule_violation",
+                    "data_type": "llm_validated",
+                    "severity": "high",
+                    "pattern": reason,
+                    "confidence": float(llm_result.get("confidence", 0.0)),
+                    "rules_checked": rules,
+                })
 
         # Apply role-level block after rule checks
         if role_action == "block" and violations:
