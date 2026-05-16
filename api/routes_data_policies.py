@@ -610,38 +610,34 @@ async def validate_data_against_policies(
 
         if rules and data:
             rules_text = "\n".join(f"- {r}" for r in rules)
+            _csv_fields = ["compliant", "confidence", "reason"]
+            llm_system = (
+                "You are a strict data policy enforcement engine. You MUST check every value "
+                "against every rule. If rules define an approved allowlist, ONLY those values "
+                "are allowed — anything not on the list is non-compliant.\n"
+                "Respond with ONLY one CSV line: compliant,confidence,reason\n"
+                "Example: false,0.95,recipient domain gmail.com not in approved list\n"
+                "Example: true,0.90,all values comply with policies"
+            )
             llm_prompt = (
-                f"You are a strict data policy enforcement engine. You MUST enforce every rule literally.\n\n"
                 f"Tool: {tool_name}\n"
                 f"User role: {user_role}\n"
                 f"Stage: {stage}\n\n"
-                f"DATA POLICY RULES (enforce ALL of these strictly):\n{rules_text}\n\n"
-                f"CONTENT TO VALIDATE:\n{data}\n\n"
-                f"INSTRUCTIONS:\n"
-                f"1. Extract ALL relevant fields from the content (email addresses, domains, data types, amounts, etc.)\n"
-                f"2. Check EACH extracted value against EVERY rule above\n"
-                f"3. If rules specify approved/allowed domains or values, ONLY those are permitted — everything else is a violation\n"
-                f"4. If rules say 'block' a category, ANY match is a violation\n"
-                f"5. Be strict: when in doubt, flag as a violation\n\n"
-                f"Respond with ONLY a JSON object:\n"
-                f'{{"compliant": true/false, "reason": "specific explanation", "violated_rules": ["which rules were violated"], "extracted_values": ["values you checked"]}}\n'
+                f"Data policy rules:\n{rules_text}\n\n"
+                f"Content to validate:\n{data}\n\n"
+                f"Extract all values (emails, domains, data types, amounts) and check each against every rule."
             )
             llm_messages = [
-                {"role": "system", "content": (
-                    "You are a strict data policy enforcement engine. You MUST check every value in the content "
-                    "against every rule. If the rules define an approved allowlist, ONLY those values are allowed — "
-                    "anything not on the list is non-compliant. Respond with ONLY a JSON object."
-                )},
+                {"role": "system", "content": llm_system},
                 {"role": "user", "content": llm_prompt},
             ]
 
-            llm_result = None
             raw_content = ""
 
             if _HAS_INPROC_LLM and async_llm_call is not None:
                 try:
                     result = await async_llm_call(
-                        messages=llm_messages, max_tokens=300, temperature=0,
+                        messages=llm_messages, max_tokens=80, temperature=0,
                         guardrail_name="data_policy_validate",
                     )
                     if isinstance(result, dict):
@@ -658,7 +654,7 @@ async def validate_data_against_policies(
                         async with httpx.AsyncClient(timeout=30) as _client:
                             _resp = await _client.post(
                                 f"{_shield_url.rstrip('/')}/v1/chat/completions",
-                                json={"messages": llm_messages, "max_tokens": 300, "temperature": 0},
+                                json={"messages": llm_messages, "max_tokens": 80, "temperature": 0},
                                 headers={"Content-Type": "application/json",
                                          "Authorization": f"Bearer {_shield_token}"} if _shield_token else {},
                             )
@@ -668,34 +664,31 @@ async def validate_data_against_policies(
                     except Exception as e:
                         logger.error(f"[data-policy-validate] HTTP LLM call failed: {e}")
 
-            # Parse structured JSON response
+            llm_result = None
             if raw_content:
                 try:
-                    from core.llm_backend import parse_llm_json
-                    llm_result = parse_llm_json(raw_content)
+                    from core.llm_backend import parse_csv_response as _parse_csv
+                    llm_result = _parse_csv(raw_content, _csv_fields)
                 except Exception:
-                    # Fallback: try to detect PASS/FAIL in free text
-                    if "FAIL" in raw_content.upper() or '"compliant": false' in raw_content.lower():
-                        llm_result = {"compliant": False, "reason": raw_content[:200]}
-                    else:
-                        llm_result = {"compliant": True, "reason": raw_content[:200]}
+                    llm_result = None
 
             logger.info(
                 f"[data-policy-validate] tool={tool_name} stage={stage} role={user_role} "
+                f"raw={repr(raw_content[:150])} "
                 f"compliant={llm_result.get('compliant') if llm_result else 'NO_RESPONSE'} "
-                f"reason={repr((llm_result or {}).get('reason', '')[:150])}"
+                f"reason={repr((llm_result or {}).get('reason', '')[:100])}"
             )
 
             if llm_result and llm_result.get("compliant") is False:
                 reason = llm_result.get("reason", "Data policy rule violated")
-                violated = llm_result.get("violated_rules", [])
+                if isinstance(reason, (int, float, bool)):
+                    reason = str(reason)
                 violations.append({
                     "violation_type": "input_rule_violation" if stage == "input" else "output_rule_violation",
                     "data_type": "llm_validated",
                     "severity": "high",
                     "pattern": reason,
-                    "violated_rules": violated,
-                    "extracted_values": llm_result.get("extracted_values", []),
+                    "confidence": float(llm_result.get("confidence", 0.0)),
                     "rules_checked": rules,
                 })
 

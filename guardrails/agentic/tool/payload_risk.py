@@ -1,7 +1,8 @@
 """LLM-based payload risk evaluation for tool calls and user messages.
 
 All data-policy checks are evaluated by the LLM against tenant-configured
-data policies — no hardcoded regex patterns.
+data policies — no hardcoded regex patterns. Uses CSV output for minimal
+token cost.
 """
 
 from __future__ import annotations
@@ -10,9 +11,30 @@ import json
 import logging
 from typing import Any, Optional
 
-from core.llm_backend import async_llm_call, parse_llm_json
+from core.llm_backend import async_llm_call, parse_csv_response
 
 logger = logging.getLogger(__name__)
+
+# CSV fields for payload risk checks
+_TOOL_CSV_FIELDS = ["violates_policy", "confidence", "risk_type", "severity", "reason"]
+_MSG_CSV_FIELDS = ["violates_policy", "confidence", "risk_type", "severity", "reason"]
+
+_TOOL_SYSTEM = (
+    "You are a strict data policy enforcement engine. Analyze tool call parameters "
+    "for policy violations. Check every value against every rule. If rules define an "
+    "approved allowlist, ONLY those values are allowed.\n"
+    "Respond with ONLY one CSV line: violates_policy,confidence,risk_type,severity,reason\n"
+    "Example: true,0.95,external_exfiltration,high,recipient domain not in approved list\n"
+    "Example: false,0.90,none,low,all parameters comply with policies"
+)
+
+_MSG_SYSTEM = (
+    "You are a strict data policy enforcement engine. Analyze user messages for "
+    "data exfiltration or policy violation intent BEFORE the AI agent acts.\n"
+    "Respond with ONLY one CSV line: violates_policy,confidence,risk_type,severity,reason\n"
+    "Example: true,0.92,external_exfiltration,high,user requests sending data to external email\n"
+    "Example: false,0.88,none,low,normal business query"
+)
 
 
 async def evaluate_payload_policy_llm(
@@ -22,78 +44,42 @@ async def evaluate_payload_policy_llm(
     user_role: str = "",
     data_policies: list[dict[str, Any]] | None = None,
 ) -> Optional[dict[str, Any]]:
-    """Use the LLM to evaluate whether a tool call payload violates data policies.
-
-    Returns a dict with 'message' and 'details' if blocked, or None if allowed.
-    """
+    """Use the LLM to evaluate whether a tool call payload violates data policies."""
     payload = payload or {}
     if not payload and not tool_name:
         return None
 
     policies_text = _format_data_policies(data_policies, tenant_id)
 
-    evaluation_prompt = f"""You are a data policy enforcement engine. Analyze this tool call for policy violations.
-
-TOOL BEING CALLED: {tool_name}
-
-TOOL PARAMETERS:
-{json.dumps(payload, indent=2, ensure_ascii=False)}
-
-USER ROLE: {user_role or "unknown"}
-
-DATA POLICIES:
-{policies_text}
-
-Evaluate the tool call for these risks:
-1. Data exfiltration — sending sensitive/confidential data to external destinations (email, webhooks, etc.)
-2. Bulk data retrieval — requesting large amounts of records, full exports, or wildcard queries
-3. Unauthorized high-value operations — payments/transfers above thresholds without proper authorization
-4. Sensitive data exposure — tool parameters containing PII, credentials, or regulated data being sent externally
-5. Injection attacks — SQL injection, command injection, path traversal, template injection, or XSS in parameter values
-6. Policy circumvention — attempts to bypass access controls through crafted parameters
-
-Consider the tool name, the parameter values, and the configured data policies.
-If no data policies are configured, apply reasonable financial/banking security defaults.
-
-Respond with ONLY a JSON object:
-{{
-    "violates_policy": true/false,
-    "confidence": 0.85,
-    "risk_type": "external_exfiltration|bulk_enumeration|approval_required|sensitive_data_exposure|none",
-    "severity": "low|medium|high|critical",
-    "reason": "specific explanation of the violation",
-    "reasoning": "detailed analysis"
-}}"""
+    prompt = (
+        f"Tool: {tool_name}\n"
+        f"Parameters: {json.dumps(payload, ensure_ascii=False)}\n"
+        f"User role: {user_role or 'unknown'}\n\n"
+        f"Data policies:\n{policies_text}\n\n"
+        f"Check for: exfiltration, bulk retrieval, unauthorized operations, "
+        f"sensitive data exposure, injection attacks, policy circumvention.\n"
+        f"If no policies configured, apply financial/banking security defaults."
+    )
 
     try:
         llm_response = await async_llm_call(
-            messages=[{"role": "user", "content": evaluation_prompt}],
-            max_tokens=250,
+            messages=[
+                {"role": "system", "content": _TOOL_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=80,
             temperature=0,
-            response_format={
-                "type": "object",
-                "properties": {
-                    "violates_policy": {"type": "boolean"},
-                    "confidence": {"type": "number"},
-                    "risk_type": {"type": "string"},
-                    "severity": {"type": "string"},
-                    "reason": {"type": "string"},
-                    "reasoning": {"type": "string"},
-                },
-            },
             guardrail_name="payload_risk",
         )
 
-        result = parse_llm_json(llm_response["choices"][0]["message"]["content"])
+        raw = (llm_response.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+        result = parse_csv_response(raw, _TOOL_CSV_FIELDS)
 
-        if not isinstance(result.get("violates_policy"), bool):
-            return None  # Fail open on bad response
+        if not result.get("violates_policy"):
+            return None
 
         confidence = float(result.get("confidence", 0.5))
         if confidence < 0.75:
-            return None  # Not confident enough
-
-        if not result["violates_policy"]:
             return None
 
         return {
@@ -102,7 +88,7 @@ Respond with ONLY a JSON object:
                 "tool": tool_name,
                 "risk_type": result.get("risk_type", "unknown"),
                 "severity": result.get("severity", "medium"),
-                "reasoning": result.get("reasoning", ""),
+                "reason": result.get("reason", ""),
                 "confidence": confidence,
             },
         }
@@ -119,80 +105,42 @@ async def evaluate_message_egress_risk_llm(
     user_role: str = "",
     data_policies: list[dict[str, Any]] | None = None,
 ) -> Optional[dict[str, Any]]:
-    """Use the LLM to evaluate whether a user message represents a data exfiltration risk.
-
-    This runs at input time, before the LLM acts, to catch risky intent early.
-    """
+    """Use the LLM to evaluate whether a user message represents a data exfiltration risk."""
     if not message:
         return None
 
     policies_text = _format_data_policies(data_policies, tenant_id)
     tools_text = ", ".join(available_tools) if available_tools else "not specified"
 
-    evaluation_prompt = f"""You are a data policy enforcement engine. Analyze this user message for data exfiltration or policy violation intent BEFORE the AI agent acts on it.
-
-USER MESSAGE:
-"{message}"
-
-USER ROLE: {user_role or "unknown"}
-
-AVAILABLE TOOLS FOR THIS AGENT:
-{tools_text}
-
-DATA POLICIES:
-{policies_text}
-
-Evaluate the user's request for these risks:
-1. Requesting to send/email/export sensitive or confidential data to external parties
-2. Requesting bulk data retrieval, full exports, or broad queries across multiple records
-3. Requesting high-value financial operations (transfers, payments) without proper authorization context
-4. Attempting to share regulated data (PII, financial data, health records) outside the organization
-5. Circumventing data access controls through indirect requests
-
-Consider the user's role, the available tools, and the configured data policies.
-If no data policies are configured, apply reasonable financial/banking security defaults.
-
-IMPORTANT: Only flag genuine policy violations. Normal business queries are allowed.
-
-Respond with ONLY a JSON object:
-{{
-    "violates_policy": true/false,
-    "confidence": 0.85,
-    "risk_type": "external_exfiltration|bulk_enumeration|approval_required|sensitive_data_exposure|none",
-    "severity": "low|medium|high|critical",
-    "reason": "specific explanation of the violation",
-    "reasoning": "detailed analysis"
-}}"""
+    prompt = (
+        f"User message: \"{message}\"\n"
+        f"User role: {user_role or 'unknown'}\n"
+        f"Available tools: {tools_text}\n\n"
+        f"Data policies:\n{policies_text}\n\n"
+        f"Check for: external exfiltration, bulk retrieval, unauthorized operations, "
+        f"sensitive data sharing, access control circumvention.\n"
+        f"Only flag genuine violations. Normal business queries are allowed."
+    )
 
     try:
         llm_response = await async_llm_call(
-            messages=[{"role": "user", "content": evaluation_prompt}],
-            max_tokens=250,
+            messages=[
+                {"role": "system", "content": _MSG_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=80,
             temperature=0,
-            response_format={
-                "type": "object",
-                "properties": {
-                    "violates_policy": {"type": "boolean"},
-                    "confidence": {"type": "number"},
-                    "risk_type": {"type": "string"},
-                    "severity": {"type": "string"},
-                    "reason": {"type": "string"},
-                    "reasoning": {"type": "string"},
-                },
-            },
             guardrail_name="payload_risk",
         )
 
-        result = parse_llm_json(llm_response["choices"][0]["message"]["content"])
+        raw = (llm_response.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+        result = parse_csv_response(raw, _MSG_CSV_FIELDS)
 
-        if not isinstance(result.get("violates_policy"), bool):
+        if not result.get("violates_policy"):
             return None
 
         confidence = float(result.get("confidence", 0.5))
         if confidence < 0.75:
-            return None
-
-        if not result["violates_policy"]:
             return None
 
         return {
@@ -200,7 +148,7 @@ Respond with ONLY a JSON object:
             "details": {
                 "risk_type": result.get("risk_type", "unknown"),
                 "severity": result.get("severity", "medium"),
-                "reasoning": result.get("reasoning", ""),
+                "reason": result.get("reason", ""),
                 "confidence": confidence,
             },
         }
@@ -223,7 +171,6 @@ def _load_data_policies(tenant_id: str) -> list[dict[str, Any]]:
         if not raw:
             return []
         all_policies = json.loads(raw)
-        # Flatten to a list of policy objects
         policies = []
         for tool_name, policy in all_policies.items():
             policies.append({
