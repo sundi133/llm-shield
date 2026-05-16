@@ -1376,9 +1376,17 @@ def create_admin_app() -> FastAPI:
 
                 # Data policy validation via /v1/data-policies/validate on Shield server
                 if data_policy.get("input_rules") and shield_endpoint:
+                    # Include user message as context when tool args are empty
+                    # so the LLM can evaluate intent even without structured params
                     content_to_validate = json.dumps(sanitized_args)
-                    print(f"[data-policy] VALIDATING tool={name} content_length={len(content_to_validate)} content={content_to_validate[:500]}", flush=True)
-                    print(f"[data-policy] sanitized_args type={type(sanitized_args).__name__} value={repr(sanitized_args)[:300]}", flush=True)
+                    is_empty_args = content_to_validate in ("{}", "null", "")
+                    if is_empty_args and user_message:
+                        content_to_validate = json.dumps({
+                            "_user_message": user_message,
+                            "_tool_name": name,
+                            "_note": "Tool args were empty — validate user intent against policy",
+                        })
+                    print(f"[data-policy] VALIDATING tool={name} empty_args={is_empty_args} content={content_to_validate[:500]}", flush=True)
                     async with httpx.AsyncClient(timeout=60) as rule_client:
                         input_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
