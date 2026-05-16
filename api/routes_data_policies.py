@@ -1,10 +1,13 @@
 """Data Policies API - Advanced tool-specific data protection with Redis persistence."""
 
 import json
+import logging
 import os
 import time
 
 import httpx
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
 from typing import Dict, List, Optional
@@ -608,19 +611,29 @@ async def validate_data_against_policies(
         if rules and data:
             rules_text = "\n".join(f"- {r}" for r in rules)
             llm_prompt = (
-                f"You are a strict data policy validator.\n\n"
+                f"You are a strict data policy enforcement engine. You MUST enforce every rule literally.\n\n"
                 f"Tool: {tool_name}\n"
+                f"User role: {user_role}\n"
                 f"Stage: {stage}\n\n"
-                f"Data policy rules:\n{rules_text}\n\n"
-                f"Content to validate:\n{data}\n\n"
-                f"Does the content violate ANY of the rules above?\n"
-                f"Answer with EXACTLY one line in this format:\n"
+                f"DATA POLICY RULES (enforce ALL of these strictly):\n{rules_text}\n\n"
+                f"CONTENT TO VALIDATE:\n{data}\n\n"
+                f"INSTRUCTIONS:\n"
+                f"1. Extract ALL relevant fields from the content (email addresses, domains, data types, amounts, etc.)\n"
+                f"2. Check EACH extracted value against EVERY rule above\n"
+                f"3. If rules specify approved/allowed domains or values, ONLY those are permitted — everything else is a violation\n"
+                f"4. If rules say 'block' a category, ANY match is a violation\n"
+                f"5. Be strict: when in doubt, FAIL\n\n"
+                f"Answer with EXACTLY one line:\n"
                 f"PASS: no violations found\n"
                 f"or\n"
-                f"FAIL: <brief explanation of which rule was violated and why>\n"
+                f"FAIL: <which specific rule was violated and what value triggered it>\n"
             )
             llm_messages = [
-                {"role": "system", "content": "You are a strict data policy validator. Answer with exactly one line: PASS or FAIL."},
+                {"role": "system", "content": (
+                    "You are a strict data policy enforcement engine. You MUST check every value in the content "
+                    "against every rule. If the rules define an approved allowlist, ONLY those values are allowed — "
+                    "anything not on the list is a FAIL. Answer with exactly one line: PASS or FAIL."
+                )},
                 {"role": "user", "content": llm_prompt},
             ]
 
@@ -631,12 +644,18 @@ async def validate_data_against_policies(
                         messages=llm_messages, max_tokens=150, temperature=0,
                         guardrail_name="data_policy_validate",
                     )
-                    # async_llm_call may return a string or a dict with 'content'
                     if isinstance(result, dict):
-                        llm_verdict = result.get("content", "") or str(result)
+                        # OpenAI format: choices[0].message.content
+                        choices = result.get("choices", [])
+                        if choices:
+                            llm_verdict = (choices[0].get("message", {}).get("content") or "").strip()
+                        if not llm_verdict:
+                            # Fallback: direct content key
+                            llm_verdict = result.get("content", "")
                     else:
                         llm_verdict = str(result) if result else ""
-                except Exception:
+                except Exception as e:
+                    logger.error(f"[data-policy-validate] LLM call failed: {e}")
                     pass
             else:
                 # HTTP fallback for admin-only image
@@ -657,6 +676,7 @@ async def validate_data_against_policies(
                     except Exception:
                         pass
 
+            logger.info(f"[data-policy-validate] tool={tool_name} stage={stage} role={user_role} llm_verdict={repr(llm_verdict[:200] if llm_verdict else 'EMPTY')}")
             if llm_verdict:
                 first_line = llm_verdict.split("\n")[0].strip()
                 if first_line.upper().startswith("FAIL"):
