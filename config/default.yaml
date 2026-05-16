@@ -66,6 +66,11 @@ guardrails:
       threshold: 0.7
 
   # --- Slow-tier input guardrails (LLM-based) ---
+  payload_risk:
+    enabled: true
+    action: block
+    settings: {}  # Uses tenant data policies from Redis; no hardcoded patterns
+
   adversarial_detection:
     enabled: true
     action: block
@@ -277,6 +282,8 @@ guardrails:
     enabled: true
     action: block
     settings:
+      approved_email_domains: []
+      approval_threshold_amount: 50000
       schemas:
         execute_sql:
           type: object

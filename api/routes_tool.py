@@ -4,7 +4,7 @@ import time
 import uuid
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Any
 
 from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
 from guardrails.agentic.tool.tool_use_control import ToolUseControlGuardrail
@@ -70,7 +70,7 @@ class ToolCheckRequest(BaseModel):
 
 class ToolOutputRequest(BaseModel):
     tool_name: str
-    tool_output: str
+    tool_output: Any
     agent_key: Optional[str] = None
     session_id: Optional[str] = None
     tool_call_id: Optional[str] = None
@@ -298,7 +298,7 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         if tenant_id and cp_config:
             tool_param_policy = (cp_config.get("parameter_policies", {}) or {}).get(body.tool_name)
             if tool_param_policy:
-                ok, msg, details = evaluate_parameter_policy(body.tool_name, body.tool_params or {}, tool_param_policy)
+                ok, msg, details = await evaluate_parameter_policy(body.tool_name, body.tool_params or {}, tool_param_policy)
                 results.append(_cp_result(
                     "parameter_policy",
                     ok,
