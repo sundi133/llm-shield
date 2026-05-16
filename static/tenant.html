@@ -2002,6 +2002,8 @@
       <div id="tp-sub-tools" class="tp-subtab-pane">
         <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
           <input id="tools-search" type="text" placeholder="Search tools by name..." oninput="filterTools()" style="flex:1;padding:0.45rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
+          <button class="small" onclick="downloadTenantBundle()">Download Config</button>
+          <button class="small" onclick="triggerTenantBundleUpload()">Upload Config</button>
           <button class="small" onclick="loadToolPolicyData()">Refresh</button>
           <button class="primary" onclick="showAddToolPolicyModal()">+ Add Tool Policy</button>
         </div>
@@ -2040,6 +2042,8 @@
           <div style="color:var(--text-dim);font-size:13px;margin-top:0.2rem;">Register AI agents, define allowed tools, and set delegation or budget defaults without changing prompt guardrails.</div>
         </div>
         <div style="display:flex;gap:0.5rem;">
+          <button class="small" onclick="downloadTenantBundle()" style="font-size:12px;">Download Config</button>
+          <button class="small" onclick="triggerTenantBundleUpload()" style="font-size:12px;">Upload Config</button>
           <button class="small" onclick="loadAgentData()" style="font-size:12px;">Refresh</button>
           <button class="primary" onclick="showAddAgentModal()" style="font-size:12px;">+ Add Agent</button>
         </div>
@@ -4290,6 +4294,8 @@ if __name__ == "__main__":
   </div>
 </div>
 
+<input id="tenant-bundle-upload" type="file" accept="application/json,.json" class="hidden" onchange="handleTenantBundleUpload(event)">
+
 <script>
 let API_KEY = localStorage.getItem('votal_tenant_key') || '';
 const BASE_URL = window.location.origin;
@@ -6045,6 +6051,83 @@ function showToast(message, type = 'info') {
     toast.style.animation = 'slideOut 0.3s ease';
     setTimeout(() => toast.remove(), 300);
   }, 3000);
+}
+
+function _tenantBundleFilename() {
+  const tenantId = (TENANT_INFO && TENANT_INFO.tenant_id) || 'tenant';
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `${tenantId}-shield-bundle-${stamp}.json`;
+}
+
+async function downloadTenantBundle() {
+  const tenantId = TENANT_INFO && TENANT_INFO.tenant_id;
+  if (!tenantId) return showToast('Log in first', 'error');
+
+  try {
+    const bundle = await apiCall(`/v1/shield/policies/${encodeURIComponent(tenantId)}/bundle/export`, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = _tenantBundleFilename();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast('Config bundle downloaded', 'success');
+  } catch (e) {
+    showToast(`Download failed: ${e.message}`, 'error');
+  }
+}
+
+function triggerTenantBundleUpload() {
+  const input = document.getElementById('tenant-bundle-upload');
+  if (!input) return;
+  input.value = '';
+  input.click();
+}
+
+async function handleTenantBundleUpload(event) {
+  const file = event.target.files && event.target.files[0];
+  const tenantId = TENANT_INFO && TENANT_INFO.tenant_id;
+  if (!file || !tenantId) return;
+
+  try {
+    const raw = await file.text();
+    const bundle = JSON.parse(raw);
+    const proceed = confirm(
+      `Import "${file.name}" into tenant "${tenantId}"?\n\n` +
+      `This will overwrite agents, tool role policies, tool data policies, and tenant guardrails.`
+    );
+    if (!proceed) return;
+
+    const result = await apiCall(
+      `/v1/shield/policies/${encodeURIComponent(tenantId)}/bundle/import?conflict_mode=overwrite`,
+      { method: 'POST', body: JSON.stringify(bundle) }
+    );
+
+    await Promise.allSettled([
+      loadPolicies(),
+      loadAgentData(),
+      loadToolPolicyData(),
+      loadDataPolicies(),
+      loadRolesOverview(),
+    ]);
+
+    const summary = result.summary || {};
+    showToast(
+      `Imported ${summary.agents_imported || 0} agents, ` +
+      `${summary.tool_policies_imported ? 'tool policies' : 'no tool policies'}, ` +
+      `${summary.data_policies_imported ? 'data policies' : 'no data policies'}`,
+      'success'
+    );
+  } catch (e) {
+    showToast(`Upload failed: ${e.message}`, 'error');
+  } finally {
+    event.target.value = '';
+  }
 }
 
 // Add CSS for animations
