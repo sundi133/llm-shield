@@ -499,6 +499,22 @@ async def _validate_data_rules(
         return None
 
 
+def _make_tools_schemaless(tools: list[dict]) -> list[dict]:
+    """Strip fixed schemas — keep only name + description."""
+    out = []
+    for tool in tools:
+        func = tool.get("function", {})
+        out.append({
+            "type": "function",
+            "function": {
+                "name": func.get("name", ""),
+                "description": func.get("description", ""),
+                "parameters": {"type": "object", "properties": {}},
+            },
+        })
+    return out
+
+
 def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
                        agent_key: str | None = None,
                        registry: dict | None = None) -> list[dict]:
@@ -521,7 +537,7 @@ def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
             if raw:
                 tools = json.loads(raw)
                 if tools:
-                    return tools
+                    return _make_tools_schemaless(tools)
         except Exception:
             pass
 
@@ -553,8 +569,8 @@ def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
         return [
             {"type": "function", "function": {
                 "name": name,
-                "strict": True,
-                **_tool_stub_meta(name, registry=registry),
+                "description": _tool_stub_description(name, registry=registry),
+                "parameters": {"type": "object", "properties": {}},
             }}
             for name in sorted(tool_names)
         ]
@@ -582,9 +598,8 @@ def _parse_verb_noun(name: str) -> tuple[str, str]:
     return "", " ".join(parts)
 
 
-def _tool_stub_meta(name: str, registry: dict | None = None) -> dict:
-    """Generate description + parameters following OpenAI function calling
-    best practices (strict mode, clear descriptions, additionalProperties).
+def _tool_stub_description(name: str, registry: dict | None = None) -> str:
+    """Generate a description for a tool stub — schemaless, no parameter schema.
 
     Checks the agent registry for a tool description first, then derives
     a meaningful description from the tool name itself.
@@ -595,12 +610,9 @@ def _tool_stub_meta(name: str, registry: dict | None = None) -> dict:
             if name in tool_descs:
                 td = tool_descs[name]
                 if isinstance(td, str):
-                    return {"description": td, "parameters": _infer_params(name)}
+                    return td
                 if isinstance(td, dict):
-                    return {
-                        "description": td.get("description", f"Perform {name.replace('_', ' ')}"),
-                        "parameters": td.get("parameters", _infer_params(name)),
-                    }
+                    return td.get("description", f"Perform {name.replace('_', ' ')}")
 
     verb, noun = _parse_verb_noun(name)
 
@@ -637,9 +649,7 @@ def _tool_stub_meta(name: str, registry: dict | None = None) -> dict:
         "verify": f"Verify {noun}.",
     }
 
-    desc = desc_map.get(verb, f"Perform the '{name.replace('_', ' ')}' operation.")
-
-    return {"description": desc, "parameters": _infer_params(name, verb)}
+    return desc_map.get(verb, f"Perform the '{name.replace('_', ' ')}' operation.")
 
 
 def _infer_params(name: str, verb: str = "") -> dict:
