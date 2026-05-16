@@ -49,6 +49,8 @@ Evaluate the tool call for these risks:
 2. Bulk data retrieval — requesting large amounts of records, full exports, or wildcard queries
 3. Unauthorized high-value operations — payments/transfers above thresholds without proper authorization
 4. Sensitive data exposure — tool parameters containing PII, credentials, or regulated data being sent externally
+5. Injection attacks — SQL injection, command injection, path traversal, template injection, or XSS in parameter values
+6. Policy circumvention — attempts to bypass access controls through crafted parameters
 
 Consider the tool name, the parameter values, and the configured data policies.
 If no data policies are configured, apply reasonable financial/banking security defaults.
