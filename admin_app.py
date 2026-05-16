@@ -509,7 +509,7 @@ def _make_tools_schemaless(tools: list[dict]) -> list[dict]:
             "function": {
                 "name": func.get("name", ""),
                 "description": func.get("description", ""),
-                "parameters": {"type": "object", "properties": {}},
+                "parameters": {"type": "object"},
             },
         })
     return out
@@ -570,7 +570,7 @@ def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
             {"type": "function", "function": {
                 "name": name,
                 "description": _tool_stub_description(name, registry=registry),
-                "parameters": {"type": "object", "properties": {}},
+                "parameters": {"type": "object"},
             }}
             for name in sorted(tool_names)
         ]

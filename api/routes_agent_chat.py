@@ -32,7 +32,7 @@ HEALTHCARE_TOOLS = [
         "function": {
             "name": "patient_lookup",
             "description": "Look up patient records by ID — returns demographics, medical history, allergies, medications, and recent visits. Accepts a patient identifier (e.g. P-12345) and an optional query type (demographics, history, allergies, medications, lab_results).",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {"type": "object"},
         },
     },
     {
@@ -40,7 +40,7 @@ HEALTHCARE_TOOLS = [
         "function": {
             "name": "update_vitals",
             "description": "Record or update a patient's vital signs including blood pressure, heart rate, temperature, respiratory rate, and oxygen saturation.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {"type": "object"},
         },
     },
     {
@@ -48,7 +48,7 @@ HEALTHCARE_TOOLS = [
         "function": {
             "name": "prescribe_medication",
             "description": "Create a new prescription for a patient. Include the drug name and strength, dosage instructions, duration, and any prescriber notes.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {"type": "object"},
         },
     },
     {
@@ -56,7 +56,7 @@ HEALTHCARE_TOOLS = [
         "function": {
             "name": "diagnosis_update",
             "description": "Update or add a diagnosis to a patient's medical record. Provide an ICD-10 code or description, status (active/resolved/chronic), and clinical notes.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {"type": "object"},
         },
     },
     {
@@ -64,7 +64,7 @@ HEALTHCARE_TOOLS = [
         "function": {
             "name": "surgery_scheduling",
             "description": "Schedule a surgical procedure for a patient. Provide procedure name, preferred date, surgeon, and pre-operative notes.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {"type": "object"},
         },
     },
     {
@@ -72,7 +72,7 @@ HEALTHCARE_TOOLS = [
         "function": {
             "name": "delete_patient_record",
             "description": "Permanently delete a patient record. Requires administrative justification and explicit confirmation.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {"type": "object"},
         },
     },
 ]
@@ -92,7 +92,7 @@ def _make_schemaless(tools: list[dict]) -> list[dict]:
             "function": {
                 "name": func.get("name", ""),
                 "description": func.get("description", ""),
-                "parameters": {"type": "object", "properties": {}},
+                "parameters": {"type": "object"},
             },
         })
     return out
