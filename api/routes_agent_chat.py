@@ -20,6 +20,7 @@ import config.schema as _config_module
 from core.llm_backend import get_server_url, _get_shared_client, _ensure_no_think
 from core.pipeline import run_input_pipeline, run_output_pipeline
 from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
+from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuardrail
 from guardrails.base import _request_configs
 from storage.audit_log import audit_logger
 
@@ -170,10 +171,11 @@ async def _call_llm(messages: list, tools: list, llm_api_key: str | None = None,
     return resp.json()
 
 
-async def _check_tool_rbac(tool_name: str, agent_key: str,
+async def _check_tool_rbac(tool_name: str, tool_args: dict, agent_key: str,
                            user_role: str | None, tenant_config: dict | None) -> dict:
-    """Run the tool_allowlist guardrail on a single tool call."""
-    guard = ToolAllowlistGuardrail()
+    """Run tool allowlist and generic parameter validation on a single tool call."""
+    allow_guard = ToolAllowlistGuardrail()
+    validation_guard = ToolCallValidationGuardrail()
 
     configs: dict = {}
     if tenant_config and "input_guardrails" in tenant_config:
@@ -187,11 +189,16 @@ async def _check_tool_rbac(tool_name: str, agent_key: str,
 
     token = _request_configs.set(configs) if configs else None
     try:
-        result = await guard.check("", {
+        context = {
             "agent_key": agent_key,
             "tool_name": tool_name,
             "user_role": user_role,
-        })
+            "tool_params": tool_args or {},
+            "tenant_id": (tenant_config or {}).get("tenant_id", ""),
+        }
+        result = await allow_guard.check("", context)
+        if result.passed:
+            result = await validation_guard.check("", context)
         return {
             "allowed": result.passed,
             "action": result.action,
@@ -370,10 +377,16 @@ async def agent_chat(request: Request):
 
     tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
 
+    # Load tools early so we can pass tool names into input guardrail context
+    tools = custom_tools or _load_tenant_tools(tenant_config)
+    tool_names = [t["function"]["name"] for t in tools if "function" in t]
+
     context = {
         "agent_key": agent_key,
         "user_role": user_role,
         "endpoint": "/v1/shield/chat/agent",
+        "tenant_id": (tenant_config or {}).get("tenant_id", ""),
+        "available_tools": tool_names,
     }
 
     last_user_msg = ""
@@ -410,8 +423,7 @@ async def agent_chat(request: Request):
             "guardrail_results": input_result.model_dump(),
         })
 
-    # --- LLM call with tools (tenant-specific from Redis, or defaults) ---
-    tools = custom_tools or _load_tenant_tools(tenant_config)
+    # --- LLM call with tools ---
     try:
         llm_data = await _call_llm(messages, tools, llm_api_key, llm_base_url, llm_model)
     except Exception as e:
@@ -428,7 +440,7 @@ async def agent_chat(request: Request):
     # --- RBAC check per tool call ---
     tool_results: list[dict] = []
     for tc in tool_calls:
-        rbac = await _check_tool_rbac(tc["name"], agent_key, user_role, tenant_config)
+        rbac = await _check_tool_rbac(tc["name"], tc["arguments"], agent_key, user_role, tenant_config)
         tool_results.append({
             "tool_call_id": tc.get("id", ""),
             "tool_name": tc["name"],

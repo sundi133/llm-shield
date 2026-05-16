@@ -3,9 +3,10 @@
 Enhanced with tenant-specific policy support from Redis storage.
 """
 
+import json
 import re
 import logging
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
@@ -23,6 +24,15 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
     name = "tool_output_sanitization"
     tier = "fast"
     stage = "agentic"
+
+    @staticmethod
+    def _normalize_output(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return str(value)
 
     def _load_tenant_policies(self, tenant_id: str) -> List[Dict]:
         """Load tenant-specific data protection policies."""
@@ -184,7 +194,7 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
 
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}
-        tool_output = ctx.get("tool_output", content)
+        tool_output = self._normalize_output(ctx.get("tool_output", content))
         tool_name = ctx.get("tool_name", "")
 
         # Extract tenant and user context

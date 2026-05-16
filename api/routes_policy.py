@@ -1,9 +1,11 @@
 """Policy management API routes — Create, read, update, delete data protection policies."""
 
+import json
+import time
+
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
-import time
 
 from enum import Enum
 
@@ -23,8 +25,10 @@ from storage.policy_store import (
     register_agent,
     set_tool_policies,
 )
-from storage.tenant_store import get_tenant
+from storage.tenant_store import get_tenant, _fallback_store
 from storage.admin_audit import log_admin_action
+from storage.custom_policies import get_tenant_custom_policies
+from storage.tenant_store import set_tenant_policies, _get_redis
 
 router = APIRouter(prefix="/v1/shield/policies", tags=["policies"])
 
@@ -460,6 +464,9 @@ class PolicyBundle(BaseModel):
     policies: List[Dict[str, Any]] = Field(default_factory=list)
     agent_configs: Dict[str, Any] = Field(default_factory=dict)
     tool_policies: Dict[str, Any] = Field(default_factory=dict)
+    data_policies: Dict[str, Any] = Field(default_factory=dict)
+    tenant_guardrails: Dict[str, Any] = Field(default_factory=dict)
+    custom_policies: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 @router.get("/{tenant_id}/bundle/export")
@@ -477,6 +484,20 @@ async def export_policies(tenant_id: str):
     policies = get_tenant_policies(tenant_id, include_deleted=False)
     agents = get_agent_registry(tenant_id)
     tool_pols = get_tool_policies(tenant_id)
+    tenant_guardrails = {
+        "input_guardrails": tenant.get("input_guardrails", {}),
+        "output_guardrails": tenant.get("output_guardrails", {}),
+    }
+    custom_policies = get_tenant_custom_policies(tenant_id, enabled_only=False)
+    r = _get_redis()
+    raw_data_policies = r.get(f"data_policies:{tenant_id}") if r else None
+    data_policies = {}
+    if raw_data_policies:
+        data_policies = raw_data_policies if isinstance(raw_data_policies, dict) else json.loads(raw_data_policies)
+    elif not r:
+        fallback_raw = _fallback_store.get(f"data_policies:{tenant_id}")
+        if fallback_raw:
+            data_policies = json.loads(fallback_raw)
 
     bundle = {
         "version": "1.0",
@@ -485,6 +506,9 @@ async def export_policies(tenant_id: str):
         "policies": policies,
         "agent_configs": agents,
         "tool_policies": tool_pols,
+        "data_policies": data_policies,
+        "tenant_guardrails": tenant_guardrails,
+        "custom_policies": custom_policies,
     }
 
     return bundle
@@ -554,6 +578,58 @@ async def import_policies(
         set_tool_policies(tenant_id, bundle.tool_policies)
         tool_policies_imported = True
 
+    # Import live tenant guardrails used by the tenant portal UI
+    tenant_guardrails_imported = False
+    if bundle.tenant_guardrails:
+        set_tenant_policies(
+            tenant_id,
+            input_guardrails=bundle.tenant_guardrails.get("input_guardrails"),
+            output_guardrails=bundle.tenant_guardrails.get("output_guardrails"),
+        )
+        tenant_guardrails_imported = True
+
+    # Import custom guardrail policies stored within tenant guardrails
+    custom_policies_imported = 0
+    if bundle.custom_policies:
+        grouped_custom = {"input": [], "output": []}
+        for policy in bundle.custom_policies:
+            stage = policy.get("stage", "input")
+            if stage in grouped_custom:
+                grouped_custom[stage].append(policy)
+
+        tenant_cfg = get_tenant(tenant_id) or {}
+        for stage, policies_for_stage in grouped_custom.items():
+            if not policies_for_stage:
+                continue
+            stage_key = f"{stage}_guardrails"
+            guardrail_key = f"custom_policy_{stage}"
+            tenant_cfg.setdefault(stage_key, {})
+            existing_guardrail = tenant_cfg[stage_key].get(guardrail_key, {})
+            tenant_cfg[stage_key][guardrail_key] = {
+                "enabled": existing_guardrail.get("enabled", True),
+                "action": existing_guardrail.get("action", "pass"),
+                "settings": {
+                    **existing_guardrail.get("settings", {}),
+                    "policies": sorted(policies_for_stage, key=lambda p: p.get("priority", 100)),
+                },
+            }
+            custom_policies_imported += len(policies_for_stage)
+        set_tenant_policies(
+            tenant_id,
+            input_guardrails=tenant_cfg.get("input_guardrails"),
+            output_guardrails=tenant_cfg.get("output_guardrails"),
+        )
+
+    # Import per-tool data policies from the Tool Policies > Data Policies UI
+    data_policies_imported = False
+    if bundle.data_policies:
+        r = _get_redis()
+        if r:
+            r.set(f"data_policies:{tenant_id}", json.dumps(bundle.data_policies))
+        else:
+            _fallback_store[f"data_policies:{tenant_id}"] = json.dumps(bundle.data_policies)
+        data_policies_imported = True
+
     log_admin_action(
         action="import_policies",
         actor=_actor_from_request(request),
@@ -564,6 +640,9 @@ async def import_policies(
             "policies_skipped": len(skipped),
             "agents_imported": agents_imported,
             "tool_policies_imported": tool_policies_imported,
+            "data_policies_imported": data_policies_imported,
+            "tenant_guardrails_imported": tenant_guardrails_imported,
+            "custom_policies_imported": custom_policies_imported,
             "conflict_mode": conflict_mode.value,
         },
     )
@@ -576,6 +655,9 @@ async def import_policies(
             "policies_skipped": len(skipped),
             "agents_imported": agents_imported,
             "tool_policies_imported": tool_policies_imported,
+            "data_policies_imported": data_policies_imported,
+            "tenant_guardrails_imported": tenant_guardrails_imported,
+            "custom_policies_imported": custom_policies_imported,
             "errors": errors,
         },
         "imported_policy_ids": imported,

@@ -1,15 +1,16 @@
-"""Validate tool call parameters — schema checks and injection detection."""
+"""Validate tool call parameters — schema checks, injection detection, and LLM-based payload policy checks."""
 
 import re
 from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
+from guardrails.agentic.tool.payload_risk import evaluate_payload_policy_llm
 
 
 class ToolCallValidationGuardrail(BaseGuardrail):
     name = "tool_call_validation"
-    tier = "fast"
+    tier = "slow"  # Uses LLM for payload policy evaluation
     stage = "agentic"
 
     _DEFAULT_INJECTION_PATTERNS = [
@@ -19,7 +20,6 @@ class ToolCallValidationGuardrail(BaseGuardrail):
         (r"\$\{.*\}", "Template injection"),
         (r"<script", "XSS"),
     ]
-
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}
         tool_name = ctx.get("tool_name")
@@ -53,6 +53,22 @@ class ToolCallValidationGuardrail(BaseGuardrail):
                         passed=False, action=self.configured_action, guardrail_name=self.name,
                         message=f"Injection detected in param '{key}': {desc}",
                         details={"param": key, "pattern": desc, "tool": tool_name})
+
+        # LLM-based payload policy evaluation against tenant data policies
+        payload_issue = await evaluate_payload_policy_llm(
+            tool_name,
+            tool_params,
+            tenant_id=ctx.get("tenant_id", ""),
+            user_role=ctx.get("user_role", ""),
+        )
+        if payload_issue:
+            return GuardrailResult(
+                passed=False,
+                action=self.configured_action,
+                guardrail_name=self.name,
+                message=payload_issue["message"],
+                details=payload_issue["details"],
+            )
 
         return GuardrailResult(passed=True, action="pass", guardrail_name=self.name,
                                message=f"Tool '{tool_name}' parameters valid")

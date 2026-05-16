@@ -9,6 +9,7 @@ import time
 import uuid
 from typing import Any, Optional
 
+from guardrails.agentic.tool.payload_risk import evaluate_payload_policy_llm
 from storage.tenant_store import _get_redis, _fallback_store
 
 
@@ -598,7 +599,16 @@ def _nested_get(data: dict[str, Any], dotted_key: str) -> Any:
     return current
 
 
-def evaluate_parameter_policy(tool_name: str, tool_params: dict[str, Any], policy: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+async def evaluate_parameter_policy(tool_name: str, tool_params: dict[str, Any], policy: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+    payload_issue = await evaluate_payload_policy_llm(
+        tool_name,
+        tool_params,
+        tenant_id=policy.get("tenant_id", ""),
+        user_role=policy.get("user_role", ""),
+    )
+    if payload_issue:
+        return False, payload_issue["message"], payload_issue["details"]
+
     required = policy.get("required_fields") or []
     for field in required:
         value = _nested_get(tool_params, field)

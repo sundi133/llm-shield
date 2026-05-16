@@ -1993,15 +1993,16 @@
 
       <!-- Sub-tabs -->
       <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:1rem;">
-        <button class="tp-subtab active" data-subtab="tools" onclick="switchTPSubtab('tools')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Tools &amp; Role Access</button>
-        <button class="tp-subtab" data-subtab="data-policies" onclick="switchTPSubtab('data-policies')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Data Policies</button>
+        <button class="tp-subtab active" data-subtab="data-policies" onclick="switchTPSubtab('data-policies')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Data Policies</button>
         <button class="tp-subtab" data-subtab="roles" onclick="switchTPSubtab('roles')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Roles Overview</button>
       </div>
 
       <!-- Sub-tab: Tools & Role Access (existing) -->
-      <div id="tp-sub-tools" class="tp-subtab-pane">
+      <div id="tp-sub-tools" class="tp-subtab-pane" style="display:none;">
         <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
           <input id="tools-search" type="text" placeholder="Search tools by name..." oninput="filterTools()" style="flex:1;padding:0.45rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
+          <button class="small" onclick="downloadTenantBundle()">Download Config</button>
+          <button class="small" onclick="triggerTenantBundleUpload()">Upload Config</button>
           <button class="small" onclick="loadToolPolicyData()">Refresh</button>
           <button class="primary" onclick="showAddToolPolicyModal()">+ Add Tool Policy</button>
         </div>
@@ -2016,8 +2017,11 @@
       </div>
 
       <!-- Sub-tab: Data Policies -->
-      <div id="tp-sub-data-policies" class="tp-subtab-pane" style="display:none;">
+      <div id="tp-sub-data-policies" class="tp-subtab-pane">
         <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
+          <input id="data-policies-search" type="text" placeholder="Search tools by name..." oninput="filterDataPolicies()" style="flex:1;padding:0.45rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
+          <button class="small" onclick="downloadTenantBundle()">Download Config</button>
+          <button class="small" onclick="triggerTenantBundleUpload()">Upload Config</button>
           <button class="small" onclick="loadDataPolicies()">Refresh</button>
         </div>
         <div id="data-policies-content">Loading data policies...</div>
@@ -2040,6 +2044,8 @@
           <div style="color:var(--text-dim);font-size:13px;margin-top:0.2rem;">Register AI agents, define allowed tools, and set delegation or budget defaults without changing prompt guardrails.</div>
         </div>
         <div style="display:flex;gap:0.5rem;">
+          <button class="small" onclick="downloadTenantBundle()" style="font-size:12px;">Download Config</button>
+          <button class="small" onclick="triggerTenantBundleUpload()" style="font-size:12px;">Upload Config</button>
           <button class="small" onclick="loadAgentData()" style="font-size:12px;">Refresh</button>
           <button class="primary" onclick="showAddAgentModal()" style="font-size:12px;">+ Add Agent</button>
         </div>
@@ -4290,6 +4296,8 @@ if __name__ == "__main__":
   </div>
 </div>
 
+<input id="tenant-bundle-upload" type="file" accept="application/json,.json" class="hidden" onchange="handleTenantBundleUpload(event)">
+
 <script>
 let API_KEY = localStorage.getItem('votal_tenant_key') || '';
 const BASE_URL = window.location.origin;
@@ -6047,6 +6055,83 @@ function showToast(message, type = 'info') {
   }, 3000);
 }
 
+function _tenantBundleFilename() {
+  const tenantId = (TENANT_INFO && TENANT_INFO.tenant_id) || 'tenant';
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `${tenantId}-shield-bundle-${stamp}.json`;
+}
+
+async function downloadTenantBundle() {
+  const tenantId = TENANT_INFO && TENANT_INFO.tenant_id;
+  if (!tenantId) return showToast('Log in first', 'error');
+
+  try {
+    const bundle = await apiCall(`/v1/shield/policies/${encodeURIComponent(tenantId)}/bundle/export`, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = _tenantBundleFilename();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast('Config bundle downloaded', 'success');
+  } catch (e) {
+    showToast(`Download failed: ${e.message}`, 'error');
+  }
+}
+
+function triggerTenantBundleUpload() {
+  const input = document.getElementById('tenant-bundle-upload');
+  if (!input) return;
+  input.value = '';
+  input.click();
+}
+
+async function handleTenantBundleUpload(event) {
+  const file = event.target.files && event.target.files[0];
+  const tenantId = TENANT_INFO && TENANT_INFO.tenant_id;
+  if (!file || !tenantId) return;
+
+  try {
+    const raw = await file.text();
+    const bundle = JSON.parse(raw);
+    const proceed = confirm(
+      `Import "${file.name}" into tenant "${tenantId}"?\n\n` +
+      `This will overwrite agents, tool role policies, tool data policies, and tenant guardrails.`
+    );
+    if (!proceed) return;
+
+    const result = await apiCall(
+      `/v1/shield/policies/${encodeURIComponent(tenantId)}/bundle/import?conflict_mode=overwrite`,
+      { method: 'POST', body: JSON.stringify(bundle) }
+    );
+
+    await Promise.allSettled([
+      loadPolicies(),
+      loadAgentData(),
+      loadToolPolicyData(),
+      loadDataPolicies(),
+      loadRolesOverview(),
+    ]);
+
+    const summary = result.summary || {};
+    showToast(
+      `Imported ${summary.agents_imported || 0} agents, ` +
+      `${summary.tool_policies_imported ? 'tool policies' : 'no tool policies'}, ` +
+      `${summary.data_policies_imported ? 'data policies' : 'no data policies'}`,
+      'success'
+    );
+  } catch (e) {
+    showToast(`Upload failed: ${e.message}`, 'error');
+  } finally {
+    event.target.value = '';
+  }
+}
+
 // Add CSS for animations
 const style = document.createElement('style');
 style.textContent = `
@@ -6282,10 +6367,19 @@ function switchTPSubtab(name) {
   if (name === 'roles') loadRolesOverview();
 }
 
-// Initialize the first sub-tab styling
+function filterDataPolicies() {
+  const q = (document.getElementById('data-policies-search')?.value || '').toLowerCase();
+  document.querySelectorAll('#data-policies-content [id^="dp-expand-"]').forEach(section => {
+    const row = section.closest('div[style*="border-bottom:1px solid var(--border);"]');
+    if (!row) return;
+    const text = row.textContent.toLowerCase();
+    row.style.display = !q || text.includes(q) ? '' : 'none';
+  });
+}
+
+// Initialize the default sub-tab styling
 setTimeout(() => {
-  const first = document.querySelector('.tp-subtab.active');
-  if (first) { first.style.borderBottomColor = 'var(--primary)'; first.style.color = 'var(--text)'; }
+  switchTPSubtab('data-policies');
 }, 0);
 
 let TOOL_POLICIES = {};
@@ -7070,103 +7164,7 @@ function openDataPolicyModal(toolName) {
 
       <div class="dp-body">
 
-        <!-- Section 1 — Data Protection -->
-        <section class="dp-section">
-          <div class="dp-section-head">
-            <div class="dp-section-title-block">
-              <div class="dp-section-title">
-                Data protection
-                <span class="dp-count-pill" id="dp-san-count">${sanCount} ${sanCount === 1 ? 'rule' : 'rules'}</span>
-              </div>
-              <div class="dp-section-desc">Describe what sensitive data this tool handles. The AI will enforce it automatically.</div>
-            </div>
-          </div>
-
-          <div class="dp-ai-card">
-            <div class="dp-ai-head">
-              <div class="dp-ai-title">Protection mode</div>
-              <div class="dp-mode-toggle" role="tablist" aria-label="Sanitization mode">
-                <button type="button" class="dp-mode-option" id="dp-mode-ai"    data-mode="ai"    onclick="dpSelectMode('ai')"    title="AI reads your policy and enforces it on every call">
-                  <span class="dp-mode-dot"></span> AI
-                </button>
-                <button type="button" class="dp-mode-option" id="dp-mode-both"  data-mode="both"  onclick="dpSelectMode('both')"  title="AI + regex patterns together (recommended)">
-                  <span class="dp-mode-dot"></span> AI + Regex
-                </button>
-                <button type="button" class="dp-mode-option" id="dp-mode-regex" data-mode="regex" onclick="dpSelectMode('regex')" title="Regex patterns only">
-                  <span class="dp-mode-dot"></span> Regex only
-                </button>
-              </div>
-            </div>
-
-            <div id="dp-ai-block" class="dp-ai-block">
-              <div class="dp-intent-controls">
-                <select onchange="dpApplyIntentTemplate(this)" title="Start from a template">
-                  <option value="">Start from a template…</option>
-                  <option value="hipaa">HIPAA — Health data</option>
-                  <option value="pci">PCI — Payment cards</option>
-                  <option value="gdpr">GDPR — Personal data</option>
-                  <option value="secrets">Secrets &amp; credentials</option>
-                  <option value="minors">Minors &amp; guardianship</option>
-                  <option value="finance">Financial data</option>
-                  <option value="custom">Custom (clear)</option>
-                </select>
-              </div>
-              <textarea id="dp-intent" rows="4" placeholder="Describe what this tool must protect in plain English. For example:&#10;&#10;Never expose SSN, credit card numbers, or API keys.&#10;Block responses that pair a patient name with diagnosis.&#10;Redact phone numbers but keep city and state."></textarea>
-            </div>
-          </div>
-
-          <details class="dp-advanced-wrap" id="dp-regex-block">
-            <summary>
-              <span>Regex rules</span>
-              <span class="dp-advanced-copy">For exact pattern matching (SSN, email, credit card formats).</span>
-            </summary>
-            <div class="dp-advanced-body">
-              <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;margin-bottom:0.5rem;flex-wrap:wrap;">
-                <div style="font-size:12.5px;font-weight:600;color:var(--text);">Patterns</div>
-                <button class="small" type="button" onclick="addDPSanitizationRule()">+ Add rule</button>
-              </div>
-
-              <div class="dp-presets" style="margin-bottom:0.75rem;">
-                <div class="dp-presets-label">Quick add</div>
-                <div class="dp-preset-row">
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('ssn')"><span class="dp-preset-plus">+</span> SSN</button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('email')"><span class="dp-preset-plus">+</span> Email</button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('phone')"><span class="dp-preset-plus">+</span> Phone</button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('credit_card')"><span class="dp-preset-plus">+</span> Credit card</button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('api_key')"><span class="dp-preset-plus">+</span> API key</button>
-                  <button class="dp-preset" type="button" onclick="addDPSanitizationExample('dob')"><span class="dp-preset-plus">+</span> DOB</button>
-                </div>
-              </div>
-
-              <div id="dp-san-rules">${sanRulesHtml}</div>
-            </div>
-          </details>
-
-          <details class="dp-advanced-wrap">
-            <summary>
-              <span>Test policy</span>
-              <span class="dp-advanced-copy">Paste sample data to preview how the policy behaves before saving.</span>
-            </summary>
-            <div class="dp-advanced-body">
-              <div class="dp-testbench">
-                <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-bottom:0.5rem;">
-                  <button type="button" class="dp-ghost-btn" onclick="dpLoadTestSample()">Load sample</button>
-                  <button type="button" class="dp-ghost-btn" onclick="dpClearTest()">Clear</button>
-                </div>
-                <textarea id="dp-test-input" rows="3" placeholder='{"ssn":"123-45-6789","email":"alex@acme.com"}'></textarea>
-                <div class="dp-testbench-run">
-                  <button id="dp-test-btn-input"  class="primary small dp-test-btn" type="button" onclick="dpTestSanitization('input')">Test input</button>
-                  <button id="dp-test-btn-output" class="small dp-test-btn"         type="button" onclick="dpTestSanitization('output')">Test output</button>
-                  <button id="dp-test-btn-ai-in"  class="small dp-test-btn dp-test-btn-ai" type="button" onclick="dpRunAIReview('input',  ${JSON.stringify(toolName)})" style="background:rgba(168,85,247,0.15);border-color:rgba(168,85,247,0.35);color:#d8b4fe;">AI review</button>
-                  <span id="dp-test-verdict" class="dp-test-verdict" style="display:none;"></span>
-                </div>
-                <div id="dp-test-result" class="dp-test-result"></div>
-              </div>
-            </div>
-          </details>
-        </section>
-
-        <!-- Section 2 — Role Access -->
+        <!-- Section 1 — Role Access -->
         <section class="dp-section">
           <div class="dp-section-head">
             <div class="dp-section-title-block">
@@ -9774,7 +9772,7 @@ document.addEventListener('click', (e) => {
       console.log('Architecture tab loaded');
     }
     if (tab === 'agents') loadAgentData();
-    if (tab === 'tool-policies') loadToolPolicyData();
+    if (tab === 'tool-policies') switchTPSubtab('data-policies');
     if (tab === 'usage') loadUsage();
     if (tab === 'activity') loadActivity();
     if (tab === 'telemetry') loadTelemetry();
