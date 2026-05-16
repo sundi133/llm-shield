@@ -627,10 +627,15 @@ async def validate_data_against_policies(
             llm_verdict = ""
             if _HAS_INPROC_LLM and async_llm_call is not None:
                 try:
-                    llm_verdict = await async_llm_call(
+                    result = await async_llm_call(
                         messages=llm_messages, max_tokens=150, temperature=0,
                         guardrail_name="data_policy_validate",
                     )
+                    # async_llm_call may return a string or a dict with 'content'
+                    if isinstance(result, dict):
+                        llm_verdict = result.get("content", "") or str(result)
+                    else:
+                        llm_verdict = str(result) if result else ""
                 except Exception:
                     pass
             else:
