@@ -420,8 +420,9 @@ function addGuardrailCard(stage, result, blocked, blockReason) {
 
   const icon = blocked ? '🛡️ ❌' : '🛡️ ✅';
   const label = stage === 'input' ? 'Input Guardrails' : 'Output Guardrails';
-  const action = result.action || 'pass';
-  const time = result.inference_time_ms ? `${Math.round(result.inference_time_ms)}ms` : '';
+  const action = result.action || (result.allowed === false ? 'block' : 'pass');
+  const time = result.inference_time_ms || result.total_latency_ms
+    ? `${Math.round(result.inference_time_ms || result.total_latency_ms)}ms` : '';
 
   let html = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
     <span style="font-size:1rem;">${icon}</span>
@@ -437,14 +438,14 @@ function addGuardrailCard(stage, result, blocked, blockReason) {
     html += `<div style="font-size:0.78rem;color:var(--danger);margin-bottom:6px;">${esc(blockReason)}</div>`;
   }
 
-  const items = result.guardrail_results || [];
+  const items = result.guardrail_results || result.results || [];
   if (items.length) {
     html += '<div style="display:flex;flex-direction:column;gap:3px;">';
     for (const gr of items) {
       const passed = gr.passed !== false;
       const grAction = gr.action || 'pass';
       const dot = passed ? '🟢' : (grAction === 'block' ? '🔴' : '🟡');
-      const name = gr.guardrail || gr.name || '?';
+      const name = gr.guardrail || gr.guardrail_name || gr.name || '?';
       const msg = gr.message || gr.reason || '';
       html += `<div style="font-size:0.72rem;display:flex;align-items:center;gap:6px;padding:3px 8px;
         background:rgba(0,0,0,0.2);border-radius:4px;">
