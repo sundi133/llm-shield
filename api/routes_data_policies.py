@@ -569,9 +569,13 @@ async def validate_data_against_policies(
         data = request.get("data", "")
         tool_name = request.get("tool_name")
         user_role = request.get("user_role")
+        stage = request.get("stage", "input")
+
+        logger.info(f"[validate] RECEIVED tool={tool_name} role={user_role} stage={stage} data_length={len(data)} data={repr(data[:300])}")
 
         all_policies = _load_all(tenant_id)
         policy = all_policies.get(tool_name, {})
+        logger.info(f"[validate] policy_found={bool(policy)} policy_keys={list(policy.keys()) if policy else []}")
 
         violations = []
         sanitized_data = data
@@ -603,12 +607,16 @@ async def validate_data_against_policies(
         role_action = role_policy.get("action", "allow") if role_policy else "allow"
 
         # Check free-form input_rules / output_rules via LLM
-        stage = request.get("stage", "input")
         rules = []
         if role_policy:
             rules = role_policy.get("input_rules", []) if stage == "input" else role_policy.get("output_rules", [])
 
-        if rules and data:
+        logger.info(f"[validate] role_policy_found={bool(role_policy)} role_action={role_action} rules_count={len(rules)} stage={stage}")
+        if not rules:
+            logger.info(f"[validate] SKIPPING LLM check — no rules for role={user_role} stage={stage}")
+        elif not data or data in ("{}", "null", ""):
+            logger.info(f"[validate] SKIPPING LLM check — empty data: {repr(data[:50])}")
+        if rules and data and data not in ("{}", "null", ""):
             rules_text = "\n".join(f"- {r}" for r in rules)
             _csv_fields = ["compliant", "confidence", "reason"]
             llm_system = (

@@ -465,7 +465,8 @@ async def _validate_data_rules(
         "stage": stage,
     }
 
-    print(f"[data-policy] POST {url} for {tool_name}/{stage} content={content[:100]}", flush=True)
+    print(f"[data-policy] POST {url} for {tool_name}/{stage} content_length={len(content)} content={content[:300]}", flush=True)
+    print(f"[data-policy] request_body={json.dumps(body)[:500]}", flush=True)
     try:
         resp = await client.post(url, json=body, headers=headers)
         print(f"[data-policy] Response status={resp.status_code}", flush=True)
@@ -1215,15 +1216,19 @@ def create_admin_app() -> FastAPI:
         tool_results = []
         data_rule_results = []
         sanitization_results = []
+        print(f"[agent-chat] LLM returned {len(raw_calls)} tool calls, content={repr(content[:100])}", flush=True)
         for tc in raw_calls:
             func = tc.get("function", {})
             name = func.get("name", "unknown")
-            args = func.get("arguments", "{}")
+            raw_args = func.get("arguments", "{}")
+            print(f"[agent-chat] tool={name} raw_arguments={repr(raw_args[:300]) if isinstance(raw_args, str) else repr(raw_args)}", flush=True)
+            args = raw_args
             if isinstance(args, str):
                 try:
                     args = json.loads(args)
                 except json.JSONDecodeError:
                     args = {"_raw": args}
+            print(f"[agent-chat] tool={name} parsed_args={json.dumps(args)[:300]}", flush=True)
 
             rbac = _check_rbac(name, agent_key, user_role, tenant_config,
                               registry=registry, calling_agent=calling_agent or None)
@@ -1371,10 +1376,13 @@ def create_admin_app() -> FastAPI:
 
                 # Data policy validation via /v1/data-policies/validate on Shield server
                 if data_policy.get("input_rules") and shield_endpoint:
+                    content_to_validate = json.dumps(sanitized_args)
+                    print(f"[data-policy] VALIDATING tool={name} content_length={len(content_to_validate)} content={content_to_validate[:500]}", flush=True)
+                    print(f"[data-policy] sanitized_args type={type(sanitized_args).__name__} value={repr(sanitized_args)[:300]}", flush=True)
                     async with httpx.AsyncClient(timeout=60) as rule_client:
                         input_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
-                            json.dumps(sanitized_args), data_policy["input_rules"],
+                            content_to_validate, data_policy["input_rules"],
                             name, "input", api_key, shield_token,
                             user_role=user_role or "",
                         )
