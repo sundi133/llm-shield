@@ -1096,6 +1096,17 @@ PERSIST_KEYS.forEach(id => {
 });
 
 restoreConfig();
+
+// Auto-fill API key from tenant portal login session if not already set
+if (!$('api-key').value) {
+  const tenantKey = localStorage.getItem('votal_tenant_key');
+  if (tenantKey) {
+    $('api-key').value = tenantKey;
+    saveConfig();
+    // Auto-load policy since we have a key
+    loadPolicy();
+  }
+}
 </script>
 </body>
 </html>
