@@ -2414,9 +2414,10 @@
               <div style="font-weight:600;margin-bottom:0.5rem;">Legacy API Key (Deprecated)</div>
               <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
                 <code style="flex:1;display:block;padding:0.5rem 0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:12px;word-break:break-all;" id="qs-api-key">—</code>
-              <button class="small" onclick="document.getElementById('qs-api-key').textContent=API_KEY||'(log in first)';showToast('Key shown','success')">Show</button>
+                <button class="small" onclick="document.getElementById('qs-api-key').textContent=API_KEY||'(log in first)';showToast('Key shown','success')">Show</button>
+              </div>
+              <div class="muted" style="font-size:11px;">Use this key in the <code>X-API-Key</code> header for all requests.</div>
             </div>
-            <div class="muted" style="font-size:11px;">Use this key in the <code>X-API-Key</code> header for all requests.</div>
           </div>
         </div>
 
