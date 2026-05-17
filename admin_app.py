@@ -1127,14 +1127,16 @@ def create_admin_app() -> FastAPI:
 
         # Build system prompt with explicit tool names to prevent hallucination
         tool_names = [t["function"]["name"] for t in tools if isinstance(t, dict) and "function" in t]
+        tool_list = ", ".join(tool_names)
         default_system = (
-            "You are an AI assistant with access to specific tools. "
-            "You may ONLY call the following tools: " + ", ".join(tool_names) + ". "
-            "Do NOT invent or guess tool names — use ONLY the exact names listed above. "
-            "Call a tool ONLY when the user is explicitly requesting an action "
-            "that requires one. For conversational messages, respond in plain text. "
-            "Do NOT avoid a tool because it was previously blocked or denied — "
-            "permissions are handled externally, not by you."
+            "You are an AI assistant. You have access to EXACTLY these tools and NO others:\n"
+            f"[{tool_list}]\n\n"
+            "RULES:\n"
+            "1. When the user requests an action, you MUST call one of the tools listed above.\n"
+            "2. You MUST use the EXACT tool name from the list. Do NOT rename, abbreviate, or invent tool names.\n"
+            "3. For example, to look up a customer use 'customer_profile_get', NOT 'account_lookup' or 'get_customer'.\n"
+            "4. If no tool matches the request, respond in plain text.\n"
+            "5. Do NOT avoid a tool because it was previously blocked — permissions are handled externally.\n"
         )
         # Always inject/replace system prompt with tool names
         messages = [m for m in messages if m.get("role") != "system"]
