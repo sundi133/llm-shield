@@ -60,11 +60,15 @@ input, select, textarea, button { font-family: inherit; }
 
 .tool-list { display: flex; flex-direction: column; gap: 6px; padding: 0 0.8rem; }
 .tool-chip { font-size: var(--type-meta); padding: 8px 10px; border-radius: 10px; background: #0f1014; border: 1px solid var(--sidebar-border); display: flex; align-items: center; gap: 8px; }
-.tool-chip .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.tool-chip .dot.allowed { background: var(--success); }
-.tool-chip .dot.blocked { background: var(--danger); }
+.tool-chip.chip-blocked { border-color: rgba(248,81,73,0.3); background: rgba(248,81,73,0.04); }
+.tool-chip .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.tool-chip .dot.allowed { background: var(--success); box-shadow: 0 0 4px var(--success); }
+.tool-chip .dot.blocked { background: var(--danger); box-shadow: 0 0 4px var(--danger); }
 .tool-chip .dot.unknown { background: var(--sidebar-text-muted); }
 .tool-chip .name { font-family: 'SF Mono', 'JetBrains Mono', monospace; color: var(--text-dim); }
+.tool-chip .access-label { font-size: 9px; font-weight: 700; margin-left: auto; padding: 1px 5px; border-radius: 4px; }
+.tool-chip .access-label.allowed { background: rgba(16,185,129,0.15); color: #10b981; }
+.tool-chip .access-label.blocked { background: rgba(248,81,73,0.15); color: #f85149; }
 .divider { height: 1px; background: var(--sidebar-border); margin: 0.1rem 0; }
 
 /* --- Chat --- */
@@ -637,7 +641,12 @@ function renderPrompts(prompts) {
     if (p.type === 'blocked') btn.classList.add('preset-blocked');
     if (p.type === 'guardrail') btn.classList.add('preset-guardrail');
     btn.addEventListener('click', () => usePreset(p.prompt));
-    btn.innerHTML = `<span class="label">${esc(p.label)}</span><span class="desc">${esc(p.desc)}</span>`;
+    const statusBadge = p.type === 'blocked'
+      ? '<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(248,81,73,0.2);color:#f85149;margin-left:6px;">BLOCKED</span>'
+      : p.type === 'allowed'
+      ? '<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(16,185,129,0.2);color:#10b981;margin-left:6px;">ALLOWED</span>'
+      : '<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(210,153,34,0.2);color:#d29922;margin-left:6px;">GUARDRAIL</span>';
+    btn.innerHTML = `<span class="label">${esc(p.label)}${statusBadge}</span><span class="desc">${esc(p.desc)}</span>`;
     presetsEl.appendChild(btn);
   }
 }
@@ -859,9 +868,9 @@ function updateToolList() {
     }
 
     const chip = document.createElement('div');
-    chip.className = 'tool-chip';
+    chip.className = 'tool-chip' + (bestStatus === 'blocked' ? ' chip-blocked' : '');
     chip.title = bestTitle;
-    chip.innerHTML = `<span class="dot ${bestStatus}"></span><span class="name">${tool}</span>`;
+    chip.innerHTML = `<span class="dot ${bestStatus}"></span><span class="name">${tool}</span><span class="access-label ${bestStatus}">${bestStatus === 'allowed' ? 'ALLOWED' : 'BLOCKED'}</span>`;
     listEl.appendChild(chip);
   }
 
