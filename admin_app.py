@@ -1141,7 +1141,10 @@ def create_admin_app() -> FastAPI:
         # Always inject/replace system prompt with tool names
         messages = [m for m in messages if m.get("role") != "system"]
         messages = [{"role": "system", "content": default_system}] + messages
+        print(f"[agent-chat] ===== NEW REQUEST =====", flush=True)
         print(f"[agent-chat] system_prompt tool_names={tool_names}", flush=True)
+        print(f"[agent-chat] system_prompt={default_system[:200]}", flush=True)
+        print(f"[agent-chat] messages count={len(messages)} first_role={messages[0].get('role') if messages else 'none'}", flush=True)
 
         # Layer 2: detect shadow tools from developer-supplied definitions
         if user_supplied_tools and tenant_id:
@@ -1215,6 +1218,7 @@ def create_admin_app() -> FastAPI:
                     headers=llm_headers,
                 )
                 llm_data = resp.json()
+                print(f"[agent-chat] LLM response status={resp.status_code}", flush=True)
             except Exception as e:
                 return JSONResponse(status_code=502, content={"error": f"LLM call failed: {e}"})
 
@@ -1229,7 +1233,9 @@ def create_admin_app() -> FastAPI:
         raw_calls = message_obj.get("tool_calls") or []
 
         # Filter out hallucinated tool names — only allow tools in the defined set
+        print(f"[agent-chat] RAW LLM tool_calls={[tc.get('function',{}).get('name','?') for tc in raw_calls]}", flush=True)
         valid_tool_set = {t["function"]["name"] for t in tools if isinstance(t, dict) and "function" in t}
+        print(f"[agent-chat] valid_tool_set={sorted(valid_tool_set)}", flush=True)
         filtered_calls = []
         hallucinated = []
         for tc in raw_calls:
