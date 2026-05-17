@@ -1096,6 +1096,38 @@ PERSIST_KEYS.forEach(id => {
 });
 
 restoreConfig();
+
+// Load playground defaults from server env vars, then tenant session
+(async function initPlayground() {
+  // 1. Fetch server-side defaults from env vars (overrides sessionStorage)
+  try {
+    const resp = await fetch('/playground/config');
+    if (resp.ok) {
+      const cfg = await resp.json();
+      const defaults = {
+        'llm-base-url': cfg.llm_base_url,
+        'llm-master-key': cfg.llm_master_key,
+        'llm-model': cfg.llm_model,
+        'shield-endpoint': cfg.shield_endpoint,
+        'shield-token': cfg.shield_token,
+      };
+      for (const [id, val] of Object.entries(defaults)) {
+        if (val) $(id).value = val;
+      }
+    }
+  } catch (e) { /* server may not have the endpoint */ }
+
+  // 2. Auto-fill API key from tenant portal login session
+  if (!$('api-key').value) {
+    const tenantKey = localStorage.getItem('votal_tenant_key');
+    if (tenantKey) $('api-key').value = tenantKey;
+  }
+
+  saveConfig();
+
+  // 3. Auto-load policy if we have an API key
+  if ($('api-key').value) loadPolicy();
+})();
 </script>
 </body>
 </html>

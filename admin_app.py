@@ -1030,6 +1030,17 @@ def create_admin_app() -> FastAPI:
     async def playground():
         return FileResponse(os.path.join(static_dir, "playground.html"))
 
+    @app.get("/playground/config")
+    async def playground_config():
+        """Serve playground defaults from environment variables."""
+        return {
+            "llm_base_url": os.environ.get("PLAYGROUND_LLM_BASE_URL", ""),
+            "llm_master_key": os.environ.get("PLAYGROUND_LLM_MASTER_KEY", ""),
+            "llm_model": os.environ.get("PLAYGROUND_LLM_MODEL", ""),
+            "shield_endpoint": os.environ.get("PLAYGROUND_SHIELD_ENDPOINT") or os.environ.get("SHIELD_LLM_URL", ""),
+            "shield_token": os.environ.get("PLAYGROUND_SHIELD_TOKEN") or os.environ.get("RUNPOD_TOKEN", ""),
+        }
+
     @app.get("/telemetry")
     async def telemetry_portal():
         return FileResponse(os.path.join(static_dir, "telemetry.html"))
