@@ -1099,7 +1099,7 @@ restoreConfig();
 
 // Load playground defaults from server env vars, then tenant session
 (async function initPlayground() {
-  // 1. Fetch server-side defaults from env vars
+  // 1. Fetch server-side defaults from env vars (overrides sessionStorage)
   try {
     const resp = await fetch('/playground/config');
     if (resp.ok) {
@@ -1112,7 +1112,7 @@ restoreConfig();
         'shield-token': cfg.shield_token,
       };
       for (const [id, val] of Object.entries(defaults)) {
-        if (val && !$(id).value) $(id).value = val;
+        if (val) $(id).value = val;
       }
     }
   } catch (e) { /* server may not have the endpoint */ }
