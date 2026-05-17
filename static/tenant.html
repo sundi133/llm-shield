@@ -4149,40 +4149,90 @@ if __name__ == "__main__":
 
 <!-- Agent Modal (Add/Edit) -->
 <div id="agent-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 2rem;">
-  <div style="background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; max-width: 700px; width: 100%; box-shadow: var(--shadow-lg); max-height: 90vh; overflow-y: auto;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);">
-      <div style="font-size: 16px; font-weight: 600;" id="agent-modal-title">Add Agent</div>
-      <button onclick="closeAgentModal()" style="background: transparent; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">&times;</button>
+  <div style="background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 760px; width: 100%; box-shadow: var(--shadow-lg); max-height: 90vh; overflow-y: auto;">
+
+    <!-- Header -->
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg-2); z-index: 1; border-radius: 12px 12px 0 0;">
+      <div>
+        <div style="font-size: 16px; font-weight: 700;" id="agent-modal-title">Add Agent</div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Configure the agent's identity, tools, and role-based access</div>
+      </div>
+      <button onclick="closeAgentModal()" style="background: transparent; border: none; color: var(--text-muted); font-size: 22px; cursor: pointer; padding: 4px 8px; border-radius: 6px;" onmouseover="this.style.background='var(--bg-3)'" onmouseout="this.style.background='transparent'">&times;</button>
     </div>
-    <div class="field">
-      <label>Agent ID <span class="muted">(cannot change after creation)</span></label>
-      <input type="text" id="agent-modal-id" placeholder="e.g. healthcare-doctor">
+
+    <div style="padding: 1.25rem 1.5rem;">
+
+      <!-- Section 1: Identity -->
+      <div style="margin-bottom: 1.25rem;">
+        <div style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.75rem;">Agent Identity</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+          <div class="field" style="margin-bottom: 0;">
+            <label style="font-size: 12px; font-weight: 600;">Agent ID <span class="muted">(unique, cannot change)</span></label>
+            <input type="text" id="agent-modal-id" placeholder="e.g. customer-service-agent" style="font-size: 13px;">
+          </div>
+          <div class="field" style="margin-bottom: 0;">
+            <label style="font-size: 12px; font-weight: 600;">Display Name</label>
+            <input type="text" id="agent-modal-name" placeholder="e.g. Customer Service Agent" style="font-size: 13px;">
+          </div>
+        </div>
+        <div class="field" style="margin-top: 0.75rem; margin-bottom: 0;">
+          <label style="font-size: 12px; font-weight: 600;">Description</label>
+          <input type="text" id="agent-modal-desc" placeholder="What does this agent do? e.g. Handles customer inquiries and account lookups" style="font-size: 13px;">
+        </div>
+      </div>
+
+      <!-- Section 2: Tools -->
+      <div style="margin-bottom: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <div>
+            <div style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);">Tools</div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Tools this agent can use. Separate with commas.</div>
+          </div>
+          <div style="display: flex; gap: 0.35rem;" id="agent-modal-tool-templates">
+            <button class="small" onclick="insertToolTemplate('banking')" style="font-size:10px;padding:3px 8px;">Banking</button>
+            <button class="small" onclick="insertToolTemplate('healthcare')" style="font-size:10px;padding:3px 8px;">Healthcare</button>
+            <button class="small" onclick="insertToolTemplate('support')" style="font-size:10px;padding:3px 8px;">Support</button>
+          </div>
+        </div>
+        <textarea id="agent-modal-tools" rows="2" placeholder="customer_profile_get, email_send, transaction_history, wire_transfer_execute" style="font-size: 13px; font-family: monospace; resize: vertical; width: 100%; padding: 0.5rem 0.75rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);" oninput="updateRoleCheckboxes(); updateAgentPermCheckboxes(); updateToolCount()"></textarea>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;" id="agent-modal-tool-count">0 tools configured</div>
+      </div>
+
+      <!-- Section 3: Roles -->
+      <div style="margin-bottom: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+          <div>
+            <div style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);">Role Permissions</div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Define which roles can use which tools. Each role sees only the tools checked below.</div>
+          </div>
+          <div style="display: flex; gap: 0.35rem;">
+            <button class="small" onclick="addRoleRow()" style="font-size: 11px;">+ Add Role</button>
+          </div>
+        </div>
+        <div id="agent-modal-roles"></div>
+        <div id="agent-modal-roles-empty" style="font-size: 12px; color: var(--text-muted); padding: 1rem; text-align: center; background: var(--bg); border: 1px dashed var(--border); border-radius: 8px;">
+          No roles configured. Click <strong>+ Add Role</strong> to define role-based tool access.
+        </div>
+        <div style="display: flex; gap: 0.35rem; margin-top: 0.5rem;">
+          <button class="small" onclick="addRoleRow('admin'); addRoleRow('manager'); addRoleRow('analyst'); addRoleRow('viewer');" style="font-size: 10px; padding: 3px 8px; color: var(--text-muted);">Quick: admin, manager, analyst, viewer</button>
+        </div>
+      </div>
+
+      <!-- Section 4: Agent-to-Agent -->
+      <details style="margin-bottom: 0.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+        <summary style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); cursor: pointer; user-select: none;">
+          Agent-to-Agent Permissions <span style="font-weight: 400; text-transform: none; letter-spacing: 0;">(optional)</span>
+        </summary>
+        <div style="font-size: 11px; color: var(--text-muted); margin: 0.5rem 0;">Which other agents can call tools on this agent. Leave empty if not needed.</div>
+        <div id="agent-modal-agent-perms"></div>
+        <button class="small" onclick="addAgentPermRow()" style="margin-top: 0.5rem; font-size: 11px;">+ Add Calling Agent</button>
+      </details>
     </div>
-    <div class="field">
-      <label>Name</label>
-      <input type="text" id="agent-modal-name" placeholder="e.g. Doctor AI Assistant">
-    </div>
-    <div class="field">
-      <label>Description</label>
-      <input type="text" id="agent-modal-desc" placeholder="Brief description of the agent">
-    </div>
-    <div class="field">
-      <label>Tools <span class="muted">(comma-separated)</span></label>
-      <input type="text" id="agent-modal-tools" placeholder="e.g. patient_lookup, prescribe_medication, view_records" oninput="updateRoleCheckboxes(); updateAgentPermCheckboxes()">
-    </div>
-    <div class="field">
-      <label>Role Permissions</label>
-      <div id="agent-modal-roles"></div>
-      <button class="small" onclick="addRoleRow()" style="margin-top: 0.5rem;">+ Add Role</button>
-    </div>
-    <div class="field" style="margin-top: 0.75rem;">
-      <label>Agent-to-Agent Permissions <span class="muted">(which calling agents can invoke tools on this agent)</span></label>
-      <div id="agent-modal-agent-perms"></div>
-      <button class="small" onclick="addAgentPermRow()" style="margin-top: 0.5rem;">+ Add Calling Agent</button>
-    </div>
-    <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
-      <button onclick="closeAgentModal()">Cancel</button>
-      <button class="primary" onclick="saveAgentFromModal()">Save Agent</button>
+
+    <!-- Footer -->
+    <div style="display: flex; gap: 0.5rem; justify-content: flex-end; padding: 1rem 1.5rem; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--bg-2); border-radius: 0 0 12px 12px;">
+      <button onclick="closeAgentModal()" style="font-size: 13px;">Cancel</button>
+      <button class="primary" onclick="saveAgentFromModal()" style="font-size: 13px;">Save Agent</button>
     </div>
   </div>
 </div>
@@ -5962,6 +6012,8 @@ async function editAgent(agentId) {
     document.getElementById('agent-modal-agent-perms').innerHTML = '';
     const agentPerms = agent.agent_permissions || {};
     Object.entries(agentPerms).forEach(([caller, tools]) => addAgentPermRow(caller, tools));
+    updateToolCount();
+    updateRolesEmptyState();
     document.getElementById('agent-modal').classList.remove('hidden');
   } catch (e) {
     showToast('Failed to load agent: ' + e.message, 'error');
@@ -5978,7 +6030,37 @@ function showAddAgentModal() {
   document.getElementById('agent-modal-tools').value = '';
   document.getElementById('agent-modal-roles').innerHTML = '';
   document.getElementById('agent-modal-agent-perms').innerHTML = '';
+  updateToolCount();
+  updateRolesEmptyState();
   document.getElementById('agent-modal').classList.remove('hidden');
+}
+
+const _TOOL_TEMPLATES = {
+  banking: 'customer_profile_get, email_send, transaction_history, statement_generate, wire_transfer_execute',
+  healthcare: 'patient_lookup, update_vitals, prescribe_medication, diagnosis_update, surgery_scheduling',
+  support: 'ticket_create, ticket_lookup, ticket_update, knowledge_search, email_send, escalate',
+};
+
+function insertToolTemplate(name) {
+  const el = document.getElementById('agent-modal-tools');
+  const existing = el.value.trim();
+  const tpl = _TOOL_TEMPLATES[name] || '';
+  el.value = existing ? existing + ', ' + tpl : tpl;
+  updateRoleCheckboxes();
+  updateAgentPermCheckboxes();
+  updateToolCount();
+}
+
+function updateToolCount() {
+  const tools = document.getElementById('agent-modal-tools').value.split(',').map(t => t.trim()).filter(Boolean);
+  const el = document.getElementById('agent-modal-tool-count');
+  if (el) el.textContent = `${tools.length} tool${tools.length !== 1 ? 's' : ''} configured`;
+}
+
+function updateRolesEmptyState() {
+  const rows = document.querySelectorAll('#agent-modal-roles .role-row');
+  const empty = document.getElementById('agent-modal-roles-empty');
+  if (empty) empty.style.display = rows.length ? 'none' : 'block';
 }
 
 function closeAgentModal() {
@@ -6010,21 +6092,26 @@ function addRoleRow(roleName, allowedTools) {
   const container = document.getElementById('agent-modal-roles');
   const row = document.createElement('div');
   row.className = 'role-row';
-  row.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.5rem;align-items:flex-start;padding:0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:0.5rem;';
+  row.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.5rem;align-items:flex-start;padding:0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-bottom:0.5rem;';
   row.innerHTML = `
-    <div style="flex:0 0 120px;">
-      <input type="text" class="role-name-input" value="${roleName}" placeholder="Role name" style="width:100%;font-size:12px;padding:0.4rem 0.6rem;">
+    <div style="flex:0 0 140px;">
+      <input type="text" class="role-name-input" value="${roleName}" placeholder="e.g. branch_manager" style="width:100%;font-size:12px;padding:0.45rem 0.6rem;font-weight:600;">
     </div>
-    <div class="role-checkboxes" style="flex:1;display:flex;flex-wrap:wrap;gap:0.25rem 0;align-items:center;">
-      ${tools.map(t =>
+    <div class="role-checkboxes" style="flex:1;display:flex;flex-wrap:wrap;gap:0.35rem 0;align-items:center;">
+      ${tools.length ? tools.map(t =>
         `<label style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:0.75rem;font-size:12px;color:var(--text);cursor:pointer;">
           <input type="checkbox" value="${t}" ${allowed.has(t) ? 'checked' : ''}> ${t}
         </label>`
-      ).join('')}
+      ).join('') : '<span style="font-size:11px;color:var(--text-muted);">Add tools above first</span>'}
     </div>
-    <button class="danger small" onclick="this.closest('.role-row').remove()" style="flex-shrink:0;">&times;</button>
+    <div style="display:flex;gap:0.25rem;flex-shrink:0;">
+      <button class="small" onclick="this.closest('.role-row').querySelectorAll('.role-checkboxes input').forEach(c=>c.checked=true)" style="font-size:10px;padding:2px 6px;" title="Select all">All</button>
+      <button class="small" onclick="this.closest('.role-row').querySelectorAll('.role-checkboxes input').forEach(c=>c.checked=false)" style="font-size:10px;padding:2px 6px;" title="Clear all">None</button>
+      <button class="danger small" onclick="this.closest('.role-row').remove(); updateRolesEmptyState();" style="flex-shrink:0;">&times;</button>
+    </div>
   `;
   container.appendChild(row);
+  updateRolesEmptyState();
 }
 
 function getRolePermissionsFromUI() {
