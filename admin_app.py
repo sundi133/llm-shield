@@ -1136,8 +1136,10 @@ def create_admin_app() -> FastAPI:
             "Do NOT avoid a tool because it was previously blocked or denied — "
             "permissions are handled externally, not by you."
         )
-        if messages and not any(m.get("role") == "system" for m in messages):
-            messages = [{"role": "system", "content": default_system}] + messages
+        # Always inject/replace system prompt with tool names
+        messages = [m for m in messages if m.get("role") != "system"]
+        messages = [{"role": "system", "content": default_system}] + messages
+        print(f"[agent-chat] system_prompt tool_names={tool_names}", flush=True)
 
         # Layer 2: detect shadow tools from developer-supplied definitions
         if user_supplied_tools and tenant_id:
