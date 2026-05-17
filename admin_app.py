@@ -1226,10 +1226,59 @@ def create_admin_app() -> FastAPI:
         content = message_obj.get("content") or ""
         raw_calls = message_obj.get("tool_calls") or []
 
+        # Filter out hallucinated tool names — only allow tools in the defined set
+        valid_tool_set = {t["function"]["name"] for t in tools if isinstance(t, dict) and "function" in t}
+        filtered_calls = []
+        hallucinated = []
+        for tc in raw_calls:
+            tc_name = (tc.get("function") or {}).get("name", "")
+            if tc_name in valid_tool_set:
+                filtered_calls.append(tc)
+            else:
+                hallucinated.append(tc_name)
+                print(f"[agent-chat] DROPPED hallucinated tool call: {tc_name} (valid: {sorted(valid_tool_set)})", flush=True)
+
+        if hallucinated and not filtered_calls:
+            # LLM only produced hallucinated tools — retry once with stronger prompt
+            print(f"[agent-chat] All tool calls hallucinated ({hallucinated}), retrying with strict prompt", flush=True)
+            retry_msg = {
+                "role": "user",
+                "content": (
+                    f"ERROR: You called tools that do not exist: {', '.join(hallucinated)}. "
+                    f"You can ONLY use these exact tool names: {', '.join(sorted(valid_tool_set))}. "
+                    f"Please try again with the correct tool name."
+                ),
+            }
+            try:
+                retry_resp = await client.post(
+                    f"{llm_base_url}/chat/completions",
+                    json={
+                        "model": llm_model,
+                        "messages": messages + [message_obj, retry_msg],
+                        "tools": tools,
+                        "tool_choice": "auto",
+                        "max_tokens": 1024,
+                        "temperature": 0.1,
+                    },
+                    headers=llm_headers,
+                )
+                retry_data = retry_resp.json()
+                retry_choices = retry_data.get("choices", [])
+                retry_obj = retry_choices[0].get("message", {}) if retry_choices else {}
+                retry_calls = retry_obj.get("tool_calls") or []
+                filtered_calls = [tc for tc in retry_calls if (tc.get("function") or {}).get("name", "") in valid_tool_set]
+                if retry_obj.get("content"):
+                    content = retry_obj["content"]
+                print(f"[agent-chat] Retry returned {len(filtered_calls)} valid tool calls", flush=True)
+            except Exception as e:
+                print(f"[agent-chat] Retry failed: {e}", flush=True)
+
+        raw_calls = filtered_calls
+
         tool_results = []
         data_rule_results = []
         sanitization_results = []
-        print(f"[agent-chat] LLM returned {len(raw_calls)} tool calls, content={repr(content[:100])}", flush=True)
+        print(f"[agent-chat] Processing {len(raw_calls)} tool calls, content={repr(content[:100])}", flush=True)
         for tc in raw_calls:
             func = tc.get("function", {})
             name = func.get("name", "unknown")
