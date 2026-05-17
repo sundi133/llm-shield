@@ -5051,7 +5051,7 @@ function renderPolicyStage(stage) {
   container.innerHTML = names.map(name => {
     const p = policies[name];
     const meta = GUARDRAIL_META[name] || {};
-    const label = meta.label || name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const label = meta.label || name.replace(/\b\w/g, c => c.toUpperCase());
     const desc = meta.desc || '';
     const icon = meta.icon || '🔒';
     const color = meta.color || '#6366f1';
@@ -5759,7 +5759,7 @@ function createPermissionsMatrix(agent) {
     matrix += `<tr><td colspan="1" style="text-align: center; padding: 1rem; color: var(--text-muted);">No role permissions configured</td></tr>`;
   } else {
     tools.forEach(tool => {
-      matrix += `<tr><td style="padding: 0.5rem; font-weight: 500; white-space: nowrap;">${tool.replace(/_/g, ' ')}</td>`;
+      matrix += `<tr><td style="padding: 0.5rem; font-weight: 500; white-space: nowrap;">${tool}</td>`;
       roles.forEach(role => {
         const hasAccess = (rolePermissions[role] || []).includes(tool);
         const cellStyle = hasAccess
@@ -5794,7 +5794,7 @@ function createAgentPermissionsMatrix(agent) {
   html += '</tr></thead><tbody>';
 
   tools.forEach(tool => {
-    html += `<tr><td style="padding: 0.5rem; font-weight: 500; white-space: nowrap;">${tool.replace(/_/g, ' ')}</td>`;
+    html += `<tr><td style="padding: 0.5rem; font-weight: 500; white-space: nowrap;">${tool}</td>`;
     callers.forEach(caller => {
       const hasAccess = (agentPerms[caller] || []).includes(tool);
       const cellStyle = hasAccess
@@ -5879,7 +5879,7 @@ function updateRoleCheckboxes() {
     row.querySelectorAll('.role-checkboxes input[type=checkbox]:checked').forEach(cb => checked.add(cb.value));
     row.querySelector('.role-checkboxes').innerHTML = tools.map(t =>
       `<label style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:0.75rem;font-size:12px;color:var(--text);cursor:pointer;">
-        <input type="checkbox" value="${t}" ${checked.has(t) ? 'checked' : ''}> ${t.replace(/_/g, ' ')}
+        <input type="checkbox" value="${t}" ${checked.has(t) ? 'checked' : ''}> ${t}
       </label>`
     ).join('');
   });
@@ -5901,7 +5901,7 @@ function addRoleRow(roleName, allowedTools) {
     <div class="role-checkboxes" style="flex:1;display:flex;flex-wrap:wrap;gap:0.25rem 0;align-items:center;">
       ${tools.map(t =>
         `<label style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:0.75rem;font-size:12px;color:var(--text);cursor:pointer;">
-          <input type="checkbox" value="${t}" ${allowed.has(t) ? 'checked' : ''}> ${t.replace(/_/g, ' ')}
+          <input type="checkbox" value="${t}" ${allowed.has(t) ? 'checked' : ''}> ${t}
         </label>`
       ).join('')}
     </div>
@@ -5938,7 +5938,7 @@ function addAgentPermRow(callerAgentId, allowedTools) {
     <div class="agent-perm-checkboxes" style="flex:1;display:flex;flex-wrap:wrap;gap:0.25rem 0;align-items:center;">
       ${tools.map(t =>
         `<label style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:0.75rem;font-size:12px;color:var(--text);cursor:pointer;">
-          <input type="checkbox" value="${t}" ${allowed.has(t) ? 'checked' : ''}> ${t.replace(/_/g, ' ')}
+          <input type="checkbox" value="${t}" ${allowed.has(t) ? 'checked' : ''}> ${t}
         </label>`
       ).join('')}
     </div>
@@ -5954,7 +5954,7 @@ function updateAgentPermCheckboxes() {
     row.querySelectorAll('.agent-perm-checkboxes input[type=checkbox]:checked').forEach(cb => checked.add(cb.value));
     row.querySelector('.agent-perm-checkboxes').innerHTML = tools.map(t =>
       `<label style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:0.75rem;font-size:12px;color:var(--text);cursor:pointer;">
-        <input type="checkbox" value="${t}" ${checked.has(t) ? 'checked' : ''}> ${t.replace(/_/g, ' ')}
+        <input type="checkbox" value="${t}" ${checked.has(t) ? 'checked' : ''}> ${t}
       </label>`
     ).join('');
   });
@@ -6565,7 +6565,7 @@ function displayToolPolicies() {
         <div onclick="document.getElementById('${toolId}').classList.toggle('hidden')" class="tp-tool-summary">
           <div style="flex:1;min-width:0;">
             <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-              <span class="tp-tool-title">${toolName.replace(/_/g, ' ')}</span>
+              <span class="tp-tool-title">${toolName}</span>
               <code class="tp-tool-code">${toolName}</code>
               <span class="tp-tool-status ${isConfigured ? 'active' : 'empty'}">${isConfigured ? 'Active' : 'No Policy'}</span>
             </div>
@@ -6745,7 +6745,7 @@ function showAddToolPolicyModal() {
   EDITING_TOOL_POLICY = null;
   document.getElementById('tp-modal-title').textContent = 'Add Tool Policy';
   const nameEl = document.getElementById('tp-modal-name');
-  nameEl.innerHTML = '<option value="">Select a tool...</option>' + available.map(t => `<option value="${t}">${t.replace(/_/g, ' ')} (${t})</option>`).join('');
+  nameEl.innerHTML = '<option value="">Select a tool...</option>' + available.map(t => `<option value="${t}">${t} (${t})</option>`).join('');
   nameEl.value = '';
   nameEl.disabled = false;
 
@@ -6763,9 +6763,9 @@ function editToolPolicy(toolName) {
   const p = TOOL_POLICIES[toolName];
   if (!p) return;
   EDITING_TOOL_POLICY = toolName;
-  document.getElementById('tp-modal-title').textContent = `Edit — ${toolName.replace(/_/g, ' ')}`;
+  document.getElementById('tp-modal-title').textContent = `Edit — ${toolName}`;
   const nameEl = document.getElementById('tp-modal-name');
-  nameEl.innerHTML = `<option value="${toolName}">${toolName.replace(/_/g, ' ')} (${toolName})</option>`;
+  nameEl.innerHTML = `<option value="${toolName}">${toolName} (${toolName})</option>`;
   nameEl.value = toolName;
   nameEl.disabled = true;
 
@@ -7004,7 +7004,7 @@ function displayDataPolicies() {
         <div onclick="document.getElementById('${dpId}').classList.toggle('hidden')" style="display:flex;align-items:center;gap:1rem;padding:0.85rem 1rem;cursor:pointer;transition:background 0.1s;" onmouseenter="this.style.background='rgba(255,255,255,0.03)'" onmouseleave="this.style.background=''">
           <div style="flex:1;min-width:0;">
             <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-              <span style="font-weight:700;font-size:14px;">${toolName.replace(/_/g, ' ')}</span>
+              <span style="font-weight:700;font-size:14px;">${toolName}</span>
               <code style="font-size:11px;color:var(--text-muted);background:rgba(255,255,255,0.05);padding:1px 6px;border-radius:3px;">${toolName}</code>
               ${(TOOL_AGENT_MAP[toolName] || []).map(a => `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(88,166,255,0.1);color:#58a6ff;font-weight:500;">${a}</span>`).join('')}
             </div>
@@ -7075,7 +7075,7 @@ function openDataPolicyModal(toolName) {
   const actionOpts = (selected) => ['allow','redact','mask','block']
     .map(a => `<option value="${a}" ${a === selected ? 'selected' : ''}>${a}</option>`).join('');
 
-  const prettyName = toolName.replace(/_/g, ' ');
+  const prettyName = toolName;
   const sanCount   = (dp.sanitization_rules || []).length;
   const compliance = (dp.compliance_framework || '').toLowerCase();
   const auditOn    = !!dp.audit_required;
@@ -10003,7 +10003,7 @@ function renderPlaygroundResponse(data, elapsed) {
           const passed = gr.passed !== false;
           const name = gr.guardrail || gr.name || 'unknown';
           const meta = GUARDRAIL_META[name] || {};
-          const label = meta.label || name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          const label = meta.label || name.replace(/\b\w/g, c => c.toUpperCase());
           const icon = meta.icon || (passed ? '✅' : '🚫');
           const action = gr.action || '';
           const msg = gr.message || gr.reason || '';
@@ -10032,7 +10032,7 @@ function renderPlaygroundResponse(data, elapsed) {
         ${Object.entries(results).map(([name, gr]) => {
           const passed = gr.passed !== false;
           const meta = GUARDRAIL_META[name] || {};
-          const label = meta.label || name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          const label = meta.label || name.replace(/\b\w/g, c => c.toUpperCase());
           const icon = meta.icon || (passed ? '✅' : '🚫');
           const action = gr.action || '';
           const msg = gr.message || gr.reason || '';
