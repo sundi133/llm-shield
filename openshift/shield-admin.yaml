@@ -1,20 +1,31 @@
 ---
 # OpenShift deployment manifests for shield-admin
-# Image: docker.io/sundi133/llm-shield:latest
+# Image: docker.io/sundi133/llm-shield-admin:latest
 #
 # Usage:
 #   1. Create secrets:  oc create secret generic shield-admin-secrets \
 #                         --from-literal=UPSTASH_REDIS_REST_URL=http://srh:8079 \
 #                         --from-literal=UPSTASH_REDIS_REST_TOKEN=your-token \
-#                         --from-literal=SHIELD_ADMIN_KEY=your-admin-key
+#                         --from-literal=SHIELD_ADMIN_KEY=your-admin-key \
+#                         --from-literal=PLAYGROUND_LLM_BASE_URL=https://your-litellm-proxy/v1 \
+#                         --from-literal=PLAYGROUND_LLM_MASTER_KEY=sk-your-key \
+#                         --from-literal=PLAYGROUND_LLM_MODEL=moonshotai/kimi-k2.5 \
+#                         --from-literal=PLAYGROUND_SHIELD_ENDPOINT=https://your-shield-server \
+#                         --from-literal=PLAYGROUND_SHIELD_TOKEN=your-shield-token
 #   2. Deploy:          oc apply -f openshift/shield-admin.yaml -n sundi133-dev
 #   3. Get route URL:   oc get route shield-admin -o jsonpath='{.spec.host}'
 
 ---
 # Secret — create manually BEFORE applying this file:
 #   oc create secret generic shield-admin-secrets \
-#     --from-literal=REDIS_URL=redis://redis:6379 \
+#     --from-literal=UPSTASH_REDIS_REST_URL=http://srh:8079 \
+#     --from-literal=UPSTASH_REDIS_REST_TOKEN=your-token \
 #     --from-literal=SHIELD_ADMIN_KEY=your-admin-key \
+#     --from-literal=PLAYGROUND_LLM_BASE_URL=https://your-litellm-proxy/v1 \
+#     --from-literal=PLAYGROUND_LLM_MASTER_KEY=sk-your-key \
+#     --from-literal=PLAYGROUND_LLM_MODEL=moonshotai/kimi-k2.5 \
+#     --from-literal=PLAYGROUND_SHIELD_ENDPOINT=https://your-shield-server \
+#     --from-literal=PLAYGROUND_SHIELD_TOKEN=your-shield-token \
 #     -n sundi133-dev
 
 ---
