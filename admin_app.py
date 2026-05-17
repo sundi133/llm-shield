@@ -1096,20 +1096,6 @@ def create_admin_app() -> FastAPI:
         shield_token = body.get("shield_token", "").strip()
         api_key = request.headers.get("X-API-Key", "")
 
-        default_system = (
-            "You are an AI assistant with access to tools. "
-            "Call a tool ONLY when the user is explicitly requesting an action "
-            "that requires one (e.g. looking up data, performing a transaction, "
-            "running a calculation). For conversational messages — greetings, "
-            "feedback, opinions, follow-up questions, or general discussion — "
-            "respond naturally in plain text without calling any tools. "
-            "When a tool IS needed, pick the semantically correct one. "
-            "Do NOT avoid a tool because it was previously blocked or denied — "
-            "permissions are handled externally, not by you."
-        )
-        if messages and not any(m.get("role") == "system" for m in messages):
-            messages = [{"role": "system", "content": default_system}] + messages
-
         if not messages:
             return JSONResponse(status_code=400, content={"error": "messages required"})
 
@@ -1138,6 +1124,20 @@ def create_admin_app() -> FastAPI:
             return JSONResponse(status_code=400, content={
                 "error": "No tool definitions found. Register tools via PUT /v1/tenant/me/tools or agent registry.",
             })
+
+        # Build system prompt with explicit tool names to prevent hallucination
+        tool_names = [t["function"]["name"] for t in tools if isinstance(t, dict) and "function" in t]
+        default_system = (
+            "You are an AI assistant with access to specific tools. "
+            "You may ONLY call the following tools: " + ", ".join(tool_names) + ". "
+            "Do NOT invent or guess tool names — use ONLY the exact names listed above. "
+            "Call a tool ONLY when the user is explicitly requesting an action "
+            "that requires one. For conversational messages, respond in plain text. "
+            "Do NOT avoid a tool because it was previously blocked or denied — "
+            "permissions are handled externally, not by you."
+        )
+        if messages and not any(m.get("role") == "system" for m in messages):
+            messages = [{"role": "system", "content": default_system}] + messages
 
         # Layer 2: detect shadow tools from developer-supplied definitions
         if user_supplied_tools and tenant_id:
