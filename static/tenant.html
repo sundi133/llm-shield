@@ -1993,7 +1993,6 @@
       <!-- Sub-tabs -->
       <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:1rem;">
         <button class="tp-subtab active" data-subtab="data-policies" onclick="switchTPSubtab('data-policies')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Data Policies</button>
-        <button class="tp-subtab" data-subtab="roles" onclick="switchTPSubtab('roles')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Roles Overview</button>
       </div>
 
       <!-- Sub-tab: Tools & Role Access (existing) -->
@@ -7290,23 +7289,26 @@ function openDataPolicyModal(toolName) {
     const currentAction = rp.action || 'block';
     const inputRules  = (rp.input_rules  || []).join('\n');
     const outputRules = (rp.output_rules || []).join('\n');
+    const scopeVal = (rp.data_scope || []).join(', ');
     return `
-      <div class="dp-role-card" data-role="${r}" data-action="${currentAction}">
-        <div class="dp-role-head">
-          <span class="dp-role-name">${r}</span>
-          <div class="dp-role-controls">
+      <div class="dp-role-card" data-role="${r}" data-action="${currentAction}" style="margin-bottom:1rem;">
+        <div class="dp-role-head" style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+          <span class="dp-role-name" style="font-size:14px;font-weight:700;">${r}</span>
+          <div class="dp-role-controls" style="display:flex;gap:0.35rem;flex-wrap:wrap;">
             <select class="dp-role-action" title="What happens when rules are violated"
-                    onchange="this.closest('.dp-role-card').setAttribute('data-action', this.value)">
+                    onchange="this.closest('.dp-role-card').setAttribute('data-action', this.value)"
+                    style="font-size:12px;padding:3px 6px;">
               ${actionOpts(currentAction)}
             </select>
-            <select class="dp-role-redaction" title="How to mask sensitive fields">
+            <select class="dp-role-redaction" title="How to mask sensitive fields"
+                    style="font-size:12px;padding:3px 6px;">
               <option value="none"    ${rp.redaction_level === 'none'    ? 'selected' : ''}>no redaction</option>
               <option value="partial" ${(!rp.redaction_level || rp.redaction_level === 'partial') ? 'selected' : ''}>partial redaction</option>
               <option value="full"    ${rp.redaction_level === 'full'    ? 'selected' : ''}>full redaction</option>
             </select>
             <select class="dp-role-template" onchange="applyDPRoleTemplate(this)"
-                    title="Apply a preset">
-              <option value="">Apply template…</option>
+                    title="Apply a preset" style="font-size:12px;padding:3px 6px;">
+              <option value="">Apply template...</option>
               <option value="full_access">Full access</option>
               <option value="read_only">Read-only + PII masked</option>
               <option value="pii_safe">Strict PII-safe</option>
@@ -7314,34 +7316,33 @@ function openDataPolicyModal(toolName) {
             </select>
           </div>
         </div>
-        <details class="dp-advanced-wrap" style="margin:0;border:none;">
-          <summary style="padding:0.4rem 0;">
-            <span>Data scope</span>
-            <span class="dp-advanced-copy">${(rp.data_scope || []).join(', ') || 'not set'}</span>
-          </summary>
-          <div style="padding:0.25rem 0 0.5rem;">
-            <input type="text" class="dp-role-scope" value="${(rp.data_scope || []).join(', ')}"
-                   placeholder="personal, contact, medical, financial"
-                   title="Comma-separated data categories visible to this role"
-                   style="width:100%;font-size:12.5px;">
-          </div>
-        </details>
-        <div class="dp-role-grid">
+
+        <div style="margin-top:0.75rem;">
+          <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.35rem;">Data scope</div>
+          <input type="text" class="dp-role-scope" value="${scopeVal}"
+                 placeholder="e.g. personal, contact, financial, medical (comma-separated)"
+                 title="Comma-separated data categories visible to this role"
+                 style="width:100%;font-size:12.5px;padding:0.4rem 0.6rem;">
+        </div>
+
+        <div class="dp-role-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-top:0.75rem;">
           <div>
-            <div class="dp-role-field-label">
-              <span>Input rules</span>
-              <button type="button" class="dp-ghost-btn" onclick="insertDPRoleExample(this, 'input')" title="Insert an example rule">+ example</button>
+            <div class="dp-role-field-label" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;">
+              <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Input rules</span>
+              <button type="button" class="dp-ghost-btn" onclick="insertDPRoleExample(this, 'input')" title="Insert an example rule" style="font-size:10px;">+ example</button>
             </div>
-            <textarea class="dp-role-input-rules" rows="2"
-                      placeholder="One rule per line, e.g.&#10;Should only have id, avoid patient names">${inputRules}</textarea>
+            <textarea class="dp-role-input-rules" rows="6"
+                      placeholder="One rule per line. These are checked by the LLM against every tool call input.&#10;&#10;Examples:&#10;- Allow only one exact customer_id&#10;- Block name-only lookup&#10;- Block bulk retrieval"
+                      style="font-size:12px;line-height:1.5;font-family:inherit;width:100%;padding:0.5rem 0.6rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);resize:vertical;">${inputRules}</textarea>
           </div>
           <div>
-            <div class="dp-role-field-label">
-              <span>Output rules</span>
-              <button type="button" class="dp-ghost-btn" onclick="insertDPRoleExample(this, 'output')" title="Insert an example rule">+ example</button>
+            <div class="dp-role-field-label" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;">
+              <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Output rules</span>
+              <button type="button" class="dp-ghost-btn" onclick="insertDPRoleExample(this, 'output')" title="Insert an example rule" style="font-size:10px;">+ example</button>
             </div>
-            <textarea class="dp-role-output-rules" rows="2"
-                      placeholder="One rule per line, e.g.&#10;Redact SSN and DOB from the response">${outputRules}</textarea>
+            <textarea class="dp-role-output-rules" rows="6"
+                      placeholder="One rule per line. These are checked by the LLM against every tool output.&#10;&#10;Examples:&#10;- Allow only name and status&#10;- Redact or mask passport number&#10;- Block full customer profile"
+                      style="font-size:12px;line-height:1.5;font-family:inherit;width:100%;padding:0.5rem 0.6rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);resize:vertical;">${outputRules}</textarea>
           </div>
         </div>
       </div>`;
