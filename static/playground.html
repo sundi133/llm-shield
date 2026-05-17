@@ -269,6 +269,7 @@ input, select, textarea, button { font-family: inherit; }
     </div>
     <div class="input-bar">
       <textarea id="msg-input" rows="1" placeholder="Send a message to the AI agent…" onkeydown="handleKey(event)"></textarea>
+      <button class="send-btn" id="clear-btn" onclick="clearChat()" title="Clear chat" style="background:transparent;color:var(--text-muted);font-size:14px;">&#8634;</button>
       <button class="send-btn" id="send-btn" onclick="sendMessage()" disabled title="Send">&#9654;</button>
     </div>
   </div>
@@ -320,6 +321,12 @@ function usePreset(text) {
 /* --- Messages --- */
 const messagesEl = $('messages');
 let conversationHistory = [];
+
+function clearChat() {
+  conversationHistory = [];
+  messagesEl.innerHTML =
+    '<div class="msg msg-system">Chat cleared. Send a new message to start a fresh conversation.</div>';
+}
 
 function scrollBottom() {
   requestAnimationFrame(() => messagesEl.scrollTop = messagesEl.scrollHeight);
