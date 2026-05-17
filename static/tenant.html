@@ -1920,6 +1920,46 @@
         <div class="page-desc">Your account summary and quick stats</div>
       </div>
       <div class="stats-grid" id="overview-stats"></div>
+
+      <!-- Analytics row -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;" id="overview-analytics-row">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Top Triggered Guardrails</div>
+              <div class="card-subtitle">Most active policy checks</div>
+            </div>
+          </div>
+          <div id="overview-top-guardrails" style="padding:0 1rem 1rem;">
+            <div class="muted" style="font-size:12px;">Loading...</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Tool Activity</div>
+              <div class="card-subtitle">Tool calls and block rates</div>
+            </div>
+          </div>
+          <div id="overview-tool-activity" style="padding:0 1rem 1rem;">
+            <div class="muted" style="font-size:12px;">Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent activity -->
+      <div class="card" style="margin-bottom:1rem;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Recent Activity</div>
+            <div class="card-subtitle">Latest agent interactions</div>
+          </div>
+        </div>
+        <div id="overview-recent-activity" style="padding:0 1rem 1rem;">
+          <div class="muted" style="font-size:12px;">Loading...</div>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <div>
@@ -1928,47 +1968,6 @@
           </div>
         </div>
         <div id="overview-policies"></div>
-      </div>
-
-      <div class="card" style="margin-top:1rem;">
-        <div class="card-header">
-          <div>
-            <div class="card-title">🚀 Votal AI Platform Features</div>
-            <div class="card-subtitle">Advanced capabilities available in your deployment</div>
-          </div>
-        </div>
-        <div id="platform-features-grid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;padding:1rem;">
-          <div style="display:flex;align-items:center;gap:0.75rem;padding:0.75rem;background:var(--bg-2);border-radius:8px;">
-            <div style="width:40px;height:40px;background:#10b981;color:white;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:bold;">⚡</div>
-            <div>
-              <div style="font-weight:600;font-size:14px;">Fast Policy Lookups</div>
-              <div style="font-size:12px;color:var(--text-muted);">Sub-millisecond tenant resolution</div>
-            </div>
-          </div>
-
-          <div style="display:flex;align-items:center;gap:0.75rem;padding:0.75rem;background:var(--bg-2);border-radius:8px;">
-            <div style="width:40px;height:40px;background:#8b5cf6;color:white;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:bold;">🛡️</div>
-            <div>
-              <div style="font-weight:600;font-size:14px;">Guardrail Inspection</div>
-              <div style="font-size:12px;color:var(--text-muted);">Pre/post call protection</div>
-            </div>
-          </div>
-
-          <div style="display:flex;align-items:center;gap:0.75rem;padding:0.75rem;background:var(--bg-2);border-radius:8px;">
-            <div style="width:40px;height:40px;background:#f59e0b;color:white;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:bold;">🤖</div>
-            <div>
-              <div style="font-weight:600;font-size:14px;">Agent Governance</div>
-              <div style="font-size:12px;color:var(--text-muted);">RBAC & tool policies</div>
-            </div>
-          </div>
-        </div>
-
-        <div style="padding:0 1rem 1rem;">
-          <div style="display:flex;gap:0.5rem;">
-            <button class="primary small" onclick="document.querySelector('.nav-item[data-tab=system-health]').click()">View System Health</button>
-            <button class="small" onclick="document.querySelector('.nav-item[data-tab=performance]').click()">Performance Metrics</button>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -4905,29 +4904,29 @@ function renderOverview() {
       <div class="stat-value" style="font-size: 18px;"><span class="badge badge-${t.plan}">${t.plan.toUpperCase()}</span></div>
     </div>
     <div class="stat">
-      <div class="stat-label">Policy Lookup</div>
-      <div class="stat-value" style="color:#10b981;">0.8ms</div>
-      <div class="muted">Sub-millisecond</div>
+      <div class="stat-label">Requests Today</div>
+      <div class="stat-value" id="ov-requests-today">--</div>
+      <div class="muted">Total API calls</div>
     </div>
     <div class="stat">
-      <div class="stat-label">Guardrail Speed</div>
-      <div class="stat-value" style="color:#10b981;">187ms</div>
-      <div class="muted"><250ms target</div>
+      <div class="stat-label">Blocked</div>
+      <div class="stat-value" style="color:#f85149;" id="ov-blocked-today">--</div>
+      <div class="muted">Guardrail blocks</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Tool Calls</div>
+      <div class="stat-value" id="ov-tool-calls">--</div>
+      <div class="muted" id="ov-tool-blocked">--</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Block Rate</div>
+      <div class="stat-value" id="ov-block-rate">--</div>
+      <div class="muted">Of total requests</div>
     </div>
     <div class="stat">
       <div class="stat-label">Active Agents</div>
       <div class="stat-value">${(t.agents || []).length}</div>
-      <div class="muted">Registered & Governed</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Input Policies</div>
-      <div class="stat-value">${(t.input_guardrails || []).length}</div>
-      <div class="muted">Pre-call Protection</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Output Policies</div>
-      <div class="stat-value">${(t.output_guardrails || []).length}</div>
-      <div class="muted">Post-call Filtering</div>
+      <div class="muted">Registered</div>
     </div>
   `;
   const all = [...(t.input_guardrails || []).map(g => ({ name: g, stage: 'input' })),
@@ -4937,6 +4936,124 @@ function renderOverview() {
       ${all.map(g => `<span class="chip">${g.name} <span class="muted" style="margin-left: 4px;">· ${g.stage}</span></span>`).join('')}
     </div>
   ` : '<div class="muted">No guardrails configured</div>';
+
+  // Fetch live analytics
+  loadOverviewAnalytics();
+}
+
+async function loadOverviewAnalytics() {
+  try {
+    const [telemetry, usage] = await Promise.all([
+      apiCall('/v1/tenant/me/telemetry?limit=50').catch(() => null),
+      apiCall('/v1/tenant/me/usage').catch(() => null),
+    ]);
+
+    // Summary stats from telemetry
+    const summary = telemetry?.summary || {};
+    const entries = telemetry?.entries || [];
+    const total = summary.messages || entries.length || 0;
+    const byStatus = summary.by_status || {};
+    const blocked = byStatus.block || 0;
+    const toolCalls = summary.tool_calls || 0;
+    const blockedTools = summary.blocked_tool_calls || 0;
+    const blockRate = total > 0 ? ((blocked / total) * 100).toFixed(1) : '0';
+
+    // Update stat cards
+    const el = id => document.getElementById(id);
+    if (el('ov-requests-today')) el('ov-requests-today').textContent = total;
+    if (el('ov-blocked-today')) el('ov-blocked-today').textContent = blocked;
+    if (el('ov-tool-calls')) el('ov-tool-calls').textContent = toolCalls;
+    if (el('ov-tool-blocked')) el('ov-tool-blocked').textContent = blockedTools > 0 ? `${blockedTools} blocked` : 'None blocked';
+    if (el('ov-block-rate')) {
+      el('ov-block-rate').textContent = blockRate + '%';
+      el('ov-block-rate').style.color = parseFloat(blockRate) > 10 ? '#f85149' : '#10b981';
+    }
+
+    // Top triggered guardrails
+    const guardrailCounts = {};
+    for (const e of entries) {
+      for (const g of (e.input_guardrails || [])) {
+        if (g.passed === false) guardrailCounts[g.guardrail || g.name] = (guardrailCounts[g.guardrail || g.name] || 0) + 1;
+      }
+      for (const g of (e.output_guardrails || [])) {
+        if (g.passed === false) guardrailCounts[g.guardrail || g.name] = (guardrailCounts[g.guardrail || g.name] || 0) + 1;
+      }
+    }
+    const topGuardrails = Object.entries(guardrailCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    const maxGCount = topGuardrails.length ? topGuardrails[0][1] : 1;
+    el('overview-top-guardrails').innerHTML = topGuardrails.length
+      ? topGuardrails.map(([name, count]) => `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <span style="font-size:12px;font-weight:600;min-width:140px;color:var(--text-dim);">${name}</span>
+          <div style="flex:1;height:16px;background:var(--bg-3);border-radius:4px;overflow:hidden;">
+            <div style="height:100%;width:${Math.round(count/maxGCount*100)}%;background:#f85149;border-radius:4px;"></div>
+          </div>
+          <span style="font-size:11px;font-weight:700;min-width:24px;text-align:right;">${count}</span>
+        </div>`).join('')
+      : '<div class="muted" style="font-size:12px;">No guardrails triggered yet</div>';
+
+    // Tool activity
+    const toolStats = {};
+    for (const e of entries) {
+      for (const tc of (e.tool_calls || [])) {
+        const tn = tc.tool_name || tc.name || 'unknown';
+        if (!toolStats[tn]) toolStats[tn] = { total: 0, blocked: 0 };
+        toolStats[tn].total++;
+        if (!tc.rbac?.allowed || tc.data_rule_violation) toolStats[tn].blocked++;
+      }
+    }
+    const toolList = Object.entries(toolStats).sort((a, b) => b[1].total - a[1].total).slice(0, 6);
+    const maxTCount = toolList.length ? toolList[0][1].total : 1;
+    el('overview-tool-activity').innerHTML = toolList.length
+      ? toolList.map(([name, s]) => {
+        const pctBlocked = s.total > 0 ? Math.round(s.blocked / s.total * 100) : 0;
+        const pctAllowed = 100 - pctBlocked;
+        return `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <span style="font-size:12px;font-weight:600;min-width:140px;color:var(--text-dim);">${name}</span>
+          <div style="flex:1;height:16px;background:var(--bg-3);border-radius:4px;overflow:hidden;display:flex;">
+            <div style="height:100%;width:${Math.round(s.total/maxTCount*pctAllowed/100*100)}%;background:#10b981;"></div>
+            <div style="height:100%;width:${Math.round(s.total/maxTCount*pctBlocked/100*100)}%;background:#f85149;"></div>
+          </div>
+          <span style="font-size:11px;min-width:50px;text-align:right;">${s.total} <span style="color:${s.blocked?'#f85149':'var(--text-muted)'}">${s.blocked?'('+s.blocked+' blocked)':''}</span></span>
+        </div>`;
+      }).join('')
+      : '<div class="muted" style="font-size:12px;">No tool calls recorded yet</div>';
+
+    // Recent activity
+    const recent = entries.slice(0, 5);
+    el('overview-recent-activity').innerHTML = recent.length
+      ? `<table style="width:100%;font-size:12px;border-collapse:collapse;">
+          <thead><tr style="color:var(--text-muted);text-align:left;">
+            <th style="padding:4px 8px;font-weight:600;">Time</th>
+            <th style="padding:4px 8px;font-weight:600;">Agent</th>
+            <th style="padding:4px 8px;font-weight:600;">Message</th>
+            <th style="padding:4px 8px;font-weight:600;">Status</th>
+            <th style="padding:4px 8px;font-weight:600;">Tools</th>
+            <th style="padding:4px 8px;font-weight:600;">Latency</th>
+          </tr></thead>
+          <tbody>${recent.map(e => {
+            const ts = e.timestamp ? new Date(e.timestamp * 1000).toLocaleTimeString() : '--';
+            const status = e.status || (e.blocked ? 'block' : 'pass');
+            const statusColor = status === 'block' ? '#f85149' : status === 'warn' ? '#d29922' : '#10b981';
+            const msg = (e.message || e.input_text || '').substring(0, 50);
+            const tools = (e.tool_calls || []).map(t => t.tool_name || t.name).join(', ') || '--';
+            const latency = e.latency_ms ? Math.round(e.latency_ms) + 'ms' : '--';
+            return `<tr style="border-top:1px solid var(--border);">
+              <td style="padding:6px 8px;color:var(--text-muted);white-space:nowrap;">${ts}</td>
+              <td style="padding:6px 8px;font-weight:500;">${e.agent_key || '--'}</td>
+              <td style="padding:6px 8px;color:var(--text-dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${msg}${msg.length >= 50 ? '...' : ''}</td>
+              <td style="padding:6px 8px;"><span style="color:${statusColor};font-weight:700;text-transform:uppercase;font-size:11px;">${status}</span></td>
+              <td style="padding:6px 8px;color:var(--text-dim);">${tools}</td>
+              <td style="padding:6px 8px;color:var(--text-muted);">${latency}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>`
+      : '<div class="muted" style="font-size:12px;">No recent activity</div>';
+
+  } catch (err) {
+    console.error('Overview analytics error:', err);
+  }
 }
 
 // ── Policies CRUD ─────────────────────────
