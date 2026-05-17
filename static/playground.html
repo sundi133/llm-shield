@@ -638,7 +638,7 @@ function renderPrompts(prompts) {
 function _buildFallbackPrompts() {
   const { allowedTools, blockedTools, role } = PROMPT_CTX;
   const prompts = [];
-  const readable = n => n.replace(/_/g, ' ');
+  const readable = n => n;
   for (const t of allowedTools) {
     prompts.push({ label: `${readable(t)} request`, desc: `Allowed for role ${role}`, prompt: `Can you ${readable(t)} for me?`, type: 'allowed' });
   }
@@ -1008,7 +1008,7 @@ async function sendMessage() {
         for (const tc of data.tool_calls) {
           const rbacOk = tc.rbac?.allowed;
           const sanBlocked = !!tc.sanitization_blocked;
-          const readable = tc.tool_name.replace(/_/g, ' ');
+          const readable = tc.tool_name;
           if (tc.unregistered) {
             lines.push(`⚠ Tool <strong>${esc(readable)}</strong> is not registered — it was blocked. Register it in your agent registry to enable access.`);
           } else if (sanBlocked) {
