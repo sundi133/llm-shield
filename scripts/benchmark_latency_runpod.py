@@ -17,6 +17,18 @@ import time
 
 import requests
 
+# ── Proxy / SSL config (for running inside OC/K8s) ───────────────
+if not os.getenv("NO_PROXY"):
+    os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1,10.0.0.0/8,172.0.0.0/8,192.168.0.0/16,.svc,.cluster.local,.apps.dxb.govai.ae")
+    os.environ.setdefault("no_proxy", os.environ["NO_PROXY"])
+if os.getenv("HTTPX_SSL_VERIFY", "1") in ("0", "false", "no"):
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    os.environ["CURL_CA_BUNDLE"] = ""
+    VERIFY_SSL = False
+else:
+    VERIFY_SSL = True
+
 # ── Config ────────────────────────────────────────────────────────
 SHIELD_URL = os.getenv("SHIELD_GUARDRAIL_URL", "https://kk5losqxwr2ui7.api.runpod.ai")
 RUNPOD_TOKEN = os.getenv("RUNPOD_TOKEN", "")
@@ -123,7 +135,7 @@ def call_guardrail(endpoint: str, payload: dict) -> dict:
     try:
         resp = requests.post(
             f"{SHIELD_URL}/{endpoint.lstrip('/')}",
-            headers=HEADERS, json=payload, timeout=300,
+            headers=HEADERS, json=payload, timeout=300, verify=VERIFY_SSL,
         )
         ms = (time.perf_counter() - start) * 1000
         try:
