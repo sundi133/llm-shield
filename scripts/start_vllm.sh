@@ -21,7 +21,7 @@ else
     --kv-cache-dtype fp8 \
     --max-model-len 8196 \
     --max-num-batched-tokens 8196 \
-    --max-num-seqs 24 \
+    --max-num-seqs 48 \
     --gpu-memory-utilization 0.85 \
     --enable-prefix-caching \
     --language-model-only \
