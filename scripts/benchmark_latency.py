@@ -183,6 +183,11 @@ def call_llm(message: str, guardrails: list = None) -> dict:
             blocked = True
             block_reason = guardrail_info.get("reason", "guardrail blocked")[:100]
 
+        # Extract response content
+        response_text = ""
+        if choices:
+            response_text = (choices[0].get("message") or {}).get("content", "")
+
         return {
             "latency_ms": round(ms, 2),
             "status": resp.status_code,
@@ -191,6 +196,8 @@ def call_llm(message: str, guardrails: list = None) -> dict:
             "total_tokens": usage.get("total_tokens", 0),
             "blocked": blocked,
             "block_reason": block_reason,
+            "response": response_text[:200] if response_text else "",
+            "finish_reason": choices[0].get("finish_reason", "") if choices else "",
             "error": data.get("error", {}).get("message", "")[:100] if resp.status_code >= 400 else "",
         }
     except Exception as e:
@@ -327,6 +334,10 @@ def run_redteam_benchmark():
         )
         if reason:
             print(f"  {'':>30} reason: {reason}")
+        if r_wd.get("response"):
+            print(f"  {'':>30} response: {r_wd['response'][:120]}")
+        if r_wd.get("finish_reason"):
+            print(f"  {'':>30} finish_reason: {r_wd['finish_reason']}")
 
         results.append({
             "name": name,
