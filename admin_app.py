@@ -31,6 +31,9 @@ from datetime import datetime
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
+
+# Set HTTPX_SSL_VERIFY=0 to disable SSL verification for internal OC/K8s calls
+_HTTPX_VERIFY = os.environ.get("HTTPX_SSL_VERIFY", "1") not in ("0", "false", "no")
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -884,7 +887,7 @@ async def _llm_simulate_tool(
         f"Return ONLY valid JSON, no markdown or explanation."
     )
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=_HTTPX_VERIFY) as client:
             resp = await client.post(url, json={
                 "model": llm_model,
                 "messages": [
@@ -1169,7 +1172,7 @@ def create_admin_app() -> FastAPI:
         input_guardrail_result = None
         output_guardrail_result = None
 
-        async with httpx.AsyncClient(timeout=180) as client:
+        async with httpx.AsyncClient(timeout=180, verify=_HTTPX_VERIFY) as client:
             # --- Step 1: Input Guardrails ---
             if shield_endpoint and user_message:
                 input_guardrail_result = await _call_guardrails(
@@ -1457,7 +1460,7 @@ def create_admin_app() -> FastAPI:
                             "_note": "Tool args were empty — validate user intent against policy",
                         })
                     print(f"[data-policy] VALIDATING tool={name} empty_args={is_empty_args} content={content_to_validate[:500]}", flush=True)
-                    async with httpx.AsyncClient(timeout=60) as rule_client:
+                    async with httpx.AsyncClient(timeout=60, verify=_HTTPX_VERIFY) as rule_client:
                         input_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
                             content_to_validate, data_policy["input_rules"],
@@ -1469,7 +1472,7 @@ def create_admin_app() -> FastAPI:
                         entry["data_rule_violation"] = input_check
                         data_rule_results.append(input_check)
                 if data_policy.get("output_rules") and entry.get("simulated_output") and shield_endpoint:
-                    async with httpx.AsyncClient(timeout=60) as rule_client:
+                    async with httpx.AsyncClient(timeout=60, verify=_HTTPX_VERIFY) as rule_client:
                         output_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
                             json.dumps(entry["simulated_output"]),
@@ -1545,7 +1548,7 @@ def create_admin_app() -> FastAPI:
 
         # --- Step 4: Output Guardrails ---
         if shield_endpoint and content:
-            async with httpx.AsyncClient(timeout=60) as client:
+            async with httpx.AsyncClient(timeout=60, verify=_HTTPX_VERIFY) as client:
                 output_guardrail_result = await _call_guardrails(
                     client, shield_endpoint, "output",
                     {
@@ -1622,7 +1625,7 @@ def create_admin_app() -> FastAPI:
         if tenant_id := request.headers.get("X-Tenant-ID"):
             forward_headers["X-Tenant-ID"] = tenant_id
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=60.0, verify=_HTTPX_VERIFY) as client:
             try:
                 if request.method == "GET":
                     resp = await client.get(
@@ -1659,7 +1662,7 @@ def create_admin_app() -> FastAPI:
             headers["Authorization"] = f"Bearer {master_key}"
 
         print(f"[llm-proxy] POST {base_url}/chat/completions model={payload.get('model')}", flush=True)
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(timeout=180.0, verify=_HTTPX_VERIFY) as client:
             try:
                 resp = await client.post(
                     f"{base_url}/chat/completions",
