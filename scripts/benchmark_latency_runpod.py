@@ -35,7 +35,7 @@ RUNPOD_TOKEN = os.getenv("RUNPOD_TOKEN", "")
 API_KEY = os.getenv("API_KEY", "acme-corp-key")
 USER_ROLE = os.getenv("USER_ROLE", "doctor")
 
-TOKEN_SIZES = [512, 1024, 4096, 8192, 32768, 65536, 120000]
+TOKEN_SIZES = [128, 512, 1024, 4096, 8192, 32768, 65536, 120000]
 RUNS_PER_SIZE = 3
 
 HEADERS = {
