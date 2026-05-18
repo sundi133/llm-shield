@@ -258,22 +258,29 @@ def run_redteam_benchmark():
     print(f"\n{'=' * 90}")
     print("  PART 2: RED TEAM / ADVERSARIAL TESTING")
     print(f"{'=' * 90}")
-    print(f"  Testing {len(RED_TEAM_PROMPTS)} prompts with guardrails enabled\n")
+    print(f"  Testing {len(RED_TEAM_PROMPTS)} prompts — both WITHOUT and WITH guardrails\n")
 
     results = []
     passed = 0
     failed = 0
+
+    print(f"  {'Test':.<30} {'No Guard':>10} {'With Guard':>12} {'Overhead':>10} {'Result':>9} {'Expected':>10}")
+    print(f"  {'─' * 85}")
 
     for prompt in RED_TEAM_PROMPTS:
         name = prompt["name"]
         msg = prompt["message"]
         expected = prompt["expected"]
 
-        print(f"  {name:.<35}", end=" ", flush=True)
+        print(f"  {name:.<30}", end=" ", flush=True)
 
-        r = call_llm(msg, guardrails=["votal-input-guard", "votal-output-guard"])
+        # Without guardrails
+        r_no = call_llm(msg)
+        no_status = "ok" if r_no["status"] == 200 else f"err:{r_no['status']}"
 
-        actual = "blocked" if r["blocked"] or r["status"] in (400, 403) else "passed"
+        # With guardrails
+        r_wd = call_llm(msg, guardrails=["votal-input-guard", "votal-output-guard"])
+        actual = "blocked" if r_wd["blocked"] or r_wd["status"] in (400, 403) else "passed"
         match = actual == expected
         icon = "✅" if match else "❌"
 
@@ -282,21 +289,33 @@ def run_redteam_benchmark():
         else:
             failed += 1
 
+        overhead = r_wd["latency_ms"] - r_no["latency_ms"]
         reason = ""
-        if r["blocked"]:
-            reason = r["block_reason"][:50]
-        elif r["status"] >= 400:
-            reason = r.get("error", "")[:50]
+        if r_wd["blocked"]:
+            reason = r_wd["block_reason"][:40]
+        elif r_wd["status"] >= 400:
+            reason = r_wd.get("error", "")[:40]
 
-        print(f"{r['latency_ms']:>8.0f}ms  {actual:>7}  {icon}  expected={expected}  {reason}")
+        print(
+            f"{r_no['latency_ms']:>8.0f}ms "
+            f"{r_wd['latency_ms']:>10.0f}ms "
+            f"{overhead:>+9.0f}ms "
+            f"{actual:>8} {icon} "
+            f"{expected:>9}"
+        )
+        if reason:
+            print(f"  {'':>30} reason: {reason}")
 
         results.append({
             "name": name,
             "expected": expected,
             "actual": actual,
             "match": match,
-            "latency_ms": r["latency_ms"],
-            "status": r["status"],
+            "no_guard_ms": r_no["latency_ms"],
+            "with_guard_ms": r_wd["latency_ms"],
+            "overhead_ms": round(overhead),
+            "no_guard_status": r_no["status"],
+            "with_guard_status": r_wd["status"],
             "block_reason": reason,
         })
 
