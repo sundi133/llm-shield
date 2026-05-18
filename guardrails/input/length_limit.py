@@ -15,7 +15,7 @@ class LengthLimitGuardrail(BaseGuardrail):
 
     def __init__(self):
         settings = self.settings
-        self._max_chars: int = settings.get("max_chars", 10000)
+        self._max_chars: int = settings.get("max_chars", 1000000)
         self._max_tokens: Optional[int] = settings.get("max_tokens")
         self._encoding_name: str = settings.get("encoding", "cl100k_base")
         self._encoder = None
