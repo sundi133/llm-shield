@@ -24,7 +24,7 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://litellm-guardrails-votal-ai-pr
 LLM_MASTER_KEY = os.getenv("LLM_MASTER_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "moonshotai/kimi-k2.5")
 
-TOKEN_SIZES = [512, 1024, 4096, 8192, 32768, 65536]
+TOKEN_SIZES = [512, 1024, 4096, 8192, 32768, 65536, 120000]
 RUNS_PER_SIZE = 3
 
 HEADERS = {"Content-Type": "application/json"}
