@@ -2482,6 +2482,7 @@
             <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Input/Output Guardrails</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Tool RBAC</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy Enforcement</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
             </div>
           </div>
@@ -2603,17 +2604,46 @@ def run_agent(user_message: str):
         "tools": openai_tools,
     }).json()
 
-    # Step 3: Process tool call results
+    # Step 3: Process tool calls with RBAC + data policy enforcement
     output_parts = []
     for tc in result.get("tool_calls", []):
         name = tc["tool_name"]
-        if tc["rbac"]["allowed"]:
-            tool_fn = {t.name: t for t in lc_tools}.get(name)
-            if tool_fn:
-                out = tool_fn.invoke(tc["arguments"])
-                output_parts.append(f"[{name}] {out}")
-        else:
+
+        # 3a. RBAC check (already in response)
+        if not tc["rbac"]["allowed"]:
             output_parts.append(f"BLOCKED: {name} — {tc['rbac']['message']}")
+            continue
+
+        # 3b. PRE-EXECUTION: Data policy check on tool arguments
+        tool_check = shield.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
+            "tool_name": name,
+            "tool_input": tc["arguments"],
+            "agent_id": AGENT_ID,
+            "user_role": USER_ROLE,
+        }).json()
+        if not tool_check.get("allowed", True):
+            output_parts.append(
+                f"BLOCKED by data policy: {name} — {tool_check.get('reason', 'policy violation')}")
+            continue
+
+        # 3c. Execute the tool
+        tool_fn = {t.name: t for t in lc_tools}.get(name)
+        if not tool_fn:
+            continue
+        raw_output = tool_fn.invoke(tc["arguments"])
+
+        # 3d. POST-EXECUTION: Sanitize tool output against data policies
+        sanitized = shield.post(f"{SHIELD_URL}/v1/shield/tool/output", json={
+            "tool_name": name,
+            "tool_output": str(raw_output),
+            "agent_id": AGENT_ID,
+            "user_role": USER_ROLE,
+        }).json()
+        if sanitized.get("action") == "block":
+            output_parts.append(f"BLOCKED: {name} output violated data policy")
+        else:
+            clean = sanitized.get("sanitized_output", str(raw_output))
+            output_parts.append(f"[{name}] {clean}")
 
     # Shadow discovery feedback
     if result.get("unregistered"):
@@ -2667,9 +2697,13 @@ if __name__ == "__main__":
               &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/input</span> ── block toxic/adversarial/PII<br>
               &nbsp;&nbsp;│<br>
               &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/chat/agent</span> ── LLM picks tools + RBAC<br>
-              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── allowed → LangChain tool.invoke()<br>
               &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── blocked → deny + log<br>
               &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span style="color:var(--warn);">unregistered → shadow discovery</span><br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/check</span> ── data policy on tool args<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── allowed → LangChain tool.invoke()<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/output</span> ── sanitize tool output (PII/secrets)<br>
               &nbsp;&nbsp;│<br>
               &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/output</span> ── block competitors/PII/bias<br>
               &nbsp;&nbsp;│<br>
@@ -2692,6 +2726,7 @@ if __name__ == "__main__":
             <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Multi-Agent RBAC</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Input/Output Guardrails</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy Enforcement</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
             </div>
           </div>
@@ -2766,7 +2801,7 @@ def register_crew():
 
 # ── 2. Shield-aware tool wrapper ──────────────────────────────────
 class ShieldTool(BaseTool):
-    """Wraps any tool call through Shield's chat/agent for RBAC."""
+    """Wraps any tool call through Shield's chat/agent for RBAC + data policies."""
     agent_key: str = ""
     user_role: str = "analyst"
 
@@ -2780,10 +2815,38 @@ class ShieldTool(BaseTool):
 
         parts = []
         for tc in result.get("tool_calls", []):
-            if tc["rbac"]["allowed"]:
-                parts.append(f"[{tc['tool_name']}] OK")
+            name = tc["tool_name"]
+
+            # RBAC check
+            if not tc["rbac"]["allowed"]:
+                parts.append(f"BLOCKED: {name} — {tc['rbac']['message']}")
+                continue
+
+            # PRE-EXECUTION: Data policy check on tool arguments
+            tool_check = shield.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
+                "tool_name": name,
+                "tool_input": tc.get("arguments", {"query": query}),
+                "agent_id": self.agent_key,
+                "user_role": self.user_role,
+            }).json()
+            if not tool_check.get("allowed", True):
+                parts.append(f"BLOCKED by data policy: {name} — {tool_check.get('reason')}")
+                continue
+
+            # Execute tool (actual implementation goes here)
+            tool_output = f"[{name}] executed OK"
+
+            # POST-EXECUTION: Sanitize tool output
+            sanitized = shield.post(f"{SHIELD_URL}/v1/shield/tool/output", json={
+                "tool_name": name,
+                "tool_output": tool_output,
+                "agent_id": self.agent_key,
+                "user_role": self.user_role,
+            }).json()
+            if sanitized.get("action") == "block":
+                parts.append(f"BLOCKED: {name} output violated data policy")
             else:
-                parts.append(f"BLOCKED: {tc['tool_name']} — {tc['rbac']['message']}")
+                parts.append(sanitized.get("sanitized_output", tool_output))
 
         # Shadow discovery
         unreg = result.get("unregistered", {})
@@ -2926,10 +2989,16 @@ if __name__ == "__main__":
               &nbsp;&nbsp;│<br>
               &nbsp;&nbsp;├─▶ <strong>Agent 1: Researcher</strong> (agent_key=research-agent)<br>
               &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:var(--accent-hover);">Shield /v1/shield/chat/agent</span> ── RBAC per tool<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:var(--accent-hover);">Shield /v1/shield/tool/check</span> ── data policy on args<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── Execute tool<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:var(--accent-hover);">Shield /v1/shield/tool/output</span> ── sanitize output<br>
               &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span style="color:var(--warn);">unregistered? → shadow discovery</span><br>
               &nbsp;&nbsp;│<br>
               &nbsp;&nbsp;├─▶ <strong>Agent 2: Writer</strong> (agent_key=writer-agent)<br>
               &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:var(--accent-hover);">Shield /v1/shield/chat/agent</span> ── RBAC per tool<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:var(--accent-hover);">Shield /v1/shield/tool/check</span> ── data policy on args<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── Execute tool<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:var(--accent-hover);">Shield /v1/shield/tool/output</span> ── sanitize output<br>
               &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span style="color:var(--warn);">unregistered? → shadow discovery</span><br>
               &nbsp;&nbsp;│<br>
               &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/output</span> ── validate final output<br>
@@ -2953,6 +3022,7 @@ if __name__ == "__main__":
             <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Input/Output Guardrails</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Tool RBAC</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy Enforcement</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
             </div>
           </div>
@@ -3096,36 +3166,65 @@ def run_agent(user_message: str):
     )
     msg = response.choices[0].message
 
-    # Step 3: If tool calls, enforce RBAC via Shield
+    # Step 3: If tool calls, enforce RBAC + data policies via Shield
     if msg.tool_calls:
-        for tc in msg.tool_calls:
-            # Option A: Use Shield's agent_chat (handles RBAC + data policies)
-            chat_resp = shield.post(f"{SHIELD_URL}/v1/shield/chat/agent",
-                json={
-                    "messages": messages,
-                    "agent_key": AGENT_ID,
-                    "user_role": USER_ROLE,
-                    "llm_api_key": os.getenv("OPENAI_API_KEY"),
-                    "tools": tools,
-                })
-            result = chat_resp.json()
+        chat_resp = shield.post(f"{SHIELD_URL}/v1/shield/chat/agent",
+            json={
+                "messages": messages,
+                "agent_key": AGENT_ID,
+                "user_role": USER_ROLE,
+                "llm_api_key": os.getenv("OPENAI_API_KEY"),
+                "tools": tools,
+            })
+        result = chat_resp.json()
 
-            for tool_result in result.get("tool_calls", []):
-                name = tool_result["tool_name"]
-                if tool_result["rbac"]["allowed"]:
-                    print(f"  ALLOWED: {name}")
-                else:
-                    print(f"  BLOCKED: {name} — {tool_result['rbac']['message']}")
+        output_parts = []
+        for tool_result in result.get("tool_calls", []):
+            name = tool_result["tool_name"]
 
-            # Check for shadow warnings
-            if result.get("unregistered"):
-                unreg = result["unregistered"]
-                if unreg.get("agents"):
-                    print(f"  SHADOW AGENT detected: {unreg['agents']}")
-                if unreg.get("tools"):
-                    print(f"  SHADOW TOOLS detected: {unreg['tools']}")
+            # 3a. RBAC check
+            if not tool_result["rbac"]["allowed"]:
+                print(f"  BLOCKED: {name} — {tool_result['rbac']['message']}")
+                output_parts.append(f"BLOCKED: {name}")
+                continue
 
-            return result.get("text", "")
+            # 3b. PRE-EXECUTION: Data policy check on tool arguments
+            tool_check = shield.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
+                "tool_name": name,
+                "tool_input": tool_result.get("arguments", {}),
+                "agent_id": AGENT_ID,
+                "user_role": USER_ROLE,
+            }).json()
+            if not tool_check.get("allowed", True):
+                print(f"  BLOCKED by data policy: {name} — {tool_check.get('reason')}")
+                output_parts.append(f"BLOCKED by data policy: {name}")
+                continue
+
+            # 3c. Execute the tool (your implementation)
+            print(f"  ALLOWED: {name}")
+            raw_output = execute_tool(name, tool_result.get("arguments", {}))
+
+            # 3d. POST-EXECUTION: Sanitize tool output
+            sanitized = shield.post(f"{SHIELD_URL}/v1/shield/tool/output", json={
+                "tool_name": name,
+                "tool_output": str(raw_output),
+                "agent_id": AGENT_ID,
+                "user_role": USER_ROLE,
+            }).json()
+            if sanitized.get("action") == "block":
+                output_parts.append(f"BLOCKED: {name} output violated data policy")
+            else:
+                output_parts.append(sanitized.get("sanitized_output", str(raw_output)))
+
+        # Check for shadow warnings
+        if result.get("unregistered"):
+            unreg = result["unregistered"]
+            if unreg.get("agents"):
+                print(f"  SHADOW AGENT detected: {unreg['agents']}")
+            if unreg.get("tools"):
+                print(f"  SHADOW TOOLS detected: {unreg['tools']}")
+
+        return result.get("text", "") or "\n".join(output_parts)
 
     # Step 4: Output guardrails on plain text responses
     if msg.content:
@@ -3181,6 +3280,7 @@ if __name__ == "__main__":
             <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Claude Tool Use</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Guardrails</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy Enforcement</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
             </div>
           </div>
@@ -3325,12 +3425,39 @@ def run_claude_agent(user_message: str):
                 }).json()
 
             for tc in chat_resp.get("tool_calls", []):
-                if tc["rbac"]["allowed"]:
-                    results.append(f"Executing {tc['tool_name']}...")
-                    # Execute your actual tool logic here
+                name = tc["tool_name"]
+
+                # RBAC check
+                if not tc["rbac"]["allowed"]:
+                    results.append(f"BLOCKED: {name} — {tc['rbac']['message']}")
+                    continue
+
+                # PRE-EXECUTION: Data policy check on tool arguments
+                tool_check = shield.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
+                    "tool_name": name,
+                    "tool_input": block.input,  # Claude's tool_use input
+                    "agent_id": AGENT_ID,
+                    "user_role": USER_ROLE,
+                }).json()
+                if not tool_check.get("allowed", True):
+                    results.append(f"BLOCKED by data policy: {name} — "
+                                   f"{tool_check.get('reason')}")
+                    continue
+
+                # Execute your actual tool logic here
+                raw_output = execute_tool(name, block.input)
+
+                # POST-EXECUTION: Sanitize tool output
+                sanitized = shield.post(f"{SHIELD_URL}/v1/shield/tool/output", json={
+                    "tool_name": name,
+                    "tool_output": str(raw_output),
+                    "agent_id": AGENT_ID,
+                    "user_role": USER_ROLE,
+                }).json()
+                if sanitized.get("action") == "block":
+                    results.append(f"BLOCKED: {name} output violated data policy")
                 else:
-                    results.append(f"BLOCKED: {tc['tool_name']} — "
-                                   f"{tc['rbac']['message']}")
+                    results.append(sanitized.get("sanitized_output", str(raw_output)))
 
             # Shadow discovery feedback
             if chat_resp.get("unregistered"):
@@ -3361,10 +3488,14 @@ if __name__ == "__main__":
               &nbsp;&nbsp;│<br>
               &nbsp;&nbsp;├─▶ <span style="color:var(--text-dim);">Claude API</span> (tool_use) ── LLM decides which tools<br>
               &nbsp;&nbsp;│<br>
-              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/chat/agent</span> ── RBAC + data policies<br>
-              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── allowed → execute tool<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/chat/agent</span> ── RBAC check<br>
               &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── blocked → deny + log<br>
               &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span style="color:var(--warn);">unregistered → shadow discovery</span><br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/check</span> ── data policy on tool args<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── allowed → execute tool<br>
+              &nbsp;&nbsp;│<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/output</span> ── sanitize tool output (PII/secrets)<br>
               &nbsp;&nbsp;│<br>
               &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/output</span> ── block competitors/PII/bias<br>
               &nbsp;&nbsp;│<br>
