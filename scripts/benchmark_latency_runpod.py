@@ -7,9 +7,6 @@ Tests chunking behavior at various input sizes.
 Usage:
   export SHIELD_GUARDRAIL_URL=https://kk5losqxwr2ui7.api.runpod.ai
   export RUNPOD_TOKEN=rpa_xxx
-  export API_KEY=acme-corp-key
-  export USER_ROLE=doctor
-
   .venv/bin/python scripts/benchmark_latency_runpod.py
 """
 
