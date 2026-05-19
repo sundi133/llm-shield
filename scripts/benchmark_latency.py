@@ -22,9 +22,11 @@ import time
 import requests
 
 # ── Proxy / SSL config (for running inside OC/K8s) ───────────────
-if not os.getenv("NO_PROXY"):
-    os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1,10.0.0.0/8,172.0.0.0/8,192.168.0.0/16,.svc,.cluster.local,.apps.dxb.govai.ae")
-    os.environ.setdefault("no_proxy", os.environ["NO_PROXY"])
+_NO_PROXY_EXTRAS = "localhost,127.0.0.1,10.0.0.0/8,172.0.0.0/8,192.168.0.0/16,.svc,.cluster.local,.apps.dxb.govai.ae,.govai.ae"
+_existing = os.getenv("NO_PROXY", "")
+_merged = f"{_existing},{_NO_PROXY_EXTRAS}" if _existing else _NO_PROXY_EXTRAS
+os.environ["NO_PROXY"] = _merged
+os.environ["no_proxy"] = _merged
 if os.getenv("HTTPX_SSL_VERIFY", "1") in ("0", "false", "no"):
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -38,7 +40,7 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://litellm-guardrails-votal-ai-pr
 LLM_MASTER_KEY = os.getenv("LLM_MASTER_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "moonshotai/kimi-k2.5")
 
-TOKEN_SIZES = [128, 512, 1024, 4096, 8192, 32768, 65536, 120000, 256000]
+TOKEN_SIZES = [128, 512, 1024, 4096, 8192, 32768, 65536, 120000, 240000]
 
 parser = argparse.ArgumentParser(description="Votal Shield Latency Benchmark")
 parser.add_argument("--runs", type=int, default=3, help="Number of runs per token size (default: 3)")

@@ -78,6 +78,8 @@ spec:
             - containerPort: 8080
               protocol: TCP
           env:
+            - name: SHIELD_MAX_MODEL_LEN
+              value: "16384"
             - name: AUDIT_DB_PATH
               value: /app/data/audit.db
             - name: NO_PROXY
