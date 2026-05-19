@@ -111,15 +111,60 @@ RED_TEAM_PROMPTS = [
 # ── Helpers ───────────────────────────────────────────────────────
 
 def generate_text(approx_tokens: int) -> str:
-    base = (
-        "Explain the key differences between renewable energy sources "
-        "such as solar, wind, and hydroelectric power. Discuss their "
-        "environmental benefits, cost efficiency, and scalability for "
-        "modern infrastructure. Provide a balanced overview. "
-    )
+    paragraphs = [
+        "Solar energy harnesses sunlight through photovoltaic cells to generate electricity. "
+        "Modern solar panels achieve efficiency rates of around 20 to 25 percent, making them "
+        "a viable option for both residential and commercial applications. The cost of solar "
+        "installations has dropped significantly over the past decade.",
+
+        "Wind power uses turbines to convert kinetic energy from the wind into electrical energy. "
+        "Onshore wind farms are common in flat, open areas, while offshore installations take "
+        "advantage of stronger and more consistent ocean winds. Wind energy currently accounts "
+        "for a growing share of global electricity generation.",
+
+        "Hydroelectric power relies on the flow of water through dams or run-of-river systems "
+        "to spin turbines and produce electricity. It is one of the oldest forms of renewable "
+        "energy and provides reliable baseload power in many countries around the world.",
+
+        "Geothermal energy taps into heat stored beneath the earth's surface. In regions with "
+        "volcanic activity or hot springs, geothermal plants can produce electricity continuously. "
+        "This energy source has a small land footprint and produces minimal greenhouse gas emissions.",
+
+        "Biomass energy is derived from organic materials such as wood, agricultural residues, "
+        "and dedicated energy crops. It can be converted into heat, electricity, or biofuels. "
+        "While it is considered renewable, sustainable sourcing practices are important to ensure "
+        "that biomass does not contribute to deforestation.",
+
+        "Tidal and wave energy technologies capture the kinetic energy of ocean tides and waves. "
+        "Although still in early stages of commercial development, these sources offer predictable "
+        "energy generation patterns. Coastal nations are investing in pilot projects to evaluate "
+        "the long-term feasibility of marine energy.",
+
+        "Energy storage systems, particularly lithium-ion batteries, play a critical role in "
+        "managing the intermittency of renewable sources like solar and wind. Grid-scale battery "
+        "installations help balance supply and demand, enabling higher penetration of renewables "
+        "into existing power grids.",
+
+        "The transition to renewable energy requires significant investment in grid infrastructure. "
+        "Smart grids use digital communication technology to detect and react to local changes in "
+        "usage, improving efficiency and reliability. Modernizing transmission lines is essential "
+        "to connect remote renewable generation sites to urban demand centers.",
+
+        "Government policies and incentives have been instrumental in accelerating renewable energy "
+        "adoption. Tax credits, feed-in tariffs, and renewable portfolio standards encourage private "
+        "investment. International agreements on climate change also drive national commitments to "
+        "increase the share of clean energy in the overall energy mix.",
+
+        "Research and development in renewable energy continues to push the boundaries of efficiency "
+        "and cost reduction. Perovskite solar cells, floating wind turbines, and advanced nuclear "
+        "fusion concepts represent the next frontier. Collaboration between universities, industry, "
+        "and governments is key to bringing these innovations to market.",
+    ]
+    block = " ".join(paragraphs)  # ~2500 chars, ~625 tokens
     chars_needed = approx_tokens * 4
-    repeats = max(1, chars_needed // len(base))
-    return (base * repeats)[:chars_needed]
+    repeats = max(1, chars_needed // len(block))
+    full_text = " ".join([block] * (repeats + 1))
+    return full_text[:chars_needed]
 
 
 def percentile(data, p):
