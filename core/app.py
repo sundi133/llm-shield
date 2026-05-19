@@ -35,6 +35,10 @@ from api.routes_killswitch import router as killswitch_router
 from api.routes_decisions import router as decisions_router
 from api.routes_webhooks import router as webhooks_router
 from api.routes_agent_identity import router as agent_identity_router
+from api.routes_models import router as models_registry_router
+from api.routes_skills import router as skills_registry_router
+from api.routes_software import router as software_registry_router
+from api.routes_mcp import governance_router as mcp_governance_router
 from storage.audit_log import audit_logger
 
 # Conditional SaaS imports - only load if saas module exists
@@ -89,6 +93,12 @@ def create_app() -> FastAPI:
     app.include_router(decisions_router)
     app.include_router(webhooks_router)
     app.include_router(agent_identity_router)
+
+    # Unified artifact registry — models, skills, software, plus MCP governance
+    app.include_router(models_registry_router)
+    app.include_router(skills_registry_router)
+    app.include_router(software_registry_router)
+    app.include_router(mcp_governance_router)
 
     # Include SaaS routes only if available
     if SAAS_AVAILABLE:

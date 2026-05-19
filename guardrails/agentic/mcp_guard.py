@@ -92,6 +92,29 @@ class MCPGuard(BaseGuardrail):
                 latency_ms=round(elapsed, 2),
             )
 
+        # Artifact registry gate: when enforcement is enabled, deny revoked /
+        # unapproved MCP servers regardless of the legacy register/trust path.
+        try:
+            from core import feature_flags as _ff
+            if _ff.ARTIFACT_ENFORCEMENT_ENABLED:
+                from core.artifact_resolver import resolve, ArtifactNotPermitted
+                from core.artifacts import ArtifactKind
+                tenant_id = (context.get("tenant_id") or "default")
+                try:
+                    resolve(tenant_id, ArtifactKind.MCP, mcp_server_name)
+                except ArtifactNotPermitted as denial:
+                    elapsed = (datetime.now() - start).total_seconds() * 1000
+                    return GuardrailResult(
+                        passed=False,
+                        action=self.configured_action,
+                        guardrail_name=self.name,
+                        message=str(denial),
+                        details={"mcp_server": mcp_server_name, "reason": "artifact_registry"},
+                        latency_ms=round(elapsed, 2),
+                    )
+        except ImportError:
+            pass
+
         # Check if server is registered
         server = get_mcp_server(mcp_server_name)
         if server is None:

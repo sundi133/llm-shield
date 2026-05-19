@@ -433,3 +433,66 @@ Request
   │
   └─ Return response
 ```
+
+---
+
+## Artifact Registry (models, MCPs, skills, software)
+
+A single registry surface governs four artifact kinds that all behave like
+versioned content with the same lifecycle (`draft` → `approved` → `deprecated`
+→ `revoked`):
+
+| Kind     | Prefix                                  | Examples                                  |
+|----------|-----------------------------------------|-------------------------------------------|
+| model    | `/v1/shield/models`                     | weights, configs, fine-tunes, adapters    |
+| skill    | `/v1/shield/skills`                     | agent skill bundles                       |
+| software | `/v1/shield/artifacts`                  | containers, JARs, npm/PyPI, terraform     |
+| mcp      | `/v1/shield/mcp/governance`             | MCP servers (legacy `/v1/shield/mcp` API still works) |
+
+Gated by `SHIELD_ENABLE_ARTIFACT_REGISTRY=true` (or `SHIELD_ENABLE_ENTERPRISE=true`).
+
+### Lifecycle endpoints (same shape for each kind)
+
+```
+POST   {prefix}/register                       # body: tenant_id,name,version,source_uri,sha256,provenance,scopes,owners,metadata
+GET    {prefix}?tenant_id=...&name=...         # list
+GET    {prefix}/{name}/{version}?tenant_id=... # detail
+POST   {prefix}/{name}/{version}/approve       # body: {tenant_id, reason?}
+POST   {prefix}/{name}/{version}/deprecate
+POST   {prefix}/{name}/{version}/revoke
+POST   {prefix}/{name}/pin                     # body: {tenant_id, version|null}
+GET    {prefix}/{name}/pin?tenant_id=...
+```
+
+### Approval policy (record-only at register, enforced at approve)
+
+| Env var                                  | Effect                                            |
+|------------------------------------------|---------------------------------------------------|
+| `SHIELD_ARTIFACT_REQUIRE_SIGNATURE=true` | Approve fails unless `provenance.signature_status=verified` |
+| `SHIELD_ARTIFACT_REQUIRE_SBOM=true`      | Approve fails unless `provenance.sbom_uri` present |
+| `SHIELD_ARTIFACT_LICENSE_ALLOWLIST=...`  | Approve fails if license not in CSV allowlist     |
+
+Signatures are checked with `cosign verify` when the binary is on PATH; otherwise
+the artifact is recorded with `signature_status=unverified` and registration is
+allowed. Approval is what enforces the policy.
+
+### Runtime enforcement
+
+Off by default. Set `SHIELD_ENABLE_ARTIFACT_ENFORCEMENT=true` to make the runtime
+resolver (`core.artifact_resolver.resolve`) deny revoked / unapproved / unknown
+artifacts. The MCP guardrail (`guardrails/agentic/mcp_guard.py`) consults the
+resolver before allowing a tool call; revoking an MCP artifact also flips the
+existing tool kill switch so legacy enforcement picks it up too.
+
+### Storage
+
+`ARTIFACT_STORE_BACKEND` selects the backend: `redis` (shared with the rest of
+the platform), `file` (JSON on disk at `ARTIFACT_STORE_PATH`), or unset for
+auto (Redis if reachable, else file).
+
+### Auditing & webhooks
+
+Every state change writes an `admin_audit` entry (`{kind}_registered`,
+`{kind}_approved`, `{kind}_revoked`, `{kind}_pinned`, …) and, when webhooks are
+enabled, dispatches a `{kind}.{event}` payload through the existing webhook
+dispatcher.

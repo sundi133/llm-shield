@@ -68,6 +68,18 @@ try:
 except Exception:
     pass
 
+_models_registry_router = None
+_skills_registry_router = None
+_software_registry_router = None
+_mcp_governance_router = None
+try:
+    from api.routes_models import router as _models_registry_router
+    from api.routes_skills import router as _skills_registry_router
+    from api.routes_software import router as _software_registry_router
+    from api.routes_mcp import governance_router as _mcp_governance_router
+except Exception:
+    pass
+
 # Graceful imports for routers that may have heavier dependencies
 _audit_router = None
 _policy_router = None
@@ -959,6 +971,16 @@ def create_admin_app() -> FastAPI:
         app.include_router(_webhooks_router)         # /v1/shield/webhooks/*
     if _agent_identity_router:
         app.include_router(_agent_identity_router)   # /v1/shield/agent/identity/*
+
+    # Unified artifact registry (models / skills / software / mcp governance)
+    if _models_registry_router:
+        app.include_router(_models_registry_router)      # /v1/shield/models/*
+    if _skills_registry_router:
+        app.include_router(_skills_registry_router)      # /v1/shield/skills/*
+    if _software_registry_router:
+        app.include_router(_software_registry_router)    # /v1/shield/artifacts/*
+    if _mcp_governance_router:
+        app.include_router(_mcp_governance_router)       # /v1/shield/mcp/governance/*
 
     # Static files
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")

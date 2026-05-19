@@ -71,3 +71,16 @@ async def list_servers():
     """List all registered MCP servers."""
     servers = list_mcp_servers()
     return {"servers": servers, "count": len(servers)}
+
+
+# MCP governance lifecycle (approve / deprecate / revoke / pin / catalog).
+# Mounted on a sibling prefix so the legacy /register and /check above keep
+# working unchanged for callers that don't use the unified artifact registry.
+from core.artifacts import ArtifactKind  # noqa: E402
+from api.routes_artifacts_common import build_registry_router  # noqa: E402
+
+governance_router = build_registry_router(
+    ArtifactKind.MCP,
+    prefix="/v1/shield/mcp/governance",
+    tag="mcp-governance",
+)

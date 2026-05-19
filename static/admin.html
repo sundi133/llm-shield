@@ -458,6 +458,14 @@
     </div>
 
     <div class="nav-section">
+      <div class="nav-label">Registry</div>
+      <div class="nav-item" data-tab="artifacts">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+        Software Artifacts
+      </div>
+    </div>
+
+    <div class="nav-section">
       <div class="nav-label">Monitoring</div>
       <div class="nav-item" data-tab="audit">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
@@ -580,6 +588,64 @@
           <button class="small" onclick="loadTemplate('financial')">Financial</button>
         </div>
         <div id="create-msg"></div>
+      </div>
+    </div>
+
+    <!-- Software Artifacts Registry -->
+    <div id="tab-artifacts" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Software Artifacts</div>
+        <div class="page-desc">Container images, JARs, npm/PyPI packages, terraform modules</div>
+      </div>
+      <div class="card">
+        <div class="toolbar">
+          <input type="text" id="artifacts-tenant-id" placeholder="Tenant ID (e.g. acme)" style="max-width: 240px;">
+          <input type="text" id="artifacts-name-filter" placeholder="Name (optional)" style="max-width: 200px;">
+          <button class="small" onclick="loadArtifacts()">Load</button>
+          <span id="artifacts-msg" class="toast hidden" style="margin-left: auto;"></span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Version</th>
+              <th>Status</th>
+              <th>License</th>
+              <th>Signature</th>
+              <th>Owners</th>
+              <th>Pinned</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="artifacts-list"><tr><td colspan="8" class="empty-state">Enter a tenant ID and click Load</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Register a new artifact (draft)</div>
+            <div class="card-subtitle">Recorded as draft; approve it after policy checks pass</div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field"><label>Tenant ID</label><input id="art-new-tenant" type="text" placeholder="acme"></div>
+          <div class="field"><label>Name</label><input id="art-new-name" type="text" placeholder="my-image"></div>
+        </div>
+        <div class="grid-2">
+          <div class="field"><label>Version</label><input id="art-new-version" type="text" placeholder="1.0.0"></div>
+          <div class="field"><label>Source URI</label><input id="art-new-uri" type="text" placeholder="oci://registry/image@sha256:..."></div>
+        </div>
+        <div class="grid-2">
+          <div class="field"><label>SHA-256 (optional)</label><input id="art-new-sha" type="text" placeholder=""></div>
+          <div class="field"><label>License (optional)</label><input id="art-new-license" type="text" placeholder="Apache-2.0"></div>
+        </div>
+        <div class="grid-2">
+          <div class="field"><label>SBOM URI (optional)</label><input id="art-new-sbom" type="text" placeholder="https://..."></div>
+          <div class="field"><label>Signature (optional)</label><input id="art-new-sig" type="text" placeholder="cosign signature"></div>
+        </div>
+        <div class="field"><label>Owners (comma-separated)</label><input id="art-new-owners" type="text" placeholder="alice@acme.com,bob@acme.com"></div>
+        <button class="small primary" onclick="registerArtifact()">Register</button>
       </div>
     </div>
 
@@ -990,6 +1056,125 @@ function loadTemplate(name) {
   document.getElementById('create-config').value = JSON.stringify(TEMPLATES[name], null, 2);
 }
 
+// ── Software artifacts registry ──────────
+function _artStatusBadge(status) {
+  const colors = { draft: '#94a3b8', approved: '#22c55e', deprecated: '#f59e0b', revoked: '#ef4444' };
+  const c = colors[status] || '#94a3b8';
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:${c}22;color:${c};font-size:11px;font-weight:600;">${status}</span>`;
+}
+
+async function loadArtifacts() {
+  const tid = document.getElementById('artifacts-tenant-id').value.trim();
+  const name = document.getElementById('artifacts-name-filter').value.trim();
+  const body = document.getElementById('artifacts-list');
+  if (!tid) { body.innerHTML = '<tr><td colspan="8" class="empty-state">Enter a tenant ID</td></tr>'; return; }
+  body.innerHTML = '<tr><td colspan="8" class="empty-state">Loading…</td></tr>';
+  try {
+    const q = new URLSearchParams({ tenant_id: tid });
+    if (name) q.set('name', name);
+    const data = await apiCall(`/v1/shield/artifacts?${q}`);
+    const pinPromises = {};
+    const items = data.items || [];
+    if (!items.length) { body.innerHTML = '<tr><td colspan="8" class="empty-state">No artifacts registered for this tenant</td></tr>'; return; }
+    const seenNames = [...new Set(items.map(i => i.name))];
+    const pinMap = {};
+    await Promise.all(seenNames.map(async n => {
+      try {
+        const p = await apiCall(`/v1/shield/artifacts/${encodeURIComponent(n)}/pin?tenant_id=${encodeURIComponent(tid)}`);
+        pinMap[n] = p.pinned_version;
+      } catch (e) { pinMap[n] = null; }
+    }));
+    body.innerHTML = items.map(a => {
+      const sig = a.provenance?.signature_status || 'absent';
+      const isPinned = pinMap[a.name] === a.version;
+      const lic = a.provenance?.license || '—';
+      const owners = (a.owners || []).join(', ') || '—';
+      const safeName = a.name.replace(/'/g, "&#39;");
+      const safeVer = a.version.replace(/'/g, "&#39;");
+      return `<tr>
+        <td>${a.name}</td>
+        <td>${a.version}</td>
+        <td>${_artStatusBadge(a.status)}</td>
+        <td>${lic}</td>
+        <td>${sig}</td>
+        <td>${owners}</td>
+        <td>${isPinned ? '📌' : ''}</td>
+        <td>
+          ${a.status === 'draft' ? `<button class="small" onclick="approveArtifact('${safeName}','${safeVer}')">Approve</button>` : ''}
+          ${a.status === 'approved' ? `<button class="small" onclick="pinArtifact('${safeName}','${safeVer}')">Pin</button>` : ''}
+          ${a.status === 'approved' ? `<button class="small" onclick="deprecateArtifact('${safeName}','${safeVer}')">Deprecate</button>` : ''}
+          ${a.status !== 'revoked' ? `<button class="small" onclick="revokeArtifact('${safeName}','${safeVer}')">Revoke</button>` : ''}
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="8" class="empty-state">Error: ${e.message}</td></tr>`;
+  }
+}
+
+async function _artAction(path, body, okMsg) {
+  try {
+    await apiCall(path, { method: 'POST', body: JSON.stringify(body) });
+    showSuccess('artifacts-msg', okMsg);
+    loadArtifacts();
+  } catch (e) {
+    showError('artifacts-msg', e.message);
+  }
+}
+
+function approveArtifact(name, version) {
+  const tid = document.getElementById('artifacts-tenant-id').value.trim();
+  _artAction(`/v1/shield/artifacts/${encodeURIComponent(name)}/${encodeURIComponent(version)}/approve`,
+    { tenant_id: tid }, 'Approved');
+}
+function deprecateArtifact(name, version) {
+  const tid = document.getElementById('artifacts-tenant-id').value.trim();
+  const reason = prompt('Deprecation reason (optional):') || '';
+  _artAction(`/v1/shield/artifacts/${encodeURIComponent(name)}/${encodeURIComponent(version)}/deprecate`,
+    { tenant_id: tid, reason }, 'Deprecated');
+}
+function revokeArtifact(name, version) {
+  const tid = document.getElementById('artifacts-tenant-id').value.trim();
+  const reason = prompt('Revocation reason:') || '';
+  if (!confirm(`Revoke ${name}@${version}? This cannot be undone.`)) return;
+  _artAction(`/v1/shield/artifacts/${encodeURIComponent(name)}/${encodeURIComponent(version)}/revoke`,
+    { tenant_id: tid, reason }, 'Revoked');
+}
+function pinArtifact(name, version) {
+  const tid = document.getElementById('artifacts-tenant-id').value.trim();
+  _artAction(`/v1/shield/artifacts/${encodeURIComponent(name)}/pin`,
+    { tenant_id: tid, version }, `Pinned to ${version}`);
+}
+
+async function registerArtifact() {
+  const body = {
+    tenant_id: document.getElementById('art-new-tenant').value.trim(),
+    name: document.getElementById('art-new-name').value.trim(),
+    version: document.getElementById('art-new-version').value.trim(),
+    source_uri: document.getElementById('art-new-uri').value.trim(),
+    sha256: document.getElementById('art-new-sha').value.trim() || null,
+    provenance: {
+      license: document.getElementById('art-new-license').value.trim() || null,
+      sbom_uri: document.getElementById('art-new-sbom').value.trim() || null,
+      signature: document.getElementById('art-new-sig').value.trim() || null,
+    },
+    owners: document.getElementById('art-new-owners').value.split(',').map(s => s.trim()).filter(Boolean),
+  };
+  if (!body.tenant_id || !body.name || !body.version || !body.source_uri) {
+    return showError('artifacts-msg', 'tenant_id, name, version, source_uri are required');
+  }
+  try {
+    await apiCall('/v1/shield/artifacts/register', { method: 'POST', body: JSON.stringify(body) });
+    showSuccess('artifacts-msg', `Registered ${body.name}@${body.version} (draft)`);
+    ['art-new-name','art-new-version','art-new-uri','art-new-sha','art-new-license','art-new-sbom','art-new-sig','art-new-owners']
+      .forEach(id => document.getElementById(id).value = '');
+    document.getElementById('artifacts-tenant-id').value = body.tenant_id;
+    loadArtifacts();
+  } catch (e) {
+    showError('artifacts-msg', e.message);
+  }
+}
+
 // ── Tab + modal switching ─────────────────
 document.addEventListener('click', (e) => {
   if (e.target.closest('.nav-item[data-tab]')) {
@@ -1001,6 +1186,12 @@ document.addEventListener('click', (e) => {
     document.getElementById(`tab-${tab}`).classList.remove('hidden');
     if (tab === 'dashboard') loadDashboard();
     if (tab === 'tenants') loadTenants();
+    if (tab === 'artifacts') {
+      // Pre-fill tenant filter from the currently focused tenant if any
+      const tid = document.getElementById('artifacts-tenant-id');
+      if (tid && !tid.value && CURRENT_TENANT) tid.value = CURRENT_TENANT.tenant_id || '';
+      if (tid && tid.value) loadArtifacts();
+    }
   }
   if (e.target.matches('.modal-tab[data-modal-tab]')) {
     const tab = e.target.getAttribute('data-modal-tab');
