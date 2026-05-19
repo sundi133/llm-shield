@@ -1,11 +1,12 @@
 """Shared text utilities for guardrails — token estimation and chunking."""
 
+import os
 from typing import Optional
 
 CHARS_PER_TOKEN = 3.5
 
 # vLLM max-model-len = 8196; leave headroom for system prompt + output tokens
-DEFAULT_SLOT_CONTEXT = 4096
+DEFAULT_SLOT_CONTEXT = int(os.getenv("SHIELD_CHUNK_MAX_TOKENS", "4096"))
 
 
 def estimate_tokens(text: str) -> int:
