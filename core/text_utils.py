@@ -1,12 +1,16 @@
 """Shared text utilities for guardrails — token estimation and chunking."""
 
 import os
+import random
 from typing import Optional
 
 CHARS_PER_TOKEN = 3.5
 
 # vLLM max-model-len = 8196; leave headroom for system prompt + output tokens
 DEFAULT_SLOT_CONTEXT = int(os.getenv("SHIELD_CHUNK_MAX_TOKENS", "4096"))
+
+# Max chunks to actually check (sample from all chunks for large inputs)
+MAX_CHUNKS_TO_CHECK = int(os.getenv("SHIELD_MAX_CHUNKS", "10"))
 
 
 def estimate_tokens(text: str) -> int:
@@ -49,6 +53,20 @@ def chunk_text(text: str, max_tokens: int) -> list[str]:
         pos = max(split_at - overlap_chars, pos + 1)
 
     return chunks
+
+
+def sample_chunks(chunks: list[str], max_chunks: int = None) -> list[str]:
+    """Sample chunks for large inputs: always include first and last,
+    randomly sample from the middle. Returns all chunks if under the limit."""
+    if max_chunks is None:
+        max_chunks = MAX_CHUNKS_TO_CHECK
+    if len(chunks) <= max_chunks:
+        return chunks
+    # Always check first and last chunks (most likely to contain adversarial content)
+    middle = chunks[1:-1]
+    sample_count = max(1, max_chunks - 2)
+    sampled_middle = random.sample(middle, min(sample_count, len(middle)))
+    return [chunks[0]] + sampled_middle + [chunks[-1]]
 
 
 def build_history_messages(

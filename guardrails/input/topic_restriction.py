@@ -6,7 +6,7 @@ from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call
 from core.text_utils import (
-    estimate_tokens, chunk_text, build_history_messages, trim_history_to_budget,
+    estimate_tokens, chunk_text, sample_chunks, build_history_messages, trim_history_to_budget, DEFAULT_SLOT_CONTEXT,
 )
 
 _SYSTEM_PROMPT_TEMPLATE = (
@@ -64,7 +64,6 @@ _USER_PREFIX = (
 )
 
 _RESERVED_TOKENS = 400  # system prompt (~250) + output (60) + overhead (~90)
-_DEFAULT_SLOT_CONTEXT = 4096
 
 
 def _parse_topic_response(raw: str) -> tuple[bool, list[str]]:
@@ -239,7 +238,7 @@ class TopicRestrictionGuardrail(BaseGuardrail):
             return result
 
         # Chunk and check in parallel for large inputs — block if ANY chunk is off-topic
-        chunks = chunk_text(content, content_budget)
+        chunks = sample_chunks(chunk_text(content, content_budget))
         tasks = [
             self._check_single(chunk, system_prompt, history_messages)
             for chunk in chunks

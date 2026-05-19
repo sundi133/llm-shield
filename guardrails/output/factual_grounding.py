@@ -5,7 +5,7 @@ from typing import Optional
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
-from core.text_utils import estimate_tokens, chunk_text
+from core.text_utils import estimate_tokens, chunk_text, sample_chunks, DEFAULT_SLOT_CONTEXT
 
 _SYSTEM_PROMPT = (
     "You are a factual accuracy analyst. Examine the given text and identify any claims that appear "
@@ -31,7 +31,6 @@ _SYSTEM_PROMPT_CITATIONS = (
 
 _CSV_FIELDS = ["grounded", "confidence", "unsupported_claim"]
 _RESERVED_TOKENS = 350
-_DEFAULT_SLOT_CONTEXT = 4096
 
 
 class FactualGroundingGuardrail(BaseGuardrail):
@@ -113,7 +112,7 @@ class FactualGroundingGuardrail(BaseGuardrail):
             result.latency_ms = (time.perf_counter() - start) * 1000
             return result
 
-        chunks = chunk_text(content, content_budget)
+        chunks = sample_chunks(chunk_text(content, content_budget))
         tasks = [self._check_single(c, system_prompt) for c in chunks]
         results = await asyncio.gather(*tasks)
 
