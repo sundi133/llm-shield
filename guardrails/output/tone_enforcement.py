@@ -5,7 +5,7 @@ from typing import Optional
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
-from core.text_utils import estimate_tokens, chunk_text
+from core.text_utils import estimate_tokens, chunk_text, adaptive_chunk_budget
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a brand voice compliance checker. Evaluate whether the given text adheres to "
@@ -112,7 +112,7 @@ class ToneEnforcementGuardrail(BaseGuardrail):
             result.latency_ms = (time.perf_counter() - start) * 1000
             return result
 
-        chunks = chunk_text(content, content_budget)
+        chunks = chunk_text(content, adaptive_chunk_budget(content_tokens, content_budget))
         tasks = [self._check_single(c, system_prompt) for c in chunks]
         results = await asyncio.gather(*tasks)
 

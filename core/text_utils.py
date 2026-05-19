@@ -8,10 +8,39 @@ CHARS_PER_TOKEN = 3.5
 # vLLM max-model-len = 8196; leave headroom for system prompt + output tokens
 DEFAULT_SLOT_CONTEXT = int(os.getenv("SHIELD_CHUNK_MAX_TOKENS", "4096"))
 
+# Target max number of chunks per guardrail call (chunks grow to fit)
+MAX_CHUNKS_TARGET = int(os.getenv("SHIELD_MAX_CHUNKS", "4"))
+
+# vLLM max-model-len — caps the maximum chunk size so it fits in the model context
+MAX_MODEL_LEN = int(os.getenv("SHIELD_MAX_MODEL_LEN", "8196"))
+
 
 def estimate_tokens(text: str) -> int:
     """Quick token count estimate without a tokenizer (~3.5 chars/token)."""
     return int(len(text) / CHARS_PER_TOKEN)
+
+
+def adaptive_chunk_budget(content_tokens: int, base_budget: int) -> int:
+    """Scale chunk size up so total chunks stays within MAX_CHUNKS_TARGET,
+    but never exceed what the guard model can handle (MAX_MODEL_LEN).
+
+    The max usable budget is MAX_MODEL_LEN minus headroom for system prompt
+    and output tokens (~800 tokens reserved).
+
+    Examples with MAX_CHUNKS_TARGET=4, MAX_MODEL_LEN=8196:
+      4K input   → 1 chunk at 4K   (fits in 1 call)
+      16K input  → 4 chunks at 4K  (already within target)
+      64K input  → 9 chunks at 7K  (capped by model, not 4 chunks at 16K)
+      120K input → 17 chunks at 7K (capped by model, not 4 chunks at 30K)
+    """
+    max_budget = MAX_MODEL_LEN - 800  # reserve for system prompt + output
+    if content_tokens <= base_budget:
+        return base_budget
+    chunks_needed = (content_tokens + base_budget - 1) // base_budget
+    if chunks_needed <= MAX_CHUNKS_TARGET:
+        return base_budget
+    ideal = (content_tokens + MAX_CHUNKS_TARGET - 1) // MAX_CHUNKS_TARGET
+    return min(ideal, max_budget)
 
 
 def chunk_text(text: str, max_tokens: int) -> list[str]:
