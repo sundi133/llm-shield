@@ -8,10 +8,30 @@ CHARS_PER_TOKEN = 3.5
 # vLLM max-model-len = 8196; leave headroom for system prompt + output tokens
 DEFAULT_SLOT_CONTEXT = int(os.getenv("SHIELD_CHUNK_MAX_TOKENS", "4096"))
 
+# Target max number of chunks per guardrail call (chunks grow to fit)
+MAX_CHUNKS_TARGET = int(os.getenv("SHIELD_MAX_CHUNKS", "4"))
+
 
 def estimate_tokens(text: str) -> int:
     """Quick token count estimate without a tokenizer (~3.5 chars/token)."""
     return int(len(text) / CHARS_PER_TOKEN)
+
+
+def adaptive_chunk_budget(content_tokens: int, base_budget: int) -> int:
+    """Scale chunk size up so total chunks stays within MAX_CHUNKS_TARGET.
+
+    Examples with MAX_CHUNKS_TARGET=4:
+      4K input, 3696 budget  → 3696  (fits in 1 call)
+      16K input, 3696 budget → 3696  (4 chunks, already within target)
+      64K input, 3696 budget → 16000 (4 chunks instead of 17)
+      120K input, 3696 budget → 30000 (4 chunks instead of 32)
+    """
+    if content_tokens <= base_budget:
+        return base_budget
+    chunks_needed = (content_tokens + base_budget - 1) // base_budget
+    if chunks_needed <= MAX_CHUNKS_TARGET:
+        return base_budget
+    return (content_tokens + MAX_CHUNKS_TARGET - 1) // MAX_CHUNKS_TARGET
 
 
 def chunk_text(text: str, max_tokens: int) -> list[str]:

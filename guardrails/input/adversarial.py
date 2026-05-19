@@ -23,7 +23,7 @@ from typing import Optional
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
-from core.text_utils import estimate_tokens, chunk_text, build_history_messages, trim_history_to_budget
+from core.text_utils import estimate_tokens, chunk_text, adaptive_chunk_budget, build_history_messages, trim_history_to_budget
 
 # ---------------------------------------------------------------------------
 # Preprocessing: ONLY decode actually-encoded content
@@ -258,7 +258,7 @@ class AdversarialGuardrail(BaseGuardrail):
         if decoded_tokens <= fast_budget:
             result = await self._fast_decoded_check_single(decoded)
         else:
-            chunks = chunk_text(decoded, fast_budget)
+            chunks = chunk_text(decoded, adaptive_chunk_budget(decoded_tokens, fast_budget))
             tasks = [self._fast_decoded_check_single(chunk) for chunk in chunks]
             results = await asyncio.gather(*tasks)
             # Use the first adversarial result found
@@ -387,8 +387,8 @@ class AdversarialGuardrail(BaseGuardrail):
             result.latency_ms = (time.perf_counter() - start) * 1000
             return result
 
-        # Chunk and check in parallel for large inputs
-        chunks = chunk_text(processed_content, content_budget)
+        # Chunk and check in parallel for large inputs (adaptive sizing)
+        chunks = chunk_text(processed_content, adaptive_chunk_budget(content_tokens, content_budget))
         tasks = [
             self._check_single(chunk, history_messages, confidence_threshold)
             for chunk in chunks
