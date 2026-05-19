@@ -111,60 +111,43 @@ RED_TEAM_PROMPTS = [
 # ── Helpers ───────────────────────────────────────────────────────
 
 def generate_text(approx_tokens: int) -> str:
-    paragraphs = [
-        "Solar energy harnesses sunlight through photovoltaic cells to generate electricity. "
-        "Modern solar panels achieve efficiency rates of around 20 to 25 percent, making them "
-        "a viable option for both residential and commercial applications. The cost of solar "
-        "installations has dropped significantly over the past decade.",
-
-        "Wind power uses turbines to convert kinetic energy from the wind into electrical energy. "
-        "Onshore wind farms are common in flat, open areas, while offshore installations take "
-        "advantage of stronger and more consistent ocean winds. Wind energy currently accounts "
-        "for a growing share of global electricity generation.",
-
-        "Hydroelectric power relies on the flow of water through dams or run-of-river systems "
-        "to spin turbines and produce electricity. It is one of the oldest forms of renewable "
-        "energy and provides reliable baseload power in many countries around the world.",
-
-        "Geothermal energy taps into heat stored beneath the earth's surface. In regions with "
-        "volcanic activity or hot springs, geothermal plants can produce electricity continuously. "
-        "This energy source has a small land footprint and produces minimal greenhouse gas emissions.",
-
-        "Biomass energy is derived from organic materials such as wood, agricultural residues, "
-        "and dedicated energy crops. It can be converted into heat, electricity, or biofuels. "
-        "While it is considered renewable, sustainable sourcing practices are important to ensure "
-        "that biomass does not contribute to deforestation.",
-
-        "Tidal and wave energy technologies capture the kinetic energy of ocean tides and waves. "
-        "Although still in early stages of commercial development, these sources offer predictable "
-        "energy generation patterns. Coastal nations are investing in pilot projects to evaluate "
-        "the long-term feasibility of marine energy.",
-
-        "Energy storage systems, particularly lithium-ion batteries, play a critical role in "
-        "managing the intermittency of renewable sources like solar and wind. Grid-scale battery "
-        "installations help balance supply and demand, enabling higher penetration of renewables "
-        "into existing power grids.",
-
-        "The transition to renewable energy requires significant investment in grid infrastructure. "
-        "Smart grids use digital communication technology to detect and react to local changes in "
-        "usage, improving efficiency and reliability. Modernizing transmission lines is essential "
-        "to connect remote renewable generation sites to urban demand centers.",
-
-        "Government policies and incentives have been instrumental in accelerating renewable energy "
-        "adoption. Tax credits, feed-in tariffs, and renewable portfolio standards encourage private "
-        "investment. International agreements on climate change also drive national commitments to "
-        "increase the share of clean energy in the overall energy mix.",
-
-        "Research and development in renewable energy continues to push the boundaries of efficiency "
-        "and cost reduction. Perovskite solar cells, floating wind turbines, and advanced nuclear "
-        "fusion concepts represent the next frontier. Collaboration between universities, industry, "
-        "and governments is key to bringing these innovations to market.",
+    """Generate unique, non-repetitive benign text for benchmarking.
+    Each section is numbered to avoid triggering repetition-based guardrails."""
+    topics = [
+        ("Solar Energy", "Solar energy harnesses sunlight through photovoltaic cells. Modern panels achieve 20-25 percent efficiency for residential and commercial use. Costs have dropped significantly, making solar one of the fastest-growing energy sources worldwide."),
+        ("Wind Power", "Wind turbines convert kinetic energy into electricity. Onshore farms occupy flat, open terrain while offshore installations use stronger ocean winds. Global wind capacity continues to expand rapidly across multiple continents."),
+        ("Hydroelectric Systems", "Hydroelectric power uses water flow through dams or run-of-river systems to spin turbines. It is one of the oldest renewable sources and provides reliable baseload power for many nations."),
+        ("Geothermal Resources", "Geothermal energy taps heat beneath the earth's surface. Volcanic regions and hot spring areas are ideal for geothermal plants, which produce continuous electricity with minimal greenhouse gas emissions and small land footprints."),
+        ("Biomass Conversion", "Biomass energy comes from organic materials like wood and agricultural residues. It converts into heat, electricity, or biofuels. Sustainable sourcing prevents deforestation while maintaining renewable classification."),
+        ("Ocean Energy", "Tidal and wave technologies capture kinetic energy from ocean movements. Though still in early commercial stages, these sources offer predictable generation. Coastal nations invest in pilot projects to assess feasibility."),
+        ("Battery Storage", "Lithium-ion batteries manage solar and wind intermittency at grid scale. These installations balance supply and demand, enabling greater renewable penetration into existing electrical infrastructure."),
+        ("Grid Modernization", "Smart grids use digital communication to detect and respond to local usage changes. Modernizing transmission lines connects remote generation sites to urban centers, improving overall system efficiency and reliability."),
+        ("Policy Frameworks", "Government incentives accelerate renewable adoption through tax credits and feed-in tariffs. Renewable portfolio standards encourage private investment. International climate agreements drive national clean energy commitments."),
+        ("Research Frontiers", "Perovskite solar cells and floating wind turbines represent next-generation technology. Advanced fusion concepts are under active investigation. University and industry collaboration accelerates commercial deployment timelines."),
+        ("Electric Vehicles", "The electrification of transportation creates new demand for renewable electricity. Battery technology improvements increase vehicle range while reducing charging times. Fleet operators increasingly adopt electric vehicles for economic and environmental reasons."),
+        ("Hydrogen Economy", "Green hydrogen produced by electrolysis powered by renewables can decarbonize heavy industry and long-distance transport. Storage and distribution infrastructure is developing rapidly across Europe, Asia, and North America."),
+        ("Carbon Capture", "Direct air capture and point-source carbon capture technologies complement renewable energy deployment. These systems remove carbon dioxide from the atmosphere or prevent industrial emissions from reaching it."),
+        ("Building Efficiency", "Passive house design and advanced insulation materials reduce energy demand in buildings. Heat pumps powered by renewable electricity replace fossil fuel heating systems. Smart thermostats optimize energy consumption patterns automatically."),
+        ("Agricultural Innovation", "Agrivoltaics combines solar panel installation with crop cultivation on the same land. This dual-use approach increases land productivity while generating clean electricity for rural communities."),
+        ("Desalination", "Renewable-powered desalination plants address water scarcity in arid regions. Solar thermal and photovoltaic systems reduce the energy cost of converting seawater to fresh water for drinking and irrigation."),
+        ("Circular Economy", "Recycling solar panels and wind turbine blades reduces waste from renewable infrastructure. Material recovery programs extract valuable metals and rare earth elements for reuse in new clean energy equipment."),
+        ("Workforce Development", "The renewable energy sector creates millions of jobs globally in manufacturing, installation, and maintenance. Training programs prepare workers for careers in solar installation, wind turbine technology, and grid management."),
+        ("Community Energy", "Community-owned renewable projects enable local investment in clean power. Cooperative models distribute financial benefits among residents. Microgrids powered by local solar and wind increase energy resilience."),
+        ("Digital Twins", "Digital twin technology creates virtual replicas of renewable energy systems for optimization. Machine learning algorithms predict maintenance needs and maximize generation output from wind farms and solar arrays."),
     ]
-    block = " ".join(paragraphs)  # ~2500 chars, ~625 tokens
     chars_needed = approx_tokens * 4
-    repeats = max(1, chars_needed // len(block))
-    full_text = " ".join([block] * (repeats + 1))
-    return full_text[:chars_needed]
+    parts = []
+    total_chars = 0
+    section = 1
+    while total_chars < chars_needed:
+        for title, body in topics:
+            paragraph = f"Section {section}: {title}. {body}"
+            parts.append(paragraph)
+            total_chars += len(paragraph) + 1
+            section += 1
+            if total_chars >= chars_needed:
+                break
+    return " ".join(parts)[:chars_needed]
 
 
 def percentile(data, p):
@@ -182,7 +165,7 @@ def call_llm(message: str, guardrails: list = None) -> dict:
         "model": LLM_MODEL,
         "messages": [{"role": "user", "content": message}],
         "max_tokens": 256,
-        "temperature": 0.3,
+        "temperature": 0,
     }
     if guardrails:
         body["guardrails"] = guardrails
@@ -289,6 +272,12 @@ def run_token_benchmark():
                 s2 = f"status={r2['status']} {r2.get('error', '')[:30]}"
             overhead = r2["latency_ms"] - r1["latency_ms"]
             print(f"with_guard={r2['latency_ms']:.0f}ms({s2})  overhead={overhead:+.0f}ms")
+            if r2["blocked"]:
+                print(f"           reason: {r2['block_reason']}")
+                if r2.get("response"):
+                    print(f"           response: {r2['response'][:200]}")
+                if r2.get("error"):
+                    print(f"           error: {r2['error']}")
 
         no_p50 = round(percentile(no_guard_times, 50))
         wd_p50 = round(percentile(with_guard_times, 50))
