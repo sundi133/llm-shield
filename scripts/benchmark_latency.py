@@ -40,7 +40,7 @@ LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://litellm-guardrails-votal-ai-pr
 LLM_MASTER_KEY = os.getenv("LLM_MASTER_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "moonshotai/kimi-k2.5")
 
-TOKEN_SIZES = [128, 512, 1024, 4096, 8192, 32768, 65536, 120000]
+TOKEN_SIZES = [128, 512, 1024, 4096, 8192, 32768, 65536, 120000, 240000]
 
 parser = argparse.ArgumentParser(description="Votal Shield Latency Benchmark")
 parser.add_argument("--runs", type=int, default=3, help="Number of runs per token size (default: 3)")
