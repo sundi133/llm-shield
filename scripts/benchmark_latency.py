@@ -10,8 +10,10 @@ Usage:
   export LLM_MODEL=moonshotai/kimi-k2.5
 
   .venv/bin/python scripts/benchmark_latency.py
+  .venv/bin/python scripts/benchmark_latency.py --runs 5
 """
 
+import argparse
 import json
 import os
 import sys
@@ -37,7 +39,11 @@ LLM_MASTER_KEY = os.getenv("LLM_MASTER_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "moonshotai/kimi-k2.5")
 
 TOKEN_SIZES = [128, 512, 1024, 4096, 8192, 32768, 65536, 120000]
-RUNS_PER_SIZE = 3
+
+parser = argparse.ArgumentParser(description="Votal Shield Latency Benchmark")
+parser.add_argument("--runs", type=int, default=3, help="Number of runs per token size (default: 3)")
+_args, _ = parser.parse_known_args()
+RUNS_PER_SIZE = _args.runs
 
 HEADERS = {"Content-Type": "application/json"}
 if LLM_MASTER_KEY:
@@ -254,31 +260,23 @@ def run_token_benchmark():
         max_retries = 3
 
         run = 0
-        while run < RUNS_PER_SIZE:
-            attempt = run + 1
-            print(f"  Run {attempt}/{RUNS_PER_SIZE}:", end=" ", flush=True)
-
+        retries_left = 3
+        while run < RUNS_PER_SIZE and retries_left > 0:
             r1 = call_llm(message)
-            no_guard_times.append(r1["latency_ms"])
-            s1 = f"ok t={r1['total_tokens']}" if r1["status"] == 200 else f"err:{r1.get('error', '')[:30]}"
-            print(f"no_guard={r1['latency_ms']:.0f}ms({s1})", end="  ", flush=True)
-
             r2 = call_llm(message, guardrails=["votal-input-guard", "votal-output-guard"])
+
             if r2["blocked"]:
-                print(f"with_guard={r2['latency_ms']:.0f}ms(BLOCKED — retrying)")
-                max_retries -= 1
-                if max_retries <= 0:
-                    print(f"  Max retries reached, skipping remaining runs for {token_size} tokens")
-                    no_guard_times.pop()  # remove the unpaired no_guard result
-                    break
-                no_guard_times.pop()  # remove the unpaired no_guard result
+                retries_left -= 1
                 continue
 
+            no_guard_times.append(r1["latency_ms"])
             with_guard_times.append(r2["latency_ms"])
+            run += 1
+
+            s1 = f"ok t={r1['total_tokens']}" if r1["status"] == 200 else f"err:{r1.get('error', '')[:30]}"
             s2 = f"ok t={r2['total_tokens']}" if r2["status"] == 200 else f"status={r2['status']} {r2.get('error', '')[:30]}"
             overhead = r2["latency_ms"] - r1["latency_ms"]
-            print(f"with_guard={r2['latency_ms']:.0f}ms({s2})  overhead={overhead:+.0f}ms")
-            run += 1
+            print(f"  Run {run}/{RUNS_PER_SIZE}: no_guard={r1['latency_ms']:.0f}ms({s1})  with_guard={r2['latency_ms']:.0f}ms({s2})  overhead={overhead:+.0f}ms")
 
         if not with_guard_times:
             print(f"  ⚠ All runs blocked for {token_size} tokens — skipping")
