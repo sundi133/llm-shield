@@ -112,9 +112,10 @@ RED_TEAM_PROMPTS = [
 
 def generate_text(approx_tokens: int) -> str:
     base = (
-        "The customer has requested a review of their account details "
-        "including transaction history, balance information, and recent "
-        "wire transfers. Please look up the profile and provide a summary. "
+        "Explain the key differences between renewable energy sources "
+        "such as solar, wind, and hydroelectric power. Discuss their "
+        "environmental benefits, cost efficiency, and scalability for "
+        "modern infrastructure. Provide a balanced overview. "
     )
     chars_needed = approx_tokens * 4
     repeats = max(1, chars_needed // len(base))
