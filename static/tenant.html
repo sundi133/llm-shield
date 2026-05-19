@@ -1880,6 +1880,14 @@
     </div>
 
       <div class="nav-section">
+        <div class="nav-label">Registry</div>
+        <div class="nav-item" data-tab="artifacts">
+          <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+          Software Artifacts
+        </div>
+      </div>
+
+      <div class="nav-section">
         <div class="nav-label">Enterprise Controls</div>
         <div class="nav-item" data-tab="kill-switch">
           <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
@@ -3995,6 +4003,63 @@ if __name__ == "__main__":
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── Registry: Software Artifacts ──────────────── -->
+    <div id="tab-artifacts" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Software Artifacts</div>
+        <div class="page-desc">Approved artifacts for your tenant. Submit a draft to request approval.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Catalog</div>
+            <div class="card-subtitle">Approved and deprecated versions visible to your tenant</div>
+          </div>
+          <button class="small" onclick="loadTenantArtifacts()">Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Version</th>
+              <th>Status</th>
+              <th>License</th>
+              <th>Signature</th>
+              <th>Pinned</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody id="tenant-artifacts-list"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Request approval for a new artifact</div>
+            <div class="card-subtitle">Creates a draft. An admin reviews and approves it.</div>
+          </div>
+          <span id="tenant-artifacts-msg" class="toast hidden"></span>
+        </div>
+        <div class="grid-2">
+          <div class="field"><label>Name</label><input id="tart-new-name" type="text" placeholder="my-image"></div>
+          <div class="field"><label>Version</label><input id="tart-new-version" type="text" placeholder="1.0.0"></div>
+        </div>
+        <div class="field"><label>Source URI</label><input id="tart-new-uri" type="text" placeholder="oci://registry/image@sha256:..."></div>
+        <div class="grid-2">
+          <div class="field"><label>SHA-256 (optional)</label><input id="tart-new-sha" type="text"></div>
+          <div class="field"><label>License (optional)</label><input id="tart-new-license" type="text" placeholder="Apache-2.0"></div>
+        </div>
+        <div class="grid-2">
+          <div class="field"><label>SBOM URI (optional)</label><input id="tart-new-sbom" type="text"></div>
+          <div class="field"><label>Signature (optional)</label><input id="tart-new-sig" type="text"></div>
+        </div>
+        <div class="field"><label>Owners (comma-separated emails)</label><input id="tart-new-owners" type="text"></div>
+        <button class="small primary" onclick="requestArtifactApproval()">Request approval</button>
       </div>
     </div>
 
@@ -10118,8 +10183,80 @@ document.addEventListener('click', (e) => {
     if (tab === 'playground') initPlayground();
     if (tab === 'kill-switch') loadKillSwitchTools();
     if (tab === 'agent-identity') {} // manual actions
+    if (tab === 'artifacts') loadTenantArtifacts();
   }
 });
+
+// ── Software Artifacts (read-only catalog + request approval) ──────────
+function _tartStatusBadge(status) {
+  const colors = { draft: '#94a3b8', approved: '#22c55e', deprecated: '#f59e0b', revoked: '#ef4444' };
+  const c = colors[status] || '#94a3b8';
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:${c}22;color:${c};font-size:11px;font-weight:600;">${status}</span>`;
+}
+
+async function loadTenantArtifacts() {
+  const body = document.getElementById('tenant-artifacts-list');
+  const tid = TENANT_INFO && TENANT_INFO.tenant_id;
+  if (!tid) { body.innerHTML = '<tr><td colspan="7" class="empty-state">Log in first</td></tr>'; return; }
+  body.innerHTML = '<tr><td colspan="7" class="empty-state">Loading…</td></tr>';
+  try {
+    const data = await apiCall(`/v1/shield/artifacts?tenant_id=${encodeURIComponent(tid)}`);
+    let items = data.items || [];
+    // Tenants see anything except revoked drafts they didn't create — keep it simple: hide revoked.
+    items = items.filter(a => a.status !== 'revoked');
+    if (!items.length) { body.innerHTML = '<tr><td colspan="7" class="empty-state">No artifacts yet. Submit one below to request approval.</td></tr>'; return; }
+    const names = [...new Set(items.map(i => i.name))];
+    const pinMap = {};
+    await Promise.all(names.map(async n => {
+      try {
+        const p = await apiCall(`/v1/shield/artifacts/${encodeURIComponent(n)}/pin?tenant_id=${encodeURIComponent(tid)}`);
+        pinMap[n] = p.pinned_version;
+      } catch (e) { pinMap[n] = null; }
+    }));
+    body.innerHTML = items.map(a => `
+      <tr>
+        <td>${a.name}</td>
+        <td>${a.version}</td>
+        <td>${_tartStatusBadge(a.status)}</td>
+        <td>${a.provenance?.license || '—'}</td>
+        <td>${a.provenance?.signature_status || 'absent'}</td>
+        <td>${pinMap[a.name] === a.version ? '📌' : ''}</td>
+        <td style="font-family:monospace;font-size:11px;">${a.source_uri}</td>
+      </tr>`).join('');
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="7" class="empty-state">Error: ${e.message}</td></tr>`;
+  }
+}
+
+async function requestArtifactApproval() {
+  const tid = TENANT_INFO && TENANT_INFO.tenant_id;
+  if (!tid) return showError('tenant-artifacts-msg', 'Log in first');
+  const body = {
+    tenant_id: tid,
+    name: document.getElementById('tart-new-name').value.trim(),
+    version: document.getElementById('tart-new-version').value.trim(),
+    source_uri: document.getElementById('tart-new-uri').value.trim(),
+    sha256: document.getElementById('tart-new-sha').value.trim() || null,
+    provenance: {
+      license: document.getElementById('tart-new-license').value.trim() || null,
+      sbom_uri: document.getElementById('tart-new-sbom').value.trim() || null,
+      signature: document.getElementById('tart-new-sig').value.trim() || null,
+    },
+    owners: document.getElementById('tart-new-owners').value.split(',').map(s => s.trim()).filter(Boolean),
+  };
+  if (!body.name || !body.version || !body.source_uri) {
+    return showError('tenant-artifacts-msg', 'name, version and source URI are required');
+  }
+  try {
+    await apiCall('/v1/shield/artifacts/register', { method: 'POST', body: JSON.stringify(body) });
+    showSuccess('tenant-artifacts-msg', `Submitted ${body.name}@${body.version} as draft — awaiting admin approval`);
+    ['tart-new-name','tart-new-version','tart-new-uri','tart-new-sha','tart-new-license','tart-new-sbom','tart-new-sig','tart-new-owners']
+      .forEach(id => document.getElementById(id).value = '');
+    loadTenantArtifacts();
+  } catch (e) {
+    showError('tenant-artifacts-msg', e.message);
+  }
+}
 
 document.getElementById('api-key-input').addEventListener('keypress', (e) => { if (e.key === 'Enter') login(); });
 
