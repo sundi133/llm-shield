@@ -12,7 +12,7 @@ from core.models import GuardrailResult
 from core.llm_backend import async_llm_call
 from guardrails.base import BaseGuardrail
 from core.text_utils import (
-    estimate_tokens, chunk_text, sample_chunks, build_history_messages, trim_history_to_budget, DEFAULT_SLOT_CONTEXT,
+    estimate_tokens, chunk_text, build_history_messages, trim_history_to_budget,
 )
 
 _DEFAULT_ENTITIES = [
@@ -40,6 +40,7 @@ _USER_PREFIX = (
 )
 
 _RESERVED_TOKENS = 350  # system prompt (~200) + output (60) + overhead (~90)
+_DEFAULT_SLOT_CONTEXT = 4096
 
 
 def _parse_pii_response(raw: str) -> tuple[bool, list[dict]]:
@@ -173,8 +174,8 @@ class PIIDetectionGuardrail(BaseGuardrail):
             result.latency_ms = (time.perf_counter() - start) * 1000
             return result
 
-        # Chunk and check in parallel — block if ANY chunk has PII (sample for large inputs)
-        chunks = sample_chunks(chunk_text(content, content_budget))
+        # Chunk and check in parallel — block if ANY chunk has PII
+        chunks = chunk_text(content, content_budget)
         tasks = [
             self._check_single(chunk, system_prompt, history_messages, entities)
             for chunk in chunks

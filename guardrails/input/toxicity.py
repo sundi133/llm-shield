@@ -7,7 +7,7 @@ from typing import Optional
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
-from core.text_utils import estimate_tokens, chunk_text, sample_chunks, build_history_messages, trim_history_to_budget, DEFAULT_SLOT_CONTEXT
+from core.text_utils import estimate_tokens, chunk_text, build_history_messages, trim_history_to_budget
 
 _SYSTEM_PROMPT = (
     "You are a toxicity classifier for user messages sent to AI agents.\n\n"
@@ -37,6 +37,7 @@ _CSV_FIELDS = ["is_toxic", "toxicity_score", "category", "severity"]
 # ---------------------------------------------------------------------------
 
 _RESERVED_TOKENS = 350  # system prompt (~280) + output (20) + overhead (~50)
+_DEFAULT_SLOT_CONTEXT = 4096  # 8196 max-model-len / 2 (conservative)
 
 
 class ToxicityGuardrail(BaseGuardrail):
@@ -140,7 +141,7 @@ class ToxicityGuardrail(BaseGuardrail):
             return result
 
         # Chunk and check in parallel for large inputs
-        chunks = sample_chunks(chunk_text(content, content_budget))
+        chunks = chunk_text(content, content_budget)
         tasks = [
             self._check_single(chunk, history_messages, threshold)
             for chunk in chunks

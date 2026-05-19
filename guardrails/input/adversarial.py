@@ -23,7 +23,7 @@ from typing import Optional
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
-from core.text_utils import estimate_tokens, chunk_text, sample_chunks, build_history_messages, trim_history_to_budget, DEFAULT_SLOT_CONTEXT
+from core.text_utils import estimate_tokens, chunk_text, build_history_messages, trim_history_to_budget
 
 # ---------------------------------------------------------------------------
 # Preprocessing: ONLY decode actually-encoded content
@@ -210,6 +210,7 @@ _FAST_USER_PREFIX = (
 # ---------------------------------------------------------------------------
 
 _RESERVED_TOKENS = 770  # system prompt (~600) + output (128) + overhead (~42)
+_DEFAULT_SLOT_CONTEXT = 4096  # 8196 max-model-len / 2 (conservative)
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +258,7 @@ class AdversarialGuardrail(BaseGuardrail):
         if decoded_tokens <= fast_budget:
             result = await self._fast_decoded_check_single(decoded)
         else:
-            chunks = sample_chunks(chunk_text(decoded, fast_budget))
+            chunks = chunk_text(decoded, fast_budget)
             tasks = [self._fast_decoded_check_single(chunk) for chunk in chunks]
             results = await asyncio.gather(*tasks)
             # Use the first adversarial result found
@@ -386,8 +387,8 @@ class AdversarialGuardrail(BaseGuardrail):
             result.latency_ms = (time.perf_counter() - start) * 1000
             return result
 
-        # Chunk and check in parallel for large inputs (sample to limit concurrency)
-        chunks = sample_chunks(chunk_text(processed_content, content_budget))
+        # Chunk and check in parallel for large inputs
+        chunks = chunk_text(processed_content, content_budget)
         tasks = [
             self._check_single(chunk, history_messages, confidence_threshold)
             for chunk in chunks

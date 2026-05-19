@@ -5,7 +5,7 @@ from typing import Optional
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
-from core.text_utils import estimate_tokens, chunk_text, sample_chunks, DEFAULT_SLOT_CONTEXT
+from core.text_utils import estimate_tokens, chunk_text
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are a bias detection specialist. Analyze the given text for any biased language, "
@@ -19,6 +19,7 @@ _SYSTEM_PROMPT_TEMPLATE = (
 
 _CSV_FIELDS = ["biased", "bias_score", "bias_type", "severity"]
 _RESERVED_TOKENS = 300
+_DEFAULT_SLOT_CONTEXT = 4096
 
 
 class BiasDetectionGuardrail(BaseGuardrail):
@@ -108,7 +109,7 @@ class BiasDetectionGuardrail(BaseGuardrail):
             result.latency_ms = (time.perf_counter() - start) * 1000
             return result
 
-        chunks = sample_chunks(chunk_text(content, content_budget))
+        chunks = chunk_text(content, content_budget)
         tasks = [self._check_single(c, system_prompt, threshold) for c in chunks]
         results = await asyncio.gather(*tasks)
 
