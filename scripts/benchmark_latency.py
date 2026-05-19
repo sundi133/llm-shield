@@ -257,10 +257,9 @@ def run_token_benchmark():
         message = generate_text(token_size)
         no_guard_times = []
         with_guard_times = []
-        max_retries = 3
 
         run = 0
-        retries_left = 3
+        retries_left = RUNS_PER_SIZE * 3  # 3 retries per expected run
         while run < RUNS_PER_SIZE and retries_left > 0:
             r1 = call_llm(message)
             r2 = call_llm(message, guardrails=["votal-input-guard", "votal-output-guard"])
