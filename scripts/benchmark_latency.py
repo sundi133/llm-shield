@@ -363,7 +363,7 @@ def run_redteam_benchmark():
         reason = ""
         if r_wd["blocked"]:
             reason = r_wd["block_reason"][:40]
-        elif r_wd["status"] >= 400:
+        elif isinstance(r_wd["status"], int) and r_wd["status"] >= 400:
             reason = r_wd.get("error", "")[:40]
 
         print(
