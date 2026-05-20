@@ -282,8 +282,8 @@ def run_token_benchmark():
         if not with_guard_times:
             print(f"  ⚠ All runs blocked for {token_size} tokens — skipping")
             all_results.append({
-                "tokens": token_size, "no_guard_p50": 0, "no_guard_p95": 0,
-                "with_guard_p50": 0, "with_guard_p95": 0, "overhead_ms": 0,
+                "tokens": token_size, "no_guard_p50": 0, "no_guard_p95": 0, "no_guard_p99": 0,
+                "with_guard_p50": 0, "with_guard_p95": 0, "with_guard_p99": 0, "overhead_ms": 0,
                 "overhead_pct": 0, "blocked_count": RUNS_PER_SIZE, "note": "ALL BLOCKED — skipped",
             })
             continue
@@ -296,8 +296,10 @@ def run_token_benchmark():
             "tokens": token_size,
             "no_guard_p50": no_p50,
             "no_guard_p95": round(percentile(no_guard_times, 95)),
+            "no_guard_p99": round(percentile(no_guard_times, 99)),
             "with_guard_p50": wd_p50,
             "with_guard_p95": round(percentile(with_guard_times, 95)),
+            "with_guard_p99": round(percentile(with_guard_times, 99)),
             "overhead_ms": overhead_ms,
             "overhead_pct": round((overhead_ms / max(no_p50, 1)) * 100),
             "blocked_count": 0,
@@ -309,14 +311,14 @@ def run_token_benchmark():
     print(f"\n{'=' * 90}")
     print("  TOKEN SIZE RESULTS")
     print(f"{'=' * 90}")
-    print(f"  {'Tokens':>8} │ {'No Guardrails':>15} │ {'With Guardrails':>15} │ {'Overhead':>12} │ Status")
-    print(f"  {'':>8} │ {'P50':>8} {'P95':>6} │ {'P50':>8} {'P95':>6} │ {'ms':>6} {'%':>4} │")
-    print(f"  {'─' * 8}─┼─{'─' * 15}─┼─{'─' * 15}─┼─{'─' * 12}─┼─{'─' * 15}")
+    print(f"  {'Tokens':>8} │ {'No Guardrails':>22} │ {'With Guardrails':>22} │ {'Overhead':>12} │ Status")
+    print(f"  {'':>8} │ {'P50':>8} {'P95':>6} {'P99':>6} │ {'P50':>8} {'P95':>6} {'P99':>6} │ {'ms':>6} {'%':>4} │")
+    print(f"  {'─' * 8}─┼─{'─' * 22}─┼─{'─' * 22}─┼─{'─' * 12}─┼─{'─' * 15}")
     for r in all_results:
         print(
             f"  {r['tokens']:>8,} │ "
-            f"{r['no_guard_p50']:>6}ms {r['no_guard_p95']:>5}ms │ "
-            f"{r['with_guard_p50']:>6}ms {r['with_guard_p95']:>5}ms │ "
+            f"{r['no_guard_p50']:>6}ms {r['no_guard_p95']:>5}ms {r['no_guard_p99']:>5}ms │ "
+            f"{r['with_guard_p50']:>6}ms {r['with_guard_p95']:>5}ms {r['with_guard_p99']:>5}ms │ "
             f"{r['overhead_ms']:>+5}ms {r['overhead_pct']:>3}% │ "
             f"{r['note']}"
         )
