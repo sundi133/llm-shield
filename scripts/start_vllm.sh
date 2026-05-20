@@ -48,4 +48,5 @@ else
   trap cleanup EXIT
 fi
 
+ulimit -n 65536 2>/dev/null || true
 exec python3 handler.py
