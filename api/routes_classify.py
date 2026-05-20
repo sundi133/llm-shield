@@ -218,8 +218,21 @@ async def classify(request: Request, body: dict):
     When neither is present, falls back to the server's default config.
     """
     message = body.get("message")
+
+    # If messages array is provided, extract last 5 user messages
+    # (skip system/assistant/developer messages — only check user input)
+    if not message and "messages" in body:
+        user_msgs = [
+            msg.get("content", "") for msg in body["messages"]
+            if msg.get("role") == "user" and msg.get("content")
+        ]
+        last_5 = user_msgs[-5:]
+        message = "\n".join(last_5) if last_5 else ""
+    elif not message and "text" in body:
+        message = body.get("text")
+
     if not message:
-        raise HTTPException(status_code=400, detail="'message' field is required")
+        raise HTTPException(status_code=400, detail="'message', 'text', or 'messages' field is required")
 
     start = datetime.now()
     input_overrides = body.get("input")
