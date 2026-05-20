@@ -1,14 +1,14 @@
 guardrails:
   # --- Fast-tier input guardrails (CPU-only) ---
   keyword_blocklist:
-    enabled: true
+    enabled: false
     action: block
     settings:
       keywords: []  # Empty by default - customers can add their own
       case_insensitive: true
 
   length_limit:
-    enabled: true
+    enabled: false
     action: block
     settings:
       max_chars: 1200000  # 1.2M characters (~300K tokens)
@@ -16,13 +16,13 @@ guardrails:
       encoding: cl100k_base
 
   regex_pattern:
-    enabled: true
+    enabled: false
     action: block
     settings:
       patterns: []  # Empty by default - customers can add their own patterns
 
   pii_detection:
-    enabled: true
+    enabled: false
     action: warn
     settings:
       entities:
@@ -54,20 +54,20 @@ guardrails:
       window_seconds: 60
 
   system_prompt_leak:
-    enabled: true
+    enabled: false
     action: block
     settings:
       extra_patterns: []
 
   toxicity:
-    enabled: true  # Enable for all customers
+    enabled: true
     action: block
     settings:
       threshold: 0.7
 
   # --- Slow-tier input guardrails (LLM-based) ---
   payload_risk:
-    enabled: true
+    enabled: false
     action: block
     settings: {}  # Uses tenant data policies from Redis; no hardcoded patterns
 
