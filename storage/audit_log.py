@@ -40,7 +40,10 @@ class AuditLogger:
 
     @property
     def enabled(self) -> bool:
-        """Check if audit logging is enabled via config."""
+        """Check if audit logging is enabled via config or env var."""
+        env = os.getenv("AUDIT_LOGGING_ENABLED", "")
+        if env.lower() in ("true", "1", "yes"):
+            return True
         try:
             from config.schema import config
             if config and hasattr(config, "audit_logging"):
