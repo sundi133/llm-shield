@@ -48,4 +48,13 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", "80"))
     workers = int(os.getenv("WORKERS", "32"))
     print(f"Starting LLM Shield on port {port} with {workers} workers")
-    uvicorn.run("handler:app", host="0.0.0.0", port=port, workers=workers)
+    backlog = int(os.getenv("BACKLOG", "4096"))
+    limit_concurrency = int(os.getenv("LIMIT_CONCURRENCY", "0")) or None
+    uvicorn.run(
+        "handler:app",
+        host="0.0.0.0",
+        port=port,
+        workers=workers,
+        backlog=backlog,
+        limit_concurrency=limit_concurrency,
+    )
