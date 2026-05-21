@@ -58,6 +58,7 @@ class ShieldConfig(BaseModel):
     rbac: RBACConfig = Field(default_factory=RBACConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    audit_logging: dict = Field(default_factory=lambda: {"enabled": False})
     telemetry: dict = Field(default_factory=dict)
     llm_backend: dict = Field(
         default_factory=lambda: {
@@ -147,6 +148,9 @@ def load_config(path: Optional[str] = None) -> ShieldConfig:
     if env_auth.lower() in ("true", "1", "yes"):
         auth.enabled = True
 
+    # Parse audit_logging section
+    audit_logging = raw.get("audit_logging", {"enabled": False})
+
     # Parse telemetry section
     telemetry = raw.get("telemetry", {})
 
@@ -155,6 +159,7 @@ def load_config(path: Optional[str] = None) -> ShieldConfig:
         rbac=rbac,
         pipeline=pipeline,
         auth=auth,
+        audit_logging=audit_logging,
         telemetry=telemetry,
         llm_backend=llm_backend,
     )

@@ -463,7 +463,7 @@ async def agent_chat(request: Request):
         agent_key=agent_key,
         user_role=user_role,
         last_user_msg=last_user_msg,
-        action_taken="warn" if has_blocked else "pass",
+        action_taken="block" if has_blocked else "pass",
         latency_ms=latency_ms,
         stage="complete",
         tool_results=tool_results,

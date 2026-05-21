@@ -649,6 +649,9 @@ auth:
     - /tenant
     - /static
 
+audit_logging:
+  enabled: false  # Set to true to log all guardrail decisions to Redis
+
 telemetry:
   enabled: true
   flush_interval_seconds: 5

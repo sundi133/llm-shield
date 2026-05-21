@@ -38,12 +38,29 @@ class AuditLogger:
             return f"audit:{tenant_id}"
         return "audit:global"
 
+    @property
+    def enabled(self) -> bool:
+        """Check if audit logging is enabled via config or env var."""
+        env = os.getenv("AUDIT_LOGGING_ENABLED", "")
+        if env.lower() in ("true", "1", "yes"):
+            return True
+        try:
+            from config.schema import config
+            if config and hasattr(config, "audit_logging"):
+                return bool(config.audit_logging.get("enabled", False))
+        except Exception:
+            pass
+        return False
+
     async def log(self, entry: dict):
         """Write an audit log entry to Redis.
 
         Expected keys: agent_key, endpoint, input_text, action_taken,
         guardrails_triggered (list), latency_ms, metadata (dict).
         """
+        if not self.enabled:
+            return
+
         r = _get_redis()
         if not r:
             return
