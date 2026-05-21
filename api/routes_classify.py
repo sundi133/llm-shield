@@ -245,7 +245,8 @@ async def classify(request: Request, body: dict):
     agent_key = (getattr(request.state, "agent_key", None) if hasattr(request, "state") else None) or body.get("agent_key", "")
     tenant_id = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
     role_name = (getattr(request.state, "role_name", None) if hasattr(request, "state") else None) or ""
-    blocked = result.get("action") == "block"
+    root_action = result.get("action", "pass")  # pass, log, warn, redact, or block
+    blocked = root_action == "block"
     guardrail_results = result.get("guardrail_results", [])
     triggered = [gr["guardrail"] for gr in guardrail_results if not gr.get("passed")]
 
@@ -253,7 +254,7 @@ async def classify(request: Request, body: dict):
         "agent_key": agent_key,
         "endpoint": "/guardrails/input",
         "input_text": message[:500],
-        "action_taken": "block" if blocked else "pass",
+        "action_taken": root_action,
         "guardrails_triggered": triggered,
         "latency_ms": result.get("inference_time_ms", 0),
         "metadata": {

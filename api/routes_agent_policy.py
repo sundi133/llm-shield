@@ -20,6 +20,7 @@ from storage.policy_store import (
     check_tool_authorization,
 )
 from core.auth import get_tenant_from_request
+from storage.audit_log import audit_logger
 
 router = APIRouter(prefix="/v1/agents", tags=["agent-policies"])
 
@@ -260,6 +261,31 @@ async def check_authorization_endpoint(
             request.tool_name,
             request.user_role
         )
+
+        authorized = result.get("authorized", False)
+        await audit_logger.log({
+            "agent_key": request.agent_id or "",
+            "endpoint": "/v1/agents/authorize",
+            "input_text": f"authorize:{request.tool_name}",
+            "action_taken": "pass" if authorized else "block",
+            "guardrails_triggered": ["tool_authorization"] if not authorized else [],
+            "latency_ms": 0,
+            "metadata": {
+                "kind": "agent_chat_telemetry",
+                "tenant_id": tenant_id,
+                "user_role": request.user_role or "",
+                "stage": "authorization",
+                "blocked": not authorized,
+                "block_reason": result.get("reason") if not authorized else None,
+                "session_id": "",
+                "tool_calls": [{"tool_name": request.tool_name, "rbac": {"allowed": authorized, "message": result.get("reason", "")}}],
+                "tool_call_count": 1,
+                "input_guardrails": [],
+                "output_guardrails": [],
+                "usage": {},
+            },
+        })
+
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,10 +1,11 @@
 """Standalone topic enforcement endpoint for LLM Shield."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 
 from guardrails.input.topic_enforcement import TopicEnforcementGuardrail
+from storage.audit_log import audit_logger
 
 router = APIRouter(prefix="/v1/shield/topic", tags=["topic"])
 
@@ -17,7 +18,7 @@ class TopicCheckRequest(BaseModel):
 
 
 @router.post("/check")
-async def check_topic(body: TopicCheckRequest):
+async def check_topic(body: TopicCheckRequest, request: Request):
     """Check whether a message falls within allowed topics.
 
     If allowed_topics/blocked_topics/system_purpose are provided in the request,
@@ -69,6 +70,30 @@ async def check_topic(body: TopicCheckRequest):
                 del cfg.guardrails[guard.name]
     else:
         result = await guard.check(body.message, context)
+
+    tenant_id = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
+    await audit_logger.log({
+        "agent_key": "",
+        "endpoint": "/v1/shield/topic/check",
+        "input_text": body.message[:500],
+        "action_taken": result.action,
+        "guardrails_triggered": ["topic_enforcement"] if not result.passed else [],
+        "latency_ms": round(result.latency_ms, 2),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id,
+            "user_role": "",
+            "stage": "topic_check",
+            "blocked": not result.passed and result.action == "block",
+            "block_reason": result.message if not result.passed else None,
+            "session_id": "",
+            "tool_calls": [],
+            "tool_call_count": 0,
+            "input_guardrails": [{"guardrail": "topic_enforcement", "passed": result.passed, "action": result.action, "message": result.message}],
+            "output_guardrails": [],
+            "usage": {},
+        },
+    })
 
     return {
         "allowed": result.passed,
