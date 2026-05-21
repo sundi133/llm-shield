@@ -12,6 +12,11 @@ if [ "$SKIP_VLLM" = "true" ]; then
   echo "Starting Python application..."
 else
   echo "Starting vLLM server in background..."
+  MAX_NUM_SEQS="${MAX_NUM_SEQS:-48}"
+  MAX_MODEL_LEN="${MAX_MODEL_LEN:-8196}"
+  MAX_BATCHED_TOKENS="${MAX_BATCHED_TOKENS:-8196}"
+  GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.85}"
+
   python3 -m vllm.entrypoints.openai.api_server \
     --model "$MODEL_NAME" \
     --host "$VLLM_HOST" \
@@ -19,10 +24,10 @@ else
     --dtype bfloat16 \
     --quantization fp8 \
     --kv-cache-dtype fp8 \
-    --max-model-len 8196 \
-    --max-num-batched-tokens 8196 \
-    --max-num-seqs 48 \
-    --gpu-memory-utilization 0.85 \
+    --max-model-len "$MAX_MODEL_LEN" \
+    --max-num-batched-tokens "$MAX_BATCHED_TOKENS" \
+    --max-num-seqs "$MAX_NUM_SEQS" \
+    --gpu-memory-utilization "$GPU_MEM_UTIL" \
     --enable-prefix-caching \
     --language-model-only \
     --performance-mode throughput &
