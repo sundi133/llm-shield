@@ -11,6 +11,7 @@ from guardrails.agentic.mcp_guard import (
     list_mcp_servers,
     MCPGuard,
 )
+from storage.audit_log import audit_logger
 
 router = APIRouter(prefix="/v1/shield/mcp", tags=["mcp"])
 
@@ -49,7 +50,7 @@ async def register_server(body: MCPRegisterRequest):
 
 
 @router.post("/check")
-async def check_tool_call(body: MCPCheckRequest):
+async def check_tool_call(body: MCPCheckRequest, request: Request):
     """Validate a tool call before execution against MCP policies."""
     guard = MCPGuard()
     context = {
@@ -58,6 +59,31 @@ async def check_tool_call(body: MCPCheckRequest):
         "agent_key": body.agent_key,
     }
     result = await guard.check("", context)
+
+    tenant_id = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
+    await audit_logger.log({
+        "agent_key": body.agent_key or "",
+        "endpoint": "/v1/shield/mcp/check",
+        "input_text": f"mcp_check:{body.mcp_server}/{body.tool_name}",
+        "action_taken": result.action,
+        "guardrails_triggered": ["mcp_guard"] if not result.passed else [],
+        "latency_ms": round(result.latency_ms, 2),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id,
+            "user_role": "",
+            "stage": "mcp_check",
+            "blocked": not result.passed and result.action == "block",
+            "block_reason": result.message if not result.passed else None,
+            "session_id": "",
+            "tool_calls": [{"tool_name": body.tool_name, "rbac": {"allowed": result.passed, "message": result.message}}],
+            "tool_call_count": 1,
+            "input_guardrails": [{"guardrail": "mcp_guard", "passed": result.passed, "action": result.action, "message": result.message}],
+            "output_guardrails": [],
+            "usage": {},
+        },
+    })
+
     return {
         "allowed": result.passed,
         "action": result.action,
