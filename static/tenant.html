@@ -3510,7 +3510,6 @@ if __name__ == "__main__":
         <div id="api-docs-content"></div>
       </div>
     </div>
-    </div>
 
     <!-- Playground -->
     <div id="tab-playground" class="tab-pane hidden">
@@ -4236,6 +4235,46 @@ if __name__ == "__main__":
           <button class="small" style="border-color:var(--danger);color:var(--danger);" onclick="revokeCert()">Revoke Cert</button>
         </div>
         <div id="id-result" class="muted" style="margin-top:0.75rem;"></div>
+      </div>
+
+      <div class="card" style="margin-top:1rem;">
+        <div class="card-header">
+          <div><div class="card-title">How It Works</div></div>
+        </div>
+        <div style="font-size:13px;line-height:1.7;color:var(--text-dim);">
+          <p style="margin:0 0 0.75rem;"><strong style="color:var(--text);">Trust Levels:</strong> Cert-based agents get <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;color:#10b981;">high</code> trust. String API key agents get <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;color:#f59e0b;">medium</code> trust. Higher trust = more permissive guardrails.</p>
+
+          <p style="margin:0 0 0.5rem;"><strong style="color:var(--text);">Step 1:</strong> Generate a certificate for your agent</p>
+          <pre style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;overflow-x:auto;margin:0 0 0.75rem;">openssl req -x509 -newkey rsa:4096 -keyout agent.key -out agent.crt -days 365 -nodes
+openssl x509 -in agent.crt -fingerprint -sha256 -noout
+# Output: SHA256 Fingerprint=AB:CD:12:34:...</pre>
+
+          <p style="margin:0 0 0.5rem;"><strong style="color:var(--text);">Step 2:</strong> Register the fingerprint above using the form, or via API:</p>
+          <pre style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;overflow-x:auto;margin:0 0 0.75rem;">curl -X POST ${BASE_URL}/v1/shield/agent/identity/register \
+  -H "X-API-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_key": "customer-service-agent",
+    "fingerprint": "AB:CD:12:34:...",
+    "tenant_id": "YOUR_TENANT_ID"
+  }'</pre>
+
+          <p style="margin:0 0 0.5rem;"><strong style="color:var(--text);">Step 3:</strong> Agent sends fingerprint with every API call:</p>
+          <pre style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;overflow-x:auto;margin:0 0 0.75rem;">curl -X POST ${BASE_URL}/v1/shield/chat/agent \
+  -H "X-API-Key: YOUR_KEY" \
+  -H "X-Client-Cert-Fingerprint: AB:CD:12:34:..." \
+  -H "Content-Type: application/json" \
+  -d '{"agent_key": "customer-service-agent", "messages": [...]}'</pre>
+
+          <p style="margin:0 0 0.5rem;"><strong style="color:var(--text);">Step 4:</strong> Query trust level for any agent:</p>
+          <pre style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;overflow-x:auto;margin:0 0 0.75rem;">curl ${BASE_URL}/v1/shield/agent/identity/customer-service-agent?tenant_id=YOUR_TENANT_ID \
+  -H "X-API-Key: YOUR_KEY"
+
+# Response:
+# {"agent_key": "customer-service-agent", "trust": {"trust_level": "high", "identity_method": "cert"}}</pre>
+
+          <p style="margin:0 0 0;"><strong style="color:var(--text);">Step 5:</strong> Revoke if compromised — click <em>Revoke Cert</em> above or call <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;">POST /v1/shield/agent/identity/revoke</code>. Agent immediately drops to <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;color:#f59e0b;">medium</code> trust.</p>
+        </div>
       </div>
     </div>
 
@@ -10096,6 +10135,7 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
     el.classList.add('active');
     document.getElementById(`tab-${tab}`).classList.remove('hidden');
+    window.scrollTo(0, 0);
 
     // Load data for new Votal AI platform tabs
     if (tab === 'system-health') {
