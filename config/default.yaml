@@ -650,7 +650,7 @@ auth:
     - /static
 
 audit_logging:
-  enabled: false  # Set to true to log all guardrail decisions to Redis
+  enabled: true  # Set to false to disable guardrail decision logging to Redis
 
 telemetry:
   enabled: true

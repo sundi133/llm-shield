@@ -41,16 +41,10 @@ class AuditLogger:
     @property
     def enabled(self) -> bool:
         """Check if audit logging is enabled via config or env var."""
-        env = os.getenv("AUDIT_LOGGING_ENABLED", "")
-        if env.lower() in ("true", "1", "yes"):
-            return True
-        try:
-            from config.schema import config
-            if config and hasattr(config, "audit_logging"):
-                return bool(config.audit_logging.get("enabled", False))
-        except Exception:
-            pass
-        return False
+        env = os.getenv("AUDIT_LOGGING_ENABLED", "true")
+        if env.lower() in ("false", "0", "no"):
+            return False
+        return True
 
     async def log(self, entry: dict):
         """Write an audit log entry to Redis.
