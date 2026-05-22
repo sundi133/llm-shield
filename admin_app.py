@@ -1303,8 +1303,23 @@ def create_admin_app() -> FastAPI:
                     args = {"_raw": args}
             print(f"[agent-chat] tool={name} parsed_args={json.dumps(args)[:300]}", flush=True)
 
-            rbac = _check_rbac(name, agent_key, user_role, tenant_config,
-                              registry=registry, calling_agent=calling_agent or None)
+            # Kill switch — immediately block disabled tools
+            _ks_blocked = False
+            try:
+                from storage.tool_killswitch import is_tool_disabled as _is_disabled
+                if tenant_id and _is_disabled(tenant_id, name):
+                    rbac = {
+                        "allowed": False,
+                        "action": "block",
+                        "message": f"Tool '{name}' is disabled via kill switch",
+                        "source": "tool_killswitch",
+                    }
+                    _ks_blocked = True
+            except Exception:
+                pass
+            if not _ks_blocked:
+                rbac = _check_rbac(name, agent_key, user_role, tenant_config,
+                                  registry=registry, calling_agent=calling_agent or None)
             data_policy = _get_data_policy(tool_policies, name, user_role,
                                            data_policies=data_policies)
             print(f"[data-policy] tool={name} role={user_role} action={data_policy.get('action')} input_rules={data_policy.get('input_rules')} shield={shield_endpoint}", flush=True)
