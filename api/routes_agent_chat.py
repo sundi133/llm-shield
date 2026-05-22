@@ -13,6 +13,8 @@ from datetime import datetime
 from typing import Optional
 
 import httpx
+from core.feature_flags import KILLSWITCH_ENABLED
+from storage.tool_killswitch import is_tool_disabled
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -405,13 +407,24 @@ async def agent_chat(request: Request):
 
     content, tool_calls = _extract_tool_calls(llm_data)
 
-    # --- RBAC check per tool call ---
+    # --- Kill switch + RBAC check per tool call ---
+    tenant_id = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
     tool_results: list[dict] = []
     for tc in tool_calls:
-        rbac = await _check_tool_rbac(tc["name"], tc["arguments"], agent_key, user_role, tenant_config)
+        tool_name = tc["name"]
+        # Kill switch check — immediately block disabled tools
+        if KILLSWITCH_ENABLED and tenant_id and is_tool_disabled(tenant_id, tool_name):
+            rbac = {
+                "allowed": False,
+                "action": "block",
+                "message": f"Tool '{tool_name}' is disabled via kill switch",
+                "source": "tool_killswitch",
+            }
+        else:
+            rbac = await _check_tool_rbac(tool_name, tc["arguments"], agent_key, user_role, tenant_config)
         tool_results.append({
             "tool_call_id": tc.get("id", ""),
-            "tool_name": tc["name"],
+            "tool_name": tool_name,
             "arguments": tc["arguments"],
             "rbac": rbac,
         })
