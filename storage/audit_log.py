@@ -47,51 +47,55 @@ class AuditLogger:
         return True
 
     async def log(self, entry: dict):
-        """Write an audit log entry to Redis.
+        """Fire-and-forget audit log write to Redis.
 
-        Expected keys: agent_key, endpoint, input_text, action_taken,
-        guardrails_triggered (list), latency_ms, metadata (dict).
+        Spawns the write as a background task so the API response
+        is never blocked by Redis latency.
         """
         if not self.enabled:
             return
 
-        r = _get_redis()
-        if not r:
-            return
-
-        tenant_id = None
-        metadata = entry.get("metadata", {})
-        if isinstance(metadata, dict):
-            tenant_id = metadata.get("tenant_id")
-
-        # Truncate input_text
-        input_text = entry.get("input_text", "")
-        if input_text and len(input_text) > 500:
-            input_text = input_text[:500]
-
-        guardrails_triggered = entry.get("guardrails_triggered", [])
-
-        ts = time.time()
-        record = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "ts": ts,
-            "agent_key": entry.get("agent_key", ""),
-            "endpoint": entry.get("endpoint", ""),
-            "input_text": input_text,
-            "action_taken": entry.get("action_taken", "pass"),
-            "guardrails_triggered": guardrails_triggered,
-            "latency_ms": entry.get("latency_ms", 0.0),
-            "metadata": metadata,
-        }
-
-        key = self._redis_key(tenant_id)
+        import asyncio
         try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, self._write_sync, entry)
+        except Exception:
+            pass
+
+    def _write_sync(self, entry: dict):
+        """Synchronous Redis write — runs in a thread pool."""
+        try:
+            r = _get_redis()
+            if not r:
+                return
+
+            tenant_id = None
+            metadata = entry.get("metadata", {})
+            if isinstance(metadata, dict):
+                tenant_id = metadata.get("tenant_id")
+
+            input_text = entry.get("input_text", "")
+            if input_text and len(input_text) > 500:
+                input_text = input_text[:500]
+
+            ts = time.time()
+            record = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "ts": ts,
+                "agent_key": entry.get("agent_key", ""),
+                "endpoint": entry.get("endpoint", ""),
+                "input_text": input_text,
+                "action_taken": entry.get("action_taken", "pass"),
+                "guardrails_triggered": entry.get("guardrails_triggered", []),
+                "latency_ms": entry.get("latency_ms", 0.0),
+                "metadata": metadata,
+            }
+
+            key = self._redis_key(tenant_id)
             r.zadd(key, {json.dumps(record): ts})
-            # Trim to keep only the most recent entries
             count = r.zcard(key)
             if count and count > _MAX_ENTRIES:
                 r.zremrangebyrank(key, 0, count - _MAX_ENTRIES - 1)
-            # Set TTL on the key if not already set
             if r.ttl(key) == -1:
                 r.expire(key, _AUDIT_TTL)
         except Exception:
