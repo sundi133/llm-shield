@@ -2090,12 +2090,12 @@
       <div class="card" style="margin-bottom:1rem;">
         <div class="card-header" style="cursor:pointer;" onclick="document.getElementById('full-json-preview').classList.toggle('hidden');this.querySelector('.toggle-arrow').textContent=document.getElementById('full-json-preview').classList.contains('hidden')?'▸':'▾';">
           <div>
-            <div class="card-title"><span class="toggle-arrow" style="margin-right:0.4rem;">▾</span>Full Policy JSON</div>
-            <div class="card-subtitle">Complete <code>input_guardrails</code> + <code>output_guardrails</code> config — click to collapse</div>
+            <div class="card-title"><span class="toggle-arrow" style="margin-right:0.4rem;">▸</span>Full Policy JSON</div>
+            <div class="card-subtitle">Complete <code>input_guardrails</code> + <code>output_guardrails</code> config — click to expand</div>
           </div>
           <button class="small" onclick="event.stopPropagation();copyFullPoliciesJSON()" style="font-size:11px;">Copy</button>
         </div>
-        <div id="full-json-preview">
+        <div id="full-json-preview" class="hidden">
           <pre id="full-json-pre" style="font-size:11.5px;max-height:400px;overflow-y:auto;line-height:1.5;color:var(--text-dim);"></pre>
         </div>
       </div>
@@ -5401,8 +5401,10 @@ function renderPolicyStage(stage) {
 
     const settingsJson = JSON.stringify({ [name]: { enabled: isEnabled, action, settings: p.settings || {} } }, null, 2);
 
+    const configId = `gr-config-${stage}-${name}`;
+
     return `
-      <div class="guardrail-row" style="opacity: ${isEnabled ? 1 : 0.5}; flex-wrap:wrap;">
+      <div class="guardrail-row" style="opacity: ${isEnabled ? 1 : 0.55}; flex-wrap:wrap;">
         <div class="guardrail-icon" style="background: ${color}20; color: ${color};">${icon}</div>
         <div class="guardrail-info">
           <div class="gr-name">
@@ -5410,15 +5412,9 @@ function renderPolicyStage(stage) {
             <span class="badge ${isEnabled ? 'badge-success' : ''}" style="${isEnabled ? '' : 'background:rgba(113,113,122,0.2);color:#a1a1aa;'}">${isEnabled ? 'Active' : 'Inactive'}</span>
           </div>
           ${desc ? `<div class="gr-desc">${desc}</div>` : ''}
-          <div style="display:flex;gap:0.4rem;margin-top:0.35rem;">
-            ${ex ? `<button class="small" onclick="toggleGrDetail('${rowId}','example')" style="font-size:10px;padding:0.15rem 0.5rem;">Full Example</button>` : ''}
-            <button class="small" onclick="editPolicy('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.25);color:var(--accent-hover);">Edit Settings</button>
-            <button class="small" onclick="deletePolicy('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;color:var(--danger);border-color:rgba(239,68,68,0.25);">Remove</button>
-          </div>
         </div>
         <div class="guardrail-controls">
-          <span style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:0.3px;">ACTION</span>
-          <select onchange="changeAction('${stage}','${name}',this.value)">
+          <select onchange="changeAction('${stage}','${name}',this.value)" style="font-size:11px;">
             <option value="block" ${action==='block'?'selected':''}>Block</option>
             <option value="warn" ${action==='warn'?'selected':''}>Warn</option>
             <option value="log" ${action==='log'?'selected':''}>Log</option>
@@ -5428,18 +5424,20 @@ function renderPolicyStage(stage) {
             <input type="checkbox" ${isEnabled?'checked':''} onchange="togglePolicy('${stage}','${name}',this.checked)">
             <span class="slider"></span>
           </label>
-          <span class="gr-arrow" onclick="editPolicy('${stage}','${name}')">›</span>
         </div>
-        <div style="width:100%;margin-top:0.5rem;">
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.6rem 0.75rem;position:relative;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
-              <span style="font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.4px;">Configuration</span>
-              <button class="small" onclick="copyGrConfig('${stage}','${name}')" style="font-size:9px;padding:0.1rem 0.4rem;">Copy</button>
-            </div>
+        <div style="width:100%;display:flex;gap:0.4rem;margin-top:0.4rem;padding-left:2.75rem;">
+          <button class="small" onclick="document.getElementById('${configId}').classList.toggle('hidden')" style="font-size:10px;padding:0.15rem 0.5rem;">Config</button>
+          <button class="small" onclick="editPolicy('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.25);color:var(--accent-hover);">Edit</button>
+          ${ex ? `<button class="small" onclick="toggleGrDetail('${rowId}','example')" style="font-size:10px;padding:0.15rem 0.5rem;">Example</button>` : ''}
+          <button class="small" onclick="copyGrConfig('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;">Copy</button>
+          <button class="small" onclick="deletePolicy('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;color:var(--danger);border-color:rgba(239,68,68,0.25);">Remove</button>
+        </div>
+        <div id="${configId}" class="hidden" style="width:100%;margin-top:0.5rem;padding-left:2.75rem;">
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.6rem 0.75rem;">
             <pre style="font-size:11px;margin:0;padding:0;background:none;border:none;color:var(--text-dim);white-space:pre-wrap;max-height:160px;overflow-y:auto;line-height:1.5;">${escapeHtml(settingsJson)}</pre>
           </div>
         </div>
-        <div id="${rowId}" class="hidden" style="width:100%;margin-top:0.5rem;"></div>
+        <div id="${rowId}" class="hidden" style="width:100%;margin-top:0.5rem;padding-left:2.75rem;"></div>
       </div>
     `;
   }).join('');
