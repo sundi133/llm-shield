@@ -35,6 +35,7 @@ from api.routes_killswitch import router as killswitch_router
 from api.routes_decisions import router as decisions_router
 from api.routes_webhooks import router as webhooks_router
 from api.routes_agent_identity import router as agent_identity_router
+from api.routes_mcp_server import router as mcp_server_router
 from storage.audit_log import audit_logger
 
 # Conditional SaaS imports - only load if saas module exists
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     app.include_router(decisions_router)
     app.include_router(webhooks_router)
     app.include_router(agent_identity_router)
+    app.include_router(mcp_server_router)
 
     # Include SaaS routes only if available
     if SAAS_AVAILABLE:
