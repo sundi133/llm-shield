@@ -1,0 +1,16 @@
+{
+  "name": "@votal/shield-mcp-server",
+  "version": "1.0.0",
+  "description": "Votal Shield guardrails as MCP tools",
+  "main": "index.js",
+  "type": "module",
+  "bin": {
+    "votal-shield-mcp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  }
+}
