@@ -33,11 +33,24 @@ from core.capabilities import (
 )
 from core.identity import IdentityTuple, get_identity_from_request
 from core.rbac import enforcer as rbac_enforcer
+from storage.agent_auth_stats import (
+    EVENT_CAP_DENIED,
+    EVENT_CAP_INVALID,
+    EVENT_CAP_MINTED,
+    EVENT_CAP_REPLAY,
+    EVENT_CAP_VERIFIED,
+    EVENT_REVOKE,
+    EVENT_TOKEN_ISSUED,
+    get_counters,
+    get_recent,
+    record as record_event,
+)
 from storage.revocation import revoke_instance, revoke_jti, revoke_user
 
 logger = logging.getLogger("votal.routes_agent_auth")
 
 router = APIRouter(prefix="/v1/shield", tags=["agent-auth"])
+tenant_router = APIRouter(prefix="/v1/tenant/me/agent-auth", tags=["agent-auth"])
 
 
 # ─── Schemas ────────────────────────────────────────────────────────────
@@ -144,6 +157,10 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
         )
     except TokenError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    record_event(
+        tenant_id=body.tenant_id, event=EVENT_TOKEN_ISSUED,
+        agent_id=body.agent_id, user_sub=body.user_sub,
+    )
     return AgentTokenResponse(agent_token=token, expires_in=body.ttl_seconds)
 
 
@@ -159,6 +176,12 @@ async def mint_capability(
     """
     decision = _decide_authz(identity, body)
     if not decision["allowed"]:
+        record_event(
+            tenant_id=identity.tenant_id, event=EVENT_CAP_DENIED,
+            agent_id=identity.agent_id, user_sub=identity.user_sub,
+            tool=body.tool, resource=body.resource,
+            reason="; ".join(decision["reasons"])[:240],
+        )
         raise HTTPException(
             status_code=403,
             detail={"error": "authz_denied", "reasons": decision["reasons"]},
@@ -176,6 +199,11 @@ async def mint_capability(
     except CapabilityError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    record_event(
+        tenant_id=identity.tenant_id, event=EVENT_CAP_MINTED,
+        agent_id=identity.agent_id, user_sub=identity.user_sub,
+        tool=body.tool, resource=body.resource,
+    )
     return CapMintResponse(
         cap_token=cap,
         expires_in=body.ttl_seconds,
@@ -198,7 +226,34 @@ async def verify_capability(body: CapVerifyRequest):
             burn_nonce=body.burn_nonce,
         )
     except CapabilityError as e:
-        return CapVerifyResponse(valid=False, error=str(e))
+        msg = str(e)
+        event = EVENT_CAP_REPLAY if "replay" in msg else EVENT_CAP_INVALID
+        # Try to recover tenant_id from the (unverified) cap claims so the
+        # event still attributes to the right tenant for the portal.
+        recovered_tenant = None
+        recovered_agent = None
+        try:
+            from core.capabilities import _b64url_decode
+            import json as _json
+            payload_b64 = body.cap_token.split(".", 1)[0]
+            _claims = _json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+            recovered_tenant = _claims.get("tenant_id")
+            recovered_agent = _claims.get("agent_id")
+        except Exception:
+            pass
+        record_event(
+            tenant_id=recovered_tenant, event=event,
+            agent_id=recovered_agent,
+            tool=body.expected_tool, resource=body.expected_resource,
+            reason=msg[:240],
+        )
+        return CapVerifyResponse(valid=False, error=msg)
+
+    record_event(
+        tenant_id=claims.tenant_id, event=EVENT_CAP_VERIFIED,
+        agent_id=claims.agent_id, user_sub=claims.user_sub,
+        tool=claims.tool, resource=claims.resource,
+    )
     return CapVerifyResponse(
         valid=True,
         claims={
@@ -216,8 +271,12 @@ async def verify_capability(body: CapVerifyRequest):
     )
 
 
+class RevokeRequestExt(RevokeRequest):
+    tenant_id: Optional[str] = None  # for portal attribution; optional
+
+
 @router.post("/auth/revoke")
-async def revoke(body: RevokeRequest, request: Request):
+async def revoke(body: RevokeRequestExt, request: Request):
     """Revoke an instance, user, or jti/cap_id. Admin only."""
     _require_admin(request)
     if not any([body.agent_instance_id, body.user_sub, body.jti]):
@@ -233,6 +292,12 @@ async def revoke(body: RevokeRequest, request: Request):
     if body.jti:
         revoke_jti(body.jti, ttl=body.ttl_seconds)
         revoked.append({"type": "jti", "id": body.jti})
+
+    for r in revoked:
+        record_event(
+            tenant_id=body.tenant_id, event=EVENT_REVOKE,
+            user_sub=body.user_sub, reason=f"{r['type']}:{r['id']}",
+        )
 
     return {"status": "revoked", "entries": revoked, "ttl_seconds": body.ttl_seconds}
 
@@ -290,3 +355,30 @@ def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
         "tool": body.tool,
         "resource": body.resource,
     }
+
+
+# ─── Tenant-scoped read endpoints (for portal) ──────────────────────────
+
+
+def _require_tenant(request: Request) -> str:
+    tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
+    if not tenant_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Tenant API key required",
+        )
+    return tenant_id
+
+
+@tenant_router.get("/stats")
+async def agent_auth_stats(request: Request, days: int = 7):
+    """Per-event counters for the calling tenant, last `days` days."""
+    tenant_id = _require_tenant(request)
+    return {"tenant_id": tenant_id, **get_counters(tenant_id, days=days)}
+
+
+@tenant_router.get("/recent")
+async def agent_auth_recent(request: Request, limit: int = 50):
+    """Last N agent-auth events for the calling tenant (newest first)."""
+    tenant_id = _require_tenant(request)
+    return {"tenant_id": tenant_id, "events": get_recent(tenant_id, limit=limit)}
