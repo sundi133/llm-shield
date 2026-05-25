@@ -38,6 +38,10 @@ from api.routes_webhooks import router as webhooks_router
 from api.routes_agent_identity import router as agent_identity_router
 from api.routes_agent_auth import router as agent_auth_router, tenant_router as agent_auth_tenant_router
 from api.routes_mcp_server import router as mcp_server_router
+from api.routes_oauth import router as oauth_router
+from api.routes_oauth_registration import router as oauth_registration_router
+from api.routes_oidc_admin import router as oidc_admin_router
+from api.routes_a2a import router as a2a_router
 from storage.audit_log import audit_logger
 
 # Conditional SaaS imports - only load if saas module exists
@@ -63,6 +67,13 @@ def create_app() -> FastAPI:
     app.add_middleware(TelemetryMiddleware)  # runs last (captures response)
     app.add_middleware(ShieldMiddleware)
     app.add_middleware(AgentIdentityMiddleware)  # populates request.state.identity from X-Agent-Token
+
+    # Optional middleware for workload identity (on-prem friendly)
+    from core.mtls_middleware import MTLSMiddleware
+    from core.oauth.spiffe_middleware import SPIFFEMiddleware
+    app.add_middleware(SPIFFEMiddleware)     # populates request.state.spiffe_identity
+    app.add_middleware(MTLSMiddleware)       # populates request.state.mtls_identity
+
     app.add_middleware(AuthMiddleware)       # runs first
 
     # Include routers
@@ -96,6 +107,10 @@ def create_app() -> FastAPI:
     app.include_router(agent_auth_router)
     app.include_router(agent_auth_tenant_router)
     app.include_router(mcp_server_router)
+    app.include_router(oauth_router)
+    app.include_router(oauth_registration_router)
+    app.include_router(oidc_admin_router)
+    app.include_router(a2a_router)
 
     # Include SaaS routes only if available
     if SAAS_AVAILABLE:

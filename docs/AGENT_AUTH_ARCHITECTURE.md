@@ -112,9 +112,19 @@ integrations for LangChain and raw OpenAI/Anthropic tool-use are in
 
 ### Wire format
 
+Standard JWT (RFC 7519) with EdDSA (Ed25519) signatures:
+
 ```
-<base64url(claims_json)>.<base64url(ed25519_signature)>
+<base64url(header)>.<base64url(claims_json)>.<base64url(ed25519_signature)>
 ```
+
+Header: `{"alg": "EdDSA", "typ": "JWT", "kid": "<key-id>"}`
+
+Verifiable by any standards-compliant JWT library (PyJWT, jose4j, go-jose,
+jsonwebtoken). Public keys available at `GET /oauth/jwks` in OKP JWK format.
+
+Legacy two-segment format (`base64url(claims).base64url(sig)`) is still
+accepted during verification for backward compatibility.
 
 Carried in the `X-Agent-Token` header.
 
@@ -269,15 +279,30 @@ revocation propagates within one verify call — no caches to bust.
 | Cross-tenant leakage                         | `tenant_id` in every cap, checked constant-time at tool |
 | "How did this happen?" 3 weeks later         | One signed audit row per decision, replayable           |
 
-## 8. Production Hardening (post-v1)
+## 8. Production Hardening
 
-This is an **on-prem** product. The hardening list reflects that — no
-cloud-managed services are required.
+This is an **on-prem** product. No cloud-managed services are required.
 
-* **Replace the admin-key gate** on `POST /v1/shield/auth/agent-token`
-  with **OIDC + SPIFFE token exchange**: take a verified user id_token
-  plus a workload SVID (from SPIRE, deployed alongside Shield) and emit
-  the agent token. The admin-key path stays as a break-glass.
+### Implemented
+
+* **Standard JWT format (RFC 7519)** with `alg: EdDSA`. Tokens are
+  verifiable by any JWT library. JWKS endpoint at `GET /oauth/jwks`.
+* **OAuth 2.1 authorization server** with PKCE, dynamic client
+  registration (RFC 7591), and token exchange (RFC 8693). MCP clients
+  connect via standard OAuth flows.
+* **External OIDC integration** — validate id_tokens from Keycloak,
+  Okta, Auth0, Azure AD. Per-tenant provider configuration.
+* **SPIFFE workload identity** — accept JWT and X.509 SVIDs as
+  alternative to admin-key for automated workloads. On-prem friendly
+  with local trust bundles and JWKS files.
+* **mTLS middleware** — extract client cert identity from
+  `X-Forwarded-Client-Cert` (Envoy/Istio) or direct TLS.
+* **A2A protocol** — Google Agent-to-Agent support with Agent Card
+  discovery, task lifecycle, and SSE streaming. All messages route
+  through the guardrail pipeline.
+
+### Planned
+
 * **Move signing into an HSM or Vault** for environments that need it.
   The `Signer` interface is already in place; see §10.
 * **Stream audit rows to immutable on-prem storage** (Kafka → ClickHouse,
@@ -387,17 +412,56 @@ under 100µs.
 
 ## 11. Where the code lives
 
+### Core AuthN/AuthZ
+
 | File                                           | Role                                |
 |------------------------------------------------|-------------------------------------|
 | `core/identity.py`                             | `IdentityTuple` + request dependency|
 | `core/signers.py`                              | Signer protocol + 3 backends        |
-| `core/agent_tokens.py`                         | Mint/verify agent tokens            |
-| `core/capabilities.py`                         | Mint/verify capability tokens       |
-| `core/agent_identity_middleware.py`            | Verifies `X-Agent-Token`            |
+| `core/jwt_utils.py`                            | JWT encode/decode/JWKS (RFC 7519)   |
+| `core/agent_tokens.py`                         | Mint/verify agent tokens (JWT)      |
+| `core/capabilities.py`                         | Mint/verify capability tokens (JWT) |
+| `core/agent_identity_middleware.py`            | Verifies `X-Agent-Token` + mTLS fallback |
 | `storage/revocation.py`                        | Three revocation axes               |
 | `api/routes_agent_auth.py`                     | All HTTP endpoints + AuthZ decision |
+
+### OAuth 2.1 / OIDC / Federation
+
+| File                                           | Role                                |
+|------------------------------------------------|-------------------------------------|
+| `core/oauth/authz_server.py`                  | OAuth 2.1 authorization server core |
+| `core/oauth/pkce.py`                           | PKCE (RFC 7636) utilities           |
+| `core/oauth/oidc_client.py`                   | External OIDC relying party         |
+| `core/oauth/jwks_cache.py`                    | JWKS key cache (Redis + in-memory)  |
+| `core/oauth/spiffe.py`                        | SPIFFE SVID validation              |
+| `core/oauth/spiffe_middleware.py`             | SPIFFE request middleware            |
+| `core/mtls_middleware.py`                      | mTLS client cert extraction         |
+| `storage/oauth_store.py`                       | OAuth clients, codes, refresh tokens|
+| `api/routes_oauth.py`                          | OAuth endpoints (metadata, token, JWKS) |
+| `api/routes_oauth_registration.py`            | Dynamic client registration (RFC 7591) |
+| `api/routes_oidc_admin.py`                    | OIDC provider management            |
+
+### A2A Protocol
+
+| File                                           | Role                                |
+|------------------------------------------------|-------------------------------------|
+| `core/a2a/agent_card.py`                      | A2A Agent Card schema               |
+| `core/a2a/task.py`                             | A2A Task lifecycle                  |
+| `api/routes_a2a.py`                            | A2A endpoints + guardrail routing   |
+
+### Tests
+
+| File                                           | Role                                |
+|------------------------------------------------|-------------------------------------|
 | `tests/test_agent_tokens.py`                   | AuthN unit tests                    |
 | `tests/test_capabilities.py`                   | AuthZ unit tests                    |
 | `tests/test_revocation.py`                     | Revocation tests                    |
 | `tests/test_signers.py`                        | Signer dispatcher + backend tests   |
 | `tests/test_agent_auth_e2e.py`                 | End-to-end FastAPI tests            |
+
+### Customer Resources
+
+| File                                           | Role                                |
+|------------------------------------------------|-------------------------------------|
+| `docs/customer-auth-flow.md`                   | Step-by-step integration guide      |
+| `demos/customer_auth_flow.sh`                  | Runnable demo script (success+failure)|

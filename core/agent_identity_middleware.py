@@ -26,6 +26,21 @@ class AgentIdentityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         token = request.headers.get(HEADER_NAME, "").strip()
         if not token:
+            # Fallback: synthesize identity from mTLS if available
+            mtls = getattr(request.state, "mtls_identity", None)
+            if mtls:
+                from core.identity import IdentityTuple
+                request.state.identity = IdentityTuple(
+                    user_sub=mtls.get("agent_key", "mtls-user"),
+                    agent_id=mtls.get("agent_key", "mtls-agent"),
+                    agent_instance_id=f"mtls-{mtls.get('fingerprint', 'unknown')[:16]}",
+                    tenant_id=mtls.get("tenant_id", ""),
+                    build_hash="mtls",
+                    model_version="n/a",
+                    session_id="mtls",
+                    trust_level=mtls.get("trust_level", "high"),
+                    identity_method="mtls",
+                )
             return await call_next(request)
 
         try:

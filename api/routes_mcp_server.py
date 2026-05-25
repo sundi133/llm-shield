@@ -232,6 +232,7 @@ async def mcp_message(request: Request):
     params = body.get("params", {})
 
     if method == "initialize":
+        base_url = str(request.base_url).rstrip("/")
         return JSONResponse(content={
             "jsonrpc": "2.0",
             "id": msg_id,
@@ -241,6 +242,10 @@ async def mcp_message(request: Request):
                 "serverInfo": {
                     "name": "votal-shield",
                     "version": "1.0.0",
+                    "authorization": {
+                        "type": "oauth2",
+                        "metadata_url": f"{base_url}/.well-known/oauth-authorization-server",
+                    },
                 },
             },
         })

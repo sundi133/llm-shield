@@ -118,13 +118,19 @@ class RevokeRequest(BaseModel):
 
 
 def _require_admin(request: Request) -> None:
-    """Token-exchange endpoint requires admin key.
+    """Token-exchange endpoint requires admin key or SPIFFE workload identity.
 
-    In production this would be replaced by an OIDC/SPIFFE-trust check.
-    For now we gate it with X-Admin-Key (already validated by AuthMiddleware
-    for /v1/admin/* — we re-check here because this route is outside that
-    prefix on purpose: it issues identity, not configuration).
+    Accepts:
+    1. X-Admin-Key header (original admin auth)
+    2. SPIFFE workload identity (set by SPIFFEMiddleware, on-prem friendly)
+
+    In production, SPIFFE replaces admin-key for automated workloads.
     """
+    # Accept SPIFFE workload identity as admin-equivalent
+    spiffe_identity = getattr(request.state, "spiffe_identity", None)
+    if spiffe_identity:
+        return
+
     admin_key = os.environ.get("SHIELD_ADMIN_KEY", "")
     if not admin_key:
         raise HTTPException(

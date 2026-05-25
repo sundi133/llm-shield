@@ -49,8 +49,67 @@ class AuthConfig(BaseModel):
             "/admin",
             "/tenant",
             "/static",
+            "/.well-known/oauth-authorization-server",
+            "/.well-known/agent.json",
+            "/oauth/jwks",
+            "/oauth/authorize",
+            "/oauth/token",
+            "/oauth/register",
+            "/oauth/revoke",
         ]
     )
+
+
+class OIDCProviderConfig(BaseModel):
+    """Configuration for a single external OIDC provider."""
+    issuer: str
+    client_id: str
+    audience: str = ""
+    jwks_uri: str = ""  # Auto-discovered from .well-known if empty
+    jwks_file: str = ""  # Local JWKS file path (on-prem, no discovery needed)
+    claim_mapping: dict = Field(default_factory=dict)
+
+
+class OIDCConfig(BaseModel):
+    """External OIDC integration configuration."""
+    providers: dict[str, OIDCProviderConfig] = Field(default_factory=dict)
+
+
+class OAuthServerConfig(BaseModel):
+    """OAuth 2.1 authorization server configuration."""
+    enabled: bool = False
+    issuer: str = ""  # Defaults to SHIELD_ISSUER env var
+    auth_code_ttl: int = 600  # 10 minutes
+    access_token_ttl: int = 600  # 10 minutes
+    refresh_token_ttl: int = 86400  # 24 hours
+    require_registration_token: bool = False  # Gate dynamic client registration
+
+
+class SPIFFETrustDomainConfig(BaseModel):
+    """Configuration for a SPIFFE trust domain."""
+    trust_domain: str
+    jwks_uri: str = ""  # For JWT SVIDs
+    trust_bundle_path: str = ""  # For X.509 SVIDs (local file, on-prem friendly)
+    allowed_workloads: list[str] = Field(default_factory=list)  # Allowed SPIFFE IDs
+
+
+class SPIFFEConfig(BaseModel):
+    """SPIFFE workload identity configuration."""
+    enabled: bool = False
+    trust_domains: dict[str, SPIFFETrustDomainConfig] = Field(default_factory=dict)
+
+
+class MTLSConfig(BaseModel):
+    """mTLS configuration for workload-to-workload auth."""
+    enabled: bool = False
+    client_ca_path: str = ""  # CA cert for verifying client certs (on-prem)
+    cert_header: str = "X-Forwarded-Client-Cert"  # Header name (Envoy/Istio style)
+
+
+class A2AConfig(BaseModel):
+    """Google A2A protocol configuration."""
+    enabled: bool = False
+    public_url: str = ""  # Public URL for Agent Card discovery
 
 
 class ShieldConfig(BaseModel):
@@ -60,6 +119,11 @@ class ShieldConfig(BaseModel):
     auth: AuthConfig = Field(default_factory=AuthConfig)
     audit_logging: dict = Field(default_factory=lambda: {"enabled": False})
     telemetry: dict = Field(default_factory=dict)
+    oidc: OIDCConfig = Field(default_factory=OIDCConfig)
+    oauth_server: OAuthServerConfig = Field(default_factory=OAuthServerConfig)
+    spiffe: SPIFFEConfig = Field(default_factory=SPIFFEConfig)
+    mtls: MTLSConfig = Field(default_factory=MTLSConfig)
+    a2a: A2AConfig = Field(default_factory=A2AConfig)
     llm_backend: dict = Field(
         default_factory=lambda: {
             "url": "http://127.0.0.1:8000",
