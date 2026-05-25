@@ -81,6 +81,26 @@ except Exception as _e:
     # show "Failed to load" in the portal but the rest of admin still works.
     pass
 
+# OAuth 2.1 / OIDC / A2A routes (graceful — admin still boots without them)
+_oauth_router = None
+_oauth_registration_router = None
+_oidc_admin_router = None
+_a2a_router = None
+
+try:
+    from api.routes_oauth import router as _oauth_router
+    from api.routes_oauth_registration import router as _oauth_registration_router
+except Exception:
+    pass
+try:
+    from api.routes_oidc_admin import router as _oidc_admin_router
+except Exception:
+    pass
+try:
+    from api.routes_a2a import router as _a2a_router
+except Exception:
+    pass
+
 # Graceful imports for routers that may have heavier dependencies
 _audit_router = None
 _policy_router = None
@@ -946,11 +966,18 @@ def create_admin_app() -> FastAPI:
     )
 
     # Middleware: auth first (last added = first executed in Starlette).
-    # Order: AuthMiddleware (tenant API-key) → AgentIdentityMiddleware
-    # (X-Agent-Token, pass-through when absent) → ShieldMiddleware
+    # Order: AuthMiddleware → mTLS → SPIFFE → AgentIdentity → Shield
     app.add_middleware(ShieldMiddleware)
     if _AgentIdentityMiddleware:
         app.add_middleware(_AgentIdentityMiddleware)
+    # Optional workload identity middleware (on-prem, no cloud deps)
+    try:
+        from core.oauth.spiffe_middleware import SPIFFEMiddleware
+        from core.mtls_middleware import MTLSMiddleware
+        app.add_middleware(SPIFFEMiddleware)
+        app.add_middleware(MTLSMiddleware)
+    except Exception:
+        pass
     app.add_middleware(AuthMiddleware)
 
     # Mount admin + tenant routers
@@ -980,6 +1007,16 @@ def create_admin_app() -> FastAPI:
         app.include_router(_agent_auth_router)         # /v1/shield/auth/*, /v1/shield/cap/*
     if _agent_auth_tenant_router:
         app.include_router(_agent_auth_tenant_router)  # /v1/tenant/me/agent-auth/*
+
+    # OAuth 2.1 / OIDC / A2A routes
+    if _oauth_router:
+        app.include_router(_oauth_router)              # /.well-known/oauth-*, /oauth/*
+    if _oauth_registration_router:
+        app.include_router(_oauth_registration_router) # /oauth/register
+    if _oidc_admin_router:
+        app.include_router(_oidc_admin_router)         # /v1/admin/oidc-providers/*
+    if _a2a_router:
+        app.include_router(_a2a_router)                # /.well-known/agent.json, /a2a/*
 
     # Static files
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
