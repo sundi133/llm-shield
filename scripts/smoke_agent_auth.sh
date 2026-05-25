@@ -6,10 +6,28 @@
 # signer-backend dispatch through the real HTTP server. Prints PASS/FAIL
 # per step and exits non-zero if any step fails.
 #
-# Usage:  scripts/smoke_agent_auth.sh
-# Env:    PORT (default 8765), KEEP_LOG=1 to dump server log on exit
+# Usage:
+#   scripts/smoke_agent_auth.sh              # self-host on PORT
+#   PORT=8080 scripts/smoke_agent_auth.sh    # use port 8080
 #
-# Requires: python3, uvicorn, cryptography>=42, fastapi, httpx, pydantic, curl
+# Auto-detects if something is already serving /healthz on $PORT (e.g. a
+# running docker container) and runs against it in EXTERNAL mode. In
+# external mode you must also pass SHIELD_ADMIN_KEY matching the server's
+# admin key; phases B (build allowlist) and C (signer backend) are skipped
+# because they require server-side env changes.
+#
+#   # Test a running docker container on port 8080:
+#   PORT=8080 SHIELD_ADMIN_KEY=your-admin-key scripts/smoke_agent_auth.sh
+#
+# Env:    PORT (default 8765)
+#         EXTERNAL=1   force external mode even if /healthz is down
+#         EXTERNAL=0   force self-host even if /healthz responds
+#         KEEP_LOG=1   dump local server log on exit (self-host only)
+#         SHIELD_ADMIN_KEY  required in EXTERNAL mode
+#
+# Self-host mode requires: python3, uvicorn, cryptography>=42, fastapi,
+# httpx, pydantic, curl
+# External mode requires:  curl, python3 (for JSON parsing)
 
 set -u  # NOT -e: we want to keep running on test failures
 
@@ -51,9 +69,52 @@ fail() {
 note() { printf '  %s· %s%s\n' "$C_DIM" "$*" "$C_RESET"; }
 
 # ── server lifecycle ─────────────────────────────────────────────────────
+#
+# Two modes:
+#   self-host (default): start a local uvicorn for each phase
+#   external (auto):     detect that something is already serving /healthz
+#                        on $PORT and run against it. Phases B and C are
+#                        skipped because they require restarting the server
+#                        with different env vars (you'd have to rebuild
+#                        the container — out of scope).
+#
+# Force external mode with EXTERNAL=1.
+# Force self-host even if something is responding with EXTERNAL=0.
+
+EXTERNAL_MODE=0
+
+detect_external_server() {
+  if [[ "${EXTERNAL:-}" == "1" ]]; then EXTERNAL_MODE=1; return; fi
+  if [[ "${EXTERNAL:-}" == "0" ]]; then EXTERNAL_MODE=0; return; fi
+  # Auto-detect: probe /healthz once
+  if curl -fs -o /dev/null --max-time 1 "$HOST/healthz" 2>/dev/null; then
+    EXTERNAL_MODE=1
+    printf '%s· detected existing server at %s — running in EXTERNAL mode%s\n' \
+      "$C_DIM" "$HOST" "$C_RESET"
+    printf '%s· phases B (build allowlist) and C (signer backend) will be skipped%s\n' \
+      "$C_DIM" "$C_RESET"
+    printf '%s· those phases require restarting the server with new env vars%s\n' \
+      "$C_DIM" "$C_RESET"
+  fi
+}
 
 start_server() {
   local extra_env="$1"   # e.g. 'SHIELD_AGENT_ALLOWED_BUILDS=sha256:foo'
+  if (( EXTERNAL_MODE )); then
+    # In external mode we never start our own server; phases that call
+    # start_server with extra_env are skipped at the call site.
+    return 0
+  fi
+  # Pre-flight: uvicorn must be available to self-host.
+  if ! python3 -c "import uvicorn" 2>/dev/null; then
+    printf '%sself-host mode needs uvicorn, which is not installed for this python3%s\n' "$C_RED" "$C_RESET"
+    printf '%soptions:%s\n' "$C_YELLOW" "$C_RESET"
+    printf '  • install:           pip3 install uvicorn fastapi cryptography httpx pydantic\n'
+    printf '  • or use a server already running on $PORT (external mode):\n'
+    printf '       e.g. with docker on port 8080:\n'
+    printf '       PORT=8080 SHIELD_ADMIN_KEY=<docker-admin-key> %s\n' "$0"
+    exit 97
+  fi
   cd "$REPO_ROOT"
   (
     [[ -n "$extra_env" ]] && export $extra_env
@@ -75,6 +136,7 @@ start_server() {
 }
 
 stop_server() {
+  if (( EXTERNAL_MODE )); then return 0; fi
   if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
@@ -129,8 +191,17 @@ call() {
   printf '%s|%s' "$status" "$body_out"
 }
 
-# Quick env setup for keys used by the local backend
+# Quick env setup for keys used by the local backend.
+# In external mode, SHIELD_ADMIN_KEY must be set by the caller to match
+# whatever the external server was started with — we leave it alone.
 generate_keys() {
+  if (( EXTERNAL_MODE )); then
+    if [[ -z "${SHIELD_ADMIN_KEY:-}" ]]; then
+      echo "${C_RED}EXTERNAL mode: SHIELD_ADMIN_KEY must be set to match the running server's admin key${C_RESET}"
+      exit 98
+    fi
+    return 0
+  fi
   export SHIELD_AGENT_TOKEN_PRIVATE_KEY=$(python3 -c "import secrets;print(secrets.token_hex(32))")
   export SHIELD_CAP_TOKEN_PRIVATE_KEY=$(python3 -c "import secrets;print(secrets.token_hex(32))")
   export SHIELD_ADMIN_KEY="smoke-admin-$(date +%s)"
@@ -143,9 +214,14 @@ TOKEN_BODY='{"user_sub":"alice","agent_id":"billing-bot","agent_instance_id":"in
 # PHASE A — happy path, binding, replay, expiry, revocation
 # ══════════════════════════════════════════════════════════════════════════
 
+detect_external_server
 generate_keys
 start_server ''
-note "server up on $HOST"
+if (( EXTERNAL_MODE )); then
+  note "running against external server at $HOST"
+else
+  note "server up on $HOST"
+fi
 
 # ─── Step 1: issue an agent token ───────────────────────────────────────
 step "1. Issue an agent token (admin key valid)"
@@ -301,6 +377,17 @@ result=$(call POST /v1/shield/auth/revoke '{"agent_instance_id":"inst-x"}')
 
 stop_server
 
+# In external mode, phases B and C can't run — they need the server to
+# be restarted with different env vars, which we can't do for a container
+# we didn't start. Skip them with a clear message and jump to the summary.
+if (( EXTERNAL_MODE )); then
+  printf '\n%s── 14, 15a, 15b — SKIPPED (external mode)%s\n' "$C_BOLD" "$C_RESET"
+  note "rerun without EXTERNAL=1 and without a server on \$PORT to cover these"
+  goto_summary=1
+fi
+
+if [[ -z "${goto_summary:-}" ]]; then
+
 # ══════════════════════════════════════════════════════════════════════════
 # PHASE B — build allowlist (needs server restart with new env)
 # ══════════════════════════════════════════════════════════════════════════
@@ -352,6 +439,8 @@ else
   fail "unknown backend dispatch broken" "status=$status detail=$detail"
 fi
 stop_server
+
+fi  # end: if [[ -z "$goto_summary" ]]
 
 # ══════════════════════════════════════════════════════════════════════════
 # Summary
