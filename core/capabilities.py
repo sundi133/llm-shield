@@ -54,6 +54,27 @@ class CapabilityError(Exception):
     """Raised when a capability token fails to mint or verify."""
 
 
+# Default audience for capability tokens. Distinct from the agent-token
+# audience so a leaked agent-token signer cannot be used to forge caps
+# even if the cap signer also (mis)trusts that kid.
+DEFAULT_CAP_AUDIENCE = "shield-capabilities"
+
+
+def _expected_cap_issuer() -> str:
+    return os.environ.get("SHIELD_ISSUER", "shield").strip() or "shield"
+
+
+def _expected_cap_audience() -> str:
+    return os.environ.get("SHIELD_CAP_AUDIENCE", DEFAULT_CAP_AUDIENCE).strip() or DEFAULT_CAP_AUDIENCE
+
+
+def _cap_retired_kids() -> set[str]:
+    raw = os.environ.get("SHIELD_RETIRED_KIDS", "").strip()
+    if not raw:
+        return set()
+    return {k.strip() for k in raw.split(",") if k.strip()}
+
+
 # ── Signer (separate from agent_tokens signer) ───────────────────────────
 
 _cap_signer_cache: dict[str, Signer] = {}
@@ -195,6 +216,8 @@ def mint_cap(
     now = int(time.time())
     cap_id = uuid.uuid4().hex
     claims = {
+        "iss": _expected_cap_issuer(),
+        "aud": _expected_cap_audience(),
         "user_sub": identity.user_sub,
         "agent_id": identity.agent_id,
         "agent_instance_id": identity.agent_instance_id,
@@ -238,6 +261,9 @@ def verify_cap(
         raise CapabilityError(f"undecodable cap token: {e}") from e
 
     kid = claims.get("kid", "cap-env")
+    # Reject retired cap-signing kids (H1/M2).
+    if kid in _cap_retired_kids():
+        raise CapabilityError(f"cap kid retired: {kid}")
     signer = get_cap_signer(kid)
     try:
         signer.verify(payload, sig)
@@ -245,12 +271,19 @@ def verify_cap(
         raise CapabilityError("invalid cap signature") from e
 
     required = (
-        "user_sub", "agent_id", "agent_instance_id", "tool", "resource",
+        "iss", "aud", "user_sub", "agent_id", "agent_instance_id", "tool", "resource",
         "scope", "clearance_max", "nonce", "iat", "exp", "cap_id",
     )
     for k in required:
         if k not in claims:
             raise CapabilityError(f"missing claim: {k}")
+
+    # Issuer + audience binding (H1). Cap aud must NOT equal the agent-token
+    # aud — that prevents a leaked agent-token from being verified as a cap.
+    if claims["iss"] != _expected_cap_issuer():
+        raise CapabilityError(f"cap issuer mismatch: {claims['iss']!r}")
+    if claims["aud"] != _expected_cap_audience():
+        raise CapabilityError(f"cap audience mismatch: {claims['aud']!r}")
 
     now = int(time.time())
     if claims["exp"] < now - 2:

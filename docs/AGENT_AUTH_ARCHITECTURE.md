@@ -199,6 +199,23 @@ Called by the tool / MCP server before executing. Checks:
 
 Returns `{valid, claims}` or `{valid: false, error}`.
 
+## 4a. Defense-in-depth (H1, H3, M1, M2, M3, M5)
+
+These are the runtime hardenings on top of the core scheme. Each maps
+to a specific failure mode a real adversary would exploit.
+
+| Defense                         | Env var                              | What it stops |
+|---------------------------------|--------------------------------------|----------------|
+| `iss` + `aud` claim binding     | `SHIELD_ISSUER`, `SHIELD_AGENT_AUDIENCE`, `SHIELD_CAP_AUDIENCE` | Tokens from one Shield deployment validating in another; a leaked agent-token verifying as a cap |
+| Token-issuance rate limit       | `SHIELD_RATELIMIT_TOKEN_PER_MIN` (60), `SHIELD_RATELIMIT_TOKEN_PER_DAY` (100k) | Stolen tenant API key minting unbounded tokens |
+| Cap-mint rate limit             | `SHIELD_RATELIMIT_CAP_PER_MIN` (600), `SHIELD_RATELIMIT_CAP_PER_DAY` (1M)    | One noisy/malicious agent_instance_id burning all caps |
+| Multi-worker hard-fail          | `SHIELD_ALLOW_INMEMORY_MULTIWORKER` (override) | Per-worker nonce/rate-limit state allowing replays across processes |
+| Retired-kid blocklist           | `SHIELD_RETIRED_KIDS=kid-old1,kid-old2` | Rotated keys still validating tokens after key rotation |
+| Quiet denial mode               | `SHIELD_VERBOSE_REASONS` (default off) | Attackers enumerating RBAC roles/tools via the denial API. Full reasons still in the audit log. |
+
+**Defaults are secure.** Production deployments only need to set `SHIELD_ISSUER`
+to a per-environment value (`shield-prod`, `shield-staging`) and provide Redis.
+
 ## 5. Revocation
 
 Three independent axes (`storage/revocation.py`):

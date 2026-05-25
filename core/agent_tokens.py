@@ -55,6 +55,30 @@ logger = logging.getLogger("votal.agent_tokens")
 MAX_TOKEN_TTL_SECONDS = 15 * 60   # hard cap, regardless of caller request
 DEFAULT_TOKEN_TTL_SECONDS = 10 * 60
 
+# Default audience for agent tokens. Verifier rejects mismatch.
+# Override at deploy time via env to prevent cross-environment token reuse.
+DEFAULT_AGENT_AUDIENCE = "shield-agent-tokens"
+
+
+def _expected_issuer() -> str:
+    """The issuer name verify accepts. Tokens minted here carry this value."""
+    return os.environ.get("SHIELD_ISSUER", "shield").strip() or "shield"
+
+
+def _expected_agent_audience() -> str:
+    return os.environ.get("SHIELD_AGENT_AUDIENCE", DEFAULT_AGENT_AUDIENCE).strip() or DEFAULT_AGENT_AUDIENCE
+
+
+def _retired_kids() -> set[str]:
+    """Comma-separated list of kids that must never verify again.
+
+    Set SHIELD_RETIRED_KIDS=old1,old2 to block tokens signed with rotated keys.
+    """
+    raw = os.environ.get("SHIELD_RETIRED_KIDS", "").strip()
+    if not raw:
+        return set()
+    return {k.strip() for k in raw.split(",") if k.strip()}
+
 
 class TokenError(Exception):
     """Raised when a token fails verification for any reason."""
@@ -141,6 +165,8 @@ def mint_agent_token(
     signer = signer or get_signer()
     now = int(time.time())
     claims = {
+        "iss": _expected_issuer(),
+        "aud": _expected_agent_audience(),
         "user_sub": user_sub,
         "agent_id": agent_id,
         "agent_instance_id": agent_instance_id,
@@ -188,6 +214,11 @@ def verify_agent_token(token: str) -> IdentityTuple:
         raise TokenError(f"undecodable token: {e}") from e
 
     kid = claims.get("kid", "env")
+    # Reject retired kids before doing any work with them (H1/M2). A rotated
+    # key whose kid is in SHIELD_RETIRED_KIDS must never verify again, even
+    # if the signer is still cached in process memory.
+    if kid in _retired_kids():
+        raise TokenError(f"kid retired: {kid}")
     signer = get_signer(kid)
     try:
         signer.verify(payload, sig)
@@ -196,12 +227,20 @@ def verify_agent_token(token: str) -> IdentityTuple:
 
     # Required claims
     required = (
-        "user_sub", "agent_id", "agent_instance_id", "tenant_id",
+        "iss", "aud", "user_sub", "agent_id", "agent_instance_id", "tenant_id",
         "build_hash", "model_version", "session_id", "iat", "exp", "jti",
     )
     for k in required:
         if k not in claims:
             raise TokenError(f"missing claim: {k}")
+
+    # Issuer + audience binding (H1). Prevents tokens from one Shield
+    # deployment validating in another and tokens minted for the agent-token
+    # signer from being mistaken for caps (and vice versa).
+    if claims["iss"] != _expected_issuer():
+        raise TokenError(f"issuer mismatch: {claims['iss']!r}")
+    if claims["aud"] != _expected_agent_audience():
+        raise TokenError(f"audience mismatch: {claims['aud']!r}")
 
     # Expiry (allow 5s clock skew)
     now = int(time.time())

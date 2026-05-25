@@ -173,6 +173,45 @@ class TestClearance:
             assert claims.clearance_max == lvl
 
 
+class TestAudienceIssuerBinding:
+    """H1: caps carry iss + aud, distinct from agent-token aud."""
+
+    def test_default_cap_aud_is_distinct_from_agent_aud(self, identity):
+        import json as _j, base64 as _b
+        cap = mint_cap(identity=identity, tool="t", resource="r")
+        payload_b64 = cap.split(".", 1)[0]
+        pad = "=" * (-len(payload_b64) % 4)
+        claims = _j.loads(_b.urlsafe_b64decode(payload_b64 + pad))
+        assert claims["aud"] == "shield-capabilities"
+        # Must differ from the agent-token default aud, otherwise H1 is moot
+        from core.agent_tokens import DEFAULT_AGENT_AUDIENCE
+        assert claims["aud"] != DEFAULT_AGENT_AUDIENCE
+
+    def test_cap_audience_mismatch_rejected(self, identity, monkeypatch):
+        monkeypatch.setenv("SHIELD_CAP_AUDIENCE", "aud-A")
+        cap = mint_cap(identity=identity, tool="t", resource="r")
+        monkeypatch.setenv("SHIELD_CAP_AUDIENCE", "aud-B")
+        with pytest.raises(CapabilityError, match="cap audience mismatch"):
+            verify_cap(cap, expected_tool="t")
+
+    def test_cap_issuer_mismatch_rejected(self, identity, monkeypatch):
+        monkeypatch.setenv("SHIELD_ISSUER", "shield-staging")
+        cap = mint_cap(identity=identity, tool="t", resource="r")
+        monkeypatch.setenv("SHIELD_ISSUER", "shield-prod")
+        with pytest.raises(CapabilityError, match="cap issuer mismatch"):
+            verify_cap(cap, expected_tool="t")
+
+
+class TestCapRetiredKids:
+    """M2 for caps: cap signing kids in SHIELD_RETIRED_KIDS must not verify."""
+
+    def test_retired_cap_kid_rejected(self, identity, monkeypatch):
+        cap = mint_cap(identity=identity, tool="t", resource="r")
+        monkeypatch.setenv("SHIELD_RETIRED_KIDS", "cap-env,other")
+        with pytest.raises(CapabilityError, match="cap kid retired: cap-env"):
+            verify_cap(cap, expected_tool="t")
+
+
 class TestMissingFields:
     def test_tool_required(self, identity):
         with pytest.raises(CapabilityError):

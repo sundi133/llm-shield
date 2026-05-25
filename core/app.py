@@ -130,6 +130,15 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def startup_event():
+        # M1: refuse to start with >1 worker and no shared Redis store —
+        # nonces/rate-limits/revocation would be per-worker, breaking
+        # security guarantees. Override with SHIELD_ALLOW_INMEMORY_MULTIWORKER=1.
+        try:
+            from core.agent_auth_safety import verify_storage_is_multiworker_safe
+            verify_storage_is_multiworker_safe()
+        except Exception as e:
+            # Re-raise to actually refuse the boot.
+            raise
         # Audit logging now uses Redis — no init needed
         # Initialize telemetry (ES, Splunk, OTLP, file)
         import asyncio

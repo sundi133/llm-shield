@@ -370,3 +370,163 @@ class TestTenantTokenIssuance:
         )
         totals = stats.get_counters("acme")["totals"]
         assert totals[stats.EVENT_TOKEN_ISSUED] == 1
+
+
+class TestRateLimiting:
+    """H3 + M5 wired into the routes."""
+
+    def test_token_issuance_rate_limited(self, client, monkeypatch):
+        from core import agent_auth_safety
+        monkeypatch.setattr(agent_auth_safety, "_DEFAULT_ISSUE_PER_MIN", 2)
+        # Clean rate-limiter state
+        from storage import rate_limiter
+        rate_limiter._memory_minute.clear()
+
+        body = {
+            "user_sub": "a", "agent_id": "b", "agent_instance_id": "i",
+            "build_hash": "x", "model_version": "m", "session_id": "s",
+        }
+        for _ in range(2):
+            r = client.post(
+                "/v1/tenant/me/agent-auth/agent-token",
+                headers={"X-API-Key": "acme"}, json=body,
+            )
+            assert r.status_code == 200
+        r = client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            headers={"X-API-Key": "acme"}, json=body,
+        )
+        assert r.status_code == 429
+
+    def test_cap_mint_rate_limited(self, client, monkeypatch):
+        from core import agent_auth_safety
+        monkeypatch.setattr(agent_auth_safety, "_DEFAULT_MINT_PER_MIN", 2)
+        from storage import rate_limiter
+        rate_limiter._memory_minute.clear()
+
+        token = client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            headers={"X-API-Key": "acme"},
+            json={
+                "user_sub": "a", "agent_id": "b", "agent_instance_id": "noisy-pod",
+                "build_hash": "x", "model_version": "m", "session_id": "s",
+            },
+        ).json()["agent_token"]
+
+        for _ in range(2):
+            r = client.post(
+                "/v1/shield/cap/mint",
+                headers={"X-Agent-Token": token},
+                json={"tool": "t", "resource": "r"},
+            )
+            assert r.status_code == 200
+        r = client.post(
+            "/v1/shield/cap/mint",
+            headers={"X-Agent-Token": token},
+            json={"tool": "t", "resource": "r"},
+        )
+        assert r.status_code == 429
+
+
+class TestQuietDenial:
+    """M3: AuthZ denial body must not leak roles/tools by default."""
+
+    def test_default_response_hides_reasons(self, client, monkeypatch):
+        # Configure RBAC so the mint is denied
+        from config.schema import RBACRole
+        from core.rbac import enforcer
+        role = RBACRole(
+            name="reader", allowed_tools=["lookup"], denied_tools=["send_email"],
+            allowed_data_scopes=[], denied_data_scopes=[],
+            data_clearance="internal",
+        )
+        monkeypatch.setattr(enforcer, "_roles", {"reader": role})
+        monkeypatch.setattr(enforcer, "_agents", {"billing-bot": "reader"})
+        monkeypatch.delenv("SHIELD_VERBOSE_REASONS", raising=False)
+
+        token = client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            headers={"X-API-Key": "acme"},
+            json={
+                "user_sub": "a", "agent_id": "billing-bot", "agent_instance_id": "i",
+                "build_hash": "x", "model_version": "m", "session_id": "s",
+            },
+        ).json()["agent_token"]
+
+        r = client.post(
+            "/v1/shield/cap/mint",
+            headers={"X-Agent-Token": token},
+            json={"tool": "send_email", "resource": "alice/inbox"},
+        )
+        assert r.status_code == 403
+        body = r.json()["detail"]
+        assert body["error"] == "authz_denied"
+        assert "request_id" in body
+        # Reasons must NOT be in the response body (they're in the audit log)
+        assert "reasons" not in body
+
+    def test_verbose_mode_includes_reasons(self, client, monkeypatch):
+        from config.schema import RBACRole
+        from core.rbac import enforcer
+        role = RBACRole(
+            name="reader", allowed_tools=["lookup"], denied_tools=["send_email"],
+            allowed_data_scopes=[], denied_data_scopes=[],
+            data_clearance="internal",
+        )
+        monkeypatch.setattr(enforcer, "_roles", {"reader": role})
+        monkeypatch.setattr(enforcer, "_agents", {"billing-bot": "reader"})
+        monkeypatch.setenv("SHIELD_VERBOSE_REASONS", "1")
+
+        token = client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            headers={"X-API-Key": "acme"},
+            json={
+                "user_sub": "a", "agent_id": "billing-bot", "agent_instance_id": "i",
+                "build_hash": "x", "model_version": "m", "session_id": "s",
+            },
+        ).json()["agent_token"]
+
+        r = client.post(
+            "/v1/shield/cap/mint",
+            headers={"X-Agent-Token": token},
+            json={"tool": "send_email", "resource": "alice/inbox"},
+        )
+        assert r.status_code == 403
+        body = r.json()["detail"]
+        assert any("send_email" in reason or "not permitted" in reason
+                   for reason in body["reasons"])
+
+    def test_audit_log_always_has_full_reasons(self, client, monkeypatch):
+        """Even in quiet mode, the full reasons land in the recent events
+        ring buffer so operators can debug."""
+        from config.schema import RBACRole
+        from core.rbac import enforcer
+        role = RBACRole(
+            name="reader", allowed_tools=[], denied_tools=["send_email"],
+            allowed_data_scopes=[], denied_data_scopes=[],
+            data_clearance="internal",
+        )
+        monkeypatch.setattr(enforcer, "_roles", {"reader": role})
+        monkeypatch.setattr(enforcer, "_agents", {"billing-bot": "reader"})
+        monkeypatch.delenv("SHIELD_VERBOSE_REASONS", raising=False)
+
+        token = client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            headers={"X-API-Key": "acme"},
+            json={
+                "user_sub": "a", "agent_id": "billing-bot", "agent_instance_id": "i",
+                "build_hash": "x", "model_version": "m", "session_id": "s",
+            },
+        ).json()["agent_token"]
+
+        client.post(
+            "/v1/shield/cap/mint",
+            headers={"X-Agent-Token": token},
+            json={"tool": "send_email", "resource": "x"},
+        )
+        # Quiet response, but the recent buffer still has the full reason
+        denial = next(
+            e for e in stats.get_recent("acme")
+            if e["event"] == stats.EVENT_CAP_DENIED
+        )
+        assert "not permitted" in denial["reason"]

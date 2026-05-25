@@ -42,6 +42,7 @@ COPY core/signers.py core/
 COPY core/agent_tokens.py core/
 COPY core/capabilities.py core/
 COPY core/agent_identity_middleware.py core/
+COPY core/agent_auth_safety.py core/
 COPY api/__init__.py api/
 COPY api/routes_tenant.py api/
 COPY api/routes_tenant_self.py api/

@@ -214,6 +214,32 @@ class TestRBACDecision:
         assert r.status_code == 403
         body = r.json()["detail"]
         assert body["error"] == "authz_denied"
+        # M3: quiet mode is the default — reasons are NOT in the response
+        # body (they go to the audit log). A request_id is always returned.
+        assert "reasons" not in body
+        assert body.get("request_id")
+
+    def test_authz_denial_with_verbose_mode_includes_reasons(self, client, monkeypatch):
+        """With SHIELD_VERBOSE_REASONS=1, denial reasons appear in the body."""
+        from config.schema import RBACRole
+        from core.rbac import enforcer
+        role = RBACRole(
+            name="reader", allowed_tools=["db_query"], denied_tools=["send_email"],
+            allowed_data_scopes=[], denied_data_scopes=[],
+            data_clearance="internal",
+        )
+        monkeypatch.setattr(enforcer, "_roles", {"reader": role})
+        monkeypatch.setattr(enforcer, "_agents", {"billing-bot": "reader"})
+        monkeypatch.setenv("SHIELD_VERBOSE_REASONS", "1")
+
+        token = _mint(client)
+        r = client.post(
+            "/v1/shield/cap/mint",
+            headers={"X-Agent-Token": token},
+            json={"tool": "send_email", "resource": "user/1/inbox"},
+        )
+        assert r.status_code == 403
+        body = r.json()["detail"]
         assert any("send_email" in reason for reason in body["reasons"])
 
     def test_authz_blocks_clearance_escalation(self, client, monkeypatch):
@@ -229,6 +255,9 @@ class TestRBACDecision:
         )
         monkeypatch.setattr(enforcer, "_roles", {"reader": role})
         monkeypatch.setattr(enforcer, "_agents", {"billing-bot": "reader"})
+        # Use verbose mode so we can assert on the actual policy reason; the
+        # quiet-mode default is already covered above.
+        monkeypatch.setenv("SHIELD_VERBOSE_REASONS", "1")
 
         token = _mint(client)
         r = client.post(

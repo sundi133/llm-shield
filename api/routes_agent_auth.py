@@ -31,6 +31,12 @@ from core.capabilities import (
     mint_cap,
     verify_cap,
 )
+from core.agent_auth_safety import (
+    public_denial_payload,
+    rate_limit_cap_mint,
+    rate_limit_token_issuance,
+    verbose_reasons_enabled,
+)
 from core.identity import IdentityTuple, get_identity_from_request
 from core.rbac import enforcer as rbac_enforcer
 from storage.agent_auth_stats import (
@@ -174,8 +180,18 @@ async def mint_capability(
     Requires a valid X-Agent-Token (verified by AgentIdentityMiddleware).
     Runs the AuthZ checks here in-process and returns the cap on success.
     """
+    # M5: per-instance rate limit on cap minting. Keyed by instance + tenant
+    # so a noisy pod can't burn the tenant-wide budget.
+    allowed, err = rate_limit_cap_mint(identity.agent_instance_id, identity.tenant_id)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=err or "rate limit exceeded")
+
     decision = _decide_authz(identity, body)
     if not decision["allowed"]:
+        # Full reasons go to the audit log so operators can debug; the
+        # response body only includes reasons when SHIELD_VERBOSE_REASONS=1
+        # is set. This prevents an attacker from enumerating tools/roles
+        # via the public API (M3).
         record_event(
             tenant_id=identity.tenant_id, event=EVENT_CAP_DENIED,
             agent_id=identity.agent_id, user_sub=identity.user_sub,
@@ -184,7 +200,7 @@ async def mint_capability(
         )
         raise HTTPException(
             status_code=403,
-            detail={"error": "authz_denied", "reasons": decision["reasons"]},
+            detail=public_denial_payload(decision["reasons"]),
         )
 
     try:
@@ -204,10 +220,20 @@ async def mint_capability(
         agent_id=identity.agent_id, user_sub=identity.user_sub,
         tool=body.tool, resource=body.resource,
     )
+    # In quiet mode return only what the caller needs to use the cap;
+    # the full decision (role, reasons, etc.) goes to the audit log.
+    if verbose_reasons_enabled():
+        public_decision = decision
+    else:
+        public_decision = {
+            "allowed": True,
+            "tool": decision["tool"],
+            "resource": decision["resource"],
+        }
     return CapMintResponse(
         cap_token=cap,
         expires_in=body.ttl_seconds,
-        decision=decision,
+        decision=public_decision,
     )
 
 
@@ -413,8 +439,12 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
 
     Auth: tenant API key via X-API-Key. The tenant_id is taken from the
     resolved API key — clients cannot specify a different tenant.
+    Rate limited per-tenant (H3) to slow down compromised-key abuse.
     """
     tenant_id = _require_tenant(request)
+    allowed, err = rate_limit_token_issuance(tenant_id)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=err or "rate limit exceeded")
     try:
         token = mint_agent_token(
             user_sub=body.user_sub,

@@ -194,6 +194,69 @@ class TestBuildAllowlist:
         assert identity.build_hash == "sha256:good1"
 
 
+class TestAudienceIssuerBinding:
+    """H1: tokens must carry iss + aud and reject mismatch."""
+
+    def test_default_iss_and_aud_are_present(self):
+        token = mint_agent_token(**VALID_CLAIMS)
+        claims = decode_claims_unverified(token)
+        assert claims["iss"] == "shield"
+        assert claims["aud"] == "shield-agent-tokens"
+
+    def test_issuer_mismatch_rejected(self, monkeypatch):
+        # Mint with one issuer, verify with another
+        monkeypatch.setenv("SHIELD_ISSUER", "shield-staging")
+        reset_signer_cache_for_tests()
+        token = mint_agent_token(**VALID_CLAIMS)
+        # Now the verifier expects prod issuer:
+        monkeypatch.setenv("SHIELD_ISSUER", "shield-prod")
+        with pytest.raises(TokenError, match="issuer mismatch"):
+            verify_agent_token(token)
+
+    def test_audience_mismatch_rejected(self, monkeypatch):
+        monkeypatch.setenv("SHIELD_AGENT_AUDIENCE", "aud-A")
+        reset_signer_cache_for_tests()
+        token = mint_agent_token(**VALID_CLAIMS)
+        monkeypatch.setenv("SHIELD_AGENT_AUDIENCE", "aud-B")
+        with pytest.raises(TokenError, match="audience mismatch"):
+            verify_agent_token(token)
+
+    def test_missing_iss_or_aud_rejected(self):
+        # Build a token manually without iss/aud, signed with the right key.
+        import base64 as _b, json as _j
+        from core.agent_tokens import get_signer, _b64url_encode
+        signer = get_signer()
+        claims = {
+            "user_sub": "u", "agent_id": "a", "agent_instance_id": "i",
+            "tenant_id": "t", "build_hash": "b", "model_version": "m",
+            "session_id": "s", "iat": 1700000000, "exp": 9999999999,
+            "jti": "x", "kid": signer.kid,
+        }
+        payload = _j.dumps(claims, separators=(",", ":"), sort_keys=True).encode()
+        sig = signer.sign(payload)
+        token = f"{_b64url_encode(payload)}.{_b64url_encode(sig)}"
+        with pytest.raises(TokenError, match="missing claim: iss"):
+            verify_agent_token(token)
+
+
+class TestRetiredKids:
+    """M2: kids in SHIELD_RETIRED_KIDS must never verify again."""
+
+    def test_retired_kid_rejected(self, monkeypatch):
+        # Mint with kid=env (default), then retire it.
+        token = mint_agent_token(**VALID_CLAIMS)
+        monkeypatch.setenv("SHIELD_RETIRED_KIDS", "env,other-old-kid")
+        with pytest.raises(TokenError, match="kid retired: env"):
+            verify_agent_token(token)
+
+    def test_unretired_kid_still_works(self, monkeypatch):
+        token = mint_agent_token(**VALID_CLAIMS)
+        # Set a retire list that does NOT include 'env'
+        monkeypatch.setenv("SHIELD_RETIRED_KIDS", "old-1,old-2")
+        identity = verify_agent_token(token)
+        assert identity.user_sub == "user-42"
+
+
 class TestKeyFromEnv:
     def test_uses_env_key_when_present(self, monkeypatch):
         # Generate a deterministic key

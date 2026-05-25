@@ -1716,6 +1716,18 @@ def create_admin_app() -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+    # M1: refuse multi-worker boot without shared Redis (nonces/rate-limits
+    # would be per-worker, breaking security). Override with env if needed.
+    @app.on_event("startup")
+    async def _agent_auth_safety_check():
+        try:
+            from core.agent_auth_safety import verify_storage_is_multiworker_safe
+            verify_storage_is_multiworker_safe()
+        except ImportError:
+            # New module unavailable (e.g. cryptography missing); admin
+            # still boots, agent-auth tab will degrade.
+            pass
+
     return app
 
 

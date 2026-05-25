@@ -194,9 +194,10 @@ class TestCustomerAuthBoundaries:
 
 
 class TestCustomerErrorSurface:
-    def test_authz_denial_is_friendly(self, sdk, monkeypatch):
-        """RBAC denial → SDK raises ShieldError with the reasons readable
-        in the message, so the agent can show them to the LLM/user."""
+    def test_authz_denial_default_is_quiet(self, sdk, monkeypatch):
+        """M3: in default (quiet) mode the SDK surfaces a 403 with a
+        request_id, but no role/tool enumeration. The full reason is in
+        the audit log on the Shield side."""
         from config.schema import RBACRole
         from core.rbac import enforcer
         role = RBACRole(
@@ -206,6 +207,7 @@ class TestCustomerErrorSurface:
         )
         monkeypatch.setattr(enforcer, "_roles", {"reader": role})
         monkeypatch.setattr(enforcer, "_agents", {"billing-bot": "reader"})
+        monkeypatch.delenv("SHIELD_VERBOSE_REASONS", raising=False)
 
         token = sdk.mint_agent_token(
             user_sub="a", agent_id="billing-bot", agent_instance_id="i",
@@ -215,4 +217,32 @@ class TestCustomerErrorSurface:
             sdk.mint_cap(token, tool="send_email", resource="r")
         msg = str(ei.value)
         assert "403" in msg
+        assert "authz_denied" in msg
+        assert "request_id" in msg
+        # Critical: the role name and tool list must NOT leak by default.
+        assert "send_email" not in msg
+        assert "reader" not in msg
+        assert "not permitted" not in msg
+
+    def test_authz_denial_verbose_mode_includes_reasons(self, sdk, monkeypatch):
+        """When SHIELD_VERBOSE_REASONS=1 the reasons come back so an LLM
+        can re-prompt or apologize sensibly."""
+        from config.schema import RBACRole
+        from core.rbac import enforcer
+        role = RBACRole(
+            name="reader", allowed_tools=["lookup"], denied_tools=["send_email"],
+            allowed_data_scopes=[], denied_data_scopes=[],
+            data_clearance="internal",
+        )
+        monkeypatch.setattr(enforcer, "_roles", {"reader": role})
+        monkeypatch.setattr(enforcer, "_agents", {"billing-bot": "reader"})
+        monkeypatch.setenv("SHIELD_VERBOSE_REASONS", "1")
+
+        token = sdk.mint_agent_token(
+            user_sub="a", agent_id="billing-bot", agent_instance_id="i",
+            build_hash="b", model_version="m", session_id="s",
+        )
+        with pytest.raises(ShieldError) as ei:
+            sdk.mint_cap(token, tool="send_email", resource="r")
+        msg = str(ei.value)
         assert "send_email" in msg or "not permitted" in msg
