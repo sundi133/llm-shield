@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from config.schema import load_config
 from core.auth import AuthMiddleware
 from core.middleware import ShieldMiddleware
+from core.agent_identity_middleware import AgentIdentityMiddleware
 from core.telemetry_middleware import TelemetryMiddleware
 from api.routes_health import router as health_router
 from api.routes_classify import router as classify_router
@@ -35,6 +36,7 @@ from api.routes_killswitch import router as killswitch_router
 from api.routes_decisions import router as decisions_router
 from api.routes_webhooks import router as webhooks_router
 from api.routes_agent_identity import router as agent_identity_router
+from api.routes_agent_auth import router as agent_auth_router
 from api.routes_mcp_server import router as mcp_server_router
 from storage.audit_log import audit_logger
 
@@ -60,6 +62,7 @@ def create_app() -> FastAPI:
     # so Auth is added last but runs first.
     app.add_middleware(TelemetryMiddleware)  # runs last (captures response)
     app.add_middleware(ShieldMiddleware)
+    app.add_middleware(AgentIdentityMiddleware)  # populates request.state.identity from X-Agent-Token
     app.add_middleware(AuthMiddleware)       # runs first
 
     # Include routers
@@ -90,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(decisions_router)
     app.include_router(webhooks_router)
     app.include_router(agent_identity_router)
+    app.include_router(agent_auth_router)
     app.include_router(mcp_server_router)
 
     # Include SaaS routes only if available
