@@ -45,6 +45,12 @@ COPY core/agent_tokens.py core/
 COPY core/capabilities.py core/
 COPY core/agent_identity_middleware.py core/
 COPY core/agent_auth_safety.py core/
+COPY core/jwt_utils.py core/
+COPY core/mtls_middleware.py core/
+# OAuth / OIDC / SPIFFE modules
+COPY core/oauth/ core/oauth/
+# A2A protocol
+COPY core/a2a/ core/a2a/
 COPY api/__init__.py api/
 COPY api/routes_tenant.py api/
 COPY api/routes_tenant_self.py api/
@@ -58,6 +64,10 @@ COPY api/routes_decisions.py api/
 COPY api/routes_webhooks.py api/
 COPY api/routes_agent_identity.py api/
 COPY api/routes_agent_auth.py api/
+COPY api/routes_oauth.py api/
+COPY api/routes_oauth_registration.py api/
+COPY api/routes_oidc_admin.py api/
+COPY api/routes_a2a.py api/
 COPY storage/__init__.py storage/
 COPY storage/tenant_store.py storage/
 COPY storage/tenant_models.py storage/
@@ -72,6 +82,7 @@ COPY storage/tool_killswitch.py storage/
 COPY storage/webhook_store.py storage/
 COPY storage/revocation.py storage/
 COPY storage/agent_auth_stats.py storage/
+COPY storage/oauth_store.py storage/
 COPY guardrails/__init__.py guardrails/
 COPY guardrails/base.py guardrails/
 COPY guardrails/agentic/__init__.py guardrails/agentic/

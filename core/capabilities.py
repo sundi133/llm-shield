@@ -4,6 +4,10 @@ A capability token is a signed, single-use, short-lived grant for ONE
 specific action. The gateway mints it AFTER the guardrail pipeline
 approves an action; the tool/MCP server verifies it before executing.
 
+Token format: Standard JWT (RFC 7519) with EdDSA (Ed25519) signatures.
+Legacy two-segment format is accepted during verification for backward
+compatibility.
+
 Why a separate signer from agent tokens
 ---------------------------------------
 Tool servers only need the cap public key — they never need the agent-
@@ -19,6 +23,7 @@ nonce on first use (Redis or fallback). Replays fail.
 
 Claims
 ------
+    iss, aud                               — issuer/audience binding
     user_sub, agent_id, agent_instance_id  — bound identity from AuthN
     tool                                   — exact tool name
     resource                               — exact target (e.g. user/42/inbox)
@@ -42,6 +47,7 @@ from typing import List, Optional
 from cryptography.exceptions import InvalidSignature
 
 from core.identity import IdentityTuple
+from core.jwt_utils import JWTError, encode_jwt, decode_jwt, decode_jwt_unverified, is_jwt_format
 from core.signers import Signer, SignerError, build_signer
 
 logger = logging.getLogger("votal.capabilities")
@@ -233,9 +239,10 @@ def mint_cap(
         "parent_cap_id": parent_cap_id,
         "kid": signer.kid,
     }
-    payload = json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    sig = signer.sign(payload)
-    return f"{_b64url_encode(payload)}.{_b64url_encode(sig)}"
+    try:
+        return encode_jwt(claims, signer)
+    except JWTError as e:
+        raise CapabilityError(f"failed to mint cap JWT: {e}") from e
 
 
 def verify_cap(
@@ -252,23 +259,44 @@ def verify_cap(
     """
     if not token or "." not in token:
         raise CapabilityError("malformed cap token")
+
+    # Extract kid from unverified claims first for retired-kid check
     try:
-        payload_b64, sig_b64 = token.split(".", 1)
-        payload = _b64url_decode(payload_b64)
-        sig = _b64url_decode(sig_b64)
-        claims = json.loads(payload.decode("utf-8"))
+        unverified = decode_jwt_unverified(token)
     except Exception as e:
         raise CapabilityError(f"undecodable cap token: {e}") from e
 
-    kid = claims.get("kid", "cap-env")
+    kid = unverified.get("kid", "cap-env")
     # Reject retired cap-signing kids (H1/M2).
     if kid in _cap_retired_kids():
         raise CapabilityError(f"cap kid retired: {kid}")
+
     signer = get_cap_signer(kid)
-    try:
-        signer.verify(payload, sig)
-    except InvalidSignature as e:
-        raise CapabilityError("invalid cap signature") from e
+
+    if is_jwt_format(token):
+        # Standard JWT (3-segment) verification
+        try:
+            claims = decode_jwt(token, signer, clock_skew_seconds=2)
+        except JWTError as e:
+            raise CapabilityError(str(e)) from e
+    else:
+        # Legacy 2-segment format
+        try:
+            payload_b64, sig_b64 = token.split(".", 1)
+            payload = _b64url_decode(payload_b64)
+            sig = _b64url_decode(sig_b64)
+            claims = json.loads(payload.decode("utf-8"))
+        except Exception as e:
+            raise CapabilityError(f"undecodable cap token: {e}") from e
+
+        try:
+            signer.verify(payload, sig)
+        except InvalidSignature as e:
+            raise CapabilityError("invalid cap signature") from e
+
+        now = int(time.time())
+        if "exp" in claims and claims["exp"] < now - 2:
+            raise CapabilityError("cap expired")
 
     required = (
         "iss", "aud", "user_sub", "agent_id", "agent_instance_id", "tool", "resource",
@@ -286,9 +314,6 @@ def verify_cap(
         raise CapabilityError(f"cap audience mismatch: {claims['aud']!r}")
 
     now = int(time.time())
-    if claims["exp"] < now - 2:
-        raise CapabilityError("cap expired")
-
     if claims["tool"] != expected_tool:
         raise CapabilityError(
             f"cap tool mismatch: token={claims['tool']!r} expected={expected_tool!r}"

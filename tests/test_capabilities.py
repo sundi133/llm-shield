@@ -131,21 +131,25 @@ class TestNonceOneShot:
 class TestSignature:
     def test_tampered_payload_rejected(self, identity):
         cap = mint_cap(identity=identity, tool="t", resource="r")
-        payload, sig = cap.split(".", 1)
+        parts = cap.split(".")
+        # Flip a char in the payload segment (middle part)
+        payload = parts[1]
         mid = len(payload) // 2
         flip = "X" if payload[mid] != "X" else "Y"
         bad_payload = payload[:mid] + flip + payload[mid + 1:]
         with pytest.raises(CapabilityError):
-            verify_cap(f"{bad_payload}.{sig}", expected_tool="t")
+            verify_cap(f"{parts[0]}.{bad_payload}.{parts[2]}", expected_tool="t")
 
     def test_tampered_signature_rejected(self, identity):
         cap = mint_cap(identity=identity, tool="t", resource="r")
-        payload, sig = cap.split(".", 1)
+        parts = cap.split(".")
+        # Flip a char in the signature segment (last part)
+        sig = parts[2]
         mid = len(sig) // 2
         flip = "X" if sig[mid] != "X" else "Y"
         bad_sig = sig[:mid] + flip + sig[mid + 1:]
         with pytest.raises(CapabilityError, match="invalid"):
-            verify_cap(f"{payload}.{bad_sig}", expected_tool="t")
+            verify_cap(f"{parts[0]}.{parts[1]}.{bad_sig}", expected_tool="t")
 
 
 class TestRevocation:
@@ -177,14 +181,11 @@ class TestAudienceIssuerBinding:
     """H1: caps carry iss + aud, distinct from agent-token aud."""
 
     def test_default_cap_aud_is_distinct_from_agent_aud(self, identity):
-        import json as _j, base64 as _b
+        from core.agent_tokens import DEFAULT_AGENT_AUDIENCE, decode_claims_unverified
         cap = mint_cap(identity=identity, tool="t", resource="r")
-        payload_b64 = cap.split(".", 1)[0]
-        pad = "=" * (-len(payload_b64) % 4)
-        claims = _j.loads(_b.urlsafe_b64decode(payload_b64 + pad))
+        claims = decode_claims_unverified(cap)
         assert claims["aud"] == "shield-capabilities"
         # Must differ from the agent-token default aud, otherwise H1 is moot
-        from core.agent_tokens import DEFAULT_AGENT_AUDIENCE
         assert claims["aud"] != DEFAULT_AGENT_AUDIENCE
 
     def test_cap_audience_mismatch_rejected(self, identity, monkeypatch):

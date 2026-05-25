@@ -69,9 +69,9 @@ class TestMintAndVerify:
 
     def test_decode_unverified_does_not_check_sig(self):
         token = mint_agent_token(**VALID_CLAIMS)
-        # Corrupt the signature half but keep payload intact
-        payload, _ = token.split(".", 1)
-        bogus = payload + ".AAAA"
+        # Corrupt the signature segment but keep header.payload intact
+        parts = token.split(".")
+        bogus = f"{parts[0]}.{parts[1]}.AAAA"
         claims = decode_claims_unverified(bogus)
         assert claims["user_sub"] == "user-42"
 

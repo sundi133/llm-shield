@@ -8,3 +8,4 @@ upstash-redis
 httpx
 aiosqlite
 cryptography>=42
+PyJWT[crypto]>=2.8

@@ -30,6 +30,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 logger = logging.getLogger("votal.signers")
 
@@ -52,6 +53,8 @@ class Signer(Protocol):
     def sign(self, payload: bytes) -> bytes: ...
 
     def verify(self, payload: bytes, signature: bytes) -> None: ...
+
+    def public_key_bytes(self) -> bytes: ...
 
 
 # ── Local in-process signer (default, on-prem ready) ─────────────────────
@@ -102,6 +105,9 @@ class LocalEd25519Signer:
     def verify(self, payload: bytes, signature: bytes) -> None:
         # InvalidSignature propagates — callers convert to their domain error.
         self._pk.verify(signature, payload)
+
+    def public_key_bytes(self) -> bytes:
+        return self._pk.public_bytes(Encoding.Raw, PublicFormat.Raw)
 
 
 # ── PKCS#11 HSM stub ─────────────────────────────────────────────────────
@@ -170,6 +176,9 @@ class PKCS11Signer:
         # Verify is local — uses the public key loaded from disk.
         self._pk.verify(signature, payload)
 
+    def public_key_bytes(self) -> bytes:
+        return self._pk.public_bytes(Encoding.Raw, PublicFormat.Raw)
+
 
 # ── HashiCorp Vault Transit stub ─────────────────────────────────────────
 
@@ -237,6 +246,9 @@ class VaultTransitSigner:
 
     def verify(self, payload: bytes, signature: bytes) -> None:
         self._pk.verify(signature, payload)
+
+    def public_key_bytes(self) -> bytes:
+        return self._pk.public_bytes(Encoding.Raw, PublicFormat.Raw)
 
 
 # ── Backend dispatcher ───────────────────────────────────────────────────

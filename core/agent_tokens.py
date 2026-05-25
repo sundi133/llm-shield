@@ -5,11 +5,18 @@ is the job of capability tokens (core/capabilities.py).
 
 Token format
 ------------
-A compact, self-contained, Ed25519-signed envelope:
+Standard JWT (RFC 7519) with EdDSA (Ed25519) signatures:
 
-    <base64url(claims_json)>.<base64url(signature)>
+    <base64url(header)>.<base64url(payload)>.<base64url(signature)>
+
+The header carries {"alg": "EdDSA", "typ": "JWT", "kid": "<key-id>"}.
+Tokens are verifiable by any standards-compliant JWT library.
+
+Legacy two-segment format (base64url(claims).base64url(sig)) is still
+accepted during verification for backward compatibility.
 
 Claims:
+    iss, aud            issuer/audience binding
     user_sub            who the human is (OIDC sub)
     agent_id            logical agent identity ("billing-bot")
     agent_instance_id   specific running process (unique per boot)
@@ -26,6 +33,7 @@ Why this design:
   * Asymmetric Ed25519 means tool servers and downstream verifiers can be
     given the public key without ever holding the signing key — defeats
     forging by a compromised tool.
+  * Standard JWT format means any OAuth/OIDC library can verify tokens.
   * The token is small enough to put in an HTTP header.
   * ≤15 minute lifetime caps the window of a stolen token.
   * agent_instance_id + jti enable two independent revocation axes
@@ -48,6 +56,7 @@ from typing import Optional
 from cryptography.exceptions import InvalidSignature
 
 from core.identity import IdentityTuple
+from core.jwt_utils import JWTError, encode_jwt, decode_jwt, decode_jwt_unverified, is_jwt_format
 from core.signers import Signer, SignerError, build_signer
 
 logger = logging.getLogger("votal.agent_tokens")
@@ -154,7 +163,7 @@ def mint_agent_token(
     ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
     signer: Optional[AgentTokenSigner] = None,
 ) -> str:
-    """Mint a signed agent token. Raises TokenError on misconfiguration."""
+    """Mint a signed agent token as a standard JWT. Raises TokenError on misconfiguration."""
     if ttl_seconds <= 0 or ttl_seconds > MAX_TOKEN_TTL_SECONDS:
         raise TokenError(
             f"ttl_seconds must be in (0, {MAX_TOKEN_TTL_SECONDS}]; got {ttl_seconds}"
@@ -180,9 +189,10 @@ def mint_agent_token(
         "jti": uuid.uuid4().hex,
         "kid": signer.kid,
     }
-    payload = json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    sig = signer.sign(payload)
-    return f"{_b64url_encode(payload)}.{_b64url_encode(sig)}"
+    try:
+        return encode_jwt(claims, signer)
+    except JWTError as e:
+        raise TokenError(f"failed to mint JWT: {e}") from e
 
 
 def _allowed_builds() -> Optional[set[str]]:
@@ -200,30 +210,51 @@ def _allowed_builds() -> Optional[set[str]]:
 def verify_agent_token(token: str) -> IdentityTuple:
     """Verify a token and return the IdentityTuple it carries.
 
+    Accepts both standard JWT (3-segment) and legacy (2-segment) formats.
     Checks: signature, exp, required claims, build_hash allowlist,
     instance/jti revocation. Raises TokenError on any failure.
     """
     if not token or "." not in token:
         raise TokenError("malformed token")
+
+    # Extract kid from unverified claims first for retired-kid check
     try:
-        payload_b64, sig_b64 = token.split(".", 1)
-        payload = _b64url_decode(payload_b64)
-        sig = _b64url_decode(sig_b64)
-        claims = json.loads(payload.decode("utf-8"))
+        unverified = decode_jwt_unverified(token)
     except Exception as e:
         raise TokenError(f"undecodable token: {e}") from e
 
-    kid = claims.get("kid", "env")
-    # Reject retired kids before doing any work with them (H1/M2). A rotated
-    # key whose kid is in SHIELD_RETIRED_KIDS must never verify again, even
-    # if the signer is still cached in process memory.
+    kid = unverified.get("kid", "env")
+    # Reject retired kids before doing any work with them (H1/M2).
     if kid in _retired_kids():
         raise TokenError(f"kid retired: {kid}")
+
     signer = get_signer(kid)
-    try:
-        signer.verify(payload, sig)
-    except InvalidSignature as e:
-        raise TokenError("invalid signature") from e
+
+    if is_jwt_format(token):
+        # Standard JWT (3-segment) verification
+        try:
+            claims = decode_jwt(token, signer)
+        except JWTError as e:
+            raise TokenError(str(e)) from e
+    else:
+        # Legacy 2-segment format: base64url(claims).base64url(sig)
+        try:
+            payload_b64, sig_b64 = token.split(".", 1)
+            payload = _b64url_decode(payload_b64)
+            sig = _b64url_decode(sig_b64)
+            claims = json.loads(payload.decode("utf-8"))
+        except Exception as e:
+            raise TokenError(f"undecodable token: {e}") from e
+
+        try:
+            signer.verify(payload, sig)
+        except InvalidSignature as e:
+            raise TokenError("invalid signature") from e
+
+        # Check expiry for legacy format
+        now = int(time.time())
+        if "exp" in claims and claims["exp"] < now - 5:
+            raise TokenError("token expired")
 
     # Required claims
     required = (
@@ -242,10 +273,8 @@ def verify_agent_token(token: str) -> IdentityTuple:
     if claims["aud"] != _expected_agent_audience():
         raise TokenError(f"audience mismatch: {claims['aud']!r}")
 
-    # Expiry (allow 5s clock skew)
+    # Future-issued check
     now = int(time.time())
-    if claims["exp"] < now - 5:
-        raise TokenError("token expired")
     if claims["iat"] > now + 30:
         raise TokenError("token issued in the future")
 
@@ -282,6 +311,8 @@ def verify_agent_token(token: str) -> IdentityTuple:
 
 
 def decode_claims_unverified(token: str) -> dict:
-    """Decode claims without verifying signature. For diagnostics only."""
-    payload_b64 = token.split(".", 1)[0]
-    return json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+    """Decode claims without verifying signature. For diagnostics only.
+
+    Handles both JWT (3-segment) and legacy (2-segment) formats.
+    """
+    return decode_jwt_unverified(token)
