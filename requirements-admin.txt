@@ -7,3 +7,4 @@ redis
 upstash-redis
 httpx
 aiosqlite
+cryptography>=42

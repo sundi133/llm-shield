@@ -50,6 +50,9 @@ _killswitch_router = None
 _decisions_router = None
 _webhooks_router = None
 _agent_identity_router = None
+_agent_auth_router = None
+_agent_auth_tenant_router = None
+_AgentIdentityMiddleware = None
 
 try:
     from api.routes_killswitch import router as _killswitch_router
@@ -66,6 +69,16 @@ except Exception:
 try:
     from api.routes_agent_identity import router as _agent_identity_router
 except Exception:
+    pass
+try:
+    from api.routes_agent_auth import (
+        router as _agent_auth_router,
+        tenant_router as _agent_auth_tenant_router,
+    )
+    from core.agent_identity_middleware import AgentIdentityMiddleware as _AgentIdentityMiddleware
+except Exception as _e:
+    # cryptography missing or new modules not present — agent-auth tab will
+    # show "Failed to load" in the portal but the rest of admin still works.
     pass
 
 # Graceful imports for routers that may have heavier dependencies
@@ -932,8 +945,12 @@ def create_admin_app() -> FastAPI:
         description="Lightweight tenant management UI and admin APIs.",
     )
 
-    # Middleware: auth first (last added = first executed in Starlette)
+    # Middleware: auth first (last added = first executed in Starlette).
+    # Order: AuthMiddleware (tenant API-key) → AgentIdentityMiddleware
+    # (X-Agent-Token, pass-through when absent) → ShieldMiddleware
     app.add_middleware(ShieldMiddleware)
+    if _AgentIdentityMiddleware:
+        app.add_middleware(_AgentIdentityMiddleware)
     app.add_middleware(AuthMiddleware)
 
     # Mount admin + tenant routers
@@ -959,6 +976,10 @@ def create_admin_app() -> FastAPI:
         app.include_router(_webhooks_router)         # /v1/shield/webhooks/*
     if _agent_identity_router:
         app.include_router(_agent_identity_router)   # /v1/shield/agent/identity/*
+    if _agent_auth_router:
+        app.include_router(_agent_auth_router)         # /v1/shield/auth/*, /v1/shield/cap/*
+    if _agent_auth_tenant_router:
+        app.include_router(_agent_auth_tenant_router)  # /v1/tenant/me/agent-auth/*
 
     # Static files
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
