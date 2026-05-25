@@ -165,12 +165,27 @@ fi
 
 attack "Forged token: attacker tries to sign their own claims" \
   "Attacker generates their own Ed25519 keypair, signs valid-looking claims. Server doesn't know that key. Must reject."
-FORGED=$(python3 <<'PY'
-import base64, json, time, uuid
+
+# This test requires the `cryptography` library on the host that runs the
+# script (to actually generate a real Ed25519 keypair and craft a
+# well-formed-but-wrongly-signed token). Without it, the test would fall
+# through to the malformed-token code path and look like a pass for the
+# wrong reason. Detect and either run or skip explicitly.
+
+if ! python3 -c "import cryptography" 2>/dev/null; then
+  printf '   %s· SKIPPED — `cryptography` not installed on this host%s\n' "$C_YEL" "$C_RESET"
+  printf '             %sFix: pip3 install cryptography%s\n' "$C_DIM" "$C_RESET"
+  printf '             %sUntil then, the forgery-detection path is unverified.%s\n' "$C_DIM" "$C_RESET"
+else
+  FORGED=$(python3 <<'PY'
+import base64, json, time, uuid, os
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 sk = Ed25519PrivateKey.generate()
+# Use whatever issuer/aud the server is configured for. SHIELD_ISSUER is
+# read from env so the forgery looks legitimate apart from the signature.
 claims = {
-  "iss": "shield-mac-dev", "aud": "shield-agent-tokens",
+  "iss": os.environ.get("SHIELD_ISSUER", "shield"),
+  "aud": "shield-agent-tokens",
   "user_sub": "mallory", "agent_id": "billing-bot",
   "agent_instance_id": "forged", "tenant_id": "bank-co",
   "build_hash": "b", "model_version": "m", "session_id": "s",
@@ -183,14 +198,22 @@ b64 = lambda x: base64.urlsafe_b64encode(x).rstrip(b"=").decode()
 print(f"{b64(payload)}.{b64(sig)}")
 PY
 )
-result=$(call POST /v1/shield/cap/mint \
-  '{"tool":"send_email","resource":"x"}' \
-  -H "X-Agent-Token: $FORGED")
-status="${result%%|*}"; body="${result#*|}"
-if [[ "$status" == "401" ]]; then
-  blocked "401 — signature key doesn't match server's, forgery caught"
-else
-  leaked "expected 401, got $status" "$body"
+  if [[ -z "$FORGED" || "$FORGED" != *.* ]]; then
+    leaked "could not construct a forged token" "(python error?)"
+  else
+    result=$(call POST /v1/shield/cap/mint \
+      '{"tool":"send_email","resource":"x"}' \
+      -H "X-Agent-Token: $FORGED")
+    status="${result%%|*}"; body="${result#*|}"
+    detail=$(jq_get "$body" "detail")
+    if [[ "$status" == "401" && "$detail" == *signature* ]]; then
+      blocked "401 + invalid signature — server's Ed25519 key didn't match attacker's"
+    elif [[ "$status" == "401" ]]; then
+      blocked "401 — rejected (reason: $detail)"
+    else
+      leaked "expected 401, got $status" "$body"
+    fi
+  fi
 fi
 
 # ═══════════════════════════════════════════════════════════════════════
