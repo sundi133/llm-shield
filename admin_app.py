@@ -1681,10 +1681,29 @@ def create_admin_app() -> FastAPI:
 
     @app.api_route("/playground/proxy/{path:path}", methods=["GET", "POST"])
     async def playground_proxy(path: str, request: Request):
-        """Proxy playground requests to a remote Shield endpoint (avoids CORS)."""
-        target_url = request.headers.get("X-Playground-Target", "").rstrip("/")
-        if not target_url:
+        """Proxy playground requests to a remote Shield endpoint.
+
+        Hardened against SSRF per IEMLabs VAPT finding 8.1 (May 2026):
+        X-Playground-Target is validated by core.url_safety before any
+        connection attempt, redirects are disabled (would bypass the
+        check), and error responses are sanitized (no upstream details
+        leaked to the wire).
+        """
+        import logging as _logging
+        import uuid as _uuid
+        from core.url_safety import UnsafeURLError, validate_outbound_url
+
+        target_url_raw = request.headers.get("X-Playground-Target", "").rstrip("/")
+        if not target_url_raw:
             return JSONResponse({"error": "Missing X-Playground-Target header"}, status_code=400)
+
+        try:
+            target_url = validate_outbound_url(target_url_raw, purpose="playground-proxy")
+        except UnsafeURLError as e:
+            return JSONResponse(
+                {"error": "target URL rejected", "detail": str(e)},
+                status_code=400,
+            )
 
         forward_headers = {"Content-Type": "application/json"}
         if auth := request.headers.get("Authorization"):
@@ -1698,7 +1717,10 @@ def create_admin_app() -> FastAPI:
         if tenant_id := request.headers.get("X-Tenant-ID"):
             forward_headers["X-Tenant-ID"] = tenant_id
 
-        async with httpx.AsyncClient(timeout=60.0, verify=_HTTPX_VERIFY) as client:
+        request_id = _uuid.uuid4().hex[:12]
+        logger = _logging.getLogger("votal.playground_proxy")
+        async with httpx.AsyncClient(timeout=60.0, verify=_HTTPX_VERIFY,
+                                     follow_redirects=False) as client:
             try:
                 if request.method == "GET":
                     resp = await client.get(
@@ -1715,41 +1737,101 @@ def create_admin_app() -> FastAPI:
                 try:
                     data = resp.json()
                 except Exception:
-                    data = {"raw_response": resp.text, "status": resp.status_code}
+                    data = {"raw_response": resp.text[:8192], "status": resp.status_code}
                 return JSONResponse(data, status_code=resp.status_code)
             except httpx.TimeoutException:
-                return JSONResponse({"error": "Upstream request timed out"}, status_code=504)
-            except httpx.ConnectError as e:
-                return JSONResponse({"error": f"Cannot reach endpoint: {e}"}, status_code=502)
+                logger.warning(f"playground-proxy {request_id}: timeout")
+                return JSONResponse(
+                    {"error": "upstream request timed out", "request_id": request_id},
+                    status_code=504,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"playground-proxy {request_id}: upstream error: {type(e).__name__}: {e}"
+                )
+                return JSONResponse(
+                    {"error": "upstream connection failed", "request_id": request_id},
+                    status_code=502,
+                )
 
     @app.post("/playground/llm-proxy")
     async def playground_llm_proxy(request: Request):
-        """Proxy LLM requests from the playground so the browser never calls LiteLLM directly."""
+        """Proxy LLM requests from the playground so the browser never calls LiteLLM directly.
+
+        Hardened against SSRF and Information Disclosure per IEMLabs VAPT
+        findings 8.1 and 8.3 (May 2026):
+
+          * base_url validated by core.url_safety BEFORE the request —
+            cloud-metadata endpoints, RFC 1918, link-local, and loopback
+            all rejected. SHIELD_LLM_PROXY_ALLOWED_HOSTS env enforces a
+            stricter allowlist when set.
+          * follow_redirects=False prevents a 302-to-internal bypass of
+            the URL check.
+          * Logging captures status + model only; the full LLM response
+            (which may contain user PII or upstream secrets) is NOT
+            logged.
+          * Error responses return generic message + request_id; the
+            real cause is in the server log so support can correlate
+            without leaking internal addresses or stack traces.
+        """
+        import logging as _logging
+        import uuid as _uuid
+        from core.url_safety import UnsafeURLError, validate_outbound_url
+
         body = await request.json()
-        base_url = body.get("base_url", "https://api.openai.com/v1").strip().rstrip("/")
+        base_url_raw = body.get("base_url", "https://api.openai.com/v1").strip().rstrip("/")
         master_key = body.get("master_key", "")
         payload = body.get("payload", {})
+
+        try:
+            base_url = validate_outbound_url(base_url_raw, purpose="llm-proxy")
+        except UnsafeURLError as e:
+            return JSONResponse(
+                {"error": "LLM base_url rejected", "detail": str(e)},
+                status_code=400,
+            )
 
         headers = {"Content-Type": "application/json"}
         if master_key:
             headers["Authorization"] = f"Bearer {master_key}"
 
-        print(f"[llm-proxy] POST {base_url}/chat/completions model={payload.get('model')}", flush=True)
-        async with httpx.AsyncClient(timeout=180.0, verify=_HTTPX_VERIFY) as client:
+        request_id = _uuid.uuid4().hex[:12]
+        logger = _logging.getLogger("votal.llm_proxy")
+        logger.info(
+            f"llm-proxy {request_id}: POST {base_url}/chat/completions "
+            f"model={payload.get('model')!r}"
+        )
+        async with httpx.AsyncClient(timeout=180.0, verify=_HTTPX_VERIFY,
+                                     follow_redirects=False) as client:
             try:
                 resp = await client.post(
                     f"{base_url}/chat/completions",
                     json=payload,
                     headers=headers,
                 )
-                data = resp.json()
-                print(f"[llm-proxy] Status={resp.status_code}", flush=True)
-                print(f"[llm-proxy] Full response: {json.dumps(data)}", flush=True)
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"raw_response": resp.text[:8192], "status": resp.status_code}
+                logger.info(
+                    f"llm-proxy {request_id}: status={resp.status_code} "
+                    f"resp_bytes={len(resp.content)}"
+                )
                 return JSONResponse(data, status_code=resp.status_code)
             except httpx.TimeoutException:
-                return JSONResponse({"error": "LLM request timed out"}, status_code=504)
-            except httpx.ConnectError as e:
-                return JSONResponse({"error": f"Cannot reach LLM endpoint: {e}"}, status_code=502)
+                logger.warning(f"llm-proxy {request_id}: upstream timed out")
+                return JSONResponse(
+                    {"error": "LLM request timed out", "request_id": request_id},
+                    status_code=504,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"llm-proxy {request_id}: upstream error: {type(e).__name__}: {e}"
+                )
+                return JSONResponse(
+                    {"error": "Cannot reach LLM endpoint", "request_id": request_id},
+                    status_code=502,
+                )
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
