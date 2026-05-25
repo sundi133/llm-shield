@@ -67,6 +67,29 @@ an **agent token** (AuthN) and a **capability token** (AuthZ).
                        Control plane: revoke(instance|user|jti).
 ```
 
+## 2a. Customer integration path (no admin key needed)
+
+Customers integrate with the platform using their **tenant API key** —
+the same key they use for every other tenant endpoint. They never see
+the admin key.
+
+The customer-facing endpoints:
+
+| Method | Path                                            | Auth         | Purpose                          |
+|--------|-------------------------------------------------|--------------|----------------------------------|
+| POST   | `/v1/tenant/me/agent-auth/agent-token`          | `X-API-Key`  | Exchange tenant key for an agent token. `tenant_id` is auto-filled from the key — clients cannot mint tokens for other tenants. |
+| POST   | `/v1/shield/cap/mint`                           | `X-Agent-Token` | Mint a capability for one tool call. |
+| POST   | `/v1/shield/cap/verify`                         | (none — cap is bearer)   | Tool-server side verification + nonce burn. |
+| GET    | `/v1/tenant/me/agent-auth/stats`                | `X-API-Key`  | Per-event counters for the portal. |
+| GET    | `/v1/tenant/me/agent-auth/recent`               | `X-API-Key`  | Last 50 events for the portal. |
+
+The admin endpoints (`POST /v1/shield/auth/agent-token`,
+`POST /v1/shield/auth/revoke`) stay for control-plane / break-glass use.
+
+A ready-to-paste customer SDK is at `examples/shield_client.py`. Wrapped
+integrations for LangChain and raw OpenAI/Anthropic tool-use are in
+`examples/langchain_shielded_tool.py` and `examples/openai_shielded_tool.py`.
+
 ## 3. AuthN — Agent Tokens
 
 ### What an agent token proves

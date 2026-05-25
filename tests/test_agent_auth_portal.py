@@ -260,3 +260,113 @@ class TestTenantEndpoints:
             headers={"X-API-Key": "t1"},
         )
         assert len(r.json()["events"]) == 4
+
+
+# ── Tenant-scoped token issuance (customer path) ──────────────────────
+
+
+class TestTenantTokenIssuance:
+    """Customers have a tenant API key, not the admin key. This endpoint
+    is what their app/SDK calls to start the AuthN/AuthZ flow."""
+
+    def test_requires_tenant_api_key(self, client):
+        r = client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            json={
+                "user_sub": "alice", "agent_id": "bot", "agent_instance_id": "i1",
+                "build_hash": "b", "model_version": "m", "session_id": "s",
+            },
+        )
+        assert r.status_code == 401
+
+    def test_tenant_can_mint_for_self(self, client):
+        body = {
+            "user_sub": "alice", "agent_id": "billing-bot", "agent_instance_id": "i1",
+            "build_hash": "sha256:abc", "model_version": "opus", "session_id": "s1",
+            "ttl_seconds": 600,
+        }
+        r = client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            headers={"X-API-Key": "tenant-acme"},
+            json=body,
+        )
+        assert r.status_code == 200
+        token = r.json()["agent_token"]
+        assert token and "." in token
+        # The token must verify and carry the API key's tenant_id (not anything
+        # the client provided).
+        from core.agent_tokens import verify_agent_token
+        identity = verify_agent_token(token)
+        assert identity.tenant_id == "tenant-acme"
+        assert identity.user_sub == "alice"
+        assert identity.agent_id == "billing-bot"
+
+    def test_tenant_id_not_spoofable(self, client):
+        """Even if the client tries to inject tenant_id in the body, it
+        must be ignored and replaced by the resolved API-key tenant."""
+        body = {
+            "user_sub": "alice", "agent_id": "bot", "agent_instance_id": "i1",
+            "build_hash": "b", "model_version": "m", "session_id": "s",
+            # An attacker tries to mint a token for someone else's tenant:
+            "tenant_id": "victim-tenant",
+        }
+        r = client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            headers={"X-API-Key": "tenant-acme"},
+            json=body,
+        )
+        assert r.status_code == 200
+        from core.agent_tokens import verify_agent_token
+        identity = verify_agent_token(r.json()["agent_token"])
+        assert identity.tenant_id == "tenant-acme"
+        assert identity.tenant_id != "victim-tenant"
+
+    def test_minted_token_works_with_cap_mint(self, client):
+        """End-to-end: tenant mints token → uses it to mint a cap."""
+        token = client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            headers={"X-API-Key": "acme"},
+            json={
+                "user_sub": "alice", "agent_id": "bot", "agent_instance_id": "i1",
+                "build_hash": "b", "model_version": "m", "session_id": "s",
+            },
+        ).json()["agent_token"]
+
+        r = client.post(
+            "/v1/shield/cap/mint",
+            headers={"X-Agent-Token": token},
+            json={"tool": "send_email", "resource": "alice/inbox"},
+        )
+        assert r.status_code == 200
+        cap = r.json()["cap_token"]
+
+        v = client.post(
+            "/v1/shield/cap/verify",
+            json={"cap_token": cap, "expected_tool": "send_email"},
+        )
+        assert v.json()["valid"] is True
+        assert v.json()["claims"]["tenant_id"] == "acme"
+
+    def test_ttl_ceiling_enforced(self, client):
+        r = client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            headers={"X-API-Key": "acme"},
+            json={
+                "user_sub": "a", "agent_id": "a", "agent_instance_id": "a",
+                "build_hash": "b", "model_version": "m", "session_id": "s",
+                "ttl_seconds": 100000,  # way over 15m cap
+            },
+        )
+        assert r.status_code == 422  # pydantic validation
+
+    def test_issuance_records_stat(self, client):
+        client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            headers={"X-API-Key": "acme"},
+            json={
+                "user_sub": "alice", "agent_id": "bot", "agent_instance_id": "i1",
+                "build_hash": "b", "model_version": "m", "session_id": "s",
+            },
+        )
+        totals = stats.get_counters("acme")["totals"]
+        assert totals[stats.EVENT_TOKEN_ISSUED] == 1

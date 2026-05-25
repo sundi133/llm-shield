@@ -382,3 +382,55 @@ async def agent_auth_recent(request: Request, limit: int = 50):
     """Last N agent-auth events for the calling tenant (newest first)."""
     tenant_id = _require_tenant(request)
     return {"tenant_id": tenant_id, "events": get_recent(tenant_id, limit=limit)}
+
+
+# ─── Tenant-scoped token issuance (customer-facing) ─────────────────────
+#
+# Customers do NOT have the admin key. They have their tenant API key,
+# the same one they use everywhere else. This endpoint:
+#   * authenticates via X-API-Key (existing AuthMiddleware → request.state.tenant_id)
+#   * locks tenant_id to whatever the API key resolves to
+#   * accepts agent identity claims in the body (user_sub, agent_id, ...)
+#   * returns the same signed agent token shape as the admin endpoint
+#
+# A customer cannot mint a token for a tenant_id they do not own.
+
+
+class TenantAgentTokenRequest(BaseModel):
+    user_sub: str = Field(..., description="OIDC sub of the human user")
+    agent_id: str = Field(..., description="Logical agent identity")
+    agent_instance_id: str = Field(..., description="Unique per-process id")
+    build_hash: str = Field(..., description="Exact build hash of the agent code")
+    model_version: str = Field(..., description="LLM model version in use")
+    session_id: str = Field(..., description="Conversation/session id")
+    parent_agent_id: Optional[str] = Field(None, description="Delegating agent, if any")
+    ttl_seconds: int = Field(DEFAULT_TOKEN_TTL_SECONDS, ge=1, le=MAX_TOKEN_TTL_SECONDS)
+
+
+@tenant_router.post("/agent-token", response_model=AgentTokenResponse)
+async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Request):
+    """Issue an agent token for the calling tenant (customer-facing).
+
+    Auth: tenant API key via X-API-Key. The tenant_id is taken from the
+    resolved API key — clients cannot specify a different tenant.
+    """
+    tenant_id = _require_tenant(request)
+    try:
+        token = mint_agent_token(
+            user_sub=body.user_sub,
+            agent_id=body.agent_id,
+            agent_instance_id=body.agent_instance_id,
+            tenant_id=tenant_id,
+            build_hash=body.build_hash,
+            model_version=body.model_version,
+            session_id=body.session_id,
+            parent_agent_id=body.parent_agent_id,
+            ttl_seconds=body.ttl_seconds,
+        )
+    except TokenError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    record_event(
+        tenant_id=tenant_id, event=EVENT_TOKEN_ISSUED,
+        agent_id=body.agent_id, user_sub=body.user_sub,
+    )
+    return AgentTokenResponse(agent_token=token, expires_in=body.ttl_seconds)
