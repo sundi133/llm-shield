@@ -1893,6 +1893,11 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
         Agent Identity
       </div>
+      <div class="nav-item" data-tab="agent-authentication">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+        Agent AuthN/AuthZ
+        <span id="nav-badge-authz" class="nav-badge"></span>
+      </div>
     </div>
 
     <div class="nav-section">
@@ -4274,6 +4279,130 @@ openssl x509 -in agent.crt -fingerprint -sha256 -noout
 # {"agent_key": "customer-service-agent", "trust": {"trust_level": "high", "identity_method": "cert"}}</pre>
 
           <p style="margin:0 0 0;"><strong style="color:var(--text);">Step 5:</strong> Revoke if compromised — click <em>Revoke Cert</em> above or call <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;">POST /v1/shield/agent/identity/revoke</code>. Agent immediately drops to <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;color:#f59e0b;">medium</code> trust.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Agent AuthN/AuthZ ─────────────────────────────────────────── -->
+    <div id="tab-agent-authentication" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Agent AuthN / AuthZ</div>
+        <div class="page-desc">Signed agent tokens prove <em>who</em> is calling. One-shot capability tokens decide <em>what</em> they can do — per action, ≤60s, replay-detected. <a href="https://github.com/sundi133/llm-shield/blob/main/docs/AGENT_AUTH_ARCHITECTURE.md" target="_blank" style="color:var(--accent);">Read the architecture →</a></div>
+      </div>
+
+      <!-- Stat cards -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Activity (last 24 hours)</div>
+          <button class="small" onclick="loadAuthzStats()">Refresh</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;padding:1rem;">
+          <div class="stat">
+            <div class="stat-label">Agent tokens issued</div>
+            <div class="stat-value" id="authz-stat-issued">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Capabilities minted</div>
+            <div class="stat-value" id="authz-stat-minted" style="color:#22c55e;">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">AuthZ denials</div>
+            <div class="stat-value" id="authz-stat-denied" style="color:#f59e0b;">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Capabilities verified</div>
+            <div class="stat-value" id="authz-stat-verified">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Replays caught</div>
+            <div class="stat-value" id="authz-stat-replay" style="color:#ef4444;">—</div>
+            <div style="font-size:10px;color:var(--text-muted);margin-top:0.25rem;">Non-zero = someone tried to reuse a one-shot token.</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Invalid tokens</div>
+            <div class="stat-value" id="authz-stat-invalid" style="color:#ef4444;">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Revocations</div>
+            <div class="stat-value" id="authz-stat-revoke">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent decisions table -->
+      <div class="card" style="margin-top:1rem;">
+        <div class="card-header">
+          <div class="card-title">Recent decisions</div>
+          <div style="font-size:11px;color:var(--text-muted);">Auto-refreshes every 10s · last 50 events</div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead>
+              <tr style="text-align:left;color:var(--text-muted);border-bottom:1px solid var(--border);">
+                <th style="padding:0.5rem 0.75rem;">Time</th>
+                <th style="padding:0.5rem 0.75rem;">Event</th>
+                <th style="padding:0.5rem 0.75rem;">Agent</th>
+                <th style="padding:0.5rem 0.75rem;">User</th>
+                <th style="padding:0.5rem 0.75rem;">Tool</th>
+                <th style="padding:0.5rem 0.75rem;">Resource</th>
+                <th style="padding:0.5rem 0.75rem;">Reason</th>
+              </tr>
+            </thead>
+            <tbody id="authz-recent-tbody">
+              <tr><td colspan="7" style="text-align:center;padding:1rem;color:var(--text-muted);">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- How to integrate -->
+      <div class="card" style="margin-top:1rem;">
+        <div class="card-header">
+          <div class="card-title">How to integrate</div>
+          <div style="font-size:11px;color:var(--text-muted);">Three calls. Copy-paste ready.</div>
+        </div>
+        <div style="padding:1rem;display:flex;flex-direction:column;gap:1rem;">
+          <div>
+            <div style="font-weight:600;margin-bottom:0.4rem;">1. Mint an agent token (control plane, admin-gated)</div>
+            <pre style="background:var(--bg-3);padding:0.75rem;border-radius:6px;overflow-x:auto;font-size:11px;">curl -X POST $BASE/v1/shield/auth/agent-token \
+  -H "X-Admin-Key: $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_sub": "alice",
+    "agent_id": "billing-bot",
+    "agent_instance_id": "inst-1",
+    "tenant_id": "<your-tenant-id>",
+    "build_hash": "sha256:&lt;agent-build&gt;",
+    "model_version": "claude-opus-4.7",
+    "session_id": "s1",
+    "ttl_seconds": 600
+  }'</pre>
+          </div>
+          <div>
+            <div style="font-weight:600;margin-bottom:0.4rem;">2. Before every tool call, mint a capability</div>
+            <pre style="background:var(--bg-3);padding:0.75rem;border-radius:6px;overflow-x:auto;font-size:11px;">curl -X POST $BASE/v1/shield/cap/mint \
+  -H "X-Agent-Token: $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"tool":"send_email","resource":"alice/inbox","ttl_seconds":30}'</pre>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:0.4rem;">Returns a single-use cap. If RBAC denies, you get <code>403</code> with reasons — visible in the table above.</div>
+          </div>
+          <div>
+            <div style="font-weight:600;margin-bottom:0.4rem;">3. Tool/MCP server verifies the cap before executing</div>
+            <pre style="background:var(--bg-3);padding:0.75rem;border-radius:6px;overflow-x:auto;font-size:11px;">curl -X POST $BASE/v1/shield/cap/verify \
+  -H "Content-Type: application/json" \
+  -d '{"cap_token":"$CAP","expected_tool":"send_email"}'</pre>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:0.4rem;">Verifies signature + expiry + tool binding + burns the nonce (one-shot). A replay attempt shows up in the table as <code>cap_replay</code> in red.</div>
+          </div>
+          <div style="background:var(--bg-3);padding:0.75rem;border-radius:6px;border-left:3px solid var(--accent);font-size:12px;line-height:1.5;">
+            <strong>Quick reality check:</strong>
+            <ul style="margin:0.4rem 0 0 1rem;padding:0;">
+              <li>Agent tokens ≤ 15 minutes. Capability tokens ≤ 60 seconds.</li>
+              <li>Caps are single-use (nonce burned at verify). Replay returns <code>valid: false</code>.</li>
+              <li>Verify uses a local public key — no round-trip to Shield needed at the tool.</li>
+              <li>If a build hash isn't on the allowlist, the token is rejected at the middleware.</li>
+              <li>Revoke an instance / user / token via <code>POST /v1/shield/auth/revoke</code> (admin-gated).</li>
+            </ul>
+          </div>
         </div>
       </div>
     </div>
@@ -10156,8 +10285,106 @@ document.addEventListener('click', (e) => {
     if (tab === 'playground') initPlayground();
     if (tab === 'kill-switch') loadKillSwitchTools();
     if (tab === 'agent-identity') {} // manual actions
+    if (tab === 'agent-authentication') startAuthzPanel();
+    else stopAuthzPanel();
   }
 });
+
+// ── Agent AuthN/AuthZ panel ─────────────────────────────────────────────
+
+let _authzTimer = null;
+
+function startAuthzPanel() {
+  loadAuthzStats();
+  loadAuthzRecent();
+  if (_authzTimer) clearInterval(_authzTimer);
+  _authzTimer = setInterval(() => {
+    loadAuthzStats();
+    loadAuthzRecent();
+  }, 10000);
+}
+
+function stopAuthzPanel() {
+  if (_authzTimer) { clearInterval(_authzTimer); _authzTimer = null; }
+}
+
+async function loadAuthzStats() {
+  try {
+    const data = await apiCall('/v1/tenant/me/agent-auth/stats?days=1');
+    const t = data.totals || {};
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = (v || 0).toString(); };
+    setVal('authz-stat-issued',   t.token_issued);
+    setVal('authz-stat-minted',   t.cap_minted);
+    setVal('authz-stat-denied',   t.cap_denied);
+    setVal('authz-stat-verified', t.cap_verified);
+    setVal('authz-stat-replay',   t.cap_replay);
+    setVal('authz-stat-invalid',  t.cap_invalid);
+    setVal('authz-stat-revoke',   t.revoke);
+    // Nav badge: highlight if there's a replay or denial today
+    const badge = document.getElementById('nav-badge-authz');
+    if (badge) {
+      const alerts = (t.cap_replay || 0) + (t.cap_invalid || 0);
+      if (alerts > 0) { badge.textContent = String(alerts); badge.style.background = '#ef4444'; badge.style.color = '#fff'; }
+      else { badge.textContent = ''; }
+    }
+  } catch (e) {
+    console.warn('loadAuthzStats:', e.message);
+  }
+}
+
+const _AUTHZ_EVENT_STYLES = {
+  token_issued:   { label: 'token issued',   color: 'var(--text)' },
+  token_rejected: { label: 'token rejected', color: '#ef4444' },
+  cap_minted:     { label: 'cap minted',     color: '#22c55e' },
+  cap_denied:     { label: 'cap denied',     color: '#f59e0b' },
+  cap_verified:   { label: 'cap verified',   color: 'var(--text)' },
+  cap_replay:     { label: 'REPLAY',         color: '#ef4444' },
+  cap_invalid:    { label: 'cap invalid',    color: '#ef4444' },
+  revoke:         { label: 'revoke',         color: '#a78bfa' },
+};
+
+function _fmtAge(ts) {
+  if (!ts) return '—';
+  const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
+  if (s < 60)   return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  return `${Math.floor(s/86400)}d ago`;
+}
+
+function _esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function loadAuthzRecent() {
+  try {
+    const data = await apiCall('/v1/tenant/me/agent-auth/recent?limit=50');
+    const tbody = document.getElementById('authz-recent-tbody');
+    if (!tbody) return;
+    const events = data.events || [];
+    if (events.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:1.5rem;color:var(--text-muted);">No activity yet. Mint a token to get started — see the snippets below.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = events.map(e => {
+      const style = _AUTHZ_EVENT_STYLES[e.event] || { label: e.event, color: 'var(--text)' };
+      return `
+        <tr style="border-bottom:1px solid var(--border-dim);">
+          <td style="padding:0.5rem 0.75rem;color:var(--text-muted);white-space:nowrap;">${_esc(_fmtAge(e.ts))}</td>
+          <td style="padding:0.5rem 0.75rem;color:${style.color};font-weight:500;white-space:nowrap;">${_esc(style.label)}</td>
+          <td style="padding:0.5rem 0.75rem;"><code style="font-size:11px;">${_esc(e.agent_id || '—')}</code></td>
+          <td style="padding:0.5rem 0.75rem;"><code style="font-size:11px;">${_esc(e.user_sub || '—')}</code></td>
+          <td style="padding:0.5rem 0.75rem;"><code style="font-size:11px;">${_esc(e.tool || '—')}</code></td>
+          <td style="padding:0.5rem 0.75rem;"><code style="font-size:11px;color:var(--text-muted);">${_esc(e.resource || '—')}</code></td>
+          <td style="padding:0.5rem 0.75rem;color:var(--text-muted);font-size:11px;">${_esc(e.reason || '')}</td>
+        </tr>`;
+    }).join('');
+  } catch (e) {
+    const tbody = document.getElementById('authz-recent-tbody');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:1rem;color:#ef4444;">Failed to load: ${_esc(e.message)}</td></tr>`;
+  }
+}
 
 document.getElementById('api-key-input').addEventListener('keypress', (e) => { if (e.key === 'Enter') login(); });
 
