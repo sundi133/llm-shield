@@ -410,6 +410,77 @@ async def agent_auth_recent(request: Request, limit: int = 50):
     return {"tenant_id": tenant_id, "events": get_recent(tenant_id, limit=limit)}
 
 
+@tenant_router.get("/diag")
+async def agent_auth_diag(request: Request):
+    """Self-diagnostic: tests Redis read+write end-to-end for the calling
+    tenant and reports exactly what works.
+
+    Surfaces the silent failure modes that otherwise show up only as
+    "all zeros in the portal" — backed-up writes, stale reads, missing
+    cryptography dep, etc.
+    """
+    tenant_id = _require_tenant(request)
+    import time as _t
+    from storage import agent_auth_stats as _stats
+    from storage.tenant_store import _get_redis
+
+    result = {
+        "tenant_id": tenant_id,
+        "redis": {"reachable": False, "type": None, "error": None},
+        "write": {"ok": False, "error": None},
+        "read":  {"ok": False, "error": None, "value": None},
+        "stats_endpoint_works": False,
+    }
+
+    # 1. Is Redis reachable?
+    r = _get_redis()
+    if r is None:
+        result["redis"]["error"] = "no Redis client (UPSTASH_REDIS_REST_URL/REDIS_URL unset)"
+    else:
+        result["redis"]["type"] = type(r).__name__
+        try:
+            # Cheap probe
+            if hasattr(r, "ping"):
+                r.ping()
+            else:
+                r.get("__shield_diag_probe__")
+            result["redis"]["reachable"] = True
+        except Exception as e:
+            result["redis"]["error"] = f"{type(e).__name__}: {e}"
+
+    # 2. Can we WRITE to this tenant's recent buffer?
+    probe_key = f"shield:authstats:diag:{tenant_id}"
+    probe_value = f"probe-{int(_t.time())}"
+    if r and result["redis"]["reachable"]:
+        try:
+            r.set(probe_key, probe_value, ex=60)
+            result["write"]["ok"] = True
+        except Exception as e:
+            result["write"]["error"] = f"{type(e).__name__}: {e}"
+
+        # 3. Can we READ what we just wrote?
+        try:
+            got = r.get(probe_key)
+            got_s = got.decode() if isinstance(got, bytes) else got
+            result["read"]["value"] = got_s
+            result["read"]["ok"] = (got_s == probe_value)
+            if not result["read"]["ok"]:
+                result["read"]["error"] = (
+                    f"wrote {probe_value!r}, read back {got_s!r}"
+                )
+        except Exception as e:
+            result["read"]["error"] = f"{type(e).__name__}: {e}"
+
+    # 4. End-to-end: does an actual event recording + read make it through?
+    _stats.record(tenant_id=tenant_id, event=_stats.EVENT_TOKEN_ISSUED,
+                  agent_id="__diag__", user_sub="__diag__")
+    counters = _stats.get_counters(tenant_id, days=1)
+    result["stats_endpoint_works"] = counters["totals"][_stats.EVENT_TOKEN_ISSUED] > 0
+    result["counters_now"] = counters["totals"]
+
+    return result
+
+
 # ─── Tenant-scoped token issuance (customer-facing) ─────────────────────
 #
 # Customers do NOT have the admin key. They have their tenant API key,
