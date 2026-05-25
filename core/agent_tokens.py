@@ -43,16 +43,12 @@ import logging
 import os
 import time
 import uuid
-from dataclasses import dataclass
 from typing import Optional
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-    Ed25519PublicKey,
-)
 
 from core.identity import IdentityTuple
+from core.signers import Signer, SignerError, build_signer
 
 logger = logging.getLogger("votal.agent_tokens")
 
@@ -66,7 +62,7 @@ class TokenError(Exception):
 
 # ── Key material ─────────────────────────────────────────────────────────
 
-_signer_cache: dict[str, "AgentTokenSigner"] = {}
+_signer_cache: dict[str, Signer] = {}
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -78,58 +74,38 @@ def _b64url_decode(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + pad)
 
 
-@dataclass
-class AgentTokenSigner:
-    """Pluggable signer. v1 is Ed25519 from env; v2 can be KMS-backed."""
-
-    kid: str
-    private_key: Ed25519PrivateKey
-    public_key: Ed25519PublicKey
-
-    def sign(self, payload: bytes) -> bytes:
-        return self.private_key.sign(payload)
-
-    def verify(self, payload: bytes, signature: bytes) -> None:
-        self.public_key.verify(signature, payload)
+# AgentTokenSigner is kept for back-compat with any external import sites.
+# New code should use the Signer protocol from core.signers.
+AgentTokenSigner = Signer
 
 
-def _generate_signer(kid: str = "dev") -> AgentTokenSigner:
-    sk = Ed25519PrivateKey.generate()
-    return AgentTokenSigner(kid=kid, private_key=sk, public_key=sk.public_key())
+def get_signer(kid: Optional[str] = None) -> Signer:
+    """Return the active signer for agent tokens.
 
-
-def get_signer(kid: Optional[str] = None) -> AgentTokenSigner:
-    """Return the active signer.
-
-    Resolution order:
-      1. SHIELD_AGENT_TOKEN_PRIVATE_KEY env (hex, 32 bytes) → kid=env_kid (default 'env')
-      2. cached generated key for `kid` (dev/test only)
+    Backend is selected by SHIELD_SIGNER_BACKEND_AGENT (falls back to
+    SHIELD_SIGNER_BACKEND). For the local backend, the private key comes
+    from SHIELD_AGENT_TOKEN_PRIVATE_KEY (hex, 32 bytes).
     """
     kid = kid or os.environ.get("SHIELD_AGENT_TOKEN_KID", "env")
 
     if kid in _signer_cache:
         return _signer_cache[kid]
 
-    env_hex = os.environ.get("SHIELD_AGENT_TOKEN_PRIVATE_KEY", "").strip()
-    if env_hex:
-        try:
-            sk_bytes = bytes.fromhex(env_hex)
-            sk = Ed25519PrivateKey.from_private_bytes(sk_bytes)
-            signer = AgentTokenSigner(kid=kid, private_key=sk, public_key=sk.public_key())
-            _signer_cache[kid] = signer
-            return signer
-        except Exception as e:
-            logger.error(f"Invalid SHIELD_AGENT_TOKEN_PRIVATE_KEY: {e}")
-            raise TokenError("agent_token signing key misconfigured") from e
+    backend_env = "SHIELD_SIGNER_BACKEND_AGENT" if os.environ.get(
+        "SHIELD_SIGNER_BACKEND_AGENT"
+    ) else "SHIELD_SIGNER_BACKEND"
 
-    # No env key — generate an ephemeral one (dev/test only).
-    # Persist in cache so verify works within the process.
-    signer = _generate_signer(kid)
+    try:
+        signer = build_signer(
+            kid=kid,
+            backend_env=backend_env,
+            local_key_env="SHIELD_AGENT_TOKEN_PRIVATE_KEY",
+        )
+    except SignerError as e:
+        logger.error(f"agent_token signer init failed: {e}")
+        raise TokenError(f"agent_token signing key misconfigured: {e}") from e
+
     _signer_cache[kid] = signer
-    logger.warning(
-        f"agent_tokens: no SHIELD_AGENT_TOKEN_PRIVATE_KEY set; using ephemeral key (kid={kid}). "
-        "DO NOT use this in production."
-    )
     return signer
 
 

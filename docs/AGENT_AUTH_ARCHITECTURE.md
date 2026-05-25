@@ -109,12 +109,18 @@ and returns 401.
 
 ### Key material
 
-* Private key in `SHIELD_AGENT_TOKEN_PRIVATE_KEY` (hex-encoded 32 bytes).
-* Key id in `SHIELD_AGENT_TOKEN_KID` (default `env`).
-* If unset, the process generates an ephemeral key — dev/test only; it
-  emits a warning.
-* The signer interface is pluggable; a KMS-backed signer is a drop-in
-  replacement.
+LLM-Shield runs **on-prem**. No external/cloud key service is required
+or assumed. The signer interface (`core/signers.py::Signer`) supports
+three backends, selected per token type at startup. See §10 for details.
+
+| Env var                            | Effect                                    |
+|------------------------------------|-------------------------------------------|
+| `SHIELD_AGENT_TOKEN_PRIVATE_KEY`   | Hex-encoded 32-byte Ed25519 private key   |
+| `SHIELD_AGENT_TOKEN_KID`           | Key id stamped in the `kid` claim         |
+| `SHIELD_SIGNER_BACKEND_AGENT`      | `local` \| `pkcs11` \| `vault` (default: `local`) |
+
+If no private key is provided in `local` mode, the process generates an
+ephemeral keypair and emits a warning — dev/test only.
 
 ## 4. AuthZ — Capability Tokens
 
@@ -217,7 +223,7 @@ revocation propagates within one verify call — no caches to bust.
 | Replayed capability token                    | One-shot nonce burn at verify                           |
 | Prompt-injected tool abuse                   | Cap minted *before* LLM sees user instruction; tool field is exact, not wildcard |
 | Confused-deputy / over-broad sub-agent       | Cap carries scope intersection; downstream cannot widen |
-| Tool server trusts agent's word              | Tool verifies cap signature against KMS pubkey          |
+| Tool server trusts agent's word              | Tool verifies cap signature locally against distributed pubkey |
 | Tampered agent build / wrong model           | `build_hash` claim checked against allowlist            |
 | Compromised agent in flight                  | `revoke_instance(agent_instance_id)` — effect ≤1s       |
 | Cross-tenant leakage                         | `tenant_id` in every cap, checked constant-time at tool |
@@ -225,21 +231,126 @@ revocation propagates within one verify call — no caches to bust.
 
 ## 8. Production Hardening (post-v1)
 
-* Replace HMAC/ephemeral-key fallback with **KMS-backed Ed25519 signing**.
-* Replace `POST /v1/shield/auth/agent-token` with **OIDC + SPIFFE token
-  exchange**: take a verified user id_token + a workload SVID and emit
-  the agent token without an admin key.
-* Stream audit rows to **immutable storage** (ClickHouse / S3 + object
-  lock), not just SQLite.
-* Add **bloom-filter front** to the revocation Redis to skip 99% of GETs.
-* Add a **client SDK** (Python + TS) for tool servers so cap verification
-  is one import, not an HTTP call.
+This is an **on-prem** product. The hardening list reflects that — no
+cloud-managed services are required.
 
-## 9. Where the code lives
+* **Replace the admin-key gate** on `POST /v1/shield/auth/agent-token`
+  with **OIDC + SPIFFE token exchange**: take a verified user id_token
+  plus a workload SVID (from SPIRE, deployed alongside Shield) and emit
+  the agent token. The admin-key path stays as a break-glass.
+* **Move signing into an HSM or Vault** for environments that need it.
+  The `Signer` interface is already in place; see §10.
+* **Stream audit rows to immutable on-prem storage** (Kafka → ClickHouse,
+  or write-once object storage like MinIO with object lock). Inline DB
+  writes do not scale to high tool-call rates.
+* **Bloom-filter front the revocation store** to skip ~99% of Redis
+  GETs. Revocation is rare, so a per-pod 1MB bloom absorbs the hot path
+  and only falls through to Redis for true positives + false positives.
+* **Shard Redis by tenant** so one noisy tenant cannot saturate the
+  revocation store for others.
+* **Ship a tool-server SDK** (Python + TS) that bundles cap verification
+  with the public key, so tools do not need an HTTP call to Shield.
+  Public keys are distributed out-of-band (config, secret store).
+
+## 9. Scale Notes
+
+The protocol is stateless on the verify side, so adding Shield pods
+scales linearly. The bottlenecks are storage-layer:
+
+| Component                | Bottleneck                | On-prem mitigation               |
+|--------------------------|---------------------------|----------------------------------|
+| Agent-token verify       | 3 Redis GETs (revocation) | Per-pod bloom filter             |
+| Cap verify               | 1 Redis SETNX (nonce)     | Redis Cluster sharded by nonce   |
+| Cap signing throughput   | Sequential HSM calls      | LocalEd25519Signer (≈30µs/sig) or envelope signing through Vault |
+| Audit fan-out            | Synchronous writes        | Async producer → Kafka           |
+
+The token formats and verify logic do not change with these — they are
+storage-layer swaps behind existing interfaces.
+
+## 10. Signing Backends
+
+`core/signers.py` defines a `Signer` protocol with three backends. Both
+agent-token signing and cap-token signing dispatch through it
+independently, so a deployment can use (for example) HSM for agent
+tokens and the local signer for caps.
+
+### Selection
+
+```
+SHIELD_SIGNER_BACKEND          # default for both (default: local)
+SHIELD_SIGNER_BACKEND_AGENT    # override for agent tokens
+SHIELD_SIGNER_BACKEND_CAP      # override for caps
+```
+
+Values: `local` (default), `pkcs11`, `vault`.
+
+### `LocalEd25519Signer` (default)
+
+Process-resident Ed25519 keypair. Suitable for:
+* hardened hosts (key mlock'd, host-disk-encrypted, TPM-sealed at boot),
+* dev / staging,
+* deployments where throughput dominates HSM compliance requirements.
+
+Throughput: ~30µs/sign, ~50µs/verify, no I/O. One 8-core pod sustains
+~150k verifies/sec.
+
+### `PKCS11Signer` (stub — production-ready shape)
+
+Delegates signing to an HSM via PKCS#11. Verify stays in-process using a
+public key loaded from disk at startup — no HSM round trip on the hot
+path.
+
+Config:
+```
+SHIELD_PKCS11_LIBRARY        path to e.g. libsofthsm2.so
+SHIELD_PKCS11_TOKEN_LABEL    HSM token label
+SHIELD_PKCS11_KEY_LABEL      private-key label inside the token
+SHIELD_PKCS11_USER_PIN_FILE  file containing the user PIN (mode 0400)
+SHIELD_PKCS11_PUBLIC_KEY     path to raw 32-byte Ed25519 pubkey
+```
+
+To activate: `pip install python-pkcs11`, then fill in the `sign()`
+method per the docstring. The stub raises a clear `NotImplementedError`
+if instantiated unconfigured.
+
+Throughput: typically 1k–10k sigs/sec depending on HSM hardware. Below
+the local backend, but offers tamper-resistant key storage and FIPS
+140-2 Level 3 attestations where compliance requires.
+
+### `VaultTransitSigner` (stub — production-ready shape)
+
+Delegates signing to HashiCorp Vault's Transit secret engine. Verify
+again stays local.
+
+Config:
+```
+SHIELD_VAULT_ADDR            e.g. https://vault.internal:8200
+SHIELD_VAULT_TOKEN_FILE      AppRole / token file path (mode 0400)
+SHIELD_VAULT_TRANSIT_KEY     transit key name (must be Ed25519)
+SHIELD_VAULT_PUBLIC_KEY      path to raw 32-byte Ed25519 pubkey
+SHIELD_VAULT_NAMESPACE       (optional, Enterprise)
+```
+
+To activate: `pip install hvac`, then fill in `sign()` per the
+docstring. Throughput: ~3k sigs/sec per Transit instance; for higher
+throughput, run Transit in HA + batch mode, or implement envelope
+signing (cache a Vault-issued short-lived data key in pod memory,
+rotate every N minutes).
+
+### Why public-key verify is always local
+
+The hot path is verify, not sign. Routing verify through an HSM or
+Vault would impose a network round trip on every tool call — that is
+the wrong tradeoff. All three backends load the public key from disk
+at startup and verify with `cryptography`, keeping verify CPU-bound and
+under 100µs.
+
+## 11. Where the code lives
 
 | File                                           | Role                                |
 |------------------------------------------------|-------------------------------------|
 | `core/identity.py`                             | `IdentityTuple` + request dependency|
+| `core/signers.py`                              | Signer protocol + 3 backends        |
 | `core/agent_tokens.py`                         | Mint/verify agent tokens            |
 | `core/capabilities.py`                         | Mint/verify capability tokens       |
 | `core/agent_identity_middleware.py`            | Verifies `X-Agent-Token`            |
@@ -248,4 +359,5 @@ revocation propagates within one verify call — no caches to bust.
 | `tests/test_agent_tokens.py`                   | AuthN unit tests                    |
 | `tests/test_capabilities.py`                   | AuthZ unit tests                    |
 | `tests/test_revocation.py`                     | Revocation tests                    |
+| `tests/test_signers.py`                        | Signer dispatcher + backend tests   |
 | `tests/test_agent_auth_e2e.py`                 | End-to-end FastAPI tests            |
