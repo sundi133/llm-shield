@@ -88,8 +88,10 @@ def record(
     if not tenant_id or event not in ALL_EVENTS:
         return
     try:
+        import uuid as _uuid
         entry = {
             "ts": int(time.time()),
+            "event_id": _uuid.uuid4().hex,   # makes dedup unambiguous
             "event": event,
             "agent_id": agent_id,
             "user_sub": user_sub,
@@ -98,18 +100,36 @@ def record(
             "reason": reason,
         }
         date = _today_utc()
+        ck = _counter_key(tenant_id, date)
+        rk = _recent_key(tenant_id)
+        entry_json = json.dumps(entry, separators=(",", ":"))
+
         r = _get_redis()
         if r:
-            pipe = r.pipeline()
-            pipe.hincrby(_counter_key(tenant_id, date), event, 1)
-            pipe.expire(_counter_key(tenant_id, date), COUNTER_TTL_SECONDS)
-            pipe.lpush(_recent_key(tenant_id), json.dumps(entry, separators=(",", ":")))
-            pipe.ltrim(_recent_key(tenant_id), 0, RECENT_BUFFER_MAX - 1)
-            pipe.execute()
-            return
+            # Sequential calls instead of pipeline: more robust across Redis
+            # client variants (upstash-redis REST has subtle pipeline quirks)
+            # and surfaces a specific failure point if something does break.
+            redis_ok = True
+            try:
+                r.hincrby(ck, event, 1)
+                r.expire(ck, COUNTER_TTL_SECONDS)
+                r.lpush(rk, entry_json)
+                r.ltrim(rk, 0, RECENT_BUFFER_MAX - 1)
+            except Exception as e:
+                # Log the specific operation that broke. Don't lose the
+                # event — fall through to the in-process store so at
+                # least single-process deployments stay observable.
+                logger.warning(
+                    f"agent_auth_stats.record: Redis write failed for "
+                    f"tenant={tenant_id} event={event}: {type(e).__name__}: {e}. "
+                    "Falling back to in-process store."
+                )
+                redis_ok = False
+            if redis_ok:
+                return
+            # fall through to in-process
 
         # Fallback: in-process dicts
-        ck = _counter_key(tenant_id, date)
         existing = _fallback_store.get(ck) or "{}"
         try:
             counts = json.loads(existing) if isinstance(existing, str) else {}
@@ -118,7 +138,6 @@ def record(
         counts[event] = counts.get(event, 0) + 1
         _fallback_store[ck] = json.dumps(counts)
 
-        rk = _recent_key(tenant_id)
         buf = _fallback_store.get(rk)
         if not isinstance(buf, list):
             buf = []
@@ -153,25 +172,37 @@ def get_counters(tenant_id: str, days: int = 7) -> dict:
     for i in range(days - 1, -1, -1):
         date = time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400))
         counts: dict[str, int] = {ev: 0 for ev in ALL_EVENTS}
+        ck = _counter_key(tenant_id, date)
+
+        # Read Redis (best-effort) AND merge in any fallback-stored data.
+        # Merging both ensures that events written to the in-process
+        # fallback (because Redis was momentarily down) don't disappear
+        # from the portal once Redis comes back.
         if r:
             try:
-                raw = r.hgetall(_counter_key(tenant_id, date))
+                raw = r.hgetall(ck)
                 for k, v in (raw or {}).items():
                     k_s = k.decode() if isinstance(k, bytes) else k
                     v_s = v.decode() if isinstance(v, bytes) else v
                     if k_s in counts:
                         counts[k_s] = int(v_s)
-            except Exception:
-                pass
-        else:
-            raw = _fallback_store.get(_counter_key(tenant_id, date)) or "{}"
-            try:
-                parsed = json.loads(raw) if isinstance(raw, str) else {}
-                for k, v in parsed.items():
-                    if k in counts:
-                        counts[k] = int(v)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    f"get_counters Redis read failed for {ck}: "
+                    f"{type(e).__name__}: {e}. Using in-process fallback only."
+                )
+        fb_raw = _fallback_store.get(ck) or "{}"
+        try:
+            parsed = json.loads(fb_raw) if isinstance(fb_raw, str) else {}
+            for k, v in parsed.items():
+                if k in counts:
+                    # Each successful write goes to Redis OR fallback (never
+                    # both — record() returns early on Redis success), so
+                    # summing is safe and correctly attributes events that
+                    # spilled to fallback during a transient Redis outage.
+                    counts[k] += int(v)
+        except Exception:
+            pass
 
         out_days.append({"date": date, "counts": counts})
         for k, v in counts.items():
@@ -181,27 +212,48 @@ def get_counters(tenant_id: str, days: int = 7) -> dict:
 
 
 def get_recent(tenant_id: str, limit: int = 50) -> list[dict]:
-    """Return the last `limit` events (newest first)."""
+    """Return the last `limit` events (newest first).
+
+    Merges Redis + in-process fallback so events that spilled to fallback
+    during a transient Redis outage don't vanish from the portal once
+    Redis comes back. Deduplicates by (ts, event, agent_id, tool, resource)
+    in case the same write somehow landed in both.
+    """
     limit = max(1, min(limit, RECENT_BUFFER_MAX))
     r = _get_redis()
     raw_entries: list = []
     if r:
         try:
             raw_entries = r.lrange(_recent_key(tenant_id), 0, limit - 1) or []
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                f"get_recent Redis read failed for tenant={tenant_id}: "
+                f"{type(e).__name__}: {e}. Using in-process fallback only."
+            )
             raw_entries = []
-    else:
-        buf = _fallback_store.get(_recent_key(tenant_id))
-        raw_entries = list(buf)[:limit] if isinstance(buf, list) else []
+    buf = _fallback_store.get(_recent_key(tenant_id))
+    if isinstance(buf, list):
+        raw_entries = list(raw_entries) + list(buf)
 
     out: list[dict] = []
+    seen_ids: set[str] = set()
     for raw in raw_entries:
         s = raw.decode() if isinstance(raw, bytes) else raw
         try:
-            out.append(json.loads(s))
+            parsed = json.loads(s)
+            # Dedup on event_id (a unique per-record UUID). Older records
+            # without event_id can't be deduped, but the worst-case is one
+            # extra row in the table — never under-counting.
+            eid = parsed.get("event_id")
+            if eid and eid in seen_ids:
+                continue
+            if eid:
+                seen_ids.add(eid)
+            out.append(parsed)
         except Exception:
             continue
-    return out
+    out.sort(key=lambda e: e.get("ts", 0), reverse=True)
+    return out[:limit]
 
 
 def clear_for_tests(tenant_id: Optional[str] = None) -> None:

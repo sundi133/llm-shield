@@ -39,6 +39,65 @@ class TestRecord:
         stats.record(tenant_id="t1", event=stats.EVENT_CAP_MINTED)
 
 
+class TestRedisFailureFallsThrough:
+    """Regression: when Redis writes raise, the event must NOT vanish
+    silently. It should fall through to the in-process fallback so a
+    single-process deployment still shows non-zero counters/recent."""
+
+    def test_write_failure_falls_through_to_inprocess(self, monkeypatch, caplog):
+        # A Redis client that pretends to exist but raises on every write.
+        class _BrokenRedis:
+            def hincrby(self, *a, **kw): raise RuntimeError("upstash quota exceeded")
+            def expire(self, *a, **kw): raise RuntimeError("nope")
+            def lpush(self, *a, **kw): raise RuntimeError("nope")
+            def ltrim(self, *a, **kw): raise RuntimeError("nope")
+            def hgetall(self, *a, **kw): return {}
+            def lrange(self, *a, **kw): return []
+        monkeypatch.setattr(stats, "_get_redis", lambda: _BrokenRedis())
+
+        with caplog.at_level("WARNING"):
+            stats.record(tenant_id="t1", event=stats.EVENT_TOKEN_ISSUED)
+
+        # 1) The failure was loud (logged), not silent
+        assert any("Redis write failed" in r.message for r in caplog.records), \
+            "expected a WARNING with the actual Redis failure reason"
+
+        # 2) The event landed in the in-process store as a fallback
+        #    The reads below also use the broken Redis (returns empty),
+        #    so the get_counters/get_recent paths fall through to fallback.
+        counters = stats.get_counters("t1", days=1)
+        assert counters["totals"][stats.EVENT_TOKEN_ISSUED] == 1, \
+            "event should have landed in fallback store after Redis write failed"
+
+        recent = stats.get_recent("t1")
+        assert any(e["event"] == stats.EVENT_TOKEN_ISSUED for e in recent), \
+            "recent buffer should reflect the fallback-stored event"
+
+    def test_read_failure_falls_through_to_inprocess(self, monkeypatch, caplog):
+        # First, write to the in-process store directly
+        stats.record(tenant_id="t1", event=stats.EVENT_CAP_MINTED)
+
+        # Now swap in a Redis client whose READS raise
+        class _ReadBrokenRedis:
+            def hincrby(self, *a, **kw): return 1
+            def expire(self, *a, **kw): return True
+            def lpush(self, *a, **kw): return 1
+            def ltrim(self, *a, **kw): return True
+            def hgetall(self, *a, **kw): raise RuntimeError("upstash timeout")
+            def lrange(self, *a, **kw): raise RuntimeError("upstash timeout")
+        monkeypatch.setattr(stats, "_get_redis", lambda: _ReadBrokenRedis())
+
+        with caplog.at_level("WARNING"):
+            counters = stats.get_counters("t1", days=1)
+            recent = stats.get_recent("t1")
+
+        # Logs explain what broke
+        assert any("Redis read failed" in r.message for r in caplog.records)
+        # Falls through to fallback store, so portal still shows real data
+        assert counters["totals"][stats.EVENT_CAP_MINTED] >= 1
+        assert any(e["event"] == stats.EVENT_CAP_MINTED for e in recent)
+
+
 class TestCounters:
     def test_increments_daily(self):
         for _ in range(3):
