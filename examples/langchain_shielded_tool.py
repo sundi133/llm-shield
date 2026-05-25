@@ -42,14 +42,21 @@ Requires:
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any, Callable, Optional
+
+# Same dual-import bootstrap as openai_shielded_tool.py
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 try:
     from langchain.tools.base import BaseTool
 except Exception:  # langchain not installed in the smoke-test sandbox
     BaseTool = object  # type: ignore[assignment,misc]
 
-from examples.shield_client import AgentToken, ShieldClient, ShieldError
+from shield_client import AgentToken, ShieldClient, ShieldError  # noqa: E402
 
 
 class ShieldedToolFactory:

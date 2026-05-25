@@ -68,9 +68,18 @@ Notes
 from __future__ import annotations
 
 import json
+import os
+import sys
 from typing import Any, Callable
 
-from examples.shield_client import AgentToken, ShieldClient, ShieldError
+# Make the SDK importable whether you run this as a script
+# (`python3 examples/openai_shielded_tool.py`) or as a module
+# (`python3 -m examples.openai_shielded_tool`).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+from shield_client import AgentToken, ShieldClient, ShieldError  # noqa: E402
 
 
 def shielded_dispatch(
