@@ -1,7 +1,8 @@
 import os
+import hmac
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -110,7 +111,21 @@ def create_app() -> FastAPI:
         return FileResponse(os.path.join(_static_dir, "playground.html"))
 
     @app.get("/admin")
-    async def admin_portal():
+    async def admin_portal(request: Request):
+        admin_key = os.environ.get("SHIELD_ADMIN_KEY", "")
+        if not admin_key:
+            raise HTTPException(
+                status_code=500,
+                detail="SHIELD_ADMIN_KEY not configured — admin endpoints disabled",
+            )
+        provided = request.headers.get("X-Admin-Key", "").strip()
+        if not provided:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing admin key. Use X-Admin-Key header for /admin.",
+            )
+        if not hmac.compare_digest(provided, admin_key):
+            raise HTTPException(status_code=403, detail="Invalid admin key")
         return FileResponse(os.path.join(_static_dir, "admin.html"))
 
     @app.get("/tenant")
