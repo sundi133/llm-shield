@@ -36,6 +36,8 @@ COPY core/feature_flags.py core/
 COPY core/policy_inheritance.py core/
 COPY core/webhook_dispatcher.py core/
 COPY core/models.py core/
+# Security hardening — IEMLabs VAPT fixes (May 2026)
+COPY core/url_safety.py core/
 # Agent AuthN/AuthZ feature
 COPY core/identity.py core/
 COPY core/signers.py core/
