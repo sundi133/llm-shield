@@ -1817,7 +1817,7 @@
     <div class="login-desc">Sign in with your tenant API key</div>
     <div class="field">
       <label>API Key</label>
-      <input type="password" id="api-key-input" placeholder="Enter your tenant API key" value="" autofocus>
+      <input type="password" id="api-key-input" placeholder="Enter your tenant API key" value="" autofocus autocomplete="off">
     </div>
     <button class="primary" style="width: 100%;" onclick="login()">Sign In</button>
     <div id="login-error" class="toast error hidden"></div>
@@ -3542,11 +3542,11 @@ if __name__ == "__main__":
         </div>
         <div id="pg-runpod-token-field" class="field">
           <label>RunPod Token <span class="muted">(required for RunPod hosted)</span></label>
-          <input type="password" id="pg-runpod-token" placeholder="rpa_YOUR_RUNPOD_TOKEN_HERE">
+          <input type="password" id="pg-runpod-token" placeholder="rpa_YOUR_RUNPOD_TOKEN_HERE" autocomplete="off">
         </div>
         <div class="field">
           <label>API Key</label>
-          <input type="text" id="pg-api-key" placeholder="tenant-xxx-key-xxx">
+          <input type="password" id="pg-api-key" placeholder="tenant-xxx-key-xxx" autocomplete="off">
           <div class="muted" style="margin-top:0.25rem;">Pre-filled from your login session. Override if testing a different key.</div>
         </div>
       </div>

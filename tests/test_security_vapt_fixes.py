@@ -1,9 +1,16 @@
-"""End-to-end tests for the IEMLabs VAPT (May 2026) high+medium fixes.
+"""End-to-end tests for the IEMLabs VAPT (May 2026) fixes.
 
 Mapped to report sections:
-  8.1 SSRF                  (High)   — /playground/llm-proxy
-  8.2 IDOR                  (High)   — /v1/tenant/me
-  8.3 Information Disclosure (Medium) — /playground/llm-proxy
+  8.1  SSRF                   (High)   — /playground/llm-proxy
+  8.2  IDOR                   (High)   — /v1/tenant/me
+  8.3  Information Disclosure  (Medium) — /playground/llm-proxy
+  8.4  Missing Security Headers (Low)  — all responses
+  8.5  HSTS                    (Low)   — all responses
+  8.6  No Cookie Validation    (Low)   — cookie attributes
+  8.7  Improper Input Validation (Low) — /v1/agents/registry
+  8.8  Clickjacking            (Low)   — X-Frame-Options + CSP
+  8.9  No Captcha / Brute-force (Low)  — auth rate limiting
+  8.10 Autocomplete Enable     (Low)   — HTML autocomplete="off"
 
 Each test reproduces the auditor's attack pattern and asserts it is
 now blocked or the leak is closed.
@@ -341,3 +348,191 @@ class TestHappyPath:
         )
         assert r.status_code == 200
         assert r.json()["id"] == "chatcmpl-x"
+
+
+# ─── Security Headers (8.4 + 8.5 + 8.8) ─────────────────────────────
+
+
+@pytest.fixture
+def headers_app():
+    """Minimal app with SecurityHeadersMiddleware to test header injection."""
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+    from core.security_headers import SecurityHeadersMiddleware
+
+    app = FastAPI()
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    @app.get("/test")
+    async def test_endpoint():
+        return JSONResponse({"ok": True})
+
+    @app.get("/html")
+    async def html_endpoint():
+        from starlette.responses import HTMLResponse
+        return HTMLResponse("<h1>Hello</h1>")
+
+    @app.get("/cookie")
+    async def cookie_endpoint():
+        resp = JSONResponse({"ok": True})
+        resp.set_cookie("session_id", "abc123")
+        return resp
+
+    return app
+
+
+@pytest.fixture
+def headers_client(headers_app):
+    return TestClient(headers_app)
+
+
+class TestSecurityHeaders:
+    """Findings 8.4, 8.5, 8.8: security headers must be on all responses."""
+
+    def test_x_frame_options_deny(self, headers_client):
+        r = headers_client.get("/test")
+        assert r.headers.get("x-frame-options") == "DENY"
+
+    def test_x_content_type_options(self, headers_client):
+        r = headers_client.get("/test")
+        assert r.headers.get("x-content-type-options") == "nosniff"
+
+    def test_csp_frame_ancestors(self, headers_client):
+        r = headers_client.get("/test")
+        csp = r.headers.get("content-security-policy", "")
+        assert "frame-ancestors 'none'" in csp
+
+    def test_hsts_header(self, headers_client):
+        r = headers_client.get("/test")
+        hsts = r.headers.get("strict-transport-security", "")
+        assert "max-age=31536000" in hsts
+        assert "includeSubDomains" in hsts
+
+    def test_referrer_policy(self, headers_client):
+        r = headers_client.get("/test")
+        assert r.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+
+    def test_permissions_policy(self, headers_client):
+        r = headers_client.get("/test")
+        pp = r.headers.get("permissions-policy", "")
+        assert "camera=()" in pp
+        assert "microphone=()" in pp
+
+    def test_cache_control_on_json(self, headers_client):
+        r = headers_client.get("/test")
+        assert r.headers.get("cache-control") == "no-store"
+
+    def test_headers_on_html_too(self, headers_client):
+        r = headers_client.get("/html")
+        assert r.headers.get("x-frame-options") == "DENY"
+        assert "max-age=31536000" in r.headers.get("strict-transport-security", "")
+
+
+class TestCookieSecurity:
+    """Finding 8.6: cookies must have HttpOnly, Secure, SameSite."""
+
+    def test_cookie_gets_secure_flags(self, headers_client):
+        r = headers_client.get("/cookie")
+        cookie_header = r.headers.get("set-cookie", "")
+        lower = cookie_header.lower()
+        assert "httponly" in lower
+        assert "secure" in lower
+        assert "samesite" in lower
+
+
+# ─── Input Validation (8.7) ──────────────────────────────────────────
+
+
+class TestInputValidation:
+    """Finding 8.7: /v1/agents/registry must reject HTML and enforce limits."""
+
+    def test_sanitize_string_strips_html(self):
+        from api.routes_agents_registry import _sanitize_string
+        assert _sanitize_string("<script>alert(1)</script>hello") == "alert(1)hello"
+        assert _sanitize_string("<b>bold</b>") == "bold"
+        assert _sanitize_string("clean text") == "clean text"
+
+    def test_sanitize_string_truncates(self):
+        from api.routes_agents_registry import _sanitize_string
+        long = "a" * 1000
+        result = _sanitize_string(long, max_len=100)
+        assert len(result) == 100
+
+    def test_validate_agent_id_rejects_traversal(self):
+        from api.routes_agents_registry import _validate_agent_id
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_agent_id("../../../etc/passwd")
+        assert exc_info.value.status_code == 400
+
+    def test_validate_agent_id_rejects_html(self):
+        from api.routes_agents_registry import _validate_agent_id
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException):
+            _validate_agent_id("<script>alert(1)</script>")
+
+    def test_validate_agent_id_accepts_valid(self):
+        from api.routes_agents_registry import _validate_agent_id
+        # Should not raise
+        _validate_agent_id("healthcare-agent_01")
+
+    def test_sanitize_value_recursive(self):
+        from api.routes_agents_registry import _sanitize_value
+        data = {
+            "name": "<b>Agent</b>",
+            "tools": ["<script>bad</script>tool1"],
+            "nested": {"key": "<img src=x>val"},
+        }
+        result = _sanitize_value(data)
+        assert "<" not in str(result)
+
+    def test_validate_agent_body_rejects_bad_tools(self):
+        from api.routes_agents_registry import _validate_agent_body
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_agent_body({"tools": ["valid_tool", "<script>bad</script>"]})
+        assert exc_info.value.status_code == 400
+
+
+# ─── Brute-force Protection (8.9) ───────────────────────────────────
+
+
+class TestBruteForceProtection:
+    """Finding 8.9: repeated failed auth must trigger lockout."""
+
+    def test_lockout_after_max_failures(self):
+        from core.auth import (
+            _record_auth_failure,
+            _is_ip_locked_out,
+            _clear_auth_failures,
+            _MAX_FAILED_ATTEMPTS,
+        )
+        test_ip = "192.0.2.99"
+        _clear_auth_failures(test_ip)
+
+        # Record failures up to the limit
+        for _ in range(_MAX_FAILED_ATTEMPTS):
+            _record_auth_failure(test_ip)
+
+        assert _is_ip_locked_out(test_ip) is True
+
+        # Clean up
+        _clear_auth_failures(test_ip)
+        assert _is_ip_locked_out(test_ip) is False
+
+    def test_successful_auth_clears_failures(self):
+        from core.auth import (
+            _record_auth_failure,
+            _is_ip_locked_out,
+            _clear_auth_failures,
+        )
+        test_ip = "192.0.2.100"
+        _clear_auth_failures(test_ip)
+
+        # Record some failures
+        for _ in range(5):
+            _record_auth_failure(test_ip)
+
+        # Simulate successful auth
+        _clear_auth_failures(test_ip)
+        assert _is_ip_locked_out(test_ip) is False

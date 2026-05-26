@@ -966,7 +966,9 @@ def create_admin_app() -> FastAPI:
     )
 
     # Middleware: auth first (last added = first executed in Starlette).
-    # Order: AuthMiddleware → mTLS → SPIFFE → AgentIdentity → Shield
+    # Order: AuthMiddleware → mTLS → SPIFFE → AgentIdentity → Shield → SecurityHeaders
+    from core.security_headers import SecurityHeadersMiddleware
+    app.add_middleware(SecurityHeadersMiddleware)  # runs last (sets response headers)
     app.add_middleware(ShieldMiddleware)
     if _AgentIdentityMiddleware:
         app.add_middleware(_AgentIdentityMiddleware)
