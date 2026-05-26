@@ -65,13 +65,22 @@ class Capability:
 
 
 class ShieldClient:
-    """Talks to a Shield deployment with the tenant API key."""
+    """Talks to a Shield deployment with the tenant API key.
+
+    For RunPod deployments, also pass the RunPod auth token:
+        client = ShieldClient(
+            base_url="https://xxx.api.runpod.ai",
+            tenant_api_key="your-tenant-key",
+            auth_token="rpa_xxx",  # or set RUNPOD_TOKEN env
+        )
+    """
 
     def __init__(
         self,
         base_url: str,
         tenant_api_key: Optional[str] = None,
-        timeout: float = 5.0,
+        auth_token: Optional[str] = None,
+        timeout: float = 10.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.tenant_api_key = tenant_api_key or os.environ.get("SHIELD_TENANT_KEY", "")
@@ -79,12 +88,16 @@ class ShieldClient:
             raise ShieldError(
                 "tenant API key required (set SHIELD_TENANT_KEY or pass tenant_api_key)"
             )
+        # RunPod / proxy auth token (Authorization: Bearer)
+        self.auth_token = auth_token or os.environ.get("RUNPOD_TOKEN", "")
         self.timeout = timeout
 
     # ── private ─────────────────────────────────────────────────────
 
     def _headers(self, extra: Optional[dict] = None) -> dict:
         h = {"Content-Type": "application/json", "X-API-Key": self.tenant_api_key}
+        if self.auth_token:
+            h["Authorization"] = f"Bearer {self.auth_token}"
         if extra:
             h.update(extra)
         return h
@@ -192,10 +205,14 @@ class ShieldClient:
         if expected_resource is not None:
             body["expected_resource"] = expected_resource
         # /cap/verify does NOT require the tenant key — it's the tool
-        # server's path, gated by the cap itself.
+        # server's path, gated by the cap itself. But RunPod proxy
+        # still needs the auth token.
+        verify_headers = {"Content-Type": "application/json"}
+        if self.auth_token:
+            verify_headers["Authorization"] = f"Bearer {self.auth_token}"
         r = requests.post(
             f"{self.base_url}/v1/shield/cap/verify",
-            json=body, headers={"Content-Type": "application/json"},
+            json=body, headers=verify_headers,
             timeout=self.timeout,
         )
         if not r.ok:
