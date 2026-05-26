@@ -161,9 +161,15 @@ def mint_agent_token(
     session_id: str,
     parent_agent_id: Optional[str] = None,
     ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
+    identity_method: str = "agent_token",
     signer: Optional[AgentTokenSigner] = None,
 ) -> str:
-    """Mint a signed agent token as a standard JWT. Raises TokenError on misconfiguration."""
+    """Mint a signed agent token as a standard JWT.
+
+    `identity_method` records how the caller proved their identity to the
+    mint endpoint. One of: admin_key | spiffe | mtls | oidc_id_token.
+    Raises TokenError on misconfiguration.
+    """
     if ttl_seconds <= 0 or ttl_seconds > MAX_TOKEN_TTL_SECONDS:
         raise TokenError(
             f"ttl_seconds must be in (0, {MAX_TOKEN_TTL_SECONDS}]; got {ttl_seconds}"
@@ -195,6 +201,7 @@ def mint_agent_token(
         "build_hash": build_hash,
         "model_version": model_version,
         "session_id": session_id,
+        "identity_method": identity_method,
         "iat": now,
         "exp": now + ttl_seconds,
         "jti": uuid.uuid4().hex,
@@ -317,7 +324,7 @@ def verify_agent_token(token: str) -> IdentityTuple:
         model_version=claims["model_version"],
         session_id=claims["session_id"],
         trust_level="high",  # signed token implies high-trust identity
-        identity_method="agent_token",
+        identity_method=claims.get("identity_method", "agent_token"),
     )
 
 

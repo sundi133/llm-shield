@@ -497,3 +497,144 @@ Everything is per-tenant scoped; no cross-tenant key reads.
                           │ / instance / user  │       within 1 verify
                           └────────────────────┘
 ```
+
+---
+
+## 7. Sovereign / on-prem mode (no cloud IdP)
+
+When there is no Okta or Entra to lean on — air-gapped enterprise, gov,
+defense — Shield's `/v1/shield/auth/agent-token` accepts three workload
+auth methods in addition to the legacy admin key. They are all wired in
+code today (`api/routes_agent_auth.py::_authenticate_caller`) and all
+covered by tests.
+
+| Mode | Caller proves identity by | What Shield checks | Trust source |
+|---|---|---|---|
+| **B — Federated OIDC** | sends `X-Id-Token` header carrying an id_token from your on-prem IdP (Keycloak / Dex / Authelia / ADFS / PingFederate) | issuer matches a tenant-registered provider, JWKS signature, `aud`, `exp`; maps claims via `provider.claim_mapping` | the IdP's local signing key (never leaves your VPC) |
+| **C₁ — SPIFFE workload** | presents an X.509 SVID via reverse proxy (`X-Client-Cert`) or JWT SVID validated against your SPIRE trust bundle | SPIFFE ID, trust domain, trust bundle / SVID JWKS, optional `allowed_workloads` allowlist | SPIRE server, on-prem |
+| **C₂ — Raw mTLS** | TLS handshake with a client cert chained to an internal CA (`SHIELD_TRUSTED_CA_BUNDLE`) | cert fingerprint resolves to an agent registered in the per-tenant cert registry | your PKI / internal CA |
+
+All three are **outbound-network-free**. The minted agent token carries
+an `identity_method` claim (`spiffe`, `mtls`, `oidc_id_token`, or
+`admin_key`) so audit rows can be filtered by how the identity was
+proven — useful when you want, e.g., "show every token minted with the
+admin break-glass key in the last 7 days."
+
+### Mode B — sequence (Keycloak federation, no cloud)
+
+```
+ User ──SSO──▶ Keycloak (on-prem)
+                    │
+                    └── id_token ──▶ Agent runtime
+                                          │
+                                          │ POST /v1/shield/auth/agent-token
+                                          │ X-Id-Token: <id_token>
+                                          │ body: { agent_instance_id,
+                                          │         tenant_id, build_hash, … }
+                                          ▼
+                                  ┌────────────────────────┐
+                                  │ Shield: AuthN          │
+                                  │  • _authenticate_caller│
+                                  │    looks up provider   │
+                                  │    by `iss`            │
+                                  │  • validate id_token   │
+                                  │    via JWKS (in-VPC)   │
+                                  │  • map_claims →        │
+                                  │    user_sub, agent_id  │
+                                  │  • mint agent token    │
+                                  │    identity_method=    │
+                                  │      oidc_id_token     │
+                                  └────────────┬───────────┘
+                                               │ X-Agent-Token
+                                               ▼
+                                       /v1/shield/cap/mint …  (unchanged)
+```
+
+Configure once per tenant:
+
+```http
+POST /v1/admin/oidc-providers/{tenant_id}
+{
+  "issuer":   "https://keycloak.corp.local/realms/main",
+  "client_id": "shield",
+  "audience":  "shield",
+  "jwks_uri":  "https://keycloak.corp.local/realms/main/protocol/openid-connect/certs",
+  "claim_mapping": {
+    "sub":                 "user_sub",
+    "preferred_username":  "agent_id"
+  }
+}
+```
+
+If the caller supplies `user_sub`/`agent_id` in the body that disagree
+with the verified id_token claims, the mint is rejected with
+`400 body.user_sub conflicts with verified identity (oidc_id_token)` —
+no spoofing.
+
+### Mode C — sequence (workload identity, no humans)
+
+```
+   SPIRE server (on-prem)
+        │
+        │ attestation → SVID
+        ▼
+   Agent workload  spiffe://corp.local/billing-bot
+        │
+        │ mTLS handshake  (or X-Client-Cert via Envoy)
+        ▼
+   ┌──────────────────────────────────────────────┐
+   │ Shield                                       │
+   │   SPIFFEMiddleware    → state.spiffe_identity│
+   │   MTLSMiddleware      → state.mtls_identity  │
+   │                                              │
+   │   POST /auth/agent-token                     │
+   │     _authenticate_caller():                  │
+   │       1) spiffe_identity?  → use it          │
+   │       2) mtls_identity?    → use it          │
+   │       3) X-Id-Token?       → Mode B          │
+   │       4) X-Admin-Key?      → legacy          │
+   │   mint agent_token with                      │
+   │     user_sub = SPIFFE ID                     │
+   │     agent_id = workload path                 │
+   │     identity_method = "spiffe"               │
+   └──────────────────────────────────────────────┘
+        │
+        ▼
+   /v1/shield/cap/mint …  (unchanged)
+```
+
+Configure once at the process level:
+
+```bash
+SHIELD_SPIFFE_ENABLED=1
+SHIELD_SPIFFE_TRUST_DOMAIN=corp.local
+SHIELD_SPIFFE_TRUST_BUNDLE=/etc/shield/spire-ca.pem
+SHIELD_SPIFFE_ALLOWED_WORKLOADS=spiffe://corp.local/billing-bot,spiffe://corp.local/support-bot
+
+# or for raw mTLS without SPIRE:
+SHIELD_MTLS_ENABLED=1
+SHIELD_MTLS_CERT_HEADER=X-Forwarded-Client-Cert   # when behind Envoy/Istio
+```
+
+### What the minted token looks like in each mode
+
+Same JWT shape across all modes — only `identity_method` and the
+identity *source* differ. SIEM consumers can tell mints apart:
+
+```json
+{ "sub": "alice@corp",                  "identity_method": "oidc_id_token", … }
+{ "sub": "spiffe://corp.local/billing", "identity_method": "spiffe",        … }
+{ "sub": "billing-bot",                 "identity_method": "mtls",          … }
+{ "sub": "ops@corp",                    "identity_method": "admin_key",     … }   # break-glass
+```
+
+### Sovereign-mode constraints — none of these need outside network
+
+| Concern                | How it's satisfied on-prem                                  |
+|------------------------|-------------------------------------------------------------|
+| Token signing keys     | Ed25519 in fs or PKCS#11 (`SHIELD_SIGNER_BACKEND=hsm`)       |
+| External JWKS fetch    | only internal IdP URLs; cached locally                       |
+| Workload attestation   | SPIRE / internal CA — no cloud IID                           |
+| State                  | self-hosted Redis / KeyDB / Sentinel                         |
+| SIEM                   | on-prem Splunk, ES, Loki — same OTLP/HEC/ES export           |
+| Outbound network       | **none required** in Mode C; only internal JWKS in Mode B    |

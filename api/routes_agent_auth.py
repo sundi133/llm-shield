@@ -63,8 +63,15 @@ tenant_router = APIRouter(prefix="/v1/tenant/me/agent-auth", tags=["agent-auth"]
 
 
 class AgentTokenRequest(BaseModel):
-    user_sub: str = Field(..., description="OIDC sub of the human user")
-    agent_id: str = Field(..., description="Logical agent identity")
+    """Body for /v1/shield/auth/agent-token.
+
+    `user_sub` and `agent_id` are optional when the caller is workload-
+    authenticated (SPIFFE/mTLS/OIDC id_token) — those identities supply
+    the values directly. With admin-key auth they are still required.
+    """
+
+    user_sub: Optional[str] = Field(None, description="OIDC sub of the human user")
+    agent_id: Optional[str] = Field(None, description="Logical agent identity")
     agent_instance_id: str = Field(..., description="Unique per-process id")
     tenant_id: str = Field(..., description="Tenant scope")
     build_hash: str = Field(..., description="Exact build hash of agent code")
@@ -114,33 +121,136 @@ class RevokeRequest(BaseModel):
     ttl_seconds: int = 3600
 
 
-# ─── Admin gate for token exchange ──────────────────────────────────────
+# ─── Caller authentication for token issuance ──────────────────────────
 
 
-def _require_admin(request: Request) -> None:
-    """Token-exchange endpoint requires admin key or SPIFFE workload identity.
+class _AuthContext:
+    """Who authenticated to /auth/agent-token, and what claims they bring.
 
-    Accepts:
-    1. X-Admin-Key header (original admin auth)
-    2. SPIFFE workload identity (set by SPIFFEMiddleware, on-prem friendly)
-
-    In production, SPIFFE replaces admin-key for automated workloads.
+    `method` is one of: admin | spiffe | mtls | oidc_id_token.
+    Workload methods (spiffe/mtls/oidc) carry identity claims that are
+    trusted over anything the body says; admin callers can supply
+    arbitrary identity in the body.
     """
-    # Accept SPIFFE workload identity as admin-equivalent
-    spiffe_identity = getattr(request.state, "spiffe_identity", None)
-    if spiffe_identity:
-        return
+
+    __slots__ = ("method", "user_sub", "agent_id", "tenant_id")
+
+    def __init__(
+        self,
+        method: str,
+        *,
+        user_sub: str = "",
+        agent_id: str = "",
+        tenant_id: str = "",
+    ) -> None:
+        self.method = method
+        self.user_sub = user_sub
+        self.agent_id = agent_id
+        self.tenant_id = tenant_id
+
+    @property
+    def is_workload(self) -> bool:
+        return self.method in ("spiffe", "mtls", "oidc_id_token")
+
+
+async def _authenticate_caller(request: Request) -> _AuthContext:
+    """Authenticate a request to /auth/agent-token.
+
+    Order of preference (workload identity first — Mode B/C, sovereign):
+      1. SPIFFE workload identity   (Mode C — SPIRE/SVID)
+      2. mTLS client cert identity  (Mode C — raw PKI)
+      3. OIDC id_token via X-Id-Token header or body (Mode B — Keycloak/Dex/etc.)
+      4. Admin key (legacy / break-glass)
+
+    Raises HTTPException(401/403) on failure.
+    """
+    spiffe = getattr(request.state, "spiffe_identity", None)
+    if spiffe:
+        return _AuthContext(
+            method="spiffe",
+            user_sub=spiffe.get("user_sub", "") or spiffe.get("agent_key", ""),
+            agent_id=spiffe.get("agent_id", "") or spiffe.get("agent_key", ""),
+            tenant_id=spiffe.get("tenant_id", "") or getattr(request.state, "tenant_id", ""),
+        )
+
+    mtls = getattr(request.state, "mtls_identity", None)
+    if mtls:
+        return _AuthContext(
+            method="mtls",
+            user_sub=mtls.get("agent_key", ""),
+            agent_id=mtls.get("agent_key", ""),
+            tenant_id=mtls.get("tenant_id", "") or getattr(request.state, "tenant_id", ""),
+        )
+
+    id_token = (request.headers.get("X-Id-Token") or "").strip()
+    if id_token:
+        ctx = await _verify_oidc_id_token(id_token, request)
+        if ctx is not None:
+            return ctx
 
     admin_key = os.environ.get("SHIELD_ADMIN_KEY", "")
-    if not admin_key:
-        raise HTTPException(
-            status_code=500,
-            detail="SHIELD_ADMIN_KEY not configured — token issuance disabled",
-        )
-    provided = request.headers.get("X-Admin-Key", "").strip()
-    import hmac
-    if not provided or not hmac.compare_digest(provided, admin_key):
-        raise HTTPException(status_code=403, detail="admin key required")
+    if admin_key:
+        provided = request.headers.get("X-Admin-Key", "").strip()
+        import hmac
+        if provided and hmac.compare_digest(provided, admin_key):
+            return _AuthContext(method="admin")
+
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "admin key required (or SPIFFE/mTLS workload identity, "
+            "or X-Id-Token from a registered OIDC provider)"
+        ),
+    )
+
+
+async def _verify_oidc_id_token(
+    id_token: str, request: Request
+) -> Optional[_AuthContext]:
+    """Validate a federated id_token against the tenant's registered providers.
+
+    Returns an _AuthContext on success, or None when no provider matches
+    so the next auth method can be tried.
+    """
+    from core.jwt_utils import decode_jwt_unverified
+    from core.oauth.oidc_client import (
+        OIDCValidationError,
+        map_claims,
+        oidc_registry,
+        validate_id_token,
+    )
+
+    try:
+        unverified = decode_jwt_unverified(id_token)
+    except Exception:
+        return None
+
+    issuer = unverified.get("iss", "")
+    if not issuer:
+        return None
+
+    tenant_id = getattr(request.state, "tenant_id", "") or ""
+    provider = await oidc_registry.get_provider_by_issuer(tenant_id, issuer)
+    if provider is None:
+        return None
+
+    try:
+        validated = await validate_id_token(id_token, provider)
+    except OIDCValidationError as e:
+        raise HTTPException(status_code=401, detail=f"invalid id_token: {e}")
+
+    mapped = map_claims(validated, provider.claim_mapping)
+    return _AuthContext(
+        method="oidc_id_token",
+        user_sub=mapped.get("user_sub") or validated.get("sub", ""),
+        agent_id=mapped.get("agent_id", ""),
+        tenant_id=tenant_id,
+    )
+
+
+async def _require_admin(request: Request) -> None:
+    """Back-compat alias — prefer `_authenticate_caller` directly."""
+    await _authenticate_caller(request)
 
 
 # ─── Endpoints ──────────────────────────────────────────────────────────
@@ -150,15 +260,48 @@ def _require_admin(request: Request) -> None:
 async def issue_agent_token(body: AgentTokenRequest, request: Request):
     """Issue a signed agent token (AuthN).
 
-    In production, this endpoint should be wired to an OIDC token exchange
-    that takes a verified user id_token + a SPIFFE workload SVID and emits
-    the agent token. v1 takes the claims directly, gated by admin key.
+    Accepts four auth modes:
+      • SPIFFE / mTLS workload identity (Mode C, sovereign air-gap)
+      • X-Id-Token from a registered OIDC provider (Mode B, on-prem Keycloak/Dex/ADFS)
+      • X-Admin-Key (break-glass / control plane)
+
+    When the caller authenticates as a workload (SPIFFE, mTLS, or OIDC),
+    `user_sub` and `agent_id` come from the verified identity, not the
+    request body — body values must match or be omitted.
     """
-    _require_admin(request)
+    ctx = await _authenticate_caller(request)
+
+    user_sub = body.user_sub or ""
+    agent_id = body.agent_id or ""
+    if ctx.is_workload:
+        if ctx.user_sub:
+            if user_sub and user_sub != ctx.user_sub:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"body.user_sub conflicts with verified identity ({ctx.method})",
+                )
+            user_sub = ctx.user_sub
+        if ctx.agent_id:
+            if agent_id and agent_id != ctx.agent_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"body.agent_id conflicts with verified identity ({ctx.method})",
+                )
+            agent_id = ctx.agent_id
+
+    if not user_sub or not agent_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "user_sub and agent_id are required (supply in body when using "
+                "admin-key auth; SPIFFE/mTLS/OIDC callers get them from their identity)"
+            ),
+        )
+
     try:
         token = mint_agent_token(
-            user_sub=body.user_sub,
-            agent_id=body.agent_id,
+            user_sub=user_sub,
+            agent_id=agent_id,
             agent_instance_id=body.agent_instance_id,
             tenant_id=body.tenant_id,
             build_hash=body.build_hash,
@@ -166,12 +309,13 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
             session_id=body.session_id,
             parent_agent_id=body.parent_agent_id,
             ttl_seconds=body.ttl_seconds,
+            identity_method=ctx.method,
         )
     except TokenError as e:
         raise HTTPException(status_code=400, detail=str(e))
     record_event(
         tenant_id=body.tenant_id, event=EVENT_TOKEN_ISSUED,
-        agent_id=body.agent_id, user_sub=body.user_sub,
+        agent_id=agent_id, user_sub=user_sub,
     )
     return AgentTokenResponse(agent_token=token, expires_in=body.ttl_seconds)
 
@@ -310,7 +454,7 @@ class RevokeRequestExt(RevokeRequest):
 @router.post("/auth/revoke")
 async def revoke(body: RevokeRequestExt, request: Request):
     """Revoke an instance, user, or jti/cap_id. Admin only."""
-    _require_admin(request)
+    await _require_admin(request)
     if not any([body.agent_instance_id, body.user_sub, body.jti]):
         raise HTTPException(status_code=400, detail="provide one of: agent_instance_id, user_sub, jti")
 
@@ -533,6 +677,7 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
             session_id=body.session_id,
             parent_agent_id=body.parent_agent_id,
             ttl_seconds=body.ttl_seconds,
+            identity_method="tenant_api_key",
         )
     except TokenError as e:
         raise HTTPException(status_code=400, detail=str(e))
