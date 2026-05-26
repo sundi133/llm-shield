@@ -173,9 +173,20 @@ def mint_agent_token(
 
     signer = signer or get_signer()
     now = int(time.time())
+
+    # RFC 8693 §2.2.1 actor chain. The standard JWT `sub` is the human who
+    # authorized the action; `act` carries the agent performing it, and any
+    # delegating parent is nested another level deep. The flat fields are
+    # retained for backward-compatibility with older verifiers.
+    act: dict = {"sub": agent_id, "agent_instance_id": agent_instance_id}
+    if parent_agent_id:
+        act["act"] = {"sub": parent_agent_id}
+
     claims = {
         "iss": _expected_issuer(),
         "aud": _expected_agent_audience(),
+        "sub": user_sub,
+        "act": act,
         "user_sub": user_sub,
         "agent_id": agent_id,
         "agent_instance_id": agent_instance_id,
