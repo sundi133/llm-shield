@@ -10,6 +10,7 @@ falls back to in-memory for single-worker deployments.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -195,6 +196,68 @@ async def exchange_refresh_token(
     }
 
 
+# ── Client credentials grant (RFC 6749 §4.4) ───────────────────────────
+
+
+async def exchange_client_credentials(
+    *,
+    client_id: str,
+    client_secret: str,
+    scope: str = "",
+) -> dict:
+    """Exchange confidential client credentials for an access token.
+
+    For autonomous M2M agents that do not act on behalf of a human user.
+    Per RFC 6749 §4.4.3 no refresh token is issued.
+    """
+    from storage.oauth_store import get_client, hash_client_secret
+
+    if not client_id or not client_secret:
+        return {"error": "invalid_request", "error_description": "client_id and client_secret required"}
+
+    client = await get_client(client_id)
+    if client is None:
+        return {"error": "invalid_client", "error_description": "unknown client_id"}
+
+    if "client_credentials" not in (client.grant_types or []):
+        return {
+            "error": "unauthorized_client",
+            "error_description": "client is not authorized for client_credentials grant",
+        }
+
+    if not client.client_secret_hash:
+        return {"error": "invalid_client", "error_description": "public client cannot use client_credentials"}
+
+    presented = hash_client_secret(client_secret)
+    if not hmac.compare_digest(presented, client.client_secret_hash):
+        return {"error": "invalid_client", "error_description": "invalid client_secret"}
+
+    # Intersect requested scope with what the client is registered for.
+    registered_scopes = set((client.scope or "").split())
+    requested = set(scope.split()) if scope else registered_scopes
+    granted = requested & registered_scopes if registered_scopes else requested
+    if not granted:
+        return {
+            "error": "invalid_scope",
+            "error_description": "no overlap between requested and registered scopes",
+        }
+    granted_scope = " ".join(sorted(granted))
+
+    access_token = issue_access_token(
+        client_id=client_id,
+        scope=granted_scope,
+        tenant_id=client.tenant_id,
+        user_sub=f"client:{client_id}",
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "expires_in": 600,
+        "scope": granted_scope,
+    }
+
+
 # ── Server metadata ────────────────────────────────────────────────────
 
 
@@ -214,6 +277,7 @@ def build_server_metadata(base_url: str) -> dict:
         "grant_types_supported": [
             "authorization_code",
             "refresh_token",
+            "client_credentials",
             "urn:ietf:params:oauth:grant-type:token-exchange",
         ],
         "token_endpoint_auth_methods_supported": [

@@ -17,6 +17,7 @@ import logging
 import os
 import secrets
 import time
+from typing import Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -25,6 +26,7 @@ from core.jwt_utils import build_jwks, decode_jwt, JWTError
 from core.oauth.authz_server import (
     build_server_metadata,
     exchange_authorization_code,
+    exchange_client_credentials,
     exchange_refresh_token,
     issue_access_token,
 )
@@ -162,6 +164,7 @@ async def oauth_token(request: Request):
     Handles:
     - grant_type=authorization_code (with PKCE)
     - grant_type=refresh_token
+    - grant_type=client_credentials (RFC 6749 §4.4)
     - grant_type=urn:ietf:params:oauth:grant-type:token-exchange (RFC 8693)
     """
     # Accept both form-encoded and JSON
@@ -194,6 +197,24 @@ async def oauth_token(request: Request):
             return JSONResponse(status_code=400, content=result)
         return result
 
+    elif grant_type == "client_credentials":
+        # Credentials may arrive in the body or via HTTP Basic auth.
+        client_id = body.get("client_id", "")
+        client_secret = body.get("client_secret", "")
+        if not client_id or not client_secret:
+            basic = _parse_basic_auth(request.headers.get("authorization", ""))
+            if basic is not None:
+                client_id = client_id or basic[0]
+                client_secret = client_secret or basic[1]
+        result = await exchange_client_credentials(
+            client_id=client_id,
+            client_secret=client_secret,
+            scope=body.get("scope", ""),
+        )
+        if "error" in result:
+            return JSONResponse(status_code=400, content=result)
+        return result
+
     elif grant_type == "urn:ietf:params:oauth:grant-type:token-exchange":
         return await _handle_token_exchange(body, request)
 
@@ -205,6 +226,22 @@ async def oauth_token(request: Request):
                 "error_description": f"unsupported grant_type: {grant_type}",
             },
         )
+
+
+def _parse_basic_auth(header: str) -> Optional[tuple[str, str]]:
+    """Decode an HTTP Basic auth header into (client_id, client_secret)."""
+    if not header or not header.lower().startswith("basic "):
+        return None
+    try:
+        import base64
+        encoded = header[6:].strip()
+        decoded = base64.b64decode(encoded).decode("utf-8")
+        if ":" not in decoded:
+            return None
+        cid, _, csec = decoded.partition(":")
+        return cid, csec
+    except Exception:
+        return None
 
 
 async def _handle_token_exchange(body: dict, request: Request) -> JSONResponse:
