@@ -3,12 +3,56 @@
 import hashlib
 import hmac
 import os
+import time
+from collections import defaultdict
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 import config.schema as _config_module
+
+
+# ── Brute-force protection (IEMLabs VAPT finding 8.9, May 2026) ──────
+#
+# Track failed auth attempts per client IP. After MAX_FAILED_ATTEMPTS
+# within the WINDOW, subsequent requests from that IP are rejected with
+# 429 until the window expires. This prevents credential stuffing and
+# brute-force attacks on the tenant login without requiring CAPTCHA at
+# the API layer.
+
+_MAX_FAILED_ATTEMPTS = int(os.environ.get("SHIELD_AUTH_MAX_FAILURES", "10"))
+_LOCKOUT_WINDOW_SECS = int(os.environ.get("SHIELD_AUTH_LOCKOUT_SECS", "300"))
+
+# {ip: [(timestamp, ...),]} — in-memory; Redis-backed deployments can
+# override via SHIELD_AUTH_RATE_LIMIT_REDIS=1 in future.
+_failed_attempts: dict[str, list[float]] = defaultdict(list)
+
+
+def _record_auth_failure(client_ip: str) -> None:
+    """Record a failed authentication attempt for the given IP."""
+    now = time.monotonic()
+    _failed_attempts[client_ip].append(now)
+    # Prune old entries outside the window
+    cutoff = now - _LOCKOUT_WINDOW_SECS
+    _failed_attempts[client_ip] = [
+        t for t in _failed_attempts[client_ip] if t > cutoff
+    ]
+
+
+def _is_ip_locked_out(client_ip: str) -> bool:
+    """Check if the IP has exceeded the failure threshold."""
+    now = time.monotonic()
+    cutoff = now - _LOCKOUT_WINDOW_SECS
+    attempts = _failed_attempts.get(client_ip, [])
+    recent = [t for t in attempts if t > cutoff]
+    _failed_attempts[client_ip] = recent  # prune while checking
+    return len(recent) >= _MAX_FAILED_ATTEMPTS
+
+
+def _clear_auth_failures(client_ip: str) -> None:
+    """Clear failure counter on successful auth (reward good behavior)."""
+    _failed_attempts.pop(client_ip, None)
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -28,6 +72,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         cfg = _config_module.config
         path = request.url.path
+        client_ip = request.client.host if request.client else "unknown"
+
+        # Brute-force lockout check (finding 8.9)
+        if _is_ip_locked_out(client_ip):
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "Too many failed authentication attempts. Try again later.",
+                },
+                headers={"Retry-After": str(_LOCKOUT_WINDOW_SECS)},
+            )
 
         # Admin routes: always require admin key regardless of auth config
         if path.startswith("/v1/admin/"):
@@ -46,11 +101,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 )
 
             if not hmac.compare_digest(provided, admin_key):
+                _record_auth_failure(client_ip)
                 return JSONResponse(
                     status_code=403,
                     content={"error": "Invalid admin key"},
                 )
 
+            _clear_auth_failures(client_ip)
             return await call_next(request)
 
         if cfg is None or not cfg.auth.enabled:
@@ -103,6 +160,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         })
 
                 if not tenant_id:
+                    _record_auth_failure(client_ip)
                     return JSONResponse(
                         status_code=403,
                         content={"error": "Invalid API key"},
@@ -112,11 +170,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 request.state.tenant_id = tenant_id
 
             except Exception:
+                _record_auth_failure(client_ip)
                 return JSONResponse(
                     status_code=403,
                     content={"error": "Invalid API key"},
                 )
 
+        _clear_auth_failures(client_ip)
         return await call_next(request)
 
 

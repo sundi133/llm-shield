@@ -172,7 +172,7 @@ input, select, textarea, button { font-family: inherit; }
       <h3>Tenant</h3>
       <div class="field">
         <label>Tenant API Key</label>
-        <input type="password" id="api-key" placeholder="tenant-…-key-…">
+        <input type="password" id="api-key" placeholder="tenant-…-key-…" autocomplete="off">
       </div>
       <button class="btn btn-primary" onclick="loadPolicy()" id="load-btn">Load Policy</button>
       <div class="policy-status policy-none" id="policy-status" style="margin-top:0.5rem;">No policy loaded</div>
@@ -207,7 +207,7 @@ input, select, textarea, button { font-family: inherit; }
         </div>
         <div class="field">
           <label>Master Key <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
-          <input type="password" id="llm-master-key" placeholder="sk-… or litellm master key">
+          <input type="password" id="llm-master-key" placeholder="sk-… or litellm master key" autocomplete="off">
         </div>
         <div class="field">
           <label>Model</label>
@@ -229,7 +229,7 @@ input, select, textarea, button { font-family: inherit; }
       </div>
       <div class="field">
         <label>Auth Token <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
-        <input type="password" id="shield-token" placeholder="Bearer token">
+        <input type="password" id="shield-token" placeholder="Bearer token" autocomplete="off">
       </div>
       <div style="font-size:var(--type-meta);color:var(--text-muted);margin:2px 0 0;padding:0 0.8rem;line-height:1.5;">
         If set, input &amp; output guardrails run before/after LLM calls. Leave empty to skip guardrails.

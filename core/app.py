@@ -11,6 +11,7 @@ from core.auth import AuthMiddleware
 from core.middleware import ShieldMiddleware
 from core.agent_identity_middleware import AgentIdentityMiddleware
 from core.telemetry_middleware import TelemetryMiddleware
+from core.security_headers import SecurityHeadersMiddleware
 from api.routes_health import router as health_router
 from api.routes_classify import router as classify_router
 from api.routes_gateway import router as gateway_router
@@ -65,7 +66,8 @@ def create_app() -> FastAPI:
 
     # Middleware order: Starlette runs them bottom-to-top,
     # so Auth is added last but runs first.
-    app.add_middleware(TelemetryMiddleware)  # runs last (captures response)
+    app.add_middleware(SecurityHeadersMiddleware)  # runs last (sets response headers)
+    app.add_middleware(TelemetryMiddleware)  # captures response telemetry
     app.add_middleware(ShieldMiddleware)
     app.add_middleware(AgentIdentityMiddleware)  # populates request.state.identity from X-Agent-Token
 

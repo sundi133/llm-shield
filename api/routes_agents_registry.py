@@ -10,10 +10,16 @@ router = APIRouter(prefix="/v1/agents", tags=["agents-registry"])
 
 _VALID_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_MAX_STRING_LEN = 500
+_MAX_TOOL_NAME_LEN = 128
+_MAX_TOOLS_PER_AGENT = 200
 
 
 def _validate_agent_id(agent_id: str) -> None:
-    """Reject agent IDs that contain path-traversal or special characters."""
+    """Reject agent IDs that contain path-traversal or special characters.
+
+    IEMLabs VAPT finding 8.7 (Improper Input Validation, May 2026).
+    """
     if not agent_id or not _VALID_ID_RE.match(agent_id):
         raise HTTPException(
             status_code=400,
@@ -21,11 +27,56 @@ def _validate_agent_id(agent_id: str) -> None:
         )
 
 
-def _sanitize_string(value: str) -> str:
-    """Strip HTML/JS tags from user-provided strings to prevent stored XSS."""
+def _sanitize_string(value: str, max_len: int = _MAX_STRING_LEN) -> str:
+    """Strip HTML/JS tags from user-provided strings to prevent stored XSS.
+
+    IEMLabs VAPT finding 8.7 (Improper Input Validation, May 2026).
+    """
     if not isinstance(value, str):
         return value
-    return _HTML_TAG_RE.sub("", value)
+    cleaned = _HTML_TAG_RE.sub("", value)
+    return cleaned[:max_len]
+
+
+def _sanitize_value(value, max_len: int = _MAX_STRING_LEN):
+    """Recursively sanitize strings within dicts and lists."""
+    if isinstance(value, str):
+        return _sanitize_string(value, max_len)
+    if isinstance(value, dict):
+        return {_sanitize_string(str(k), _MAX_TOOL_NAME_LEN): _sanitize_value(v, max_len) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_value(item, max_len) for item in value[:_MAX_TOOLS_PER_AGENT]]
+    return value
+
+
+def _validate_agent_body(body: dict) -> None:
+    """Validate agent registration/update body fields.
+
+    IEMLabs VAPT finding 8.7 (Improper Input Validation, May 2026).
+    """
+    name = body.get("name", "")
+    if isinstance(name, str) and len(name) > _MAX_STRING_LEN:
+        raise HTTPException(status_code=400, detail=f"name must be at most {_MAX_STRING_LEN} characters")
+
+    desc = body.get("description", "")
+    if isinstance(desc, str) and len(desc) > _MAX_STRING_LEN:
+        raise HTTPException(status_code=400, detail=f"description must be at most {_MAX_STRING_LEN} characters")
+
+    tools = body.get("tools", [])
+    if not isinstance(tools, list):
+        raise HTTPException(status_code=400, detail="tools must be a list")
+    if len(tools) > _MAX_TOOLS_PER_AGENT:
+        raise HTTPException(status_code=400, detail=f"too many tools (max {_MAX_TOOLS_PER_AGENT})")
+    for t in tools:
+        if not isinstance(t, str) or not _VALID_ID_RE.match(t):
+            raise HTTPException(
+                status_code=400,
+                detail=f"tool name must be 1-128 alphanumeric/hyphen/underscore characters, got: {str(t)[:50]}",
+            )
+
+    status = body.get("status")
+    if status is not None and status not in ("active", "inactive", "disabled"):
+        raise HTTPException(status_code=400, detail="status must be active, inactive, or disabled")
 
 def get_tenant_from_api_key(request: Request) -> str:
     """Get tenant ID directly from API key via Redis lookup."""
@@ -421,6 +472,7 @@ async def create_agent(request: Request):
         if not agent_id:
             raise HTTPException(status_code=400, detail="agent_id is required")
         _validate_agent_id(agent_id)
+        _validate_agent_body(body)
 
         agents_key = f"agents:{tenant_id}"
         agents = get_redis_data(agents_key) or {}
@@ -434,9 +486,9 @@ async def create_agent(request: Request):
             "agent_id": agent_id,
             "name": _sanitize_string(body.get("name", agent_id)),
             "description": _sanitize_string(body.get("description", "")),
-            "tools": body.get("tools", []),
-            "role_permissions": body.get("role_permissions", {}),
-            "agent_permissions": body.get("agent_permissions", {}),
+            "tools": [_sanitize_string(t, _MAX_TOOL_NAME_LEN) for t in body.get("tools", [])],
+            "role_permissions": _sanitize_value(body.get("role_permissions", {})),
+            "agent_permissions": _sanitize_value(body.get("agent_permissions", {})),
             "status": body.get("status", "active"),
             "created_at": now,
             "updated_at": now,
@@ -464,7 +516,9 @@ async def create_agent(request: Request):
 async def update_agent(agent_id: str, agent_data: dict, request: Request):
     """Update an existing agent."""
     try:
+        _validate_agent_id(agent_id)
         tenant_id = get_tenant_from_api_key(request)
+        _validate_agent_body(agent_data)
 
         # Get existing agents
         agents_key = f"agents:{tenant_id}"
@@ -473,14 +527,21 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
         if agent_id not in agents:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if "name" in agent_data:
-            agent_data["name"] = _sanitize_string(agent_data["name"])
-        if "description" in agent_data:
-            agent_data["description"] = _sanitize_string(agent_data["description"])
+        # Sanitize all string fields recursively
+        sanitized = _sanitize_value(agent_data)
+        if "name" in sanitized:
+            sanitized["name"] = _sanitize_string(sanitized["name"])
+        if "description" in sanitized:
+            sanitized["description"] = _sanitize_string(sanitized["description"])
+        if "tools" in sanitized:
+            sanitized["tools"] = [_sanitize_string(t, _MAX_TOOL_NAME_LEN) for t in sanitized.get("tools", [])]
+
+        # Prevent overriding immutable fields
+        sanitized.pop("created_at", None)
 
         agents[agent_id] = {
             **agents[agent_id],
-            **agent_data,
+            **sanitized,
             "agent_id": agent_id,
             "updated_at": int(__import__('time').time())
         }
@@ -508,6 +569,7 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
 async def delete_agent(agent_id: str, request: Request):
     """Delete an agent."""
     try:
+        _validate_agent_id(agent_id)
         tenant_id = get_tenant_from_api_key(request)
 
         # Get existing agents
