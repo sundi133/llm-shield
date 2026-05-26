@@ -15,6 +15,8 @@ set -u
 
 S="${SHIELD_URL:?Set SHIELD_URL to your guardrail server}"
 TK="${TENANT_KEY:?Set TENANT_KEY to your tenant API key}"
+# RunPod auth token (required if Shield is behind RunPod proxy)
+RT="${RUNPOD_TOKEN:-}"
 
 R=$'\033[0m'; G=$'\033[32m'; RED=$'\033[31m'; Y=$'\033[33m'; C=$'\033[36m'; B=$'\033[1m'
 PASS=0; FAIL=0
@@ -25,9 +27,13 @@ step() { echo ""; echo "${C}${B}── $1${R}"; }
 
 _curl() {
     local method=$1 path=$2; shift 2
+    local auth_args=()
+    if [ -n "$RT" ]; then
+        auth_args+=(-H "Authorization: Bearer $RT")
+    fi
     local raw
     raw=$(curl -s -w "\n%{http_code}" -X "$method" "$S$path" \
-        -H "Content-Type: application/json" "$@" 2>/dev/null)
+        -H "Content-Type: application/json" "${auth_args[@]}" "$@" 2>/dev/null)
     _BODY=$(echo "$raw" | sed '$d')
     _CODE=$(echo "$raw" | tail -1)
 }

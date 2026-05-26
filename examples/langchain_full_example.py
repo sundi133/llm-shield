@@ -42,11 +42,13 @@ class ShieldGuardedClient:
         self,
         shield_url: str | None = None,
         tenant_key: str | None = None,
+        auth_token: str | None = None,
         agent_id: str = "langchain-agent",
         user_sub: str = "default-user",
     ):
         self.shield_url = (shield_url or os.environ.get("SHIELD_URL", "")).rstrip("/")
         self.tenant_key = tenant_key or os.environ.get("SHIELD_TENANT_KEY", "")
+        self.auth_token = auth_token or os.environ.get("RUNPOD_TOKEN", "")
 
         if not self.shield_url:
             raise ValueError("SHIELD_URL required")
@@ -62,6 +64,7 @@ class ShieldGuardedClient:
         self.client = ShieldClient(
             base_url=self.shield_url,
             tenant_api_key=self.tenant_key,
+            auth_token=self.auth_token,
             timeout=10.0,
         )
 
@@ -70,7 +73,10 @@ class ShieldGuardedClient:
         self._token_exp: float = 0
 
     def _headers(self) -> dict:
-        return {"X-API-Key": self.tenant_key, "Content-Type": "application/json"}
+        h = {"X-API-Key": self.tenant_key, "Content-Type": "application/json"}
+        if self.auth_token:
+            h["Authorization"] = f"Bearer {self.auth_token}"
+        return h
 
     # ── Guardrails ──────────────────────────────────────────────────
 
@@ -159,11 +165,17 @@ def run_langchain_example():
     # Try importing LangChain — give clear error if missing
     try:
         from langchain_openai import ChatOpenAI
-        from langchain.agents import create_tool_calling_agent, AgentExecutor
         from langchain.tools import tool
         from langchain_core.prompts import ChatPromptTemplate
-    except ImportError:
-        print("Install LangChain: pip install langchain langchain-openai")
+        # Agent API changed across LangChain versions — try both
+        try:
+            from langchain.agents import create_tool_calling_agent, AgentExecutor
+        except ImportError:
+            from langchain.agents import create_openai_tools_agent as create_tool_calling_agent
+            from langchain.agents import AgentExecutor
+    except (ImportError, Exception) as e:
+        print(f"LangChain not available: {e}")
+        print("Install: pip install langchain langchain-openai langchain-core")
         print("Falling back to manual demo without LangChain...\n")
         run_manual_demo()
         return
