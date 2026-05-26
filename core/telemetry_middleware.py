@@ -20,7 +20,8 @@ from core.telemetry import (
 async def _record_request_async(
     trace_id: str, endpoint: str, method: str, agent_key: str, tenant_id: str,
     session_id: str, role_name: str, source_ip: str, user_agent: str,
-    input_text: str, body: dict, headers: dict
+    input_text: str, body: dict, headers: dict,
+    principal_type: str = "", principal_id: str = "",
 ):
     """Record request telemetry asynchronously."""
     try:
@@ -37,6 +38,8 @@ async def _record_request_async(
             input_text=input_text,
             body=body,
             headers=headers,
+            principal_type=principal_type,
+            principal_id=principal_id,
         ))
     except Exception:
         # Don't let telemetry errors affect the main request
@@ -46,7 +49,8 @@ async def _record_request_async(
 async def _process_response_telemetry_async(
     trace_id: str, endpoint: str, status_code: int, latency_ms: float,
     response_dict: dict, agent_key: str, tenant_id: str, session_id: str,
-    role_name: str, source_ip: str, input_text: str, body_dict: dict
+    role_name: str, source_ip: str, input_text: str, body_dict: dict,
+    principal_type: str = "", principal_id: str = "",
 ):
     """Process response telemetry asynchronously."""
     try:
@@ -119,10 +123,44 @@ async def _process_response_telemetry_async(
             blocked_guardrails=blocked_guardrails,
             guardrail_results=guardrail_results,
             body=response_dict,
+            principal_type=principal_type,
+            principal_id=principal_id,
         ))
     except Exception:
         # Don't let telemetry errors affect the main request
         pass
+
+
+def _classify_principal(request: Request, agent_key: str, body: dict) -> tuple[str, str]:
+    """Return (principal_type, principal_id) so audit streams can split human vs agent.
+
+    Precedence:
+      1. AgentIdentityMiddleware-attached IdentityTuple → agent
+      2. Agent-key header / body field                  → agent
+      3. OAuth user_sub on request state                → human
+      4. Anonymous / system                             → system
+    """
+    try:
+        from core.identity import IdentityTuple
+        identity = getattr(request.state, "identity", None)
+        if isinstance(identity, IdentityTuple):
+            return "agent", identity.agent_id or ""
+    except Exception:
+        pass
+
+    if agent_key:
+        return "agent", agent_key
+
+    user_sub = (
+        getattr(request.state, "user_sub", "")
+        or (body.get("user_sub", "") if isinstance(body, dict) else "")
+    )
+    if user_sub and not user_sub.startswith("client:"):
+        return "human", user_sub
+    if user_sub.startswith("client:"):
+        return "agent", user_sub[len("client:"):]
+
+    return "system", ""
 
 
 class TelemetryMiddleware(BaseHTTPMiddleware):
@@ -178,12 +216,16 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         role_name = getattr(request.state, "role_name", "") or ""
         tenant_id = getattr(request.state, "tenant_id", "") or ""
 
+        # Classify the principal so SIEMs can split human vs agent audit streams.
+        principal_type, principal_id = _classify_principal(request, agent_key, bd)
+
         # Record inbound request asynchronously (non-blocking)
         asyncio.create_task(
             _record_request_async(
                 trace_id, request.url.path, request.method, agent_key, tenant_id,
                 session_id, role_name, source_ip, user_agent, input_text,
-                body_dict, dict(request.headers)
+                body_dict, dict(request.headers),
+                principal_type, principal_id,
             )
         )
 
@@ -202,7 +244,8 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
                 _process_response_telemetry_async(
                     trace_id, request.url.path, response.status_code, latency_ms,
                     {"action": "stream"}, agent_key, tenant_id, session_id, role_name,
-                    source_ip, input_text, body_dict
+                    source_ip, input_text, body_dict,
+                    principal_type, principal_id,
                 )
             )
             response.headers["x-trace-id"] = trace_id
@@ -225,7 +268,8 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
             _process_response_telemetry_async(
                 trace_id, request.url.path, response.status_code, latency_ms,
                 response_dict, agent_key, tenant_id, session_id, role_name,
-                source_ip, input_text, body_dict
+                source_ip, input_text, body_dict,
+                principal_type, principal_id,
             )
         )
 

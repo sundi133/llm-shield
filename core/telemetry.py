@@ -53,6 +53,8 @@ def build_request_event(
     input_text: str = "",
     body: Optional[dict] = None,
     headers: Optional[dict] = None,
+    principal_type: str = "",
+    principal_id: str = "",
 ) -> dict:
     return {
         "event.kind": "event",
@@ -72,6 +74,8 @@ def build_request_event(
         "votal.input_text": _truncate_str(input_text, 1000),
         "request.body": _truncate(body),
         "request.headers": _safe_headers(headers),
+        "principal.type": principal_type,
+        "principal.id": principal_id,
     }
 
 
@@ -95,6 +99,8 @@ def build_response_event(
     blocked_guardrails: Optional[list[str]] = None,
     guardrail_results: Optional[list] = None,
     body: Optional[dict] = None,
+    principal_type: str = "",
+    principal_id: str = "",
 ) -> dict:
     # Compute risk score: 0 (safe) to 100 (blocked attack)
     risk_score = 0
@@ -152,6 +158,8 @@ def build_response_event(
         "votal.guardrail_results": guardrail_results,
         "votal.latency_ms": round(latency_ms, 2),
         "response.body": _truncate(body),
+        "principal.type": principal_type,
+        "principal.id": principal_id,
         **conversation_context,
         **prompt_chain_context,
     }
