@@ -10,9 +10,32 @@ router = APIRouter(prefix="/v1/agents", tags=["agents-registry"])
 
 _VALID_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _MAX_STRING_LEN = 500
 _MAX_TOOL_NAME_LEN = 128
 _MAX_TOOLS_PER_AGENT = 200
+_MAX_EMAIL_LEN = 254
+
+
+def _validate_owner_email(value, *, required: bool) -> str:
+    """Validate `owner_email`. Returns the trimmed email, or '' if optional+absent.
+
+    Every agent needs a named human owner for accountability — see the
+    Agent IDP design doc.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if required:
+            raise HTTPException(
+                status_code=400,
+                detail="owner_email is required to identify the human accountable for this agent",
+            )
+        return ""
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail="owner_email must be a string")
+    email = value.strip()
+    if len(email) > _MAX_EMAIL_LEN or not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="owner_email must be a valid email address")
+    return email
 
 
 def _validate_agent_id(agent_id: str) -> None:
@@ -49,11 +72,14 @@ def _sanitize_value(value, max_len: int = _MAX_STRING_LEN):
     return value
 
 
-def _validate_agent_body(body: dict) -> None:
+def _validate_agent_body(body: dict, *, require_owner: bool = False) -> None:
     """Validate agent registration/update body fields.
 
     IEMLabs VAPT finding 8.7 (Improper Input Validation, May 2026).
+    When `require_owner` is true, `owner_email` must be provided and valid.
     """
+    if require_owner or "owner_email" in body:
+        _validate_owner_email(body.get("owner_email"), required=require_owner)
     name = body.get("name", "")
     if isinstance(name, str) and len(name) > _MAX_STRING_LEN:
         raise HTTPException(status_code=400, detail=f"name must be at most {_MAX_STRING_LEN} characters")
@@ -347,6 +373,8 @@ async def seed_test_data():
                     "healthcare-nurse": ["patient_lookup", "view_records"],
                     "healthcare-triage": ["patient_lookup"]
                 },
+                "owner_email": "demo-owner@votal.ai",
+                "owner_name": "Demo Owner",
                 "created_at": 1775632429,
                 "updated_at": 1775632429
             },
@@ -365,6 +393,8 @@ async def seed_test_data():
                     "healthcare-doctor": ["patient_lookup", "schedule_appointment", "update_vitals", "view_basic_records"],
                     "healthcare-triage": ["patient_lookup", "schedule_appointment"]
                 },
+                "owner_email": "demo-owner@votal.ai",
+                "owner_name": "Demo Owner",
                 "created_at": 1775632479,
                 "updated_at": 1775632479
             }
@@ -472,7 +502,8 @@ async def create_agent(request: Request):
         if not agent_id:
             raise HTTPException(status_code=400, detail="agent_id is required")
         _validate_agent_id(agent_id)
-        _validate_agent_body(body)
+        _validate_agent_body(body, require_owner=True)
+        owner_email = _validate_owner_email(body.get("owner_email"), required=True)
 
         agents_key = f"agents:{tenant_id}"
         agents = get_redis_data(agents_key) or {}
@@ -489,6 +520,8 @@ async def create_agent(request: Request):
             "tools": [_sanitize_string(t, _MAX_TOOL_NAME_LEN) for t in body.get("tools", [])],
             "role_permissions": _sanitize_value(body.get("role_permissions", {})),
             "agent_permissions": _sanitize_value(body.get("agent_permissions", {})),
+            "owner_email": owner_email,
+            "owner_name": _sanitize_string(body.get("owner_name", "")),
             "status": body.get("status", "active"),
             "created_at": now,
             "updated_at": now,
@@ -526,6 +559,10 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
 
         if agent_id not in agents:
             raise HTTPException(status_code=404, detail="Agent not found")
+
+        # If caller is updating owner_email, validate it.
+        if "owner_email" in agent_data:
+            agent_data["owner_email"] = _validate_owner_email(agent_data.get("owner_email"), required=False)
 
         # Sanitize all string fields recursively
         sanitized = _sanitize_value(agent_data)
