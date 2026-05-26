@@ -127,12 +127,14 @@ class TestSignatureIntegrity:
 
     def test_rejects_tampered_signature(self):
         token = mint_agent_token(**VALID_CLAIMS)
-        payload, sig = token.split(".", 1)
+        # Tokens are 3-segment JWTs (header.payload.sig); rsplit so we
+        # only mutate the signature, leaving the payload decodable.
+        prefix, sig = token.rsplit(".", 1)
         mid = len(sig) // 2
         flip = "X" if sig[mid] != "X" else "Y"
         bad_sig = sig[:mid] + flip + sig[mid + 1:]
         with pytest.raises(TokenError, match="invalid signature"):
-            verify_agent_token(f"{payload}.{bad_sig}")
+            verify_agent_token(f"{prefix}.{bad_sig}")
 
     def test_rejects_malformed_token(self):
         with pytest.raises(TokenError, match="malformed"):

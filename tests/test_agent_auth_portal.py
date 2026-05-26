@@ -178,11 +178,12 @@ class TestRecordingOnRoutes:
             json={"tool": "t", "resource": "r"},
         ).json()["cap_token"]
         # Flip a byte in the middle of the SIGNATURE; payload stays readable
-        # so we can still attribute the event to the right tenant.
-        payload, sig = cap.split(".", 1)
+        # so we can still attribute the event to the right tenant. Caps are
+        # 3-segment JWTs (header.payload.sig) — rsplit so we only mutate sig.
+        prefix, sig = cap.rsplit(".", 1)
         mid = len(sig) // 2
         flip = "X" if sig[mid] != "X" else "Y"
-        bad = f"{payload}.{sig[:mid]}{flip}{sig[mid+1:]}"
+        bad = f"{prefix}.{sig[:mid]}{flip}{sig[mid+1:]}"
         client.post("/v1/shield/cap/verify",
                     json={"cap_token": bad, "expected_tool": "t"})
         totals = stats.get_counters("t1")["totals"]

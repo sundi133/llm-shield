@@ -404,14 +404,17 @@ async def verify_capability(body: CapVerifyRequest):
     except CapabilityError as e:
         msg = str(e)
         event = EVENT_CAP_REPLAY if "replay" in msg else EVENT_CAP_INVALID
-        # Try to recover tenant_id from the (unverified) cap claims so the
-        # event still attributes to the right tenant for the portal.
+        # Recover tenant_id from the (unverified) cap claims so the event
+        # still attributes to the right tenant for the portal. A standard
+        # JWT has 3 segments (header.payload.sig); the legacy 2-segment
+        # format is (payload.sig). Try the JWT shape first, then fall back.
         recovered_tenant = None
         recovered_agent = None
         try:
             from core.capabilities import _b64url_decode
             import json as _json
-            payload_b64 = body.cap_token.split(".", 1)[0]
+            segments = body.cap_token.split(".")
+            payload_b64 = segments[1] if len(segments) >= 3 else segments[0]
             _claims = _json.loads(_b64url_decode(payload_b64).decode("utf-8"))
             recovered_tenant = _claims.get("tenant_id")
             recovered_agent = _claims.get("agent_id")
