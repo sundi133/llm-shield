@@ -508,11 +508,15 @@ auth methods in addition to the legacy admin key. They are all wired in
 code today (`api/routes_agent_auth.py::_authenticate_caller`) and all
 covered by tests.
 
+All three modes work on the **tenant-facing** endpoint
+(`POST /v1/tenant/me/agent-auth/agent-token`) with just the tenant API
+key — the admin key never reaches a customer:
+
 | Mode | Caller proves identity by | What Shield checks | Trust source |
 |---|---|---|---|
-| **B — Federated OIDC** | sends `X-Id-Token` header carrying an id_token from your on-prem IdP (Keycloak / Dex / Authelia / ADFS / PingFederate) | issuer matches a tenant-registered provider, JWKS signature, `aud`, `exp`; maps claims via `provider.claim_mapping` | the IdP's local signing key (never leaves your VPC) |
-| **C₁ — SPIFFE workload** | presents an X.509 SVID via reverse proxy (`X-Client-Cert`) or JWT SVID validated against your SPIRE trust bundle | SPIFFE ID, trust domain, trust bundle / SVID JWKS, optional `allowed_workloads` allowlist | SPIRE server, on-prem |
-| **C₂ — Raw mTLS** | TLS handshake with a client cert chained to an internal CA (`SHIELD_TRUSTED_CA_BUNDLE`) | cert fingerprint resolves to an agent registered in the per-tenant cert registry | your PKI / internal CA |
+| **B — Federated OIDC** | tenant API key + `X-Id-Token` header carrying an id_token from your on-prem IdP (Keycloak / Dex / Authelia / ADFS / PingFederate); the tenant registers their provider via `POST /v1/tenant/me/oidc-providers` (no admin key) | issuer matches a provider the tenant registered, JWKS signature, `aud`, `exp`; maps claims via `provider.claim_mapping` | the IdP's local signing key (never leaves your VPC) |
+| **C₁ — SPIFFE workload** | tenant API key + X.509 SVID via reverse proxy (`X-Client-Cert`) or JWT SVID validated against your SPIRE trust bundle | SPIFFE ID, trust domain, trust bundle / SVID JWKS, optional `allowed_workloads` allowlist | SPIRE server, on-prem |
+| **C₂ — Raw mTLS** | tenant API key + TLS handshake with a client cert chained to an internal CA (`SHIELD_TRUSTED_CA_BUNDLE`) | cert fingerprint resolves to an agent registered in the per-tenant cert registry | your PKI / internal CA |
 
 All three are **outbound-network-free**. The minted agent token carries
 an `identity_method` claim (`spiffe`, `mtls`, `oidc_id_token`, or
@@ -550,12 +554,16 @@ admin break-glass key in the last 7 days."
                                        /v1/shield/cap/mint …  (unchanged)
 ```
 
-Configure once per tenant:
+Configure once per tenant — **tenant API key only, no admin key**.
+The tenant_id is taken from the resolved key; clients cannot target
+other tenants' providers:
 
 ```http
-POST /v1/admin/oidc-providers/{tenant_id}
+POST /v1/tenant/me/oidc-providers
+X-API-Key: <tenant key>
 {
-  "issuer":   "https://keycloak.corp.local/realms/main",
+  "name":      "keycloak",
+  "issuer":    "https://keycloak.corp.local/realms/main",
   "client_id": "shield",
   "audience":  "shield",
   "jwks_uri":  "https://keycloak.corp.local/realms/main/protocol/openid-connect/certs",
@@ -565,6 +573,28 @@ POST /v1/admin/oidc-providers/{tenant_id}
   }
 }
 ```
+
+(The platform operator can also use `POST /v1/admin/oidc-providers/{tenant_id}`
+with the admin key for break-glass / fleet-management workflows, but
+customers never see that key.)
+
+Then mint an agent token using just the tenant API key + the id_token:
+
+```http
+POST /v1/tenant/me/agent-auth/agent-token
+X-API-Key: <tenant key>
+X-Id-Token: <id_token from Keycloak>
+{
+  "agent_instance_id": "inst-1",
+  "build_hash":        "sha256:dev",
+  "model_version":     "claude-opus-4.7",
+  "session_id":        "sess-1"
+}
+```
+
+`user_sub` and `agent_id` on the minted token come from the verified
+id_token via the registered `claim_mapping`. Body values that conflict
+with the verified identity are rejected with 400.
 
 If the caller supplies `user_sub`/`agent_id` in the body that disagree
 with the verified id_token claims, the mint is rejected with

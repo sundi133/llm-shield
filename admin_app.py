@@ -86,6 +86,7 @@ except Exception as _e:
 _oauth_router = None
 _oauth_registration_router = None
 _oidc_admin_router = None
+_oidc_tenant_router = None
 _a2a_router = None
 
 try:
@@ -95,6 +96,10 @@ except Exception:
     pass
 try:
     from api.routes_oidc_admin import router as _oidc_admin_router
+except Exception:
+    pass
+try:
+    from api.routes_oidc_tenant import router as _oidc_tenant_router
 except Exception:
     pass
 try:
@@ -1022,6 +1027,8 @@ def create_admin_app() -> FastAPI:
         app.include_router(_oauth_registration_router) # /oauth/register
     if _oidc_admin_router:
         app.include_router(_oidc_admin_router)         # /v1/admin/oidc-providers/*
+    if _oidc_tenant_router:
+        app.include_router(_oidc_tenant_router)        # /v1/tenant/me/oidc-providers/* (tenant self-serve)
     if _a2a_router:
         app.include_router(_a2a_router)                # /.well-known/agent.json, /a2a/*
 

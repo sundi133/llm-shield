@@ -647,8 +647,8 @@ async def agent_auth_diag(request: Request):
 
 
 class TenantAgentTokenRequest(BaseModel):
-    user_sub: str = Field(..., description="OIDC sub of the human user")
-    agent_id: str = Field(..., description="Logical agent identity")
+    user_sub: Optional[str] = Field(None, description="OIDC sub of the human user")
+    agent_id: Optional[str] = Field(None, description="Logical agent identity")
     agent_instance_id: str = Field(..., description="Unique per-process id")
     build_hash: str = Field(..., description="Exact build hash of the agent code")
     model_version: str = Field(..., description="LLM model version in use")
@@ -663,16 +663,72 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
 
     Auth: tenant API key via X-API-Key. The tenant_id is taken from the
     resolved API key — clients cannot specify a different tenant.
+
+    The minted token's identity (user_sub, agent_id) comes from, in order:
+      1. SPIFFE / mTLS workload identity attached by middleware (Mode C)
+      2. X-Id-Token validated against one of the tenant's registered
+         OIDC providers (Mode B — `POST /v1/tenant/me/oidc-providers` to
+         register Keycloak/Dex/ADFS, no admin key needed)
+      3. body.user_sub / body.agent_id (tenant trusts its own caller)
+
     Rate limited per-tenant (H3) to slow down compromised-key abuse.
     """
     tenant_id = _require_tenant(request)
     allowed, err = rate_limit_token_issuance(tenant_id)
     if not allowed:
         raise HTTPException(status_code=429, detail=err or "rate limit exceeded")
+
+    # Resolve identity. Workload / federated identity wins over body claims.
+    identity_method = "tenant_api_key"
+    user_sub = body.user_sub or ""
+    agent_id = body.agent_id or ""
+
+    spiffe = getattr(request.state, "spiffe_identity", None)
+    mtls = getattr(request.state, "mtls_identity", None)
+    id_token = (request.headers.get("X-Id-Token") or "").strip()
+
+    if spiffe:
+        identity_method = "spiffe"
+        verified_sub = spiffe.get("user_sub") or spiffe.get("agent_key") or ""
+        verified_agent = spiffe.get("agent_id") or spiffe.get("agent_key") or ""
+        _check_no_conflict(body.user_sub, verified_sub, "user_sub", identity_method)
+        _check_no_conflict(body.agent_id, verified_agent, "agent_id", identity_method)
+        user_sub = verified_sub or user_sub
+        agent_id = verified_agent or agent_id
+    elif mtls:
+        identity_method = "mtls"
+        verified_sub = mtls.get("agent_key", "")
+        _check_no_conflict(body.user_sub, verified_sub, "user_sub", identity_method)
+        _check_no_conflict(body.agent_id, verified_sub, "agent_id", identity_method)
+        user_sub = verified_sub or user_sub
+        agent_id = verified_sub or agent_id
+    elif id_token:
+        ctx = await _verify_oidc_id_token(id_token, request)
+        if ctx is None:
+            raise HTTPException(
+                status_code=401,
+                detail="X-Id-Token issuer not registered for this tenant",
+            )
+        identity_method = "oidc_id_token"
+        _check_no_conflict(body.user_sub, ctx.user_sub, "user_sub", identity_method)
+        _check_no_conflict(body.agent_id, ctx.agent_id, "agent_id", identity_method)
+        user_sub = ctx.user_sub or user_sub
+        agent_id = ctx.agent_id or agent_id
+
+    if not user_sub or not agent_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "user_sub and agent_id are required (supply in body when relying "
+                "on the tenant API key alone; SPIFFE/mTLS/X-Id-Token callers get "
+                "them from the verified identity)"
+            ),
+        )
+
     try:
         token = mint_agent_token(
-            user_sub=body.user_sub,
-            agent_id=body.agent_id,
+            user_sub=user_sub,
+            agent_id=agent_id,
             agent_instance_id=body.agent_instance_id,
             tenant_id=tenant_id,
             build_hash=body.build_hash,
@@ -680,12 +736,23 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
             session_id=body.session_id,
             parent_agent_id=body.parent_agent_id,
             ttl_seconds=body.ttl_seconds,
-            identity_method="tenant_api_key",
+            identity_method=identity_method,
         )
     except TokenError as e:
         raise HTTPException(status_code=400, detail=str(e))
     record_event(
         tenant_id=tenant_id, event=EVENT_TOKEN_ISSUED,
-        agent_id=body.agent_id, user_sub=body.user_sub,
+        agent_id=agent_id, user_sub=user_sub,
     )
     return AgentTokenResponse(agent_token=token, expires_in=body.ttl_seconds)
+
+
+def _check_no_conflict(
+    body_value: Optional[str], verified: str, field: str, method: str
+) -> None:
+    """Reject the request when the body and the verified identity disagree."""
+    if body_value and verified and body_value != verified:
+        raise HTTPException(
+            status_code=400,
+            detail=f"body.{field} conflicts with verified identity ({method})",
+        )

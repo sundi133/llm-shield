@@ -48,6 +48,7 @@ from api.routes_mcp_server import router as mcp_server_router
 from api.routes_oauth import router as oauth_router
 from api.routes_oauth_registration import router as oauth_registration_router
 from api.routes_oidc_admin import router as oidc_admin_router
+from api.routes_oidc_tenant import router as oidc_tenant_router
 from api.routes_a2a import router as a2a_router
 from storage.audit_log import audit_logger
 
@@ -120,6 +121,7 @@ def create_app() -> FastAPI:
     app.include_router(oauth_router)
     app.include_router(oauth_registration_router)
     app.include_router(oidc_admin_router)
+    app.include_router(oidc_tenant_router)
     app.include_router(a2a_router)
 
     # Include SaaS routes only if available
