@@ -4071,7 +4071,7 @@ if __name__ == "__main__":
         </div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
           <input id="wh-url" type="text" placeholder="https://hooks.slack.com/..." style="flex:2;min-width:200px;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-          <input id="wh-secret" type="text" placeholder="Shared secret" style="flex:1;min-width:120px;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
+          <input id="wh-secret" type="text" placeholder="Shared secret" autocomplete="off" style="flex:1;min-width:120px;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
           <button class="primary" onclick="createWebhook()">Create</button>
         </div>
         <div style="margin-bottom:1rem;">

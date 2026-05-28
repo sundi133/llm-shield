@@ -565,7 +565,7 @@
           </div>
           <div class="field">
             <label>API Keys (comma-separated)</label>
-            <input type="text" id="create-api-keys" placeholder="acme-key-abc123">
+            <input type="text" id="create-api-keys" placeholder="acme-key-abc123" autocomplete="off">
           </div>
         </div>
         <div class="field">
@@ -635,14 +635,14 @@
       <div class="field">
         <label>Add new API key</label>
         <div style="display: flex; gap: 0.5rem;">
-          <input type="text" id="new-api-key" placeholder="new-key-value">
+          <input type="text" id="new-api-key" placeholder="new-key-value" autocomplete="off">
           <button class="primary small" onclick="addApiKey()">Add</button>
         </div>
       </div>
       <div class="field">
         <label>Revoke API key</label>
         <div style="display: flex; gap: 0.5rem;">
-          <input type="text" id="del-api-key" placeholder="key-to-remove">
+          <input type="text" id="del-api-key" placeholder="key-to-remove" autocomplete="off">
           <button class="danger small" onclick="removeApiKey()">Revoke</button>
         </div>
       </div>
