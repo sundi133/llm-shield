@@ -128,6 +128,81 @@ class TestIDORTenantMe:
             assert forbidden not in body, f"internal field {forbidden!r} leaked"
 
 
+# ─── /v1/shield/* — path-tenant_id IDOR (BOLA) ───────────────────────
+
+
+@pytest.fixture
+def shield_app(monkeypatch) -> Iterator[FastAPI]:
+    """Mount the path-scoped /v1/shield routers behind the fake tenant
+    auth so we can exercise the require_tenant_access guard."""
+    from storage import tenant_store
+    monkeypatch.setattr(tenant_store, "_get_redis", lambda: None)
+    from storage.tenant_store import create_tenant
+    for tid in ("acme", "corp"):
+        try:
+            create_tenant(tid, {"name": tid, "plan": "enterprise"})
+        except Exception:
+            pass
+
+    from api.routes_policy import router as policy_router
+    from api.routes_webhooks import router as webhooks_router
+    from api.routes_decisions import router as decisions_router
+
+    app = FastAPI()
+    app.add_middleware(_FakeTenantAuth)
+    app.include_router(policy_router)
+    app.include_router(webhooks_router)
+    app.include_router(decisions_router)
+    yield app
+
+
+@pytest.fixture
+def shield_client(shield_app):
+    return TestClient(shield_app)
+
+
+class TestIDORShieldPathScoping:
+    """A tenant key must not reach another tenant's path-scoped resources
+    under /v1/shield/policies, /webhooks, /decisions. Master keys (no
+    tenant_id on request.state) keep cross-tenant access for the admin
+    portal."""
+
+    def test_cross_tenant_policy_list_blocked(self, shield_client):
+        r = shield_client.get("/v1/shield/policies/corp", headers={"X-API-Key": "acme-key"})
+        assert r.status_code == 403
+
+    def test_cross_tenant_bundle_export_blocked(self, shield_client):
+        # The most severe vector: full-config exfiltration.
+        r = shield_client.get(
+            "/v1/shield/policies/corp/bundle/export", headers={"X-API-Key": "acme-key"}
+        )
+        assert r.status_code == 403
+
+    def test_cross_tenant_decisions_blocked(self, shield_client):
+        r = shield_client.get("/v1/shield/decisions/corp", headers={"X-API-Key": "acme-key"})
+        assert r.status_code == 403
+
+    def test_cross_tenant_webhooks_blocked(self, shield_client):
+        r = shield_client.get("/v1/shield/webhooks/corp", headers={"X-API-Key": "acme-key"})
+        assert r.status_code == 403
+
+    def test_own_tenant_allowed(self, shield_client):
+        # Acting on your own tenant must NOT be blocked by the guard.
+        r = shield_client.get("/v1/shield/policies/acme", headers={"X-API-Key": "acme-key"})
+        assert r.status_code != 403
+
+    def test_master_key_cross_tenant_allowed(self, shield_client):
+        # No X-API-Key → no tenant_id on state → treated as master/admin.
+        r = shield_client.get("/v1/shield/policies/corp")
+        assert r.status_code != 403
+
+    def test_non_tenant_route_unaffected(self, shield_client):
+        # POST /v1/shield/policies/test has no tenant_id path param and must
+        # not be forced to 403 by the guard (body validation may still 422).
+        r = shield_client.post("/v1/shield/policies/test", headers={"X-API-Key": "acme-key"}, json={})
+        assert r.status_code != 403
+
+
 # ─── /playground/llm-proxy — SSRF (8.1) + Info Disclosure (8.3) ──────
 
 

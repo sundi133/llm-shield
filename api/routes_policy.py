@@ -3,7 +3,9 @@
 import json
 import time
 
-from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi import APIRouter, HTTPException, Request, Query, Depends
+
+from core.auth import verify_tenant_path_access
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
 
@@ -30,7 +32,11 @@ from storage.admin_audit import log_admin_action
 from storage.custom_policies import get_tenant_custom_policies
 from storage.tenant_store import set_tenant_policies, _get_redis
 
-router = APIRouter(prefix="/v1/shield/policies", tags=["policies"])
+router = APIRouter(
+    prefix="/v1/shield/policies",
+    tags=["policies"],
+    dependencies=[Depends(verify_tenant_path_access)],
+)
 
 
 def _actor_from_request(request: Request) -> str:
@@ -82,6 +88,32 @@ class TestPolicyRequest(BaseModel):
     policy: PolicyConfig = Field(..., description="Policy to test")
     test_content: str = Field(..., description="Sample content to test against")
     test_user_role: str = Field(..., description="Role to test permissions with")
+
+
+@router.post("/test")
+async def test_policy(test_request: TestPolicyRequest):
+    """Test a policy against sample content without storing it.
+
+    Declared before the `/{tenant_id}` routes so the literal `/test` path
+    is matched first; otherwise POST /v1/shield/policies/test resolves to
+    create_tenant_policy(tenant_id="test").
+    """
+    try:
+        result = test_policy_against_content(
+            policy_config=test_request.policy.model_dump(),
+            content=test_request.test_content,
+            user_role=test_request.test_user_role
+        )
+
+        return {
+            "tenant_id": test_request.tenant_id,
+            "policy_id": test_request.policy.policy_id,
+            "test_role": test_request.test_user_role,
+            "test_content": test_request.test_content,
+            "result": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Policy test failed: {str(e)}")
 
 
 @router.get("/{tenant_id}")
@@ -256,27 +288,6 @@ async def delete_tenant_policy(
         "policy_id": policy_id,
         "hard": hard
     }
-
-
-@router.post("/test")
-async def test_policy(test_request: TestPolicyRequest):
-    """Test a policy against sample content without storing it."""
-    try:
-        result = test_policy_against_content(
-            policy_config=test_request.policy.model_dump(),
-            content=test_request.test_content,
-            user_role=test_request.test_user_role
-        )
-
-        return {
-            "tenant_id": test_request.tenant_id,
-            "policy_id": test_request.policy.policy_id,
-            "test_role": test_request.test_user_role,
-            "test_content": test_request.test_content,
-            "result": result
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Policy test failed: {str(e)}")
 
 
 @router.post("/{tenant_id}/bulk")
