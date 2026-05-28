@@ -13,6 +13,7 @@ from typing import Optional
 
 import httpx
 
+from core.url_safety import UnsafeURLError, validate_outbound_url
 from storage.webhook_store import get_webhooks_for_event
 
 logger = logging.getLogger("votal.webhook_dispatcher")
@@ -48,7 +49,7 @@ async def _send_with_retry(
     """
     for attempt in range(max_retries):
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False) as client:
                 resp = await client.post(url, content=body, headers=headers)
                 if 200 <= resp.status_code < 300:
                     return True
@@ -103,6 +104,15 @@ async def dispatch_event(
         secret = wh.get("secret", "")
 
         if not url:
+            continue
+
+        # SSRF defense-in-depth: never dial internal/metadata addresses,
+        # even if an unsafe URL was stored before validation existed or a
+        # hostname later rebinds to a private IP.
+        try:
+            validate_outbound_url(url, purpose="webhook")
+        except UnsafeURLError as e:
+            logger.warning(f"Webhook delivery blocked (unsafe URL) for tenant {tenant_id}: {e}")
             continue
 
         signature = _sign_payload(event_bytes, secret) if secret else ""

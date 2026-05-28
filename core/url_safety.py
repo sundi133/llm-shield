@@ -88,7 +88,11 @@ def _ip_is_safe_to_dial(ip_str: str) -> bool:
 
 
 def validate_outbound_url(
-    url: str, *, purpose: str = "outbound", check_env_allowlist: bool = True
+    url: str,
+    *,
+    purpose: str = "outbound",
+    check_env_allowlist: bool = True,
+    resolve_dns: bool = True,
 ) -> str:
     """Reject the URL or return it unchanged if safe.
 
@@ -99,6 +103,11 @@ def validate_outbound_url(
             SHIELD_LLM_PROXY_ALLOWED_HOSTS env allowlist. Callers that
             apply their own (e.g. validate_proxy_base_url) pass False so
             the env var isn't interpreted twice with different semantics.
+        resolve_dns: when True, resolve the hostname and verify every
+            address is public (the real anti-SSRF guarantee, run right
+            before dialing). Pass False for a cheap boundary check at
+            store time (validate scheme + IP-literal host + metadata
+            denylist) that doesn't depend on DNS being reachable.
 
     Returns:
         The same URL string (canonicalized) if safe.
@@ -141,6 +150,21 @@ def validate_outbound_url(
     if host in _BLOCKED_HOSTS:
         logger.warning(f"{purpose}: rejecting metadata-endpoint host {host!r}")
         raise UnsafeURLError("host is a blocked internal endpoint")
+
+    # 3b. If the host is an IP literal, check it directly — no DNS needed.
+    #     This is the only IP check performed when resolve_dns=False.
+    try:
+        literal_ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        literal_ip = None
+    if literal_ip is not None:
+        if not _ip_is_safe_to_dial(str(literal_ip)):
+            logger.warning(f"{purpose}: rejecting non-public IP-literal host {host!r}")
+            raise UnsafeURLError("host resolves to a non-public IP")
+        return url
+
+    if not resolve_dns:
+        return url
 
     # 4. Resolve the hostname and check EVERY returned address is public.
     #    This defends against DNS rebinding and against domains that

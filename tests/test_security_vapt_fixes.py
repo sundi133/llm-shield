@@ -607,3 +607,82 @@ class TestBruteForceProtection:
         # Simulate successful auth
         _clear_auth_failures(test_ip)
         assert _is_ip_locked_out(test_ip) is False
+
+
+class TestProxyAwareClientIP:
+    """Behind an edge proxy, the lockout must key on the real client IP
+    (from X-Forwarded-For when trusted), not the shared proxy IP — else
+    one attacker locks out everyone (8.9 hardening)."""
+
+    def _req(self, headers: dict, peer: str = "10.0.0.1"):
+        class _Client:
+            host = peer
+        class _Req:
+            def __init__(self):
+                self.headers = headers
+                self.client = _Client()
+        return _Req()
+
+    def test_uses_peer_ip_by_default(self, monkeypatch):
+        from core.auth import _client_ip
+        monkeypatch.delenv("SHIELD_TRUST_PROXY_HEADERS", raising=False)
+        ip = _client_ip(self._req({"X-Forwarded-For": "1.2.3.4"}, peer="10.0.0.1"))
+        assert ip == "10.0.0.1"  # header ignored when proxy not trusted
+
+    def test_uses_xff_last_entry_when_trusted(self, monkeypatch):
+        from core.auth import _client_ip
+        monkeypatch.setenv("SHIELD_TRUST_PROXY_HEADERS", "1")
+        # client spoofs a fake left entry; proxy appends the real one
+        ip = _client_ip(self._req({"X-Forwarded-For": "9.9.9.9, 203.0.113.7"}))
+        assert ip == "203.0.113.7"
+
+    def test_falls_back_to_peer_when_no_xff(self, monkeypatch):
+        from core.auth import _client_ip
+        monkeypatch.setenv("SHIELD_TRUST_PROXY_HEADERS", "1")
+        ip = _client_ip(self._req({}, peer="10.0.0.5"))
+        assert ip == "10.0.0.5"
+
+
+# ─── Webhook SSRF (defense-in-depth, same class as 8.1) ─────────────
+
+
+class TestWebhookSSRF:
+    def test_validate_rejects_internal_url(self):
+        from api.routes_webhooks import _validate_webhook_url
+        from fastapi import HTTPException
+        for bad in (
+            "http://169.254.169.254/latest/meta-data/",
+            "http://127.0.0.1:6379/",
+            "http://10.0.0.5/hook",
+            "file:///etc/passwd",
+        ):
+            with pytest.raises(HTTPException) as ei:
+                _validate_webhook_url(bad)
+            assert ei.value.status_code == 400
+
+    def test_validate_accepts_public_https(self, monkeypatch):
+        from api.routes_webhooks import _validate_webhook_url
+        _stub_getaddrinfo(monkeypatch, {"hooks.slack.com": ["3.3.3.3"]})
+        _validate_webhook_url("https://hooks.slack.com/services/T/B/x")  # no raise
+
+    @pytest.mark.asyncio
+    async def test_dispatcher_skips_internal_url(self, monkeypatch):
+        """Even if an unsafe URL was stored, dispatch must not dial it."""
+        import core.webhook_dispatcher as wd
+
+        monkeypatch.setattr(
+            wd, "get_webhooks_for_event",
+            lambda tid, ev: [{"url": "http://169.254.169.254/", "secret": "s"}],
+        )
+
+        called = {"n": 0}
+        import httpx as _httpx
+        async def spy_post(self, *a, **kw):
+            called["n"] += 1
+            class _R:
+                status_code = 200
+            return _R()
+        monkeypatch.setattr(_httpx.AsyncClient, "post", spy_post)
+
+        await wd.dispatch_event("t1", "guardrail_blocked", {"x": 1})
+        assert called["n"] == 0
