@@ -36,11 +36,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Content-Security-Policy"] = (
                 "frame-ancestors 'none'; "
                 "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline'; "
-                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "script-src 'self' 'unsafe-inline' https://hcaptcha.com https://*.hcaptcha.com; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://hcaptcha.com https://*.hcaptcha.com; "
                 "font-src 'self' https://fonts.gstatic.com; "
                 "img-src 'self' data:; "
-                "connect-src 'self'"
+                "connect-src 'self' https://hcaptcha.com https://*.hcaptcha.com; "
+                "frame-src https://hcaptcha.com https://*.hcaptcha.com"
             )
 
         # HSTS — enforce HTTPS for 1 year, including subdomains (finding 8.5)

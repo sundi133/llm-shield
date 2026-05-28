@@ -1819,6 +1819,9 @@
       <label>API Key</label>
       <input type="password" id="api-key-input" placeholder="Enter your tenant API key" value="" autofocus autocomplete="off">
     </div>
+    <div id="hcaptcha-container" class="field hidden" style="display:none;">
+      <div id="hcaptcha-widget"></div>
+    </div>
     <button class="primary" style="width: 100%;" onclick="login()">Sign In</button>
     <div id="login-error" class="toast error hidden"></div>
     <div class="muted" style="text-align: center; margin-top: 1.25rem;">Need a key? Contact your administrator</div>
@@ -4973,15 +4976,61 @@ function showSuccess(id, msg) {
   setTimeout(() => el.classList.add('hidden'), 3000);
 }
 
-function login() {
+let HCAPTCHA_ENABLED = false;
+let HCAPTCHA_WIDGET_ID = null;
+
+async function initCaptcha() {
+  try {
+    const r = await fetch(`${BASE_URL}/captcha-config`);
+    const cfg = await r.json();
+    if (cfg.enabled && cfg.site_key) {
+      HCAPTCHA_ENABLED = true;
+      const container = document.getElementById('hcaptcha-container');
+      container.classList.remove('hidden');
+      container.style.display = '';
+      const script = document.createElement('script');
+      script.src = 'https://js.hcaptcha.com/1/api.js?render=explicit';
+      script.async = true;
+      script.onload = () => {
+        HCAPTCHA_WIDGET_ID = hcaptcha.render('hcaptcha-widget', { sitekey: cfg.site_key, theme: 'dark' });
+      };
+      document.head.appendChild(script);
+    }
+  } catch (e) { /* captcha not available, skip */ }
+}
+
+async function login() {
   const key = document.getElementById('api-key-input').value.trim();
   if (!key) return showError('login-error', 'Enter your API key');
+
+  // Verify captcha if enabled
+  if (HCAPTCHA_ENABLED) {
+    const token = hcaptcha.getResponse(HCAPTCHA_WIDGET_ID);
+    if (!token) return showError('login-error', 'Please complete the captcha');
+    try {
+      const cr = await fetch(`${BASE_URL}/verify-captcha`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      const cd = await cr.json();
+      if (!cd.success) {
+        hcaptcha.reset(HCAPTCHA_WIDGET_ID);
+        return showError('login-error', cd.error || 'Captcha verification failed');
+      }
+    } catch (e) {
+      hcaptcha.reset(HCAPTCHA_WIDGET_ID);
+      return showError('login-error', 'Captcha verification error');
+    }
+  }
+
   fetch(`${BASE_URL}/v1/tenant/me`, { headers: { 'X-API-Key': key } })
     .then(r => r.status === 200
       ? r.json().then(d => { API_KEY = key; TENANT_INFO = d; localStorage.setItem('votal_tenant_key', key); showApp(); })
       : r.json().then(d => showError('login-error', d.detail || d.error || 'Invalid key')))
     .catch(e => showError('login-error', 'Connection error: ' + e.message));
 }
+
+initCaptcha();
 
 function logout() {
   localStorage.removeItem('votal_tenant_key');
@@ -12101,7 +12150,12 @@ async function revokeCert() {
 
 if (API_KEY) {
   document.getElementById('api-key-input').value = API_KEY;
-  login();
+  // Auto-login with stored key — skip captcha (already verified in prior session)
+  fetch(`${BASE_URL}/v1/tenant/me`, { headers: { 'X-API-Key': API_KEY } })
+    .then(r => r.status === 200
+      ? r.json().then(d => { TENANT_INFO = d; showApp(); })
+      : logout())
+    .catch(() => {});
 }
 
 // Custom Policies Management
