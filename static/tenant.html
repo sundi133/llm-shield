@@ -50,6 +50,7 @@
     color: var(--text);
     -webkit-font-smoothing: antialiased;
     line-height: 1.5;
+    overflow-x: hidden;
   }
   code, pre, .mono { font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace; }
 
@@ -65,7 +66,7 @@
     height: 100vh;
     overflow-y: auto;
   }
-  .main { flex: 1; margin-left: var(--sidebar-width); padding: 2rem 2.5rem; max-width: 1400px; }
+  .main { flex: 1; min-width: 0; margin-left: var(--sidebar-width); padding: 2rem 2.5rem; max-width: 1400px; }
 
   .logo {
     display: flex;
@@ -5539,7 +5540,8 @@ async function loadOverviewAnalytics() {
             <th style="padding:4px 8px;font-weight:600;">Latency</th>
           </tr></thead>
           <tbody>${recent.map(e => {
-            const ts = e.timestamp ? new Date(e.timestamp * 1000).toLocaleTimeString() : '--';
+            const _tsd = e.timestamp ? new Date(e.timestamp) : null;
+            const ts = (_tsd && !isNaN(_tsd.getTime())) ? _tsd.toLocaleTimeString() : '--';
             const status = e.status || (e.blocked ? 'block' : 'pass');
             const statusColor = status === 'block' ? '#f85149' : status === 'warn' ? '#d29922' : '#10b981';
             const msg = (e.message || e.input_text || '').substring(0, 50);
