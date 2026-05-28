@@ -1,11 +1,16 @@
 """Decision audit query routes — query runtime guardrail enforcement decisions."""
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
 from typing import Optional
 
+from core.auth import verify_tenant_path_access
 from storage.decision_audit import query_decisions
 
-router = APIRouter(prefix="/v1/shield/decisions", tags=["decisions"])
+router = APIRouter(
+    prefix="/v1/shield/decisions",
+    tags=["decisions"],
+    dependencies=[Depends(verify_tenant_path_access)],
+)
 
 
 @router.get("/{tenant_id}")

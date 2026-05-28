@@ -263,3 +263,33 @@ def get_tenant_from_request(request: Request) -> str:
         )
 
     return tenant_id
+
+
+def require_tenant_access(tenant_id: str, request: Request) -> None:
+    """Authorize access to a tenant-scoped resource identified in the path.
+
+    Closes IDOR / broken object-level authorization: a tenant-scoped API key
+    may only act on its own tenant_id. Master/global keys (validated against
+    cfg.auth.api_keys) leave request.state.tenant_id unset and remain
+    unrestricted, preserving admin-portal cross-tenant management.
+    """
+    from fastapi import HTTPException
+
+    caller_tenant = getattr(getattr(request, "state", None), "tenant_id", None)
+    if caller_tenant and caller_tenant != tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: API key is not authorized for this tenant.",
+        )
+
+
+def verify_tenant_path_access(request: Request, tenant_id: str | None = None) -> None:
+    """Router dependency that enforces tenant ownership of a path tenant_id.
+
+    FastAPI resolves ``tenant_id`` from the route's path parameter when one
+    exists; routes without a ``{tenant_id}`` path parameter receive ``None``
+    and are left unaffected.
+    """
+    if tenant_id is None:
+        return
+    require_tenant_access(tenant_id, request)

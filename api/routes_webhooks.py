@@ -1,9 +1,10 @@
 """Webhook management routes — CRUD for webhook endpoint configurations."""
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
+from core.auth import verify_tenant_path_access
 from core.url_safety import UnsafeURLError, validate_outbound_url
 from storage.webhook_store import (
     create_webhook,
@@ -14,7 +15,11 @@ from storage.webhook_store import (
 )
 from storage.admin_audit import log_admin_action
 
-router = APIRouter(prefix="/v1/shield/webhooks", tags=["webhooks"])
+router = APIRouter(
+    prefix="/v1/shield/webhooks",
+    tags=["webhooks"],
+    dependencies=[Depends(verify_tenant_path_access)],
+)
 
 
 def _validate_webhook_url(url: str) -> None:
