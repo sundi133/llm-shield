@@ -9,7 +9,11 @@ from unittest import mock
 
 import pytest
 
-from core.url_safety import UnsafeURLError, validate_outbound_url
+from core.url_safety import (
+    UnsafeURLError,
+    validate_outbound_url,
+    validate_proxy_base_url,
+)
 
 
 # Helper: stub socket.getaddrinfo so the tests don't need DNS.
@@ -30,6 +34,7 @@ def _stub_getaddrinfo(monkeypatch, resolution_map):
 @pytest.fixture(autouse=True)
 def _no_allowlist(monkeypatch):
     monkeypatch.delenv("SHIELD_LLM_PROXY_ALLOWED_HOSTS", raising=False)
+    monkeypatch.delenv("SHIELD_LLM_PROXY_ALLOW_ANY_HOST", raising=False)
 
 
 class TestSchemeCheck:
@@ -142,6 +147,57 @@ class TestHostnameAllowlist:
         monkeypatch.setenv("SHIELD_LLM_PROXY_ALLOWED_HOSTS", "api.openai.com")
         _stub_getaddrinfo(monkeypatch, {"api.openai.com": ["104.18.6.123"]})
         validate_outbound_url("https://API.OPENAI.COM/v1")
+
+
+class TestProxyAllowlist:
+    """validate_proxy_base_url is deny-by-default: only vetted LLM
+    provider domains may be dialed, because the proxy attaches the
+    caller's bearer token to the outbound request (VAPT 8.1 + 8.3)."""
+
+    def test_known_provider_allowed(self, monkeypatch):
+        _stub_getaddrinfo(monkeypatch, {"api.openai.com": ["104.18.6.123"]})
+        validate_proxy_base_url("https://api.openai.com/v1")
+
+    def test_provider_subdomain_allowed(self, monkeypatch):
+        _stub_getaddrinfo(monkeypatch, {"x.api.runpod.ai": ["8.8.8.8"]})
+        validate_proxy_base_url("https://x.api.runpod.ai/v1")
+
+    def test_external_collaborator_host_rejected(self):
+        # The exact PoC host class — public, but not a provider.
+        with pytest.raises(UnsafeURLError, match="not allowed"):
+            validate_proxy_base_url("https://abc123.oastify.com/")
+
+    def test_arbitrary_public_host_rejected(self):
+        with pytest.raises(UnsafeURLError, match="not allowed"):
+            validate_proxy_base_url("https://evil.example.com/v1")
+
+    def test_lookalike_domain_rejected(self):
+        # Suffix match must be on a dot boundary — notopenai.com != openai.com
+        with pytest.raises(UnsafeURLError, match="not allowed"):
+            validate_proxy_base_url("https://notopenai.com/v1")
+
+    def test_env_extends_allowlist(self, monkeypatch):
+        monkeypatch.setenv("SHIELD_LLM_PROXY_ALLOWED_HOSTS", "myllm.internalcorp.example")
+        _stub_getaddrinfo(monkeypatch, {"myllm.internalcorp.example": ["8.8.8.8"]})
+        validate_proxy_base_url("https://myllm.internalcorp.example/v1")
+
+    def test_allow_any_host_escape_hatch(self, monkeypatch):
+        monkeypatch.setenv("SHIELD_LLM_PROXY_ALLOW_ANY_HOST", "1")
+        _stub_getaddrinfo(monkeypatch, {"anything.example.com": ["8.8.8.8"]})
+        validate_proxy_base_url("https://anything.example.com/v1")
+
+    def test_metadata_still_blocked_even_if_allow_any(self, monkeypatch):
+        # Escape hatch must NOT disable the IP/metadata defense.
+        monkeypatch.setenv("SHIELD_LLM_PROXY_ALLOW_ANY_HOST", "1")
+        with pytest.raises(UnsafeURLError):
+            validate_proxy_base_url("http://169.254.169.254/latest/meta-data/")
+
+    def test_provider_resolving_to_internal_ip_still_blocked(self, monkeypatch):
+        # Defense in depth: even an allowed provider name can't dial an
+        # internal IP (DNS rebinding / poisoning).
+        _stub_getaddrinfo(monkeypatch, {"api.openai.com": ["127.0.0.1"]})
+        with pytest.raises(UnsafeURLError, match="non-public"):
+            validate_proxy_base_url("https://api.openai.com/v1")
 
 
 class TestMalformedInput:

@@ -28,6 +28,28 @@ _LOCKOUT_WINDOW_SECS = int(os.environ.get("SHIELD_AUTH_LOCKOUT_SECS", "300"))
 # override via SHIELD_AUTH_RATE_LIMIT_REDIS=1 in future.
 _failed_attempts: dict[str, list[float]] = defaultdict(list)
 
+_TRUTHY = ("1", "true", "yes", "on")
+
+
+def _client_ip(request: Request) -> str:
+    """Resolve the real client IP for rate-limiting.
+
+    The app runs behind an edge proxy (e.g. Railway), so request.client.host
+    is the proxy's IP — keying the lockout on it would lock out every user
+    at once and never isolate a single attacker. When SHIELD_TRUST_PROXY_HEADERS
+    is enabled we use the last entry of X-Forwarded-For, which is the address
+    the nearest trusted proxy observed and the client cannot forge (the proxy
+    appends it). Without the flag we keep request.client.host so a directly
+    exposed deployment can't be bypassed via a spoofed header.
+    """
+    if os.environ.get("SHIELD_TRUST_PROXY_HEADERS", "").strip().lower() in _TRUTHY:
+        xff = request.headers.get("X-Forwarded-For", "")
+        if xff:
+            parts = [p.strip() for p in xff.split(",") if p.strip()]
+            if parts:
+                return parts[-1]
+    return request.client.host if request.client else "unknown"
+
 
 def _record_auth_failure(client_ip: str) -> None:
     """Record a failed authentication attempt for the given IP."""
@@ -72,7 +94,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         cfg = _config_module.config
         path = request.url.path
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = _client_ip(request)
 
         # Brute-force lockout check (finding 8.9)
         if _is_ip_locked_out(client_ip):

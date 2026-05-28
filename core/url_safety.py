@@ -87,12 +87,27 @@ def _ip_is_safe_to_dial(ip_str: str) -> bool:
     return True
 
 
-def validate_outbound_url(url: str, *, purpose: str = "outbound") -> str:
+def validate_outbound_url(
+    url: str,
+    *,
+    purpose: str = "outbound",
+    check_env_allowlist: bool = True,
+    resolve_dns: bool = True,
+) -> str:
     """Reject the URL or return it unchanged if safe.
 
     Args:
         url:     the URL the application is about to fetch.
         purpose: short label used in error messages and logs (e.g. "llm-proxy").
+        check_env_allowlist: when True, also enforce the exact-match
+            SHIELD_LLM_PROXY_ALLOWED_HOSTS env allowlist. Callers that
+            apply their own (e.g. validate_proxy_base_url) pass False so
+            the env var isn't interpreted twice with different semantics.
+        resolve_dns: when True, resolve the hostname and verify every
+            address is public (the real anti-SSRF guarantee, run right
+            before dialing). Pass False for a cheap boundary check at
+            store time (validate scheme + IP-literal host + metadata
+            denylist) that doesn't depend on DNS being reachable.
 
     Returns:
         The same URL string (canonicalized) if safe.
@@ -122,7 +137,7 @@ def validate_outbound_url(url: str, *, purpose: str = "outbound") -> str:
 
     # 2. Hostname-based allowlist (strictest). If env says only api.openai.com
     #    et al. are reachable, no resolution-time trickery matters.
-    allowed = _allowed_hosts()
+    allowed = _allowed_hosts() if check_env_allowlist else None
     if allowed is not None:
         if host not in allowed:
             logger.warning(
@@ -135,6 +150,21 @@ def validate_outbound_url(url: str, *, purpose: str = "outbound") -> str:
     if host in _BLOCKED_HOSTS:
         logger.warning(f"{purpose}: rejecting metadata-endpoint host {host!r}")
         raise UnsafeURLError("host is a blocked internal endpoint")
+
+    # 3b. If the host is an IP literal, check it directly — no DNS needed.
+    #     This is the only IP check performed when resolve_dns=False.
+    try:
+        literal_ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        literal_ip = None
+    if literal_ip is not None:
+        if not _ip_is_safe_to_dial(str(literal_ip)):
+            logger.warning(f"{purpose}: rejecting non-public IP-literal host {host!r}")
+            raise UnsafeURLError("host resolves to a non-public IP")
+        return url
+
+    if not resolve_dns:
+        return url
 
     # 4. Resolve the hostname and check EVERY returned address is public.
     #    This defends against DNS rebinding and against domains that
@@ -160,3 +190,98 @@ def validate_outbound_url(url: str, *, purpose: str = "outbound") -> str:
         raise UnsafeURLError("hostname resolved to no addresses")
 
     return url
+
+
+# ── Playground LLM-proxy allowlist (deny-by-default) ─────────────────
+#
+# The /playground/llm-proxy handler attaches the caller-supplied
+# master_key as `Authorization: Bearer …` to the OUTBOUND request. The
+# IEMLabs VAPT PoC (findings 8.1 SSRF + 8.3 Information Disclosure)
+# pointed base_url at an attacker-controlled Burp Collaborator host and
+# received that bearer token — credential exfiltration. The IP/metadata
+# filter above does NOT stop this, because the collaborator host is a
+# perfectly public IP.
+#
+# Defense: the proxy may only dial a vetted set of LLM-provider domains.
+# Operators extend the list with SHIELD_LLM_PROXY_ALLOWED_HOSTS (comma-
+# separated; entries match the host exactly or as a parent domain, e.g.
+# "example.com" also allows "llm.example.com"). Setting
+# SHIELD_LLM_PROXY_ALLOW_ANY_HOST=1 reverts to IP-filter-only behavior
+# for self-hosted/dev setups that genuinely need arbitrary endpoints.
+_DEFAULT_LLM_PROVIDER_DOMAINS: tuple[str, ...] = (
+    "openai.com",
+    "anthropic.com",
+    "openai.azure.com",
+    "generativelanguage.googleapis.com",
+    "aiplatform.googleapis.com",
+    "cohere.ai",
+    "cohere.com",
+    "mistral.ai",
+    "groq.com",
+    "together.xyz",
+    "together.ai",
+    "deepseek.com",
+    "openrouter.ai",
+    "perplexity.ai",
+    "fireworks.ai",
+    "x.ai",
+    "runpod.ai",
+    "railway.app",
+)
+
+_TRUTHY = ("1", "true", "yes", "on")
+
+
+def _allow_any_proxy_host() -> bool:
+    return os.environ.get("SHIELD_LLM_PROXY_ALLOW_ANY_HOST", "").strip().lower() in _TRUTHY
+
+
+def _proxy_allowed_domains() -> tuple[str, ...]:
+    """Built-in provider domains plus any from SHIELD_LLM_PROXY_ALLOWED_HOSTS."""
+    raw = os.environ.get("SHIELD_LLM_PROXY_ALLOWED_HOSTS", "").strip()
+    extra = tuple(h.strip().lower() for h in raw.split(",") if h.strip())
+    return _DEFAULT_LLM_PROVIDER_DOMAINS + extra
+
+
+def _host_in_domains(host: str, domains: tuple[str, ...]) -> bool:
+    """True if host equals, or is a subdomain of, any allowed domain."""
+    host = host.lower()
+    for d in domains:
+        if host == d or host.endswith("." + d):
+            return True
+    return False
+
+
+def validate_proxy_base_url(url: str, *, purpose: str = "llm-proxy") -> str:
+    """Validate a user-supplied LLM base_url for the playground proxy.
+
+    Stricter than validate_outbound_url: enforces a provider allowlist
+    (deny-by-default) BEFORE the network-level SSRF checks, so the
+    bearer token the proxy attaches can only ever reach a known LLM
+    provider. Raises UnsafeURLError (generic message) on rejection.
+    """
+    if _allow_any_proxy_host():
+        return validate_outbound_url(url, purpose=purpose)
+
+    if not url or not isinstance(url, str):
+        raise UnsafeURLError("URL is empty or not a string")
+
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:
+        raise UnsafeURLError("URL could not be parsed")
+
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise UnsafeURLError("URL missing hostname")
+
+    if not _host_in_domains(host, _proxy_allowed_domains()):
+        logger.warning(
+            f"{purpose}: rejecting base_url host {host!r} — not an allowed "
+            f"LLM provider (set SHIELD_LLM_PROXY_ALLOWED_HOSTS to permit it)"
+        )
+        raise UnsafeURLError("LLM provider host is not allowed")
+
+    # Defense in depth: still run the IP/metadata/scheme checks. The env
+    # allowlist is disabled here since we just applied the richer one.
+    return validate_outbound_url(url, purpose=purpose, check_env_allowlist=False)
