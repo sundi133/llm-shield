@@ -2,8 +2,9 @@ import os
 import hmac
 import logging
 
+import httpx
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config.schema import load_config
@@ -162,6 +163,31 @@ def create_app() -> FastAPI:
     @app.get("/telemetry")
     async def telemetry_portal():
         return FileResponse(os.path.join(_static_dir, "telemetry.html"))
+
+    # ── hCaptcha ──────────────────────────────────────────────
+    @app.get("/captcha-config")
+    async def captcha_config():
+        site_key = os.environ.get("HCAPTCHA_SITE_KEY", "")
+        return {"enabled": bool(site_key), "site_key": site_key}
+
+    @app.post("/verify-captcha")
+    async def verify_captcha(request: Request):
+        body = await request.json()
+        token = body.get("token", "")
+        secret = os.environ.get("HCAPTCHA_SECRET_KEY", "")
+        if not secret:
+            return {"success": True}  # captcha not configured, skip
+        if not token:
+            return JSONResponse({"success": False, "error": "Missing captcha token"}, status_code=400)
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.hcaptcha.com/siteverify",
+                data={"secret": secret, "response": token},
+            )
+            result = resp.json()
+        if result.get("success"):
+            return {"success": True}
+        return JSONResponse({"success": False, "error": "Captcha verification failed"}, status_code=403)
 
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
