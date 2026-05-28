@@ -1766,10 +1766,14 @@ def create_admin_app() -> FastAPI:
         Hardened against SSRF and Information Disclosure per IEMLabs VAPT
         findings 8.1 and 8.3 (May 2026):
 
-          * base_url validated by core.url_safety BEFORE the request —
+          * base_url validated by core.url_safety BEFORE the request.
+            Deny-by-default: only vetted LLM-provider domains are
+            reachable (the proxy attaches the bearer master_key to the
+            outbound call, so an arbitrary host would exfiltrate it).
             cloud-metadata endpoints, RFC 1918, link-local, and loopback
-            all rejected. SHIELD_LLM_PROXY_ALLOWED_HOSTS env enforces a
-            stricter allowlist when set.
+            are also rejected as defense-in-depth. Operators extend the
+            list via SHIELD_LLM_PROXY_ALLOWED_HOSTS, or set
+            SHIELD_LLM_PROXY_ALLOW_ANY_HOST=1 to allow arbitrary hosts.
           * follow_redirects=False prevents a 302-to-internal bypass of
             the URL check.
           * Logging captures status + model only; the full LLM response
@@ -1781,7 +1785,7 @@ def create_admin_app() -> FastAPI:
         """
         import logging as _logging
         import uuid as _uuid
-        from core.url_safety import UnsafeURLError, validate_outbound_url
+        from core.url_safety import UnsafeURLError, validate_proxy_base_url
 
         body = await request.json()
         base_url_raw = body.get("base_url", "https://api.openai.com/v1").strip().rstrip("/")
@@ -1789,7 +1793,7 @@ def create_admin_app() -> FastAPI:
         payload = body.get("payload", {})
 
         try:
-            base_url = validate_outbound_url(base_url_raw, purpose="llm-proxy")
+            base_url = validate_proxy_base_url(base_url_raw, purpose="llm-proxy")
         except UnsafeURLError as e:
             return JSONResponse(
                 {"error": "LLM base_url rejected", "detail": str(e)},

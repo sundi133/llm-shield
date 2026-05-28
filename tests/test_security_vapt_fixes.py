@@ -150,7 +150,7 @@ def admin_app_min(monkeypatch):
     import httpx
     import logging as _logging
     import uuid as _uuid
-    from core.url_safety import UnsafeURLError, validate_outbound_url
+    from core.url_safety import UnsafeURLError, validate_proxy_base_url
 
     app = FastAPI()
 
@@ -163,7 +163,7 @@ def admin_app_min(monkeypatch):
         payload = body.get("payload", {})
 
         try:
-            base_url = validate_outbound_url(base_url_raw, purpose="llm-proxy")
+            base_url = validate_proxy_base_url(base_url_raw, purpose="llm-proxy")
         except UnsafeURLError as e:
             return JSONResponse(
                 {"error": "LLM base_url rejected", "detail": str(e)},
@@ -251,7 +251,12 @@ class TestSSRFInLLMProxy:
         assert r.status_code == 400
 
     def test_dns_rebinding_blocked(self, admin_client, monkeypatch):
-        """Hostname that resolves to BOTH public + internal must reject."""
+        """Hostname that resolves to BOTH public + internal must reject.
+
+        Allowlist the host so the request reaches the IP-resolution check
+        (the layer this test is about) rather than the provider gate.
+        """
+        monkeypatch.setenv("SHIELD_LLM_PROXY_ALLOWED_HOSTS", "attacker.example.com")
         _stub_getaddrinfo(monkeypatch, {
             "attacker.example.com": ["8.8.8.8", "127.0.0.1"],
         })
@@ -269,6 +274,71 @@ class TestSSRFInLLMProxy:
             json={"base_url": "https://random-public.example.com", "payload": {}},
         )
         assert r.status_code == 400
+
+    def test_external_collaborator_host_blocked_by_default(self, admin_client):
+        """The exact IEMLabs PoC: base_url pointed at an attacker host.
+
+        It is a perfectly public domain (passes the IP filter), so only
+        the provider allowlist stops it. Must be rejected with NO env
+        allowlist configured (deny-by-default).
+        """
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={
+                "base_url": "https://o8xfoo3qzgckd4oyo497ek9h78dz1qpf.oastify.com",
+                "master_key": "sk-my-master-key-123",
+                "payload": {"model": "gpt-4"},
+            },
+        )
+        assert r.status_code == 400
+        assert r.json()["error"] == "LLM base_url rejected"
+
+    def test_master_key_not_exfiltrated_to_unallowed_host(self, admin_client, monkeypatch):
+        """The proxy attaches Authorization: Bearer <master_key>. When the
+        host is rejected, the outbound HTTP call must never happen — so the
+        credential can't leak (findings 8.1 + 8.3)."""
+        import httpx as _httpx
+
+        called = {"n": 0}
+
+        async def spy_post(self, *a, **kw):
+            called["n"] += 1
+            raise AssertionError("outbound request must not be made for a blocked host")
+
+        monkeypatch.setattr(_httpx.AsyncClient, "post", spy_post)
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={
+                "base_url": "https://attacker.evil.example",
+                "master_key": "sk-secret-leak-me",
+                "payload": {"model": "gpt-4"},
+            },
+        )
+        assert r.status_code == 400
+        assert called["n"] == 0
+
+    def test_provider_subdomain_allowed(self, admin_client, monkeypatch):
+        """A subdomain of a known provider (e.g. tenant LiteLLM on Railway)
+        is permitted by the parent-domain match."""
+        _stub_getaddrinfo(monkeypatch, {"litellm-votal.up.railway.app": ["8.8.8.8"]})
+
+        import httpx as _httpx
+
+        async def fake_post(self, url, **kw):
+            class _R:
+                status_code = 200
+                content = b'{"ok":1}'
+                text = '{"ok":1}'
+                def json(self):
+                    return {"ok": 1}
+            return _R()
+
+        monkeypatch.setattr(_httpx.AsyncClient, "post", fake_post)
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={"base_url": "https://litellm-votal.up.railway.app/v1", "payload": {}},
+        )
+        assert r.status_code == 200
 
 
 class TestInfoDisclosureInLLMProxy:
@@ -291,6 +361,7 @@ class TestInfoDisclosureInLLMProxy:
     ):
         """When the upstream call genuinely fails, response must be
         a generic message + a correlation id — NOT the raw exception."""
+        monkeypatch.setenv("SHIELD_LLM_PROXY_ALLOWED_HOSTS", "unreachable.example.com")
         _stub_getaddrinfo(monkeypatch, {"unreachable.example.com": ["8.8.8.8"]})
 
         # Force the underlying httpx call to raise a ConnectError with
