@@ -1,0 +1,511 @@
+# LLM Shield — split deployment: vLLM + handler.py as separate services
+#
+# Architecture:
+#   ┌─────────────┐         ┌─────────────────┐
+#   │  OC Route   │────────▶│  shield-handler  │──────▶ vllm-inference (ClusterIP)
+#   │  (edge TLS) │         │  (N replicas)    │        (M replicas, GPU)
+#   └─────────────┘         └─────────────────┘
+#
+# vLLM runs as a standalone GPU service (port 8000, OpenAI-compatible).
+# handler.py connects to it via LLM_BACKEND_URL=http://vllm-inference:8000/v1
+#
+# Multiple handler replicas share the same vLLM pool. Path-based routing
+# with prefix stripping is shown in the Route examples at the bottom.
+#
+# Usage:
+#   1. Create secrets first (see below)
+#   2. oc apply -f openshift/shield-vllm-split.yaml -n <your-project>
+#   3. oc get route shield -o jsonpath='{.spec.host}'
+#
+# To add prefix-based routing for multiple services behind one domain,
+# see the "PREFIX-BASED ROUTING" section at the bottom.
+
+---
+# ══════════════════════════════════════════════════════════════
+# Secrets — create BEFORE applying:
+#   oc create secret generic shield-secrets \
+#     --from-literal=SHIELD_ADMIN_KEY=your-admin-key \
+#     --from-literal=UPSTASH_REDIS_REST_URL=http://srh:8079 \
+#     --from-literal=UPSTASH_REDIS_REST_TOKEN=your-token \
+#     --from-literal=HCAPTCHA_SITE_KEY=your-site-key \
+#     --from-literal=HCAPTCHA_SECRET_KEY=your-secret-key \
+#     -n <your-project>
+# ══════════════════════════════════════════════════════════════
+
+---
+# ──────────────────────────────────────────────────────────────
+# 1. vLLM Inference Service (GPU)
+# ──────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-config
+  labels:
+    app: vllm-inference
+    app.kubernetes.io/part-of: llm-shield
+data:
+  MODEL_NAME: "votal-ai/vai35-4B-v2"
+  VLLM_HOST: "0.0.0.0"
+  VLLM_PORT: "8000"
+  MAX_NUM_SEQS: "48"
+  MAX_MODEL_LEN: "8196"
+  MAX_BATCHED_TOKENS: "8196"
+  GPU_MEM_UTIL: "0.85"
+  # Cache dirs
+  CACHE: "/tmp/cache"
+  HF_HOME: "/tmp/cache/huggingface"
+  HUGGINGFACE_HUB_CACHE: "/tmp/cache/huggingface/hub"
+  VLLM_CACHE_ROOT: "/tmp/cache/vllm"
+  VLLM_ATTENTION_BACKEND: "FLASHINFER"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-inference
+  labels:
+    app: vllm-inference
+    app.kubernetes.io/part-of: llm-shield
+    app.kubernetes.io/component: inference
+spec:
+  replicas: 1                    # scale based on GPU availability
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: vllm-inference
+  template:
+    metadata:
+      labels:
+        app: vllm-inference
+        app.kubernetes.io/part-of: llm-shield
+        app.kubernetes.io/component: inference
+    spec:
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:latest
+          imagePullPolicy: Always
+          command:
+            - python3
+            - -m
+            - vllm.entrypoints.openai.api_server
+          args:
+            - --model
+            - $(MODEL_NAME)
+            - --host
+            - $(VLLM_HOST)
+            - --port
+            - $(VLLM_PORT)
+            - --dtype
+            - bfloat16
+            - --quantization
+            - fp8
+            - --kv-cache-dtype
+            - fp8
+            - --max-model-len
+            - $(MAX_MODEL_LEN)
+            - --max-num-batched-tokens
+            - $(MAX_BATCHED_TOKENS)
+            - --max-num-seqs
+            - $(MAX_NUM_SEQS)
+            - --gpu-memory-utilization
+            - $(GPU_MEM_UTIL)
+            - --enable-prefix-caching
+            - --language-model-only
+            - --performance-mode
+            - throughput
+          envFrom:
+            - configMapRef:
+                name: vllm-config
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            initialDelaySeconds: 60      # model loading takes time
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30         # up to 5 min for large models
+          livenessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: 24Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: cache
+              mountPath: /tmp/cache
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: cache
+          emptyDir:
+            sizeLimit: 50Gi
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi             # vLLM needs large shared memory
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-inference
+  labels:
+    app: vllm-inference
+    app.kubernetes.io/part-of: llm-shield
+spec:
+  selector:
+    app: vllm-inference
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+  type: ClusterIP
+
+---
+# ──────────────────────────────────────────────────────────────
+# 2. Shield Handler Service (CPU — handler.py)
+# ──────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shield-handler-config
+  labels:
+    app: shield-handler
+    app.kubernetes.io/part-of: llm-shield
+data:
+  # Point handler at the vLLM ClusterIP service
+  LLM_BACKEND_URL: "http://vllm-inference:8000/v1"
+  LLM_BACKEND_TYPE: "vllm"
+  SKIP_VLLM: "true"               # don't start embedded vLLM
+  PORT: "8080"
+  AUDIT_LOGGING_ENABLED: "true"
+  AUDIT_DB_PATH: "/app/data/audit.db"
+  SHIELD_MAX_MODEL_LEN: "16384"
+  NO_PROXY: "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local,redis,vllm-inference"
+  no_proxy: "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local,redis,vllm-inference"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shield-handler
+  labels:
+    app: shield-handler
+    app.kubernetes.io/part-of: llm-shield
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2                      # scale handler independently of vLLM
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: shield-handler
+  template:
+    metadata:
+      labels:
+        app: shield-handler
+        app.kubernetes.io/part-of: llm-shield
+        app.kubernetes.io/component: api
+    spec:
+      initContainers:
+        - name: init-dirs
+          image: busybox:latest
+          command: ["sh", "-c", "mkdir -p /app/data /app/log /app/reports"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/log
+      containers:
+        - name: handler
+          image: docker.io/sundi133/llm-shield:latest  # same image, just skip vLLM
+          imagePullPolicy: Always
+          command: ["python3", "handler.py"]            # run handler directly
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: shield-handler-config
+            - secretRef:
+                name: shield-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/log
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          emptyDir:
+            sizeLimit: 500Mi
+        - name: logs
+          emptyDir:
+            sizeLimit: 500Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shield-handler
+  labels:
+    app: shield-handler
+    app.kubernetes.io/part-of: llm-shield
+spec:
+  selector:
+    app: shield-handler
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+
+---
+# ──────────────────────────────────────────────────────────────
+# 3. Route — single domain, all traffic to handler
+# ──────────────────────────────────────────────────────────────
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: shield
+  labels:
+    app: shield-handler
+    app.kubernetes.io/part-of: llm-shield
+  annotations:
+    haproxy.router.openshift.io/timeout: 120s
+spec:
+  to:
+    kind: Service
+    name: shield-handler
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+
+---
+# ──────────────────────────────────────────────────────────────
+# 4. HPA — auto-scale handler pods
+# ──────────────────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: shield-handler
+  labels:
+    app: shield-handler
+    app.kubernetes.io/part-of: llm-shield
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: shield-handler
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+# ──────────────────────────────────────────────────────────────
+# 5. NetworkPolicy
+# ──────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shield-handler-ingress
+  labels:
+    app: shield-handler
+spec:
+  podSelector:
+    matchLabels:
+      app: shield-handler
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vllm-inference-ingress
+  labels:
+    app: vllm-inference
+spec:
+  podSelector:
+    matchLabels:
+      app: vllm-inference
+  policyTypes:
+    - Ingress
+  ingress:
+    # Only allow handler pods to reach vLLM — no external access
+    - from:
+        - podSelector:
+            matchLabels:
+              app: shield-handler
+      ports:
+        - port: 8000
+          protocol: TCP
+
+# ══════════════════════════════════════════════════════════════
+# PREFIX-BASED ROUTING (multiple services behind one domain)
+# ══════════════════════════════════════════════════════════════
+#
+# If you want multiple services (shield, admin, other apps) behind
+# one domain with path prefixes, use separate Routes with path specs.
+#
+# Example: https://myapp.example.com/shield/...  → shield-handler
+#          https://myapp.example.com/admin/...   → shield-admin
+#          https://myapp.example.com/agent/...   → insurance-agent
+#
+# Uncomment and customize:
+#
+# ---
+# apiVersion: route.openshift.io/v1
+# kind: Route
+# metadata:
+#   name: shield-prefixed
+#   annotations:
+#     haproxy.router.openshift.io/timeout: 120s
+#     # Strip the /shield prefix before forwarding to the backend.
+#     # The handler sees "/" not "/shield/".
+#     haproxy.router.openshift.io/rewrite-target: /
+# spec:
+#   # Optional: set host to share a domain with other routes
+#   # host: myapp.example.com
+#   path: /shield
+#   to:
+#     kind: Service
+#     name: shield-handler
+#     weight: 100
+#   port:
+#     targetPort: http
+#   tls:
+#     termination: edge
+#     insecureEdgeTerminationPolicy: Redirect
+#
+# ---
+# apiVersion: route.openshift.io/v1
+# kind: Route
+# metadata:
+#   name: admin-prefixed
+#   annotations:
+#     haproxy.router.openshift.io/timeout: 60s
+#     haproxy.router.openshift.io/rewrite-target: /
+# spec:
+#   # host: myapp.example.com
+#   path: /admin-portal
+#   to:
+#     kind: Service
+#     name: shield-admin
+#     weight: 100
+#   port:
+#     targetPort: http
+#   tls:
+#     termination: edge
+#     insecureEdgeTerminationPolicy: Redirect
+#
+# ---
+# apiVersion: route.openshift.io/v1
+# kind: Route
+# metadata:
+#   name: agent-prefixed
+#   annotations:
+#     haproxy.router.openshift.io/timeout: 120s
+#     haproxy.router.openshift.io/rewrite-target: /
+# spec:
+#   # host: myapp.example.com
+#   path: /agent
+#   to:
+#     kind: Service
+#     name: insurance-agent
+#     weight: 100
+#   port:
+#     targetPort: http
+#   tls:
+#     termination: edge
+#     insecureEdgeTerminationPolicy: Redirect
