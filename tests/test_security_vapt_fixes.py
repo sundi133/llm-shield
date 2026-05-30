@@ -586,6 +586,77 @@ class TestCookieSecurity:
         assert "samesite" in lower
 
 
+# ─── HSTS config + HTTPS enforcement (8.5) ───────────────────────────
+
+
+class TestHSTSConfig:
+    """Finding 8.5: HSTS value is configurable and preload is opt-in."""
+
+    def test_default_hsts_value(self):
+        from core.security_headers import build_hsts_value
+        v = build_hsts_value()
+        assert "max-age=31536000" in v
+        assert "includeSubDomains" in v
+        assert "preload" not in v
+
+    def test_preload_opt_in(self):
+        from core.security_headers import build_hsts_value
+        assert "preload" in build_hsts_value(preload=True, include_subdomains=True)
+
+    def test_preload_requires_subdomains(self):
+        from core.security_headers import build_hsts_value
+        # preload is invalid without includeSubDomains and must be dropped
+        assert "preload" not in build_hsts_value(preload=True, include_subdomains=False)
+
+    def test_custom_max_age(self):
+        from core.security_headers import build_hsts_value
+        assert "max-age=120" in build_hsts_value(max_age=120)
+
+
+class TestHTTPSRedirect:
+    """Finding 8.5: insecure HTTP is redirected to HTTPS (proxy aware)."""
+
+    def _client(self, enabled):
+        from fastapi import FastAPI
+        from core.security_headers import HTTPSRedirectMiddleware
+
+        app = FastAPI()
+        app.add_middleware(HTTPSRedirectMiddleware, enabled=enabled)
+
+        @app.get("/x")
+        async def _x():
+            return {"ok": True}
+
+        @app.get("/healthz")
+        async def _h():
+            return {"status": "ok"}
+
+        return TestClient(app)
+
+    def test_http_redirected_to_https(self):
+        c = self._client(enabled=True)
+        r = c.get("/x", follow_redirects=False)
+        assert r.status_code == 308
+        assert r.headers["location"].startswith("https://")
+
+    def test_health_check_not_redirected(self):
+        c = self._client(enabled=True)
+        assert c.get("/healthz", follow_redirects=False).status_code == 200
+
+    def test_no_loop_when_already_https(self):
+        c = self._client(enabled=True)
+        r = c.get(
+            "/x",
+            headers={"X-Forwarded-Proto": "https"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 200
+
+    def test_disabled_by_default(self):
+        c = self._client(enabled=False)
+        assert c.get("/x", follow_redirects=False).status_code == 200
+
+
 # ─── Input Validation (8.7) ──────────────────────────────────────────
 
 
