@@ -2559,8 +2559,8 @@
               </div>
               <div style="display:flex;align-items:center;gap:0.75rem;">
                 <span style="width:28px;height:28px;border-radius:50%;background:var(--success);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">4</span>
-                <div><strong style="font-size:13px;">Run Guardrails (Runtime)</strong><div class="muted" style="font-size:11px;">Classify input/output, check tools, authorize actions, or proxy via gateway</div></div>
-                <code class="muted" style="font-size:10px;margin-left:auto;">POST /guardrails/input · /output</code>
+                <div><strong style="font-size:13px;">Run Guardrails (Runtime)</strong><div class="muted" style="font-size:11px;">LiteLLM handles input/output guardrails automatically. App calls Shield only for tool RBAC + data policies.</div></div>
+                <code class="muted" style="font-size:10px;margin-left:auto;">POST /v1/shield/tool/check · /output</code>
               </div>
               <div style="display:flex;align-items:center;gap:0.75rem;">
                 <span style="width:28px;height:28px;border-radius:50%;background:var(--success);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">5</span>
@@ -2588,18 +2588,55 @@
 
       <!-- LangChain Integration -->
       <div id="api-tab-langchain" class="api-tab-content hidden">
+        <div class="card" style="margin-bottom:1rem;border:1px solid var(--accent);border-radius:8px;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Production Architecture: LiteLLM + Shield</div>
+              <div class="card-subtitle">Your app talks to two services — LiteLLM for LLM calls (guardrails automatic), Shield only for tool RBAC + data policies</div>
+            </div>
+          </div>
+          <div style="padding:0 1.25rem 1.25rem;">
+            <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:1rem;margin-bottom:1rem;">
+              <div style="font-size:12px;color:var(--text);line-height:1.8;font-family:var(--font-mono);">
+                <strong style="color:var(--accent-hover);">Your App</strong><br>
+                &nbsp;&nbsp;│<br>
+                &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">LiteLLM Proxy</span> (base_url for your LLM client)<br>
+                &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── Input guardrails run <strong>automatically</strong> (adversarial, PII, toxicity)<br>
+                &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── LLM call → returns tool_calls<br>
+                &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── Output guardrails run <strong>automatically</strong> (PII leakage, bias)<br>
+                &nbsp;&nbsp;│<br>
+                &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/check</span> ← <strong>only call your app makes to Shield</strong><br>
+                &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── RBAC: can this role use this tool?<br>
+                &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── Data policy: do input rules allow these args?<br>
+                &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── allowed → execute tool locally<br>
+                &nbsp;&nbsp;│<br>
+                &nbsp;&nbsp;└─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/output</span><br>
+                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── allow → output unchanged<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:#8b5cf6;">mask</span> → partial masking (j***@****.com)<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:#f59e0b;">redact</span> → full replacement ([REDACTED])<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span style="color:#ef4444;">block</span> → output rejected entirely
+              </div>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);line-height:1.6;">
+              <strong>Your app never calls <code>/guardrails/input</code> or <code>/guardrails/output</code> directly.</strong>
+              LiteLLM handles those via Shield middleware. Your app only adds ~10 lines around the tool execution loop.
+              If tools/agents are not registered in the portal, they are blocked by default and tracked as shadow agents.
+            </div>
+          </div>
+        </div>
+
         <div class="card" style="margin-bottom:1rem;">
           <div class="card-header">
             <div>
               <div class="card-title">LangChain + LLM Shield</div>
-              <div class="card-subtitle">Protect LangChain agents with guardrails, RBAC, and shadow discovery</div>
+              <div class="card-subtitle">Protect LangChain agents with tool RBAC, data policies, and shadow discovery</div>
             </div>
           </div>
           <div style="padding:0 1.25rem 1.25rem;">
             <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Input/Output Guardrails</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Guardrails via LiteLLM</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Tool RBAC</span>
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy Enforcement</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy (mask/redact/block)</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
             </div>
           </div>
@@ -2817,14 +2854,14 @@ if __name__ == "__main__":
           <div class="card-header">
             <div>
               <div class="card-title">CrewAI + LLM Shield</div>
-              <div class="card-subtitle">Multi-agent crews with guardrails, RBAC per agent, and shadow discovery</div>
+              <div class="card-subtitle">Multi-agent crews with per-agent tool RBAC, data policies, and shadow discovery</div>
             </div>
           </div>
           <div style="padding:0 1.25rem 1.25rem;">
             <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Multi-Agent RBAC</span>
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Input/Output Guardrails</span>
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy Enforcement</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Guardrails via LiteLLM</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Per-Agent Tool RBAC</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy (mask/redact/block)</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
             </div>
           </div>
@@ -3039,14 +3076,14 @@ if __name__ == "__main__":
           <div class="card-header">
             <div>
               <div class="card-title">OpenAI Agents SDK + LLM Shield</div>
-              <div class="card-subtitle">Wrap OpenAI function-calling agents with Shield guardrails, RBAC, and shadow discovery</div>
+              <div class="card-subtitle">OpenAI function-calling agents with tool RBAC, data policies via Shield</div>
             </div>
           </div>
           <div style="padding:0 1.25rem 1.25rem;">
             <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Input/Output Guardrails</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Guardrails via LiteLLM</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Tool RBAC</span>
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy Enforcement</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy (mask/redact/block)</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
             </div>
           </div>
@@ -3228,14 +3265,14 @@ if __name__ == "__main__":
           <div class="card-header">
             <div>
               <div class="card-title">Anthropic Claude + LLM Shield</div>
-              <div class="card-subtitle">Protect Claude tool-use agents with Shield guardrails and RBAC</div>
+              <div class="card-subtitle">Claude tool-use agents with tool RBAC, data policies via Shield</div>
             </div>
           </div>
           <div style="padding:0 1.25rem 1.25rem;">
             <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Guardrails via LiteLLM</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Claude Tool Use</span>
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Guardrails</span>
-              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy Enforcement</span>
+              <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Data Policy (mask/redact/block)</span>
               <span class="badge" style="background:var(--accent-dim);color:var(--accent-hover);">Shadow Discovery</span>
             </div>
           </div>
