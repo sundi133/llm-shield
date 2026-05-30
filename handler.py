@@ -57,4 +57,9 @@ if __name__ == "__main__":
         workers=workers,
         backlog=backlog,
         limit_concurrency=limit_concurrency,
+        # Trust the TLS-terminating edge proxy (railway-edge) so the app sees
+        # the original scheme via X-Forwarded-Proto. Required for correct
+        # HTTPS detection / redirects behind the proxy.
+        proxy_headers=True,
+        forwarded_allow_ips=os.getenv("FORWARDED_ALLOW_IPS", "*"),
     )

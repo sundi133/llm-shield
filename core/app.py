@@ -14,8 +14,12 @@ from core.agent_identity_middleware import AgentIdentityMiddleware
 from core.telemetry_middleware import TelemetryMiddleware
 
 try:
-    from core.security_headers import SecurityHeadersMiddleware
+    from core.security_headers import (
+        HTTPSRedirectMiddleware,
+        SecurityHeadersMiddleware,
+    )
 except ImportError:
+    HTTPSRedirectMiddleware = None
     SecurityHeadersMiddleware = None
 from api.routes_health import router as health_router
 from api.routes_classify import router as classify_router
@@ -84,6 +88,11 @@ def create_app() -> FastAPI:
     app.add_middleware(MTLSMiddleware)       # populates request.state.mtls_identity
 
     app.add_middleware(AuthMiddleware)       # runs first
+
+    # Added last → outermost → runs first on the request path: redirect
+    # insecure HTTP→HTTPS before any auth/processing. Gated by FORCE_HTTPS.
+    if HTTPSRedirectMiddleware is not None:
+        app.add_middleware(HTTPSRedirectMiddleware)
 
     # Include routers
     app.include_router(health_router)

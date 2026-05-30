@@ -985,6 +985,14 @@ def create_admin_app() -> FastAPI:
         pass
     app.add_middleware(AuthMiddleware)
 
+    # Outermost (added last → runs first): redirect insecure HTTP→HTTPS before
+    # any auth/processing. Gated by FORCE_HTTPS env var.
+    try:
+        from core.security_headers import HTTPSRedirectMiddleware
+        app.add_middleware(HTTPSRedirectMiddleware)
+    except ImportError:
+        pass
+
     # Mount admin + tenant routers
     app.include_router(tenant_router)           # /v1/admin/tenants/*
     app.include_router(tenant_audit_router)     # /v1/admin/audit, /v1/admin/dashboard
@@ -1893,4 +1901,10 @@ if __name__ == "__main__":
     print(f"Starting Votal Shield Admin on {host}:{port}")
     print(f"  Admin portal  → http://localhost:{port}/admin")
     print(f"  Tenant portal → http://localhost:{port}/tenant")
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        proxy_headers=True,
+        forwarded_allow_ips=os.getenv("FORWARDED_ALLOW_IPS", "*"),
+    )
