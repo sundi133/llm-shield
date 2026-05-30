@@ -19,12 +19,23 @@ examples/
 
 ### 1. Set Environment Variables
 
+These examples use a **two-plane architecture** — guardrails live in the
+LiteLLM proxy, agents/RBAC live in LLM Shield — so there are two sets of vars:
+
 ```bash
+# Plane 1 — LiteLLM proxy (votal.ai guardrails configured in its config.yaml)
+export LITELLM_URL="http://localhost:4000"        # LiteLLM proxy base URL
+export LITELLM_API_KEY="sk-litellm-..."            # LiteLLM virtual key
+export LLM_MODEL="gpt-4o-mini"                     # model alias in the proxy
+
+# Plane 2 — LLM Shield (agents + RBAC)
 export LLM_SHIELD_URL="http://localhost:8080"     # or your RunPod URL
 export API_KEY="tenant-...-key-..."
-export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."              # only for Anthropic example
 ```
+
+> The proxy's API keys for the upstream LLM (OpenAI/Anthropic/...) live in the
+> **LiteLLM proxy** config, not in these apps. See any framework README for a
+> sample `config.yaml` with the `votal_guardrails` callback.
 
 ### 2. Pick a Framework
 
@@ -55,31 +66,32 @@ python shield_anthropic_agent.py
 | Feature | LangChain | OpenAI | CrewAI | Anthropic |
 |---|---|---|---|---|
 | Agent Registration | ✅ | ✅ | ✅ | ✅ |
-| Input Guardrails | ✅ | ✅ | ✅ | ✅ |
-| Output Guardrails | ✅ | ✅ | ✅ | ✅ |
-| Tool RBAC | ✅ | ✅ | ✅ | ✅ |
+| Guardrails (in LiteLLM proxy) | ✅ | ✅ | ✅ | ✅ |
+| Tool RBAC (Shield) | ✅ | ✅ | ✅ | ✅ |
+| Per-tool data policy (Shield) | ✅ | ✅ | ✅ | ✅ |
 | Shadow Discovery | ✅ | ✅ | ✅ | ✅ |
 | Multi-Agent | — | — | ✅ | — |
-| Direct LLM Flow | — | ✅ | — | — |
 
 ## Integration Flow
 
-All examples follow the same pattern:
+All examples follow the same **two-plane** pattern:
 
 ```
 User Message
   │
-  ├──▶ Shield /guardrails/input     — block toxic / adversarial / PII
+  ├─ LLM reasoning ─▶ LiteLLM proxy ─▶ [input guardrails] ─▶ LLM ─▶ [output guardrails]
+  │                   (votal.ai callback in config.yaml — apps never call /guardrails/*)
   │
-  ├──▶ Shield /v1/shield/chat/agent — LLM picks tools, RBAC enforced
-  │      ├── allowed  → execute tool locally
-  │      ├── blocked  → deny + log
-  │      └── unregistered → shadow discovery
-  │
-  ├──▶ Shield /guardrails/output    — block competitors / PII / bias
-  │
-  └──▶ Response
+  └─ tool call ────▶ Shield /v1/shield/tool/check    RBAC + input data policy
+                       ├─ allowed ▶ run tool ▶ Shield /v1/shield/tool/output (sanitize)
+                       ├─ blocked ▶ deny + log
+                       └─ unregistered ▶ shadow discovery
 ```
+
+**Why split?** Putting guardrails in the LiteLLM proxy means every app and
+agent that talks to the gateway is automatically guarded — no per-app guardrail
+code. The Shield endpoints add the agent-aware layer (who may call which tool,
+with what data) that a proxy can't enforce on its own.
 
 ## Testing Shadow Discovery
 
@@ -101,10 +113,11 @@ The shadow items will also be visible in the tenant portal under the Agents tab.
 
 ## API Endpoints Used
 
-| Endpoint | Method | Purpose |
-|---|---|---|
-| `/v1/agents/registry` | POST | Register an agent |
-| `/guardrails/input` | POST | Input guardrails |
-| `/guardrails/output` | POST | Output guardrails |
-| `/v1/shield/chat/agent` | POST | LLM + RBAC enforcement |
-| `/v1/agents/unregistered` | GET | List shadow agents/tools |
+| Plane | Endpoint | Method | Purpose |
+|---|---|---|---|
+| LiteLLM proxy | `/v1/chat/completions` (or `/v1/messages`) | POST | LLM call; guardrails run via the proxy's `votal_guardrails` callback |
+| LiteLLM proxy → Shield | `/guardrails/input`, `/guardrails/output` | POST | Called *by the proxy*, not the apps |
+| Shield | `/v1/agents/registry` | POST | Register an agent |
+| Shield | `/v1/shield/tool/check` | POST | Pre-exec RBAC + input data policy |
+| Shield | `/v1/shield/tool/output` | POST | Post-exec output sanitization/redaction |
+| Shield | `/v1/agents/unregistered` | GET | List shadow agents/tools |
