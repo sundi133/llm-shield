@@ -1,5 +1,12 @@
 """Wrap any LangChain tool so every call is gated by a Shield capability.
 
+This is the AGENT plane (Plane 2) of the two-plane architecture: it authorizes
+tool calls. The LLM and its input/output guardrails belong to Plane 1 — point
+your ChatOpenAI base_url at the LiteLLM proxy (whose config.yaml has the
+votal.ai guardrails callback) and guardrails run there automatically. This
+factory does NOT call /guardrails/*; it only mints + verifies capability tokens
+for each tool the agent invokes.
+
 The wrapper does three things on every tool invocation:
   1. Asks Shield to authorize THIS call (tool + resource).
   2. If allowed, gets back a one-shot capability token.

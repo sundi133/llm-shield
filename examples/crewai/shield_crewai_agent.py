@@ -1,18 +1,40 @@
 #!/usr/bin/env python3
-"""CrewAI + LLM Shield Integration
+"""CrewAI + LLM Shield Integration (production deployment architecture).
 
-Demonstrates a multi-agent CrewAI crew protected by LLM Shield:
-  - Each crew member registers as a separate Shield agent with its own RBAC
-  - Input guardrails run before the crew starts
-  - Each tool call routes through Shield for RBAC enforcement
-  - Output guardrails run on the final crew output
-  - Shadow discovery detects unregistered agents and tools
+Two planes, matching the deployment architecture:
+
+  PLANE 1 — LLM + GUARDRAILS  →  LiteLLM proxy
+      Every crew agent's LLM points at the LiteLLM proxy whose config.yaml has
+      the votal.ai guardrails callback configured. Input (PreCall) and output
+      (PostCall) guardrails run *inside* the proxy — the app never calls
+      /guardrails/input or /guardrails/output directly. (CrewAI already uses
+      LiteLLM under the hood, so this is just a base_url.)
+
+  PLANE 2 — AGENTS + RBAC  →  LLM Shield
+      Each crew member registers as its own Shield agent. Tool calls are gated
+      by the Shield endpoints (NOT LiteLLM):
+        /v1/agents/registry     register each agent + role_permissions
+        /v1/shield/tool/check    pre-exec: RBAC + input data policy
+        /v1/shield/tool/output   post-exec: output sanitization/redaction
+        /v1/agents/unregistered  shadow discovery
+
+Flow:
+
+    Crew kicks off ─▶ agents reason via LiteLLM proxy (─▶ guardrails)
+                       └─ tool call ─▶ Shield /v1/shield/tool/check (RBAC + policy)
+                                        ├─ allowed ▶ run ▶ /tool/output (sanitize)
+                                        └─ blocked ▶ deny, reason returned to agent
 
 Usage:
+    # Plane 1 — LiteLLM proxy (guardrails configured in its config.yaml)
+    export LITELLM_URL="http://localhost:4000"
+    export LITELLM_API_KEY="sk-litellm-..."     # LiteLLM virtual key
+    export LLM_MODEL="gpt-4o-mini"             # model alias in litellm config
+
+    # Plane 2 — LLM Shield (agents + RBAC)
     export LLM_SHIELD_URL="http://localhost:8080"
     export API_KEY="tenant-...-key-..."
-    export OPENAI_API_KEY="sk-..."
-    export USER_ROLE="analyst"            # optional
+    export USER_ROLE="analyst"                 # analyst / viewer
 
     pip install -r requirements.txt
     python shield_crewai_agent.py
@@ -20,25 +42,41 @@ Usage:
 
 import json
 import os
-import sys
+import time
 from typing import Type
 
 import requests
-from crewai import Agent, Crew, Process, Task
+from crewai import Agent, Crew, LLM, Process, Task
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
-# Config
+# Config — TWO separate planes
 # ---------------------------------------------------------------------------
 
-SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+# Plane 1: LiteLLM proxy (guardrails run inside it via the votal.ai callback)
+LITELLM_URL = os.getenv("LITELLM_URL", "http://localhost:4000").rstrip("/")
+LITELLM_API_KEY = os.getenv("LITELLM_API_KEY", os.getenv("OPENAI_API_KEY", "sk-noop"))
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+# Plane 2: LLM Shield (agents + RBAC + data policy)
+SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8080").rstrip("/")
 API_KEY = os.getenv("API_KEY", "")
 USER_ROLE = os.getenv("USER_ROLE", "analyst")
+SESSION_ID = f"sess-{int(time.time())}"
 
+# CrewAI LLM → LiteLLM proxy (so guardrails run in the proxy)
+crew_llm = LLM(
+    model=f"openai/{LLM_MODEL}",
+    base_url=f"{LITELLM_URL}/v1",
+    api_key=LITELLM_API_KEY,
+)
+
+# Shield session — tenant key on every Shield request
 shield = requests.Session()
 shield.headers.update({
     "X-API-Key": API_KEY,
+    "X-User-Role": USER_ROLE,
     "Content-Type": "application/json",
 })
 
@@ -72,59 +110,90 @@ def register_crew():
         },
     ]
     for agent_cfg in agents:
-        resp = shield.post(
-            f"{SHIELD_URL}/v1/agents/registry", json=agent_cfg
-        )
+        resp = shield.post(f"{SHIELD_URL}/v1/agents/registry", json=agent_cfg)
         print(f"[register] {agent_cfg['agent_id']}: {resp.status_code}")
 
 
 # ---------------------------------------------------------------------------
-# 2. Shield-aware tool base class
+# 2. Shield tool gate — RBAC + data policy around every tool execution
+# ---------------------------------------------------------------------------
+
+class ToolBlocked(Exception):
+    """Raised when Shield denies a tool call; message is returned to the agent."""
+
+
+def _shield_tool_check(agent_key: str, tool_name: str, args: dict) -> None:
+    """Pre-execution gate: RBAC + input data-policy via Shield /tool/check."""
+    resp = shield.post(
+        f"{SHIELD_URL}/v1/shield/tool/check",
+        json={
+            "agent_key": agent_key,
+            "tool_name": tool_name,
+            "user_role": USER_ROLE,
+            "session_id": SESSION_ID,
+            "tool_params": args,
+        },
+    )
+    if resp.status_code != 200:
+        raise ToolBlocked(f"tool/check failed ({resp.status_code}): {resp.text}")
+    data = resp.json()
+    if not (data.get("allowed", True) and data.get("action") != "block"):
+        reason = "denied by policy"
+        for r in data.get("guardrail_results", []):
+            if not r.get("passed", True):
+                reason = r.get("message", reason)
+                break
+        raise ToolBlocked(f"{tool_name} blocked for role '{USER_ROLE}' — {reason}")
+
+
+def _shield_tool_output(agent_key: str, tool_name: str, raw_output: str) -> str:
+    """Post-execution gate: sanitize/redact tool output via Shield /tool/output."""
+    resp = shield.post(
+        f"{SHIELD_URL}/v1/shield/tool/output",
+        json={
+            "tool_name": tool_name,
+            "tool_output": str(raw_output),
+            "agent_key": agent_key,
+            "session_id": SESSION_ID,
+        },
+    )
+    if resp.status_code != 200:
+        raise ToolBlocked(f"{tool_name} output withheld (sanitizer error)")
+    data = resp.json()
+    if data.get("action") == "block":
+        raise ToolBlocked(f"{tool_name} output blocked by data policy")
+    return data.get("sanitized_output", str(raw_output))
+
+
+# ---------------------------------------------------------------------------
+# 3. Shield-aware CrewAI tool base class
 # ---------------------------------------------------------------------------
 
 class ShieldTool(BaseTool):
-    """CrewAI tool that routes execution through Shield for RBAC."""
+    """CrewAI tool that gates every call through Shield (RBAC + data policy).
+
+    Subclasses set `agent_key` and implement `execute()`.
+    """
 
     agent_key: str = ""
-    user_role: str = ""
+
+    def execute(self, query: str) -> str:  # override in subclasses
+        raise NotImplementedError
 
     def _run(self, query: str) -> str:
-        """Override to call Shield's chat/agent endpoint for RBAC."""
-        result = shield.post(
-            f"{SHIELD_URL}/v1/shield/chat/agent",
-            json={
-                "messages": [{"role": "user", "content": query}],
-                "agent_key": self.agent_key,
-                "user_role": self.user_role,
-                "llm_api_key": os.getenv("OPENAI_API_KEY"),
-            },
-        )
-        if result.status_code != 200:
-            return f"Shield error: {result.status_code} — {result.text}"
-
-        data = result.json()
-        parts = []
-
-        for tc in data.get("tool_calls", []):
-            if tc["rbac"]["allowed"]:
-                parts.append(f"[{tc['tool_name']}] OK — {tc.get('simulated_output', '')}")
-            else:
-                parts.append(
-                    f"BLOCKED: {tc['tool_name']} — {tc['rbac']['message']}"
-                )
-
-        # Surface shadow discovery warnings
-        unreg = data.get("unregistered", {})
-        if unreg.get("agents"):
-            parts.append(f"[Shadow agent(s): {unreg['agents']}]")
-        if unreg.get("tools"):
-            parts.append(f"[Shadow tool(s): {unreg['tools']}]")
-
-        return data.get("text", "") or "\n".join(parts)
+        try:
+            _shield_tool_check(self.agent_key, self.name, {"query": query})
+            raw = self.execute(query)
+            out = _shield_tool_output(self.agent_key, self.name, raw)
+            print(f"  [ALLOWED] {self.name}('{query}') -> {out}")
+            return out
+        except ToolBlocked as e:
+            print(f"  [Shield] BLOCKED {self.name}: {e}")
+            return f"BLOCKED by LLM Shield: {e}"
 
 
 # ---------------------------------------------------------------------------
-# 3. Concrete tools
+# 4. Concrete tools
 # ---------------------------------------------------------------------------
 
 class SearchInput(BaseModel):
@@ -137,12 +206,18 @@ class WebSearchTool(ShieldTool):
     args_schema: Type[BaseModel] = SearchInput
     agent_key: str = "research-agent"
 
+    def execute(self, query: str) -> str:
+        return f"Web results for '{query}': 3 sources found (example.com, news.org, ...)."
+
 
 class DocumentSearchTool(ShieldTool):
     name: str = "document_search"
     description: str = "Search internal documents for information"
     args_schema: Type[BaseModel] = SearchInput
     agent_key: str = "research-agent"
+
+    def execute(self, query: str) -> str:
+        return f"Internal docs for '{query}': see Q1 strategy memo, section 4."
 
 
 class ReportInput(BaseModel):
@@ -155,6 +230,9 @@ class GenerateReportTool(ShieldTool):
     args_schema: Type[BaseModel] = ReportInput
     agent_key: str = "writer-agent"
 
+    def execute(self, query: str) -> str:
+        return f"Report draft generated for '{query}' (1,200 words, 3 sections)."
+
 
 class EmailInput(BaseModel):
     query: str = Field(description="Email subject and recipients")
@@ -166,45 +244,8 @@ class SendEmailTool(ShieldTool):
     args_schema: Type[BaseModel] = EmailInput
     agent_key: str = "writer-agent"
 
-
-# ---------------------------------------------------------------------------
-# 4. Guardrail helpers
-# ---------------------------------------------------------------------------
-
-def check_input(text: str) -> str | None:
-    """Run input guardrails. Returns error message if blocked, else None."""
-    resp = shield.post(
-        f"{SHIELD_URL}/guardrails/input", json={"message": text}
-    )
-    if resp.status_code != 200:
-        return None
-    data = resp.json()
-    if data.get("action") == "block":
-        blocked = [
-            g["guardrail"]
-            for g in data.get("guardrail_results", [])
-            if g.get("action") == "block"
-        ]
-        return f"Input blocked: {', '.join(blocked)}"
-    return None
-
-
-def check_output(text: str) -> str | None:
-    """Run output guardrails. Returns error message if blocked, else None."""
-    resp = shield.post(
-        f"{SHIELD_URL}/guardrails/output", json={"output": text}
-    )
-    if resp.status_code != 200:
-        return None
-    data = resp.json()
-    if data.get("action") == "block":
-        blocked = [
-            g["guardrail"]
-            for g in data.get("guardrail_results", [])
-            if g.get("action") == "block"
-        ]
-        return f"Output blocked: {', '.join(blocked)}"
-    return None
+    def execute(self, query: str) -> str:
+        return f"Email sent: '{query}'."
 
 
 # ---------------------------------------------------------------------------
@@ -212,43 +253,26 @@ def check_output(text: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 def run_crew(topic: str) -> str:
-    """Run a two-agent crew with Shield protection.
-
-    Flow:
-        1. Input guardrails on the topic
-        2. Researcher agent searches (RBAC via Shield)
-        3. Writer agent produces report (RBAC via Shield)
-        4. Output guardrails on the final result
-    """
-    print(f"\n{'='*60}")
+    """Run a two-agent crew. LLM reasoning (with guardrails) goes through the
+    LiteLLM proxy; tool calls are gated by Shield per crew member."""
+    print(f"\n{'=' * 60}")
     print(f"Crew topic: {topic}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
-    # Step 1: input guardrails
-    block = check_input(topic)
-    if block:
-        print(f"[BLOCKED] {block}")
-        return block
-
-    # Step 2: build crew
     researcher = Agent(
         role="Research Analyst",
         goal=f"Research: {topic}",
         backstory="Senior analyst with deep domain expertise",
-        tools=[
-            WebSearchTool(user_role=USER_ROLE),
-            DocumentSearchTool(user_role=USER_ROLE),
-        ],
+        tools=[WebSearchTool(), DocumentSearchTool()],
+        llm=crew_llm,
         verbose=True,
     )
     writer = Agent(
         role="Report Writer",
         goal="Write a clear, actionable report from the research",
         backstory="Technical writer specializing in data-driven reports",
-        tools=[
-            GenerateReportTool(user_role=USER_ROLE),
-            SendEmailTool(user_role=USER_ROLE),
-        ],
+        tools=[GenerateReportTool(), SendEmailTool()],
+        llm=crew_llm,
         verbose=True,
     )
 
@@ -270,38 +294,39 @@ def run_crew(topic: str) -> str:
         verbose=True,
     )
 
-    # Step 3: execute
-    result = str(crew.kickoff())
-
-    # Step 4: output guardrails
-    block = check_output(result)
-    if block:
-        print(f"[BLOCKED] {block}")
-        return block
+    try:
+        result = str(crew.kickoff())
+    except Exception as e:  # noqa: BLE001 — surface proxy-side guardrail blocks
+        msg = str(e)
+        if any(k in msg.lower() for k in ("guardrail", "blocked", "403", "policy")):
+            print(f"[BLOCKED by LiteLLM proxy guardrails] {msg}")
+            return "[Request blocked by guardrails in the LiteLLM proxy]"
+        print(f"[Crew error] {msg}")
+        return f"Error: {msg}"
 
     print(f"\nFinal output:\n{result}")
     return result
 
 
 # ---------------------------------------------------------------------------
-# 6. Shadow discovery check
+# 6. Shadow discovery — Shield endpoint
 # ---------------------------------------------------------------------------
 
 def check_shadow_items():
     """Fetch unregistered agents/tools that Shield has detected."""
     resp = shield.get(f"{SHIELD_URL}/v1/agents/unregistered")
-    if resp.status_code == 200:
-        data = resp.json()
-        if data.get("agents"):
-            print("\nShadow Agents:")
-            print(json.dumps(data["agents"], indent=2))
-        if data.get("tools"):
-            print("\nShadow Tools:")
-            print(json.dumps(data["tools"], indent=2))
-        if not data.get("agents") and not data.get("tools"):
-            print("\nNo shadow agents or tools detected.")
-    else:
+    if resp.status_code != 200:
         print(f"Could not fetch shadow items: {resp.status_code}")
+        return
+    data = resp.json()
+    if data.get("agents"):
+        print("\nShadow Agents:")
+        print(json.dumps(data["agents"], indent=2))
+    if data.get("tools"):
+        print("\nShadow Tools:")
+        print(json.dumps(data["tools"], indent=2))
+    if not data.get("agents") and not data.get("tools"):
+        print("\nNo shadow agents or tools detected.")
 
 
 # ---------------------------------------------------------------------------
@@ -309,13 +334,12 @@ def check_shadow_items():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    if not os.getenv("OPENAI_API_KEY"):
-        print("ERROR: OPENAI_API_KEY not set")
-        sys.exit(1)
     if not API_KEY:
-        print("WARNING: API_KEY not set — requests may be rejected")
+        print("WARNING: API_KEY not set — Shield requests may be rejected")
+    print(f"LLM plane  : LiteLLM proxy at {LITELLM_URL} (model={LLM_MODEL})")
+    print(f"Agent plane: LLM Shield at {SHIELD_URL} (role={USER_ROLE})")
 
-    # Uncomment to register the crew (skip to test shadow discovery):
+    # Uncomment on first run to register the crew (skip to test shadow discovery):
     # register_crew()
 
     run_crew("Analyze Q1 2026 market trends in AI infrastructure")

@@ -1,5 +1,11 @@
 """Gate every OpenAI/Anthropic tool call with a Shield capability.
 
+This is the AGENT plane (Plane 2) of the two-plane architecture: it authorizes
+tool calls. The LLM itself — and its input/output guardrails — belong to Plane 1
+(the LiteLLM proxy): point your OpenAI/Anthropic client's base_url at the proxy
+and guardrails run there automatically. This module does NOT call /guardrails/*;
+it only mints + verifies capability tokens for the tools the model wants to run.
+
 This is the no-framework path: you read the model's tool_calls and you
 dispatch them yourself. To gate one with Shield, ask Shield to authorize
 the call (mint cap) and have the tool side verify before executing.
