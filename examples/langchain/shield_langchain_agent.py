@@ -1,63 +1,35 @@
 #!/usr/bin/env python3
-"""LangChain + LLM Shield Integration (production deployment architecture).
+"""LangChain + LLM Shield Integration (Production Architecture)
 
-This example follows the two-plane deployment architecture:
+Correct flow based on the production deployment architecture:
 
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │  PLANE 1 — LLM + GUARDRAILS  →  LiteLLM proxy                         │
-  │                                                                       │
-  │  The LangChain model (ChatOpenAI) points at the LiteLLM proxy whose  │
-  │  config.yaml has the votal.ai guardrails callback configured. Input  │
-  │  (PreCall) and output (PostCall) guardrail checks run *inside* the    │
-  │  proxy — the app NEVER calls /guardrails/input or /guardrails/output  │
-  │  directly. A blocked prompt/response surfaces as an error from the    │
-  │  proxy, never reaching (or leaving) the LLM.                          │
-  │                                                                       │
-  │      LiteLLM config.yaml:                                             │
-  │        litellm_settings:                                              │
-  │          callbacks: [votal_guardrails]                                │
-  │        votal_guardrails:                                              │
-  │          api_url: "https://<shield>/guardrails/input"                 │
-  │          input_guardrails:  {adversarial-prompt-detection, pii, ...}  │
-  │          output_guardrails: {pii-leakage, competitor-mention, ...}    │
-  └──────────────────────────────────────────────────────────────────────┘
+  Client/App ──▶ LiteLLM Proxy (port 8000) ──▶ LLMs (GPU)
+                     │
+                     │  LiteLLM handles input/output guardrails
+                     │  automatically via Shield middleware
+                     │
+                     └──▶ Shield Guardrail Service
+                           ├── Input/Output guardrails (automatic)
+                           ├── Agent RBAC (/v1/shield/tool/check)
+                           ├── Tool output sanitization (/v1/shield/tool/output)
+                           └── Agent registry (/v1/agents/registry)
 
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │  PLANE 2 — AGENTS + RBAC  →  LLM Shield endpoint                      │
-  │                                                                       │
-  │  Agent registration, role-based tool authorization, data-policy      │
-  │  enforcement and shadow discovery all go through the Shield endpoints │
-  │  (NOT through LiteLLM):                                               │
-  │                                                                       │
-  │      /v1/agents/registry     register agent + role_permissions       │
-  │      /v1/shield/tool/check    pre-exec: RBAC + input data policy      │
-  │      /v1/shield/tool/output   post-exec: output sanitization/redact   │
-  │      /v1/agents/unregistered  shadow discovery                        │
-  └──────────────────────────────────────────────────────────────────────┘
-
-Flow per user message:
-
-    User ──▶ LangChain AgentExecutor
-               │
-               ├─ LLM reasoning ─▶ LiteLLM proxy ─▶ (input/output guardrails) ─▶ LLM
-               │
-               └─ tool call ─▶ Shield /v1/shield/tool/check   (RBAC + data policy)
-                                  ├─ allowed  ▶ run tool ▶ Shield /tool/output (sanitize)
-                                  └─ blocked  ▶ deny, return reason to the agent
+Key principle:
+  - The APP never calls /guardrails/input or /guardrails/output directly.
+  - LiteLLM proxy applies those automatically on every LLM call.
+  - The APP only calls Shield for: agent registration, tool RBAC checks,
+    tool output sanitization, and data policy enforcement.
+  - LangChain uses LiteLLM as its LLM endpoint (OpenAI-compatible).
 
 Usage:
-    # Plane 1 — LiteLLM proxy (guardrails configured in its config.yaml)
-    export LITELLM_URL="http://localhost:4000"
-    export LITELLM_API_KEY="sk-litellm-..."     # LiteLLM virtual key
-    export LLM_MODEL="gpt-4o-mini"              # model alias in litellm config
+    export LITELLM_URL="http://localhost:8000"        # LiteLLM proxy
+    export LLM_SHIELD_URL="http://localhost:8080"     # Shield service
+    export API_KEY="tenant-...-key-..."
+    export OPENAI_API_KEY="sk-..."                    # for LiteLLM backend
+    export AGENT_ID="my-langchain-agent"              # optional
+    export USER_ROLE="user"                           # optional
 
-    # Plane 2 — LLM Shield (agents + RBAC)
-    export LLM_SHIELD_URL="http://localhost:8080"
-    export API_KEY="tenant-...-key-..."         # tenant API key
-    export AGENT_ID="langchain-support-agent"   # optional
-    export USER_ROLE="user"                     # user / support / admin
-
-    pip install -r requirements.txt
+    pip install langchain langchain-openai
     python shield_langchain_agent.py
 """
 
@@ -69,25 +41,19 @@ import time
 import requests
 from langchain_openai import ChatOpenAI
 from langchain.tools import tool
-from langchain_core.prompts import ChatPromptTemplate
-
-try:
-    from langchain.agents import create_tool_calling_agent, AgentExecutor
-except ImportError:  # older LangChain
-    from langchain.agents import create_openai_tools_agent as create_tool_calling_agent
-    from langchain.agents import AgentExecutor
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # ---------------------------------------------------------------------------
 # Config — TWO separate planes
 # ---------------------------------------------------------------------------
 
-# Plane 1: LiteLLM proxy (guardrails run inside it via the votal.ai callback)
-LITELLM_URL = os.getenv("LITELLM_URL", "http://localhost:4000").rstrip("/")
-LITELLM_API_KEY = os.getenv("LITELLM_API_KEY", os.getenv("OPENAI_API_KEY", "sk-noop"))
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+# LiteLLM proxy — LangChain talks to this as its LLM.
+# LiteLLM automatically applies input/output guardrails via Shield.
+LITELLM_URL = os.getenv("LITELLM_URL", "http://localhost:8000")
 
-# Plane 2: LLM Shield (agents + RBAC + data policy)
-SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8080").rstrip("/")
+# Shield service — only for agent RBAC, tool checks, data policies.
+SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+
 API_KEY = os.getenv("API_KEY", "")
 AGENT_ID = os.getenv("AGENT_ID", "langchain-support-agent")
 USER_ROLE = os.getenv("USER_ROLE", "user")
@@ -243,16 +209,63 @@ TOOLS = [search_faq, create_ticket, check_order_status]
 
 
 # ---------------------------------------------------------------------------
-# 4. LangChain agent — LLM reasoning goes through the LiteLLM proxy (Plane 1)
+# 3. Shield helper: check tool RBAC + data policies before execution
 # ---------------------------------------------------------------------------
 
-def build_agent() -> AgentExecutor:
-    """Build a LangChain agent whose LLM is the LiteLLM proxy.
+def shield_check_tool(tool_name: str, tool_args: dict) -> dict:
+    """Pre-execution check: RBAC + data policy on tool arguments.
 
-    Because ChatOpenAI's base_url points at the LiteLLM proxy, every LLM
-    request passes through the proxy's votal.ai guardrails callback:
-    input guardrails run before the LLM, output guardrails run after.
-    The app does not call /guardrails/* itself.
+    This is the ONLY Shield call the app makes before executing a tool.
+    Returns {"allowed": bool, "reason": str}.
+    """
+    resp = shield.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
+        "tool_name": tool_name,
+        "tool_input": tool_args,
+        "agent_key": AGENT_ID,
+        "user_role": USER_ROLE,
+    })
+    if resp.status_code != 200:
+        return {"allowed": False, "reason": f"Shield error: {resp.status_code}"}
+    data = resp.json()
+    return {
+        "allowed": data.get("allowed", True),
+        "reason": data.get("reason", ""),
+        "guardrail_results": data.get("guardrail_results", []),
+    }
+
+
+def shield_sanitize_output(tool_name: str, tool_output: str) -> dict:
+    """Post-execution: sanitize tool output (PII redaction, data policies).
+
+    This applies mask/redact/block based on the role's data policy
+    configured in the tenant portal.
+    """
+    resp = shield.post(f"{SHIELD_URL}/v1/shield/tool/output", json={
+        "tool_name": tool_name,
+        "tool_output": tool_output,
+        "agent_key": AGENT_ID,
+    })
+    if resp.status_code != 200:
+        return {"sanitized_output": tool_output, "action": "pass"}
+    return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# 4. Shield-wrapped agent loop
+# ---------------------------------------------------------------------------
+
+def run_agent(user_message: str) -> str:
+    """Send a message through the LangChain agent with Shield tool protection.
+
+    Flow:
+      1. LangChain calls LiteLLM (input guardrails applied automatically)
+      2. LLM returns tool_calls
+      3. For each tool call:
+         a. Shield /v1/shield/tool/check → RBAC + data policy on args
+         b. If allowed → execute tool locally
+         c. Shield /v1/shield/tool/output → sanitize output (mask/redact)
+      4. Feed sanitized tool results back to LLM
+      5. LLM generates final response (output guardrails applied by LiteLLM)
     """
     llm = ChatOpenAI(
         model=LLM_MODEL,
@@ -284,21 +297,106 @@ def run_agent(executor: AgentExecutor, user_message: str) -> str:
     print(f"User: {user_message}")
     print(f"{'=' * 60}")
 
-    try:
-        result = executor.invoke({"input": user_message})
-        output = result.get("output", "")
-    except Exception as e:  # noqa: BLE001 — surface proxy-side guardrail blocks
-        # A guardrail block inside the LiteLLM proxy comes back as an API
-        # error (e.g. 400/403). Detect and report it cleanly.
-        msg = str(e)
-        if any(k in msg.lower() for k in ("guardrail", "blocked", "403", "policy")):
-            print(f"[BLOCKED by LiteLLM proxy guardrails] {msg}")
-            return "[Request blocked by guardrails in the LiteLLM proxy]"
-        print(f"[Agent error] {msg}")
-        return f"Error: {msg}"
+    # LangChain LLM pointed at LiteLLM proxy.
+    # LiteLLM automatically applies input/output guardrails — no direct
+    # /guardrails/input or /guardrails/output calls needed.
+    llm = ChatOpenAI(
+        model="default",
+        base_url=f"{LITELLM_URL}/v1",
+        api_key=os.getenv("OPENAI_API_KEY", "not-needed"),
+        default_headers={
+            "X-API-Key": API_KEY,
+            "X-Agent-Key": AGENT_ID,
+            "X-User-Role": USER_ROLE,
+        },
+    )
 
-    print(f"Response: {output}")
-    return output
+    # Bind tools so LLM can request function calls
+    llm_with_tools = llm.bind_tools(TOOLS)
+
+    # Initial LLM call — LiteLLM applies input guardrails before forwarding
+    messages = [HumanMessage(content=user_message)]
+    try:
+        response = llm_with_tools.invoke(messages)
+    except Exception as e:
+        # If input guardrails block, LiteLLM returns 400/403
+        msg = f"[BLOCKED by guardrails] {e}"
+        print(msg)
+        return msg
+
+    # If no tool calls, return the text response directly
+    # (output guardrails already applied by LiteLLM)
+    if not response.tool_calls:
+        print(f"Response: {response.content}")
+        return response.content
+
+    # Process tool calls with Shield RBAC + data policy checks
+    messages.append(response)
+    tool_map = {t.name: t for t in TOOLS}
+    output_parts = []
+
+    for tc in response.tool_calls:
+        name = tc["name"]
+        args = tc["args"]
+        tool_call_id = tc["id"]
+
+        # Step 3a: Shield RBAC + data policy check on tool arguments
+        check = shield_check_tool(name, args)
+
+        if not check["allowed"]:
+            reason = check.get("reason", "denied by RBAC/data policy")
+            print(f"  [BLOCKED] {name}({args}) — {reason}")
+            # Tell the LLM the tool was denied
+            messages.append(ToolMessage(
+                content=f"DENIED: {reason}",
+                tool_call_id=tool_call_id,
+            ))
+            output_parts.append(f"BLOCKED: {name} — {reason}")
+            continue
+
+        # Step 3b: Execute the tool locally
+        fn = tool_map.get(name)
+        if not fn:
+            messages.append(ToolMessage(
+                content=f"Unknown tool: {name}",
+                tool_call_id=tool_call_id,
+            ))
+            continue
+
+        raw_output = fn.invoke(args)
+        print(f"  [ALLOWED] {name}({args}) -> {raw_output}")
+
+        # Step 3c: Sanitize tool output (mask/redact/block per data policy)
+        sanitized = shield_sanitize_output(name, str(raw_output))
+
+        if sanitized.get("action") == "block":
+            print(f"  [OUTPUT BLOCKED] {name} output violated data policy")
+            messages.append(ToolMessage(
+                content="Tool output blocked by data policy.",
+                tool_call_id=tool_call_id,
+            ))
+            output_parts.append(f"BLOCKED: {name} output violated data policy")
+        else:
+            clean = sanitized.get("sanitized_output", str(raw_output))
+            if clean != str(raw_output):
+                print(f"  [SANITIZED] {name}: {clean}")
+            messages.append(ToolMessage(
+                content=clean,
+                tool_call_id=tool_call_id,
+            ))
+            output_parts.append(clean)
+
+    # Step 4: Final LLM call with tool results
+    # LiteLLM applies output guardrails automatically on the response
+    try:
+        final_response = llm_with_tools.invoke(messages)
+        print(f"Response: {final_response.content}")
+        return final_response.content
+    except Exception as e:
+        # Output guardrails may block
+        fallback = "\n".join(output_parts)
+        print(f"[Output blocked or error] {e}")
+        return fallback
 
 
 # ---------------------------------------------------------------------------
