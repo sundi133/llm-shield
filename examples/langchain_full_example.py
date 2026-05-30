@@ -17,8 +17,8 @@ The app NEVER calls /guardrails/input or /guardrails/output directly.
 LiteLLM handles that automatically on every LLM call.
 
 Usage:
-    export LITELLM_URL=http://localhost:8000         # LiteLLM proxy
-    export SHIELD_URL=http://localhost:8080           # Shield service
+    export LITELLM_URL=https://litellm.your-company.com         # LiteLLM proxy
+    export SHIELD_URL=https://shield.votal.ai           # Shield service
     export SHIELD_TENANT_KEY=your-tenant-api-key
     export OPENAI_API_KEY=sk-...                     # LiteLLM backend
 
@@ -62,7 +62,7 @@ class ShieldToolClient:
         user_role: str = "user",
     ):
         self.shield_url = (shield_url or os.environ.get("SHIELD_URL", "")).rstrip("/")
-        self.litellm_url = (litellm_url or os.environ.get("LITELLM_URL", "http://localhost:8000")).rstrip("/")
+        self.litellm_url = (litellm_url or os.environ.get("LITELLM_URL", "https://litellm.your-company.com")).rstrip("/")
         self.tenant_key = tenant_key or os.environ.get("SHIELD_TENANT_KEY", "")
         self.auth_token = auth_token or os.environ.get("RUNPOD_TOKEN", "")
         self.user_role = user_role
@@ -209,7 +209,7 @@ def _make_llm():
     """
     from langchain_openai import ChatOpenAI
 
-    litellm_url = os.environ.get("LITELLM_URL", "http://localhost:4000").rstrip("/")
+    litellm_url = os.environ.get("LITELLM_URL", "https://litellm.your-company.com").rstrip("/")
     litellm_key = os.environ.get("LITELLM_API_KEY", os.environ.get("OPENAI_API_KEY", "sk-noop"))
     model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
     return ChatOpenAI(

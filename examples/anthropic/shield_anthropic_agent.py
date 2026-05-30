@@ -28,12 +28,12 @@ Flow per user message:
 
 Usage:
     # Plane 1 — LiteLLM proxy (guardrails configured in its config.yaml)
-    export LITELLM_URL="http://localhost:4000"
+    export LITELLM_URL="https://litellm.your-company.com"
     export LITELLM_API_KEY="sk-litellm-..."     # LiteLLM virtual key
     export CLAUDE_MODEL="claude-sonnet-4-20250514"
 
     # Plane 2 — LLM Shield (agents + RBAC)
-    export LLM_SHIELD_URL="http://localhost:8080"
+    export LLM_SHIELD_URL="https://shield.votal.ai"
     export API_KEY="tenant-...-key-..."
     export AGENT_ID="claude-support-agent"     # optional
     export USER_ROLE="user"                    # user / support / admin
@@ -55,12 +55,12 @@ import requests
 # ---------------------------------------------------------------------------
 
 # Plane 1: LiteLLM proxy (guardrails run inside it via the votal.ai callback)
-LITELLM_URL = os.getenv("LITELLM_URL", "http://localhost:4000").rstrip("/")
+LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm.your-company.com").rstrip("/")
 LITELLM_API_KEY = os.getenv("LITELLM_API_KEY", os.getenv("ANTHROPIC_API_KEY", "sk-noop"))
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
 
 # Plane 2: LLM Shield (agents + RBAC + data policy)
-SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8080").rstrip("/")
+SHIELD_URL = os.getenv("LLM_SHIELD_URL", "https://shield.votal.ai").rstrip("/")
 API_KEY = os.getenv("API_KEY", "")
 AGENT_ID = os.getenv("AGENT_ID", "claude-support-agent")
 USER_ROLE = os.getenv("USER_ROLE", "user")

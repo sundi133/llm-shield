@@ -2600,17 +2600,17 @@
               <div style="font-size:12px;color:var(--text);line-height:1.8;font-family:var(--font-mono);">
                 <strong style="color:var(--accent-hover);">Your App</strong><br>
                 &nbsp;&nbsp;│<br>
-                &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">LiteLLM Proxy</span> (base_url for your LLM client)<br>
+                &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">LiteLLM Proxy</span> (https://litellm.your-company.com)<br>
                 &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── Input guardrails run <strong>automatically</strong> (adversarial, PII, toxicity)<br>
                 &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── LLM call → returns tool_calls<br>
                 &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── Output guardrails run <strong>automatically</strong> (PII leakage, bias)<br>
                 &nbsp;&nbsp;│<br>
-                &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/check</span> ← <strong>only call your app makes to Shield</strong><br>
+                &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield</span> (https://shield.votal.ai) <span style="color:var(--accent-hover);">/v1/shield/tool/check</span><br>
                 &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── RBAC: can this role use this tool?<br>
                 &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── Data policy: do input rules allow these args?<br>
                 &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── allowed → execute tool locally<br>
                 &nbsp;&nbsp;│<br>
-                &nbsp;&nbsp;└─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/output</span><br>
+                &nbsp;&nbsp;└─▶ <span style="color:var(--accent-hover);">Shield</span> (https://shield.votal.ai) <span style="color:var(--accent-hover);">/v1/shield/tool/output</span><br>
                 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── allow → output unchanged<br>
                 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:#8b5cf6;">mask</span> → partial masking (j***@****.com)<br>
                 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span style="color:#f59e0b;">redact</span> → full replacement ([REDACTED])<br>
@@ -2671,10 +2671,10 @@ from langchain_openai import ChatOpenAI
 from langchain.tools import tool
 from langchain_core.messages import HumanMessage, ToolMessage
 
-# LiteLLM proxy — guardrails run here automatically
-LITELLM_URL = os.getenv("LITELLM_URL", "http://localhost:8000")
-# Shield — only for tool RBAC + data policies
-SHIELD_URL  = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+# LiteLLM proxy — your LLM gateway (guardrails run here automatically)
+LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm.your-company.com")
+# Shield — tool RBAC + data policies (separate service)
+SHIELD_URL  = os.getenv("LLM_SHIELD_URL", "https://shield.votal.ai")
 API_KEY     = os.getenv("API_KEY")
 AGENT_ID    = os.getenv("AGENT_ID", "my-langchain-agent")
 USER_ROLE   = os.getenv("USER_ROLE", "user")
@@ -2873,10 +2873,10 @@ from crewai.tools import BaseTool
 from typing import Type
 from pydantic import BaseModel, Field
 
-# LiteLLM proxy — guardrails run here automatically
-LITELLM_URL = os.getenv("LITELLM_URL", "http://localhost:8000")
-# Shield — only for tool RBAC + data policies
-SHIELD_URL  = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+# LiteLLM proxy — your LLM gateway (guardrails run here automatically)
+LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm.your-company.com")
+# Shield — tool RBAC + data policies (separate service)
+SHIELD_URL  = os.getenv("LLM_SHIELD_URL", "https://shield.votal.ai")
 API_KEY     = os.getenv("API_KEY")
 
 shield = requests.Session()
@@ -3066,10 +3066,10 @@ App only calls Shield for tool RBAC + data policy enforcement.
 import os, json, requests
 from openai import OpenAI
 
-# LiteLLM proxy — guardrails run here automatically
-LITELLM_URL = os.getenv("LITELLM_URL", "http://localhost:8000")
-# Shield — only for tool RBAC + data policies
-SHIELD_URL  = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+# LiteLLM proxy — your LLM gateway (guardrails run here automatically)
+LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm.your-company.com")
+# Shield — tool RBAC + data policies (separate service)
+SHIELD_URL  = os.getenv("LLM_SHIELD_URL", "https://shield.votal.ai")
 API_KEY     = os.getenv("API_KEY")
 AGENT_ID    = os.getenv("AGENT_ID", "my-openai-agent")
 USER_ROLE   = os.getenv("USER_ROLE", "user")
@@ -3255,10 +3255,10 @@ App only calls Shield for tool RBAC + data policy enforcement.
 import os, json, requests
 import anthropic
 
-# LiteLLM proxy — guardrails run here automatically
-LITELLM_URL = os.getenv("LITELLM_URL", "http://localhost:8000")
-# Shield — only for tool RBAC + data policies
-SHIELD_URL  = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+# LiteLLM proxy — your LLM gateway (guardrails run here automatically)
+LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm.your-company.com")
+# Shield — tool RBAC + data policies (separate service)
+SHIELD_URL  = os.getenv("LLM_SHIELD_URL", "https://shield.votal.ai")
 API_KEY     = os.getenv("API_KEY")
 AGENT_ID    = os.getenv("AGENT_ID", "my-claude-agent")
 USER_ROLE   = os.getenv("USER_ROLE", "user")

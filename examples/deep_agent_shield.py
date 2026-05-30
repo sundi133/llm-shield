@@ -17,7 +17,7 @@ Demonstrates a healthcare AI agent following the two-plane deployment model:
 
 Usage:
     # Plane 1 — LiteLLM proxy (guardrails configured in its config.yaml)
-    export LITELLM_URL="http://localhost:4000"
+    export LITELLM_URL="https://litellm.your-company.com"
     export LITELLM_API_KEY="sk-litellm-..."
     export LLM_MODEL="gpt-4o-mini"
 
@@ -38,7 +38,7 @@ import httpx
 
 
 # Plane 1: LiteLLM proxy (guardrails run inside it via the votal.ai callback)
-LITELLM_URL = os.environ.get("LITELLM_URL", "http://localhost:4000").rstrip("/")
+LITELLM_URL = os.environ.get("LITELLM_URL", "https://litellm.your-company.com").rstrip("/")
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", os.environ.get("OPENAI_API_KEY", "sk-noop"))
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 

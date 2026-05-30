@@ -22,8 +22,8 @@ Key principle:
   - LangChain uses LiteLLM as its LLM endpoint (OpenAI-compatible).
 
 Usage:
-    export LITELLM_URL="http://localhost:8000"        # LiteLLM proxy
-    export LLM_SHIELD_URL="http://localhost:8080"     # Shield service
+    export LITELLM_URL="https://litellm.your-company.com"        # LiteLLM proxy
+    export LLM_SHIELD_URL="https://shield.votal.ai"     # Shield service
     export API_KEY="tenant-...-key-..."
     export OPENAI_API_KEY="sk-..."                    # for LiteLLM backend
     export AGENT_ID="my-langchain-agent"              # optional
@@ -49,10 +49,10 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # LiteLLM proxy — LangChain talks to this as its LLM.
 # LiteLLM automatically applies input/output guardrails via Shield.
-LITELLM_URL = os.getenv("LITELLM_URL", "http://localhost:8000")
+LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm.your-company.com")
 
 # Shield service — only for agent RBAC, tool checks, data policies.
-SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+SHIELD_URL = os.getenv("LLM_SHIELD_URL", "https://shield.votal.ai")
 
 API_KEY = os.getenv("API_KEY", "")
 AGENT_ID = os.getenv("AGENT_ID", "langchain-support-agent")
