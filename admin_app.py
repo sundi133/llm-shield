@@ -292,7 +292,7 @@ def _load_data_policies(tenant_id: str | None) -> dict:
 # records the violation and leaves the payload untouched so the tool still
 # functions; "block" records the violation and signals the caller to refuse.
 
-_VALID_ACTIONS = {"detect", "redact", "block"}
+_VALID_ACTIONS = {"detect", "redact", "mask", "block"}
 
 
 def _resolve_action(rule: dict, default_action: str) -> str:
@@ -343,6 +343,14 @@ def _apply_sanitization(text: str, rules: list[dict],
         if effective == "redact":
             replacement = rule.get("replacement", "[REDACTED]")
             sanitized = compiled.sub(replacement, sanitized)
+        elif effective == "mask":
+            # Partial mask: keep first and last chars, mask the middle
+            def _partial_mask(m):
+                val = m.group(0)
+                if len(val) <= 4:
+                    return "*" * len(val)
+                return val[0] + "*" * (len(val) - 2) + val[-1]
+            sanitized = compiled.sub(_partial_mask, sanitized)
 
         violations.append({
             "pattern_id": rule.get("pattern_id", "unknown"),

@@ -26,7 +26,7 @@ router = APIRouter()
 # Shield LLM reasons about (robust to obfuscation). Both need to run here,
 # or the whole feature is just a playground toy.
 
-_VALID_ACTIONS = {"detect", "redact", "block"}
+_VALID_ACTIONS = {"detect", "redact", "mask", "block"}
 
 
 def _resolve_rule_action(rule: dict, default_action: str) -> str:
@@ -71,6 +71,13 @@ def _apply_regex_sanitization(text: str, rules: list[dict],
         if effective == "redact":
             replacement = rule.get("replacement", "[REDACTED]")
             sanitized = compiled.sub(replacement, sanitized)
+        elif effective == "mask":
+            def _partial_mask(m):
+                val = m.group(0)
+                if len(val) <= 4:
+                    return "*" * len(val)
+                return val[0] + "*" * (len(val) - 2) + val[-1]
+            sanitized = compiled.sub(_partial_mask, sanitized)
         if effective == "block":
             had_block = True
 

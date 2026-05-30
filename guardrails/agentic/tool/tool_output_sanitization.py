@@ -115,6 +115,20 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                     "confidence": confidence,
                 },
             )
+        elif action == "mask":
+            return GuardrailResult(
+                passed=False, action="mask", guardrail_name=self.name,
+                message=f"Sensitive data partially masked in tool output: {findings}",
+                details={
+                    "findings": findings,
+                    "sanitized_output": tool_output,
+                    "truncated": truncated,
+                    "tenant_id": tenant_id,
+                    "user_role": user_role,
+                    "confidence": confidence,
+                    "mask_level": "partial",
+                },
+            )
         elif action == "redact":
             return GuardrailResult(
                 passed=False, action=self.configured_action, guardrail_name=self.name,

@@ -392,6 +392,8 @@ function addToolCards(toolCalls) {
     const rbacAllowed = tc.rbac && tc.rbac.allowed;
     const sanBlocked = !!tc.sanitization_blocked;
     const dpBlocked = !!tc.data_policy_blocked;
+    const dpMasked = !!tc.data_policy_masked;
+    const dpRedacted = !!tc.data_policy_redacted;
     const allowed = rbacAllowed && !sanBlocked && !dpBlocked;
     const isUnreg = tc.unregistered;
     const card = document.createElement('div');
@@ -1065,6 +1067,10 @@ async function sendMessage() {
           } else if (tc.data_policy_blocked) {
             const reason = tc.rbac?.message || 'Data policy violation';
             lines.push(`🛡️ Tool <strong>${esc(readable)}</strong> blocked by data policy — ${esc(reason)}.`);
+          } else if (tc.data_policy_masked) {
+            lines.push(`🔒 Tool <strong>${esc(readable)}</strong> output partially masked by data policy.`);
+          } else if (tc.data_policy_redacted) {
+            lines.push(`🔏 Tool <strong>${esc(readable)}</strong> output redacted by data policy.`);
           } else if (rbacOk) {
             const sanitizedNote = tc.sanitization && tc.sanitization.input_modified ? ' <em style="color:#93c5fd;">(sanitized)</em>' : '';
             let toolLine = `✅ <strong>${esc(readable)}</strong> executed${sanitizedNote}`;

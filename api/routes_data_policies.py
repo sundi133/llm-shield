@@ -700,11 +700,33 @@ async def validate_data_against_policies(
                     "rules_checked": rules,
                 })
 
-        # Apply role-level block after rule checks
+        # Apply role-level enforcement after rule checks
         if role_action == "block" and violations:
             # Role says block when rules are violated — escalate severity
             for v in violations:
                 v["severity"] = "critical"
+        elif role_action == "mask" and violations:
+            # Role says mask — apply partial masking to sanitized data
+            for v in violations:
+                v["action_applied"] = "mask"
+            # Use the sanitized (regex-replaced) version as the masked output
+            # If no regex rules fired, apply generic masking
+            if sanitized_data == data:
+                sanitized_data = _re.sub(
+                    r'\b[\w.+-]+@[\w-]+\.[\w.]+\b', '[MASKED]', sanitized_data)
+                sanitized_data = _re.sub(
+                    r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', '[MASKED]', sanitized_data)
+                sanitized_data = _re.sub(
+                    r'\b\d{3}-\d{2}-\d{4}\b', '[MASKED]', sanitized_data)
+                sanitized_data = _re.sub(
+                    r'\b(?:\d{4}[- ]?){3}\d{4}\b', '[MASKED]', sanitized_data)
+        elif role_action == "redact" and violations:
+            # Role says redact — use the sanitized (regex-replaced) version
+            for v in violations:
+                v["action_applied"] = "redact"
+            # If no regex rules fired, apply full redaction
+            if sanitized_data == data:
+                sanitized_data = "[REDACTED]"
 
         risk_level = "high" if any(v["severity"] in ("critical", "high") for v in violations) else "medium" if violations else "low"
 
