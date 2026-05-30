@@ -2616,7 +2616,7 @@ pip install langchain langchain-openai openai requests
 
         <div class="sdk-section">
           <div class="sdk-section-title">2. Complete Integration</div>
-          <div class="sdk-section-desc">LangChain agent with Shield guardrails, RBAC, and shadow discovery</div>
+          <div class="sdk-section-desc">LangChain agent with LiteLLM guardrails + Shield tool RBAC</div>
           <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;margin:0.5rem 0;">
             <div style="background:var(--border);padding:0.5rem 1rem;font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border);">
               langchain_shield_agent.py
@@ -2624,19 +2624,23 @@ pip install langchain langchain-openai openai requests
             </div>
             <div style="padding:1rem;overflow-x:auto;">
               <pre id="langchain-code" style="margin:0;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text);"><code>"""
-LangChain + LLM Shield Integration
-Guardrails, RBAC, data policies, and shadow agent discovery
+LangChain + LLM Shield (Production Architecture)
+
+LiteLLM proxy handles input/output guardrails automatically.
+App only calls Shield for tool RBAC + data policy enforcement.
 """
 import os, json, requests
 from langchain_openai import ChatOpenAI
-from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain.tools import tool
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, ToolMessage
 
-SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
-API_KEY    = os.getenv("API_KEY")
-AGENT_ID   = os.getenv("AGENT_ID", "my-langchain-agent")
-USER_ROLE  = os.getenv("USER_ROLE", "user")
+# LiteLLM proxy — guardrails run here automatically
+LITELLM_URL = os.getenv("LITELLM_URL", "http://localhost:8000")
+# Shield — only for tool RBAC + data policies
+SHIELD_URL  = os.getenv("LLM_SHIELD_URL", "http://localhost:8080")
+API_KEY     = os.getenv("API_KEY")
+AGENT_ID    = os.getenv("AGENT_ID", "my-langchain-agent")
+USER_ROLE   = os.getenv("USER_ROLE", "user")
 
 shield = requests.Session()
 shield.headers.update({
@@ -2654,7 +2658,6 @@ def register_agent():
     resp = shield.post(f"{SHIELD_URL}/v1/agents/registry", json={
         "agent_id": AGENT_ID,
         "name": "LangChain Support Agent",
-        "description": "Customer support agent built with LangChain",
         "tools": ["search_faq", "create_ticket", "check_order_status"],
         "role_permissions": {
             "user":    ["search_faq", "check_order_status"],
@@ -2686,99 +2689,76 @@ lc_tools = [search_faq, create_ticket, check_order_status]
 
 # ── 3. Shielded LangChain agent ──────────────────────────────────
 def run_agent(user_message: str):
-    # Step 1: Input guardrails
-    guard_in = shield.post(f"{SHIELD_URL}/guardrails/input",
-                           json={"message": user_message}).json()
-    if guard_in.get("action") == "block":
-        blocked = [r for r in guard_in.get("guardrail_results", [])
-                   if r.get("action") == "block"]
-        return f"Blocked by input guardrails: {blocked[0]['guardrail']}"
+    # LangChain LLM pointed at LiteLLM proxy
+    # Input/output guardrails are applied automatically by LiteLLM
+    llm = ChatOpenAI(
+        model="default",
+        base_url=f"{LITELLM_URL}/v1",
+        api_key=os.getenv("OPENAI_API_KEY", "not-needed"),
+        default_headers={
+            "X-API-Key": API_KEY,
+            "X-Agent-Key": AGENT_ID,
+            "X-User-Role": USER_ROLE,
+        },
+    )
+    llm_with_tools = llm.bind_tools(lc_tools)
 
-    # Step 2: Use Shield's agent chat for RBAC + tool execution
-    # This sends tools in OpenAI format, gets back RBAC results
-    openai_tools = []
-    for t in lc_tools:
-        openai_tools.append({"type": "function", "function": {
-            "name": t.name,
-            "description": t.description,
-            "strict": True,
-            "parameters": {
-                "type": "object",
-                "properties": {k: {"type": "string"}
-                               for k in (t.args_schema.schema()
-                                         .get("properties", {}).keys())},
-                "required": list(t.args_schema.schema()
-                                 .get("required", [])),
-                "additionalProperties": False,
-            },
-        }})
+    # Step 1: LLM call via LiteLLM (guardrails automatic)
+    messages = [HumanMessage(content=user_message)]
+    try:
+        response = llm_with_tools.invoke(messages)
+    except Exception as e:
+        return f"Blocked by guardrails: {e}"
 
-    result = shield.post(f"{SHIELD_URL}/v1/shield/chat/agent", json={
-        "messages": [{"role": "user", "content": user_message}],
-        "agent_key": AGENT_ID,
-        "user_role": USER_ROLE,
-        "llm_api_key": os.getenv("OPENAI_API_KEY"),
-        "tools": openai_tools,
-    }).json()
+    if not response.tool_calls:
+        return response.content
 
-    # Step 3: Process tool calls with RBAC + data policy enforcement
+    # Step 2: Process tool calls with Shield RBAC + data policies
+    messages.append(response)
+    tool_map = {t.name: t for t in lc_tools}
     output_parts = []
-    for tc in result.get("tool_calls", []):
-        name = tc["tool_name"]
 
-        # 3a. RBAC check (already in response)
-        if not tc["rbac"]["allowed"]:
-            output_parts.append(f"BLOCKED: {name} — {tc['rbac']['message']}")
-            continue
+    for tc in response.tool_calls:
+        name, args = tc["name"], tc["args"]
 
-        # 3b. PRE-EXECUTION: Data policy check on tool arguments
-        tool_check = shield.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
+        # 2a. Shield RBAC + data policy check on tool args
+        check = shield.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
             "tool_name": name,
-            "tool_input": tc["arguments"],
-            "agent_id": AGENT_ID,
+            "tool_input": args,
+            "agent_key": AGENT_ID,
             "user_role": USER_ROLE,
         }).json()
-        if not tool_check.get("allowed", True):
-            output_parts.append(
-                f"BLOCKED by data policy: {name} — {tool_check.get('reason', 'policy violation')}")
+        if not check.get("allowed", True):
+            reason = check.get("reason", "denied by RBAC")
+            messages.append(ToolMessage(content=f"DENIED: {reason}",
+                                        tool_call_id=tc["id"]))
+            output_parts.append(f"BLOCKED: {name} — {reason}")
             continue
 
-        # 3c. Execute the tool
-        tool_fn = {t.name: t for t in lc_tools}.get(name)
-        if not tool_fn:
-            continue
-        raw_output = tool_fn.invoke(tc["arguments"])
+        # 2b. Execute the tool locally
+        raw_output = tool_map[name].invoke(args)
 
-        # 3d. POST-EXECUTION: Sanitize tool output against data policies
+        # 2c. Sanitize tool output (mask/redact/block per data policy)
         sanitized = shield.post(f"{SHIELD_URL}/v1/shield/tool/output", json={
             "tool_name": name,
             "tool_output": str(raw_output),
-            "agent_id": AGENT_ID,
-            "user_role": USER_ROLE,
+            "agent_key": AGENT_ID,
         }).json()
         if sanitized.get("action") == "block":
-            output_parts.append(f"BLOCKED: {name} output violated data policy")
+            messages.append(ToolMessage(
+                content="Tool output blocked by data policy.",
+                tool_call_id=tc["id"]))
         else:
             clean = sanitized.get("sanitized_output", str(raw_output))
+            messages.append(ToolMessage(content=clean, tool_call_id=tc["id"]))
             output_parts.append(f"[{name}] {clean}")
 
-    # Shadow discovery feedback
-    if result.get("unregistered"):
-        u = result["unregistered"]
-        if u.get("agents"):
-            output_parts.append(f"[Shadow agent: {u['agents']}]")
-        if u.get("tools"):
-            output_parts.append(f"[Shadow tools: {u['tools']}]")
-
-    # Step 4: Output guardrails
-    final_text = result.get("text", "") or "\n".join(output_parts)
-    if final_text:
-        guard_out = shield.post(f"{SHIELD_URL}/guardrails/output",
-                                json={"output": final_text}).json()
-        if guard_out.get("action") == "block":
-            return "Response blocked by output policy."
-
-    return final_text or "\n".join(output_parts)
+    # Step 3: Final LLM call (output guardrails automatic via LiteLLM)
+    try:
+        final = llm_with_tools.invoke(messages)
+        return final.content
+    except Exception:
+        return "\n".join(output_parts)
 
 
 if __name__ == "__main__":
@@ -2811,20 +2791,21 @@ if __name__ == "__main__":
             <div style="font-size:12px;color:var(--text);line-height:1.8;font-family:var(--font-mono);">
               User Message<br>
               &nbsp;&nbsp;│<br>
-              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/input</span> ── block toxic/adversarial/PII<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">LiteLLM Proxy</span> ── input guardrails (automatic)<br>
+              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── LLM returns tool_calls<br>
               &nbsp;&nbsp;│<br>
-              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/chat/agent</span> ── LLM picks tools + RBAC<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/check</span> ── RBAC + data policy on args<br>
               &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── blocked → deny + log<br>
-              &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span style="color:var(--warn);">unregistered → shadow discovery</span><br>
-              &nbsp;&nbsp;│<br>
-              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/check</span> ── data policy on tool args<br>
               &nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── allowed → LangChain tool.invoke()<br>
               &nbsp;&nbsp;│<br>
-              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/output</span> ── sanitize tool output (PII/secrets)<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /v1/shield/tool/output</span> ── sanitize output (mask/redact/block)<br>
               &nbsp;&nbsp;│<br>
-              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">Shield /guardrails/output</span> ── block competitors/PII/bias<br>
+              &nbsp;&nbsp;├─▶ <span style="color:var(--accent-hover);">LiteLLM Proxy</span> ── output guardrails (automatic)<br>
               &nbsp;&nbsp;│<br>
-              &nbsp;&nbsp;└─▶ Response to User
+              &nbsp;&nbsp;└─▶ Response to User<br>
+              <br>
+              <span style="color:var(--text-muted);">App never calls /guardrails/input or /guardrails/output directly.</span><br>
+              <span style="color:var(--text-muted);">LiteLLM handles those via Shield middleware.</span>
             </div>
           </div>
         </div>
