@@ -970,8 +970,11 @@ def create_admin_app() -> FastAPI:
     try:
         from core.security_headers import SecurityHeadersMiddleware
         app.add_middleware(SecurityHeadersMiddleware)  # runs last (sets response headers)
-    except ImportError:
-        pass  # Module not yet deployed — headers will be added by reverse proxy
+    except ImportError as e:
+        # Security headers are a required control — never fail silently.
+        # If you see this in logs, core/security_headers.py is missing from
+        # the deployed image (check Dockerfile.admin COPY lines).
+        print(f"[SECURITY] WARNING: SecurityHeadersMiddleware NOT loaded: {e}", flush=True)
     app.add_middleware(ShieldMiddleware)
     if _AgentIdentityMiddleware:
         app.add_middleware(_AgentIdentityMiddleware)
