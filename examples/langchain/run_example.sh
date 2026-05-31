@@ -14,5 +14,9 @@ export LLM_SHIELD_URL="${LLM_SHIELD_URL:-https://shield.votal.ai}"
 export SHIELD_TOKEN="${SHIELD_TOKEN:-rpa_your-runpod-token}"
 export SHIELD_ADMIN_KEY="${SHIELD_ADMIN_KEY:-your-tenant-api-key}"
 
+# Agent identity
+export AGENT_ID="${AGENT_ID:-langchain-demo-agent}"
+export USER_ROLE="${USER_ROLE:-branch_manager}"
+
 cd "$(dirname "$0")"
 python3 demo_langchain_shield.py "$@"

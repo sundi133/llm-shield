@@ -27,8 +27,8 @@ SHIELD_URL = os.getenv("LLM_SHIELD_URL", "").rstrip("/")
 SHIELD_TOKEN = os.getenv("SHIELD_TOKEN", "")
 SHIELD_ADMIN_KEY = os.getenv("SHIELD_ADMIN_KEY", "")
 
-AGENT_ID = "langchain-demo-agent"
-USER_ROLE = "branch_manager"
+AGENT_ID = os.getenv("AGENT_ID", "langchain-demo-agent")
+USER_ROLE = os.getenv("USER_ROLE", "branch_manager")
 
 if not LITELLM_URL or not SHIELD_URL:
     print("ERROR: Set LITELLM_URL and LLM_SHIELD_URL env vars")
