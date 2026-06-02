@@ -10,9 +10,13 @@ to call Shield's safety endpoints from your own harness:
 
     shield = ShieldGuardrails(
         base_url=os.environ["SHIELD_URL"],          # http://localhost:8080 or RunPod URL
-        api_key=os.environ["SHIELD_API_KEY"],       # per-tenant key
+        api_key=os.environ["SHIELD_API_KEY"],       # per-tenant key (resolves the tenant)
+        tenant_id=os.environ.get("SHIELD_TENANT_ID"),  # optional; asserted as X-Tenant-Id
         # runpod_token=os.environ.get("RUNPOD_TOKEN"),  # only for the RunPod proxy
     )
+
+Multi-tenant callers keep one client per tenant (the API key is what scopes
+the call); `tenant_id` is a validated assertion, not a tenant selector.
 
     # ── your own agent loop ────────────────────────────────────────────
     try:
@@ -54,19 +58,34 @@ class ShieldGuardrails:
         self,
         base_url: str,
         api_key: str,
+        tenant_id: Optional[str] = None,
         runpod_token: Optional[str] = None,
         timeout: float = 30.0,
     ):
+        """Construct one client per tenant.
+
+        `api_key` is the per-tenant key and is the source of truth for which
+        tenant the call runs against — Shield resolves the tenant from it.
+
+        `tenant_id` is optional. When given, it is sent as the `X-Tenant-Id`
+        header. Shield validates it MATCHES the key's tenant and returns 403
+        on mismatch (IDOR defense), so it's a guard against accidentally
+        pairing the wrong key with the wrong tenant — not a way to switch
+        tenants. Multi-tenant callers should keep a client per tenant.
+        """
         if not base_url or not api_key:
             raise ValueError("base_url and api_key are required")
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.tenant_id = tenant_id
         self.runpod_token = runpod_token
         self.timeout = timeout
         self._session = requests.Session()
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json", "X-API-Key": self.api_key}
+        if self.tenant_id:  # asserted; Shield 403s if it != the key's tenant
+            h["X-Tenant-Id"] = self.tenant_id
         if self.runpod_token:  # RunPod proxy needs a bearer token on top
             h["Authorization"] = f"Bearer {self.runpod_token}"
         return h
@@ -127,6 +146,7 @@ if __name__ == "__main__":
     shield = ShieldGuardrails(
         base_url=os.environ.get("SHIELD_URL", "http://localhost:8080"),
         api_key=os.environ.get("SHIELD_API_KEY", ""),
+        tenant_id=os.environ.get("SHIELD_TENANT_ID"),
         runpod_token=os.environ.get("RUNPOD_TOKEN"),
     )
 

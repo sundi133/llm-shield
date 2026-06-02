@@ -15,14 +15,25 @@ Both wrap the same two HTTP endpoints:
 | `/guardrails/input` | POST | Vet a user message **before** your model sees it |
 | `/guardrails/output` | POST | Vet / redact a model reply **before** the user sees it |
 
-## Auth
+## Auth & tenancy
 
-Every call sends the per-tenant key as `X-API-Key`. For a RunPod-hosted
-Shield, also send the RunPod bearer token.
+Every call sends the **per-tenant key** as `X-API-Key`. Shield resolves the
+tenant **from that key** server-side — that's the single source of truth.
+
+`tenant_id` / `tenantId` is **optional** and sent as the `X-Tenant-Id` header.
+Shield validates it **matches** the key's tenant and returns **403** on a
+mismatch (an IDOR defense). So it is a *guard* against accidentally pairing the
+wrong key with the wrong tenant — **not** a way to select or switch tenants.
+A caller cannot act as another tenant by changing this value.
+
+> **Multi-tenant callers:** keep **one client instance per tenant**, each with
+> that tenant's own API key. The key scopes the call; the tenant id just
+> asserts the pairing.
 
 ```bash
 export SHIELD_URL="http://localhost:8080"      # or https://<id>.proxy.runpod.net
-export SHIELD_API_KEY="tenant-...-key-..."
+export SHIELD_API_KEY="tenant-...-key-..."     # per-tenant key (authenticates + scopes)
+export SHIELD_TENANT_ID="acme"                 # optional; asserted as X-Tenant-Id
 export RUNPOD_TOKEN="rpa_..."                   # RunPod proxy only
 ```
 
@@ -36,7 +47,9 @@ python examples/external/shield_guardrails.py
 ```python
 from shield_guardrails import ShieldGuardrails, GuardrailBlocked
 
-shield = ShieldGuardrails(base_url=SHIELD_URL, api_key=SHIELD_API_KEY)
+shield = ShieldGuardrails(
+    base_url=SHIELD_URL, api_key=SHIELD_API_KEY, tenant_id=SHIELD_TENANT_ID
+)
 
 try:
     shield.check_input(user_msg)          # raises GuardrailBlocked on "block"
@@ -57,7 +70,9 @@ node examples/external/shieldGuardrails.js
 ```js
 import { ShieldGuardrails, GuardrailBlocked } from "./shieldGuardrails.js";
 
-const shield = new ShieldGuardrails({ baseUrl: SHIELD_URL, apiKey: SHIELD_API_KEY });
+const shield = new ShieldGuardrails({
+  baseUrl: SHIELD_URL, apiKey: SHIELD_API_KEY, tenantId: SHIELD_TENANT_ID,
+});
 
 try {
   await shield.checkInput(userMsg);        // throws GuardrailBlocked on "block"
