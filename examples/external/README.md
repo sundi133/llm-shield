@@ -17,24 +17,17 @@ Both wrap the same two HTTP endpoints:
 
 ## Auth & tenancy
 
-Every call sends the **per-tenant key** as `X-API-Key`. Shield resolves the
-tenant **from that key** server-side — that's the single source of truth.
+A tenant needs exactly **two things**: the **Shield URL** and their **tenant
+API key**. That's it — no tenant id, no admin key.
 
-`tenant_id` / `tenantId` is **optional** and sent as the `X-Tenant-Id` header.
-Shield validates it **matches** the key's tenant and returns **403** on a
-mismatch (an IDOR defense). So it is a *guard* against accidentally pairing the
-wrong key with the wrong tenant — **not** a way to select or switch tenants.
-A caller cannot act as another tenant by changing this value.
-
-> **Multi-tenant callers:** keep **one client instance per tenant**, each with
-> that tenant's own API key. The key scopes the call; the tenant id just
-> asserts the pairing.
+Every call sends the key as `X-API-Key`. Shield resolves *which* tenant the
+call belongs to **from that key** server-side, so the client never sends a
+tenant id. A multi-tenant caller just keeps one client per key.
 
 ```bash
 export SHIELD_URL="http://localhost:8080"      # or https://<id>.proxy.runpod.net
-export SHIELD_API_KEY="tenant-...-key-..."     # per-tenant key (authenticates + scopes)
-export SHIELD_TENANT_ID="acme"                 # optional; asserted as X-Tenant-Id
-export RUNPOD_TOKEN="rpa_..."                   # RunPod proxy only
+export SHIELD_API_KEY="tenant-...-key-..."     # the tenant API key (authenticates + scopes)
+export RUNPOD_TOKEN="rpa_..."                   # optional — RunPod proxy only
 ```
 
 ## Python
@@ -47,9 +40,7 @@ python examples/external/shield_guardrails.py
 ```python
 from shield_guardrails import ShieldGuardrails, GuardrailBlocked
 
-shield = ShieldGuardrails(
-    base_url=SHIELD_URL, api_key=SHIELD_API_KEY, tenant_id=SHIELD_TENANT_ID
-)
+shield = ShieldGuardrails(base_url=SHIELD_URL, api_key=SHIELD_API_KEY)
 
 try:
     shield.check_input(user_msg)          # raises GuardrailBlocked on "block"
@@ -70,9 +61,7 @@ node examples/external/shieldGuardrails.js
 ```js
 import { ShieldGuardrails, GuardrailBlocked } from "./shieldGuardrails.js";
 
-const shield = new ShieldGuardrails({
-  baseUrl: SHIELD_URL, apiKey: SHIELD_API_KEY, tenantId: SHIELD_TENANT_ID,
-});
+const shield = new ShieldGuardrails({ baseUrl: SHIELD_URL, apiKey: SHIELD_API_KEY });
 
 try {
   await shield.checkInput(userMsg);        // throws GuardrailBlocked on "block"

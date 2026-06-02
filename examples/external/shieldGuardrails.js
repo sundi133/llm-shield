@@ -11,10 +11,9 @@
  *   import { ShieldGuardrails, GuardrailBlocked } from "./shieldGuardrails.js";
  *
  *   const shield = new ShieldGuardrails({
- *     baseUrl: process.env.SHIELD_URL,         // http://localhost:8080 or RunPod URL
- *     apiKey: process.env.SHIELD_API_KEY,      // per-tenant key (resolves the tenant)
- *     tenantId: process.env.SHIELD_TENANT_ID,  // optional; asserted as X-Tenant-Id
- *     runpodToken: process.env.RUNPOD_TOKEN,   // only for the RunPod proxy
+ *     baseUrl: process.env.SHIELD_URL,        // the Shield URL
+ *     apiKey: process.env.SHIELD_API_KEY,     // the tenant API key
+ *     runpodToken: process.env.RUNPOD_TOKEN,  // only for the RunPod proxy
  *   });
  *
  *   // ── your own agent loop ──────────────────────────────────────────
@@ -47,26 +46,24 @@ export class GuardrailBlocked extends Error {
 
 export class ShieldGuardrails {
   /**
-   * Construct one client per tenant.
-   * @param {string} apiKey  per-tenant key; Shield resolves the tenant from it
-   *   (the source of truth for which tenant the call runs against).
-   * @param {string} [tenantId]  optional; sent as `X-Tenant-Id`. Shield
-   *   validates it MATCHES the key's tenant and 403s on mismatch (IDOR
-   *   defense) — a guard against mispairing key+tenant, not a tenant
-   *   selector. Multi-tenant callers keep one client per tenant.
+   * Construct one client per tenant from just two things:
+   *   baseUrl — the Shield URL
+   *   apiKey  — the tenant API key
+   * Shield resolves WHICH tenant the call belongs to from the API key
+   * server-side, so the client never sends a tenant id. No admin key here.
+   * @param {string} [runpodToken]  optional; only when Shield sits behind the
+   *   RunPod proxy, which needs a bearer token.
    */
-  constructor({ baseUrl, apiKey, tenantId = null, runpodToken = null, timeoutMs = 30000 }) {
+  constructor({ baseUrl, apiKey, runpodToken = null, timeoutMs = 30000 }) {
     if (!baseUrl || !apiKey) throw new Error("baseUrl and apiKey are required");
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.apiKey = apiKey;
-    this.tenantId = tenantId;
     this.runpodToken = runpodToken;
     this.timeoutMs = timeoutMs;
   }
 
   #headers() {
     const h = { "Content-Type": "application/json", "X-API-Key": this.apiKey };
-    if (this.tenantId) h["X-Tenant-Id"] = this.tenantId; // 403 if != key's tenant
     if (this.runpodToken) h["Authorization"] = `Bearer ${this.runpodToken}`;
     return h;
   }
@@ -130,7 +127,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const shield = new ShieldGuardrails({
     baseUrl: process.env.SHIELD_URL || "http://localhost:8080",
     apiKey: process.env.SHIELD_API_KEY || "",
-    tenantId: process.env.SHIELD_TENANT_ID || null,
     runpodToken: process.env.RUNPOD_TOKEN || null,
   });
 
