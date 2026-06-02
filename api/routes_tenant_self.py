@@ -317,11 +317,18 @@ async def get_my_telemetry(
     status: Optional[str] = Query(None, description="pass, warn, or block"),
     tool_name: Optional[str] = Query(None),
     q: Optional[str] = Query(None, description="Free-text search across message, tool, and reason"),
+    since: Optional[str] = Query(None, description="ISO timestamp — only return entries after this time (e.g. 2026-05-25T00:00:00Z)"),
+    until: Optional[str] = Query(None, description="ISO timestamp — only return entries before this time"),
 ):
     """Return tenant-scoped agent chat telemetry with normalized tool-call status."""
     tenant_id = _require_tenant(request)
 
-    raw_entries = await audit_logger.query(limit=1000, offset=0, tenant_id=tenant_id)
+    filters = {}
+    if since:
+        filters["since"] = since
+    if until:
+        filters["until"] = until
+    raw_entries = await audit_logger.query(limit=1000, offset=0, tenant_id=tenant_id, filters=filters if filters else None)
     telemetry_entries = []
 
     for entry in raw_entries:

@@ -2033,8 +2033,20 @@
     <!-- Overview -->
     <div id="tab-overview" class="tab-pane">
       <div class="page-header">
-        <div class="page-title" id="welcome-title">Overview</div>
-        <div class="page-desc">Your account summary and quick stats</div>
+        <div>
+          <div class="page-title" id="welcome-title">Overview</div>
+          <div class="page-desc">Your account summary and quick stats</div>
+        </div>
+        <div style="display:flex;gap:0.5rem;align-items:center;">
+          <select id="overview-range" onchange="loadOverviewAnalytics()" style="font-size:12px;padding:0.35rem 0.6rem;">
+            <option value="1">Last 24 hours</option>
+            <option value="7" selected>Last 7 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="60">Last 60 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+        </div>
       </div>
       <div class="stats-grid" id="overview-stats"></div>
 
@@ -2393,11 +2405,23 @@
     <!-- Usage -->
     <div id="tab-usage" class="tab-pane hidden">
       <div class="page-header">
-        <div class="page-title">Usage</div>
-        <div class="page-desc">Quota consumption over time</div>
+        <div>
+          <div class="page-title">Usage</div>
+          <div class="page-desc">Quota consumption over time</div>
+        </div>
+        <div style="display:flex;gap:0.5rem;align-items:center;">
+          <select id="usage-range" onchange="loadUsage()" style="font-size:12px;padding:0.35rem 0.6rem;">
+            <option value="1">Last 24 hours</option>
+            <option value="7" selected>Last 7 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="60">Last 60 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <button class="small" onclick="loadUsage()">Refresh</button>
+        </div>
       </div>
       <div id="usage-display"></div>
-      <button class="small" onclick="loadUsage()">Refresh</button>
     </div>
 
     <!-- Activity -->
@@ -2427,7 +2451,7 @@
       </div>
 
       <div class="card" style="margin-bottom:1rem;">
-        <div style="display:grid;grid-template-columns:minmax(0,1.3fr) repeat(3, minmax(140px,0.7fr)) auto;gap:0.75rem;align-items:end;">
+        <div style="display:grid;grid-template-columns:minmax(0,1.3fr) repeat(4, minmax(120px,0.7fr)) auto;gap:0.75rem;align-items:end;">
           <div class="field" style="margin-bottom:0;">
             <label for="telemetry-search">Search</label>
             <input id="telemetry-search" type="text" placeholder="message, tool, block reason, agent">
@@ -2439,6 +2463,17 @@
               <option value="pass">Pass</option>
               <option value="warn">Warn</option>
               <option value="block">Block</option>
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label for="telemetry-range">Time Range</label>
+            <select id="telemetry-range">
+              <option value="1">Last 24 hours</option>
+              <option value="7" selected>Last 7 days</option>
+              <option value="14">Last 14 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="60">Last 60 days</option>
+              <option value="90">Last 90 days</option>
             </select>
           </div>
           <div class="field" style="margin-bottom:0;">
@@ -5217,8 +5252,10 @@ function renderOverview() {
 
 async function loadOverviewAnalytics() {
   try {
+    const days = parseInt((document.getElementById('overview-range') || {}).value) || 7;
+    const since = _sinceDate(days);
     const [telemetry, usage] = await Promise.all([
-      apiCall('/v1/tenant/me/telemetry?limit=50').catch(() => null),
+      apiCall(`/v1/tenant/me/telemetry?limit=200&since=${encodeURIComponent(since)}`).catch(() => null),
       apiCall('/v1/tenant/me/usage').catch(() => null),
     ]);
 
@@ -5837,21 +5874,28 @@ function updateTelemetrySummary(summary) {
   document.getElementById('telemetry-stat-tools-note').textContent = `${summary && summary.blocked_tool_calls || 0} blocked`;
 }
 
+function _sinceDate(days) {
+  const d = new Date(Date.now() - days * 86400000);
+  return d.toISOString();
+}
+
 async function loadTelemetry() {
   const errorEl = document.getElementById('telemetry-error');
   errorEl.classList.add('hidden');
   errorEl.textContent = '';
 
   try {
-    const params = new URLSearchParams({ limit: '100' });
+    const params = new URLSearchParams({ limit: '200' });
     const q = (document.getElementById('telemetry-search').value || '').trim();
     const status = document.getElementById('telemetry-status-filter').value;
     const agent = (document.getElementById('telemetry-agent-filter').value || '').trim();
     const tool = (document.getElementById('telemetry-tool-filter').value || '').trim();
+    const days = parseInt(document.getElementById('telemetry-range').value) || 7;
     if (q) params.set('q', q);
     if (status) params.set('status', status);
     if (agent) params.set('agent_key', agent);
     if (tool) params.set('tool_name', tool);
+    params.set('since', _sinceDate(days));
 
     const data = await apiCall(`/v1/tenant/me/telemetry?${params.toString()}`);
     updateTelemetrySummary(data.summary || {});
