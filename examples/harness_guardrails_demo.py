@@ -162,8 +162,9 @@ def check_output(output: str) -> tuple[str, dict]:
     result = resp.json()
     if result.get("action") == "block":
         raise Blocked("output", result.get("guardrail_results", []))
-    # Shield returns the redacted text when auto_redact masks something.
-    safe_text = result.get("redacted_output") or result.get("output") or output
+    # Shield returns the redacted text under `sanitized_output` when
+    # auto_redact masks something; otherwise the original stands.
+    safe_text = result.get("sanitized_output") or output
     return safe_text, result
 
 
