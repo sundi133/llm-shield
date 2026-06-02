@@ -137,9 +137,16 @@ class AuditLogger:
                         ).timestamp()
                     except (ValueError, TypeError):
                         max_score = "+inf"
-                raw_entries = r.zrevrangebyscore(
-                    key, max_score, min_score, start=0, num=_MAX_ENTRIES
-                )
+                try:
+                    # Upstash Redis uses offset/count params
+                    raw_entries = r.zrevrangebyscore(
+                        key, max_score, min_score, offset=0, count=_MAX_ENTRIES
+                    )
+                except TypeError:
+                    # Standard redis-py uses start/num params
+                    raw_entries = r.zrevrangebyscore(
+                        key, max_score, min_score, start=0, num=_MAX_ENTRIES
+                    )
             else:
                 raw_entries = r.zrevrange(key, offset, offset + limit - 1)
 
