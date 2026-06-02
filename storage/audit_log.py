@@ -17,8 +17,8 @@ from typing import Optional
 
 # Max entries to keep per tenant (rolling window)
 _MAX_ENTRIES = int(os.getenv("AUDIT_MAX_ENTRIES", "5000"))
-# TTL for audit entries in seconds (default 7 days)
-_AUDIT_TTL = int(os.getenv("AUDIT_TTL_SECONDS", str(7 * 86400)))
+# TTL for audit entries in seconds (default 90 days)
+_AUDIT_TTL = int(os.getenv("AUDIT_TTL_SECONDS", str(90 * 86400)))
 
 
 def _get_redis():
@@ -108,15 +108,41 @@ class AuditLogger:
         offset: int = 0,
         tenant_id: str | None = None,
     ) -> list:
-        """Query audit log entries with optional filters."""
+        """Query audit log entries with optional filters.
+
+        When `since`/`until` are in filters, uses ZREVRANGEBYSCORE for
+        efficient time-range queries instead of fetching everything.
+        """
         r = _get_redis()
         if not r:
             return []
 
         key = self._redis_key(tenant_id)
         try:
-            # Get entries in reverse order (newest first)
-            raw_entries = r.zrevrange(key, offset, offset + limit - 1)
+            # Use score-based range when time filters are provided
+            if filters and ("since" in filters or "until" in filters):
+                min_score = "-inf"
+                max_score = "+inf"
+                if "since" in filters:
+                    try:
+                        min_score = datetime.fromisoformat(
+                            filters["since"].replace("Z", "+00:00")
+                        ).timestamp()
+                    except (ValueError, TypeError):
+                        min_score = "-inf"
+                if "until" in filters:
+                    try:
+                        max_score = datetime.fromisoformat(
+                            filters["until"].replace("Z", "+00:00")
+                        ).timestamp()
+                    except (ValueError, TypeError):
+                        max_score = "+inf"
+                raw_entries = r.zrevrangebyscore(
+                    key, max_score, min_score, start=0, num=_MAX_ENTRIES
+                )
+            else:
+                raw_entries = r.zrevrange(key, offset, offset + limit - 1)
+
             if not raw_entries:
                 return []
 
@@ -127,15 +153,11 @@ class AuditLogger:
                 except (json.JSONDecodeError, TypeError):
                     continue
 
-                # Apply filters
+                # Apply non-time filters
                 if filters:
                     if "agent_key" in filters and entry.get("agent_key") != filters["agent_key"]:
                         continue
                     if "action_taken" in filters and entry.get("action_taken") != filters["action_taken"]:
-                        continue
-                    if "since" in filters and entry.get("timestamp", "") < filters["since"]:
-                        continue
-                    if "until" in filters and entry.get("timestamp", "") > filters["until"]:
                         continue
 
                 results.append(entry)
