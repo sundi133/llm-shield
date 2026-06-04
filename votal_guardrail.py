@@ -169,15 +169,17 @@ class VotalGuardrail(CustomGuardrail):
             return data
 
     # ------------------------------------------------------------------
-    # Output guardrail + tool RBAC — post_call (non-streaming)
+    # Output guardrail + tool RBAC + data policies — post_call (non-streaming)
     # ------------------------------------------------------------------
 
     async def async_post_call_success_hook(self, data: dict, user_api_key_dict: UserAPIKeyAuth, response):
-        """Output guardrail + tool call RBAC enforcement.
+        """Output guardrail + tool call RBAC + data policy enforcement.
 
-        1. Check text content via Shield /guardrails/output
-        2. If LLM returned tool_calls, check each via Shield /v1/shield/tool/check
-        3. Inject rbac results into response metadata
+        Uses /guardrails/output with full tool context so Shield handles
+        everything in one call per tool:
+          1. Role-based tool authorization (RBAC)
+          2. Data policy sanitization (regex + AI reasoning)
+          3. Standard output guardrails (PII, bias, tone, etc.)
         """
         try:
             content = None
@@ -194,8 +196,12 @@ class VotalGuardrail(CustomGuardrail):
 
             # Forward tenant/agent headers to Shield
             shield_headers = self._extract_shield_headers(data)
+            metadata = data.get("metadata", {}) or {}
+            proxy_headers = data.get("proxy_server_request", {}).get("headers", {})
+            agent_key = metadata.get("agent_key") or proxy_headers.get("x-agent-key", "")
+            user_role = metadata.get("user_role") or proxy_headers.get("x-user-role", "")
 
-            # --- Step 1: Output guardrails on text ---
+            # --- Step 1: Output guardrails on text (no tool context) ---
             if content:
                 result_resp = await self.client.post(
                     f"{self.api_base}/guardrails/output",
@@ -220,17 +226,11 @@ class VotalGuardrail(CustomGuardrail):
                             detection_info=result,
                         )
 
-            # --- Step 2: Tool call RBAC ---
+            # --- Step 2: Tool call RBAC + data policies via /guardrails/output ---
             if tool_calls:
-                agent_key = (data.get("metadata", {}) or {}).get("agent_key", "")
-                user_role = (data.get("metadata", {}) or {}).get("user_role", "")
-                # Also check headers from the original request
-                if not agent_key:
-                    agent_key = data.get("proxy_server_request", {}).get("headers", {}).get("x-agent-key", "")
-                if not user_role:
-                    user_role = data.get("proxy_server_request", {}).get("headers", {}).get("x-user-role", "")
-
-                tool_results = await self._check_tool_calls(tool_calls, agent_key, user_role, shield_headers)
+                tool_results = await self._check_tool_calls(
+                    tool_calls, agent_key, user_role, shield_headers,
+                )
 
                 has_blocked = any(not t["rbac"]["allowed"] for t in tool_results)
 
@@ -246,8 +246,6 @@ class VotalGuardrail(CustomGuardrail):
                     "all_tools_allowed": not has_blocked,
                 }
 
-                # If any tool is blocked, add a header/metadata for the client
-                # The client can check response headers or _hidden_params
                 if has_blocked:
                     blocked_tools = [t["tool_name"] for t in tool_results if not t["rbac"]["allowed"]]
                     blocked_reasons = [t["rbac"].get("message", "") for t in tool_results if not t["rbac"]["allowed"]]
@@ -264,56 +262,74 @@ class VotalGuardrail(CustomGuardrail):
             return response
 
     async def _check_tool_calls(self, tool_calls, agent_key: str, user_role: str, shield_headers: dict = None) -> list[dict]:
-        """Check each tool call against Shield RBAC + data policies."""
+        """Check each tool call via /guardrails/output with full context.
+
+        This single call gives us:
+          - Role-based tool authorization (RBAC)
+          - Data policy sanitization (regex + AI)
+          - Standard output guardrails on tool args
+        """
         results = []
         for tc in tool_calls:
             tool_name = tc.function.name if hasattr(tc, "function") else ""
             tool_args_raw = tc.function.arguments if hasattr(tc, "function") else "{}"
             tool_call_id = tc.id if hasattr(tc, "id") else ""
 
-            # Parse arguments
             try:
                 tool_args = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw or {}
             except json.JSONDecodeError:
                 tool_args = {"_raw": tool_args_raw}
 
-            # Call Shield /v1/shield/tool/check
             rbac = {"allowed": True, "action": "pass", "message": ""}
+            sanitization = None
+
             try:
+                # Call /guardrails/output with full tool context
+                # Shield runs: tool authorization → data policy sanitization → output guardrails
                 resp = await self.client.post(
-                    f"{self.api_base}/v1/shield/tool/check",
+                    f"{self.api_base}/guardrails/output",
                     json={
-                        "agent_key": agent_key,
-                        "tool_name": tool_name,
-                        "user_role": user_role,
-                        "tool_params": tool_args,
+                        "output": json.dumps(tool_args),
+                        "context": {
+                            "tool_name": tool_name,
+                            "tool_input": tool_args,
+                            "agent_id": agent_key,
+                            "user_role": user_role,
+                            "stage": "input",  # checking tool args before execution
+                        },
                     },
                     headers=shield_headers or {},
                 )
                 if resp.status_code == 200:
                     check = resp.json()
+                    is_safe = check.get("safe", True)
                     rbac = {
-                        "allowed": check.get("allowed", True),
+                        "allowed": is_safe,
                         "action": check.get("action", "pass"),
                         "message": "",
                     }
-                    # Extract block reason from guardrail results
-                    if not rbac["allowed"]:
+                    if not is_safe:
                         for gr in check.get("guardrail_results", []):
                             if not gr.get("passed", True):
                                 rbac["message"] = gr.get("message", "denied by policy")
                                 break
+                    # Capture sanitization metadata if present
+                    if check.get("sanitization"):
+                        sanitization = check["sanitization"]
                 else:
-                    print(f"[VOTAL] tool/check failed for {tool_name}: {resp.status_code}")
+                    print(f"[VOTAL] guardrails/output tool check failed for {tool_name}: {resp.status_code}")
             except Exception as e:
-                print(f"[VOTAL] tool/check error for {tool_name}: {e}")
+                print(f"[VOTAL] guardrails/output tool check error for {tool_name}: {e}")
 
-            results.append({
+            result = {
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "arguments": tool_args,
                 "rbac": rbac,
-            })
+            }
+            if sanitization:
+                result["sanitization"] = sanitization
+            results.append(result)
 
         return results
 
