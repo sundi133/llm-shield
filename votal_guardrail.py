@@ -296,12 +296,13 @@ class VotalGuardrail(CustomGuardrail):
     # Streaming helpers
     # ------------------------------------------------------------------
 
-    async def _is_output_safe(self, content: str, request_data: dict):
+    async def _is_output_safe(self, content: str, request_data: dict, shield_headers: dict = None):
         """Call Votal output endpoint. Returns (safe: bool, result: dict)."""
         try:
             resp = await self.client.post(
                 f"{self.api_base}/guardrails/output",
                 json={"output": content},
+                headers=shield_headers or {},
             )
             if resp.status_code != 200:
                 return (not self.block_on_failure), {"error": resp.status_code}
@@ -328,6 +329,7 @@ class VotalGuardrail(CustomGuardrail):
         accumulated_text = []
         accumulated_tool_calls = {}  # index -> {id, name, arguments}
         chunks_since_check = 0
+        shield_headers = self._extract_shield_headers(request_data)
 
         async for chunk in response:
             delta_text = None
@@ -367,7 +369,7 @@ class VotalGuardrail(CustomGuardrail):
                 if chunks_since_check >= self.check_every_n_chunks:
                     chunks_since_check = 0
                     full_text = "".join(accumulated_text)
-                    safe, result = await self._is_output_safe(full_text, request_data)
+                    safe, result = await self._is_output_safe(full_text, request_data, shield_headers)
                     if not safe:
                         blocked = result.get("guardrail_results", []) if isinstance(result, dict) else []
                         names = [g.get("guardrail", "?") for g in blocked if not g.get("passed", True)]
@@ -429,6 +431,7 @@ class VotalGuardrail(CustomGuardrail):
                             "user_role": user_role,
                             "tool_params": tool_args,
                         },
+                        headers=shield_headers,
                     )
                     if resp.status_code == 200:
                         check = resp.json()

@@ -76,7 +76,7 @@ class VotalShield:
         """
         body = {
             "tool_name": tool_name,
-            "tool_input": tool_input or {},
+            "tool_params": tool_input or {},
             "agent_key": self.agent_id,
             "user_role": user_role or self.user_role,
         }
