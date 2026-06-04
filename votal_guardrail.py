@@ -32,9 +32,12 @@ class VotalGuardrail(CustomGuardrail):
 
         # Read settings from config.yaml
         api_base = "http://172.148.110.30:8080"
+        api_token = ""
         last_k = 3
         try:
             import yaml, os, sys
+            # Check env var first (highest priority)
+            api_token = os.environ.get("RUNPOD_TOKEN", "") or os.environ.get("SHIELD_API_TOKEN", "")
             for i, arg in enumerate(sys.argv[:-1]):
                 if arg.startswith("--config="):
                     path = arg.split("=", 1)[1]
@@ -47,6 +50,8 @@ class VotalGuardrail(CustomGuardrail):
                         cfg = yaml.safe_load(f) or {}
                     votal_cfg = cfg.get("votal_guardrail", {})
                     api_base = votal_cfg.get("api_base", api_base)
+                    if not api_token:
+                        api_token = votal_cfg.get("api_token", "")
                     last_k = int(votal_cfg.get("last_k_messages", last_k))
                     break
         except:
@@ -57,13 +62,16 @@ class VotalGuardrail(CustomGuardrail):
         self.block_on_failure = True
         self.check_every_n_chunks = 20  # streaming check cadence
 
-        # Clean client — NO auth headers
+        # Client with optional auth for RunPod/cloud deployments
+        client_headers = {"Content-Type": "application/json"}
+        if api_token:
+            client_headers["Authorization"] = f"Bearer {api_token}"
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(10),
-            headers={"Content-Type": "application/json"},
+            headers=client_headers,
         )
 
-        print(f"VotalGuardrail initialized → {self.api_base} (last_k={self.last_k_messages})")
+        print(f"VotalGuardrail initialized → {self.api_base} (last_k={self.last_k_messages}, auth={'yes' if api_token else 'no'})")
 
     def _extract_shield_headers(self, data: dict) -> dict:
         """Extract tenant/agent headers from the proxy request to forward to Shield."""
