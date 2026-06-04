@@ -43,11 +43,9 @@ session = requests.Session()
 session.headers.update({
     "Authorization": f"Bearer {LITELLM_KEY}",
     "Content-Type": "application/json",
-    # Agent identity — VotalGuardrail plugin forwards these to Shield
-    "X-Agent-Key": AGENT_ID,
-    "X-User-Role": USER_ROLE,
-    # Tenant key — Shield uses this to resolve tenant → RBAC roles, data policies
-    "X-API-Key": TENANT_API_KEY,
+    # NOTE: Do NOT send X-API-Key as a header — LiteLLM intercepts it as a
+    # LiteLLM user key and rejects it with "No connected db." error.
+    # Instead, pass tenant/agent identity in metadata (see chat() function).
 })
 
 # ---------------------------------------------------------------------------
@@ -148,10 +146,13 @@ def chat(messages: list[dict], tools: list[dict] | None = None) -> dict:
         "temperature": 0.3,
         # Enable Votal guardrails
         "guardrails": ["votal-input-guard", "votal-output-guard"],
-        # Pass agent identity in metadata for tool RBAC
+        # Pass tenant + agent identity in metadata (NOT headers — LiteLLM
+        # intercepts X-API-Key as a LiteLLM user key). VotalGuardrail plugin
+        # reads these and forwards to Shield as headers.
         "metadata": {
             "agent_key": AGENT_ID,
             "user_role": USER_ROLE,
+            "tenant_api_key": TENANT_API_KEY,
         },
     }
     if tools:

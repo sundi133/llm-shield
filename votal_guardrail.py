@@ -74,19 +74,36 @@ class VotalGuardrail(CustomGuardrail):
         print(f"VotalGuardrail initialized → {self.api_base} (last_k={self.last_k_messages}, auth={'yes' if api_token else 'no'})")
 
     def _extract_shield_headers(self, data: dict) -> dict:
-        """Extract tenant/agent headers from the proxy request to forward to Shield."""
+        """Extract tenant/agent headers from the proxy request to forward to Shield.
+
+        Reads from proxy_server_request.headers first, then falls back to
+        metadata dict. The tenant_api_key is passed via metadata (not headers)
+        because LiteLLM intercepts X-API-Key as its own user key.
+        """
         headers = {}
         proxy_headers = data.get("proxy_server_request", {}).get("headers", {})
-        for key in ("x-api-key", "x-agent-key", "x-user-role", "x-tenant-id"):
-            val = proxy_headers.get(key, "")
-            if val:
-                headers[key] = val
-        # Also check metadata
         metadata = data.get("metadata", {}) or {}
-        if not headers.get("x-agent-key") and metadata.get("agent_key"):
-            headers["x-agent-key"] = metadata["agent_key"]
-        if not headers.get("x-user-role") and metadata.get("user_role"):
-            headers["x-user-role"] = metadata["user_role"]
+
+        # Tenant API key — prefer metadata (avoids LiteLLM interception)
+        tenant_key = metadata.get("tenant_api_key") or proxy_headers.get("x-api-key", "")
+        if tenant_key:
+            headers["x-api-key"] = tenant_key
+
+        # Agent identity
+        agent_key = metadata.get("agent_key") or proxy_headers.get("x-agent-key", "")
+        if agent_key:
+            headers["x-agent-key"] = agent_key
+
+        # User role
+        user_role = metadata.get("user_role") or proxy_headers.get("x-user-role", "")
+        if user_role:
+            headers["x-user-role"] = user_role
+
+        # Tenant ID (if explicitly set)
+        tenant_id = proxy_headers.get("x-tenant-id", "")
+        if tenant_id:
+            headers["x-tenant-id"] = tenant_id
+
         return headers
 
     # ------------------------------------------------------------------
