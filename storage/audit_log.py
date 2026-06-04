@@ -16,9 +16,9 @@ from typing import Optional
 
 
 # Max entries to keep per tenant (rolling window)
-_MAX_ENTRIES = int(os.getenv("AUDIT_MAX_ENTRIES", "5000"))
-# TTL for audit entries in seconds (default 90 days)
-_AUDIT_TTL = int(os.getenv("AUDIT_TTL_SECONDS", str(90 * 86400)))
+_MAX_ENTRIES = int(os.getenv("AUDIT_MAX_ENTRIES", "1000000"))
+# TTL for audit entries in seconds (default 30 days)
+_AUDIT_TTL = int(os.getenv("AUDIT_TTL_SECONDS", str(30 * 86400)))
 
 
 def _get_redis():

@@ -23,6 +23,8 @@ from core.llm_backend import get_server_url, _get_shared_client, _ensure_no_thin
 from core.pipeline import run_input_pipeline, run_output_pipeline
 from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
 from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuardrail
+from guardrails.agentic.rbac_guard import RBACGuard
+from guardrails.agentic.data_access_guard import DataAccessGuard
 from guardrails.base import _request_configs
 from storage.audit_log import audit_logger
 
@@ -140,7 +142,9 @@ async def _call_llm(messages: list, tools: list, llm_api_key: str | None = None,
 
 async def _check_tool_rbac(tool_name: str, tool_args: dict, agent_key: str,
                            user_role: str | None, tenant_config: dict | None) -> dict:
-    """Run tool allowlist and generic parameter validation on a single tool call."""
+    """Run RBAC, data access, tool allowlist, and parameter validation on a single tool call."""
+    rbac_guard = RBACGuard()
+    data_access_guard = DataAccessGuard()
     allow_guard = ToolAllowlistGuardrail()
     validation_guard = ToolCallValidationGuardrail()
 
@@ -163,9 +167,33 @@ async def _check_tool_rbac(tool_name: str, tool_args: dict, agent_key: str,
             "tool_params": tool_args or {},
             "tenant_id": (tenant_config or {}).get("tenant_id", ""),
         }
+
+        # 1. RBAC guard — role-based tool and data scope access
+        result = await rbac_guard.check("", context)
+        if not result.passed:
+            return {
+                "allowed": False, "action": result.action,
+                "message": result.message, "details": result.details,
+            }
+
+        # 2. Data access guard — clearance level validation
+        result = await data_access_guard.check("", context)
+        if not result.passed:
+            return {
+                "allowed": False, "action": result.action,
+                "message": result.message, "details": result.details,
+            }
+
+        # 3. Tool allowlist — per-agent and per-role allowlist (intersection model)
         result = await allow_guard.check("", context)
-        if result.passed:
-            result = await validation_guard.check("", context)
+        if not result.passed:
+            return {
+                "allowed": False, "action": result.action,
+                "message": result.message, "details": result.details,
+            }
+
+        # 4. Parameter validation — LLM-based data policy checks
+        result = await validation_guard.check("", context)
         return {
             "allowed": result.passed,
             "action": result.action,

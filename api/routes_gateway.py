@@ -13,8 +13,15 @@ import config.schema as _config_module
 from core.llm_backend import async_llm_call, _build_payload, get_server_url
 from core.models import ChatRequest, ShieldResponse
 from core.pipeline import run_input_pipeline, run_output_pipeline
+from core.feature_flags import KILLSWITCH_ENABLED
 from guardrails.registry import get_by_stage
+from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
+from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuardrail
+from guardrails.agentic.rbac_guard import RBACGuard
+from guardrails.agentic.data_access_guard import DataAccessGuard
+from guardrails.base import _request_configs
 from storage.audit_log import audit_logger
+from storage.tool_killswitch import is_tool_disabled
 
 router = APIRouter(prefix="/v1/shield", tags=["gateway"])
 
@@ -27,6 +34,84 @@ def _get_upstream_url() -> Optional[str]:
     if _config_module.config and _config_module.config.llm_backend:
         return _config_module.config.llm_backend.get("upstream_url")
     return None
+
+
+def _extract_tool_calls(llm_data: dict) -> tuple[str, list[dict]]:
+    """Extract text content and tool calls from an OpenAI-format LLM response."""
+    choices = llm_data.get("choices", [])
+    if not choices:
+        return "", []
+
+    message = choices[0].get("message", {})
+    content = message.get("content") or ""
+    raw_calls = message.get("tool_calls") or []
+
+    parsed: list[dict] = []
+    for tc in raw_calls:
+        func = tc.get("function", {})
+        args = func.get("arguments", "{}")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {"_raw": args}
+        parsed.append({
+            "id": tc.get("id", ""),
+            "name": func.get("name", "unknown"),
+            "arguments": args,
+        })
+    return content, parsed
+
+
+async def _check_tool_call_rbac(
+    tool_name: str,
+    tool_args: dict,
+    agent_key: str,
+    role_name: str | None,
+    tenant_id: str,
+    tenant_config: dict | None,
+) -> dict:
+    """Run RBAC, data access, allowlist, and validation guardrails on a single tool call."""
+    guards = [
+        RBACGuard(),
+        DataAccessGuard(),
+        ToolAllowlistGuardrail(),
+        ToolCallValidationGuardrail(),
+    ]
+
+    configs: dict = {}
+    if tenant_config and "input_guardrails" in tenant_config:
+        ta = tenant_config["input_guardrails"].get("tool_allowlist")
+        if ta:
+            configs["tool_allowlist"] = {
+                "enabled": ta.get("enabled", True),
+                "action": ta.get("action", "block"),
+                "settings": ta.get("settings", {}),
+            }
+
+    token = _request_configs.set(configs) if configs else None
+    try:
+        context = {
+            "agent_key": agent_key,
+            "tool_name": tool_name,
+            "user_role": role_name,
+            "tool_params": tool_args or {},
+            "tenant_id": tenant_id,
+        }
+        for guard in guards:
+            result = await guard.check("", context)
+            if not result.passed:
+                return {
+                    "allowed": False, "action": result.action,
+                    "message": result.message, "details": result.details,
+                }
+        return {
+            "allowed": True, "action": "pass",
+            "message": "All tool RBAC checks passed", "details": {},
+        }
+    finally:
+        if token is not None:
+            _request_configs.reset(token)
 
 
 def _build_stream_payload(body: dict, messages: list[dict]) -> tuple[str, dict]:
@@ -447,13 +532,36 @@ async def shield_chat_completions(request: Request):
             response_format=body.get("response_format"),
         )
 
-    # Extract response text
-    choices = llm_data.get("choices", [])
-    if choices:
-        llm_response_text = choices[0].get("message", {}).get("content", "")
+    # Extract response text and tool calls
+    llm_response_text, tool_calls = _extract_tool_calls(llm_data)
     usage = llm_data.get("usage")
 
-    # Run output pipeline
+    # --- Tool RBAC validation (if LLM returned tool_calls) ---
+    tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
+    tool_results: list[dict] = []
+    for tc in tool_calls:
+        tool_name = tc["name"]
+        # Kill switch — immediately block disabled tools
+        if KILLSWITCH_ENABLED and tenant_id and is_tool_disabled(tenant_id, tool_name):
+            rbac = {
+                "allowed": False, "action": "block",
+                "message": f"Tool '{tool_name}' is disabled via kill switch",
+                "details": {"source": "tool_killswitch"},
+            }
+        else:
+            rbac = await _check_tool_call_rbac(
+                tool_name, tc["arguments"], agent_key, role_name, tenant_id, tenant_config,
+            )
+        tool_results.append({
+            "tool_call_id": tc.get("id", ""),
+            "tool_name": tool_name,
+            "arguments": tc["arguments"],
+            "rbac": rbac,
+        })
+
+    has_blocked_tools = any(not t["rbac"]["allowed"] for t in tool_results)
+
+    # Run output pipeline on text content
     output_context = {**context, "stage": "output"}
     output_result = await run_output_pipeline(llm_response_text, output_context)
 
@@ -477,11 +585,11 @@ async def shield_chat_completions(request: Request):
                     "blocked": True,
                     "block_reason": "; ".join(triggered),
                     "session_id": "",
-                    "tool_calls": [],
-                    "tool_call_count": 0,
+                    "tool_calls": tool_results,
+                    "tool_call_count": len(tool_results),
                     "input_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in input_result.results],
                     "output_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in output_result.results],
-                    "usage": {},
+                    "usage": usage or {},
                 },
             }
         )
@@ -501,6 +609,7 @@ async def shield_chat_completions(request: Request):
                     else "Blocked by output guardrail"
                 ),
                 "guardrail_results": output_result.model_dump(),
+                "tool_calls": tool_results,
             },
         )
 
@@ -509,18 +618,19 @@ async def shield_chat_completions(request: Request):
         if r.details and "redacted_text" in r.details:
             llm_response_text = r.details["redacted_text"]
 
-    # Log successful request
+    # Log request
     triggered = [
         r.guardrail_name
         for r in (input_result.results + output_result.results)
         if not r.passed
     ]
+    action_taken = "block" if has_blocked_tools else ("warn" if triggered else "pass")
     await audit_logger.log(
         {
             "agent_key": agent_key,
             "endpoint": "/v1/shield/chat/completions",
             "input_text": last_user_msg,
-            "action_taken": "pass" if not triggered else "warn",
+            "action_taken": action_taken,
             "guardrails_triggered": triggered,
             "latency_ms": round(latency_ms, 2),
             "metadata": {
@@ -531,20 +641,27 @@ async def shield_chat_completions(request: Request):
                 "blocked": False,
                 "block_reason": None,
                 "session_id": "",
-                "tool_calls": [],
-                "tool_call_count": 0,
+                "tool_calls": tool_results,
+                "tool_call_count": len(tool_results),
                 "input_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in input_result.results],
                 "output_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in output_result.results],
-                "usage": {},
+                "usage": usage or {},
             },
         }
     )
 
-    response = ShieldResponse(
+    response_data = ShieldResponse(
         text=llm_response_text,
         usage=usage,
         inference_time_ms=round(latency_ms, 2),
         guardrail_results=output_result,
         blocked=False,
-    )
-    return response.model_dump()
+    ).model_dump()
+
+    # Attach tool call RBAC results to response
+    if tool_results:
+        response_data["tool_calls"] = tool_results
+        response_data["has_blocked_tools"] = has_blocked_tools
+        response_data["all_tools_allowed"] = not has_blocked_tools
+
+    return response_data

@@ -13,6 +13,8 @@ from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuard
 from guardrails.agentic.tool.tool_output_sanitization import ToolOutputSanitizationGuardrail
 from guardrails.agentic.tool.sensitive_action_confirmation import SensitiveActionConfirmationGuardrail
 from guardrails.agentic.identity.cert_identity import CertIdentityGuardrail
+from guardrails.agentic.rbac_guard import RBACGuard
+from guardrails.agentic.data_access_guard import DataAccessGuard
 from guardrails.base import _request_configs
 import asyncio
 from core.feature_flags import (
@@ -39,6 +41,8 @@ from storage.agentic_control_plane import (
 router = APIRouter(prefix="/v1/shield/tool", tags=["tool"])
 
 _CHECK_GUARDS = [
+    ("rbac_guard", RBACGuard),
+    ("data_access_guard", DataAccessGuard),
     ("tool_allowlist", ToolAllowlistGuardrail),
     ("tool_use_control", ToolUseControlGuardrail),
     ("tool_call_rate_limiting", ToolCallRateLimitingGuardrail),

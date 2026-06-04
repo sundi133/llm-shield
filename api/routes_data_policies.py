@@ -56,10 +56,23 @@ class RoleDataPolicy(BaseModel):
     output_rules: List[str] = []
 
 
+class ScopeMapping(BaseModel):
+    """Maps a tool parameter value to a data scope name for fast-tier RBAC.
+
+    Example: parameter="query_type", values={"billing": "billing", "history": "medical_history"}
+    When the LLM calls patient_lookup(query_type="billing"), the resolved scope "billing"
+    is checked against the role's allowed_data_scopes at the fast tier.
+    """
+    parameter: str                          # tool parameter name (e.g., "query_type")
+    values: Dict[str, str] = {}             # param value → scope name mapping
+    default_scope: Optional[str] = None     # scope when value not in map (None = skip)
+
+
 class ToolDataPolicy(BaseModel):
     tool_name: str
     sanitization_rules: List[DataSanitizationRule] = []
     role_policies: List[RoleDataPolicy] = []
+    scope_mappings: List[ScopeMapping] = []  # fast-tier parameter → scope resolution
     compliance_framework: Optional[str] = None  # hipaa, pci_dss, gdpr
     audit_required: bool = False
     retention_days: Optional[int] = None
