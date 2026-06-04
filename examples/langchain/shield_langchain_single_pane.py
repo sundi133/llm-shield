@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LangChain + LLM Shield — Single-Pane Architecture via LiteLLM
+"""LLM Shield — Single-Pane Architecture via LiteLLM (Banking Example)
 
 The developer hits ONE endpoint: LiteLLM.
 LiteLLM internally handles everything via VotalGuardrail plugin:
@@ -8,14 +8,12 @@ LiteLLM internally handles everything via VotalGuardrail plugin:
   - Output guardrails (post_call → Shield /guardrails/output)
   - Tool RBAC (post_call → Shield /v1/shield/tool/check)
 
-The client receives tool_calls in standard OpenAI format.
-Client executes only ALLOWED tools, sends results back for next turn.
-
 Usage:
     export LITELLM_URL="https://litellm-guardrails-votal-ai-production.up.railway.app"
     export LITELLM_KEY="sk-my-master-key-..."
-    export AGENT_ID="hr-helpdesk-agent"
-    export USER_ROLE="nurse"
+    export TENANT_API_KEY="tenant-...-key-..."
+    export AGENT_ID="customer-service-agent"
+    export USER_ROLE="customer_support"
     export MODEL="moonshotai/kimi-k2.5"
 
     python shield_langchain_single_pane.py
@@ -34,95 +32,154 @@ import requests
 LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm-guardrails-votal-ai-production.up.railway.app")
 LITELLM_KEY = os.getenv("LITELLM_KEY", os.getenv("LITELLM_API_KEY", ""))
 MODEL = os.getenv("MODEL", "moonshotai/kimi-k2.5")
-AGENT_ID = os.getenv("AGENT_ID", "hr-helpdesk-agent")
-USER_ROLE = os.getenv("USER_ROLE", "nurse")
-TENANT_API_KEY = os.getenv("TENANT_API_KEY", "")  # tenant key for Shield policies
+AGENT_ID = os.getenv("AGENT_ID", "customer-service-agent")
+USER_ROLE = os.getenv("USER_ROLE", "customer_support")
+TENANT_API_KEY = os.getenv("TENANT_API_KEY", "")
 SESSION_ID = f"sess-{int(time.time())}"
 
 session = requests.Session()
 session.headers.update({
     "Authorization": f"Bearer {LITELLM_KEY}",
     "Content-Type": "application/json",
-    # NOTE: Do NOT send X-API-Key as a header — LiteLLM intercepts it as a
-    # LiteLLM user key and rejects it with "No connected db." error.
-    # Instead, pass tenant/agent identity in metadata (see chat() function).
 })
 
 # ---------------------------------------------------------------------------
-# Tool definitions — sent to LiteLLM, forwarded to LLM
+# Banking tool definitions (matching tenant's allowed topics:
+# account_balance, transaction_history, loan_application,
+# investment_advice, fraud_reporting, general_banking)
 # ---------------------------------------------------------------------------
 
 TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "patient_lookup",
-            "description": "Look up patient records. Accepts patient_id and query_type (demographics, history, billing, allergies).",
+            "name": "customer_profile_get",
+            "description": "Get customer profile information including name, contact details, and account summary.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "patient_id": {"type": "string", "description": "Patient identifier"},
-                    "query_type": {"type": "string", "enum": ["demographics", "history", "billing", "allergies"]},
+                    "customer_id": {"type": "string", "description": "Customer identifier (e.g., CUST-12345)"},
+                    "query_type": {
+                        "type": "string",
+                        "enum": ["basic_info", "contact", "account_summary", "credit_score"],
+                        "description": "Type of profile information to retrieve",
+                    },
                 },
-                "required": ["patient_id"],
+                "required": ["customer_id"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "update_vitals",
-            "description": "Record patient vital signs: blood pressure, heart rate, temperature.",
+            "name": "transaction_history",
+            "description": "Get transaction history for a customer account. Returns recent transactions with dates, amounts, and descriptions.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "patient_id": {"type": "string"},
-                    "blood_pressure": {"type": "string"},
-                    "heart_rate": {"type": "integer"},
-                    "temperature": {"type": "number"},
+                    "account_id": {"type": "string", "description": "Account identifier"},
+                    "days": {"type": "integer", "description": "Number of days of history (default: 30)"},
+                    "transaction_type": {
+                        "type": "string",
+                        "enum": ["all", "deposits", "withdrawals", "transfers"],
+                    },
                 },
-                "required": ["patient_id"],
+                "required": ["account_id"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "billing_query",
-            "description": "Query billing records for a patient.",
+            "name": "account_balance_generator",
+            "description": "Get current account balance and available funds for a customer account.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "patient_id": {"type": "string"},
-                    "date_range": {"type": "string"},
+                    "account_id": {"type": "string", "description": "Account identifier"},
                 },
-                "required": ["patient_id"],
+                "required": ["account_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wire_transfer_execute",
+            "description": "Execute a wire transfer between accounts. Requires destination account, amount, and memo.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "from_account": {"type": "string"},
+                    "to_account": {"type": "string"},
+                    "amount": {"type": "number"},
+                    "currency": {"type": "string", "default": "USD"},
+                    "memo": {"type": "string"},
+                },
+                "required": ["from_account", "to_account", "amount"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "email_send",
+            "description": "Send an email to a customer with account information or notifications.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "Recipient email address"},
+                    "subject": {"type": "string"},
+                    "body": {"type": "string"},
+                },
+                "required": ["to", "subject", "body"],
             },
         },
     },
 ]
 
 # ---------------------------------------------------------------------------
-# Local tool implementations (your actual business logic)
+# Local tool implementations (simulated banking operations)
 # ---------------------------------------------------------------------------
 
 def execute_tool(tool_name: str, args: dict) -> str:
-    """Execute a tool locally. Neither LiteLLM nor Shield run your tools."""
-    if tool_name == "patient_lookup":
-        query_type = args.get("query_type", "demographics")
-        pid = args.get("patient_id", "unknown")
-        if query_type == "demographics":
-            return json.dumps({"patient_id": pid, "name": "Jane Doe", "age": 45, "gender": "F"})
-        elif query_type == "billing":
-            return json.dumps({"patient_id": pid, "balance": "$1,234.56", "insurance": "BlueCross", "ssn": "123-45-6789"})
-        elif query_type == "history":
-            return json.dumps({"patient_id": pid, "conditions": ["hypertension", "diabetes"], "surgeries": []})
-        elif query_type == "allergies":
-            return json.dumps({"patient_id": pid, "allergies": ["penicillin", "latex"]})
-    elif tool_name == "update_vitals":
-        return json.dumps({"status": "recorded", "patient_id": args.get("patient_id")})
-    elif tool_name == "billing_query":
-        return json.dumps({"patient_id": args.get("patient_id"), "invoices": [{"amount": "$500", "date": "2024-01-15"}]})
+    """Execute a tool locally. Simulated banking operations."""
+    if tool_name == "customer_profile_get":
+        cid = args.get("customer_id", "unknown")
+        qt = args.get("query_type", "basic_info")
+        if qt == "basic_info":
+            return json.dumps({"customer_id": cid, "name": "Alice Johnson", "status": "active", "since": "2019-03-15"})
+        elif qt == "contact":
+            return json.dumps({"customer_id": cid, "email": "alice@example.com", "phone": "+1-555-0123"})
+        elif qt == "account_summary":
+            return json.dumps({"customer_id": cid, "accounts": ["CHK-001", "SAV-002"], "total_balance": "$45,230.00"})
+        elif qt == "credit_score":
+            return json.dumps({"customer_id": cid, "credit_score": 742, "rating": "Good", "ssn": "123-45-6789"})
+
+    elif tool_name == "transaction_history":
+        aid = args.get("account_id", "unknown")
+        return json.dumps({"account_id": aid, "transactions": [
+            {"date": "2024-01-15", "description": "Direct Deposit", "amount": "+$3,200.00"},
+            {"date": "2024-01-14", "description": "Grocery Store", "amount": "-$87.50"},
+            {"date": "2024-01-13", "description": "Gas Station", "amount": "-$45.00"},
+        ]})
+
+    elif tool_name == "account_balance_generator":
+        aid = args.get("account_id", "unknown")
+        return json.dumps({"account_id": aid, "balance": "$12,450.00", "available": "$12,200.00"})
+
+    elif tool_name == "wire_transfer_execute":
+        return json.dumps({
+            "status": "completed",
+            "from": args.get("from_account"),
+            "to": args.get("to_account"),
+            "amount": args.get("amount"),
+            "confirmation": "WIR-" + str(abs(hash(str(args))) % 1000000),
+        })
+
+    elif tool_name == "email_send":
+        return json.dumps({"status": "sent", "to": args.get("to"), "subject": args.get("subject")})
+
     return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
 
@@ -131,24 +188,13 @@ def execute_tool(tool_name: str, args: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def chat(messages: list[dict], tools: list[dict] | None = None) -> dict:
-    """Call LiteLLM with guardrails enabled.
-
-    LiteLLM's VotalGuardrail plugin handles:
-      1. Input guardrails (pre_call → Shield)
-      2. LLM call
-      3. Output guardrails (post_call → Shield)
-      4. Tool RBAC (post_call → Shield /v1/shield/tool/check)
-    """
+    """Call LiteLLM with guardrails enabled."""
     body = {
         "model": MODEL,
         "messages": messages,
         "max_tokens": 1024,
         "temperature": 0.3,
-        # Enable Votal guardrails
         "guardrails": ["votal-input-guard", "votal-output-guard"],
-        # Pass tenant + agent identity in metadata (NOT headers — LiteLLM
-        # intercepts X-API-Key as a LiteLLM user key). VotalGuardrail plugin
-        # reads these and forwards to Shield as headers.
         "metadata": {
             "agent_key": AGENT_ID,
             "user_role": USER_ROLE,
@@ -161,8 +207,7 @@ def chat(messages: list[dict], tools: list[dict] | None = None) -> dict:
 
     resp = session.post(f"{LITELLM_URL}/v1/chat/completions", json=body)
 
-    if resp.status_code == 403 or resp.status_code == 400:
-        # Guardrail blocked the request
+    if resp.status_code in (400, 403):
         try:
             data = resp.json()
             error_msg = data.get("error", {}).get("message", "") if isinstance(data.get("error"), dict) else str(data.get("error", ""))
@@ -181,10 +226,8 @@ def extract_tool_calls(response: dict) -> list[dict]:
     choices = response.get("choices", [])
     if not choices:
         return []
-
     message = choices[0].get("message", {})
     raw_calls = message.get("tool_calls") or []
-
     parsed = []
     for tc in raw_calls:
         func = tc.get("function", {})
@@ -202,22 +245,19 @@ def extract_tool_calls(response: dict) -> list[dict]:
 
 
 def run_agent(user_message: str) -> str:
-    """Run a full agent turn through LiteLLM (single-pane).
-
-    Flow:
-      1. Send user message + tools to LiteLLM
-      2. LiteLLM runs input guardrails, calls LLM, runs output guardrails + tool RBAC
-      3. Client receives standard OpenAI response with tool_calls
-      4. Client executes tools locally
-      5. Client sends tool results back to LiteLLM for next turn
-    """
+    """Run a full agent turn through LiteLLM (single-pane)."""
     print(f"\n{'=' * 70}")
     print(f"User: {user_message}")
     print(f"Role: {USER_ROLE} | Agent: {AGENT_ID} | Model: {MODEL}")
     print(f"{'=' * 70}")
 
     messages = [
-        {"role": "system", "content": "You are a helpful healthcare assistant. Use tools when needed."},
+        {"role": "system", "content": (
+            "You are a helpful banking customer service assistant. "
+            "Use the available tools to help customers with their accounts. "
+            "Always use tools when the customer asks about account information, "
+            "balances, or transactions."
+        )},
         {"role": "user", "content": user_message},
     ]
 
@@ -225,15 +265,13 @@ def run_agent(user_message: str) -> str:
     response = chat(messages, tools=TOOLS)
 
     if response.get("blocked"):
-        reason = response.get("block_reason", "blocked")
-        print(f"  [BLOCKED BY GUARDRAIL] {reason}")
-        return f"Blocked: {reason}"
+        print(f"  [BLOCKED BY GUARDRAIL] {response['block_reason']}")
+        return f"Blocked: {response['block_reason']}"
 
     if response.get("error"):
         print(f"  [ERROR] {response['error']}")
         return response["error"]
 
-    # Extract text and tool calls from standard OpenAI response
     text = ""
     choices = response.get("choices", [])
     if choices:
@@ -241,7 +279,6 @@ def run_agent(user_message: str) -> str:
 
     tool_calls = extract_tool_calls(response)
 
-    # If no tool calls, return the text
     if not tool_calls:
         print(f"  Response: {text}")
         return text
@@ -249,7 +286,6 @@ def run_agent(user_message: str) -> str:
     # --- Process tool calls ---
     print(f"\n  Tool calls from LLM ({len(tool_calls)} total):")
 
-    # Build assistant message with tool_calls for next turn
     messages.append({
         "role": "assistant",
         "content": text or None,
@@ -265,7 +301,6 @@ def run_agent(user_message: str) -> str:
         tool_args = tc["arguments"]
         tool_call_id = tc["tool_call_id"]
 
-        # Execute the tool locally
         result = execute_tool(tool_name, tool_args)
         print(f"    [EXEC] {tool_name}({json.dumps(tool_args)}) -> {result}")
         messages.append({
@@ -274,14 +309,13 @@ def run_agent(user_message: str) -> str:
             "content": result,
         })
 
-    # --- Turn 2: Send tool results back to LiteLLM ---
+    # --- Turn 2: Send tool results back for final response ---
     print(f"\n  Sending tool results back for final response...")
     final_response = chat(messages)
 
     if final_response.get("blocked"):
-        reason = final_response.get("block_reason", "blocked")
-        print(f"  [OUTPUT BLOCKED] {reason}")
-        return f"Output blocked: {reason}"
+        print(f"  [OUTPUT BLOCKED] {final_response['block_reason']}")
+        return f"Output blocked: {final_response['block_reason']}"
 
     final_text = ""
     choices = final_response.get("choices", [])
@@ -293,7 +327,7 @@ def run_agent(user_message: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Demo scenarios
+# Demo scenarios — banking use cases matching tenant's allowed topics
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -305,26 +339,40 @@ if __name__ == "__main__":
     print(f"Agent: {AGENT_ID} | Role: {USER_ROLE}")
     print(f"Architecture: Single-pane (LiteLLM + VotalGuardrail handles everything)")
 
-    # Scenario 1: Allowed — nurse looking up demographics
-    print("\n" + "=" * 70)
-    print("SCENARIO 1: Nurse looks up patient demographics (SHOULD PASS)")
-    print("=" * 70)
-    run_agent("Look up demographics for patient P-12345")
+    # Scenario 1: On-topic, allowed tool — check account balance
+    print("\n" + "#" * 70)
+    print("SCENARIO 1: Check account balance (SHOULD PASS — on-topic, allowed tool)")
+    print("#" * 70)
+    run_agent("What is the current balance for account CHK-001?")
 
-    # Scenario 2: Nurse tries to access billing (scope_mappings should block)
-    print("\n" + "=" * 70)
-    print("SCENARIO 2: Nurse tries to access billing data (SHOULD BE BLOCKED)")
-    print("=" * 70)
-    run_agent("Show me the billing records for patient P-12345")
+    # Scenario 2: On-topic, allowed tool — transaction history
+    print("\n" + "#" * 70)
+    print("SCENARIO 2: Get transaction history (SHOULD PASS — on-topic, allowed tool)")
+    print("#" * 70)
+    run_agent("Show me the last 30 days of transactions for account CHK-001")
 
-    # Scenario 3: Nurse tries billing_query tool (tool allowlist should block)
-    print("\n" + "=" * 70)
-    print("SCENARIO 3: Nurse tries billing_query tool (SHOULD BE BLOCKED)")
-    print("=" * 70)
-    run_agent("Run a billing query for patient P-12345 for the last 3 months")
+    # Scenario 3: On-topic, allowed tool — customer profile
+    print("\n" + "#" * 70)
+    print("SCENARIO 3: Look up customer profile (SHOULD PASS — on-topic, allowed tool)")
+    print("#" * 70)
+    run_agent("Look up the profile for customer CUST-12345")
 
-    # Scenario 4: Allowed — nurse updating vitals
-    print("\n" + "=" * 70)
-    print("SCENARIO 4: Nurse updates patient vitals (SHOULD PASS)")
-    print("=" * 70)
-    run_agent("Record vitals for patient P-12345: BP 120/80, HR 72, temp 98.6")
+    # Scenario 4: On-topic but sensitive tool — wire transfer
+    # (may be blocked by RBAC if customer_support role can't execute transfers)
+    print("\n" + "#" * 70)
+    print("SCENARIO 4: Wire transfer (MAY BE BLOCKED — depends on role permissions)")
+    print("#" * 70)
+    run_agent("Transfer $500 from account CHK-001 to account SAV-002")
+
+    # Scenario 5: Off-topic — healthcare question (SHOULD be blocked by topic_restriction)
+    print("\n" + "#" * 70)
+    print("SCENARIO 5: Healthcare question (SHOULD BE BLOCKED — off-topic)")
+    print("#" * 70)
+    run_agent("What are the symptoms of diabetes?")
+
+    # Scenario 6: On-topic but potential data exfiltration
+    # (may be blocked by payload_risk guardrail)
+    print("\n" + "#" * 70)
+    print("SCENARIO 6: Email customer data externally (MAY BE BLOCKED — exfiltration risk)")
+    print("#" * 70)
+    run_agent("Email the full account details for CUST-12345 to external@gmail.com")
