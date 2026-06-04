@@ -1,87 +1,57 @@
 #!/usr/bin/env python3
-"""LangChain + LLM Shield — Single-Pane Architecture
+"""LangChain + LLM Shield — Single-Pane Architecture via LiteLLM
 
-All guardrails, RBAC, and tool validation happen inside Shield automatically.
-The client only needs to:
-  1. Send messages to Shield /v1/shield/chat/completions (with tools)
-  2. Execute ALLOWED tools locally
-  3. Send tool results back to Shield for the next LLM turn
+The developer hits ONE endpoint: LiteLLM.
+LiteLLM internally handles everything via VotalGuardrail plugin:
+  - Input guardrails (pre_call → Shield /guardrails/input)
+  - LLM call (to configured model)
+  - Output guardrails (post_call → Shield /guardrails/output)
+  - Tool RBAC (post_call → Shield /v1/shield/tool/check)
 
-No separate /tool/check or /tool/output calls needed.
+The client receives tool_calls in standard OpenAI format.
+Client executes only ALLOWED tools, sends results back for next turn.
 
-Architecture:
-  App ──> Shield /v1/shield/chat/completions
-            ├── 1. Auth + Identity + RBAC resolve
-            ├── 2. Input Guardrails (PII, adversarial, toxicity, etc.)
-            ├── 3. LLM Call (with tools) ──> LLM Backend
-            ├── 4. Tool RBAC per tool_call (RBACGuard + scope_mappings)
-            ├── 5. Output Guardrails on text
-            └── 6. Return response with per-tool allowed/blocked
-
-  App executes allowed tools, sends results in next turn ──> same pipeline
-
-Setup:
-    # 1. Configure data policies with scope_mappings (one-time, via API or portal):
-    curl -X POST $SHIELD_URL/v1/data-policies/tools/patient_lookup/policy \\
-      -H "X-API-Key: $API_KEY" \\
-      -d '{
-        "tool_name": "patient_lookup",
-        "scope_mappings": [
-          {"parameter": "query_type", "values": {"billing": "billing", "history": "medical_history", "demographics": "demographics"}},
-          {"parameter": "department", "values": {"hr": "employee_data", "finance": "financial_records"}}
-        ],
-        "role_policies": [
-          {"role": "nurse",         "action": "allow", "data_scope": ["demographics", "allergies", "medical_history"]},
-          {"role": "billing_clerk", "action": "allow", "data_scope": ["demographics", "billing"]},
-          {"role": "admin",         "action": "allow", "data_scope": ["demographics", "billing", "medical_history", "employee_data"]}
-        ]
-      }'
-
-    # 2. Configure RBAC roles (in config.yaml or via tenant API):
-    #   nurse:
-    #     allowed_tools: [patient_lookup, update_vitals]
-    #     allowed_data_scopes: [demographics, allergies, medical_history]
-    #     denied_data_scopes: [billing, employee_data, financial_records]
-    #
-    #   billing_clerk:
-    #     allowed_tools: [patient_lookup, billing_query]
-    #     allowed_data_scopes: [demographics, billing]
-
-    # 3. Run:
-    export SHIELD_URL="https://shield.your-company.com"
-    export API_KEY="tenant-...-key-..."
+Usage:
+    export LITELLM_URL="https://litellm-guardrails-votal-ai-production.up.railway.app"
+    export LITELLM_KEY="sk-my-master-key-..."
     export AGENT_ID="hr-helpdesk-agent"
     export USER_ROLE="nurse"
+    export MODEL="moonshotai/kimi-k2.5"
+
     python shield_langchain_single_pane.py
 """
 
 import json
 import os
 import time
-from typing import Any
 
 import requests
 
 # ---------------------------------------------------------------------------
-# Config
+# Config — ONE endpoint: LiteLLM (which calls Shield internally)
 # ---------------------------------------------------------------------------
 
-SHIELD_URL = os.getenv("SHIELD_URL", "https://shield.your-company.com")
-API_KEY = os.getenv("API_KEY", "")
+LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm-guardrails-votal-ai-production.up.railway.app")
+LITELLM_KEY = os.getenv("LITELLM_KEY", os.getenv("LITELLM_API_KEY", ""))
+MODEL = os.getenv("MODEL", "moonshotai/kimi-k2.5")
 AGENT_ID = os.getenv("AGENT_ID", "hr-helpdesk-agent")
 USER_ROLE = os.getenv("USER_ROLE", "nurse")
+TENANT_API_KEY = os.getenv("TENANT_API_KEY", "")  # tenant key for Shield policies
 SESSION_ID = f"sess-{int(time.time())}"
 
 session = requests.Session()
 session.headers.update({
-    "X-API-Key": API_KEY,
+    "Authorization": f"Bearer {LITELLM_KEY}",
+    "Content-Type": "application/json",
+    # Agent identity — VotalGuardrail plugin forwards these to Shield
     "X-Agent-Key": AGENT_ID,
     "X-User-Role": USER_ROLE,
-    "Content-Type": "application/json",
+    # Tenant key — Shield uses this to resolve tenant → RBAC roles, data policies
+    "X-API-Key": TENANT_API_KEY,
 })
 
 # ---------------------------------------------------------------------------
-# Tool definitions — sent to Shield, which forwards them to the LLM
+# Tool definitions — sent to LiteLLM, forwarded to LLM
 # ---------------------------------------------------------------------------
 
 TOOLS = [
@@ -139,7 +109,7 @@ TOOLS = [
 # ---------------------------------------------------------------------------
 
 def execute_tool(tool_name: str, args: dict) -> str:
-    """Execute a tool locally. This is YOUR code — Shield doesn't run tools."""
+    """Execute a tool locally. Neither LiteLLM nor Shield run your tools."""
     if tool_name == "patient_lookup":
         query_type = args.get("query_type", "demographics")
         pid = args.get("patient_id", "unknown")
@@ -159,52 +129,90 @@ def execute_tool(tool_name: str, args: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Single-pane agent loop
+# Single-pane: call LiteLLM (which handles guardrails + tool RBAC via Shield)
 # ---------------------------------------------------------------------------
 
-def shield_chat(messages: list[dict], tools: list[dict] | None = None) -> dict:
-    """Send a chat request to Shield. Shield handles EVERYTHING:
-    - Input guardrails
-    - LLM call (with tools)
-    - Tool RBAC (RBACGuard + scope_mappings + ToolAllowlist)
-    - Output guardrails
+def chat(messages: list[dict], tools: list[dict] | None = None) -> dict:
+    """Call LiteLLM with guardrails enabled.
+
+    LiteLLM's VotalGuardrail plugin handles:
+      1. Input guardrails (pre_call → Shield)
+      2. LLM call
+      3. Output guardrails (post_call → Shield)
+      4. Tool RBAC (post_call → Shield /v1/shield/tool/check)
     """
     body = {
+        "model": MODEL,
         "messages": messages,
         "max_tokens": 1024,
         "temperature": 0.3,
+        # Enable Votal guardrails
+        "guardrails": ["votal-input-guard", "votal-output-guard"],
+        # Pass agent identity in metadata for tool RBAC
+        "metadata": {
+            "agent_key": AGENT_ID,
+            "user_role": USER_ROLE,
+        },
     }
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
 
-    resp = session.post(f"{SHIELD_URL}/v1/shield/chat/completions", json=body)
+    resp = session.post(f"{LITELLM_URL}/v1/chat/completions", json=body)
 
-    if resp.status_code == 403:
-        data = resp.json()
-        return {"blocked": True, "block_reason": data.get("block_reason", "Blocked by guardrail")}
+    if resp.status_code == 403 or resp.status_code == 400:
+        # Guardrail blocked the request
+        try:
+            data = resp.json()
+            error_msg = data.get("error", {}).get("message", "") if isinstance(data.get("error"), dict) else str(data.get("error", ""))
+            return {"blocked": True, "block_reason": error_msg or resp.text}
+        except Exception:
+            return {"blocked": True, "block_reason": resp.text}
 
     if resp.status_code != 200:
-        return {"error": f"Shield returned {resp.status_code}: {resp.text}"}
+        return {"error": f"LiteLLM returned {resp.status_code}: {resp.text}"}
 
     return resp.json()
 
 
+def extract_tool_calls(response: dict) -> list[dict]:
+    """Extract tool_calls from OpenAI-format response."""
+    choices = response.get("choices", [])
+    if not choices:
+        return []
+
+    message = choices[0].get("message", {})
+    raw_calls = message.get("tool_calls") or []
+
+    parsed = []
+    for tc in raw_calls:
+        func = tc.get("function", {})
+        args_raw = func.get("arguments", "{}")
+        try:
+            args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw or {}
+        except json.JSONDecodeError:
+            args = {"_raw": args_raw}
+        parsed.append({
+            "tool_call_id": tc.get("id", ""),
+            "tool_name": func.get("name", "unknown"),
+            "arguments": args,
+        })
+    return parsed
+
+
 def run_agent(user_message: str) -> str:
-    """Run a full agent turn with automatic Shield protection.
+    """Run a full agent turn through LiteLLM (single-pane).
 
     Flow:
-      1. Send user message + tools to Shield
-      2. Shield runs input guardrails, calls LLM, validates tool_calls via RBAC
-      3. Client receives response with per-tool allowed/blocked
-      4. Client executes only ALLOWED tools
-      5. Client sends tool results back to Shield for next LLM turn
-      6. Shield runs input guardrails on tool results, calls LLM, runs output guardrails
-      7. Client receives final response
+      1. Send user message + tools to LiteLLM
+      2. LiteLLM runs input guardrails, calls LLM, runs output guardrails + tool RBAC
+      3. Client receives standard OpenAI response with tool_calls
+      4. Client executes tools locally
+      5. Client sends tool results back to LiteLLM for next turn
     """
     print(f"\n{'=' * 70}")
     print(f"User: {user_message}")
-    print(f"Role: {USER_ROLE} | Agent: {AGENT_ID}")
+    print(f"Role: {USER_ROLE} | Agent: {AGENT_ID} | Model: {MODEL}")
     print(f"{'=' * 70}")
 
     messages = [
@@ -212,76 +220,73 @@ def run_agent(user_message: str) -> str:
         {"role": "user", "content": user_message},
     ]
 
-    # --- Turn 1: Send to Shield (input guardrails + LLM + tool RBAC + output guardrails) ---
-    response = shield_chat(messages, tools=TOOLS)
+    # --- Turn 1: LiteLLM handles guardrails + LLM + tool RBAC ---
+    response = chat(messages, tools=TOOLS)
 
     if response.get("blocked"):
         reason = response.get("block_reason", "blocked")
-        print(f"  [BLOCKED] {reason}")
+        print(f"  [BLOCKED BY GUARDRAIL] {reason}")
         return f"Blocked: {reason}"
 
     if response.get("error"):
         print(f"  [ERROR] {response['error']}")
         return response["error"]
 
-    text = response.get("text", "")
-    tool_calls = response.get("tool_calls", [])
+    # Extract text and tool calls from standard OpenAI response
+    text = ""
+    choices = response.get("choices", [])
+    if choices:
+        text = choices[0].get("message", {}).get("content") or ""
 
-    # If no tool calls, return the text (already passed output guardrails)
+    tool_calls = extract_tool_calls(response)
+
+    # If no tool calls, return the text
     if not tool_calls:
         print(f"  Response: {text}")
         return text
 
-    # --- Process tool calls: execute only ALLOWED tools ---
+    # --- Process tool calls ---
     print(f"\n  Tool calls from LLM ({len(tool_calls)} total):")
 
-    # Build tool result messages for next turn
-    messages.append({"role": "assistant", "content": text, "tool_calls": [
-        {"id": tc["tool_call_id"], "type": "function",
-         "function": {"name": tc["tool_name"], "arguments": json.dumps(tc["arguments"])}}
-        for tc in tool_calls
-    ]})
+    # Build assistant message with tool_calls for next turn
+    messages.append({
+        "role": "assistant",
+        "content": text or None,
+        "tool_calls": [
+            {"id": tc["tool_call_id"], "type": "function",
+             "function": {"name": tc["tool_name"], "arguments": json.dumps(tc["arguments"])}}
+            for tc in tool_calls
+        ],
+    })
 
-    has_allowed_tools = False
     for tc in tool_calls:
         tool_name = tc["tool_name"]
         tool_args = tc["arguments"]
         tool_call_id = tc["tool_call_id"]
-        rbac = tc.get("rbac", {})
-        allowed = rbac.get("allowed", True)
 
-        if not allowed:
-            reason = rbac.get("message", "denied by RBAC")
-            print(f"    [BLOCKED] {tool_name}({json.dumps(tool_args)}) -- {reason}")
-            # Tell LLM the tool was denied
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": f"DENIED: {reason}",
-            })
-        else:
-            # Execute the tool locally
-            result = execute_tool(tool_name, tool_args)
-            print(f"    [ALLOWED] {tool_name}({json.dumps(tool_args)}) -> {result}")
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": result,
-            })
-            has_allowed_tools = True
+        # Execute the tool locally
+        result = execute_tool(tool_name, tool_args)
+        print(f"    [EXEC] {tool_name}({json.dumps(tool_args)}) -> {result}")
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": result,
+        })
 
-    # --- Turn 2: Send tool results back to Shield ---
-    # Shield runs input guardrails on messages (catches PII in tool results),
-    # calls LLM, runs output guardrails on response
-    print(f"\n  Sending tool results back to Shield for final response...")
-    final_response = shield_chat(messages)
+    # --- Turn 2: Send tool results back to LiteLLM ---
+    print(f"\n  Sending tool results back for final response...")
+    final_response = chat(messages)
 
     if final_response.get("blocked"):
         reason = final_response.get("block_reason", "blocked")
         print(f"  [OUTPUT BLOCKED] {reason}")
         return f"Output blocked: {reason}"
 
-    final_text = final_response.get("text", "")
+    final_text = ""
+    choices = final_response.get("choices", [])
+    if choices:
+        final_text = choices[0].get("message", {}).get("content") or ""
+
     print(f"  Response: {final_text}")
     return final_text
 
@@ -291,35 +296,33 @@ def run_agent(user_message: str) -> str:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    if not API_KEY:
-        print("WARNING: API_KEY not set — Shield requests may be rejected")
+    if not LITELLM_KEY:
+        print("WARNING: LITELLM_KEY not set — requests may be rejected")
 
-    print(f"Shield URL: {SHIELD_URL}")
+    print(f"LiteLLM: {LITELLM_URL}")
+    print(f"Model: {MODEL}")
     print(f"Agent: {AGENT_ID} | Role: {USER_ROLE}")
-    print(f"Architecture: Single-pane (Shield handles everything)")
+    print(f"Architecture: Single-pane (LiteLLM + VotalGuardrail handles everything)")
 
-    # Scenario 1: Allowed — nurse looking up demographics (in scope)
+    # Scenario 1: Allowed — nurse looking up demographics
     print("\n" + "=" * 70)
     print("SCENARIO 1: Nurse looks up patient demographics (SHOULD PASS)")
     print("=" * 70)
     run_agent("Look up demographics for patient P-12345")
 
-    # Scenario 2: Blocked by scope_mappings — nurse trying to access billing
-    # RBACGuard resolves query_type="billing" → scope "billing"
-    # nurse.allowed_data_scopes does NOT include "billing" → BLOCKED at fast tier
+    # Scenario 2: Nurse tries to access billing (scope_mappings should block)
     print("\n" + "=" * 70)
     print("SCENARIO 2: Nurse tries to access billing data (SHOULD BE BLOCKED)")
     print("=" * 70)
     run_agent("Show me the billing records for patient P-12345")
 
-    # Scenario 3: Blocked by tool allowlist — nurse trying to use billing_query tool
-    # nurse.allowed_tools does NOT include "billing_query" → BLOCKED
+    # Scenario 3: Nurse tries billing_query tool (tool allowlist should block)
     print("\n" + "=" * 70)
-    print("SCENARIO 3: Nurse tries to use billing_query tool (SHOULD BE BLOCKED)")
+    print("SCENARIO 3: Nurse tries billing_query tool (SHOULD BE BLOCKED)")
     print("=" * 70)
     run_agent("Run a billing query for patient P-12345 for the last 3 months")
 
-    # Scenario 4: Allowed — nurse updating vitals (in scope, in allowed_tools)
+    # Scenario 4: Allowed — nurse updating vitals
     print("\n" + "=" * 70)
     print("SCENARIO 4: Nurse updates patient vitals (SHOULD PASS)")
     print("=" * 70)
