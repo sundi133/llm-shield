@@ -1,0 +1,77 @@
+# =============================================================================
+# Rafay.co Terraform deployment — example variable values
+# Copy to terraform.tfvars and fill in your values.
+# =============================================================================
+
+# --- Rafay credentials -------------------------------------------------
+rafay_api_key    = "your-rafay-api-key"
+rafay_api_secret = "your-rafay-api-secret"
+
+# --- Cluster -----------------------------------------------------------
+rafay_project_name = "llm-shield"
+cluster_name       = "my-rafay-cluster"
+kubeconfig_path    = "~/.kube/config"
+kubeconfig_context = ""          # leave empty for current-context
+namespace          = "llm-shield"
+
+# --- Container images --------------------------------------------------
+shield_image = "docker.io/sundi133/llm-shield:latest"
+admin_image  = "docker.io/sundi133/llm-shield-admin:latest"
+vllm_image   = "vllm/vllm-openai:latest"
+redis_image  = "redis:7-alpine"
+
+# --- Shield App --------------------------------------------------------
+shield_replicas     = 2
+shield_min_replicas = 2
+shield_max_replicas = 10
+shield_workers      = 32
+shield_cpu_request  = "1"
+shield_cpu_limit    = "4"
+shield_memory_request = "2Gi"
+shield_memory_limit   = "8Gi"
+shield_host         = "shield.example.com"     # ingress hostname
+
+# --- vLLM (GPU) -------------------------------------------------------
+vllm_model_name        = "votal-ai/vai35-4B-v2"
+vllm_gpu_count         = 1
+gpu_memory_utilization = "0.85"
+vllm_max_model_len     = "8196"
+vllm_max_num_seqs      = "48"
+vllm_cpu_request       = "4"
+vllm_cpu_limit         = "8"
+vllm_memory_request    = "16Gi"
+vllm_memory_limit      = "32Gi"
+gpu_node_pool_label    = "nvidia.com/gpu.present"
+
+# --- Admin Portal ------------------------------------------------------
+admin_replicas     = 1
+admin_min_replicas = 1
+admin_max_replicas = 6
+admin_host         = "admin.example.com"       # ingress hostname
+
+# --- Redis -------------------------------------------------------------
+redis_storage_size  = "10Gi"
+redis_max_memory    = "8gb"
+redis_cpu_request   = "500m"
+redis_cpu_limit     = "2"
+redis_memory_request = "4Gi"
+redis_memory_limit   = "9Gi"
+
+# --- Secrets (sensitive — never commit real values) --------------------
+shield_admin_key           = "change-me-admin-key"
+upstash_redis_rest_url     = ""    # leave empty to use in-cluster Redis
+upstash_redis_rest_token   = ""
+playground_llm_base_url    = "https://your-litellm-proxy/v1"
+playground_llm_master_key  = "sk-your-key"
+playground_llm_model       = "moonshotai/kimi-k2.5"
+playground_shield_endpoint = "https://shield.example.com"
+playground_shield_token    = "your-shield-token"
+
+# --- HTTP Proxy (on-prem) ----------------------------------------------
+http_proxy  = ""                   # e.g. "http://proxy.corp.internal:8080"
+https_proxy = ""                   # defaults to http_proxy if empty
+no_proxy    = "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local,redis,vllm"
+
+# --- Ingress -----------------------------------------------------------
+ingress_class_name = "nginx"
+tls_secret_name    = ""            # leave empty to skip TLS
