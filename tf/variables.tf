@@ -8,10 +8,10 @@ variable "rafay_api_key" {
   sensitive   = true
 }
 
-variable "rafay_api_secret" {
-  description = "Rafay API secret"
+variable "rafay_rest_endpoint" {
+  description = "Rafay API endpoint (e.g. https://console.rafay.dev)"
   type        = string
-  sensitive   = true
+  default     = "https://console.rafay.dev"
 }
 
 variable "rafay_project_name" {

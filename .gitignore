@@ -40,5 +40,12 @@ htmlcov/
 # Tenant env files (auto-generated)
 tenant-*.env
 
+# Terraform
+tf/.terraform/
+tf/*.tfstate
+tf/*.tfstate.backup
+tf/*.tfvars
+!tf/terraform.tfvars.example
+
 # Scripts
 git_loc_by_author.sh

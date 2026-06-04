@@ -3,10 +3,10 @@
 # =============================================================================
 
 # --- Redis: only accept from pods in the same namespace ----------------
-resource "kubernetes_network_policy" "redis_ingress" {
+resource "kubernetes_network_policy_v1" "redis_ingress" {
   metadata {
     name      = "redis-ingress"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
 
     labels = {
       app = "redis"
@@ -36,10 +36,10 @@ resource "kubernetes_network_policy" "redis_ingress" {
 }
 
 # --- vLLM: only accept from Shield app pods ----------------------------
-resource "kubernetes_network_policy" "vllm_ingress" {
+resource "kubernetes_network_policy_v1" "vllm_ingress" {
   metadata {
     name      = "vllm-ingress"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
 
     labels = {
       app = "vllm"
@@ -73,10 +73,10 @@ resource "kubernetes_network_policy" "vllm_ingress" {
 }
 
 # --- Shield: accept from ingress controller + namespace pods -----------
-resource "kubernetes_network_policy" "shield_ingress" {
+resource "kubernetes_network_policy_v1" "shield_ingress" {
   metadata {
     name      = "shield-ingress"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
 
     labels = {
       app = "shield"
@@ -116,10 +116,10 @@ resource "kubernetes_network_policy" "shield_ingress" {
 }
 
 # --- Admin: accept from ingress controller + namespace pods ------------
-resource "kubernetes_network_policy" "admin_ingress" {
+resource "kubernetes_network_policy_v1" "admin_ingress" {
   metadata {
     name      = "admin-ingress"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
 
     labels = {
       app = "shield-admin"

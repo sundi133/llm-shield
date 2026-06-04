@@ -1,26 +1,26 @@
 output "namespace" {
   description = "Kubernetes namespace for LLM Shield"
-  value       = kubernetes_namespace.llm_shield.metadata[0].name
+  value       = kubernetes_namespace_v1.llm_shield.metadata[0].name
 }
 
 output "redis_service" {
   description = "Redis internal service endpoint"
-  value       = "redis://redis.${kubernetes_namespace.llm_shield.metadata[0].name}.svc.cluster.local:6379"
+  value       = "redis://redis.${kubernetes_namespace_v1.llm_shield.metadata[0].name}.svc.cluster.local:6379"
 }
 
 output "vllm_service" {
   description = "vLLM internal service endpoint"
-  value       = "http://vllm.${kubernetes_namespace.llm_shield.metadata[0].name}.svc.cluster.local:8000"
+  value       = "http://vllm.${kubernetes_namespace_v1.llm_shield.metadata[0].name}.svc.cluster.local:8000"
 }
 
 output "shield_service" {
   description = "Shield app internal service endpoint"
-  value       = "http://shield.${kubernetes_namespace.llm_shield.metadata[0].name}.svc.cluster.local:80"
+  value       = "http://shield.${kubernetes_namespace_v1.llm_shield.metadata[0].name}.svc.cluster.local:80"
 }
 
 output "admin_service" {
   description = "Admin portal internal service endpoint"
-  value       = "http://shield-admin.${kubernetes_namespace.llm_shield.metadata[0].name}.svc.cluster.local:8080"
+  value       = "http://shield-admin.${kubernetes_namespace_v1.llm_shield.metadata[0].name}.svc.cluster.local:8080"
 }
 
 output "shield_ingress_host" {

@@ -10,10 +10,10 @@ locals {
   }
 }
 
-resource "kubernetes_deployment" "vllm" {
+resource "kubernetes_deployment_v1" "vllm" {
   metadata {
     name      = "vllm"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.vllm_labels
   }
 
@@ -175,10 +175,10 @@ resource "kubernetes_deployment" "vllm" {
 }
 
 # --- Service (internal only) ------------------------------------------
-resource "kubernetes_service" "vllm" {
+resource "kubernetes_service_v1" "vllm" {
   metadata {
     name      = "vllm"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.vllm_labels
   }
 

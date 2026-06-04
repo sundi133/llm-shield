@@ -11,10 +11,10 @@ locals {
 }
 
 # --- PersistentVolumeClaim ---------------------------------------------
-resource "kubernetes_persistent_volume_claim" "redis_data" {
+resource "kubernetes_persistent_volume_claim_v1" "redis_data" {
   metadata {
     name      = "redis-data"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.redis_labels
   }
 
@@ -30,10 +30,10 @@ resource "kubernetes_persistent_volume_claim" "redis_data" {
 }
 
 # --- Deployment --------------------------------------------------------
-resource "kubernetes_deployment" "redis" {
+resource "kubernetes_deployment_v1" "redis" {
   metadata {
     name      = "redis"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.redis_labels
   }
 
@@ -118,7 +118,7 @@ resource "kubernetes_deployment" "redis" {
           name = "redis-data"
 
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.redis_data.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim_v1.redis_data.metadata[0].name
           }
         }
       }
@@ -127,10 +127,10 @@ resource "kubernetes_deployment" "redis" {
 }
 
 # --- Service -----------------------------------------------------------
-resource "kubernetes_service" "redis" {
+resource "kubernetes_service_v1" "redis" {
   metadata {
     name      = "redis"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.redis_labels
   }
 

@@ -4,8 +4,8 @@
 # =============================================================================
 
 # --- Rafay credentials -------------------------------------------------
-rafay_api_key    = "your-rafay-api-key"
-rafay_api_secret = "your-rafay-api-secret"
+rafay_api_key      = "your-rafay-api-key"
+rafay_rest_endpoint = "https://console.rafay.dev"
 
 # --- Cluster -----------------------------------------------------------
 rafay_project_name = "llm-shield"

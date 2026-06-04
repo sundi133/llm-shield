@@ -10,7 +10,7 @@ resource "rafay_project" "llm_shield" {
 }
 
 # --- Kubernetes namespace ----------------------------------------------
-resource "kubernetes_namespace" "llm_shield" {
+resource "kubernetes_namespace_v1" "llm_shield" {
   metadata {
     name = var.namespace
 

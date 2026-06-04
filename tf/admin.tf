@@ -10,10 +10,10 @@ locals {
   }
 }
 
-resource "kubernetes_deployment" "admin" {
+resource "kubernetes_deployment_v1" "admin" {
   metadata {
     name      = "shield-admin"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.admin_labels
   }
 
@@ -111,7 +111,7 @@ resource "kubernetes_deployment" "admin" {
 
           env_from {
             secret_ref {
-              name = kubernetes_secret.admin_secrets.metadata[0].name
+              name = kubernetes_secret_v1.admin_secrets.metadata[0].name
             }
           }
 
@@ -219,15 +219,15 @@ resource "kubernetes_deployment" "admin" {
   }
 
   depends_on = [
-    kubernetes_deployment.redis,
+    kubernetes_deployment_v1.redis,
   ]
 }
 
 # --- Service -----------------------------------------------------------
-resource "kubernetes_service" "admin" {
+resource "kubernetes_service_v1" "admin" {
   metadata {
     name      = "shield-admin"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.admin_labels
   }
 
@@ -253,7 +253,7 @@ resource "kubernetes_ingress_v1" "admin" {
 
   metadata {
     name      = "shield-admin"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.admin_labels
   }
 
@@ -278,7 +278,7 @@ resource "kubernetes_ingress_v1" "admin" {
 
           backend {
             service {
-              name = kubernetes_service.admin.metadata[0].name
+              name = kubernetes_service_v1.admin.metadata[0].name
               port {
                 number = 8080
               }
@@ -294,7 +294,7 @@ resource "kubernetes_ingress_v1" "admin" {
 resource "kubernetes_horizontal_pod_autoscaler_v2" "admin" {
   metadata {
     name      = "shield-admin"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.admin_labels
   }
 
@@ -302,7 +302,7 @@ resource "kubernetes_horizontal_pod_autoscaler_v2" "admin" {
     scale_target_ref {
       api_version = "apps/v1"
       kind        = "Deployment"
-      name        = kubernetes_deployment.admin.metadata[0].name
+      name        = kubernetes_deployment_v1.admin.metadata[0].name
     }
 
     min_replicas = var.admin_min_replicas

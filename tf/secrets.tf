@@ -1,8 +1,8 @@
 # --- Shield app secrets -------------------------------------------------
-resource "kubernetes_secret" "shield_secrets" {
+resource "kubernetes_secret_v1" "shield_secrets" {
   metadata {
     name      = "shield-secrets"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
 
     labels = {
       "app.kubernetes.io/part-of" = "llm-shield"
@@ -15,10 +15,10 @@ resource "kubernetes_secret" "shield_secrets" {
 }
 
 # --- Admin portal secrets ----------------------------------------------
-resource "kubernetes_secret" "admin_secrets" {
+resource "kubernetes_secret_v1" "admin_secrets" {
   metadata {
     name      = "admin-secrets"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
 
     labels = {
       "app.kubernetes.io/part-of" = "llm-shield"

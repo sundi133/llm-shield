@@ -10,10 +10,10 @@ locals {
   }
 }
 
-resource "kubernetes_deployment" "shield" {
+resource "kubernetes_deployment_v1" "shield" {
   metadata {
     name      = "shield"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.shield_labels
   }
 
@@ -109,7 +109,7 @@ resource "kubernetes_deployment" "shield" {
 
           env_from {
             secret_ref {
-              name = kubernetes_secret.shield_secrets.metadata[0].name
+              name = kubernetes_secret_v1.shield_secrets.metadata[0].name
             }
           }
 
@@ -171,15 +171,15 @@ resource "kubernetes_deployment" "shield" {
   }
 
   depends_on = [
-    kubernetes_deployment.redis,
+    kubernetes_deployment_v1.redis,
   ]
 }
 
 # --- Service -----------------------------------------------------------
-resource "kubernetes_service" "shield" {
+resource "kubernetes_service_v1" "shield" {
   metadata {
     name      = "shield"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.shield_labels
   }
 
@@ -205,7 +205,7 @@ resource "kubernetes_ingress_v1" "shield" {
 
   metadata {
     name      = "shield"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.shield_labels
 
     annotations = {
@@ -235,7 +235,7 @@ resource "kubernetes_ingress_v1" "shield" {
 
           backend {
             service {
-              name = kubernetes_service.shield.metadata[0].name
+              name = kubernetes_service_v1.shield.metadata[0].name
               port {
                 number = 80
               }
@@ -251,7 +251,7 @@ resource "kubernetes_ingress_v1" "shield" {
 resource "kubernetes_horizontal_pod_autoscaler_v2" "shield" {
   metadata {
     name      = "shield"
-    namespace = kubernetes_namespace.llm_shield.metadata[0].name
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
     labels    = local.shield_labels
   }
 
@@ -259,7 +259,7 @@ resource "kubernetes_horizontal_pod_autoscaler_v2" "shield" {
     scale_target_ref {
       api_version = "apps/v1"
       kind        = "Deployment"
-      name        = kubernetes_deployment.shield.metadata[0].name
+      name        = kubernetes_deployment_v1.shield.metadata[0].name
     }
 
     min_replicas = var.shield_min_replicas

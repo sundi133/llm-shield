@@ -15,8 +15,9 @@ terraform {
 
 # --- Rafay provider ---------------------------------------------------
 provider "rafay" {
-  api_key    = var.rafay_api_key
-  api_secret = var.rafay_api_secret
+  api_key      = var.rafay_api_key
+  project      = var.rafay_project_name
+  rest_endpoint = var.rafay_rest_endpoint
 }
 
 # --- Kubernetes provider (uses Rafay-managed cluster) ------------------
