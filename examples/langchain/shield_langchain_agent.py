@@ -220,9 +220,10 @@ def shield_check_tool(tool_name: str, tool_args: dict) -> dict:
     """
     resp = shield.post(f"{SHIELD_URL}/v1/shield/tool/check", json={
         "tool_name": tool_name,
-        "tool_input": tool_args,
+        "tool_params": tool_args,
         "agent_key": AGENT_ID,
         "user_role": USER_ROLE,
+        "session_id": SESSION_ID,
     })
     if resp.status_code != 200:
         return {"allowed": False, "reason": f"Shield error: {resp.status_code}"}
