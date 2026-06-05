@@ -82,10 +82,15 @@ resource "kubernetes_deployment_v1" "shield" {
             value = "vllm"
           }
 
-          # Redis — use in-cluster service
+          # Redis — authenticated in-cluster service
           env {
-            name  = "REDIS_URL"
-            value = "redis://redis:6379"
+            name = "REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.shield_secrets.metadata[0].name
+                key  = "REDIS_URL"
+              }
+            }
           }
 
           env {

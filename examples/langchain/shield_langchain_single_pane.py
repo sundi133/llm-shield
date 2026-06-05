@@ -29,7 +29,7 @@ import requests
 # Config — ONE endpoint: LiteLLM (which calls Shield internally)
 # ---------------------------------------------------------------------------
 
-LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm-guardrails-votal-ai-production.up.railway.app")
+LITELLM_URL = os.getenv("LITELLM_URL", "")
 LITELLM_KEY = os.getenv("LITELLM_KEY", os.getenv("LITELLM_API_KEY", ""))
 MODEL = os.getenv("MODEL", "moonshotai/kimi-k2.5")
 AGENT_ID = os.getenv("AGENT_ID", "customer-service-agent")
@@ -331,6 +331,9 @@ def run_agent(user_message: str) -> str:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    if not LITELLM_URL:
+        print("ERROR: Set LITELLM_URL environment variable")
+        exit(1)
     if not LITELLM_KEY:
         print("WARNING: LITELLM_KEY not set — requests may be rejected")
 

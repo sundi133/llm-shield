@@ -52,6 +52,7 @@ admin_host         = "admin.example.com"       # ingress hostname
 # --- Redis -------------------------------------------------------------
 redis_storage_size  = "10Gi"
 redis_max_memory    = "8gb"
+redis_password      = "change-me-strong-redis-password"  # REQUIRED — no unauthenticated access
 redis_cpu_request   = "500m"
 redis_cpu_limit     = "2"
 redis_memory_request = "4Gi"

@@ -4,7 +4,7 @@ output "namespace" {
 }
 
 output "redis_service" {
-  description = "Redis internal service endpoint"
+  description = "Redis internal service endpoint (password in shield-secrets)"
   value       = "redis://redis.${kubernetes_namespace_v1.llm_shield.metadata[0].name}.svc.cluster.local:6379"
 }
 

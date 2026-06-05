@@ -94,10 +94,15 @@ resource "kubernetes_deployment_v1" "admin" {
             value = "16384"
           }
 
-          # Redis — use in-cluster service
+          # Redis — authenticated in-cluster service
           env {
-            name  = "REDIS_URL"
-            value = "redis://redis:6379"
+            name = "REDIS_URL"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.admin_secrets.metadata[0].name
+                key  = "REDIS_URL"
+              }
+            }
           }
 
           # HTTP proxy for on-prem environments

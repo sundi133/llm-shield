@@ -237,6 +237,12 @@ variable "redis_max_memory" {
   default     = "8gb"
 }
 
+variable "redis_password" {
+  description = "Redis AUTH password (required — no unauthenticated access)"
+  type        = string
+  sensitive   = true
+}
+
 variable "redis_cpu_request" {
   description = "CPU request for Redis"
   type        = string

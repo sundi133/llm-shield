@@ -1,3 +1,19 @@
+# --- Redis secret ------------------------------------------------------
+resource "kubernetes_secret_v1" "redis_secret" {
+  metadata {
+    name      = "redis-secret"
+    namespace = kubernetes_namespace_v1.llm_shield.metadata[0].name
+
+    labels = {
+      "app.kubernetes.io/part-of" = "llm-shield"
+    }
+  }
+
+  data = {
+    REDIS_PASSWORD = var.redis_password
+  }
+}
+
 # --- Shield app secrets -------------------------------------------------
 resource "kubernetes_secret_v1" "shield_secrets" {
   metadata {
@@ -10,7 +26,7 @@ resource "kubernetes_secret_v1" "shield_secrets" {
   }
 
   data = {
-    REDIS_URL = "redis://redis:6379"
+    REDIS_URL = "redis://:${var.redis_password}@redis:6379"
   }
 }
 
@@ -28,6 +44,7 @@ resource "kubernetes_secret_v1" "admin_secrets" {
   data = merge(
     {
       SHIELD_ADMIN_KEY = var.shield_admin_key
+      REDIS_URL        = "redis://:${var.redis_password}@redis:6379"
     },
     # Use in-cluster Redis by default; Upstash overrides if provided
     var.upstash_redis_rest_url != "" ? {

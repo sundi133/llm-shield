@@ -62,6 +62,7 @@ resource "kubernetes_deployment_v1" "redis" {
 
           command = [
             "redis-server",
+            "--requirepass", var.redis_password,
             "--appendonly", "yes",
             "--dir", "/data",
             "--maxmemory", var.redis_max_memory,
@@ -70,6 +71,9 @@ resource "kubernetes_deployment_v1" "redis" {
             "--save", "300 100",
             "--tcp-keepalive", "60",
             "--timeout", "0",
+            "--rename-command", "FLUSHALL \"\"",
+            "--rename-command", "FLUSHDB \"\"",
+            "--rename-command", "CONFIG \"\"",
           ]
 
           port {
@@ -88,9 +92,19 @@ resource "kubernetes_deployment_v1" "redis" {
             }
           }
 
+          env {
+            name = "REDISCLI_AUTH"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.redis_secret.metadata[0].name
+                key  = "REDIS_PASSWORD"
+              }
+            }
+          }
+
           liveness_probe {
             exec {
-              command = ["redis-cli", "ping"]
+              command = ["redis-cli", "-a", "$(REDISCLI_AUTH)", "ping"]
             }
             initial_delay_seconds = 10
             period_seconds        = 15
@@ -100,7 +114,7 @@ resource "kubernetes_deployment_v1" "redis" {
 
           readiness_probe {
             exec {
-              command = ["redis-cli", "ping"]
+              command = ["redis-cli", "-a", "$(REDISCLI_AUTH)", "ping"]
             }
             initial_delay_seconds = 5
             period_seconds        = 5
