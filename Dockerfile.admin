@@ -69,6 +69,7 @@ COPY api/routes_oauth.py api/
 COPY api/routes_oauth_registration.py api/
 COPY api/routes_oidc_admin.py api/
 COPY api/routes_a2a.py api/
+COPY api/routes_agentic_control_plane.py api/
 COPY storage/__init__.py storage/
 COPY storage/tenant_store.py storage/
 COPY storage/tenant_models.py storage/
@@ -84,6 +85,8 @@ COPY storage/webhook_store.py storage/
 COPY storage/revocation.py storage/
 COPY storage/agent_auth_stats.py storage/
 COPY storage/oauth_store.py storage/
+COPY storage/agentic_control_plane.py storage/
+COPY core/telemetry.py core/
 COPY guardrails/__init__.py guardrails/
 COPY guardrails/base.py guardrails/
 COPY guardrails/agentic/__init__.py guardrails/agentic/
