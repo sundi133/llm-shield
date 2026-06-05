@@ -6,6 +6,7 @@ pyyaml
 redis
 upstash-redis
 httpx
+requests
 aiosqlite
 cryptography>=42
 PyJWT[crypto]>=2.8
