@@ -4011,6 +4011,40 @@ if __name__ == "__main__":
         <!-- Alert banners will be inserted here -->
       </div>
 
+      <!-- Approvals Modal -->
+      <div id="ops-approvals-modal" class="modal hidden">
+        <div class="modal-overlay" onclick="closeOpsModal('ops-approvals-modal')"></div>
+        <div class="modal-content" style="width:700px;max-width:90vw;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;">
+          <div class="modal-header">
+            <h3>Pending Approvals</h3>
+            <button onclick="closeOpsModal('ops-approvals-modal')">×</button>
+          </div>
+          <div class="modal-body" id="ops-approvals-modal-body" style="flex:1;overflow-y:auto;min-height:0;padding:1rem 1.5rem;">
+            <div style="text-align:center;color:var(--text-muted);padding:2rem;">Loading...</div>
+          </div>
+          <div class="modal-footer">
+            <button class="small" onclick="loadOperationsCenter(); closeOpsModal('ops-approvals-modal')">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Circuit Breakers Modal -->
+      <div id="ops-breakers-modal" class="modal hidden">
+        <div class="modal-overlay" onclick="closeOpsModal('ops-breakers-modal')"></div>
+        <div class="modal-content" style="width:700px;max-width:90vw;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;">
+          <div class="modal-header">
+            <h3>Circuit Breakers</h3>
+            <button onclick="closeOpsModal('ops-breakers-modal')">×</button>
+          </div>
+          <div class="modal-body" id="ops-breakers-modal-body" style="flex:1;overflow-y:auto;min-height:0;padding:1rem 1.5rem;">
+            <div style="text-align:center;color:var(--text-muted);padding:2rem;">Loading...</div>
+          </div>
+          <div class="modal-footer">
+            <button class="small" onclick="loadOperationsCenter(); closeOpsModal('ops-breakers-modal')">Close</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Essential Status Grid -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:1.5rem;">
         <div class="stat">
@@ -5077,34 +5111,53 @@ setInterval(() => {
   }
 }, 30000);
 
-// ── Simplified Operations Center ──────────────────────────────
-function loadOperationsCenter() {
-  // Load essential operational data only
-  updateOperationsStatus();
-  loadUrgentIssues();
-  loadRecentActivity();
+// ── Operations Center (uses real API data) ───────────────────
+async function loadOperationsCenter() {
+  try {
+    const [approvalData, grantData, breakerData] = await Promise.all([
+      apiCall('/v1/tenant/me/agentic/approvals').catch(() => ({ approvals: [] })),
+      apiCall('/v1/tenant/me/agentic/execution-grants').catch(() => ({ execution_grants: [] })),
+      apiCall('/v1/tenant/me/agentic/circuit-breakers').catch(() => ({ circuit_breakers: {} })),
+    ]);
+
+    const approvals = approvalData.approvals || [];
+    const grants = grantData.execution_grants || [];
+    const breakers = Object.values(breakerData.circuit_breakers || {});
+
+    // Sync to shared runtime state so detail panels stay in sync
+    workflowControlPlaneRuntime.approvals = approvals;
+    workflowControlPlaneRuntime.grants = grants;
+    workflowControlPlaneRuntime.breakers = breakerData.circuit_breakers || {};
+
+    const pendingApprovals = approvals.filter(a => a.status === 'pending').length;
+    const openBreakers = breakers.filter(b => b && b.status === 'open').length;
+    const activeGrants = grants.filter(g => g.status === 'active').length;
+
+    updateOperationsStatus(pendingApprovals, openBreakers, activeGrants);
+    showCriticalAlerts(pendingApprovals, openBreakers);
+    loadUrgentIssues(approvals, breakers, grants);
+    loadRecentActivity(approvals, grants, breakers);
+  } catch (e) {
+    console.error('Operations Center load error:', e);
+  }
 }
 
-function updateOperationsStatus() {
-  // Simulate essential operational metrics
-  const pendingApprovals = Math.floor(Math.random() * 5);
-  const circuitBreakers = Math.floor(Math.random() * 2);
-  const activeGrants = Math.floor(Math.random() * 8);
+function updateOperationsStatus(pendingApprovals, circuitBreakers, activeGrants) {
+  const pendingEl = document.getElementById('ops-pending-approvals');
+  const breakerEl = document.getElementById('ops-circuit-breakers');
+  const grantsEl = document.getElementById('ops-active-grants');
+  const statusEl = document.getElementById('ops-system-status');
+  if (pendingEl) pendingEl.textContent = pendingApprovals;
+  if (breakerEl) breakerEl.textContent = circuitBreakers;
+  if (grantsEl) grantsEl.textContent = activeGrants;
 
-  document.getElementById('ops-pending-approvals').textContent = pendingApprovals;
-  document.getElementById('ops-circuit-breakers').textContent = circuitBreakers;
-  document.getElementById('ops-active-grants').textContent = activeGrants;
-
-  // Show system status
   const systemStatus = (pendingApprovals === 0 && circuitBreakers === 0) ? 'Normal' : 'Attention';
-  document.getElementById('ops-system-status').textContent = systemStatus;
-
-  // Show critical alerts if needed
-  showCriticalAlerts(pendingApprovals, circuitBreakers);
+  if (statusEl) statusEl.textContent = systemStatus;
 }
 
 function showCriticalAlerts(pendingApprovals, circuitBreakers) {
   const alertsContainer = document.getElementById('ops-alerts');
+  if (!alertsContainer) return;
   alertsContainer.innerHTML = '';
 
   if (circuitBreakers > 0) {
@@ -5126,19 +5179,51 @@ function showCriticalAlerts(pendingApprovals, circuitBreakers) {
   }
 }
 
-function loadUrgentIssues() {
-  // Show only critical issues that need immediate attention
+function loadUrgentIssues(approvals, breakers, grants) {
   const urgentContainer = document.getElementById('ops-urgent-issues');
+  if (!urgentContainer) return;
 
-  // Simulate urgent issues (replace with real data)
-  const issues = [
-    // Example urgent issues - replace with actual API calls
-  ];
+  const issues = [];
+  const now = Date.now() / 1000;
+
+  // Approvals expiring within 5 minutes
+  (approvals || []).filter(a => a.status === 'pending').forEach(a => {
+    if (a.expires_at && (a.expires_at - now) < 300) {
+      issues.push({
+        id: a.request_id,
+        title: `Approval expiring soon: ${a.tool_name}`,
+        time: `Expires ${new Date(a.expires_at * 1000).toLocaleTimeString()}`,
+        action: 'approve',
+      });
+    }
+  });
+
+  // Open circuit breakers
+  (breakers || []).filter(b => b && b.status === 'open').forEach(b => {
+    issues.push({
+      id: b.tool_name,
+      title: `Circuit breaker open: ${b.tool_name}`,
+      time: b.opened_reason || `${b.consecutive_failures || 0} consecutive failures`,
+      action: 'reset',
+    });
+  });
+
+  // Grants near exhaustion (>80% used)
+  (grants || []).filter(g => g.status === 'active' && g.max_uses > 0).forEach(g => {
+    if (g.consumed_uses / g.max_uses >= 0.8) {
+      issues.push({
+        id: g.grant_id,
+        title: `Grant nearly exhausted: ${g.tool_name}`,
+        time: `${g.consumed_uses}/${g.max_uses} uses consumed`,
+        action: 'view',
+      });
+    }
+  });
 
   if (issues.length === 0) {
     urgentContainer.innerHTML = `
       <div style="padding:1rem;text-align:center;color:var(--text-muted);">
-        ✅ No urgent issues
+        No urgent issues
       </div>`;
   } else {
     urgentContainer.innerHTML = issues.map(issue => `
@@ -5147,51 +5232,179 @@ function loadUrgentIssues() {
           <div style="font-weight:500;">${issue.title}</div>
           <div style="font-size:12px;color:var(--text-muted);">${issue.time}</div>
         </div>
-        <button class="small" onclick="handleUrgentIssue('${issue.id}')">Fix</button>
+        ${issue.action === 'reset'
+          ? `<button class="small" onclick="resetCircuitBreaker('${issue.id}')">Reset</button>`
+          : issue.action === 'approve'
+          ? `<button class="small" onclick="showPendingApprovals()">Review</button>`
+          : ''}
       </div>
     `).join('');
   }
 }
 
-function loadRecentActivity() {
-  // Show recent operational activity
+function loadRecentActivity(approvals, grants, breakers) {
   const activityContainer = document.getElementById('ops-recent-activity');
+  if (!activityContainer) return;
 
-  // Simulate recent activity
-  const activities = [
-    {time: '2 min ago', action: 'Tool approval granted', detail: 'customer_lookup'},
-    {time: '15 min ago', action: 'Circuit breaker reset', detail: 'email_sender'},
-    {time: '1 hour ago', action: 'Grant expired', detail: 'file_processor'},
-  ];
+  const activities = [];
 
-  if (activities.length === 0) {
+  // Recent approvals (approved/denied)
+  (approvals || []).filter(a => a.status !== 'pending').forEach(a => {
+    activities.push({
+      time: a.decided_at || a.created_at || 0,
+      action: `Tool ${a.status}`,
+      detail: a.tool_name,
+    });
+  });
+
+  // Active grants
+  (grants || []).forEach(g => {
+    activities.push({
+      time: g.created_at || 0,
+      action: g.status === 'active' ? 'Grant issued' : `Grant ${g.status}`,
+      detail: g.tool_name,
+    });
+  });
+
+  // Open breakers
+  (breakers || []).filter(b => b && b.status === 'open').forEach(b => {
+    activities.push({
+      time: b.opened_at || 0,
+      action: 'Circuit breaker opened',
+      detail: b.tool_name,
+    });
+  });
+
+  // Sort by time descending, take latest 10
+  activities.sort((a, b) => (b.time || 0) - (a.time || 0));
+  const recent = activities.slice(0, 10);
+
+  if (recent.length === 0) {
     activityContainer.innerHTML = `
       <div style="padding:1rem;text-align:center;color:var(--text-muted);">
         No recent activity
       </div>`;
   } else {
-    activityContainer.innerHTML = activities.map(activity => `
-      <div style="padding:0.75rem;border-bottom:1px solid var(--border);">
-        <div style="font-weight:500;font-size:13px;">${activity.action}</div>
-        <div style="font-size:12px;color:var(--text-muted);">${activity.detail} • ${activity.time}</div>
-      </div>
-    `).join('');
+    activityContainer.innerHTML = recent.map(activity => {
+      const timeStr = activity.time ? new Date(activity.time * 1000).toLocaleString() : '';
+      return `
+        <div style="padding:0.75rem;border-bottom:1px solid var(--border);">
+          <div style="font-weight:500;font-size:13px;">${activity.action}</div>
+          <div style="font-size:12px;color:var(--text-muted);">${activity.detail}${timeStr ? ' &middot; ' + timeStr : ''}</div>
+        </div>`;
+    }).join('');
   }
 }
 
-function showPendingApprovals() {
-  alert('Opening approval review panel...\n\nThis would show pending requests with approve/deny actions.');
-  // Replace with actual approval panel
+function closeOpsModal(id) {
+  const modal = document.getElementById(id);
+  if (modal) modal.classList.add('hidden');
 }
 
-function showCircuitBreakers() {
-  alert('Opening circuit breaker management...\n\nThis would show failed tools with reset options.');
-  // Replace with actual circuit breaker management
+async function showPendingApprovals() {
+  const modal = document.getElementById('ops-approvals-modal');
+  const body = document.getElementById('ops-approvals-modal-body');
+  if (!modal || !body) return;
+  modal.classList.remove('hidden');
+  body.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:2rem;">Loading approvals...</div>';
+
+  try {
+    const data = await apiCall('/v1/tenant/me/agentic/approvals');
+    const approvals = (data.approvals || []).filter(a => a.status === 'pending');
+    if (!approvals.length) {
+      body.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:2rem;">No pending approvals</div>';
+      return;
+    }
+    body.innerHTML = approvals.map(item => `
+      <div style="padding:1rem;border-bottom:1px solid var(--border);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div style="font-weight:600;font-size:15px;">${item.tool_name || 'Unknown tool'}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:0.25rem;">
+              Agent: <span class="mono">${item.agent_key || '-'}</span>
+              &middot; Session: <span class="mono">${item.session_id || '-'}</span>
+              ${item.workflow ? '&middot; Workflow: <span class="mono">' + item.workflow + '</span>' : ''}
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:0.25rem;">
+              ${item.expires_at ? 'Expires: ' + new Date(item.expires_at * 1000).toLocaleString() : ''}
+            </div>
+          </div>
+          <div style="display:flex;gap:0.5rem;flex-shrink:0;">
+            <button class="primary small" onclick="opsDecideApproval('${item.request_id}','approve')">Approve</button>
+            <button class="small" style="color:#dc2626;" onclick="opsDecideApproval('${item.request_id}','deny')">Deny</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    body.innerHTML = '<div style="color:#dc2626;padding:1rem;">Failed to load: ' + e.message + '</div>';
+  }
 }
 
-function handleUrgentIssue(issueId) {
-  alert(`Handling urgent issue: ${issueId}`);
-  // Replace with actual issue resolution
+async function opsDecideApproval(requestId, decision) {
+  const approver = prompt('Enter approver name:', 'tenant-operator');
+  if (!approver) return;
+  const reason = prompt('Reason (optional):', '') || '';
+  try {
+    await apiCall('/v1/tenant/me/agentic/approvals/' + requestId + '/' + decision, {
+      method: 'POST',
+      body: JSON.stringify({ approver, reason }),
+    });
+    showToast('Request ' + decision + 'd', 'success');
+    showPendingApprovals();
+    loadOperationsCenter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function showCircuitBreakers() {
+  const modal = document.getElementById('ops-breakers-modal');
+  const body = document.getElementById('ops-breakers-modal-body');
+  if (!modal || !body) return;
+  modal.classList.remove('hidden');
+  body.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:2rem;">Loading circuit breakers...</div>';
+
+  try {
+    const data = await apiCall('/v1/tenant/me/agentic/circuit-breakers');
+    const rows = Object.values(data.circuit_breakers || {});
+    if (!rows.length) {
+      body.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:2rem;">No circuit breaker state recorded</div>';
+      return;
+    }
+    body.innerHTML = rows.map(b => {
+      const isOpen = b.status === 'open';
+      return `
+        <div style="padding:1rem;border-bottom:1px solid var(--border);">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <div style="font-weight:600;font-size:15px;">${b.tool_name || 'Unknown'}</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:0.25rem;">
+                Status: <span style="color:${isOpen ? '#dc2626' : '#16a34a'};font-weight:600;">${b.status || 'closed'}</span>
+                &middot; Failures: ${b.consecutive_failures || 0}
+                ${b.last_latency_ms != null ? '&middot; Last latency: ' + Math.round(b.last_latency_ms) + 'ms' : ''}
+              </div>
+              ${b.opened_reason ? '<div style="font-size:12px;color:var(--text-muted);margin-top:0.25rem;">Reason: ' + b.opened_reason + '</div>' : ''}
+              ${b.open_until ? '<div style="font-size:12px;color:var(--text-muted);margin-top:0.25rem;">Open until: ' + new Date(b.open_until * 1000).toLocaleString() + '</div>' : ''}
+            </div>
+            ${isOpen ? '<button class="primary small" onclick="opsResetBreaker(\'' + b.tool_name + '\')">Reset</button>' : '<span style="color:#16a34a;font-size:12px;font-weight:600;">Closed</span>'}
+          </div>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = '<div style="color:#dc2626;padding:1rem;">Failed to load: ' + e.message + '</div>';
+  }
+}
+
+async function opsResetBreaker(toolName) {
+  try {
+    await apiCall('/v1/tenant/me/agentic/circuit-breakers/' + encodeURIComponent(toolName) + '/reset', { method: 'POST' });
+    showToast('Circuit breaker reset: ' + toolName, 'success');
+    showCircuitBreakers();
+    loadOperationsCenter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
 }
 
 // ── Overview ──────────────────────────────
