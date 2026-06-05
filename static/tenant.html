@@ -4011,6 +4011,40 @@ if __name__ == "__main__":
         <!-- Alert banners will be inserted here -->
       </div>
 
+      <!-- Approvals Modal -->
+      <div id="ops-approvals-modal" class="modal hidden">
+        <div class="modal-overlay" onclick="closeOpsModal('ops-approvals-modal')"></div>
+        <div class="modal-content" style="width:700px;max-width:90vw;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;">
+          <div class="modal-header">
+            <h3>Pending Approvals</h3>
+            <button onclick="closeOpsModal('ops-approvals-modal')">×</button>
+          </div>
+          <div class="modal-body" id="ops-approvals-modal-body" style="flex:1;overflow-y:auto;min-height:0;padding:1rem 1.5rem;">
+            <div style="text-align:center;color:var(--text-muted);padding:2rem;">Loading...</div>
+          </div>
+          <div class="modal-footer">
+            <button class="small" onclick="loadOperationsCenter(); closeOpsModal('ops-approvals-modal')">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Circuit Breakers Modal -->
+      <div id="ops-breakers-modal" class="modal hidden">
+        <div class="modal-overlay" onclick="closeOpsModal('ops-breakers-modal')"></div>
+        <div class="modal-content" style="width:700px;max-width:90vw;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;">
+          <div class="modal-header">
+            <h3>Circuit Breakers</h3>
+            <button onclick="closeOpsModal('ops-breakers-modal')">×</button>
+          </div>
+          <div class="modal-body" id="ops-breakers-modal-body" style="flex:1;overflow-y:auto;min-height:0;padding:1rem 1.5rem;">
+            <div style="text-align:center;color:var(--text-muted);padding:2rem;">Loading...</div>
+          </div>
+          <div class="modal-footer">
+            <button class="small" onclick="loadOperationsCenter(); closeOpsModal('ops-breakers-modal')">Close</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Essential Status Grid -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:1.5rem;">
         <div class="stat">
@@ -5262,18 +5296,115 @@ function loadRecentActivity(approvals, grants, breakers) {
   }
 }
 
-function showPendingApprovals() {
-  // Scroll to and load the Approval Queue detail section
-  loadApprovalQueue();
-  const el = document.getElementById('acp-approval-list');
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+function closeOpsModal(id) {
+  const modal = document.getElementById(id);
+  if (modal) modal.classList.add('hidden');
 }
 
-function showCircuitBreakers() {
-  // Scroll to and load the Circuit Breakers detail section
-  loadCircuitBreakers();
-  const el = document.getElementById('acp-breaker-list');
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+async function showPendingApprovals() {
+  const modal = document.getElementById('ops-approvals-modal');
+  const body = document.getElementById('ops-approvals-modal-body');
+  if (!modal || !body) return;
+  modal.classList.remove('hidden');
+  body.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:2rem;">Loading approvals...</div>';
+
+  try {
+    const data = await apiCall('/v1/tenant/me/agentic/approvals');
+    const approvals = (data.approvals || []).filter(a => a.status === 'pending');
+    if (!approvals.length) {
+      body.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:2rem;">No pending approvals</div>';
+      return;
+    }
+    body.innerHTML = approvals.map(item => `
+      <div style="padding:1rem;border-bottom:1px solid var(--border);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div style="font-weight:600;font-size:15px;">${item.tool_name || 'Unknown tool'}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:0.25rem;">
+              Agent: <span class="mono">${item.agent_key || '-'}</span>
+              &middot; Session: <span class="mono">${item.session_id || '-'}</span>
+              ${item.workflow ? '&middot; Workflow: <span class="mono">' + item.workflow + '</span>' : ''}
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:0.25rem;">
+              ${item.expires_at ? 'Expires: ' + new Date(item.expires_at * 1000).toLocaleString() : ''}
+            </div>
+          </div>
+          <div style="display:flex;gap:0.5rem;flex-shrink:0;">
+            <button class="primary small" onclick="opsDecideApproval('${item.request_id}','approve')">Approve</button>
+            <button class="small" style="color:#dc2626;" onclick="opsDecideApproval('${item.request_id}','deny')">Deny</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    body.innerHTML = '<div style="color:#dc2626;padding:1rem;">Failed to load: ' + e.message + '</div>';
+  }
+}
+
+async function opsDecideApproval(requestId, decision) {
+  const approver = prompt('Enter approver name:', 'tenant-operator');
+  if (!approver) return;
+  const reason = prompt('Reason (optional):', '') || '';
+  try {
+    await apiCall('/v1/tenant/me/agentic/approvals/' + requestId + '/' + decision, {
+      method: 'POST',
+      body: JSON.stringify({ approver, reason }),
+    });
+    showToast('Request ' + decision + 'd', 'success');
+    showPendingApprovals();
+    loadOperationsCenter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function showCircuitBreakers() {
+  const modal = document.getElementById('ops-breakers-modal');
+  const body = document.getElementById('ops-breakers-modal-body');
+  if (!modal || !body) return;
+  modal.classList.remove('hidden');
+  body.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:2rem;">Loading circuit breakers...</div>';
+
+  try {
+    const data = await apiCall('/v1/tenant/me/agentic/circuit-breakers');
+    const rows = Object.values(data.circuit_breakers || {});
+    if (!rows.length) {
+      body.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:2rem;">No circuit breaker state recorded</div>';
+      return;
+    }
+    body.innerHTML = rows.map(b => {
+      const isOpen = b.status === 'open';
+      return `
+        <div style="padding:1rem;border-bottom:1px solid var(--border);">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <div style="font-weight:600;font-size:15px;">${b.tool_name || 'Unknown'}</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:0.25rem;">
+                Status: <span style="color:${isOpen ? '#dc2626' : '#16a34a'};font-weight:600;">${b.status || 'closed'}</span>
+                &middot; Failures: ${b.consecutive_failures || 0}
+                ${b.last_latency_ms != null ? '&middot; Last latency: ' + Math.round(b.last_latency_ms) + 'ms' : ''}
+              </div>
+              ${b.opened_reason ? '<div style="font-size:12px;color:var(--text-muted);margin-top:0.25rem;">Reason: ' + b.opened_reason + '</div>' : ''}
+              ${b.open_until ? '<div style="font-size:12px;color:var(--text-muted);margin-top:0.25rem;">Open until: ' + new Date(b.open_until * 1000).toLocaleString() + '</div>' : ''}
+            </div>
+            ${isOpen ? '<button class="primary small" onclick="opsResetBreaker(\'' + b.tool_name + '\')">Reset</button>' : '<span style="color:#16a34a;font-size:12px;font-weight:600;">Closed</span>'}
+          </div>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = '<div style="color:#dc2626;padding:1rem;">Failed to load: ' + e.message + '</div>';
+  }
+}
+
+async function opsResetBreaker(toolName) {
+  try {
+    await apiCall('/v1/tenant/me/agentic/circuit-breakers/' + encodeURIComponent(toolName) + '/reset', { method: 'POST' });
+    showToast('Circuit breaker reset: ' + toolName, 'success');
+    showCircuitBreakers();
+    loadOperationsCenter();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
 }
 
 // ── Overview ──────────────────────────────
