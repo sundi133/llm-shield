@@ -154,7 +154,7 @@ guardrails:
 
   bias_detection:
     enabled: true
-    action: warn
+    action: block
     settings:
       categories:
         - Gender
@@ -165,6 +165,9 @@ guardrails:
         - Disability
         - Socioeconomic
         - Sexual orientation
+        - Nationality
+        - Neurodiversity
+        - Name-based
       threshold: 0.60
       auto_regenerate: false
 
