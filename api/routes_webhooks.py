@@ -49,6 +49,7 @@ VALID_EVENTS = [
     "tool_enabled",
     "policy_changed",
     "budget_exceeded",
+    "shadow_agent_detected",
 ]
 
 

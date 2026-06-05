@@ -56,9 +56,14 @@ def _get_registered_agents(tenant_id: str) -> set[str]:
 
 def _record_shadow_agent(tenant_id: str, agent_key: str, endpoint: str,
                          user_role: str | None):
-    """Buffer a shadow agent sighting (non-blocking, in-memory)."""
+    """Buffer a shadow agent sighting (non-blocking, in-memory).
+
+    Fires a ``shadow_agent_detected`` webhook on the *first* sighting
+    of each unique agent_key so the SOC team gets an immediate alert.
+    """
     buf_key = f"{tenant_id}::{agent_key}"
     now = int(time.time())
+    first_sighting = False
     with _shadow_lock:
         if buf_key in _shadow_buffer:
             entry = _shadow_buffer[buf_key]
@@ -68,6 +73,7 @@ def _record_shadow_agent(tenant_id: str, agent_key: str, endpoint: str,
             if user_role:
                 entry["roles"].add(user_role)
         else:
+            first_sighting = True
             _shadow_buffer[buf_key] = {
                 "tenant_id": tenant_id,
                 "agent_key": agent_key,
@@ -78,6 +84,35 @@ def _record_shadow_agent(tenant_id: str, agent_key: str, endpoint: str,
                 "roles": {user_role} if user_role else set(),
             }
     _maybe_flush_shadows()
+
+    # Fire webhook only on first sighting to avoid flooding the SOC
+    if first_sighting:
+        _dispatch_shadow_webhook(tenant_id, agent_key, endpoint, user_role)
+
+
+def _dispatch_shadow_webhook(tenant_id: str, agent_key: str,
+                              endpoint: str, user_role: str | None):
+    """Send shadow_agent_detected webhook asynchronously."""
+    try:
+        import asyncio
+        from core.webhook_dispatcher import dispatch_event
+        payload = {
+            "agent_key": agent_key,
+            "endpoint": endpoint,
+            "user_role": user_role or "",
+            "severity": "high",
+            "message": f"Unregistered agent '{agent_key}' detected making requests. "
+                       f"This agent is not in the tenant's agent registry.",
+        }
+        # Fire-and-forget — get or create an event loop
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(dispatch_event(tenant_id, "shadow_agent_detected", payload))
+        except RuntimeError:
+            # No running loop (sync context) — skip webhook
+            pass
+    except Exception:
+        pass  # Never block the request for a webhook failure
 
 
 def _maybe_flush_shadows():
