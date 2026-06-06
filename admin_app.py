@@ -42,6 +42,13 @@ from api.routes_tenant_self import router as tenant_self_router
 from api.routes_agents_registry import router as agents_registry_router
 from api.routes_data_policies import router as data_policies_router
 from api.routes_agentic_control_plane import router as agentic_control_plane_router
+
+# Runtime tool-check routes (RBAC + data policy enforcement)
+_tool_router = None
+try:
+    from api.routes_tool import router as _tool_router
+except ImportError:
+    pass
 from core.auth import AuthMiddleware
 from core.middleware import ShieldMiddleware
 from storage.audit_log import audit_logger
@@ -1012,6 +1019,10 @@ def create_admin_app() -> FastAPI:
     app.include_router(agents_registry_router)  # /v1/agents/* (registry, roles, tool policies)
     app.include_router(data_policies_router)    # /v1/data-policies/*
     app.include_router(agentic_control_plane_router)  # /v1/tenant/me/agentic/*
+
+    # Runtime: tool RBAC + data policy enforcement
+    if _tool_router:
+        app.include_router(_tool_router)           # /v1/shield/tool/check, /v1/shield/tool/output
 
     if _audit_router:
         app.include_router(_audit_router)       # /v1/shield/audit, /v1/shield/stats

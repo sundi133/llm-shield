@@ -1,0 +1,99 @@
+version: '3.8'
+
+# Local test stack: Keycloak (OIDC) + OpenLDAP + Redis + LLM Shield
+# Usage: docker compose -f docker-compose.local.yml up -d
+
+services:
+  # ── OpenLDAP ─────────────────────────────────────────────────────────
+  # Pre-loaded with test users: dr.smith (doctor), nurse.jones (nurse),
+  # admin.doe (admin), patient.lee (patient)
+  openldap:
+    image: osixia/openldap:1.5.0
+    container_name: shield-ldap
+    ports:
+      - "1389:389"
+    environment:
+      - LDAP_ORGANISATION=Shield
+      - LDAP_DOMAIN=shield.local
+      - LDAP_ADMIN_PASSWORD=adminpassword
+      - LDAP_READONLY_USER=true
+      - LDAP_READONLY_USER_USERNAME=readonly
+      - LDAP_READONLY_USER_PASSWORD=readonly
+    volumes:
+      - ldap_data:/var/lib/ldap
+      - ldap_slapd:/etc/ldap/slapd.d
+
+  # ── Keycloak (OIDC provider) ────────────────────────────────────────
+  # Admin console: http://localhost:8180
+  # OIDC discovery: http://localhost:8180/realms/shield/.well-known/openid-configuration
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: shield-keycloak
+    ports:
+      - "8180:8080"
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - KC_HTTP_RELATIVE_PATH=/
+      - KC_HEALTH_ENABLED=true
+    command: start-dev
+    depends_on:
+      - openldap
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /realms/master HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n' >&3; cat <&3 | grep -q 'realm'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Redis ───────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: shield-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── LLM Shield ─────────────────────────────────────────────────────
+  llm-shield:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.dev
+    container_name: shield-api
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SHIELD_ADMIN_KEY=test-admin-key
+      - SHIELD_AUTH_ENABLED=true
+      - PYTHONPATH=/app
+      - ENVIRONMENT=development
+      # Agent token signing keys (hex-encoded 32-byte Ed25519 seeds)
+      # THESE ARE FOR LOCAL TESTING ONLY — never use in production
+      - SHIELD_AGENT_TOKEN_PRIVATE_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      - SHIELD_CAP_TOKEN_PRIVATE_KEY=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+    volumes:
+      - ../..:/app
+      - /app/__pycache__
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: python handler.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  ldap_data:
+  ldap_slapd:
+  redis_data:

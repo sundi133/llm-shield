@@ -17,6 +17,63 @@ from guardrails.base import BaseGuardrail
 logger = logging.getLogger(__name__)
 
 
+def _resolve_role_from_registry(
+    agent_key: str,
+    tool_name: str,
+    user_role: str,
+    tenant_id: str,
+) -> "Optional[RBACRole]":
+    """Look up agent in Redis registry and build an RBACRole on the fly.
+
+    The agent registry stores role_permissions as:
+        {"customer_support": ["tool_a", "tool_b"], "admin": ["tool_a", ...]}
+
+    We match user_role to the registered permissions and build a temporary
+    RBACRole with the allowed tools for that role.
+    """
+    try:
+        from storage.tenant_store import _get_redis, _fallback_store
+        import json as _json
+
+        r = _get_redis()
+        key = f"agents:{tenant_id}"
+        raw = r.get(key) if r else None
+        if not raw:
+            raw = _fallback_store.get(key)
+        if not raw:
+            return None
+
+        agents = _json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+        agent_data = agents.get(agent_key)
+        if not agent_data:
+            return None
+
+        role_permissions = agent_data.get("role_permissions", {})
+        if not role_permissions:
+            return None
+
+        # Find the user's role in the agent's role_permissions
+        allowed_tools = role_permissions.get(user_role)
+        if allowed_tools is None:
+            # Role not configured for this agent — deny
+            return None
+
+        # Build a synthetic RBACRole
+        from config.schema import RBACRole
+        return RBACRole(
+            name=user_role,
+            allowed_tools=allowed_tools,
+            denied_tools=[],
+            allowed_data_scopes=[],
+            denied_data_scopes=[],
+            data_clearance="public",
+        )
+
+    except Exception as e:
+        logger.debug(f"Registry RBAC lookup failed for {agent_key}: {e}")
+        return None
+
+
 def _resolve_scopes_from_params(
     tool_name: str,
     tool_params: dict,
@@ -122,6 +179,14 @@ class RBACGuard(BaseGuardrail):
             )
 
         role = enforcer.resolve_role(agent_key)
+
+        # Fallback: if static config doesn't know the agent, check Redis
+        # agent registry for dynamically registered agents
+        if role is None and tenant_id:
+            role = _resolve_role_from_registry(
+                agent_key, tool_name, context.get("user_role", ""), tenant_id,
+            )
+
         if role is None:
             elapsed = (datetime.now() - start).total_seconds() * 1000
             return GuardrailResult(
