@@ -39,15 +39,35 @@ KEYCLOAK_URL = "http://localhost:8180"
 REALM = "shield"
 CLIENT_ID = "shield-api"
 CLIENT_SECRET = "shield-client-secret"
+# Shield runtime URL — full Shield with tool/check, tool/output, cap/mint
+# For RunPod: export LLM_SHIELD_URL=https://xxx.api.runpod.ai
+# For local:  export LLM_SHIELD_URL=http://localhost:8000
 SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8000")
 SHIELD_ADMIN_KEY = os.getenv("SHIELD_ADMIN_KEY", "test-admin-key")
 API_KEY = os.getenv("API_KEY", "")  # Set via env or created via tenant setup
+
+# RunPod auth token (only needed for RunPod-hosted Shield)
+RUNPOD_TOKEN = os.getenv("RUNPOD_TOKEN", "")
 
 AGENT_ID = "test-oidc-agent"
 AGENT_INSTANCE_ID = f"{AGENT_ID}-{uuid.uuid4().hex[:8]}"
 SESSION_ID = f"sess-{int(time.time())}"
 
 SHIELD_ROLES = {"doctor", "nurse", "admin", "patient"}
+
+
+def _shield_headers(api_key: str = "", agent_key: str = "", user_role: str = "") -> dict:
+    """Build headers for Shield API calls, including RunPod auth if needed."""
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["X-API-Key"] = api_key
+    if agent_key:
+        headers["X-Agent-Key"] = agent_key
+    if user_role:
+        headers["X-User-Role"] = user_role
+    if RUNPOD_TOKEN:
+        headers["Authorization"] = f"Bearer {RUNPOD_TOKEN}"
+    return headers
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -125,12 +145,11 @@ def keycloak_login(username: str, password: str = "password") -> dict:
 
 def setup_tenant() -> str:
     """Create a test tenant and return its API key."""
+    h = _shield_headers()
+    h["X-Admin-Key"] = SHIELD_ADMIN_KEY
     r = requests.post(
         f"{SHIELD_URL}/v1/admin/tenants",
-        headers={
-            "X-Admin-Key": SHIELD_ADMIN_KEY,
-            "Content-Type": "application/json",
-        },
+        headers=h,
         json={
             "tenant_id": "test-oidc-tenant",
             "name": "OIDC Test Tenant",
@@ -150,9 +169,11 @@ def setup_tenant() -> str:
             return api_key
 
     # Tenant may already exist — try to get its key
+    h2 = _shield_headers()
+    h2["X-Admin-Key"] = SHIELD_ADMIN_KEY
     r = requests.get(
         f"{SHIELD_URL}/v1/admin/tenants/test-oidc-tenant",
-        headers={"X-Admin-Key": SHIELD_ADMIN_KEY},
+        headers=h2,
     )
     if r.status_code == 200:
         data = r.json()
@@ -171,11 +192,7 @@ def register_agent(api_key: str):
     """Register agent with role-based tool permissions."""
     r = requests.post(
         f"{SHIELD_URL}/v1/agents/registry",
-        headers={
-            "X-API-Key": api_key,
-            "X-Agent-Key": AGENT_ID,
-            "Content-Type": "application/json",
-        },
+        headers=_shield_headers(api_key=api_key, agent_key=AGENT_ID),
         json={
             "agent_id": AGENT_ID,
             "name": "OIDC Test Agent",
@@ -207,10 +224,7 @@ def mint_agent_token(api_key: str, user_sub: str) -> str:
     """Mint a Shield agent token from the Keycloak user identity."""
     r = requests.post(
         f"{SHIELD_URL}/v1/tenant/me/agent-auth/agent-token",
-        headers={
-            "X-API-Key": api_key,
-            "Content-Type": "application/json",
-        },
+        headers=_shield_headers(api_key=api_key),
         json={
             "user_sub": user_sub,
             "agent_id": AGENT_ID,
@@ -236,12 +250,7 @@ def shield_tool_check(api_key: str, tool_name: str, user_role: str, tool_params:
     """RBAC check: can this role use this tool?"""
     r = requests.post(
         f"{SHIELD_URL}/v1/shield/tool/check",
-        headers={
-            "X-API-Key": api_key,
-            "X-Agent-Key": AGENT_ID,
-            "X-User-Role": user_role,
-            "Content-Type": "application/json",
-        },
+        headers=_shield_headers(api_key=api_key, agent_key=AGENT_ID, user_role=user_role),
         json={
             "agent_key": AGENT_ID,
             "tool_name": tool_name,
@@ -259,13 +268,11 @@ def shield_tool_check(api_key: str, tool_name: str, user_role: str, tool_params:
 
 def shield_cap_mint(api_key: str, agent_token: str, tool: str, resource: str) -> dict:
     """Mint a single-use capability token for a tool action."""
+    h = _shield_headers(api_key=api_key)
+    h["X-Agent-Token"] = agent_token
     r = requests.post(
         f"{SHIELD_URL}/v1/shield/cap/mint",
-        headers={
-            "X-API-Key": api_key,
-            "X-Agent-Token": agent_token,
-            "Content-Type": "application/json",
-        },
+        headers=h,
         json={
             "tool": tool,
             "resource": resource,
@@ -284,10 +291,7 @@ def shield_cap_verify(api_key: str, cap_token: str, expected_tool: str) -> dict:
     """Verify a capability token (what a tool server would do)."""
     r = requests.post(
         f"{SHIELD_URL}/v1/shield/cap/verify",
-        headers={
-            "X-API-Key": api_key,
-            "Content-Type": "application/json",
-        },
+        headers=_shield_headers(api_key=api_key),
         json={
             "cap_token": cap_token,
             "expected_tool": expected_tool,
@@ -305,12 +309,7 @@ def shield_sanitize_output(api_key: str, tool_name: str, tool_output: str, user_
     """Post-execution: sanitize tool output per data policies."""
     r = requests.post(
         f"{SHIELD_URL}/v1/shield/tool/output",
-        headers={
-            "X-API-Key": api_key,
-            "X-Agent-Key": AGENT_ID,
-            "X-User-Role": user_role,
-            "Content-Type": "application/json",
-        },
+        headers=_shield_headers(api_key=api_key, agent_key=AGENT_ID, user_role=user_role),
         json={
             "tool_name": tool_name,
             "tool_output": tool_output,

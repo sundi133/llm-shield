@@ -58,6 +58,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 
 SHIELD_URL = os.getenv("LLM_SHIELD_URL", "https://shield.votal.ai")
 API_KEY = os.getenv("API_KEY", "")
+RUNPOD_TOKEN = os.getenv("RUNPOD_TOKEN", "")  # only needed for RunPod-hosted Shield
 LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm.your-company.com")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 AGENT_ID = os.getenv("AGENT_ID", "langchain-support-agent")
@@ -83,6 +84,8 @@ shield_session.headers.update({
     "X-User-Role": USER_ROLE,
     "Content-Type": "application/json",
 })
+if RUNPOD_TOKEN:
+    shield_session.headers["Authorization"] = f"Bearer {RUNPOD_TOKEN}"
 
 
 # ──────────────────────────────────────────────────────────────────────────
