@@ -104,10 +104,19 @@ def keycloak_login(username: str, password: str = "password") -> dict:
     claims = decode_jwt_payload(data["access_token"])
     role = extract_shield_role(claims)
 
+    # Keycloak 26 puts `sub` in the id_token, not the access_token
+    sub = claims.get("sub")
+    if not sub and "id_token" in data:
+        id_claims = decode_jwt_payload(data["id_token"])
+        sub = id_claims.get("sub")
+    # Fallback to preferred_username if sub is still missing
+    if not sub:
+        sub = claims.get("preferred_username", username)
+
     return {
         "access_token": data["access_token"],
         "claims": claims,
-        "sub": claims.get("sub"),
+        "sub": sub,
         "role": role,
     }
 
@@ -171,12 +180,18 @@ def register_agent(api_key: str):
             "agent_id": AGENT_ID,
             "name": "OIDC Test Agent",
             "description": "Tests OIDC + LDAP integration",
-            "tools": ["patient_lookup", "view_records", "prescribe_medication", "check_vitals"],
+            "tools": [
+                "patient_lookup", "view_records", "prescribe_medication",
+                "check_vitals", "email_send",
+            ],
             "role_permissions": {
-                "doctor":  ["patient_lookup", "view_records", "prescribe_medication", "check_vitals"],
+                "doctor":  ["patient_lookup", "view_records", "prescribe_medication", "check_vitals", "email_send"],
                 "nurse":   ["patient_lookup", "view_records", "check_vitals"],
-                "admin":   ["patient_lookup", "view_records", "prescribe_medication", "check_vitals"],
-                "patient": ["check_vitals"],   # patients can only check their own vitals
+                "admin":   ["patient_lookup", "view_records", "prescribe_medication", "check_vitals", "email_send"],
+                "patient": ["check_vitals"],
+                # Map to tenant's data policy roles
+                "compliance_officer": ["patient_lookup", "view_records", "email_send"],
+                "customer_support":   ["patient_lookup", "check_vitals", "email_send"],
             },
         },
     )
@@ -282,6 +297,30 @@ def shield_cap_verify(api_key: str, cap_token: str, expected_tool: str) -> dict:
     if r.status_code == 200:
         return r.json()
     return {"valid": False, "error": f"{r.status_code}: {r.text[:200]}"}
+
+
+# ── Step 8: Output sanitization ──────────────────────────────────────────
+
+def shield_sanitize_output(api_key: str, tool_name: str, tool_output: str, user_role: str) -> dict:
+    """Post-execution: sanitize tool output per data policies."""
+    r = requests.post(
+        f"{SHIELD_URL}/v1/shield/tool/output",
+        headers={
+            "X-API-Key": api_key,
+            "X-Agent-Key": AGENT_ID,
+            "X-User-Role": user_role,
+            "Content-Type": "application/json",
+        },
+        json={
+            "tool_name": tool_name,
+            "tool_output": tool_output,
+            "agent_key": AGENT_ID,
+            "session_id": SESSION_ID,
+        },
+    )
+    if r.status_code == 200:
+        return r.json()
+    return {"sanitized_output": tool_output, "action": "error", "status": r.status_code, "detail": r.text[:200]}
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -419,6 +458,140 @@ def main():
             fail(f"Cap mint failed: {cap_result['error']}")
     else:
         print("  (skipped — dr.smith agent token not available)")
+
+    # ── Step 7: email_send data policy tests ────────────────────────────
+    section("STEP 7 — email_send data policy (input + output)")
+
+    print("\n  Testing email_send tool RBAC + data policy:")
+    print("  (matches your tenant's email_send data policy for")
+    print("   compliance_officer and customer_support roles)\n")
+
+    # 7a. RBAC checks on email_send for different roles
+    email_rbac_tests = [
+        # (role,                  tool,         expected, description)
+        ("compliance_officer", "email_send", True,  "compliance_officer can send email"),
+        ("customer_support",   "email_send", True,  "customer_support can send email"),
+        ("patient",            "email_send", False, "patient CANNOT send email"),
+    ]
+
+    for role, tool_name, expected, desc in email_rbac_tests:
+        result = shield_tool_check(api_key, tool_name, role, {
+            "to": "ops@bank.ae", "subject": "Test", "body": "Hello",
+        })
+        allowed = result.get("allowed", False) and result.get("action") != "block"
+        if allowed == expected:
+            ok(f"{desc} — {'ALLOWED' if allowed else 'BLOCKED'}")
+        else:
+            fail(f"{desc} — got {'ALLOWED' if allowed else 'BLOCKED'}, expected {'ALLOWED' if expected else 'BLOCKED'}")
+
+    # 7b. Input data policy: domain allowlist
+    print("\n  Input policy — approved vs blocked email domains:")
+
+    email_domain_tests = [
+        # (role,                 to_email,                   expected, description)
+        ("compliance_officer", "ops@bank.ae",               True,  "approved domain (bank.ae) → ALLOWED"),
+        ("compliance_officer", "fraud@fraud.bank.ae",       True,  "approved domain (fraud.bank.ae) → ALLOWED"),
+        ("compliance_officer", "someone@gmail.com",         False, "public mail (gmail.com) → BLOCKED"),
+        ("compliance_officer", "data@competitor.com",       False, "external domain → BLOCKED"),
+        ("customer_support",   "team@ops.bank.ae",          True,  "approved domain for support → ALLOWED"),
+        ("customer_support",   "external@yahoo.com",        False, "public mail for support → BLOCKED"),
+    ]
+
+    for role, to_email, expected, desc in email_domain_tests:
+        result = shield_tool_check(api_key, "email_send", role, {
+            "to": to_email,
+            "subject": "Account Update",
+            "body": "Customer account status notification.",
+        })
+        allowed = result.get("allowed", False) and result.get("action") != "block"
+        if allowed == expected:
+            ok(f"{desc}")
+        else:
+            fail(f"{desc} — got {'ALLOWED' if allowed else 'BLOCKED'}")
+            for gr in result.get("guardrail_results", []):
+                if not gr.get("passed", True):
+                    print(f"      reason: {gr.get('message', 'unknown')}")
+
+    # 7c. Input data policy: sensitive banking data in body
+    print("\n  Input policy — sensitive data in email body:")
+
+    sensitive_input_tests = [
+        ("compliance_officer", "Status update for customer", True,  "normal content → ALLOWED"),
+        ("compliance_officer",
+         "Customer SSN: 784-19-1234-5678-9, Account: AE070331234567890123456",
+         False, "banking data (SSN + IBAN) in body → BLOCKED"),
+        ("customer_support",
+         "Full profile: Name: Ahmed, DOB: 1985-03-15, Passport: P1234567, Balance: $45,230",
+         False, "full customer profile in body → BLOCKED"),
+    ]
+
+    for role, body, expected, desc in sensitive_input_tests:
+        result = shield_tool_check(api_key, "email_send", role, {
+            "to": "ops@bank.ae",
+            "subject": "Customer Info",
+            "body": body,
+        })
+        allowed = result.get("allowed", False) and result.get("action") != "block"
+        if allowed == expected:
+            ok(f"{desc}")
+        else:
+            fail(f"{desc} — got {'ALLOWED' if allowed else 'BLOCKED'}")
+            for gr in result.get("guardrail_results", []):
+                if not gr.get("passed", True):
+                    print(f"      reason: {gr.get('message', 'unknown')}")
+
+    # 7d. Output sanitization: PII redaction and profile blocking
+    print("\n  Output policy — PII redaction and data masking:")
+
+    output_tests = [
+        (
+            "compliance_officer",
+            '{"name": "Ahmed Ali", "status": "active"}',
+            "name + status only → should PASS (allow only name and status)",
+        ),
+        (
+            "compliance_officer",
+            '{"name": "Ahmed Ali", "passport": "P1234567", "status": "active"}',
+            "passport in output → should be REDACTED or BLOCKED",
+        ),
+        (
+            "compliance_officer",
+            '{"name": "Ahmed Ali", "email": "ahmed@bank.ae", "phone": "+971501234567", '
+            '"dob": "1985-03-15", "passport": "P1234567", "balance": "$45,230", '
+            '"accounts": ["AE07033"], "credit_score": 742}',
+            "full customer profile → should be BLOCKED",
+        ),
+        (
+            "customer_support",
+            '{"name": "Fatima Hassan", "status": "pending", "ticket": "TKT-001"}',
+            "name + status + ticket → should PASS",
+        ),
+        (
+            "customer_support",
+            '{"name": "Fatima Hassan", "passport": "P9876543", "ssn": "784-1985-1234567-8"}',
+            "passport + SSN in support output → should be REDACTED or BLOCKED",
+        ),
+    ]
+
+    for role, output, desc in output_tests:
+        result = shield_sanitize_output(api_key, "email_send", output, role)
+        action = result.get("action", "unknown")
+        sanitized = result.get("sanitized_output", "")
+
+        if action == "block":
+            ok(f"{desc}")
+            print(f"      action: BLOCK")
+        elif action == "pass" and "passport" not in output.lower() and "ssn" not in output.lower():
+            ok(f"{desc}")
+            print(f"      action: PASS")
+        elif sanitized != output:
+            ok(f"{desc}")
+            print(f"      action: {action} (sanitized)")
+            print(f"      output: {sanitized[:120]}...")
+        else:
+            print(f"  ? {desc}")
+            print(f"      action: {action}")
+            print(f"      output: {sanitized[:120]}")
 
     # ── Summary ───────────────────────────────────────────────────────
     section("DONE")

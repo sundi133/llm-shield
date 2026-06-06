@@ -324,8 +324,18 @@ def print_test_tokens():
         realm_roles = claims.get("realm_access", {}).get("roles", [])
         shield_role = next((r for r in realm_roles if r in ROLES), "unknown")
 
+        # Keycloak 26 puts sub in id_token, not access_token
+        sub = claims.get("sub")
+        if not sub and "id_token" in token_data:
+            id_payload = token_data["id_token"].split(".")[1]
+            id_payload += "=" * (-len(id_payload) % 4)
+            id_claims = json.loads(base64.urlsafe_b64decode(id_payload))
+            sub = id_claims.get("sub")
+        if not sub:
+            sub = claims.get("preferred_username", username)
+
         print(f"\n  {username} ({role}):")
-        print(f"    sub: {claims.get('sub')}")
+        print(f"    sub: {sub}")
         print(f"    realm_roles: {realm_roles}")
         print(f"    shield_role: {shield_role}")
         print(f"    token: {access_token[:50]}...")
