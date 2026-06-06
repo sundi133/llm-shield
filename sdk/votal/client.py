@@ -10,6 +10,7 @@ Handles:
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import logging
@@ -138,6 +139,37 @@ class VotalShield:
             logger.error(f"Shield tool/output failed: {e}")
             return {"sanitized_output": tool_output, "action": "pass"}
 
+    # ── Async variants (for LangGraph / deep-agents tool execution) ──
+    # LangGraph runs tools on its async path. These offload the blocking
+    # requests call to a thread so the event loop isn't stalled — no extra
+    # dependency, identical behavior and fail-open semantics.
+
+    async def acheck_tool(
+        self,
+        tool_name: str,
+        tool_input: dict = None,
+        *,
+        user_role: str = None,
+        session_id: str = "",
+    ) -> ToolGuard:
+        """Async wrapper around check_tool (runs in a worker thread)."""
+        return await asyncio.to_thread(
+            self.check_tool, tool_name, tool_input,
+            user_role=user_role, session_id=session_id,
+        )
+
+    async def asanitize_output(
+        self,
+        tool_name: str,
+        tool_output: str,
+        *,
+        session_id: str = "",
+    ) -> dict:
+        """Async wrapper around sanitize_output (runs in a worker thread)."""
+        return await asyncio.to_thread(
+            self.sanitize_output, tool_name, tool_output, session_id=session_id,
+        )
+
     def register_agent(
         self,
         tools: List[str],
@@ -182,45 +214,98 @@ class VotalShield:
         """Wrap a list of LangChain tools with Shield protection."""
         return [self._wrap_tool(t) for t in tools]
 
-    def _wrap_tool(self, tool_obj):
-        """Internal: wrap a LangChain tool's _run method."""
-        original_run = getattr(tool_obj, "_run", None)
-        if original_run is None:
-            original_run = tool_obj.run
+    @staticmethod
+    def _tool_input(tool_obj, args: tuple, kwargs: dict) -> dict:
+        """Build a Shield tool_input dict from a tool's call args/kwargs,
+        dropping LangChain internals and mapping positional args via schema."""
+        _LC_INTERNALS = {"run_manager", "config", "callbacks", "tags", "metadata"}
+        tool_input = {k: v for k, v in kwargs.items()
+                      if k not in _LC_INTERNALS and isinstance(v, (str, int, float, bool, list, dict, type(None)))}
+        if args:
+            schema = getattr(tool_obj, "args_schema", None)
+            if schema:
+                props = list(schema.model_fields.keys()) if hasattr(schema, 'model_fields') else list(schema.schema().get("properties", {}).keys())
+                for i, arg in enumerate(args):
+                    if i < len(props):
+                        tool_input[props[i]] = arg
+        return tool_input
 
+    def _wrap_tool(self, tool_obj):
+        """Wrap a LangChain tool with Shield RBAC + output sanitization.
+
+        Wraps the SYNC path (_run) for AgentExecutor-style tools, and the
+        ASYNC path (coroutine) for tools that LangGraph / deep-agents invoke
+        asynchronously. Only one path is wrapped per tool to avoid a double
+        RBAC check: if the tool defines a native coroutine we wrap that;
+        otherwise we wrap _run (async callers fall through to it).
+
+        The tool's name, description and args_schema are left untouched, so
+        deep-agents (planner, sub-agents, interrupt_on) keeps working.
+        """
         tool_name = getattr(tool_obj, "name", tool_obj.__class__.__name__)
         shield = self
 
+        native_coro = getattr(tool_obj, "coroutine", None)
+
+        if native_coro is not None:
+            # Native async tool (e.g. StructuredTool.from_function(coroutine=...))
+            @functools.wraps(native_coro)
+            async def shielded_coro(*args, **kwargs):
+                tool_input = shield._tool_input(tool_obj, args, kwargs)
+                guard = await shield.acheck_tool(tool_name, tool_input)
+                if not guard.allowed:
+                    return f"DENIED by Shield: {guard.reason}"
+                raw_output = await native_coro(*args, **kwargs)
+                result = await shield.asanitize_output(tool_name, str(raw_output))
+                if result.get("action") == "block":
+                    return "[OUTPUT BLOCKED BY DATA POLICY]"
+                return result.get("sanitized_output", str(raw_output))
+
+            tool_obj.coroutine = shielded_coro
+            return tool_obj
+
+        # Sync tool. Wrapping _run covers AgentExecutor; async callers reach
+        # the BaseTool default _arun, which delegates back to this _run.
+        original_run = getattr(tool_obj, "_run", None) or tool_obj.run
+
         @functools.wraps(original_run)
         def shielded_run(*args, **kwargs):
-            # Build tool_input from args/kwargs, filtering out LangChain internals
-            _LC_INTERNALS = {"run_manager", "config", "callbacks", "tags", "metadata"}
-            tool_input = {k: v for k, v in kwargs.items()
-                          if k not in _LC_INTERNALS and isinstance(v, (str, int, float, bool, list, dict, type(None)))}
-            if args:
-                schema = getattr(tool_obj, "args_schema", None)
-                if schema:
-                    props = list(schema.model_fields.keys()) if hasattr(schema, 'model_fields') else list(schema.schema().get("properties", {}).keys())
-                    for i, arg in enumerate(args):
-                        if i < len(props):
-                            tool_input[props[i]] = arg
-
-            # 1. RBAC check
+            tool_input = shield._tool_input(tool_obj, args, kwargs)
             guard = shield.check_tool(tool_name, tool_input)
             if not guard.allowed:
                 return f"DENIED by Shield: {guard.reason}"
-
-            # 2. Execute original tool
             raw_output = original_run(*args, **kwargs)
-
-            # 3. Sanitize output
             result = shield.sanitize_output(tool_name, str(raw_output))
             if result.get("action") == "block":
                 return "[OUTPUT BLOCKED BY DATA POLICY]"
             return result.get("sanitized_output", str(raw_output))
 
-        tool_obj._run = shielded_run
+        if getattr(tool_obj, "_run", None) is not None:
+            tool_obj._run = shielded_run
         return tool_obj
+
+    def interrupt_on(self, tools: list, require_approval=None) -> dict:
+        """Build a deep-agents `interrupt_on` map from your tools.
+
+        Pass the tool names that need human approval (from your Shield
+        approval policy) as `require_approval`; returns `{name: True}` for
+        the matching tools so you can hand it straight to create_deep_agent.
+        Composes with deep-agents' NATIVE human-in-the-loop — Shield supplies
+        the policy, the framework drives the pause/resume.
+
+            agent = create_deep_agent(
+                model=llm,
+                tools=shield.wrap_tools(my_tools),
+                interrupt_on=shield.interrupt_on(my_tools,
+                                                 require_approval=["wire_transfer"]),
+            )
+        """
+        names = [getattr(t, "name", None) for t in tools]
+        names = [n for n in names if n]
+        if not require_approval:
+            return {}
+        approve = set(require_approval)
+        return {n: True for n in names if n in approve}
 
     # ── Context manager ───────────────────────────────────────────
 
