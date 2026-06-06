@@ -218,6 +218,11 @@ def assign_roles(token: str):
                 json={
                     "username": username,
                     "enabled": True,
+                    "email": f"{username.replace('.', '')}@shield.local",
+                    "emailVerified": True,
+                    "firstName": username.split(".")[0].capitalize(),
+                    "lastName": username.split(".")[-1].capitalize(),
+                    "requiredActions": [],
                     "credentials": [{"type": "password", "value": "password", "temporary": False}],
                 },
             )
@@ -245,6 +250,24 @@ def assign_roles(token: str):
         if not role:
             print(f"  {username} — SKIP (role '{role_name}' not found)")
             continue
+
+        # Clear required actions and set email so password grant works
+        requests.put(
+            f"{KC_URL}/admin/realms/{REALM}/users/{user_id}",
+            headers=admin_headers(token),
+            json={
+                "email": f"{username.replace('.', '')}@shield.local",
+                "emailVerified": True,
+                "requiredActions": [],
+            },
+        )
+
+        # Set password (non-temporary)
+        requests.put(
+            f"{KC_URL}/admin/realms/{REALM}/users/{user_id}/reset-password",
+            headers=admin_headers(token),
+            json={"type": "password", "value": "password", "temporary": False},
+        )
 
         r = requests.post(
             f"{KC_URL}/admin/realms/{REALM}/users/{user_id}/role-mappings/realm",
