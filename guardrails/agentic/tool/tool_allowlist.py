@@ -1,11 +1,49 @@
 """Strict deny-by-default tool allowlist per agent/role."""
 
 import fnmatch
+import json
+import logging
 from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.rbac import enforcer
+
+logger = logging.getLogger(__name__)
+
+
+def _load_registry_permissions(agent_key: str, tenant_id: str) -> dict:
+    """Load agent's role_permissions from Redis registry.
+
+    Returns {"per_agent": {"agent_key": [tools]}, "per_role": {"role": [tools]}}
+    or empty dicts if not found.
+    """
+    try:
+        from storage.tenant_store import _get_redis, _fallback_store
+
+        r = _get_redis()
+        key = f"agents:{tenant_id}"
+        raw = r.get(key) if r else None
+        if not raw:
+            raw = _fallback_store.get(key)
+        if not raw:
+            return {}
+
+        agents = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+        agent_data = agents.get(agent_key)
+        if not agent_data:
+            return {}
+
+        tools = agent_data.get("tools", [])
+        role_permissions = agent_data.get("role_permissions", {})
+
+        return {
+            "per_agent": {agent_key: tools},
+            "per_role": role_permissions,
+        }
+    except Exception as e:
+        logger.debug(f"Registry lookup failed for {agent_key}: {e}")
+        return {}
 
 
 class ToolAllowlistGuardrail(BaseGuardrail):
@@ -22,8 +60,15 @@ class ToolAllowlistGuardrail(BaseGuardrail):
                                    message="Missing agent_key or tool_name, skipping")
 
         # INTERSECTION MODEL: Both agent AND role must allow (if role provided)
-        per_agent = self.settings.get("per_agent", {})
-        per_role = self.settings.get("per_role", {})
+        per_agent = dict(self.settings.get("per_agent", {}))
+        per_role = dict(self.settings.get("per_role", {}))
+
+        # Fallback: if agent not in static config, check Redis registry
+        tenant_id = ctx.get("tenant_id", "")
+        if agent_key not in per_agent and tenant_id:
+            registry = _load_registry_permissions(agent_key, tenant_id)
+            per_agent.update(registry.get("per_agent", {}))
+            per_role.update(registry.get("per_role", {}))
         user_role = ctx.get("user_role") or ctx.get("X-User-Role")
 
         agent_allowed = False
