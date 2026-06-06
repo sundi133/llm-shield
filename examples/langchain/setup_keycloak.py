@@ -47,7 +47,8 @@ def wait_for_keycloak():
     print("Waiting for Keycloak to be ready...", end="", flush=True)
     for _ in range(60):
         try:
-            r = requests.get(f"{KC_URL}/health/ready", timeout=3)
+            # Dev mode doesn't expose /health — check the master realm endpoint
+            r = requests.get(f"{KC_URL}/realms/master", timeout=3)
             if r.status_code == 200:
                 print(" ready!")
                 return

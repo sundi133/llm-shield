@@ -291,7 +291,7 @@ def main():
     # ── Preflight ─────────────────────────────────────────────────────
     section("PREFLIGHT — Check services")
 
-    for name, url in [("Shield", f"{SHIELD_URL}/health"), ("Keycloak", f"{KEYCLOAK_URL}/health/ready")]:
+    for name, url in [("Shield", f"{SHIELD_URL}/health"), ("Keycloak", f"{KEYCLOAK_URL}/realms/master")]:
         try:
             r = requests.get(url, timeout=5)
             if r.status_code == 200:
