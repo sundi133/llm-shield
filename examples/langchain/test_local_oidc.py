@@ -332,7 +332,8 @@ def main():
 
     for name, url in [("Shield", f"{SHIELD_URL}/health"), ("Keycloak", f"{KEYCLOAK_URL}/realms/master")]:
         try:
-            r = requests.get(url, timeout=5)
+            h = _shield_headers() if name == "Shield" else {}
+            r = requests.get(url, headers=h, timeout=5)
             if r.status_code == 200:
                 ok(f"{name} is up")
             else:
