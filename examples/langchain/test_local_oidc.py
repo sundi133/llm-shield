@@ -26,6 +26,7 @@ What it tests:
 
 import base64
 import json
+import os
 import sys
 import time
 import uuid
@@ -38,9 +39,9 @@ KEYCLOAK_URL = "http://localhost:8180"
 REALM = "shield"
 CLIENT_ID = "shield-api"
 CLIENT_SECRET = "shield-client-secret"
-SHIELD_URL = "http://localhost:8000"
-SHIELD_ADMIN_KEY = "test-admin-key"
-API_KEY = ""  # Will be set after tenant creation
+SHIELD_URL = os.getenv("LLM_SHIELD_URL", "http://localhost:8000")
+SHIELD_ADMIN_KEY = os.getenv("SHIELD_ADMIN_KEY", "test-admin-key")
+API_KEY = os.getenv("API_KEY", "")  # Set via env or created via tenant setup
 
 AGENT_ID = "test-oidc-agent"
 AGENT_INSTANCE_ID = f"{AGENT_ID}-{uuid.uuid4().hex[:8]}"
@@ -314,7 +315,8 @@ def main():
         try:
             user = keycloak_login(username)
             users[username] = user
-            ok(f"{username} → sub={user['sub'][:8]}..., role={user['role']}")
+            sub_display = (user['sub'] or 'unknown')[:12]
+            ok(f"{username} → sub={sub_display}..., role={user['role']}")
         except RuntimeError as e:
             fail(f"{username}: {e}")
 
@@ -323,12 +325,17 @@ def main():
         sys.exit(1)
 
     # ── Step 2: Create tenant ─────────────────────────────────────────
-    section("STEP 2 — Create Shield tenant")
+    section("STEP 2 — Shield tenant API key")
 
-    api_key = setup_tenant()
-    if not api_key:
-        print("\n  Cannot proceed without API key. Check Shield admin endpoint.")
-        sys.exit(1)
+    if API_KEY:
+        api_key = API_KEY
+        ok(f"Using API_KEY from environment: {api_key[:20]}...")
+    else:
+        api_key = setup_tenant()
+        if not api_key:
+            print("\n  Cannot proceed without API key.")
+            print("  Either set API_KEY env var or check Shield admin endpoint.")
+            sys.exit(1)
 
     # ── Step 3: Register agent ────────────────────────────────────────
     section("STEP 3 — Register agent (one-time)")
