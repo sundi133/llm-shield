@@ -33,13 +33,17 @@ LDAP_BIND_DN = "cn=admin,dc=shield,dc=local"
 LDAP_BIND_PASS = "adminpassword"
 LDAP_BASE_DN = "dc=shield,dc=local"
 
-ROLES = ["doctor", "nurse", "admin", "patient"]
+ROLES = [
+    # Banking roles (match your Shield tenant config)
+    "customer_support", "payments_officer", "fraud_analyst",
+    "compliance_officer", "branch_manager",
+]
 
 USER_ROLES = {
-    "dr.smith": "doctor",
-    "nurse.jones": "nurse",
-    "admin.doe": "admin",
-    "patient.lee": "patient",
+    "dr.smith": "branch_manager",        # full access
+    "nurse.jones": "customer_support",   # limited access
+    "admin.doe": "compliance_officer",   # compliance access
+    "patient.lee": "fraud_analyst",      # fraud + read access
 }
 
 

@@ -49,11 +49,14 @@ API_KEY = os.getenv("API_KEY", "")  # Set via env or created via tenant setup
 # RunPod auth token (only needed for RunPod-hosted Shield)
 RUNPOD_TOKEN = os.getenv("RUNPOD_TOKEN", "")
 
-AGENT_ID = "test-oidc-agent"
+AGENT_ID = os.getenv("AGENT_ID", "customer-service-agent")
 AGENT_INSTANCE_ID = f"{AGENT_ID}-{uuid.uuid4().hex[:8]}"
 SESSION_ID = f"sess-{int(time.time())}"
 
-SHIELD_ROLES = {"doctor", "nurse", "admin", "patient"}
+SHIELD_ROLES = {
+    "customer_support", "payments_officer", "fraud_analyst",
+    "compliance_officer", "branch_manager",
+}
 
 
 def _shield_headers(api_key: str = "", agent_key: str = "", user_role: str = "") -> dict:
@@ -195,25 +198,25 @@ def register_agent(api_key: str):
         headers=_shield_headers(api_key=api_key, agent_key=AGENT_ID),
         json={
             "agent_id": AGENT_ID,
-            "name": "OIDC Test Agent",
-            "description": "Tests OIDC + LDAP integration",
+            "name": "Customer Service Agent",
+            "description": "Banking customer service agent (OIDC + LDAP test)",
             "tools": [
-                "patient_lookup", "view_records", "prescribe_medication",
-                "check_vitals", "email_send",
+                "customer_profile_get", "transaction_history",
+                "statement_generate", "wire_transfer_execute", "email_send",
             ],
             "role_permissions": {
-                "doctor":  ["patient_lookup", "view_records", "prescribe_medication", "check_vitals", "email_send"],
-                "nurse":   ["patient_lookup", "view_records", "check_vitals"],
-                "admin":   ["patient_lookup", "view_records", "prescribe_medication", "check_vitals", "email_send"],
-                "patient": ["check_vitals"],
-                # Map to tenant's data policy roles
-                "compliance_officer": ["patient_lookup", "view_records", "email_send"],
-                "customer_support":   ["patient_lookup", "check_vitals", "email_send"],
+                "customer_support":   ["customer_profile_get", "statement_generate", "email_send"],
+                "payments_officer":   ["customer_profile_get", "transaction_history", "statement_generate", "wire_transfer_execute", "email_send"],
+                "fraud_analyst":      ["customer_profile_get", "transaction_history", "email_send"],
+                "compliance_officer": ["transaction_history", "email_send"],
+                "branch_manager":     ["customer_profile_get", "transaction_history", "statement_generate", "wire_transfer_execute", "email_send"],
             },
         },
     )
     if r.status_code in (200, 201):
         ok(f"Agent registered: {AGENT_ID}")
+    elif r.status_code == 409:
+        ok(f"Agent already registered: {AGENT_ID}")
     else:
         print(f"    Registration: {r.status_code} — {r.text[:200]}")
 
@@ -393,22 +396,40 @@ def main():
     # ── Step 5: RBAC tool checks ──────────────────────────────────────
     section("STEP 5 — RBAC tool checks (per-action)")
 
+    # Test cases matching tenant's actual tool permissions:
+    #   branch_manager:     ALL tools
+    #   customer_support:   customer_profile_get, statement_generate, email_send
+    #   compliance_officer: transaction_history, email_send
+    #   fraud_analyst:      customer_profile_get, transaction_history, email_send
+    #   payments_officer:   ALL tools
     test_cases = [
-        # (user,          tool,                   expected)
-        ("dr.smith",      "patient_lookup",        True,   "doctor can look up patients"),
-        ("dr.smith",      "prescribe_medication",  True,   "doctor can prescribe"),
-        ("nurse.jones",   "patient_lookup",        True,   "nurse can look up patients"),
-        ("nurse.jones",   "prescribe_medication",  False,  "nurse CANNOT prescribe"),
-        ("patient.lee",   "check_vitals",          True,   "patient can check own vitals"),
-        ("patient.lee",   "patient_lookup",        False,  "patient CANNOT look up other patients"),
-        ("patient.lee",   "view_records",          False,  "patient CANNOT view records"),
+        # (user,          tool,                      expected, description)
+        # dr.smith = branch_manager (full access)
+        ("dr.smith",      "customer_profile_get",     True,   "branch_manager can get customer profile"),
+        ("dr.smith",      "wire_transfer_execute",    True,   "branch_manager can execute wire transfer"),
+        ("dr.smith",      "email_send",               True,   "branch_manager can send email"),
+        # nurse.jones = customer_support (limited)
+        ("nurse.jones",   "customer_profile_get",     True,   "customer_support can get profile"),
+        ("nurse.jones",   "email_send",               True,   "customer_support can send email"),
+        ("nurse.jones",   "wire_transfer_execute",    False,  "customer_support CANNOT wire transfer"),
+        ("nurse.jones",   "transaction_history",      False,  "customer_support CANNOT view tx history"),
+        # admin.doe = compliance_officer (audit only)
+        ("admin.doe",     "transaction_history",      True,   "compliance_officer can view tx history"),
+        ("admin.doe",     "email_send",               True,   "compliance_officer can send email"),
+        ("admin.doe",     "customer_profile_get",     False,  "compliance_officer CANNOT get profile"),
+        ("admin.doe",     "wire_transfer_execute",    False,  "compliance_officer CANNOT wire transfer"),
+        # patient.lee = fraud_analyst
+        ("patient.lee",   "customer_profile_get",     True,   "fraud_analyst can get profile"),
+        ("patient.lee",   "transaction_history",      True,   "fraud_analyst can view tx history"),
+        ("patient.lee",   "wire_transfer_execute",    False,  "fraud_analyst CANNOT wire transfer"),
+        ("patient.lee",   "statement_generate",       False,  "fraud_analyst CANNOT generate statements"),
     ]
 
     for username, tool, expected_allowed, description in test_cases:
         if username not in users:
             continue
         role = users[username]["role"]
-        result = shield_tool_check(api_key, tool, role, {"patient_id": "P-001"})
+        result = shield_tool_check(api_key, tool, role, {"customer_id": "CUST-12345"})
         allowed = result.get("allowed", False) and result.get("action") != "block"
 
         if allowed == expected_allowed:
@@ -426,12 +447,12 @@ def main():
     section("STEP 6 — Capability tokens (mint + verify)")
 
     if "dr.smith" in agent_tokens:
-        print("\n  Doctor mints capability for patient_lookup:")
+        print("\n  Branch manager mints capability for customer_profile_get:")
         cap_result = shield_cap_mint(
             api_key,
             agent_tokens["dr.smith"],
-            "patient_lookup",
-            "patient/P-001",
+            "customer_profile_get",
+            "customer/CUST-12345",
         )
         if "cap_token" in cap_result:
             cap_token = cap_result["cap_token"]
@@ -440,7 +461,7 @@ def main():
 
             # Verify the capability (what a tool server does)
             print("\n  Tool server verifies capability:")
-            verify_result = shield_cap_verify(api_key, cap_token, "patient_lookup")
+            verify_result = shield_cap_verify(api_key, cap_token, "customer_profile_get")
             if verify_result.get("valid"):
                 claims = verify_result.get("claims", {})
                 ok(f"Cap VALID — agent={claims.get('agent_id')}, tool={claims.get('tool')}")
@@ -449,7 +470,7 @@ def main():
 
             # Replay attack — same cap should be rejected
             print("\n  Replay attack (reuse burned cap):")
-            replay_result = shield_cap_verify(api_key, cap_token, "patient_lookup")
+            replay_result = shield_cap_verify(api_key, cap_token, "customer_profile_get")
             if not replay_result.get("valid"):
                 ok(f"Replay REJECTED: {replay_result.get('error')}")
             else:
