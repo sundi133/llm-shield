@@ -28,10 +28,10 @@ REALM = "shield"
 CLIENT_ID = "shield-api"
 CLIENT_SECRET = "shield-client-secret"  # fixed for local testing
 
-LDAP_URL = "ldap://openldap:1389"  # Keycloak resolves this via docker network
+LDAP_URL = "ldap://openldap:389"  # Keycloak resolves this via docker network
 LDAP_BIND_DN = "cn=admin,dc=shield,dc=local"
 LDAP_BIND_PASS = "adminpassword"
-LDAP_BASE_DN = "ou=users,dc=shield,dc=local"
+LDAP_BASE_DN = "dc=shield,dc=local"
 
 ROLES = ["doctor", "nurse", "admin", "patient"]
 

@@ -8,19 +8,20 @@ services:
   # Pre-loaded with test users: dr.smith (doctor), nurse.jones (nurse),
   # admin.doe (admin), patient.lee (patient)
   openldap:
-    image: bitnami/openldap:2
+    image: osixia/openldap:1.5.0
     container_name: shield-ldap
     ports:
-      - "1389:1389"
+      - "1389:389"
     environment:
-      - LDAP_ROOT=dc=shield,dc=local
-      - LDAP_ADMIN_USERNAME=admin
+      - LDAP_ORGANISATION=Shield
+      - LDAP_DOMAIN=shield.local
       - LDAP_ADMIN_PASSWORD=adminpassword
-      - LDAP_USERS=dr.smith,nurse.jones,admin.doe,patient.lee
-      - LDAP_PASSWORDS=password,password,password,password
-      - LDAP_GROUP=shield-users
+      - LDAP_READONLY_USER=true
+      - LDAP_READONLY_USER_USERNAME=readonly
+      - LDAP_READONLY_USER_PASSWORD=readonly
     volumes:
-      - ldap_data:/bitnami/openldap
+      - ldap_data:/var/lib/ldap
+      - ldap_slapd:/etc/ldap/slapd.d
 
   # ── Keycloak (OIDC provider) ────────────────────────────────────────
   # Admin console: http://localhost:8180
@@ -94,4 +95,5 @@ services:
 
 volumes:
   ldap_data:
+  ldap_slapd:
   redis_data:
