@@ -251,11 +251,15 @@ def assign_roles(token: str):
             print(f"  {username} — SKIP (role '{role_name}' not found)")
             continue
 
-        # Clear required actions and set email so password grant works
+        # Set profile fields + clear required actions so password grant works
+        # Keycloak 26 VERIFY_PROFILE blocks login if firstName/lastName missing
+        parts = username.split(".")
         requests.put(
             f"{KC_URL}/admin/realms/{REALM}/users/{user_id}",
             headers=admin_headers(token),
             json={
+                "firstName": parts[0].capitalize(),
+                "lastName": parts[-1].capitalize(),
                 "email": f"{username.replace('.', '')}@shield.local",
                 "emailVerified": True,
                 "requiredActions": [],
