@@ -333,20 +333,41 @@ def main():
     # ── Preflight ─────────────────────────────────────────────────────
     section("PREFLIGHT — Check services")
 
-    for name, url in [("Shield", f"{SHIELD_URL}/health"), ("Keycloak", f"{KEYCLOAK_URL}/realms/master")]:
+    # Shield health: try multiple paths (full app vs admin vs RunPod)
+    shield_up = False
+    for path in ["/health", "/ping", "/healthz", "/"]:
         try:
-            h = _shield_headers() if name == "Shield" else {}
-            r = requests.get(url, headers=h, timeout=5)
+            r = requests.get(f"{SHIELD_URL}{path}", headers=_shield_headers(), timeout=5)
+            if r.status_code == 200:
+                ok(f"Shield is up ({path})")
+                shield_up = True
+                break
+        except Exception:
+            pass
+    if not shield_up:
+        # Last resort: try a real API call
+        try:
+            r = requests.get(f"{SHIELD_URL}/v1/agents/registry", headers=_shield_headers(api_key=API_KEY), timeout=5)
+            if r.status_code == 200:
+                ok("Shield is up (registry endpoint)")
+                shield_up = True
+        except Exception:
+            pass
+    if not shield_up:
+        fail("Shield unreachable on all endpoints")
+        print(f"    Tried: {SHIELD_URL}")
+        sys.exit(1)
+
+    # Keycloak health
+    for name, url in [("Keycloak", f"{KEYCLOAK_URL}/realms/master")]:
+        try:
+            r = requests.get(url, timeout=5)
             if r.status_code == 200:
                 ok(f"{name} is up")
             else:
                 fail(f"{name} returned {r.status_code}")
-                if name == "Shield":
-                    print("    Run: docker compose -f docker-compose.local.yml up -d")
-                    sys.exit(1)
         except Exception as e:
             fail(f"{name} unreachable: {e}")
-            print("    Run: docker compose -f docker-compose.local.yml up -d")
             sys.exit(1)
 
     # ── Step 1: Login as each user ────────────────────────────────────
