@@ -508,12 +508,18 @@ def main():
     print("  (matches your tenant's email_send data policy for")
     print("   compliance_officer and customer_support roles)\n")
 
-    # 7a. RBAC checks on email_send for different roles
+    # 7a. Data policy checks on email_send for different roles
+    # Actual tenant policy:
+    #   - compliance_officer: BLOCKED from email_send entirely
+    #   - customer_support:   BLOCKED from email_send by data policy
+    #   - branch_manager:     ALLOWED (full access)
+    #   - fraud_analyst:      NOT registered for email_send in RBAC
     email_rbac_tests = [
         # (role,                  tool,         expected, description)
-        ("compliance_officer", "email_send", True,  "compliance_officer can send email"),
-        ("customer_support",   "email_send", True,  "customer_support can send email"),
-        ("patient",            "email_send", False, "patient CANNOT send email"),
+        ("compliance_officer", "email_send", False, "compliance_officer BLOCKED from email_send (data policy)"),
+        ("customer_support",   "email_send", False, "customer_support BLOCKED from email_send (data policy)"),
+        ("branch_manager",     "email_send", True,  "branch_manager can send email"),
+        ("fraud_analyst",      "email_send", False, "fraud_analyst CANNOT send email"),
     ]
 
     for role, tool_name, expected, desc in email_rbac_tests:
@@ -526,17 +532,18 @@ def main():
         else:
             fail(f"{desc} — got {'ALLOWED' if allowed else 'BLOCKED'}, expected {'ALLOWED' if expected else 'BLOCKED'}")
 
-    # 7b. Input data policy: domain allowlist
-    print("\n  Input policy — approved vs blocked email domains:")
+    # 7b. Input data policy: domain allowlist (using branch_manager who has access)
+    print("\n  Input policy — approved vs blocked email domains (branch_manager):")
 
     email_domain_tests = [
-        # (role,                 to_email,                   expected, description)
-        ("compliance_officer", "ops@bank.ae",               True,  "approved domain (bank.ae) → ALLOWED"),
-        ("compliance_officer", "fraud@fraud.bank.ae",       True,  "approved domain (fraud.bank.ae) → ALLOWED"),
-        ("compliance_officer", "someone@gmail.com",         False, "public mail (gmail.com) → BLOCKED"),
-        ("compliance_officer", "data@competitor.com",       False, "external domain → BLOCKED"),
-        ("customer_support",   "team@ops.bank.ae",          True,  "approved domain for support → ALLOWED"),
-        ("customer_support",   "external@yahoo.com",        False, "public mail for support → BLOCKED"),
+        # Tenant allowlist: only bank.ae (not subdomains)
+        # (role,              to_email,                   expected, description)
+        ("branch_manager",  "ops@bank.ae",               True,  "approved domain (bank.ae) → ALLOWED"),
+        ("branch_manager",  "fraud@fraud.bank.ae",       False, "subdomain (fraud.bank.ae) → BLOCKED (not in allowlist)"),
+        ("branch_manager",  "someone@gmail.com",         False, "public mail (gmail.com) → BLOCKED"),
+        ("branch_manager",  "data@competitor.com",       False, "external domain → BLOCKED"),
+        ("branch_manager",  "team@ops.bank.ae",          False, "subdomain (ops.bank.ae) → BLOCKED (not in allowlist)"),
+        ("branch_manager",  "external@yahoo.com",        False, "public mail for manager → BLOCKED"),
     ]
 
     for role, to_email, expected, desc in email_domain_tests:
@@ -554,15 +561,15 @@ def main():
                 if not gr.get("passed", True):
                     print(f"      reason: {gr.get('message', 'unknown')}")
 
-    # 7c. Input data policy: sensitive banking data in body
-    print("\n  Input policy — sensitive data in email body:")
+    # 7c. Input data policy: sensitive banking data in body (branch_manager)
+    print("\n  Input policy — sensitive data in email body (branch_manager):")
 
     sensitive_input_tests = [
-        ("compliance_officer", "Status update for customer", True,  "normal content → ALLOWED"),
-        ("compliance_officer",
+        ("branch_manager", "Status update for customer", True,  "normal content → ALLOWED"),
+        ("branch_manager",
          "Customer SSN: 784-19-1234-5678-9, Account: AE070331234567890123456",
          False, "banking data (SSN + IBAN) in body → BLOCKED"),
-        ("customer_support",
+        ("branch_manager",
          "Full profile: Name: Ahmed, DOB: 1985-03-15, Passport: P1234567, Balance: $45,230",
          False, "full customer profile in body → BLOCKED"),
     ]
