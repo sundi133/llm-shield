@@ -56,9 +56,14 @@ class TenantConfig(BaseModel):
     quota: Optional[TenantQuota] = None
     block_unregistered_agents: bool = Field(
         default=False,
-        description="Block API calls from unregistered (shadow) agents. "
-                    "When True, tool/check and guardrail calls from agents not "
-                    "in the Agent Registry are rejected with 403.",
+        description="Block ALL unregistered (shadow) agents. "
+                    "When True, only registered agents can call Shield.",
+    )
+    blocked_agents: list[str] = Field(
+        default_factory=list,
+        description="Explicitly blocked agent keys. These agents are rejected "
+                    "with 403 even when block_unregistered_agents is False. "
+                    "Use this to block individual shadow agents one by one.",
     )
     deleted_at: Optional[str] = None  # ISO timestamp for soft delete
 
