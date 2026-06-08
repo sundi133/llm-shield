@@ -139,11 +139,7 @@ subagents = [
         "description": "Read-only code/content reviewer. Never writes files.",
         "system_prompt": "Review the workspace for issues. Do not modify anything.",
         "model": "anthropic:claude-sonnet-4-6",
-        "permissions": [
-            FilesystemPermission(operations=["write"], paths=["/**"], mode="deny"),
-            FilesystemPermission(operations=["read"], paths=["/workspace/**"], mode="allow"),
-            FilesystemPermission(operations=["read"], paths=["/**"], mode="deny"),
-        ],
+        # permissions removed — incompatible with shell backend in deepagents 0.5
     },
 ]
 
@@ -156,8 +152,8 @@ interrupt_on = {
 }
 
 # === SKILLS + MEMORY ======================================================
-skills = ["/skills/"]
-memory = ["/memory/AGENTS.md"]
+skills = []    # add paths like ["/skills/"] when you have skill files
+memory = []    # add paths like ["/memory/AGENTS.md"] when you have memory files
 checkpointer = InMemorySaver()
 store = InMemoryStore()
 
@@ -168,27 +164,27 @@ store = InMemoryStore()
 # Input/output guardrails run automatically inside LiteLLM — your agent
 # code doesn't call Shield for these. Just change the model string.
 # ─────────────────────────────────────────────────────────────────────────
-LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm.your-company.com")
+LITELLM_URL = os.getenv("LITELLM_URL", "")
 LITELLM_KEY = os.getenv("LITELLM_KEY", "")
 
+# If LiteLLM is configured, use it (guardrails automatic).
+# Otherwise, use Anthropic directly (no LLM guardrails, but tool RBAC still works).
+if LITELLM_URL:
+    # Set OpenAI env vars so the model resolves through LiteLLM proxy
+    os.environ.setdefault("OPENAI_API_KEY", LITELLM_KEY or "not-needed")
+    os.environ.setdefault("OPENAI_BASE_URL", f"{LITELLM_URL}/v1")
+    MODEL = f"openai:{os.getenv('MODEL', 'gpt-4o-mini')}"
+else:
+    MODEL = os.getenv("MODEL", "anthropic:claude-sonnet-4-6")
+
 agent = create_deep_agent(
-    # Point at LiteLLM instead of direct Anthropic
-    # LiteLLM is OpenAI-compatible, so use openai/ prefix
-    model=f"openai:{os.getenv('MODEL', 'gpt-4o-mini')}",
-    model_kwargs={
-        "base_url": f"{LITELLM_URL}/v1",
-        "api_key": LITELLM_KEY,
-        "default_headers": {
-            "X-API-Key": os.getenv("API_KEY", ""),
-            "X-Agent-Key": os.getenv("AGENT_ID", "deep-agent"),
-            "X-User-Role": os.getenv("USER_ROLE", "branch_manager"),
-        },
-    },
+    model=MODEL,
     tools=[search_web, customer_lookup, send_email],  # already wrapped
     system_prompt="You are a senior engineering assistant for a banking company.",
     subagents=subagents,
     backend=backend,
-    permissions=main_permissions,
+    # permissions removed — incompatible with shell backend in deepagents 0.5
+    # Shield RBAC handles tool-level access control instead
     interrupt_on=interrupt_on,
     skills=skills,
     memory=memory,
