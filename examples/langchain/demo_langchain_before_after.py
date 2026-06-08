@@ -15,6 +15,12 @@ Usage:
 
 import json
 import os
+import sys
+
+# Force UTF-8 console output — Windows defaults to cp1252 and crashes on ✓ ✗ →
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 from langchain_anthropic import ChatAnthropic
 from langchain.tools import tool

@@ -38,6 +38,11 @@ import os
 import sys
 import time
 
+# Force UTF-8 console output — Windows defaults to cp1252 and crashes on ✓ ✗ →
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 import requests
 from langchain_openai import ChatOpenAI
 from langchain.tools import tool

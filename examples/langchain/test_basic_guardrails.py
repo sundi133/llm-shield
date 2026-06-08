@@ -30,6 +30,11 @@ import os
 import sys
 import requests
 
+# Force UTF-8 console output — Windows defaults to cp1252 and crashes on ✓ ✗ →
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 # ── Config ────────────────────────────────────────────────────────────────
 
 LITELLM_URL = os.getenv("LITELLM_URL", "")

@@ -52,6 +52,12 @@ Config:
 """
 
 import os
+import sys
+
+# Force UTF-8 console output — Windows defaults to cp1252 and crashes on ✓ ✗ →
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 from deepagents import create_deep_agent
 from deepagents.backends import LocalShellBackend
@@ -71,6 +77,7 @@ shield = VotalShield(
     api_key=os.getenv("API_KEY", ""),
     agent_id=os.getenv("AGENT_ID", "deep-agent"),
     user_role=os.getenv("USER_ROLE", "branch_manager"),
+    auth_token=os.getenv("RUNPOD_TOKEN", ""),  # required for RunPod-hosted Shield
 )
 
 # One-time: register agent (safe to call on every startup — idempotent)
