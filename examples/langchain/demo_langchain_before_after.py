@@ -18,8 +18,7 @@ import os
 
 from langchain_anthropic import ChatAnthropic
 from langchain.tools import tool
-from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain_core.prompts import ChatPromptTemplate
+from langgraph.prebuilt import create_react_agent
 
 # ══════════════════════════════════════════════════════════════════════════
 #  AGENT A: No Shield — anyone can do anything, PII flows freely
@@ -87,24 +86,27 @@ SYSTEM_PROMPT = (
 
 def build_agent(tools):
     llm = ChatAnthropic(model="claude-sonnet-4-6", max_tokens=1024)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT),
-        ("human", "{input}"),
-        ("placeholder", "{agent_scratchpad}"),
-    ])
-    agent = create_tool_calling_agent(llm, tools, prompt)
-    return AgentExecutor(agent=agent, tools=tools, verbose=True,
-                         handle_parsing_errors=True, max_iterations=5)
+    return create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
 
 
-def run_agent(executor, message: str, label: str):
+def run_agent(agent, message: str, label: str):
     print(f"\n  {'─' * 56}")
     print(f"  {label}")
     print(f"  User: {message}")
     print(f"  {'─' * 56}")
     try:
-        result = executor.invoke({"input": message})
-        print(f"\n  Final: {result['output'][:300]}")
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": message}]},
+        )
+        # Print tool calls and final response
+        for msg in result["messages"]:
+            role = getattr(msg, "type", "unknown")
+            if role == "tool":
+                name = getattr(msg, "name", "?")
+                content = str(msg.content)[:200]
+                print(f"  [Tool: {name}] {content}")
+            elif role == "ai" and msg.content:
+                print(f"\n  Final: {str(msg.content)[:300]}")
     except Exception as e:
         print(f"\n  Error: {e}")
 
