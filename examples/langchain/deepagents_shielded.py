@@ -168,22 +168,21 @@ store = InMemoryStore()
 # Input/output guardrails run automatically inside LiteLLM — your agent
 # code doesn't call Shield for these. Just change the model string.
 # ─────────────────────────────────────────────────────────────────────────
-LITELLM_URL = os.getenv("LITELLM_URL", "https://litellm.your-company.com")
+LITELLM_URL = os.getenv("LITELLM_URL", "")
 LITELLM_KEY = os.getenv("LITELLM_KEY", "")
 
+# If LiteLLM is configured, use it (guardrails automatic).
+# Otherwise, use Anthropic directly (no LLM guardrails, but tool RBAC still works).
+if LITELLM_URL:
+    # Set OpenAI env vars so the model resolves through LiteLLM proxy
+    os.environ.setdefault("OPENAI_API_KEY", LITELLM_KEY or "not-needed")
+    os.environ.setdefault("OPENAI_BASE_URL", f"{LITELLM_URL}/v1")
+    MODEL = f"openai:{os.getenv('MODEL', 'gpt-4o-mini')}"
+else:
+    MODEL = os.getenv("MODEL", "anthropic:claude-sonnet-4-6")
+
 agent = create_deep_agent(
-    # Point at LiteLLM instead of direct Anthropic
-    # LiteLLM is OpenAI-compatible, so use openai/ prefix
-    model=f"openai:{os.getenv('MODEL', 'gpt-4o-mini')}",
-    model_kwargs={
-        "base_url": f"{LITELLM_URL}/v1",
-        "api_key": LITELLM_KEY,
-        "default_headers": {
-            "X-API-Key": os.getenv("API_KEY", ""),
-            "X-Agent-Key": os.getenv("AGENT_ID", "deep-agent"),
-            "X-User-Role": os.getenv("USER_ROLE", "branch_manager"),
-        },
-    },
+    model=MODEL,
     tools=[search_web, customer_lookup, send_email],  # already wrapped
     system_prompt="You are a senior engineering assistant for a banking company.",
     subagents=subagents,
