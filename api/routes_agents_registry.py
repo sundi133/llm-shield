@@ -325,6 +325,65 @@ async def dismiss_unregistered(item_type: str, item_id: str, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Shadow agent approval / blocking ──────────────────────────────────────
+
+
+@router.post("/unregistered/{agent_id}/block")
+async def block_shadow_agent(agent_id: str, request: Request):
+    """Block a specific shadow agent. Adds it to the tenant's blocked_agents list.
+
+    The agent is rejected with 403 on all future calls, even if
+    block_unregistered_agents is False.
+    """
+    _validate_agent_id(agent_id)
+    tenant_id = get_tenant_from_api_key(request)
+
+    from storage.tenant_store import get_tenant, update_tenant
+    config = get_tenant(tenant_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    blocked = config.get("blocked_agents", [])
+    if agent_id not in blocked:
+        blocked.append(agent_id)
+        update_tenant(tenant_id, {"blocked_agents": blocked})
+
+    return {
+        "success": True,
+        "action": "blocked",
+        "agent_id": agent_id,
+        "blocked_agents": blocked,
+    }
+
+
+@router.post("/unregistered/{agent_id}/allow")
+async def allow_shadow_agent(agent_id: str, request: Request):
+    """Allow a previously blocked shadow agent. Removes it from blocked_agents.
+
+    To fully approve a shadow agent, register it via POST /v1/agents/registry
+    with its tools and role_permissions. This endpoint only unblocks.
+    """
+    _validate_agent_id(agent_id)
+    tenant_id = get_tenant_from_api_key(request)
+
+    from storage.tenant_store import get_tenant, update_tenant
+    config = get_tenant(tenant_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    blocked = config.get("blocked_agents", [])
+    if agent_id in blocked:
+        blocked.remove(agent_id)
+        update_tenant(tenant_id, {"blocked_agents": blocked})
+
+    return {
+        "success": True,
+        "action": "allowed",
+        "agent_id": agent_id,
+        "blocked_agents": blocked,
+    }
+
+
 @router.post("/seed-test-data")
 async def seed_test_data():
     """Seed test tenant with sample agents and policies data."""
