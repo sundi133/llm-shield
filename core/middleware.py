@@ -300,6 +300,19 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                             _record_shadow_agent(
                                 tenant_id, agent_key, path, user_role,
                             )
+                            # Block unregistered agents if tenant opted in
+                            if tenant_config.get("block_unregistered_agents", False):
+                                from starlette.responses import JSONResponse
+                                return JSONResponse(
+                                    status_code=403,
+                                    content={
+                                        "error": "unregistered_agent",
+                                        "detail": f"Agent '{agent_key}' is not registered. "
+                                                  f"Register it in the Agent Registry or disable "
+                                                  f"block_unregistered_agents in tenant settings.",
+                                        "agent_key": agent_key,
+                                    },
+                                )
                         else:
                             request.state.shadow_agent = False
 
