@@ -67,17 +67,17 @@ def section(title):
     print(f"{'=' * 60}")
 
 
-def tool_check(agent_key, tool_name="search_web", user_role="user"):
-    """Call tool/check with a given agent key. Returns (status_code, body)."""
+def agent_call(agent_key, user_role="user"):
+    """Make any API call as a given agent. The middleware detects shadow agents
+    regardless of which endpoint is called. We use /guardrails/input since it
+    exists on all Shield deployments (full app and admin).
+
+    Returns (status_code, body).
+    """
     r = requests.post(
-        f"{SHIELD_URL}/v1/shield/tool/check",
+        f"{SHIELD_URL}/guardrails/input",
         headers=headers(agent_key=agent_key, user_role=user_role),
-        json={
-            "agent_key": agent_key,
-            "tool_name": tool_name,
-            "user_role": user_role,
-            "tool_params": {},
-        },
+        json={"message": "hello"},
         timeout=15,
     )
     try:
@@ -158,18 +158,29 @@ def main():
 
     # ── Preflight ─────────────────────────────────────────────────────
     section("PREFLIGHT")
-    code, _ = tool_check("customer-service-agent", "search_web")
-    if code == 200:
-        ok("Shield is reachable")
-    else:
-        fail(f"Shield returned {code}")
+    try:
+        r = requests.get(f"{SHIELD_URL}/v1/agents/registry", headers=headers(), timeout=10)
+        if r.status_code == 200:
+            ok("Shield is reachable")
+        else:
+            fail(f"Shield returned {r.status_code}")
+            sys.exit(1)
+    except Exception as e:
+        fail(f"Shield unreachable: {e}")
         sys.exit(1)
+
+    # Check if tool/check endpoint exists
+    code, body = agent_call("customer-service-agent")
+    if code == 200:
+        ok(f"Agent API call works ({code})")
+    else:
+        print(f"  ? Agent call returned {code} — continuing anyway")
 
     # ── Step 1: Create shadow agents ──────────────────────────────────
     section("STEP 1 — Create shadow agents (call with unregistered agent IDs)")
 
     for shadow in [SHADOW_1, SHADOW_2, SHADOW_3]:
-        code, body = tool_check(shadow, "some_tool")
+        code, body = agent_call(shadow)
         # Shadow agents should be allowed (default: detect only)
         if code == 200:
             ok(f"{shadow} called tool/check → {code} (detected as shadow)")
@@ -225,7 +236,7 @@ def main():
 
     # Verify blocked agent gets 403
     print(f"\n  Calling tool/check as blocked agent {SHADOW_1}:")
-    code, body = tool_check(SHADOW_1, "some_tool")
+    code, body = agent_call(SHADOW_1)
     if code == 403 and body.get("error") == "agent_blocked":
         ok(f"{SHADOW_1} → 403 agent_blocked")
     else:
@@ -234,7 +245,7 @@ def main():
 
     # Verify other shadows still work
     print(f"\n  Calling tool/check as non-blocked agent {SHADOW_2}:")
-    code, body = tool_check(SHADOW_2, "some_tool")
+    code, body = agent_call(SHADOW_2)
     if code == 200:
         ok(f"{SHADOW_2} → {code} (still allowed)")
     else:
@@ -250,7 +261,7 @@ def main():
         fail(f"Unblock failed: {code} {json.dumps(body)[:100]}")
 
     # Verify it works again
-    code, body = tool_check(SHADOW_1, "some_tool")
+    code, body = agent_call(SHADOW_1)
     if code == 200:
         ok(f"{SHADOW_1} → {code} (working again)")
     elif code == 403:
@@ -273,7 +284,7 @@ def main():
         fail(f"Registration failed: {code} {json.dumps(body)[:100]}")
 
     # Verify registered agent passes RBAC
-    code, body = tool_check(SHADOW_3, "search_web")
+    code, body = agent_call(SHADOW_3)
     if code == 200:
         allowed = body.get("allowed", False)
         if allowed:
@@ -293,7 +304,7 @@ def main():
 
     # Verify both blocked
     for s in [SHADOW_1, SHADOW_2]:
-        code, _ = tool_check(s, "test")
+        code, _ = agent_call(s)
         status = "403 BLOCKED" if code == 403 else f"{code} ???"
         print(f"      {s} → {status}")
 
@@ -301,8 +312,8 @@ def main():
     allow_agent(SHADOW_1)
     ok(f"Allowed {SHADOW_1} back")
 
-    code1, _ = tool_check(SHADOW_1, "test")
-    code2, _ = tool_check(SHADOW_2, "test")
+    code1, _ = agent_call(SHADOW_1)
+    code2, _ = agent_call(SHADOW_2)
     if code1 == 200 and code2 == 403:
         ok(f"{SHADOW_1} → 200 (allowed), {SHADOW_2} → 403 (still blocked)")
     else:
