@@ -292,14 +292,41 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                     request.state.tenant_id = tenant_id
                     request.state.tenant_config = tenant_config
 
-                    # Shadow agent discovery — detect unregistered agent keys
+                    # Shadow agent discovery + enforcement
                     if agent_key:
+                        # Check explicit blocklist first (works regardless of registration)
+                        blocked_agents = tenant_config.get("blocked_agents", [])
+                        if agent_key in blocked_agents:
+                            from starlette.responses import JSONResponse
+                            _record_shadow_agent(tenant_id, agent_key, path, user_role)
+                            return JSONResponse(
+                                status_code=403,
+                                content={
+                                    "error": "agent_blocked",
+                                    "detail": f"Agent '{agent_key}' is explicitly blocked. "
+                                              f"Remove it from blocked_agents to allow access.",
+                                    "agent_key": agent_key,
+                                },
+                            )
+
                         registered = _get_registered_agents(tenant_id)
                         if registered and agent_key not in registered:
                             request.state.shadow_agent = True
                             _record_shadow_agent(
                                 tenant_id, agent_key, path, user_role,
                             )
+                            # Block ALL unregistered agents if tenant opted in
+                            if tenant_config.get("block_unregistered_agents", False):
+                                from starlette.responses import JSONResponse
+                                return JSONResponse(
+                                    status_code=403,
+                                    content={
+                                        "error": "unregistered_agent",
+                                        "detail": f"Agent '{agent_key}' is not registered. "
+                                                  f"Register it in the Agent Registry to allow access.",
+                                        "agent_key": agent_key,
+                                    },
+                                )
                         else:
                             request.state.shadow_agent = False
 

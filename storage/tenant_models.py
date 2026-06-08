@@ -54,6 +54,17 @@ class TenantConfig(BaseModel):
     output_guardrails: dict[str, GuardrailPolicy] = Field(default_factory=dict)
     rbac: TenantRBAC = Field(default_factory=TenantRBAC)
     quota: Optional[TenantQuota] = None
+    block_unregistered_agents: bool = Field(
+        default=False,
+        description="Block ALL unregistered (shadow) agents. "
+                    "When True, only registered agents can call Shield.",
+    )
+    blocked_agents: list[str] = Field(
+        default_factory=list,
+        description="Explicitly blocked agent keys. These agents are rejected "
+                    "with 403 even when block_unregistered_agents is False. "
+                    "Use this to block individual shadow agents one by one.",
+    )
     deleted_at: Optional[str] = None  # ISO timestamp for soft delete
 
     @field_validator("quota", mode="before")
