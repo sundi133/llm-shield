@@ -6228,17 +6228,21 @@ function displayAgents(agents, unreg) {
           <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);">${roles || '—'}</td>
           <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);text-align:right;">${meta.call_count || 1}</td>
           <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);text-align:right;white-space:nowrap;">${ago}</td>
-          <td style="padding:0.5rem 0.5rem;text-align:right;"><button onclick="dismissUnregistered('agents','${itemId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px;" title="Dismiss" onmouseover="this.style.color='var(--warn)'" onmouseout="this.style.color='var(--text-muted)'">✕</button></td>
+          <td style="padding:0.5rem 0.5rem;text-align:right;display:flex;gap:4px;justify-content:flex-end;align-items:center;">
+            <button onclick="blockShadowAgent('${itemId}')" style="background:rgba(248,81,73,0.1);color:#fca5a5;border:1px solid rgba(248,81,73,0.3);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;cursor:pointer;" title="Block this agent" onmouseover="this.style.background='rgba(248,81,73,0.2)'" onmouseout="this.style.background='rgba(248,81,73,0.1)'">Block</button>
+            <button onclick="registerShadowAgent('${itemId}')" style="background:rgba(16,185,129,0.1);color:#10b981;border:1px solid rgba(16,185,129,0.3);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;cursor:pointer;" title="Register this agent" onmouseover="this.style.background='rgba(16,185,129,0.2)'" onmouseout="this.style.background='rgba(16,185,129,0.1)'">Register</button>
+            <button onclick="dismissUnregistered('agents','${itemId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px;" title="Dismiss" onmouseover="this.style.color='var(--warn)'" onmouseout="this.style.color='var(--text-muted)'">✕</button>
+          </td>
         </tr>`;
       },
       columns: [
-        { label: 'Agent ID', width: '22%' },
-        { label: 'Source', width: '8%' },
-        { label: 'Endpoints', width: '28%' },
-        { label: 'Roles', width: '14%' },
-        { label: 'Calls', width: '8%', align: 'right' },
+        { label: 'Agent ID', width: '20%' },
+        { label: 'Source', width: '7%' },
+        { label: 'Endpoints', width: '22%' },
+        { label: 'Roles', width: '12%' },
+        { label: 'Calls', width: '7%', align: 'right' },
         { label: 'Last Seen', width: '12%', align: 'right' },
-        { label: '', width: '8%', align: 'right' },
+        { label: 'Actions', width: '20%', align: 'right' },
       ],
     });
   }
@@ -6342,6 +6346,39 @@ async function dismissUnregistered(type, id) {
     loadAgentData();
   } catch (e) {
     showToast('Failed to dismiss: ' + e.message, 'error');
+  }
+}
+
+async function blockShadowAgent(agentId) {
+  if (!confirm(`Block agent "${agentId}"?\n\nThis agent will be rejected with 403 on all future API calls. You can unblock it later.`)) return;
+  try {
+    await apiCall(`/v1/agents/unregistered/${agentId}/block`, { method: 'POST' });
+    showToast(`Agent "${agentId}" blocked`, 'success');
+    loadAgentData();
+  } catch (e) {
+    showToast('Failed to block agent: ' + e.message, 'error');
+  }
+}
+
+function registerShadowAgent(agentId) {
+  // Open the Add Agent modal pre-filled with the shadow agent's ID
+  showAddAgentModal();
+  setTimeout(() => {
+    const idField = document.getElementById('agent-id');
+    if (idField) {
+      idField.value = agentId;
+      idField.dispatchEvent(new Event('input'));
+    }
+  }, 100);
+}
+
+async function unblockAgent(agentId) {
+  try {
+    await apiCall(`/v1/agents/unregistered/${agentId}/allow`, { method: 'POST' });
+    showToast(`Agent "${agentId}" unblocked`, 'success');
+    loadAgentData();
+  } catch (e) {
+    showToast('Failed to unblock agent: ' + e.message, 'error');
   }
 }
 
