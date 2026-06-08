@@ -152,8 +152,8 @@ interrupt_on = {
 }
 
 # === SKILLS + MEMORY ======================================================
-skills = ["/skills/"]
-memory = ["/memory/AGENTS.md"]
+skills = []    # add paths like ["/skills/"] when you have skill files
+memory = []    # add paths like ["/memory/AGENTS.md"] when you have memory files
 checkpointer = InMemorySaver()
 store = InMemoryStore()
 
