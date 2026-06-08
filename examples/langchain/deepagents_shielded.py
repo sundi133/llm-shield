@@ -139,11 +139,7 @@ subagents = [
         "description": "Read-only code/content reviewer. Never writes files.",
         "system_prompt": "Review the workspace for issues. Do not modify anything.",
         "model": "anthropic:claude-sonnet-4-6",
-        "permissions": [
-            FilesystemPermission(operations=["write"], paths=["/**"], mode="deny"),
-            FilesystemPermission(operations=["read"], paths=["/workspace/**"], mode="allow"),
-            FilesystemPermission(operations=["read"], paths=["/**"], mode="deny"),
-        ],
+        # permissions removed — incompatible with shell backend in deepagents 0.5
     },
 ]
 
@@ -187,7 +183,8 @@ agent = create_deep_agent(
     system_prompt="You are a senior engineering assistant for a banking company.",
     subagents=subagents,
     backend=backend,
-    permissions=main_permissions,
+    # permissions removed — incompatible with shell backend in deepagents 0.5
+    # Shield RBAC handles tool-level access control instead
     interrupt_on=interrupt_on,
     skills=skills,
     memory=memory,
