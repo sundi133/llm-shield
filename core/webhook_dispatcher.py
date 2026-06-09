@@ -132,3 +132,10 @@ async def dispatch_event(
             f"Webhook dispatch: event={event_type} tenant={tenant_id} "
             f"delivered={delivered}/{len(tasks)}"
         )
+
+    # Fan-out to SIEM endpoints (Splunk, Sentinel, generic)
+    try:
+        from core.siem_dispatcher import dispatch_to_siem
+        await dispatch_to_siem(tenant_id, event)
+    except Exception as e:
+        logger.debug(f"SIEM dispatch failed: {e}")
