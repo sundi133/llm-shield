@@ -45,6 +45,7 @@ from api.routes_agentic_control_plane import router as agentic_control_plane_rou
 from api.routes_guardrail_metrics import router as guardrail_metrics_router
 from api.routes_siem import router as siem_router
 from api.routes_evidence import router as evidence_router
+from api.routes_board_report import router as board_report_router
 
 # Runtime tool-check routes (RBAC + data policy enforcement)
 _tool_router = None
@@ -1025,6 +1026,7 @@ def create_admin_app() -> FastAPI:
     app.include_router(guardrail_metrics_router)       # /v1/tenant/me/guardrails/metrics
     app.include_router(siem_router)                    # /v1/tenant/me/siem
     app.include_router(evidence_router)                # /v1/tenant/me/compliance/*
+    app.include_router(board_report_router)             # /v1/tenant/me/board-report
 
     # Runtime: tool RBAC + data policy enforcement
     if _tool_router:
