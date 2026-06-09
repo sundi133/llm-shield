@@ -241,9 +241,14 @@ async def classify(request: Request, body: dict):
     else:
         result = await _classify_with_overrides(message, input_overrides, context, start)
 
+    # Record guardrail effectiveness metrics
+    tenant_id = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
+    if tenant_id:
+        from storage.guardrail_metrics import record_results_batch
+        record_results_batch(tenant_id, result.get("guardrail_results", []))
+
     # Log to audit_logger so input guardrail checks appear in tenant telemetry
     agent_key = (getattr(request.state, "agent_key", None) if hasattr(request, "state") else None) or body.get("agent_key", "")
-    tenant_id = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
     role_name = (getattr(request.state, "role_name", None) if hasattr(request, "state") else None) or ""
     root_action = result.get("action", "pass")  # pass, log, warn, redact, or block
     blocked = root_action == "block"
