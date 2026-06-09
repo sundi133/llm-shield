@@ -2014,6 +2014,18 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
         Webhooks
       </div>
+      <div class="nav-item" data-tab="siem">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        SIEM Integration
+      </div>
+      <div class="nav-item" data-tab="guardrail-metrics">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+        Guardrail Metrics
+      </div>
+      <div class="nav-item" data-tab="board-report">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        Board Report
+      </div>
     </div>
 
     <div class="nav-section">
@@ -4158,6 +4170,82 @@ if __name__ == "__main__":
           </div>
           <div id="acp-breaker-list" class="wf-stack"></div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── SIEM Integration ────────────────────── -->
+    <div id="tab-siem" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">SIEM Integration</div>
+        <div class="page-desc">Send guardrail events to Splunk, Azure Sentinel, or any SIEM endpoint.</div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">Add SIEM Endpoint</div></div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
+          <select id="siem-type" style="padding:0.45rem 0.6rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
+            <option value="splunk">Splunk HEC</option>
+            <option value="sentinel">Azure Sentinel</option>
+            <option value="generic">Generic (HTTP POST)</option>
+          </select>
+          <input id="siem-url" type="text" placeholder="https://splunk-hec.company.com:8088/services/collector" style="flex:1;min-width:300px;padding:0.45rem 0.6rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
+          <input id="siem-token" type="password" placeholder="HEC Token / Bearer Token" style="width:220px;padding:0.45rem 0.6rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
+          <button class="primary" onclick="createSIEM()">Add</button>
+        </div>
+        <div id="siem-list" style="margin-top:1rem;"></div>
+      </div>
+      <div class="card" style="margin-top:1rem;">
+        <button class="small" onclick="testSIEM()">Send Test Event</button>
+        <span id="siem-test-result" style="margin-left:0.75rem;font-size:12px;color:var(--text-dim);"></span>
+      </div>
+    </div>
+
+    <!-- ── Guardrail Metrics ────────────────────── -->
+    <div id="tab-guardrail-metrics" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Guardrail Effectiveness</div>
+        <div class="page-desc">Track pass/block rates, latency, and trends for every guardrail.</div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">All Guardrails (Last 30 Days)</div></div>
+          <button class="small" onclick="loadGuardrailMetrics()">Refresh</button>
+        </div>
+        <div id="guardrail-metrics-content" style="min-height:200px;">
+          <div style="text-align:center;color:var(--text-dim);padding:2rem;">Loading metrics...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Board Report ────────────────────── -->
+    <div id="tab-board-report" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Board & Compliance Report</div>
+        <div class="page-desc">Executive-level metrics for board presentations and compliance audits.</div>
+        <div style="display:flex;gap:0.5rem;margin-top:0.75rem;">
+          <button class="primary" onclick="exportEvidencePack('html')">Export Evidence Pack (HTML)</button>
+          <button class="small" onclick="exportEvidencePack('json')">Export JSON</button>
+        </div>
+      </div>
+      <div id="board-report-cards" class="stat-grid" style="grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Daily Trend (30 Days)</div></div></div>
+          <div id="board-trend-chart" style="height:200px;display:flex;align-items:flex-end;gap:2px;padding:1rem;"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Top Threats</div></div></div>
+          <div id="board-threats" style="padding:0.5rem;"></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:1rem;">
+        <div class="card-header"><div><div class="card-title">Recent Incidents</div></div></div>
+        <div id="board-incidents" style="padding:0.5rem;"></div>
+      </div>
+      <div class="card" style="margin-top:1rem;">
+        <div class="card-header"><div><div class="card-title">Guardrail Coverage</div></div></div>
+        <div id="board-coverage" style="padding:0.5rem;"></div>
       </div>
     </div>
 
@@ -10479,6 +10567,200 @@ function copyApiSnippet(id) {
   navigator.clipboard.writeText(text).then(() => showToast('cURL copied', 'success'));
 }
 
+// ── SIEM Integration ──────────────────────
+async function loadSIEMData() {
+  try {
+    const data = await apiCall('/v1/tenant/me/siem');
+    const list = document.getElementById('siem-list');
+    const integrations = data.integrations || [];
+    if (!integrations.length) {
+      list.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:1rem 0;">No SIEM integrations configured.</div>';
+      return;
+    }
+    list.innerHTML = integrations.map(s => `
+      <div style="display:flex;align-items:center;gap:1rem;padding:0.75rem;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:0.5rem;background:var(--bg-2);">
+        <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(99,102,241,0.15);color:var(--accent);font-weight:600;text-transform:uppercase;">${s.type}</span>
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);flex:1;overflow:hidden;text-overflow:ellipsis;">${s.url || s.workspace_id || '—'}</span>
+        <span style="font-size:11px;color:${s.enabled ? 'var(--green)' : 'var(--text-muted)'};">${s.enabled ? 'Active' : 'Disabled'}</span>
+        <button class="small danger" onclick="deleteSIEM('${s.siem_id}')">Remove</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('siem-list').innerHTML = `<div style="color:var(--red);font-size:12px;">Failed: ${e.message}</div>`;
+  }
+}
+
+async function createSIEM() {
+  try {
+    await apiCall('/v1/tenant/me/siem', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: document.getElementById('siem-type').value,
+        url: document.getElementById('siem-url').value,
+        token: document.getElementById('siem-token').value,
+      }),
+    });
+    showToast('SIEM integration created', 'success');
+    document.getElementById('siem-url').value = '';
+    document.getElementById('siem-token').value = '';
+    loadSIEMData();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+async function deleteSIEM(id) {
+  if (!confirm('Remove this SIEM integration?')) return;
+  try {
+    await apiCall(`/v1/tenant/me/siem/${id}`, { method: 'DELETE' });
+    showToast('SIEM integration removed', 'success');
+    loadSIEMData();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+async function testSIEM() {
+  const el = document.getElementById('siem-test-result');
+  el.textContent = 'Sending test event...';
+  el.style.color = 'var(--text-dim)';
+  try {
+    await apiCall('/v1/tenant/me/siem/test', { method: 'POST' });
+    el.textContent = 'Test event sent!';
+    el.style.color = 'var(--green)';
+  } catch (e) {
+    el.textContent = 'Failed: ' + e.message;
+    el.style.color = 'var(--red)';
+  }
+}
+
+// ── Guardrail Metrics ────────────────────
+async function loadGuardrailMetrics() {
+  const el = document.getElementById('guardrail-metrics-content');
+  try {
+    const data = await apiCall('/v1/tenant/me/guardrails/metrics?days=30');
+    const gs = data.guardrails || [];
+    if (!gs.length) {
+      el.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:2rem;">No guardrail metrics recorded yet. Metrics appear after guardrails process requests.</div>';
+      return;
+    }
+    el.innerHTML = `
+      <table style="width:100%;font-size:12px;border-collapse:collapse;">
+        <tr style="border-bottom:2px solid var(--border);">
+          <th style="text-align:left;padding:0.5rem;">Guardrail</th>
+          <th style="text-align:right;padding:0.5rem;">Total</th>
+          <th style="text-align:right;padding:0.5rem;">Passed</th>
+          <th style="text-align:right;padding:0.5rem;">Blocked</th>
+          <th style="text-align:right;padding:0.5rem;">Block Rate</th>
+          <th style="text-align:right;padding:0.5rem;">Avg Latency</th>
+          <th style="text-align:center;padding:0.5rem;">Trend</th>
+        </tr>
+        ${gs.map(g => `
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:0.5rem;font-weight:600;color:var(--text);">${g.guardrail}</td>
+            <td style="padding:0.5rem;text-align:right;color:var(--text-dim);">${g.total.toLocaleString()}</td>
+            <td style="padding:0.5rem;text-align:right;color:var(--green);">${g.passed.toLocaleString()}</td>
+            <td style="padding:0.5rem;text-align:right;color:var(--red);">${g.blocked.toLocaleString()}</td>
+            <td style="padding:0.5rem;text-align:right;font-weight:600;color:${g.block_rate > 0.3 ? 'var(--red)' : g.block_rate > 0.1 ? 'var(--warn)' : 'var(--green)'};">${(g.block_rate * 100).toFixed(1)}%</td>
+            <td style="padding:0.5rem;text-align:right;color:var(--text-dim);">${g.avg_latency_ms.toFixed(0)}ms</td>
+            <td style="padding:0.5rem;text-align:center;">${g.trend === 'up' ? '<span style="color:var(--red);">&#9650;</span>' : g.trend === 'down' ? '<span style="color:var(--green);">&#9660;</span>' : '<span style="color:var(--text-muted);">&#8722;</span>'}</td>
+          </tr>
+        `).join('')}
+      </table>`;
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--red);padding:1rem;">Failed to load metrics: ${e.message}</div>`;
+  }
+}
+
+// ── Board Report ─────────────────────────
+async function loadBoardReport() {
+  try {
+    const data = await apiCall('/v1/tenant/me/board-report?days=30');
+    const s = data.summary || {};
+
+    // Summary cards
+    document.getElementById('board-report-cards').innerHTML = `
+      <div class="stat-card"><div class="stat-value">${(s.total_requests || 0).toLocaleString()}</div><div class="stat-label">Total Requests</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:var(--red);">${(s.blocked_count || 0).toLocaleString()}</div><div class="stat-label">Blocked</div></div>
+      <div class="stat-card"><div class="stat-value">${s.block_rate_pct || 0}%</div><div class="stat-label">Block Rate</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:${s.compliance_score >= 80 ? 'var(--green)' : s.compliance_score >= 50 ? 'var(--warn)' : 'var(--red)'};">${s.compliance_score || 0}%</div><div class="stat-label">Compliance Score</div></div>
+    `;
+
+    // Daily trend chart (simple bar chart)
+    const trend = data.daily_trend || [];
+    const maxReq = Math.max(...trend.map(d => d.requests), 1);
+    document.getElementById('board-trend-chart').innerHTML = trend.length
+      ? trend.map(d => {
+          const h = Math.max(2, (d.requests / maxReq) * 160);
+          const bh = Math.max(0, (d.blocked / maxReq) * 160);
+          return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;" title="${d.date}: ${d.requests} requests, ${d.blocked} blocked">
+            <div style="width:100%;background:var(--accent);border-radius:2px 2px 0 0;height:${h}px;position:relative;">
+              <div style="position:absolute;bottom:0;width:100%;height:${bh}px;background:var(--red);border-radius:0 0 2px 2px;"></div>
+            </div>
+          </div>`;
+        }).join('')
+      : '<div style="color:var(--text-dim);padding:2rem;text-align:center;">No data yet</div>';
+
+    // Top threats
+    const threats = data.top_threats || [];
+    document.getElementById('board-threats').innerHTML = threats.length
+      ? threats.map(t => `
+          <div style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem 0;border-bottom:1px solid var(--border);">
+            <span style="font-weight:600;font-size:12px;color:var(--text);flex:1;">${t.guardrail}</span>
+            <span style="font-size:12px;color:var(--red);font-weight:600;">${t.blocked} blocked</span>
+            <span style="font-size:11px;color:var(--text-dim);">${(t.block_rate * 100).toFixed(1)}%</span>
+            <span>${t.trend === 'up' ? '<span style="color:var(--red);">&#9650;</span>' : t.trend === 'down' ? '<span style="color:var(--green);">&#9660;</span>' : '&#8722;'}</span>
+          </div>`).join('')
+      : '<div style="color:var(--text-dim);font-size:13px;">No threats detected</div>';
+
+    // Incidents
+    const incidents = data.incidents || [];
+    document.getElementById('board-incidents').innerHTML = incidents.length
+      ? `<table style="width:100%;font-size:12px;border-collapse:collapse;">
+          <tr style="border-bottom:2px solid var(--border);"><th style="text-align:left;padding:0.4rem;">Time</th><th style="text-align:left;padding:0.4rem;">Guardrail</th><th style="text-align:left;padding:0.4rem;">Tool</th><th style="text-align:left;padding:0.4rem;">Role</th><th style="text-align:left;padding:0.4rem;">Reason</th></tr>
+          ${incidents.map(inc => `<tr style="border-bottom:1px solid var(--border);"><td style="padding:0.4rem;color:var(--text-dim);white-space:nowrap;">${(inc.timestamp || '').substring(0,19)}</td><td style="padding:0.4rem;font-weight:600;">${inc.guardrail}</td><td style="padding:0.4rem;">${inc.tool_name || '—'}</td><td style="padding:0.4rem;">${inc.user_role || '—'}</td><td style="padding:0.4rem;color:var(--text-dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${inc.reason}</td></tr>`).join('')}
+        </table>`
+      : '<div style="color:var(--text-dim);font-size:13px;">No incidents in this period</div>';
+
+    // Coverage
+    const cov = data.guardrail_coverage || {};
+    document.getElementById('board-coverage').innerHTML = `
+      <div style="display:flex;gap:2rem;font-size:12px;">
+        <div><strong>Enabled:</strong> <span style="color:var(--green);">${(cov.enabled || []).join(', ') || 'None'}</span></div>
+        <div><strong>Missing:</strong> <span style="color:var(--red);">${(cov.missing || []).join(', ') || 'None — full coverage!'}</span></div>
+      </div>`;
+  } catch (e) {
+    document.getElementById('board-report-cards').innerHTML = `<div style="color:var(--red);padding:1rem;grid-column:1/-1;">Failed: ${e.message}</div>`;
+  }
+}
+
+// ── Evidence Pack Export ─────────────────
+async function exportEvidencePack(format) {
+  try {
+    const resp = await fetch('/v1/tenant/me/compliance/evidence-pack', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+      body: JSON.stringify({ format, framework: 'generic' }),
+    });
+    if (format === 'html') {
+      const html = await resp.text();
+      const w = window.open('', '_blank');
+      w.document.write(html);
+      w.document.close();
+    } else {
+      const data = await resp.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `evidence-pack-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+    }
+    showToast('Evidence pack generated', 'success');
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
 // ── Nav ───────────────────────────────────
 document.addEventListener('click', (e) => {
   if (e.target.closest('.nav-item[data-tab]')) {
@@ -10501,6 +10783,9 @@ document.addEventListener('click', (e) => {
       // Architecture tab is static, no loading needed
       console.log('Architecture tab loaded');
     }
+    if (tab === 'siem') loadSIEMData();
+    if (tab === 'guardrail-metrics') loadGuardrailMetrics();
+    if (tab === 'board-report') loadBoardReport();
     if (tab === 'agents') loadAgentData();
     if (tab === 'tool-policies') switchTPSubtab('data-policies');
     if (tab === 'usage') loadUsage();
