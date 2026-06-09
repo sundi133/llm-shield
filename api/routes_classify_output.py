@@ -526,6 +526,11 @@ async def classify_output(request: Request, body: dict):
         if sanitization_meta.get("output_modified"):
             response["sanitized_output"] = output
 
+    # Record guardrail effectiveness metrics
+    if tenant_id:
+        from storage.guardrail_metrics import record_results_batch
+        record_results_batch(tenant_id, response.get("guardrail_results", []))
+
     # Log to audit_logger so output guardrail checks appear in tenant telemetry
     blocked = response.get("action") == "block"
     guardrail_results = response.get("guardrail_results", [])
