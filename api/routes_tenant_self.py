@@ -942,3 +942,49 @@ async def get_policy_limits(request: Request):
             "priority_range": {"min": 1, "max": 1000}
         }
     }
+
+
+# ── Audit ingest: client-side tool-call audit records ────────────────────
+
+
+@router.post("/me/audit")
+async def ingest_audit(request: Request):
+    """Ingest a client-side audit record into the tenant's Redis audit log.
+
+    Used by agent runtimes to write GuardedToolCall records (tool execution
+    outcomes) into the same audit stream as guardrail events. Records appear
+    in the tenant portal's audit log and are queryable via /me/audit/query.
+
+    Controlled by the SHIELD_AUDIT_REDIS feature flag on the client side.
+    """
+    tenant_id = _require_tenant(request)
+    body = await request.json()
+
+    import time as _time
+    record = {
+        "agent_key": body.get("agent_id", ""),
+        "endpoint": "guarded_tool_call",
+        "input_text": f"{body.get('tool_name', '')}({body.get('resource', '')})",
+        "action_taken": "pass" if body.get("executed") else "block",
+        "guardrails_triggered": [body.get("denied_reason")] if body.get("denied_reason") else [],
+        "latency_ms": 0,
+        "metadata": {
+            "kind": "guarded_tool_call",
+            "tenant_id": tenant_id,
+            "tool_name": body.get("tool_name", ""),
+            "resource": body.get("resource", ""),
+            "user_sub": body.get("user_sub", ""),
+            "user_role": body.get("user_role", ""),
+            "session_id": body.get("session_id", ""),
+            "rbac_allowed": body.get("rbac_allowed", False),
+            "cap_minted": body.get("cap_minted", False),
+            "cap_verified": body.get("cap_verified", False),
+            "executed": body.get("executed", False),
+            "output_sanitized": body.get("output_sanitized", False),
+            "denied_reason": body.get("denied_reason"),
+            "status": body.get("status", "unknown"),
+        },
+    }
+
+    await audit_logger.log(record)
+    return {"success": True, "event_type": "guarded_tool_call"}
