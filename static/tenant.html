@@ -6589,14 +6589,22 @@ function createAgentPermissionsMatrix(agent) {
 
 // Agent Management Functions
 async function toggleAgent(agentId, enabled) {
+  const status = enabled ? 'active' : 'disabled';
   try {
-    const status = enabled ? 'active' : 'disabled';
-    // TODO: Implement API call to toggle agent status
-    console.log(`${enabled ? 'Enabling' : 'Disabling'} agent: ${agentId}`);
-    showToast(`Agent ${agentId} ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    // apiCall() centralizes auth + content-type headers and throws on non-2xx,
+    // so we don't reference the key or build headers here.
+    await apiCall(`/v1/agents/registry/${agentId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    });
+    showToast(`Agent "${agentId}" ${enabled ? 'enabled' : 'disabled'}`, 'success');
   } catch (error) {
     console.error('Failed to toggle agent:', error);
-    showToast('Failed to update agent status', 'error');
+    showToast('Failed to update agent status: ' + error.message, 'error');
+  } finally {
+    // Re-render from the saved state so the toggle reflects reality
+    // (and reverts if the request failed).
+    loadAgentData();
   }
 }
 
@@ -6979,8 +6987,11 @@ style.textContent = `
     background: #10b981;
   }
 
-  .toggle input:checked + .slider .slider-dot {
-    transform: translateX(19px);
+  /* This toggle supplies its own knob via .slider-dot, so suppress the generic
+     .slider:before knob (line ~250) that would otherwise show as a stray grey
+     circle on the left in both states. */
+  .toggle .slider::before {
+    display: none;
   }
 
   .permissions-matrix table th,
