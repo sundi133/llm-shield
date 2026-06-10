@@ -207,18 +207,22 @@ class RBACGuard(BaseGuardrail):
                 latency_ms=round(elapsed, 2),
             )
 
-        # Per-agent kill switch: a registry agent toggled "disabled" must not
-        # act, regardless of its role permissions. Checked before role
-        # resolution so a paused agent is blocked even if its tools would
-        # otherwise be allowed.
-        if tenant_id and _registry_agent_status(agent_key, tenant_id) == "disabled":
+        # Per-agent kill switch: a registry agent must be explicitly "active" to
+        # act. Any other registered state — "disabled", "inactive", or an
+        # unexpected/injected value — is blocked (fail-closed against a tampered
+        # status field), regardless of role permissions. A None status means the
+        # agent is not in the registry, so fall through to normal role
+        # resolution. Checked before role resolution so a paused agent is denied
+        # even if its tools would otherwise be allowed.
+        registry_status = _registry_agent_status(agent_key, tenant_id) if tenant_id else None
+        if registry_status is not None and registry_status != "active":
             elapsed = (datetime.now() - start).total_seconds() * 1000
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
-                message=f"Agent '{agent_key}' is disabled",
-                details={"agent_key": agent_key, "status": "disabled"},
+                message=f"Agent '{agent_key}' is not active (status: {registry_status})",
+                details={"agent_key": agent_key, "status": registry_status},
                 latency_ms=round(elapsed, 2),
             )
 

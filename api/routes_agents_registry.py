@@ -1,5 +1,6 @@
 """Agents Registry API - Direct Redis access for tenant data."""
 
+import os
 import re
 import json
 
@@ -386,7 +387,18 @@ async def allow_shadow_agent(agent_id: str, request: Request):
 
 @router.post("/seed-test-data")
 async def seed_test_data():
-    """Seed test tenant with sample agents and policies data."""
+    """Seed test tenant with sample agents and policies data.
+
+    Test/dev utility only. It mints a working tenant API key, so it refuses to
+    run in production to avoid exposing a well-known credential in a live
+    deployment. The key itself is read from SEED_TEST_API_KEY rather than
+    hardcoded.
+    """
+    if os.environ.get("ENVIRONMENT", "").lower() in ("production", "prod"):
+        raise HTTPException(
+            status_code=403,
+            detail="seed-test-data is disabled in production",
+        )
     try:
         tenant_id = "test-tenant-001"
 
@@ -514,7 +526,7 @@ async def seed_test_data():
         # resolve_tenant_by_api_key() returns None and every authenticated
         # route 401s even though the agent data exists.
         from storage.tenant_store import create_tenant, get_tenant, add_api_key
-        test_api_key = "sk-test-healthcare"
+        test_api_key = os.environ.get("SEED_TEST_API_KEY", "sk-test-healthcare")
         if not get_tenant(tenant_id):
             create_tenant(tenant_id, {
                 "name": "Test Healthcare Organization",

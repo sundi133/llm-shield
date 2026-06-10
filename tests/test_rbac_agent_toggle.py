@@ -67,6 +67,23 @@ async def test_active_agent_is_allowed():
 
 
 @pytest.mark.asyncio
+async def test_inactive_agent_is_blocked():
+    """Any non-active registered state (e.g. "inactive") is blocked, not just "disabled"."""
+    _seed_agent("inactive")
+    result = await RBACGuard().check("", _context())
+    assert result.passed is False
+    assert result.details.get("status") == "inactive"
+
+
+@pytest.mark.asyncio
+async def test_unknown_status_is_blocked():
+    """An unexpected/tampered status value fails closed (only "active" is allowed)."""
+    _seed_agent("bogus-injected-value")
+    result = await RBACGuard().check("", _context())
+    assert result.passed is False
+
+
+@pytest.mark.asyncio
 async def test_reenabling_restores_access():
     """Flipping the toggle back to active restores access for the same agent."""
     _seed_agent("disabled")
