@@ -74,6 +74,35 @@ def _resolve_role_from_registry(
         return None
 
 
+def _registry_agent_status(agent_key: str, tenant_id: str) -> "Optional[str]":
+    """Return the registered agent's status, or None if it is not in the registry.
+
+    Used to enforce the Agent Registry on/off toggle: an agent whose status is
+    "disabled" must be blocked from acting regardless of its role permissions.
+    """
+    try:
+        from storage.tenant_store import _get_redis, _fallback_store
+
+        r = _get_redis()
+        key = f"agents:{tenant_id}"
+        raw = r.get(key) if r else None
+        if not raw:
+            raw = _fallback_store.get(key)
+        if not raw:
+            return None
+
+        agents = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+        agent_data = agents.get(agent_key)
+        if not agent_data:
+            return None
+
+        return agent_data.get("status", "active")
+
+    except Exception as e:
+        logger.debug(f"Registry status lookup failed for {agent_key}: {e}")
+        return None
+
+
 def _resolve_scopes_from_params(
     tool_name: str,
     tool_params: dict,
@@ -175,6 +204,21 @@ class RBACGuard(BaseGuardrail):
                 action="pass",
                 guardrail_name=self.name,
                 message="No agent key provided, skipping RBAC check",
+                latency_ms=round(elapsed, 2),
+            )
+
+        # Per-agent kill switch: a registry agent toggled "disabled" must not
+        # act, regardless of its role permissions. Checked before role
+        # resolution so a paused agent is blocked even if its tools would
+        # otherwise be allowed.
+        if tenant_id and _registry_agent_status(agent_key, tenant_id) == "disabled":
+            elapsed = (datetime.now() - start).total_seconds() * 1000
+            return GuardrailResult(
+                passed=False,
+                action=self.configured_action,
+                guardrail_name=self.name,
+                message=f"Agent '{agent_key}' is disabled",
+                details={"agent_key": agent_key, "status": "disabled"},
                 latency_ms=round(elapsed, 2),
             )
 

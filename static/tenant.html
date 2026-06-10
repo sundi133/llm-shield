@@ -6589,14 +6589,26 @@ function createAgentPermissionsMatrix(agent) {
 
 // Agent Management Functions
 async function toggleAgent(agentId, enabled) {
+  const status = enabled ? 'active' : 'disabled';
   try {
-    const status = enabled ? 'active' : 'disabled';
-    // TODO: Implement API call to toggle agent status
-    console.log(`${enabled ? 'Enabling' : 'Disabling'} agent: ${agentId}`);
-    showToast(`Agent ${agentId} ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    const response = await fetch(`/v1/agents/registry/${agentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+      body: JSON.stringify({ status }),
+    });
+    const result = await response.json();
+    if (response.ok && result.success) {
+      showToast(`Agent "${agentId}" ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    } else {
+      showToast(result.detail || 'Failed to update agent status', 'error');
+    }
   } catch (error) {
     console.error('Failed to toggle agent:', error);
-    showToast('Failed to update agent status', 'error');
+    showToast('Failed to update agent status: ' + error.message, 'error');
+  } finally {
+    // Re-render from the saved state so the toggle reflects reality
+    // (and reverts if the request failed).
+    loadAgentData();
   }
 }
 
@@ -6979,8 +6991,11 @@ style.textContent = `
     background: #10b981;
   }
 
-  .toggle input:checked + .slider .slider-dot {
-    transform: translateX(19px);
+  /* This toggle supplies its own knob via .slider-dot, so suppress the generic
+     .slider:before knob (line ~250) that would otherwise show as a stray grey
+     circle on the left in both states. */
+  .toggle .slider::before {
+    display: none;
   }
 
   .permissions-matrix table th,
