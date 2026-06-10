@@ -6591,17 +6591,13 @@ function createAgentPermissionsMatrix(agent) {
 async function toggleAgent(agentId, enabled) {
   const status = enabled ? 'active' : 'disabled';
   try {
-    const response = await fetch(`/v1/agents/registry/${agentId}`, {
+    // apiCall() centralizes auth + content-type headers and throws on non-2xx,
+    // so we don't reference the key or build headers here.
+    await apiCall(`/v1/agents/registry/${agentId}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
       body: JSON.stringify({ status }),
     });
-    const result = await response.json();
-    if (response.ok && result.success) {
-      showToast(`Agent "${agentId}" ${enabled ? 'enabled' : 'disabled'}`, 'success');
-    } else {
-      showToast(result.detail || 'Failed to update agent status', 'error');
-    }
+    showToast(`Agent "${agentId}" ${enabled ? 'enabled' : 'disabled'}`, 'success');
   } catch (error) {
     console.error('Failed to toggle agent:', error);
     showToast('Failed to update agent status: ' + error.message, 'error');
