@@ -4,7 +4,12 @@ import re
 import json
 
 from fastapi import APIRouter, HTTPException, Request
-from storage.tenant_store import resolve_tenant_by_api_key, _get_redis
+from storage.tenant_store import (
+    resolve_tenant_by_api_key,
+    kv_get,
+    kv_set,
+    kv_delete,
+)
 
 router = APIRouter(prefix="/v1/agents", tags=["agents-registry"])
 
@@ -79,31 +84,67 @@ def _validate_agent_body(body: dict) -> None:
         raise HTTPException(status_code=400, detail="status must be active, inactive, or disabled")
 
 def get_tenant_from_api_key(request: Request) -> str:
-    """Get tenant ID directly from API key via Redis lookup."""
-    api_key = request.headers.get("X-API-Key", "").strip()
+    """Resolve the caller's tenant for registry operations.
 
+    Resolution order, kept consistent with the AuthMiddleware so the same
+    credential works for both /tool/check and agent registration:
+      1. Tenant already resolved by AuthMiddleware (request.state.tenant_id),
+         populated when SHIELD_AUTH_ENABLED is on and a tenant key validated.
+      2. X-API-Key → tenant via the apikey:* mapping.
+      3. The ``sk-test-`` sandbox key → the auto-provisioned test tenant, so the
+         zero-setup quickstart works without first minting a real key.
+    """
+    state_tenant = getattr(getattr(request, "state", None), "tenant_id", None)
+    if state_tenant:
+        return state_tenant
+
+    api_key = request.headers.get("X-API-Key", "").strip()
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
 
     tenant_id = resolve_tenant_by_api_key(api_key)
-    if not tenant_id:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+    if tenant_id:
+        return tenant_id
 
-    return tenant_id
+    if api_key.startswith("sk-test-"):
+        return _ensure_sandbox_tenant()
+
+    raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+_SANDBOX_TENANT_ID = "test-tenant-001"
+
+
+def _ensure_sandbox_tenant() -> str:
+    """Provision the shared sandbox tenant on first use (matches auth.py)."""
+    from storage.tenant_store import get_tenant, create_tenant
+
+    if not get_tenant(_SANDBOX_TENANT_ID):
+        create_tenant(_SANDBOX_TENANT_ID, {
+            "name": "Test Healthcare Organization",
+            "plan": "enterprise",
+            "description": "Test tenant for healthcare AI agents",
+            "industry": "healthcare",
+            "compliance_frameworks": ["hipaa"],
+            "created_at": "2026-04-08T00:00:00Z",
+        })
+    return _SANDBOX_TENANT_ID
+
 
 def get_redis_data(key: str):
-    """Get data from Redis using the same connection as tenant_store."""
-    redis_client = _get_redis()
-    if redis_client:
-        try:
-            data = redis_client.get(key)
-            if data:
-                if isinstance(data, str):
-                    return json.loads(data)
-                return data
-        except Exception as e:
-            print(f"Redis error getting {key}: {e}")
-    return None
+    """Get registry data, Redis-or-fallback (works without Redis in local dev)."""
+    return kv_get(key)
+
+
+def _save_agents(tenant_id: str, agents: dict) -> None:
+    """Persist the tenant's agents and invalidate the middleware cache so
+    enable/disable toggles take effect immediately."""
+    kv_set(f"agents:{tenant_id}", agents)
+    try:
+        from core.middleware import invalidate_registry_cache
+        invalidate_registry_cache(tenant_id)
+    except Exception:
+        pass
 
 
 @router.get("/registry")
@@ -232,11 +273,7 @@ async def save_all_tool_policies(request: Request):
         import time as _time
         body["updated_at"] = int(_time.time())
 
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(policies_key, json.dumps(body))
-        else:
-            raise Exception("Redis connection not available")
+        kv_set(policies_key, body)
 
         return {"success": True, "message": "Tool policies saved"}
 
@@ -262,11 +299,7 @@ async def delete_tool_policy(tool_name: str, request: Request):
 
         del policies[tool_name]
 
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(policies_key, json.dumps(policies))
-        else:
-            raise Exception("Redis connection not available")
+        kv_set(policies_key, policies)
 
         return {"success": True, "message": f"Tool policy '{tool_name}' deleted"}
 
@@ -303,12 +336,8 @@ async def dismiss_unregistered(item_type: str, item_id: str, request: Request):
     try:
         tenant_id = get_tenant_from_api_key(request)
         key = f"unregistered:{tenant_id}"
-        redis_client = _get_redis()
-        if not redis_client:
-            raise Exception("Redis connection not available")
 
-        raw = redis_client.get(key)
-        data = json.loads(raw) if raw and isinstance(raw, str) else (raw or {})
+        data = kv_get(key) or {}
         if not isinstance(data, dict):
             data = {}
 
@@ -316,7 +345,7 @@ async def dismiss_unregistered(item_type: str, item_id: str, request: Request):
         if item_id in section:
             del section[item_id]
             data[item_type] = section
-            redis_client.set(key, json.dumps(data))
+            kv_set(key, data)
 
         return {"success": True, "message": f"Dismissed {item_type[:-1]} '{item_id}'"}
     except HTTPException:
@@ -502,12 +531,8 @@ async def seed_test_data():
             }
         ]
 
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(f"agents:{tenant_id}", json.dumps(agents))
-            redis_client.set(f"policies:{tenant_id}", json.dumps(policies))
-        else:
-            raise Exception("Redis connection not available")
+        _save_agents(tenant_id, agents)
+        kv_set(f"policies:{tenant_id}", policies)
 
         return {
             "success": True,
@@ -553,11 +578,7 @@ async def create_agent(request: Request):
             "updated_at": now,
         }
 
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(agents_key, json.dumps(agents))
-        else:
-            raise Exception("Redis connection not available")
+        _save_agents(tenant_id, agents)
 
         return {
             "success": True,
@@ -605,12 +626,7 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
             "updated_at": int(__import__('time').time())
         }
 
-        # Save to Redis
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(agents_key, json.dumps(agents))
-        else:
-            raise Exception("Redis connection not available")
+        _save_agents(tenant_id, agents)
 
         return {
             "success": True,
@@ -641,12 +657,7 @@ async def delete_agent(agent_id: str, request: Request):
         # Remove agent
         deleted_agent = agents.pop(agent_id)
 
-        # Save to Redis
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(agents_key, json.dumps(agents))
-        else:
-            raise Exception("Redis connection not available")
+        _save_agents(tenant_id, agents)
 
         return {
             "success": True,

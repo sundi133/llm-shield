@@ -768,8 +768,31 @@ def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
     def _matches(name: str, patterns: list) -> bool:
         return any(fnmatch.fnmatch(name, p) for p in patterns)
 
-    # --- 1. Check agent registry ---
+    # --- 0. Disabled agent: blocked outright, before any permission logic ---
     agent_entry = (registry or {}).get(agent_key)
+    if agent_entry and agent_entry.get("status") == "disabled":
+        return {
+            "allowed": False, "action": "block",
+            "message": f"Agent '{agent_key}' is disabled. Re-enable it in the "
+                       f"Agent Registry to allow tool calls.",
+            "source": "agent_status",
+        }
+
+    # Agent-to-agent: a disabled CALLING agent must not act through another
+    # agent either.
+    if calling_agent:
+        caller_entry = (registry or {}).get(calling_agent)
+        if caller_entry and caller_entry.get("status") == "disabled":
+            return {
+                "allowed": False, "action": "block",
+                "message": f"Calling agent '{calling_agent}' is disabled. "
+                           f"Re-enable it in the Agent Registry to allow delegation.",
+                "source": "agent_status",
+                "calling_agent": calling_agent,
+                "caller_allowed": False,
+            }
+
+    # --- 1. Check agent registry ---
     if agent_entry:
         agent_tools = agent_entry.get("tools") or []
         role_perms = agent_entry.get("role_permissions") or {}
@@ -1243,6 +1266,19 @@ def create_admin_app() -> FastAPI:
         tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
 
         registry = _load_agent_registry(tenant_id)
+
+        # A disabled agent must not converse at all — reject before any
+        # guardrail or LLM call.
+        _agent_entry = (registry or {}).get(agent_key)
+        if _agent_entry and _agent_entry.get("status") == "disabled":
+            return JSONResponse(status_code=403, content={
+                "blocked": True,
+                "stage": "agent_status",
+                "block_reason": f"Agent '{agent_key}' is disabled. "
+                                f"Re-enable it in the Agent Registry to chat.",
+                "agent_key": agent_key,
+            })
+
         tool_policies = _load_tool_policies(tenant_id)
         data_policies = _load_data_policies(tenant_id)
         print(f"[data-policy] tenant_id={tenant_id} data_policies_keys={list(data_policies.keys()) if data_policies else 'None'}", flush=True)

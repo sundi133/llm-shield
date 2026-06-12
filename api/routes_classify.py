@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
+from core.policy_mode import resolve_mode, apply_to_response as apply_policy_mode
 from guardrails.base import _request_configs
 from guardrails.registry import get_by_stage, get_guardrail
 from storage.audit_log import audit_logger
@@ -240,6 +241,10 @@ async def classify(request: Request, body: dict):
         result = await _classify_with_defaults(message, context, start)
     else:
         result = await _classify_with_overrides(message, input_overrides, context, start)
+
+    # Apply the tenant's enforcement mode (monitor = dry-run, enforce = block).
+    # No-op for requests without a tenant policy.
+    result = apply_policy_mode(result, resolve_mode(tenant_config))
 
     # Record guardrail effectiveness metrics
     tenant_id = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""

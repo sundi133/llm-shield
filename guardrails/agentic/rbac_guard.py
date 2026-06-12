@@ -17,6 +17,29 @@ from guardrails.base import BaseGuardrail
 logger = logging.getLogger(__name__)
 
 
+def _load_agent_entry(agent_key: str, tenant_id: str) -> Optional[dict]:
+    """Load one agent's registry entry, Redis-or-fallback. None if absent."""
+    if not agent_key or not tenant_id:
+        return None
+    try:
+        from storage.tenant_store import _get_redis, _fallback_store
+        import json as _json
+
+        r = _get_redis()
+        key = f"agents:{tenant_id}"
+        raw = r.get(key) if r else None
+        if not raw:
+            raw = _fallback_store.get(key)
+        if not raw:
+            return None
+
+        agents = _json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+        return agents.get(agent_key)
+    except Exception as e:
+        logger.debug(f"Registry entry lookup failed for {agent_key}: {e}")
+        return None
+
+
 def _resolve_role_from_registry(
     agent_key: str,
     tool_name: str,
@@ -32,19 +55,7 @@ def _resolve_role_from_registry(
     RBACRole with the allowed tools for that role.
     """
     try:
-        from storage.tenant_store import _get_redis, _fallback_store
-        import json as _json
-
-        r = _get_redis()
-        key = f"agents:{tenant_id}"
-        raw = r.get(key) if r else None
-        if not raw:
-            raw = _fallback_store.get(key)
-        if not raw:
-            return None
-
-        agents = _json.loads(raw) if isinstance(raw, (str, bytes)) else raw
-        agent_data = agents.get(agent_key)
+        agent_data = _load_agent_entry(agent_key, tenant_id)
         if not agent_data:
             return None
 
@@ -175,6 +186,23 @@ class RBACGuard(BaseGuardrail):
                 action="pass",
                 guardrail_name=self.name,
                 message="No agent key provided, skipping RBAC check",
+                latency_ms=round(elapsed, 2),
+            )
+
+        # A registry agent toggled to "disabled" must not act at all,
+        # regardless of role permissions. Missing status = legacy entry =
+        # active; the portal toggle writes active/disabled.
+        agent_entry = _load_agent_entry(agent_key, tenant_id)
+        if agent_entry and agent_entry.get("status") == "disabled":
+            elapsed = (datetime.now() - start).total_seconds() * 1000
+            return GuardrailResult(
+                passed=False,
+                action="block",
+                guardrail_name=self.name,
+                message=f"Agent '{agent_key}' is disabled. Re-enable it in the "
+                        f"Agent Registry to allow tool calls.",
+                details={"agent_key": agent_key, "agent_status": "disabled",
+                         "administrative": True},
                 latency_ms=round(elapsed, 2),
             )
 

@@ -344,6 +344,51 @@ def list_tenants(include_deleted: bool = False) -> list[dict]:
     return tenants
 
 
+def kv_get(key: str):
+    """Read a JSON value by raw key, Redis-or-fallback.
+
+    Mirrors the Redis-or-in-memory pattern used throughout this module so
+    callers (e.g. the agent registry routes) work identically whether or not
+    Redis is configured. Returns the decoded value, or None if absent.
+    """
+    r = _get_redis()
+    data = r.get(key) if r else _fallback_store.get(key)
+    if data is None:
+        return None
+    if isinstance(data, (bytes, bytearray)):
+        data = data.decode()
+    if isinstance(data, str):
+        try:
+            return json.loads(data)
+        except (json.JSONDecodeError, ValueError):
+            return data
+    return data
+
+
+def kv_set(key: str, value) -> None:
+    """Write a JSON value by raw key, Redis-or-fallback.
+
+    Lets registry/policy writes succeed in local dev with no Redis instead of
+    raising "Redis connection not available". The in-memory fallback holds the
+    JSON string, matching how RBACGuard reads it back.
+    """
+    payload = json.dumps(value)
+    r = _get_redis()
+    if r:
+        r.set(key, payload)
+    else:
+        _fallback_store[key] = payload
+
+
+def kv_delete(key: str) -> None:
+    """Delete a raw key, Redis-or-fallback."""
+    r = _get_redis()
+    if r:
+        r.delete(key)
+    else:
+        _fallback_store.pop(key, None)
+
+
 def resolve_tenant_by_api_key(api_key: str) -> Optional[str]:
     """Resolve an API key to a tenant ID.
 

@@ -25,6 +25,7 @@ from storage.tool_killswitch import is_tool_disabled
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
 from core.telemetry import record_event, build_guardrail_event, build_response_event
+from core.policy_mode import resolve_mode, apply as apply_policy_mode
 from storage.audit_log import audit_logger
 from storage.agentic_control_plane import (
     get_control_plane_config,
@@ -421,6 +422,13 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 action = r["action"]
                 break
 
+        # Apply the tenant's enforcement mode. In monitor (dry-run) mode a
+        # would-be block is recorded but not enforced; in enforce mode the
+        # decision above is returned unchanged.
+        decision = apply_policy_mode(results, allowed, action, resolve_mode(tenant_config))
+        allowed = decision["allowed"]
+        action = decision["action"]
+
         # Record guardrail effectiveness metrics
         if tenant_id:
             from storage.guardrail_metrics import record_results_batch
@@ -467,7 +475,13 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 workflow_step=body.workflow_step,
             )
 
-        _final_result = {"allowed": allowed, "action": action, "guardrail_results": results}
+        _final_result = {
+            "allowed": allowed,
+            "action": action,
+            "guardrail_results": results,
+            "mode": decision["mode"],
+            "would_block": decision["would_block"],
+        }
         return _final_result
     finally:
         # Emit SIEM telemetry for every tool check decision (all paths)

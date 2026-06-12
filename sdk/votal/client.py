@@ -31,9 +31,18 @@ class VotalShield:
         api_key: Tenant API key from the portal
         agent_id: Agent identifier (register in portal or via register_agent())
         user_role: Default user role for RBAC checks
+        tenant_id: Optional explicit tenant id, sent as X-Tenant-ID. Needed for
+            local dev with auth disabled, where the server can't derive the
+            tenant from the API key. Ignored when the server resolves the tenant
+            from your API key.
         auth_token: Optional RunPod/proxy auth token
         timeout: HTTP request timeout in seconds
     """
+
+    #: Default Shield URL for the local quickstart server.
+    LOCAL_URL = "http://localhost:8080"
+    #: Shared sandbox tenant auto-provisioned by Shield for ``sk-test-`` keys.
+    SANDBOX_TENANT_ID = "test-tenant-001"
 
     def __init__(
         self,
@@ -41,6 +50,7 @@ class VotalShield:
         api_key: str,
         agent_id: str = "default-agent",
         user_role: str = "user",
+        tenant_id: str = "",
         auth_token: str = "",
         timeout: float = 30.0,
     ):
@@ -48,6 +58,7 @@ class VotalShield:
         self.api_key = api_key
         self.agent_id = agent_id
         self.user_role = user_role
+        self.tenant_id = tenant_id
         self.timeout = timeout
 
         self._session = requests.Session()
@@ -57,8 +68,37 @@ class VotalShield:
             "X-User-Role": user_role,
             "Content-Type": "application/json",
         })
+        if tenant_id:
+            self._session.headers["X-Tenant-ID"] = tenant_id
         if auth_token:
             self._session.headers["Authorization"] = f"Bearer {auth_token}"
+
+    @classmethod
+    def sandbox(
+        cls,
+        agent_id: str = "quickstart-agent",
+        user_role: str = "user",
+        *,
+        shield_url: str = None,
+        timeout: float = 30.0,
+    ) -> "VotalShield":
+        """Connect to a Shield in sandbox mode — zero setup, no API key needed.
+
+        Uses the built-in ``sk-test-`` sandbox key and the shared sandbox
+        tenant, so you can register an agent and see a block in a few lines
+        without provisioning a tenant first. Point ``shield_url`` at your
+        local quickstart server (default) or a hosted sandbox.
+
+            shield = VotalShield.sandbox(agent_id="support-bot", user_role="support")
+        """
+        return cls(
+            shield_url=shield_url or cls.LOCAL_URL,
+            api_key="sk-test-sandbox",
+            agent_id=agent_id,
+            user_role=user_role,
+            tenant_id=cls.SANDBOX_TENANT_ID,
+            timeout=timeout,
+        )
 
     # ── Core API calls ────────────────────────────────────────────
 
@@ -257,6 +297,7 @@ class VotalShield:
             api_key=self.api_key,
             agent_id=self.agent_id,
             user_role=user_role,
+            tenant_id=self.tenant_id,
             timeout=self.timeout,
         )
         # Copy auth token if present
