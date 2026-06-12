@@ -105,3 +105,27 @@ async def test_siem(request: Request):
 
     await dispatch_to_siem(tenant_id, test_event)
     return {"success": True, "message": f"Test event dispatched to {len(configs)} endpoint(s)"}
+
+
+@router.post("/ingest")
+async def ingest_siem_event(request: Request):
+    """Ingest a client-side event and fan out to all configured SIEM endpoints.
+
+    Used by agent runtimes to forward GuardedToolCall audit records (or any
+    custom event) to the tenant's SIEM without needing direct SIEM credentials.
+    The client POSTs here; Shield dispatches to Splunk/Sentinel/generic.
+    """
+    from core.siem_dispatcher import dispatch_to_siem
+
+    tenant_id = _require_tenant(request)
+    body = await request.json()
+
+    event = {
+        "event_type": body.get("event_type", "guarded_tool_call"),
+        "tenant_id": tenant_id,
+        "timestamp": body.get("timestamp", time.time()),
+        "payload": {k: v for k, v in body.items() if k not in ("event_type", "timestamp")},
+    }
+
+    await dispatch_to_siem(tenant_id, event)
+    return {"success": True, "event_type": event["event_type"]}

@@ -4328,8 +4328,16 @@ openssl x509 -in agent.crt -fingerprint -sha256 -noout
       <!-- Stat cards -->
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Activity (last 24 hours)</div>
-          <button class="small" onclick="loadAuthzStats()">Refresh</button>
+          <div class="card-title">Activity</div>
+          <div style="display:flex;align-items:center;gap:0.5rem;">
+            <select id="authz-range" onchange="loadAuthzStats()" style="font-size:12px;padding:0.35rem 0.6rem;">
+              <option value="1">Last 24 hours</option>
+              <option value="7" selected>Last 7 days</option>
+              <option value="14">Last 14 days</option>
+              <option value="30">Last 30 days</option>
+            </select>
+            <button class="small" onclick="loadAuthzStats()">Refresh</button>
+          </div>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;padding:1rem;">
           <div class="stat">
@@ -10832,7 +10840,8 @@ function stopAuthzPanel() {
 
 async function loadAuthzStats() {
   try {
-    const data = await apiCall('/v1/tenant/me/agent-auth/stats?days=1');
+    const days = parseInt((document.getElementById('authz-range') || {}).value) || 7;
+    const data = await apiCall(`/v1/tenant/me/agent-auth/stats?days=${days}`);
     const t = data.totals || {};
     const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = (v || 0).toString(); };
     setVal('authz-stat-issued',   t.token_issued);
