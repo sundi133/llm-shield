@@ -25,33 +25,51 @@ _shadow_lock = threading.Lock()
 _shadow_last_flush = 0.0
 _SHADOW_FLUSH_INTERVAL = 30  # seconds
 
-# In-memory cache of registered agent keys per tenant (avoids Redis on every req)
-_registry_cache: dict[str, tuple[set[str], float]] = {}
+# In-memory cache of registered agents per tenant (avoids Redis on every req)
+_registry_cache: dict[str, tuple[dict[str, str], float]] = {}
 _REGISTRY_CACHE_TTL = 120  # seconds
 
 
-def _get_registered_agents(tenant_id: str) -> set[str]:
-    """Get the set of registered agent keys for a tenant (cached)."""
+def _get_registered_agents(tenant_id: str) -> dict[str, str]:
+    """Get registered agents for a tenant as {agent_key: status} (cached).
+
+    A registry entry without a status field (legacy) counts as "active".
+    Membership tests (``agent_key in registered``) behave the same as the
+    previous set-based cache.
+    """
     now = time.time()
     if tenant_id in _registry_cache:
-        keys, ts = _registry_cache[tenant_id]
+        agents, ts = _registry_cache[tenant_id]
         if now - ts < _REGISTRY_CACHE_TTL:
-            return keys
+            return agents
     try:
-        from storage.tenant_store import _get_redis
+        from storage.tenant_store import _get_redis, _fallback_store
         r = _get_redis()
-        if r:
-            raw = r.get(f"agents:{tenant_id}")
-            if raw:
-                data = json.loads(raw) if isinstance(raw, str) else raw
-                if isinstance(data, dict):
-                    keys = set(data.keys())
-                    _registry_cache[tenant_id] = (keys, now)
-                    return keys
+        raw = r.get(f"agents:{tenant_id}") if r else None
+        if not raw:
+            raw = _fallback_store.get(f"agents:{tenant_id}")
+        if raw:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(data, dict):
+                agents = {
+                    k: (v.get("status", "active") if isinstance(v, dict) else "active")
+                    for k, v in data.items()
+                }
+                _registry_cache[tenant_id] = (agents, now)
+                return agents
     except Exception:
         pass
-    _registry_cache[tenant_id] = (set(), now)
-    return set()
+    _registry_cache[tenant_id] = ({}, now)
+    return {}
+
+
+def invalidate_registry_cache(tenant_id: str) -> None:
+    """Drop the cached registry for a tenant (call after registry writes).
+
+    Makes portal toggles (enable/disable agent) take effect immediately in
+    this process instead of waiting out _REGISTRY_CACHE_TTL.
+    """
+    _registry_cache.pop(tenant_id, None)
 
 
 def _record_shadow_agent(tenant_id: str, agent_key: str, endpoint: str,
@@ -310,6 +328,26 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                             )
 
                         registered = _get_registered_agents(tenant_id)
+
+                        # Registry agents must be explicitly "active" to act —
+                        # any other state (disabled, inactive, tampered value)
+                        # fails closed. Cached up to _REGISTRY_CACHE_TTL
+                        # seconds; registry writes invalidate the cache.
+                        _agent_status = registered.get(agent_key)
+                        if _agent_status is not None and _agent_status != "active":
+                            from starlette.responses import JSONResponse
+                            return JSONResponse(
+                                status_code=403,
+                                content={
+                                    "error": "agent_disabled",
+                                    "detail": f"Agent '{agent_key}' is not active "
+                                              f"(status: {_agent_status}). Re-enable it "
+                                              f"in the Agent Registry to allow access.",
+                                    "agent_key": agent_key,
+                                    "agent_status": _agent_status,
+                                },
+                            )
+
                         if registered and agent_key not in registered:
                             request.state.shadow_agent = True
                             _record_shadow_agent(

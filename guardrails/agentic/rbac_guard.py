@@ -17,6 +17,29 @@ from guardrails.base import BaseGuardrail
 logger = logging.getLogger(__name__)
 
 
+def _load_agent_entry(agent_key: str, tenant_id: str) -> Optional[dict]:
+    """Load one agent's registry entry, Redis-or-fallback. None if absent."""
+    if not agent_key or not tenant_id:
+        return None
+    try:
+        from storage.tenant_store import _get_redis, _fallback_store
+        import json as _json
+
+        r = _get_redis()
+        key = f"agents:{tenant_id}"
+        raw = r.get(key) if r else None
+        if not raw:
+            raw = _fallback_store.get(key)
+        if not raw:
+            return None
+
+        agents = _json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+        return agents.get(agent_key)
+    except Exception as e:
+        logger.debug(f"Registry entry lookup failed for {agent_key}: {e}")
+        return None
+
+
 def _resolve_role_from_registry(
     agent_key: str,
     tool_name: str,
@@ -32,19 +55,7 @@ def _resolve_role_from_registry(
     RBACRole with the allowed tools for that role.
     """
     try:
-        from storage.tenant_store import _get_redis, _fallback_store
-        import json as _json
-
-        r = _get_redis()
-        key = f"agents:{tenant_id}"
-        raw = r.get(key) if r else None
-        if not raw:
-            raw = _fallback_store.get(key)
-        if not raw:
-            return None
-
-        agents = _json.loads(raw) if isinstance(raw, (str, bytes)) else raw
-        agent_data = agents.get(agent_key)
+        agent_data = _load_agent_entry(agent_key, tenant_id)
         if not agent_data:
             return None
 
@@ -77,30 +88,14 @@ def _resolve_role_from_registry(
 def _registry_agent_status(agent_key: str, tenant_id: str) -> "Optional[str]":
     """Return the registered agent's status, or None if it is not in the registry.
 
-    Used to enforce the Agent Registry on/off toggle: an agent whose status is
-    "disabled" must be blocked from acting regardless of its role permissions.
+    Used to enforce the Agent Registry on/off toggle: only an explicitly
+    "active" agent may act; a missing status field (legacy entry) counts as
+    active.
     """
-    try:
-        from storage.tenant_store import _get_redis, _fallback_store
-
-        r = _get_redis()
-        key = f"agents:{tenant_id}"
-        raw = r.get(key) if r else None
-        if not raw:
-            raw = _fallback_store.get(key)
-        if not raw:
-            return None
-
-        agents = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
-        agent_data = agents.get(agent_key)
-        if not agent_data:
-            return None
-
-        return agent_data.get("status", "active")
-
-    except Exception as e:
-        logger.debug(f"Registry status lookup failed for {agent_key}: {e}")
+    agent_data = _load_agent_entry(agent_key, tenant_id)
+    if not agent_data:
         return None
+    return agent_data.get("status", "active")
 
 
 def _resolve_scopes_from_params(
@@ -213,16 +208,21 @@ class RBACGuard(BaseGuardrail):
         # status field), regardless of role permissions. A None status means the
         # agent is not in the registry, so fall through to normal role
         # resolution. Checked before role resolution so a paused agent is denied
-        # even if its tools would otherwise be allowed.
+        # even if its tools would otherwise be allowed. Action is a hard
+        # "block" (not configured_action) and tagged administrative so neither
+        # a softened guardrail action nor monitor (dry-run) mode can let a
+        # toggled-off agent act.
         registry_status = _registry_agent_status(agent_key, tenant_id) if tenant_id else None
         if registry_status is not None and registry_status != "active":
             elapsed = (datetime.now() - start).total_seconds() * 1000
             return GuardrailResult(
                 passed=False,
-                action=self.configured_action,
+                action="block",
                 guardrail_name=self.name,
-                message=f"Agent '{agent_key}' is not active (status: {registry_status})",
-                details={"agent_key": agent_key, "status": registry_status},
+                message=f"Agent '{agent_key}' is not active (status: {registry_status}). "
+                        f"Re-enable it in the Agent Registry to allow tool calls.",
+                details={"agent_key": agent_key, "status": registry_status,
+                         "agent_status": registry_status, "administrative": True},
                 latency_ms=round(elapsed, 2),
             )
 
