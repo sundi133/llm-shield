@@ -768,25 +768,30 @@ def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
     def _matches(name: str, patterns: list) -> bool:
         return any(fnmatch.fnmatch(name, p) for p in patterns)
 
-    # --- 0. Disabled agent: blocked outright, before any permission logic ---
+    # --- 0. Non-active agent: blocked outright, before any permission logic.
+    # Fail-closed: any registered status other than "active" (disabled,
+    # inactive, tampered value) blocks; missing status = legacy = active. ---
     agent_entry = (registry or {}).get(agent_key)
-    if agent_entry and agent_entry.get("status") == "disabled":
+    _status = agent_entry.get("status", "active") if agent_entry else None
+    if _status is not None and _status != "active":
         return {
             "allowed": False, "action": "block",
-            "message": f"Agent '{agent_key}' is disabled. Re-enable it in the "
-                       f"Agent Registry to allow tool calls.",
+            "message": f"Agent '{agent_key}' is not active (status: {_status}). "
+                       f"Re-enable it in the Agent Registry to allow tool calls.",
             "source": "agent_status",
         }
 
-    # Agent-to-agent: a disabled CALLING agent must not act through another
+    # Agent-to-agent: a non-active CALLING agent must not act through another
     # agent either.
     if calling_agent:
         caller_entry = (registry or {}).get(calling_agent)
-        if caller_entry and caller_entry.get("status") == "disabled":
+        _cstatus = caller_entry.get("status", "active") if caller_entry else None
+        if _cstatus is not None and _cstatus != "active":
             return {
                 "allowed": False, "action": "block",
-                "message": f"Calling agent '{calling_agent}' is disabled. "
-                           f"Re-enable it in the Agent Registry to allow delegation.",
+                "message": f"Calling agent '{calling_agent}' is not active "
+                           f"(status: {_cstatus}). Re-enable it in the Agent "
+                           f"Registry to allow delegation.",
                 "source": "agent_status",
                 "calling_agent": calling_agent,
                 "caller_allowed": False,
@@ -1270,13 +1275,16 @@ def create_admin_app() -> FastAPI:
         # A disabled agent must not converse at all — reject before any
         # guardrail or LLM call.
         _agent_entry = (registry or {}).get(agent_key)
-        if _agent_entry and _agent_entry.get("status") == "disabled":
+        _agent_status = _agent_entry.get("status", "active") if _agent_entry else None
+        if _agent_status is not None and _agent_status != "active":
             return JSONResponse(status_code=403, content={
                 "blocked": True,
                 "stage": "agent_status",
-                "block_reason": f"Agent '{agent_key}' is disabled. "
-                                f"Re-enable it in the Agent Registry to chat.",
+                "block_reason": f"Agent '{agent_key}' is not active "
+                                f"(status: {_agent_status}). Re-enable it in "
+                                f"the Agent Registry to chat.",
                 "agent_key": agent_key,
+                "agent_status": _agent_status,
             })
 
         tool_policies = _load_tool_policies(tenant_id)

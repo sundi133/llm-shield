@@ -17,13 +17,25 @@ router = APIRouter(prefix="/v1/admin/oidc-providers", tags=["oidc-admin"])
 
 
 def _require_admin(request: Request) -> None:
-    """Check that the request carries a valid admin key."""
+    """Check that the request carries a valid admin key.
+
+    Fails closed when SHIELD_ADMIN_KEY is unset — matching the admin gate
+    used everywhere else (core/auth.py, core/app.py, routes_agent_auth.py).
+    An unconfigured key must never mean "open access": these endpoints
+    register the OIDC providers a tenant trusts, so leaving them open to
+    unauthenticated callers would let anyone establish IdP trust for any
+    tenant. The key comparison is constant-time to avoid leaking it via
+    timing.
+    """
+    import hmac
     import os
     admin_key = os.environ.get("SHIELD_ADMIN_KEY", "").strip()
     if not admin_key:
-        return  # No admin key configured = open access (dev mode)
-    header = request.headers.get("X-Admin-Key", "").strip()
-    if header != admin_key:
+        raise PermissionError(
+            "SHIELD_ADMIN_KEY not configured — admin endpoints disabled"
+        )
+    provided = request.headers.get("X-Admin-Key", "").strip()
+    if not provided or not hmac.compare_digest(provided, admin_key):
         raise PermissionError("invalid admin key")
 
 

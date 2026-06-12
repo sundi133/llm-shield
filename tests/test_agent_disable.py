@@ -51,7 +51,19 @@ def test_disabled_agent_blocked_regardless_of_role():
     assert not r.passed
     assert r.action == "block"
     assert "disabled" in r.message
+    assert r.details.get("status") == "disabled"
     assert r.details.get("administrative") is True
+
+
+def test_inactive_and_tampered_status_fail_closed():
+    # Only an explicitly "active" agent may act — any other registered
+    # status (inactive, injected garbage) blocks.
+    for status in ("inactive", "bogus-injected-value"):
+        _seed(status)
+        r = _check()
+        assert not r.passed, status
+        assert r.action == "block"
+        assert r.details.get("status") == status
 
 
 def test_loader_reads_fallback_store():
@@ -61,6 +73,9 @@ def test_loader_reads_fallback_store():
 
 
 def test_middleware_registry_statuses():
+    _seed("inactive")
+    reg = _get_registered_agents(TENANT)
+    assert reg.get("cs-agent") == "inactive"  # any non-active state surfaces
     _seed("disabled")
     reg = _get_registered_agents(TENANT)
     assert reg.get("cs-agent") == "disabled"
@@ -93,6 +108,10 @@ def test_playground_check_rbac_blocks_disabled():
     # delegation: disabled CALLING agent blocked on an active target
     r = _check_rbac("email_send", "target", "customer_support", None,
                     registry=registry, calling_agent="caller")
+    assert not r["allowed"] and r["source"] == "agent_status"
+    # fail-closed: a non-"active" status (e.g. inactive) also blocks
+    registry["cs-agent"]["status"] = "inactive"
+    r = _check_rbac("email_send", "cs-agent", "customer_support", None, registry=registry)
     assert not r["allowed"] and r["source"] == "agent_status"
     # sanity: active path still allowed
     r = _check_rbac("email_send", "target", "customer_support", None, registry=registry)

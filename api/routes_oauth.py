@@ -238,6 +238,20 @@ async def _handle_token_exchange(body: dict, request: Request) -> JSONResponse:
     # Determine tenant from request context or audience
     tenant_id = getattr(request.state, "tenant_id", "") or ""
 
+    # Fail closed: token exchange must run in a resolved tenant context.
+    # Without a tenant, the provider lookup below would fall back to the
+    # empty-tenant namespace (get_provider_by_issuer("", issuer)), which
+    # risks issuing an access token scoped to an empty/unintended tenant
+    # and breaks per-tenant OIDC isolation. Reject rather than guess.
+    if not tenant_id:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "invalid_request",
+                "error_description": "tenant context required for token exchange",
+            },
+        )
+
     # Validate the external token via OIDC client
     try:
         from core.oauth.oidc_client import oidc_registry, validate_id_token, map_claims

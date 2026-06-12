@@ -85,6 +85,19 @@ def _resolve_role_from_registry(
         return None
 
 
+def _registry_agent_status(agent_key: str, tenant_id: str) -> "Optional[str]":
+    """Return the registered agent's status, or None if it is not in the registry.
+
+    Used to enforce the Agent Registry on/off toggle: only an explicitly
+    "active" agent may act; a missing status field (legacy entry) counts as
+    active.
+    """
+    agent_data = _load_agent_entry(agent_key, tenant_id)
+    if not agent_data:
+        return None
+    return agent_data.get("status", "active")
+
+
 def _resolve_scopes_from_params(
     tool_name: str,
     tool_params: dict,
@@ -189,20 +202,27 @@ class RBACGuard(BaseGuardrail):
                 latency_ms=round(elapsed, 2),
             )
 
-        # A registry agent toggled to "disabled" must not act at all,
-        # regardless of role permissions. Missing status = legacy entry =
-        # active; the portal toggle writes active/disabled.
-        agent_entry = _load_agent_entry(agent_key, tenant_id)
-        if agent_entry and agent_entry.get("status") == "disabled":
+        # Per-agent kill switch: a registry agent must be explicitly "active" to
+        # act. Any other registered state — "disabled", "inactive", or an
+        # unexpected/injected value — is blocked (fail-closed against a tampered
+        # status field), regardless of role permissions. A None status means the
+        # agent is not in the registry, so fall through to normal role
+        # resolution. Checked before role resolution so a paused agent is denied
+        # even if its tools would otherwise be allowed. Action is a hard
+        # "block" (not configured_action) and tagged administrative so neither
+        # a softened guardrail action nor monitor (dry-run) mode can let a
+        # toggled-off agent act.
+        registry_status = _registry_agent_status(agent_key, tenant_id) if tenant_id else None
+        if registry_status is not None and registry_status != "active":
             elapsed = (datetime.now() - start).total_seconds() * 1000
             return GuardrailResult(
                 passed=False,
                 action="block",
                 guardrail_name=self.name,
-                message=f"Agent '{agent_key}' is disabled. Re-enable it in the "
-                        f"Agent Registry to allow tool calls.",
-                details={"agent_key": agent_key, "agent_status": "disabled",
-                         "administrative": True},
+                message=f"Agent '{agent_key}' is not active (status: {registry_status}). "
+                        f"Re-enable it in the Agent Registry to allow tool calls.",
+                details={"agent_key": agent_key, "status": registry_status,
+                         "agent_status": registry_status, "administrative": True},
                 latency_ms=round(elapsed, 2),
             )
 

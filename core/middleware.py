@@ -329,18 +329,22 @@ class ShieldMiddleware(BaseHTTPMiddleware):
 
                         registered = _get_registered_agents(tenant_id)
 
-                        # Registry agents toggled off in the portal must not
-                        # act at all (status check, cached up to
-                        # _REGISTRY_CACHE_TTL seconds).
-                        if registered.get(agent_key) == "disabled":
+                        # Registry agents must be explicitly "active" to act —
+                        # any other state (disabled, inactive, tampered value)
+                        # fails closed. Cached up to _REGISTRY_CACHE_TTL
+                        # seconds; registry writes invalidate the cache.
+                        _agent_status = registered.get(agent_key)
+                        if _agent_status is not None and _agent_status != "active":
                             from starlette.responses import JSONResponse
                             return JSONResponse(
                                 status_code=403,
                                 content={
                                     "error": "agent_disabled",
-                                    "detail": f"Agent '{agent_key}' is disabled. "
-                                              f"Re-enable it in the Agent Registry to allow access.",
+                                    "detail": f"Agent '{agent_key}' is not active "
+                                              f"(status: {_agent_status}). Re-enable it "
+                                              f"in the Agent Registry to allow access.",
                                     "agent_key": agent_key,
+                                    "agent_status": _agent_status,
                                 },
                             )
 
