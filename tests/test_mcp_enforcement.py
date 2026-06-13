@@ -9,7 +9,8 @@ we are verifying the proxy's *wiring* to the existing guards, not the LLMs.
 import asyncio
 import json
 
-# ── Stub the LLM entry points before importing the enforcement core ──
+import pytest
+
 import guardrails.agentic.tool.tool_call_validation as _tcv
 import guardrails.agentic.tool.tool_output_sanitization as _tos
 
@@ -22,8 +23,19 @@ async def _boom(*a, **k):
     raise RuntimeError("offline")  # forces sanitizer's fail-open path
 
 
-_tcv.evaluate_payload_policy_llm = _no_issue
-_tos.async_llm_call = _boom
+def _install_stubs():
+    """Apply LLM stubs (used by the standalone __main__ runner)."""
+    _tcv.evaluate_payload_policy_llm = _no_issue
+    _tos.async_llm_call = _boom
+
+
+@pytest.fixture(autouse=True)
+def _stub_llms(monkeypatch):
+    """Under pytest, stub the two slow guards with auto-restore so we never
+    leak globals into other test modules."""
+    monkeypatch.setattr(_tcv, "evaluate_payload_policy_llm", _no_issue)
+    monkeypatch.setattr(_tos, "async_llm_call", _boom)
+
 
 from storage.tenant_store import kv_set
 from core.mcp.enforcement import (
@@ -131,6 +143,7 @@ def test_filter_tools_for_role_hides_disallowed():
 
 
 if __name__ == "__main__":
+    _install_stubs()
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
         fn()

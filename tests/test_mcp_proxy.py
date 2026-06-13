@@ -9,6 +9,8 @@ test_mcp_enforcement).
 
 import asyncio
 
+import pytest
+
 import guardrails.agentic.tool.tool_call_validation as _tcv
 import guardrails.agentic.tool.tool_output_sanitization as _tos
 
@@ -21,8 +23,16 @@ async def _boom(*a, **k):
     raise RuntimeError("offline")
 
 
-_tcv.evaluate_payload_policy_llm = _no_issue
-_tos.async_llm_call = _boom
+def _install_stubs():
+    _tcv.evaluate_payload_policy_llm = _no_issue
+    _tos.async_llm_call = _boom
+
+
+@pytest.fixture(autouse=True)
+def _stub_llms(monkeypatch):
+    monkeypatch.setattr(_tcv, "evaluate_payload_policy_llm", _no_issue)
+    monkeypatch.setattr(_tos, "async_llm_call", _boom)
+
 
 from storage.tenant_store import kv_set
 from core.mcp.proxy_server import MCPProxy
@@ -125,6 +135,7 @@ def test_decision_sink_invoked():
 
 
 if __name__ == "__main__":
+    _install_stubs()
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
         fn()
