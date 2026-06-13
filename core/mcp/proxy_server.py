@@ -145,22 +145,19 @@ def _as_text(value) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Live transport adapter — REQUIRES a running upstream MCP server.
-# Not exercised by unit tests; verify against a real server (e.g. on RunPod).
-# Pin the `mcp` SDK version to match mcp/votal_shield_server.py.
+# Live transport adapter (core/mcp/upstream.py). Connects to a real upstream
+# MCP server via the official `mcp` client SDK. The adapter's normalization
+# logic is unit-tested with a fake session; full transport is verified against
+# a live server.
 # ─────────────────────────────────────────────────────────────────────
 
-async def connect_upstream(config: dict) -> "UpstreamClient":  # pragma: no cover
-    """Build an UpstreamClient from a server config.
+from core.mcp.upstream import connect_upstream, MCPUpstream  # noqa: E402,F401
 
-    config = {"transport": "stdio"|"sse"|"http", "command"/"url": ..., ...}
 
-    Implementation note: wrap an mcp.client ClientSession so list_tools() and
-    call_tool() proxy to the upstream. Kept as an explicit integration seam —
-    implement against the pinned mcp client API and test live.
+async def proxy_for(config: dict, **proxy_kwargs) -> "MCPProxy":
+    """Convenience: connect to an upstream and wrap it in an MCPProxy.
+
+    Caller is responsible for ``await proxy._upstream.aclose()`` on shutdown.
     """
-    raise NotImplementedError(
-        "connect_upstream: implement with the mcp client SDK against a live "
-        "upstream server, then validate end-to-end. The MCPProxy logic above "
-        "is transport-agnostic and already unit-tested with a fake upstream."
-    )
+    upstream = await connect_upstream(config)
+    return MCPProxy(upstream, **proxy_kwargs)
