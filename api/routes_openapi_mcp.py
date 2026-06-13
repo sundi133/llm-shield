@@ -21,6 +21,11 @@ from storage.tenant_store import kv_get, kv_set
 from api.routes_agents_registry import get_tenant_from_api_key
 from core.openapi import load_spec, OpenAPIError, spec_to_tools
 from core.openapi.upstream_call import build_request, execute
+from core.openapi.codegen.python_gen import generate_python_server
+from core.openapi.codegen.typescript_gen import (
+    generate_typescript_server, generate_package_json,
+)
+from core.openapi.codegen.llm_enhance import enhance_tool_descriptions
 from core.mcp.enforcement import enforce_tool_call, sanitize_tool_result
 
 router = APIRouter(prefix="/v1/openapi", tags=["openapi-mcp"])
@@ -43,6 +48,18 @@ class CallRequest(BaseModel):
     arguments: dict = {}
     agent_key: Optional[str] = None
     user_role: Optional[str] = None
+
+
+class GenerateRequest(BaseModel):
+    spec: Any
+    base_url: str
+    language: str = "python"          # python | typescript | both
+    include_risky: bool = False
+    shield_enforce: bool = True       # bake Shield enforcement into the output
+    enhance: bool = False             # LLM-improve weak tool descriptions
+    server_name: str = "generated-mcp"
+    title: str = "Generated API"
+    agent_key: str = "generated-agent"
 
 
 @router.post("/import")
@@ -175,6 +192,48 @@ async def call_generated_tool(body: CallRequest, request: Request):
         "upstream_status": upstream.get("status"),
         "output_blocked": san["blocked"],
         "output": san["sanitized_output"],
+    }
+
+
+@router.post("/generate")
+async def generate_server(body: GenerateRequest, request: Request):
+    """Build-time codegen: emit deployable MCP server source from a spec.
+
+    Returns {files: {filename: source}} for Python and/or TypeScript, with
+    Shield enforcement baked in. Optionally LLM-enhances weak tool descriptions.
+    """
+    get_tenant_from_api_key(request)  # authn (sandbox key ok)
+    try:
+        spec = load_spec(body.spec)
+        tools = spec_to_tools(spec, include_risky=body.include_risky)
+    except OpenAPIError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid OpenAPI spec: {e}")
+    if not tools:
+        raise HTTPException(status_code=400, detail="No eligible operations to generate.")
+
+    if body.enhance:
+        tools = await enhance_tool_descriptions(tools)
+
+    lang = body.language.lower()
+    if lang not in ("python", "typescript", "both"):
+        raise HTTPException(status_code=400, detail="language must be python, typescript, or both")
+
+    kw = dict(base_url=body.base_url, title=body.title,
+              server_name=body.server_name, agent_key=body.agent_key)
+    files: dict[str, str] = {}
+    if lang in ("python", "both"):
+        files["server.py"] = generate_python_server(tools, **kw)
+        files["requirements.txt"] = "mcp\nhttpx\n"
+    if lang in ("typescript", "both"):
+        files["src/index.ts"] = generate_typescript_server(tools, **kw)
+        files["package.json"] = generate_package_json(body.server_name)
+
+    return {
+        "success": True,
+        "language": lang,
+        "tool_count": len(tools),
+        "shield_enforce": body.shield_enforce,
+        "files": files,
     }
 
 

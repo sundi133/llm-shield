@@ -127,7 +127,20 @@ def run():
     assert r.status_code == 400
     print("  ok  invalid spec → 400")
 
-    print("\n8 checks passed")
+    # codegen: generate a deployable Python MCP server
+    import ast
+    r = c.post("/v1/openapi/generate", headers=HEADERS, json={
+        "spec": SPEC, "base_url": "https://api.bank.test",
+        "language": "both", "include_risky": True})
+    assert r.status_code == 200, r.text
+    g = r.json()
+    assert g["tool_count"] == 2
+    assert "server.py" in g["files"] and "src/index.ts" in g["files"]
+    ast.parse(g["files"]["server.py"])                       # emitted python is valid
+    assert "/v1/shield/tool/check" in g["files"]["server.py"]  # shield baked in
+    print("  ok  generate → valid Python + TS source with Shield baked in")
+
+    print("\n9 checks passed")
 
 
 if __name__ == "__main__":
