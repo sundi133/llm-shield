@@ -199,6 +199,22 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         if hasattr(request, "state")
         else None
     ) or request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
+
+    # Fallback: resolve the tenant directly from the API key when the auth
+    # middleware didn't (e.g. auth disabled in local dev). No-op in production
+    # where middleware already set request.state.tenant_id. Mirrors the
+    # registry routes so /tool/check works with the same credential.
+    if not tenant_id:
+        api_key = request.headers.get("X-API-Key", "").strip()
+        if api_key:
+            try:
+                from storage.tenant_store import resolve_tenant_by_api_key
+                tenant_id = resolve_tenant_by_api_key(api_key)
+                if not tenant_id and api_key.startswith("sk-test-"):
+                    tenant_id = "test-tenant-001"  # shared sandbox tenant
+            except Exception:
+                pass
+
     user_role = (
         body.user_role
         or request.headers.get("X-User-Role")

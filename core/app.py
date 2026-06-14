@@ -50,6 +50,7 @@ from api.routes_webhooks import router as webhooks_router
 from api.routes_agent_identity import router as agent_identity_router
 from api.routes_agent_auth import router as agent_auth_router, tenant_router as agent_auth_tenant_router
 from api.routes_mcp_server import router as mcp_server_router
+from api.routes_openapi_mcp import router as openapi_mcp_router
 from api.routes_oauth import router as oauth_router
 from api.routes_oauth_registration import router as oauth_registration_router
 from api.routes_oidc_admin import router as oidc_admin_router
@@ -127,6 +128,7 @@ def create_app() -> FastAPI:
     app.include_router(agent_auth_router)
     app.include_router(agent_auth_tenant_router)
     app.include_router(mcp_server_router)
+    app.include_router(openapi_mcp_router)
     app.include_router(oauth_router)
     app.include_router(oauth_registration_router)
     app.include_router(oidc_admin_router)
