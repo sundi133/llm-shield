@@ -28,6 +28,9 @@ from core.openapi.codegen.python_typed_gen import generate_python_typed_server
 from core.openapi.codegen.typescript_gen import (
     generate_typescript_server, generate_package_json,
 )
+from core.openapi.codegen.typescript_typed_gen import (
+    generate_typescript_typed_server, generate_typed_package_json,
+)
 from core.openapi.codegen.llm_enhance import enhance_tool_descriptions
 from core.mcp.enforcement import enforce_tool_call, sanitize_tool_result
 
@@ -244,8 +247,12 @@ async def generate_server(body: GenerateRequest, request: Request):
             files["server.py"] = generate_python_typed_server(tools, security=security, **kw)
             files["requirements.txt"] = "mcp\nhttpx\npydantic\n"
     if lang in ("typescript", "both"):
-        files["src/index.ts"] = generate_typescript_server(tools, **kw)
-        files["package.json"] = generate_package_json(body.server_name)
+        if body.style == "table":
+            files["src/index.ts"] = generate_typescript_server(tools, **kw)
+            files["package.json"] = generate_package_json(body.server_name)
+        else:
+            files["src/index.ts"] = generate_typescript_typed_server(tools, security=security, **kw)
+            files["package.json"] = generate_typed_package_json(body.server_name)
 
     return {
         "success": True,

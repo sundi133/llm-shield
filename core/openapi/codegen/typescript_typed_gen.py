@@ -1,0 +1,267 @@
+"""Idiomatic typed TypeScript MCP server codegen (Zod), mirroring the Python
+typed generator.
+
+Emits, per operation: a Zod schema + a typed `async function <tool>(args)` that
+calls a shared `_request()` transport (Shield check → env-driven auth → fetch
+with 429/5xx retry). Arguments are validated by Zod on every call.
+
+Depends on @modelcontextprotocol/sdk + zod (Node >= 18 for global fetch).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Iterable
+
+from core.openapi.tool_mapper import ToolSpec
+
+
+def _const_name(tool_name: str) -> str:
+    parts = re.split(r"[^a-zA-Z0-9]+", tool_name)
+    return "".join(p[:1].upper() + p[1:] for p in parts if p) + "Args"
+
+
+def _fn_name(tool_name: str) -> str:
+    s = re.sub(r"[^a-zA-Z0-9_$]", "_", tool_name)
+    if not s or s[0].isdigit():
+        s = "f_" + s
+    return s
+
+
+def _zod_type(schema: dict) -> str:
+    schema = schema or {}
+    t = schema.get("type")
+    if t == "string":
+        enum = schema.get("enum")
+        if enum and all(isinstance(e, str) for e in enum):
+            return "z.enum([" + ", ".join(json.dumps(e) for e in enum) + "])"
+        return "z.string()"
+    if t == "integer" or t == "number":
+        return "z.number()"
+    if t == "boolean":
+        return "z.boolean()"
+    if t == "array":
+        return f"z.array({_zod_type(schema.get('items') or {})})"
+    if t == "object":
+        return "z.record(z.any())"
+    return "z.any()"
+
+
+def _zod_schema_src(tool: ToolSpec) -> str:
+    name = _const_name(tool.name)
+    props = (tool.input_schema or {}).get("properties") or {}
+    required = set((tool.input_schema or {}).get("required") or [])
+    if not props:
+        body = "z.object({})"
+    else:
+        fields = []
+        for pname, sch in props.items():
+            zt = _zod_type(sch)
+            if pname not in required:
+                zt += ".optional()"
+            fields.append(f"  {json.dumps(pname)}: {zt}")
+        body = "z.object({\n" + ",\n".join(fields) + "\n})"
+    return f"const {name}Schema = {body};\ntype {name} = z.infer<typeof {name}Schema>;"
+
+
+def _fn_src(tool: ToolSpec) -> str:
+    cls = _const_name(tool.name)
+    meta = {"method": tool.method, "path": tool.path,
+            "param_locations": tool.param_locations, "has_body": tool.has_body}
+    # JSON booleans true/false are valid JS, so json.dumps is fine here.
+    return (f"async function {_fn_name(tool.name)}(args: {cls}) {{\n"
+            f"  return _request({json.dumps(meta)}, {json.dumps(tool.name)}, args as Record<string, any>);\n"
+            f"}}")
+
+
+def _ts_auth_fn(security: list) -> str:
+    lines = ["async function applyAuth(headers: Record<string, string>, params: Record<string, any>) {"]
+    oauth = None
+    if not security:
+        lines.append("  return;")
+    for p in security or []:
+        t = p.get("type")
+        if t == "apiKey":
+            env, nm, loc = p["env"], p["name"], p.get("in", "header")
+            lines.append(f'  {{ const v = process.env[{json.dumps(env)}];')
+            if loc == "query":
+                lines.append(f'    if (v) params[{json.dumps(nm)}] = v; }}')
+            elif loc == "cookie":
+                lines.append(f'    if (v) headers["Cookie"] = ((headers["Cookie"] || "") + "; {nm}=" + v).replace(/^; /, ""); }}')
+            else:
+                lines.append(f'    if (v) headers[{json.dumps(nm)}] = v; }}')
+        elif t == "bearer":
+            lines.append(f'  {{ const t = process.env[{json.dumps(p["env"])}]; if (t) headers["Authorization"] = "Bearer " + t; }}')
+        elif t == "basic":
+            lines.append(f'  {{ const u = process.env[{json.dumps(p["env_user"])}], pw = process.env[{json.dumps(p["env_pass"])}];')
+            lines.append('    if (u && pw) headers["Authorization"] = "Basic " + Buffer.from(u + ":" + pw).toString("base64"); }')
+        elif t == "oauth2":
+            oauth = p
+    if oauth:
+        lines.append('  { const tok = await oauthToken(); if (tok) headers["Authorization"] = "Bearer " + tok; }')
+    lines.append("}")
+    fn = "\n".join(lines)
+    if oauth:
+        fn += (
+            "\n\nlet _oauthToken: string | null = null;\n"
+            "async function oauthToken(): Promise<string> {\n"
+            "  if (_oauthToken) return _oauthToken;\n"
+            f"  const cid = process.env[{json.dumps(oauth['env_id'])}], sec = process.env[{json.dumps(oauth['env_secret'])}];\n"
+            "  if (!cid || !sec) return \"\";\n"
+            "  const body = new URLSearchParams({ grant_type: \"client_credentials\", client_id: cid, client_secret: sec });\n"
+            f"  const r = await fetch({json.dumps(oauth.get('token_url',''))}, {{ method: \"POST\", body }});\n"
+            "  try { const d: any = await r.json(); _oauthToken = d.access_token || \"\"; } catch { _oauthToken = \"\"; }\n"
+            "  return _oauthToken;\n"
+            "}"
+        )
+    return fn
+
+
+def _tools_list_meta(tools: Iterable[ToolSpec]) -> list[dict]:
+    return [{"name": t.name, "description": t.description, "inputSchema": t.input_schema} for t in tools]
+
+
+_TEMPLATE = '''// MCP server for @@TITLE@@ — generated by Votal Shield (typed).
+// Run: npm install && API_BASE_URL=@@BASE_URL@@ node dist/index.js
+// Optional Shield enforcement: SHIELD_URL, SHIELD_API_KEY, SHIELD_AGENT_KEY, SHIELD_USER_ROLE
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+
+const BASE_URL = process.env.API_BASE_URL || "@@BASE_URL@@";
+const SHIELD_URL = process.env.SHIELD_URL || "";
+const SHIELD_API_KEY = process.env.SHIELD_API_KEY || "";
+const AGENT_KEY = process.env.SHIELD_AGENT_KEY || "@@AGENT_KEY@@";
+const USER_ROLE = process.env.SHIELD_USER_ROLE || "";
+const MAX_RETRIES = parseInt(process.env.API_MAX_RETRIES || "2", 10);
+
+const TOOLS_META: any[] = @@TOOLS_JSON@@;
+
+const server = new Server({ name: "@@SERVER_NAME@@", version: "1.0.0" }, { capabilities: { tools: {} } });
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: TOOLS_META.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+}));
+
+async function shieldAllows(name: string, args: any): Promise<[boolean, string]> {
+  if (!SHIELD_URL) return [true, ""];
+  try {
+    const r = await fetch(SHIELD_URL.replace(/\\/$/, "") + "/v1/shield/tool/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Key": SHIELD_API_KEY, "X-Agent-Key": AGENT_KEY, "X-User-Role": USER_ROLE },
+      body: JSON.stringify({ agent_key: AGENT_KEY, tool_name: name, tool_params: args, user_role: USER_ROLE }),
+    });
+    const d: any = await r.json();
+    let reason = "";
+    for (const gr of d.guardrail_results || []) { if (gr.passed === false) { reason = gr.message || ""; break; } }
+    return [d.allowed !== false, reason];
+  } catch { return [true, ""]; }
+}
+
+@@AUTH_FN@@
+
+async function _request(meta: any, name: string, args: Record<string, any>): Promise<any> {
+  const [ok, reason] = await shieldAllows(name, args);
+  if (!ok) throw new Error("Blocked by Shield: " + reason);
+  let path: string = meta.path;
+  const query: Record<string, any> = {}, headers: Record<string, string> = {}, body: Record<string, any> = {};
+  for (const [k, v] of Object.entries(args || {})) {
+    const loc = meta.param_locations[k] || (meta.has_body ? "body" : "query");
+    if (loc === "path") path = path.replace("{" + k + "}", String(v));
+    else if (loc === "query") query[k] = v;
+    else if (loc === "header") headers[k] = String(v);
+    else body[k] = v;
+  }
+  await applyAuth(headers, query);
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) {
+    if (Array.isArray(v)) v.forEach((x) => qs.append(k, String(x)));
+    else qs.append(k, String(v));
+  }
+  const url = BASE_URL.replace(/\\/$/, "") + "/" + path.replace(/^\\//, "") + (qs.toString() ? "?" + qs.toString() : "");
+  const jsonBody = (Object.keys(body).length && meta.method !== "GET" && meta.method !== "HEAD") ? JSON.stringify(body) : undefined;
+  let last: any = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const resp = await fetch(url, { method: meta.method, headers: { "Content-Type": "application/json", ...headers }, body: jsonBody });
+    if (resp.status < 500 && resp.status !== 429) {
+      const txt = await resp.text();
+      try { return JSON.parse(txt); } catch { return txt; }
+    }
+    last = resp;
+    await new Promise((r) => setTimeout(r, 500 * Math.pow(2, attempt)));
+  }
+  return last ? await last.text() : "";
+}
+
+@@MODELS@@
+
+@@FUNCTIONS@@
+
+const DISPATCH: Record<string, { schema: z.ZodTypeAny; fn: (a: any) => Promise<any> }> = {
+@@DISPATCH@@
+};
+
+server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  const name = req.params.name;
+  const args = req.params.arguments || {};
+  const entry = DISPATCH[name];
+  if (!entry) return { content: [{ type: "text", text: "Unknown tool: " + name }] };
+  const parsed = entry.schema.safeParse(args);
+  if (!parsed.success) return { content: [{ type: "text", text: "Invalid arguments: " + parsed.error.message }] };
+  try {
+    const result = await entry.fn(parsed.data);
+    const text = typeof result === "string" ? result : JSON.stringify(result);
+    return { content: [{ type: "text", text }] };
+  } catch (e: any) {
+    return { content: [{ type: "text", text: String(e?.message || e) }] };
+  }
+});
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
+'''
+
+_PACKAGE_JSON = {
+    "name": "@@SERVER_NAME@@", "version": "1.0.0", "type": "module",
+    "bin": {"@@SERVER_NAME@@": "dist/index.js"},
+    "scripts": {"build": "tsc"},
+    "dependencies": {"@modelcontextprotocol/sdk": "^1.0.0", "zod": "^3.23.0"},
+    "devDependencies": {"typescript": "^5.4.0", "@types/node": "^20.0.0"},
+}
+
+
+def generate_typescript_typed_server(
+    tools: Iterable[ToolSpec],
+    *,
+    base_url: str,
+    title: str = "Generated API",
+    server_name: str = "generated-mcp",
+    agent_key: str = "generated-agent",
+    security: list | None = None,
+) -> str:
+    tools = list(tools)
+    models = "\n\n".join(_zod_schema_src(t) for t in tools)
+    functions = "\n\n".join(_fn_src(t) for t in tools)
+    dispatch = "\n".join(
+        f'  {json.dumps(t.name)}: {{ schema: {_const_name(t.name)}Schema, fn: {_fn_name(t.name)} }},'
+        for t in tools
+    )
+    tools_json = json.dumps(_tools_list_meta(tools), indent=2)
+    return (
+        _TEMPLATE
+        .replace("@@TITLE@@", title)
+        .replace("@@BASE_URL@@", base_url)
+        .replace("@@AGENT_KEY@@", agent_key)
+        .replace("@@SERVER_NAME@@", server_name)
+        .replace("@@AUTH_FN@@", _ts_auth_fn(security or []))
+        .replace("@@MODELS@@", models or "// (no models)")
+        .replace("@@FUNCTIONS@@", functions or "// (no functions)")
+        .replace("@@DISPATCH@@", dispatch)
+        .replace("@@TOOLS_JSON@@", tools_json)
+    )
+
+
+def generate_typed_package_json(server_name: str = "generated-mcp") -> str:
+    return json.dumps(_PACKAGE_JSON, indent=2).replace("@@SERVER_NAME@@", server_name)
