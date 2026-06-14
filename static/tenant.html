@@ -9,37 +9,38 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0a0a0f;
-    --bg-2: #12121a;
-    --bg-3: #1a1a24;
-    --bg-hover: #1f1f2c;
-    --border: #27272f;
-    --border-strong: #3a3a45;
-    --text: #e4e4e7;
-    --text-dim: #a1a1aa;
-    --text-muted: #71717a;
+    /* Light theme — clean, high-contrast, calm for busy operators */
+    --bg: #f6f7f9;
+    --bg-2: #ffffff;
+    --bg-3: #ffffff;
+    --bg-hover: #f1f3f5;
+    --border: #e4e7ec;
+    --border-strong: #d0d5dd;
+    --text: #1a1d24;
+    --text-dim: #5b616e;
+    --text-muted: #868c98;
     --accent: #4f46e5;
-    --accent-hover: #818cf8;
-    --accent-dim: rgba(99, 102, 241, 0.15);
-    --success: #10b981;
-    --warn: #f59e0b;
-    --danger: #ef4444;
+    --accent-hover: #4338ca;
+    --accent-dim: rgba(79, 70, 229, 0.10);
+    --success: #059669;
+    --warn: #b45309;
+    --danger: #dc2626;
     --radius: 8px;
     --radius-sm: 6px;
     --sidebar-width: 240px;
-    --sidebar-bg: #12121a;
-    --sidebar-surface: #1b1d22;
-    --sidebar-border: #27272f;
-    --sidebar-text: #f5f5f7;
-    --sidebar-text-dim: #9a9ca5;
-    --sidebar-text-muted: #6d7078;
-    --sidebar-accent: #9bea60;
+    --sidebar-bg: #ffffff;
+    --sidebar-surface: #f4f6f8;
+    --sidebar-border: #e4e7ec;
+    --sidebar-text: #1a1d24;
+    --sidebar-text-dim: #5b616e;
+    --sidebar-text-muted: #868c98;
+    --sidebar-accent: #4f46e5;
     --type-label: 11px;
     --type-body: 14px;
     --type-meta: 12.5px;
     --type-title: 15px;
     --tracking-label: 0.14em;
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 4px 12px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -960,7 +961,7 @@
   @keyframes dp-fade { from { opacity: 0; } to { opacity: 1; } }
   .dp-sheet {
     width: min(860px, 100%); max-height: 92vh;
-    background: linear-gradient(180deg, #12121a 0%, #0e0e16 100%);
+    background: linear-gradient(180deg, #ffffff 0%, #f6f7f9 100%);
     border: 1px solid var(--border-strong);
     border-radius: 14px;
     box-shadow: 0 24px 64px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.02) inset;
@@ -7083,12 +7084,12 @@ style.textContent = `
   .tp-tool-title {
     font-weight: 700;
     font-size: 15px;
-    color: #f4f4f5;
+    color: var(--text);
     letter-spacing: -0.02em;
   }
   .tp-tool-code {
     font-size: 11px;
-    color: #d4d4d8;
+    color: var(--text);
     background: rgba(255,255,255,0.06);
     border: 1px solid rgba(255,255,255,0.07);
     padding: 2px 7px;
@@ -7109,7 +7110,7 @@ style.textContent = `
   }
   .tp-tool-status.empty {
     background: rgba(148,163,184,0.12);
-    color: #e4e4e7;
+    color: var(--text);
     border: 1px solid rgba(148,163,184,0.18);
   }
   .tp-tool-meta {
@@ -7118,7 +7119,7 @@ style.textContent = `
     gap: 0.8rem;
     margin-top: 0.45rem;
     font-size: 12.5px;
-    color: #c4c4cc;
+    color: var(--text);
     flex-wrap: wrap;
   }
   .tp-tool-sep {
@@ -7128,7 +7129,7 @@ style.textContent = `
     color: #a1a1aa;
   }
   .tp-tool-value {
-    color: #ededf1;
+    color: var(--text);
     font-weight: 600;
   }
   .tp-tool-agent-chip {
@@ -7160,13 +7161,13 @@ style.textContent = `
     text-align: left;
     padding: 0.55rem 0.75rem;
     font-size: 11.5px;
-    color: #b4b4bc;
+    color: var(--text);
     font-weight: 700;
   }
   .tp-tool-expand td {
     padding: 0.55rem 0.75rem;
     border-top: 1px solid rgba(63, 63, 70, 0.75);
-    color: #e5e7eb;
+    color: var(--text);
   }
   .tp-tool-footer {
     margin-top: 0.85rem;
@@ -7448,7 +7449,7 @@ function displayToolPolicies() {
                 </tr>`;
               }).join('')}
             </tbody>
-          </table>` : `<div style="padding:0.5rem 0;font-size:13px;color:#b4b4bc;">${isConfigured ? 'No roles configured for this tool.' : 'Add a policy to configure role access.'}</div>`}
+          </table>` : `<div style="padding:0.5rem 0;font-size:13px;color: var(--text);">${isConfigured ? 'No roles configured for this tool.' : 'Add a policy to configure role access.'}</div>`}
         </div>
       </div>`;
   });
