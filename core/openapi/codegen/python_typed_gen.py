@@ -64,22 +64,45 @@ def _unique(name: str, seen: set) -> str:
     return candidate
 
 
-def _field_type(schema: dict, base: str, prop: str, out: list, seen: set) -> str:
-    """Resolve a field's Python type, emitting nested model classes into ``out``."""
+class _ModelCtx:
+    """Shared state so a component schema becomes ONE model reused everywhere."""
+    def __init__(self):
+        self.out: list[str] = []          # class sources, in dependency order
+        self.names: set[str] = set()      # all class names taken
+        self.registry: dict[str, str] = {}  # x-model-name -> class name (shared)
+        self.emitted: set[str] = set()    # class names already written
+        self.classes: list[str] = []      # for model_rebuild()
+
+
+def _field_type(schema: dict, base: str, prop: str, ctx: _ModelCtx) -> str:
+    """Resolve a field's Python type, emitting/reusing model classes in ctx.
+
+    Model-typed fields are returned as quoted forward references so cyclic or
+    out-of-order component models resolve via model_rebuild().
+    """
     schema = schema or {}
     t = schema.get("type")
     if t == "object" and schema.get("properties"):
-        cls = _unique(base + _camel(prop), seen)
-        _emit_model(cls, schema, out, seen)
-        return cls
+        mn = schema.get("x-model-name")
+        if mn and mn in ctx.registry:
+            return f'"{ctx.registry[mn]}"'           # reuse the shared model
+        cls = _unique(_camel(mn) if mn else (base + _camel(prop)), ctx.names)
+        if mn:
+            ctx.registry[mn] = cls                    # register before recursing (cycle-safe)
+        _emit_model(cls, schema, ctx)
+        return f'"{cls}"'
     if t == "array":
-        inner = _field_type(schema.get("items") or {}, base, prop + "Item", out, seen)
+        inner = _field_type(schema.get("items") or {}, base, prop + "Item", ctx)
         return f"List[{inner}]"
     return _py_type(schema)
 
 
-def _emit_model(cls: str, schema: dict, out: list, seen: set) -> None:
-    """Emit a Pydantic model class for ``schema`` (nested classes appended first)."""
+def _emit_model(cls: str, schema: dict, ctx: _ModelCtx) -> None:
+    """Emit a Pydantic model class once (nested/shared classes appended first)."""
+    if cls in ctx.emitted:
+        return
+    ctx.emitted.add(cls)
+    ctx.classes.append(cls)
     props = (schema or {}).get("properties") or {}
     required = set((schema or {}).get("required") or [])
     lines = [f"class {cls}(BaseModel):",
@@ -88,8 +111,7 @@ def _emit_model(cls: str, schema: dict, out: list, seen: set) -> None:
         lines.append("    pass")
     for name, sch in props.items():
         pid = _ident(name)
-        # _field_type may append nested classes to `out` before this class is added.
-        pytype = _field_type(sch, cls, name, out, seen)
+        pytype = _field_type(sch, cls, name, ctx)   # may append nested classes first
         alias = "" if pid == name else f', alias="{name}"'
         desc = (sch or {}).get("description")
         dkw = f', description={json.dumps(desc)}' if desc else ""
@@ -102,16 +124,7 @@ def _emit_model(cls: str, schema: dict, out: list, seen: set) -> None:
             lines.append(f"    {pid}: {pytype} = Field({default}{alias}{dkw})")
         else:
             lines.append(f"    {pid}: {pytype} = {default}")
-    out.append("\n".join(lines))
-
-
-def _models_for(tool: ToolSpec, seen: set) -> str:
-    """Return all model classes for a tool (nested first, arg class last)."""
-    out: list = []
-    arg_cls = _class_name(tool.name)
-    seen.add(arg_cls)
-    _emit_model(arg_cls, tool.input_schema or {}, out, seen)
-    return "\n\n\n".join(out)
+    ctx.out.append("\n".join(lines))
 
 
 def _fn_src(tool: ToolSpec) -> str:
@@ -292,8 +305,14 @@ def generate_python_typed_server(
     security: list | None = None,
 ) -> str:
     tools = list(tools)
-    _seen: set = set()
-    models = "\n\n\n".join(_models_for(t, _seen) for t in tools)
+    ctx = _ModelCtx()
+    for t in tools:                                   # reserve arg class names first
+        ctx.names.add(_class_name(t.name))
+    for t in tools:
+        _emit_model(_class_name(t.name), t.input_schema or {}, ctx)
+    models = "\n\n\n".join(ctx.out)
+    if ctx.classes:                                   # resolve quoted forward refs
+        models += "\n\n\n" + "\n".join(f"{c}.model_rebuild()" for c in ctx.classes)
     functions = "\n\n\n".join(_fn_src(t) for t in tools)
     dispatch = "\n".join(
         f'    {json.dumps(t.name)}: ({_class_name(t.name)}, {_ident(t.name)}),'

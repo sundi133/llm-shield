@@ -70,6 +70,16 @@ def _resolve_refs(node: Any, root: dict, _depth: int = 0, _seen: tuple = ()) -> 
             if target is None:
                 return node  # unresolvable — leave as-is
             resolved = _resolve_refs(target, root, _depth + 1, _seen + (ref,))
+            # Tag inlined component schemas with their model name so the typed
+            # codegen can emit ONE shared model per component and reference it
+            # (instead of duplicating an anonymous class per use site). Harmless
+            # extra metadata everywhere else.
+            if (ref.startswith("#/components/schemas/")
+                    and isinstance(resolved, dict)
+                    and resolved.get("type", "object") == "object"
+                    and "x-model-name" not in resolved):
+                resolved = dict(resolved)
+                resolved["x-model-name"] = ref.rsplit("/", 1)[-1]
             # Merge sibling keys (OpenAPI allows description alongside $ref).
             siblings = {k: v for k, v in node.items() if k != "$ref"}
             if siblings and isinstance(resolved, dict):

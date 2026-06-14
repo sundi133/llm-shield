@@ -29,7 +29,41 @@ def _fn_name(tool_name: str) -> str:
     return s
 
 
-def _zod_type(schema: dict) -> str:
+def _camel(s: str) -> str:
+    parts = re.split(r"[^a-zA-Z0-9]+", s)
+    return "".join(p[:1].upper() + p[1:] for p in parts if p)
+
+
+class _TsCtx:
+    """Shared state so a component schema becomes ONE Zod const reused everywhere."""
+    def __init__(self):
+        self.out: list[str] = []          # `const XSchema = z.object(...);` decls
+        self.registry: dict[str, str] = {}  # x-model-name -> const name
+        self.names: set[str] = set()
+
+
+def _unique(name: str, names: set) -> str:
+    candidate, i = name, 2
+    while candidate in names:
+        candidate = f"{name}{i}"
+        i += 1
+    names.add(candidate)
+    return candidate
+
+
+def _zod_object_body(schema: dict, ctx: _TsCtx) -> str:
+    props = (schema or {}).get("properties") or {}
+    required = set((schema or {}).get("required") or [])
+    fields = []
+    for pname, psch in props.items():
+        zt = _zod_type(psch, ctx)
+        if pname not in required:
+            zt += ".optional()"
+        fields.append(f"{json.dumps(pname)}: {zt}")
+    return ", ".join(fields)
+
+
+def _zod_type(schema: dict, ctx: _TsCtx) -> str:
     schema = schema or {}
     t = schema.get("type")
     if t == "string":
@@ -42,36 +76,31 @@ def _zod_type(schema: dict) -> str:
     if t == "boolean":
         return "z.boolean()"
     if t == "array":
-        return f"z.array({_zod_type(schema.get('items') or {})})"
+        return f"z.array({_zod_type(schema.get('items') or {}, ctx)})"
     if t == "object":
         props = schema.get("properties")
         if props:
-            required = set(schema.get("required") or [])
-            fields = []
-            for pname, psch in props.items():
-                zt = _zod_type(psch)
-                if pname not in required:
-                    zt += ".optional()"
-                fields.append(f"{json.dumps(pname)}: {zt}")
-            return "z.object({ " + ", ".join(fields) + " })"
+            mn = schema.get("x-model-name")
+            if mn:
+                if mn not in ctx.registry:
+                    const = _unique(_camel(mn) + "Schema", ctx.names)
+                    ctx.registry[mn] = const          # register before recursing (cycle-safe)
+                    body = _zod_object_body(schema, ctx)
+                    ctx.out.append(f"const {const}: z.ZodTypeAny = z.object({{ {body} }});")
+                # z.lazy defers resolution -> declaration order & cycles are fine
+                return f"z.lazy(() => {ctx.registry[mn]})"
+            return "z.object({ " + _zod_object_body(schema, ctx) + " })"
         return "z.record(z.any())"
     return "z.any()"
 
 
-def _zod_schema_src(tool: ToolSpec) -> str:
+def _zod_schema_src(tool: ToolSpec, ctx: _TsCtx) -> str:
     name = _const_name(tool.name)
     props = (tool.input_schema or {}).get("properties") or {}
-    required = set((tool.input_schema or {}).get("required") or [])
     if not props:
         body = "z.object({})"
     else:
-        fields = []
-        for pname, sch in props.items():
-            zt = _zod_type(sch)
-            if pname not in required:
-                zt += ".optional()"
-            fields.append(f"  {json.dumps(pname)}: {zt}")
-        body = "z.object({\n" + ",\n".join(fields) + "\n})"
+        body = "z.object({ " + _zod_object_body(tool.input_schema, ctx) + " })"
     return f"const {name}Schema = {body};\ntype {name} = z.infer<typeof {name}Schema>;"
 
 
@@ -268,7 +297,10 @@ def generate_typescript_typed_server(
     security: list | None = None,
 ) -> str:
     tools = list(tools)
-    models = "\n\n".join(_zod_schema_src(t) for t in tools)
+    ctx = _TsCtx()
+    arg_decls = [_zod_schema_src(t, ctx) for t in tools]
+    # Shared component consts first (referenced via z.lazy), then per-op arg schemas.
+    models = "\n\n".join(ctx.out + arg_decls)
     functions = "\n\n".join(_fn_src(t) for t in tools)
     dispatch = "\n".join(
         f'  {json.dumps(t.name)}: {{ schema: {_const_name(t.name)}Schema, fn: {_fn_name(t.name)} }},'
