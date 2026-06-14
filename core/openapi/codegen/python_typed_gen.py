@@ -156,7 +156,9 @@ Run:
     pip install mcp httpx pydantic
     API_BASE_URL=@@BASE_URL@@ python server.py
 
-Optional Shield enforcement: set SHIELD_URL, SHIELD_API_KEY, SHIELD_AGENT_KEY, SHIELD_USER_ROLE.
+Optional Shield enforcement: set SHIELD_URL, SHIELD_API_KEY, SHIELD_AGENT_KEY,
+SHIELD_USER_ROLE. If Shield sits behind a proxy that needs a bearer token
+(e.g. RunPod), also set SHIELD_AUTH_TOKEN.
 """
 
 import asyncio
@@ -174,8 +176,16 @@ from mcp.types import Tool, TextContent
 BASE_URL = os.environ.get("API_BASE_URL", "@@BASE_URL@@")
 SHIELD_URL = os.environ.get("SHIELD_URL", "")
 SHIELD_API_KEY = os.environ.get("SHIELD_API_KEY", "")
+SHIELD_AUTH_TOKEN = os.environ.get("SHIELD_AUTH_TOKEN", "")  # proxy bearer (e.g. RunPod)
 AGENT_KEY = os.environ.get("SHIELD_AGENT_KEY", "@@AGENT_KEY@@")
 USER_ROLE = os.environ.get("SHIELD_USER_ROLE", "")
+
+
+def _shield_headers():
+    h = {"X-API-Key": SHIELD_API_KEY, "X-Agent-Key": AGENT_KEY, "X-User-Role": USER_ROLE}
+    if SHIELD_AUTH_TOKEN:
+        h["Authorization"] = "Bearer " + SHIELD_AUTH_TOKEN
+    return h
 MAX_RETRIES = int(os.environ.get("API_MAX_RETRIES", "2"))
 MAX_PAGES = int(os.environ.get("API_MAX_PAGES", "1"))  # >1 enables cursor auto-pagination
 
@@ -198,7 +208,7 @@ async def _shield_allows(name, args):
     try:
         r = await _http.post(
             SHIELD_URL.rstrip("/") + "/v1/shield/tool/check",
-            headers={"X-API-Key": SHIELD_API_KEY, "X-Agent-Key": AGENT_KEY, "X-User-Role": USER_ROLE},
+            headers=_shield_headers(),
             json={"agent_key": AGENT_KEY, "tool_name": name, "tool_params": args, "user_role": USER_ROLE},
         )
         d = r.json()

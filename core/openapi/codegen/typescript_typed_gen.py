@@ -177,6 +177,7 @@ import { z } from "zod";
 const BASE_URL = process.env.API_BASE_URL || "@@BASE_URL@@";
 const SHIELD_URL = process.env.SHIELD_URL || "";
 const SHIELD_API_KEY = process.env.SHIELD_API_KEY || "";
+const SHIELD_AUTH_TOKEN = process.env.SHIELD_AUTH_TOKEN || ""; // proxy bearer (e.g. RunPod)
 const AGENT_KEY = process.env.SHIELD_AGENT_KEY || "@@AGENT_KEY@@";
 const USER_ROLE = process.env.SHIELD_USER_ROLE || "";
 const MAX_RETRIES = parseInt(process.env.API_MAX_RETRIES || "2", 10);
@@ -193,9 +194,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 async function shieldAllows(name: string, args: any): Promise<[boolean, string]> {
   if (!SHIELD_URL) return [true, ""];
   try {
+    const headers: Record<string, string> = { "Content-Type": "application/json", "X-API-Key": SHIELD_API_KEY, "X-Agent-Key": AGENT_KEY, "X-User-Role": USER_ROLE };
+    if (SHIELD_AUTH_TOKEN) headers["Authorization"] = "Bearer " + SHIELD_AUTH_TOKEN;
     const r = await fetch(SHIELD_URL.replace(/\\/$/, "") + "/v1/shield/tool/check", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-API-Key": SHIELD_API_KEY, "X-Agent-Key": AGENT_KEY, "X-User-Role": USER_ROLE },
+      headers,
       body: JSON.stringify({ agent_key: AGENT_KEY, tool_name: name, tool_params: args, user_role: USER_ROLE }),
     });
     const d: any = await r.json();
