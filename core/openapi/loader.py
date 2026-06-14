@@ -21,9 +21,19 @@ class OpenAPIError(ValueError):
 _MAX_REF_DEPTH = 50
 
 
-def load_spec(raw: str | bytes | dict) -> dict:
+def load_spec(
+    raw: str | bytes | dict,
+    *,
+    external_docs: dict | None = None,
+    fetch_external: bool = False,
+    allowed_hosts: list | None = None,
+) -> dict:
     """Parse a spec (str/bytes JSON-or-YAML, or an already-parsed dict) and
-    return it with local $refs resolved.
+    return it with external refs bundled and local $refs resolved.
+
+    External $refs (other files/URLs) resolve against ``external_docs`` (a map of
+    uri -> parsed document). ``fetch_external`` additionally allows fetching from
+    ``allowed_hosts`` over HTTPS (off by default; SSRF-guarded).
 
     Raises OpenAPIError on unparseable input or a doc missing both ``openapi``
     and ``paths``.
@@ -51,6 +61,15 @@ def load_spec(raw: str | bytes | dict) -> dict:
     # #/definitions → #/components/schemas), so downstream sees one shape.
     from core.openapi.normalize import normalize_spec
     doc = normalize_spec(doc)
+
+    # Bundle external $refs (other files/URLs) into local components, then
+    # resolve all local refs.
+    if external_docs or fetch_external:
+        from core.openapi.external import bundle_external_refs
+        doc = bundle_external_refs(
+            doc, external_docs=external_docs,
+            fetch_external=fetch_external, allowed_hosts=allowed_hosts,
+        )
 
     return _resolve_refs(doc, doc)
 

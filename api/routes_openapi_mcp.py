@@ -44,6 +44,7 @@ def _store_key(tenant_id: str) -> str:
 class ImportRequest(BaseModel):
     spec: Any                       # JSON/YAML string or already-parsed object
     base_url: Optional[str] = None  # falls back to the spec's servers[]
+    external_docs: Optional[dict] = None  # uri -> parsed doc, for external $refs
     include_risky: bool = False
     name_prefix: str = ""
     auth: Optional[dict] = None     # {"type":"bearer","token":...} | api_key
@@ -59,6 +60,7 @@ class CallRequest(BaseModel):
 class GenerateRequest(BaseModel):
     spec: Any
     base_url: Optional[str] = None    # falls back to the spec's servers[]
+    external_docs: Optional[dict] = None  # uri -> parsed doc, for external $refs
     language: str = "python"          # python | typescript | both
     style: str = "typed"             # typed (Pydantic, per-op fns) | table (compact)
     include_risky: bool = False
@@ -74,7 +76,7 @@ async def import_spec(body: ImportRequest, request: Request):
     """Parse a spec, generate MCP tools, store them, and auto-register them."""
     tenant_id = get_tenant_from_api_key(request)
     try:
-        spec = load_spec(body.spec)
+        spec = load_spec(body.spec, external_docs=body.external_docs)
         tools = spec_to_tools(
             spec, include_risky=body.include_risky, name_prefix=body.name_prefix
         )
@@ -218,7 +220,7 @@ async def generate_server(body: GenerateRequest, request: Request):
     """
     get_tenant_from_api_key(request)  # authn (sandbox key ok)
     try:
-        spec = load_spec(body.spec)
+        spec = load_spec(body.spec, external_docs=body.external_docs)
         tools = spec_to_tools(spec, include_risky=body.include_risky)
     except OpenAPIError as e:
         raise HTTPException(status_code=400, detail=f"Invalid OpenAPI spec: {e}")
