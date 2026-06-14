@@ -44,6 +44,16 @@ def _zod_type(schema: dict) -> str:
     if t == "array":
         return f"z.array({_zod_type(schema.get('items') or {})})"
     if t == "object":
+        props = schema.get("properties")
+        if props:
+            required = set(schema.get("required") or [])
+            fields = []
+            for pname, psch in props.items():
+                zt = _zod_type(psch)
+                if pname not in required:
+                    zt += ".optional()"
+                fields.append(f"{json.dumps(pname)}: {zt}")
+            return "z.object({ " + ", ".join(fields) + " })"
         return "z.record(z.any())"
     return "z.any()"
 
@@ -68,7 +78,8 @@ def _zod_schema_src(tool: ToolSpec) -> str:
 def _fn_src(tool: ToolSpec) -> str:
     cls = _const_name(tool.name)
     meta = {"method": tool.method, "path": tool.path,
-            "param_locations": tool.param_locations, "has_body": tool.has_body}
+            "param_locations": tool.param_locations, "has_body": tool.has_body,
+            "body_ct": tool.body_content_type}
     # JSON booleans true/false are valid JS, so json.dumps is fine here.
     return (f"async function {_fn_name(tool.name)}(args: {cls}) {{\n"
             f"  return _request({json.dumps(meta)}, {json.dumps(tool.name)}, args as Record<string, any>);\n"
@@ -181,10 +192,25 @@ async function _request(meta: any, name: string, args: Record<string, any>): Pro
     else qs.append(k, String(v));
   }
   const url = BASE_URL.replace(/\\/$/, "") + "/" + path.replace(/^\\//, "") + (qs.toString() ? "?" + qs.toString() : "");
-  const jsonBody = (Object.keys(body).length && meta.method !== "GET" && meta.method !== "HEAD") ? JSON.stringify(body) : undefined;
+  // Encode the body per the operation's declared content type.
+  let sendHeaders: Record<string, string> = { ...headers };
+  let sendBody: any = undefined;
+  if (Object.keys(body).length && meta.method !== "GET" && meta.method !== "HEAD") {
+    const ct = meta.body_ct || "json";
+    if (ct === "form") {
+      sendBody = new URLSearchParams(body as Record<string, string>);
+    } else if (ct === "multipart") {
+      const fd = new FormData();
+      for (const [k, v] of Object.entries(body)) fd.append(k, String(v));
+      sendBody = fd;
+    } else {
+      sendHeaders["Content-Type"] = "application/json";
+      sendBody = JSON.stringify(body);
+    }
+  }
   let last: any = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const resp = await fetch(url, { method: meta.method, headers: { "Content-Type": "application/json", ...headers }, body: jsonBody });
+    const resp = await fetch(url, { method: meta.method, headers: sendHeaders, body: sendBody });
     if (resp.status < 500 && resp.status !== 429) {
       const txt = await resp.text();
       try { return JSON.parse(txt); } catch { return txt; }

@@ -50,17 +50,46 @@ def _ident(name: str) -> str:
     return s
 
 
-def _model_src(tool: ToolSpec) -> str:
-    cls = _class_name(tool.name)
-    props = (tool.input_schema or {}).get("properties") or {}
-    required = set((tool.input_schema or {}).get("required") or [])
+def _camel(s: str) -> str:
+    parts = re.split(r"[^a-zA-Z0-9]+", s)
+    return "".join(p[:1].upper() + p[1:] for p in parts if p)
+
+
+def _unique(name: str, seen: set) -> str:
+    candidate, i = name, 2
+    while candidate in seen:
+        candidate = f"{name}{i}"
+        i += 1
+    seen.add(candidate)
+    return candidate
+
+
+def _field_type(schema: dict, base: str, prop: str, out: list, seen: set) -> str:
+    """Resolve a field's Python type, emitting nested model classes into ``out``."""
+    schema = schema or {}
+    t = schema.get("type")
+    if t == "object" and schema.get("properties"):
+        cls = _unique(base + _camel(prop), seen)
+        _emit_model(cls, schema, out, seen)
+        return cls
+    if t == "array":
+        inner = _field_type(schema.get("items") or {}, base, prop + "Item", out, seen)
+        return f"List[{inner}]"
+    return _py_type(schema)
+
+
+def _emit_model(cls: str, schema: dict, out: list, seen: set) -> None:
+    """Emit a Pydantic model class for ``schema`` (nested classes appended first)."""
+    props = (schema or {}).get("properties") or {}
+    required = set((schema or {}).get("required") or [])
     lines = [f"class {cls}(BaseModel):",
              "    model_config = ConfigDict(populate_by_name=True, extra='ignore')"]
     if not props:
         lines.append("    pass")
     for name, sch in props.items():
         pid = _ident(name)
-        pytype = _py_type(sch)
+        # _field_type may append nested classes to `out` before this class is added.
+        pytype = _field_type(sch, cls, name, out, seen)
         alias = "" if pid == name else f', alias="{name}"'
         desc = (sch or {}).get("description")
         dkw = f', description={json.dumps(desc)}' if desc else ""
@@ -73,7 +102,16 @@ def _model_src(tool: ToolSpec) -> str:
             lines.append(f"    {pid}: {pytype} = Field({default}{alias}{dkw})")
         else:
             lines.append(f"    {pid}: {pytype} = {default}")
-    return "\n".join(lines)
+    out.append("\n".join(lines))
+
+
+def _models_for(tool: ToolSpec, seen: set) -> str:
+    """Return all model classes for a tool (nested first, arg class last)."""
+    out: list = []
+    arg_cls = _class_name(tool.name)
+    seen.add(arg_cls)
+    _emit_model(arg_cls, tool.input_schema or {}, out, seen)
+    return "\n\n\n".join(out)
 
 
 def _fn_src(tool: ToolSpec) -> str:
@@ -81,6 +119,7 @@ def _fn_src(tool: ToolSpec) -> str:
     meta = {
         "method": tool.method, "path": tool.path,
         "param_locations": tool.param_locations, "has_body": tool.has_body,
+        "body_ct": tool.body_content_type,
     }
     # Embed meta as a Python literal via repr() — json.dumps would emit
     # JSON `true/false/null`, which are NameErrors when the function runs.
@@ -172,20 +211,29 @@ def _build(meta, args):
         else:
             body[k] = v
     url = BASE_URL.rstrip("/") + "/" + path.lstrip("/")
-    json_body = body if (body and meta["method"] not in ("GET", "HEAD")) else None
-    return url, query, headers, json_body
+    return url, query, headers, body
 
 
 async def _request(meta, name, args):
     allowed, reason = await _shield_allows(name, args)
     if not allowed:
         raise PermissionError("Blocked by Shield: " + reason)
-    url, query, headers, json_body = _build(meta, args)
+    url, query, headers, body = _build(meta, args)
     await _apply_auth(headers, query)
+    # Encode the body per the operation's declared content type.
+    kwargs = {}
+    if body and meta["method"] not in ("GET", "HEAD"):
+        ct = meta.get("body_ct", "json")
+        if ct == "form":
+            kwargs["data"] = body
+        elif ct == "multipart":
+            kwargs["files"] = {k: (None, str(v)) for k, v in body.items()}
+        else:
+            kwargs["json"] = body
     last = None
     for attempt in range(MAX_RETRIES + 1):
         resp = await _http.request(meta["method"], url, params=query or None,
-                                   headers=headers or None, json=json_body)
+                                   headers=headers or None, **kwargs)
         if resp.status_code < 500 and resp.status_code != 429:
             try:
                 return resp.json()
@@ -244,7 +292,8 @@ def generate_python_typed_server(
     security: list | None = None,
 ) -> str:
     tools = list(tools)
-    models = "\n\n\n".join(_model_src(t) for t in tools)
+    _seen: set = set()
+    models = "\n\n\n".join(_models_for(t, _seen) for t in tools)
     functions = "\n\n\n".join(_fn_src(t) for t in tools)
     dispatch = "\n".join(
         f'    {json.dumps(t.name)}: ({_class_name(t.name)}, {_ident(t.name)}),'

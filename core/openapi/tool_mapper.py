@@ -38,6 +38,8 @@ class ToolSpec:
     param_locations: dict
     has_body: bool
     operation_id: str
+    # request body encoding: "json" | "form" | "multipart"
+    body_content_type: str = "json"
 
     def to_mcp_tool(self) -> dict:
         """Shape expected by an MCP tools/list entry (name/description/inputSchema)."""
@@ -79,7 +81,7 @@ def spec_to_tools(
                 continue
 
             params = list(shared_params) + list(op.get("parameters") or [])
-            input_schema, locations = _build_input_schema(params, op)
+            input_schema, locations, body_ct = _build_input_schema(params, op)
             name = _tool_name(op, method, path, name_prefix, seen)
             risk = score_tool(name, method=method)["risk"]
 
@@ -93,6 +95,7 @@ def spec_to_tools(
                 param_locations=locations,
                 has_body="requestBody" in op,
                 operation_id=op.get("operationId", ""),
+                body_content_type=body_ct,
             ))
     return tools
 
@@ -110,15 +113,33 @@ def _tool_name(op: dict, method: str, path: str, prefix: str, seen: set) -> str:
     return candidate
 
 
-def _build_input_schema(params: list, op: dict) -> tuple[dict, dict]:
-    """Merge path/query/header params and a JSON requestBody into one schema.
+def _select_body_content(content: dict) -> tuple[str, dict]:
+    """Pick the request body media type we support, preferring JSON.
 
-    Returns (json_schema, {param_name: location}). Body fields are merged at
-    the top level so the tool takes a flat argument object.
+    Returns ("json"|"form"|"multipart", schema). Empty schema if none match.
+    """
+    if "application/json" in content:
+        return "json", (content["application/json"] or {}).get("schema") or {}
+    if "multipart/form-data" in content:
+        return "multipart", (content["multipart/form-data"] or {}).get("schema") or {}
+    if "application/x-www-form-urlencoded" in content:
+        return "form", (content["application/x-www-form-urlencoded"] or {}).get("schema") or {}
+    # Fall back to the first declared media type's schema, treated as JSON.
+    for ct, media in content.items():
+        return "json", (media or {}).get("schema") or {}
+    return "json", {}
+
+
+def _build_input_schema(params: list, op: dict) -> tuple[dict, dict, str]:
+    """Merge path/query/header params and the requestBody into one schema.
+
+    Returns (json_schema, {param_name: location}, body_content_type). Body fields
+    are merged at the top level so the tool takes a flat argument object.
     """
     properties: dict = {}
     required: list[str] = []
     locations: dict = {}
+    body_ct = "json"
 
     for p in params:
         if not isinstance(p, dict):
@@ -138,8 +159,8 @@ def _build_input_schema(params: list, op: dict) -> tuple[dict, dict]:
     body = op.get("requestBody")
     if isinstance(body, dict):
         content = body.get("content") or {}
-        json_ct = content.get("application/json") or {}
-        body_schema = resolve_schema(json_ct.get("schema") or {})
+        body_ct, raw_schema = _select_body_content(content)
+        body_schema = resolve_schema(raw_schema)
         if body_schema.get("type") == "object" or "properties" in body_schema:
             for fname, fschema in (body_schema.get("properties") or {}).items():
                 properties.setdefault(fname, fschema)
@@ -157,4 +178,4 @@ def _build_input_schema(params: list, op: dict) -> tuple[dict, dict]:
     schema = {"type": "object", "properties": properties, "additionalProperties": False}
     if required:
         schema["required"] = required
-    return schema, locations
+    return schema, locations, body_ct
