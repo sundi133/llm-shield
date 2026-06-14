@@ -21,6 +21,7 @@ from storage.tenant_store import kv_get, kv_set
 from api.routes_agents_registry import get_tenant_from_api_key
 from core.openapi import load_spec, OpenAPIError, spec_to_tools
 from core.openapi.security import extract_security
+from core.openapi.normalize import default_base_url
 from core.openapi.upstream_call import build_request, execute
 from core.openapi.codegen.python_gen import generate_python_server
 from core.openapi.codegen.typescript_gen import (
@@ -38,7 +39,7 @@ def _store_key(tenant_id: str) -> str:
 
 class ImportRequest(BaseModel):
     spec: Any                       # JSON/YAML string or already-parsed object
-    base_url: str
+    base_url: Optional[str] = None  # falls back to the spec's servers[]
     include_risky: bool = False
     name_prefix: str = ""
     auth: Optional[dict] = None     # {"type":"bearer","token":...} | api_key
@@ -53,7 +54,7 @@ class CallRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     spec: Any
-    base_url: str
+    base_url: Optional[str] = None    # falls back to the spec's servers[]
     language: str = "python"          # python | typescript | both
     include_risky: bool = False
     shield_enforce: bool = True       # bake Shield enforcement into the output
@@ -82,9 +83,16 @@ async def import_spec(body: ImportRequest, request: Request):
                    "(set include_risky=true to expose write operations).",
         )
 
+    base_url = body.base_url or default_base_url(spec)
+    if not base_url:
+        raise HTTPException(
+            status_code=400,
+            detail="No base_url provided and the spec declares no servers[].",
+        )
+
     # Persist tool descriptors + how to call upstream (auth kept server-side).
     stored = {
-        "base_url": body.base_url,
+        "base_url": base_url,
         "auth": body.auth,
         "tools": {
             t.name: {
@@ -219,8 +227,11 @@ async def generate_server(body: GenerateRequest, request: Request):
     if lang not in ("python", "typescript", "both"):
         raise HTTPException(status_code=400, detail="language must be python, typescript, or both")
 
+    base_url = body.base_url or default_base_url(spec)
+    if not base_url:
+        raise HTTPException(status_code=400, detail="No base_url and spec declares no servers[].")
     security = extract_security(spec)
-    kw = dict(base_url=body.base_url, title=body.title,
+    kw = dict(base_url=base_url, title=body.title,
               server_name=body.server_name, agent_key=body.agent_key)
     files: dict[str, str] = {}
     if lang in ("python", "both"):

@@ -47,6 +47,11 @@ def load_spec(raw: str | bytes | dict) -> dict:
     if "paths" not in doc:
         raise OpenAPIError("not an OpenAPI document (no 'paths')")
 
+    # Normalize Swagger 2.0 → OpenAPI 3.x before resolving refs (rewrites
+    # #/definitions → #/components/schemas), so downstream sees one shape.
+    from core.openapi.normalize import normalize_spec
+    doc = normalize_spec(doc)
+
     return _resolve_refs(doc, doc)
 
 
