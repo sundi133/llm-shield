@@ -133,7 +133,8 @@ def _fn_src(tool: ToolSpec) -> str:
         "method": tool.method, "path": tool.path,
         "param_locations": tool.param_locations, "has_body": tool.has_body,
         "body_ct": tool.body_content_type,
-        "cursor_param": tool.cursor_param,
+        "file_fields": tool.file_fields,
+        "pagination": tool.pagination,
     }
     # Embed meta as a Python literal via repr() — json.dumps would emit
     # JSON `true/false/null`, which are NameErrors when the function runs.
@@ -243,6 +244,30 @@ def _next_cursor(payload):
     return None
 
 
+def _page_len(payload):
+    if isinstance(payload, list):
+        return len(payload)
+    if isinstance(payload, dict):
+        for k in _LIST_KEYS:
+            if isinstance(payload.get(k), list):
+                return len(payload[k])
+        for v in payload.values():
+            if isinstance(v, list):
+                return len(v)
+    return 0
+
+
+def _decode_file(v):
+    """Bytes for a multipart file part. Decodes data:...;base64, URIs."""
+    if isinstance(v, (bytes, bytearray)):
+        return bytes(v)
+    s = str(v)
+    if s.startswith("data:") and ";base64," in s:
+        import base64
+        return base64.b64decode(s.split(";base64,", 1)[1])
+    return s.encode("utf-8")
+
+
 def _merge_pages(pages):
     base = pages[0]
     if not isinstance(base, dict):
@@ -271,7 +296,19 @@ async def _do_request(meta, args):
         if ct == "form":
             kwargs["data"] = body
         elif ct == "multipart":
-            kwargs["files"] = {k: (None, str(v)) for k, v in body.items()}
+            ff = set(meta.get("file_fields") or [])
+            files, data = {}, {}
+            for k, v in body.items():
+                if k in ff:
+                    files[k] = (str(k), _decode_file(v))   # real file part
+                else:
+                    data[k] = str(v)
+            if not files:                                  # no binary parts: still multipart
+                files = {k: (None, str(v)) for k, v in body.items()}
+                data = {}
+            kwargs["files"] = files
+            if data:
+                kwargs["data"] = data
         else:
             kwargs["json"] = body
     last = None
@@ -292,20 +329,42 @@ async def _request(meta, name, args):
     allowed, reason = await _shield_allows(name, args)
     if not allowed:
         raise PermissionError("Blocked by Shield: " + reason)
-    cursor = meta.get("cursor_param")
-    # Cursor auto-pagination: only when the op has a cursor param and the
-    # operator opted in via API_MAX_PAGES > 1. Otherwise a single request.
-    if not (cursor and MAX_PAGES > 1):
+    pag = meta.get("pagination")
+    # Auto-pagination: only when the op is paginated AND the operator opted in
+    # via API_MAX_PAGES > 1. Otherwise a single request (default).
+    if not (pag and MAX_PAGES > 1):
         return await _do_request(meta, args)
     args = dict(args or {})
+    style = pag.get("style")
     pages = []
-    for _ in range(MAX_PAGES):
-        result = await _do_request(meta, args)
-        pages.append(result)
-        nxt = _next_cursor(result)
-        if not nxt:
-            break
-        args[cursor] = nxt
+    if style == "cursor":
+        cp = pag["cursor_param"]
+        for _ in range(MAX_PAGES):
+            result = await _do_request(meta, args)
+            pages.append(result)
+            nxt = _next_cursor(result)
+            if not nxt:
+                break
+            args[cp] = nxt
+    elif style in ("offset", "page"):
+        key = pag.get("offset_param") or pag.get("page_param")
+        limit_param = pag.get("limit_param")
+        pos = args.get(key)
+        if pos is None:
+            pos = 0 if style == "offset" else 1
+        for _ in range(MAX_PAGES):
+            args[key] = pos
+            result = await _do_request(meta, args)
+            pages.append(result)
+            n = _page_len(result)
+            if n == 0:
+                break
+            limit = args.get(limit_param) if limit_param else None
+            if limit and n < limit:           # short page = last page
+                break
+            pos = pos + (limit or n) if style == "offset" else pos + 1
+    else:
+        return await _do_request(meta, args)
     return pages[0] if len(pages) == 1 else _merge_pages(pages)
 
 

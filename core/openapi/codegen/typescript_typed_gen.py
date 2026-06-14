@@ -108,7 +108,8 @@ def _fn_src(tool: ToolSpec) -> str:
     cls = _const_name(tool.name)
     meta = {"method": tool.method, "path": tool.path,
             "param_locations": tool.param_locations, "has_body": tool.has_body,
-            "body_ct": tool.body_content_type, "cursor_param": tool.cursor_param}
+            "body_ct": tool.body_content_type,
+            "file_fields": tool.file_fields, "pagination": tool.pagination}
     # JSON booleans true/false are valid JS, so json.dumps is fine here.
     return (f"async function {_fn_name(tool.name)}(args: {cls}) {{\n"
             f"  return _request({json.dumps(meta)}, {json.dumps(tool.name)}, args as Record<string, any>);\n"
@@ -213,6 +214,23 @@ function nextCursor(payload: any): any {
   return null;
 }
 
+function pageLen(payload: any): number {
+  if (Array.isArray(payload)) return payload.length;
+  if (payload && typeof payload === "object") {
+    for (const k of LIST_KEYS) if (Array.isArray(payload[k])) return payload[k].length;
+    for (const k of Object.keys(payload)) if (Array.isArray(payload[k])) return payload[k].length;
+  }
+  return 0;
+}
+
+function decodeFile(v: any): Uint8Array {
+  const s = String(v);
+  if (s.startsWith("data:") && s.includes(";base64,")) {
+    return Uint8Array.from(Buffer.from(s.split(";base64,")[1], "base64"));
+  }
+  return new TextEncoder().encode(s);
+}
+
 function mergePages(pages: any[]): any {
   const base = pages[0];
   if (!base || typeof base !== "object") return pages;
@@ -227,16 +245,34 @@ function mergePages(pages: any[]): any {
 async function _request(meta: any, name: string, args: Record<string, any>): Promise<any> {
   const [ok, reason] = await shieldAllows(name, args);
   if (!ok) throw new Error("Blocked by Shield: " + reason);
-  const cursor = meta.cursor_param;
-  if (cursor && MAX_PAGES > 1) {
+  const pag = meta.pagination;
+  if (pag && MAX_PAGES > 1) {
     const a = { ...args };
     const pages: any[] = [];
-    for (let i = 0; i < MAX_PAGES; i++) {
-      const result = await _doRequest(meta, a);
-      pages.push(result);
-      const nxt = nextCursor(result);
-      if (!nxt) break;
-      a[cursor] = nxt;
+    if (pag.style === "cursor") {
+      for (let i = 0; i < MAX_PAGES; i++) {
+        const result = await _doRequest(meta, a);
+        pages.push(result);
+        const nxt = nextCursor(result);
+        if (!nxt) break;
+        a[pag.cursor_param] = nxt;
+      }
+    } else if (pag.style === "offset" || pag.style === "page") {
+      const key = pag.offset_param || pag.page_param;
+      let pos = a[key];
+      if (pos === undefined) pos = pag.style === "offset" ? 0 : 1;
+      for (let i = 0; i < MAX_PAGES; i++) {
+        a[key] = pos;
+        const result = await _doRequest(meta, a);
+        pages.push(result);
+        const n = pageLen(result);
+        if (n === 0) break;
+        const limit = pag.limit_param ? a[pag.limit_param] : undefined;
+        if (limit && n < limit) break;
+        pos = pag.style === "offset" ? pos + (limit || n) : pos + 1;
+      }
+    } else {
+      return _doRequest(meta, args);
     }
     return pages.length === 1 ? pages[0] : mergePages(pages);
   }
@@ -269,7 +305,14 @@ async function _doRequest(meta: any, args: Record<string, any>): Promise<any> {
       sendBody = new URLSearchParams(body as Record<string, string>);
     } else if (ct === "multipart") {
       const fd = new FormData();
-      for (const [k, v] of Object.entries(body)) fd.append(k, String(v));
+      const ff = new Set(meta.file_fields || []);
+      for (const [k, v] of Object.entries(body)) {
+        if (ff.has(k)) {
+          fd.append(k, new Blob([decodeFile(v)]), String(k));   // real file part
+        } else {
+          fd.append(k, String(v));
+        }
+      }
       sendBody = fd;
     } else {
       sendHeaders["Content-Type"] = "application/json";

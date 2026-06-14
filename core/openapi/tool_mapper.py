@@ -26,6 +26,7 @@ _READ_METHODS = {"get", "head", "options"}
 # Query-param names that conventionally carry a next-page cursor.
 _CURSOR_PARAMS = ("cursor", "next", "page_token", "pagetoken", "next_token",
                   "starting_after", "page_cursor", "after")
+_LIMIT_PARAMS = ("limit", "per_page", "perpage", "page_size", "pagesize", "size", "count")
 
 
 def _detect_cursor_param(locations: dict) -> str:
@@ -34,6 +35,38 @@ def _detect_cursor_param(locations: dict) -> str:
         if loc == "query" and pname.lower().replace("-", "_") in _CURSOR_PARAMS:
             return pname
     return ""
+
+
+def _detect_pagination(locations: dict) -> dict:
+    """Classify pagination style from query params. Returns a plan or None.
+
+    Priority: cursor > page > offset (cursor is the most reliable to follow).
+    """
+    qnames = {p: p.lower().replace("-", "_") for p, loc in locations.items() if loc == "query"}
+    limit_param = next((p for p, n in qnames.items() if n in _LIMIT_PARAMS), "")
+
+    cursor = _detect_cursor_param(locations)
+    if cursor:
+        return {"style": "cursor", "cursor_param": cursor}
+    page = next((p for p, n in qnames.items() if n == "page"), "")
+    if page:
+        return {"style": "page", "page_param": page, "limit_param": limit_param}
+    offset = next((p for p, n in qnames.items() if n in ("offset", "skip", "start")), "")
+    if offset:
+        return {"style": "offset", "offset_param": offset, "limit_param": limit_param}
+    return None
+
+
+def _file_fields(op: dict) -> list:
+    """Body fields declared as binary (multipart file parts)."""
+    body = op.get("requestBody")
+    if not isinstance(body, dict):
+        return []
+    content = body.get("content") or {}
+    media = content.get("multipart/form-data") or {}
+    schema = media.get("schema") or {}
+    return [fname for fname, fsch in (schema.get("properties") or {}).items()
+            if isinstance(fsch, dict) and fsch.get("format") == "binary"]
 
 
 @dataclasses.dataclass
@@ -53,6 +86,10 @@ class ToolSpec:
     body_content_type: str = "json"
     # cursor pagination: the query param that carries the next-page cursor (or None)
     cursor_param: str = ""
+    # binary body fields to send as multipart file parts
+    file_fields: list = dataclasses.field(default_factory=list)
+    # pagination plan: {"style": cursor|offset|page, ...} or None
+    pagination: dict = None
 
     def to_mcp_tool(self) -> dict:
         """Shape expected by an MCP tools/list entry (name/description/inputSchema)."""
@@ -110,6 +147,8 @@ def spec_to_tools(
                 operation_id=op.get("operationId", ""),
                 body_content_type=body_ct,
                 cursor_param=_detect_cursor_param(locations),
+                file_fields=_file_fields(op),
+                pagination=_detect_pagination(locations),
             ))
     return tools
 
