@@ -108,7 +108,7 @@ def _fn_src(tool: ToolSpec) -> str:
     cls = _const_name(tool.name)
     meta = {"method": tool.method, "path": tool.path,
             "param_locations": tool.param_locations, "has_body": tool.has_body,
-            "body_ct": tool.body_content_type}
+            "body_ct": tool.body_content_type, "cursor_param": tool.cursor_param}
     # JSON booleans true/false are valid JS, so json.dumps is fine here.
     return (f"async function {_fn_name(tool.name)}(args: {cls}) {{\n"
             f"  return _request({json.dumps(meta)}, {json.dumps(tool.name)}, args as Record<string, any>);\n"
@@ -176,6 +176,7 @@ const SHIELD_API_KEY = process.env.SHIELD_API_KEY || "";
 const AGENT_KEY = process.env.SHIELD_AGENT_KEY || "@@AGENT_KEY@@";
 const USER_ROLE = process.env.SHIELD_USER_ROLE || "";
 const MAX_RETRIES = parseInt(process.env.API_MAX_RETRIES || "2", 10);
+const MAX_PAGES = parseInt(process.env.API_MAX_PAGES || "1", 10); // >1 enables cursor pagination
 
 const TOOLS_META: any[] = @@TOOLS_JSON@@;
 
@@ -202,9 +203,47 @@ async function shieldAllows(name: string, args: any): Promise<[boolean, string]>
 
 @@AUTH_FN@@
 
+const NEXT_KEYS = ["next", "nextCursor", "next_cursor", "next_page_token", "nextPageToken", "next_token", "after"];
+const LIST_KEYS = ["data", "items", "results", "records", "value"];
+
+function nextCursor(payload: any): any {
+  if (payload && typeof payload === "object") {
+    for (const k of NEXT_KEYS) if (payload[k]) return payload[k];
+  }
+  return null;
+}
+
+function mergePages(pages: any[]): any {
+  const base = pages[0];
+  if (!base || typeof base !== "object") return pages;
+  let key = LIST_KEYS.find((k) => Array.isArray(base[k]));
+  if (!key) key = Object.keys(base).find((k) => Array.isArray(base[k]));
+  if (!key) return base;
+  const merged: any[] = [];
+  for (const p of pages) if (p && Array.isArray(p[key])) merged.push(...p[key]);
+  return { ...base, [key]: merged };
+}
+
 async function _request(meta: any, name: string, args: Record<string, any>): Promise<any> {
   const [ok, reason] = await shieldAllows(name, args);
   if (!ok) throw new Error("Blocked by Shield: " + reason);
+  const cursor = meta.cursor_param;
+  if (cursor && MAX_PAGES > 1) {
+    const a = { ...args };
+    const pages: any[] = [];
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const result = await _doRequest(meta, a);
+      pages.push(result);
+      const nxt = nextCursor(result);
+      if (!nxt) break;
+      a[cursor] = nxt;
+    }
+    return pages.length === 1 ? pages[0] : mergePages(pages);
+  }
+  return _doRequest(meta, args);
+}
+
+async function _doRequest(meta: any, args: Record<string, any>): Promise<any> {
   let path: string = meta.path;
   const query: Record<string, any> = {}, headers: Record<string, string> = {}, body: Record<string, any> = {};
   for (const [k, v] of Object.entries(args || {})) {

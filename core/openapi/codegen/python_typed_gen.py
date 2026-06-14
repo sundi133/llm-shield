@@ -133,6 +133,7 @@ def _fn_src(tool: ToolSpec) -> str:
         "method": tool.method, "path": tool.path,
         "param_locations": tool.param_locations, "has_body": tool.has_body,
         "body_ct": tool.body_content_type,
+        "cursor_param": tool.cursor_param,
     }
     # Embed meta as a Python literal via repr() — json.dumps would emit
     # JSON `true/false/null`, which are NameErrors when the function runs.
@@ -175,6 +176,7 @@ SHIELD_API_KEY = os.environ.get("SHIELD_API_KEY", "")
 AGENT_KEY = os.environ.get("SHIELD_AGENT_KEY", "@@AGENT_KEY@@")
 USER_ROLE = os.environ.get("SHIELD_USER_ROLE", "")
 MAX_RETRIES = int(os.environ.get("API_MAX_RETRIES", "2"))
+MAX_PAGES = int(os.environ.get("API_MAX_PAGES", "1"))  # >1 enables cursor auto-pagination
 
 server = Server("@@SERVER_NAME@@")
 _http = httpx.AsyncClient(timeout=30)
@@ -227,10 +229,39 @@ def _build(meta, args):
     return url, query, headers, body
 
 
-async def _request(meta, name, args):
-    allowed, reason = await _shield_allows(name, args)
-    if not allowed:
-        raise PermissionError("Blocked by Shield: " + reason)
+_NEXT_KEYS = ("next", "nextCursor", "next_cursor", "next_page_token",
+              "nextPageToken", "next_token", "after")
+_LIST_KEYS = ("data", "items", "results", "records", "value")
+
+
+def _next_cursor(payload):
+    if isinstance(payload, dict):
+        for k in _NEXT_KEYS:
+            v = payload.get(k)
+            if v:
+                return v
+    return None
+
+
+def _merge_pages(pages):
+    base = pages[0]
+    if not isinstance(base, dict):
+        return pages
+    base = dict(base)
+    key = next((k for k in _LIST_KEYS if isinstance(base.get(k), list)), None)
+    if key is None:
+        key = next((k for k, v in base.items() if isinstance(v, list)), None)
+    if key is None:
+        return base
+    merged = []
+    for p in pages:
+        if isinstance(p, dict) and isinstance(p.get(key), list):
+            merged += p[key]
+    base[key] = merged
+    return base
+
+
+async def _do_request(meta, args):
     url, query, headers, body = _build(meta, args)
     await _apply_auth(headers, query)
     # Encode the body per the operation's declared content type.
@@ -255,6 +286,27 @@ async def _request(meta, name, args):
         last = resp
         await asyncio.sleep(0.5 * (2 ** attempt))
     return (last.text if last is not None else "")
+
+
+async def _request(meta, name, args):
+    allowed, reason = await _shield_allows(name, args)
+    if not allowed:
+        raise PermissionError("Blocked by Shield: " + reason)
+    cursor = meta.get("cursor_param")
+    # Cursor auto-pagination: only when the op has a cursor param and the
+    # operator opted in via API_MAX_PAGES > 1. Otherwise a single request.
+    if not (cursor and MAX_PAGES > 1):
+        return await _do_request(meta, args)
+    args = dict(args or {})
+    pages = []
+    for _ in range(MAX_PAGES):
+        result = await _do_request(meta, args)
+        pages.append(result)
+        nxt = _next_cursor(result)
+        if not nxt:
+            break
+        args[cursor] = nxt
+    return pages[0] if len(pages) == 1 else _merge_pages(pages)
 
 
 @@MODELS@@

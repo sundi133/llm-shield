@@ -23,6 +23,17 @@ from core.openapi.schema import resolve_schema
 _HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options")
 _NAME_SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 _READ_METHODS = {"get", "head", "options"}
+# Query-param names that conventionally carry a next-page cursor.
+_CURSOR_PARAMS = ("cursor", "next", "page_token", "pagetoken", "next_token",
+                  "starting_after", "page_cursor", "after")
+
+
+def _detect_cursor_param(locations: dict) -> str:
+    """Return the query param that looks like a pagination cursor, else ''."""
+    for pname, loc in locations.items():
+        if loc == "query" and pname.lower().replace("-", "_") in _CURSOR_PARAMS:
+            return pname
+    return ""
 
 
 @dataclasses.dataclass
@@ -40,6 +51,8 @@ class ToolSpec:
     operation_id: str
     # request body encoding: "json" | "form" | "multipart"
     body_content_type: str = "json"
+    # cursor pagination: the query param that carries the next-page cursor (or None)
+    cursor_param: str = ""
 
     def to_mcp_tool(self) -> dict:
         """Shape expected by an MCP tools/list entry (name/description/inputSchema)."""
@@ -96,6 +109,7 @@ def spec_to_tools(
                 has_body="requestBody" in op,
                 operation_id=op.get("operationId", ""),
                 body_content_type=body_ct,
+                cursor_param=_detect_cursor_param(locations),
             ))
     return tools
 
