@@ -44,8 +44,8 @@ def test_python_output_is_valid_and_complete():
                                  title="Bank", server_name="bank-mcp")
     ast.parse(src)  # raises SyntaxError if the generated code is malformed
     for token in ("get_account", "wire_transfer", "/v1/shield/tool/check",
-                  "run_server", "_build_request", "https://api.bank.test",
-                  "Blocked by Shield"):
+                  "stdio_server", "server.run", "asyncio.run", "_build_request",
+                  "https://api.bank.test", "Blocked by Shield"):
         assert token in src, token
     # embedded tool table round-trips
     assert '"name": "get_account"' in src or "get_account" in src

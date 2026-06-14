@@ -39,12 +39,13 @@ Optional Shield enforcement (RBAC + kill switch) before each tool call:
     export SHIELD_USER_ROLE=...
 """
 
+import asyncio
 import os
 import json
 import httpx
 
 from mcp.server import Server
-from mcp.server.stdio import run_server
+from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 BASE_URL = os.environ.get("API_BASE_URL", "@@BASE_URL@@")
@@ -134,8 +135,14 @@ async def call_tool(name, arguments):
     return [TextContent(type="text", text=text)]
 
 
+async def main():
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream,
+                         server.create_initialization_options())
+
+
 if __name__ == "__main__":
-    run_server(server)
+    asyncio.run(main())
 '''
 
 
