@@ -20,6 +20,7 @@ from typing import Any, Optional
 from storage.tenant_store import kv_get, kv_set
 from api.routes_agents_registry import get_tenant_from_api_key
 from core.openapi import load_spec, OpenAPIError, spec_to_tools
+from core.openapi.security import extract_security
 from core.openapi.upstream_call import build_request, execute
 from core.openapi.codegen.python_gen import generate_python_server
 from core.openapi.codegen.typescript_gen import (
@@ -218,11 +219,12 @@ async def generate_server(body: GenerateRequest, request: Request):
     if lang not in ("python", "typescript", "both"):
         raise HTTPException(status_code=400, detail="language must be python, typescript, or both")
 
+    security = extract_security(spec)
     kw = dict(base_url=body.base_url, title=body.title,
               server_name=body.server_name, agent_key=body.agent_key)
     files: dict[str, str] = {}
     if lang in ("python", "both"):
-        files["server.py"] = generate_python_server(tools, **kw)
+        files["server.py"] = generate_python_server(tools, security=security, **kw)
         files["requirements.txt"] = "mcp\nhttpx\n"
     if lang in ("typescript", "both"):
         files["src/index.ts"] = generate_typescript_server(tools, **kw)

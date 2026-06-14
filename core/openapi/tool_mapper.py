@@ -18,6 +18,7 @@ import re
 from typing import Optional
 
 from core.risk import score_tool
+from core.openapi.schema import resolve_schema
 
 _HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options")
 _NAME_SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_-]+")
@@ -125,7 +126,7 @@ def _build_input_schema(params: list, op: dict) -> tuple[dict, dict]:
         pname = p.get("name")
         if not pname:
             continue
-        schema = p.get("schema") or {"type": "string"}
+        schema = resolve_schema(p.get("schema") or {"type": "string"})
         prop = dict(schema)
         if p.get("description"):
             prop.setdefault("description", p["description"])
@@ -138,7 +139,7 @@ def _build_input_schema(params: list, op: dict) -> tuple[dict, dict]:
     if isinstance(body, dict):
         content = body.get("content") or {}
         json_ct = content.get("application/json") or {}
-        body_schema = json_ct.get("schema") or {}
+        body_schema = resolve_schema(json_ct.get("schema") or {})
         if body_schema.get("type") == "object" or "properties" in body_schema:
             for fname, fschema in (body_schema.get("properties") or {}).items():
                 properties.setdefault(fname, fschema)

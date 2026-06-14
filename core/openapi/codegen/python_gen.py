@@ -113,6 +113,9 @@ def _build_request(meta, args):
     return url, query, headers, json_body
 
 
+@@AUTH_FN@@
+
+
 @server.call_tool()
 async def call_tool(name, arguments):
     meta = _BY_NAME.get(name)
@@ -124,6 +127,7 @@ async def call_tool(name, arguments):
         return [TextContent(type="text", text="Blocked by Shield: " + reason)]
 
     url, query, headers, json_body = _build_request(meta, arguments or {})
+    await _apply_auth(headers, query)
     resp = await _http.request(meta["method"], url,
                                params=query or None, headers=headers or None,
                                json=json_body)
@@ -146,6 +150,56 @@ if __name__ == "__main__":
 '''
 
 
+def _build_auth_fn(security: list) -> str:
+    """Emit an `async def _apply_auth(headers, params)` from the security plans."""
+    if not security:
+        return "async def _apply_auth(headers, params):\n    return"
+
+    lines = ["async def _apply_auth(headers, params):", "    import os"]
+    oauth = None
+    for p in security:
+        t = p.get("type")
+        if t == "apiKey":
+            nm, env, loc = p["name"], p["env"], p.get("in", "header")
+            lines.append(f'    _v = os.environ.get({env!r})')
+            if loc == "query":
+                lines.append(f'    if _v: params[{nm!r}] = _v')
+            elif loc == "cookie":
+                lines.append(f'    if _v: headers["Cookie"] = (headers.get("Cookie","") + "; {nm}=" + _v).lstrip("; ")')
+            else:
+                lines.append(f'    if _v: headers[{nm!r}] = _v')
+        elif t == "bearer":
+            lines.append(f'    _t = os.environ.get({p["env"]!r})')
+            lines.append('    if _t: headers["Authorization"] = "Bearer " + _t')
+        elif t == "basic":
+            lines.append(f'    _u = os.environ.get({p["env_user"]!r}); _p = os.environ.get({p["env_pass"]!r})')
+            lines.append('    if _u and _p:')
+            lines.append('        import base64')
+            lines.append('        headers["Authorization"] = "Basic " + base64.b64encode((_u + ":" + _p).encode()).decode()')
+        elif t == "oauth2":
+            oauth = p
+    if oauth:
+        lines.append('    _tok = await _oauth_token()')
+        lines.append('    if _tok: headers["Authorization"] = "Bearer " + _tok')
+
+    fn = "\n".join(lines)
+    if oauth:
+        fn += (
+            "\n\n_OAUTH_TOKEN = None\n"
+            "async def _oauth_token():\n"
+            "    global _OAUTH_TOKEN\n"
+            "    if _OAUTH_TOKEN: return _OAUTH_TOKEN\n"
+            "    import os\n"
+            f"    cid = os.environ.get({oauth['env_id']!r}); sec = os.environ.get({oauth['env_secret']!r})\n"
+            "    if not (cid and sec): return ''\n"
+            f"    r = await _http.post({oauth.get('token_url','')!r}, data={{'grant_type':'client_credentials','client_id':cid,'client_secret':sec}})\n"
+            "    try: _OAUTH_TOKEN = r.json().get('access_token','')\n"
+            "    except Exception: _OAUTH_TOKEN = ''\n"
+            "    return _OAUTH_TOKEN"
+        )
+    return fn
+
+
 def generate_python_server(
     tools: Iterable[ToolSpec],
     *,
@@ -153,8 +207,13 @@ def generate_python_server(
     title: str = "Generated API",
     server_name: str = "generated-mcp",
     agent_key: str = "generated-agent",
+    security: list | None = None,
 ) -> str:
-    """Return the source of a standalone Python MCP server for ``tools``."""
+    """Return the source of a standalone Python MCP server for ``tools``.
+
+    ``security`` is the list of auth plans from core.openapi.security.extract_security;
+    when provided, the server applies the matching auth from environment variables.
+    """
     tools_json = json.dumps(_meta(tools))
     return (
         _TEMPLATE
@@ -162,6 +221,7 @@ def generate_python_server(
         .replace("@@BASE_URL@@", base_url)
         .replace("@@AGENT_KEY@@", agent_key)
         .replace("@@SERVER_NAME@@", server_name)
+        .replace("@@AUTH_FN@@", _build_auth_fn(security or []))
         # repr() produces a safe single-line Python string literal regardless of
         # quotes/newlines in descriptions — robust embedding of the JSON.
         .replace("@@TOOLS_REPR@@", repr(tools_json))
