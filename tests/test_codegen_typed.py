@@ -43,7 +43,8 @@ def test_valid_python_and_structure():
     for token in ("class GetAccountArgs(BaseModel)", "class SendPaymentArgs(BaseModel)",
                   "async def get_account(", "async def send_payment(",
                   "/v1/shield/tool/check", "async def _apply_auth", "MAX_RETRIES",
-                  "ValidationError", "X-API-Key"):
+                  "ValidationError", "X-API-Key",
+                  "FastMCP", 'mcp.run("streamable-http")', "MCP_TRANSPORT", "/health"):
         assert token in src, token
 
 

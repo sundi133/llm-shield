@@ -166,9 +166,9 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from starlette.responses import JSONResponse
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
+from mcp.server.fastmcp import FastMCP
 from mcp.types import Tool, TextContent
 
 BASE_URL = os.environ.get("API_BASE_URL", "@@BASE_URL@@")
@@ -179,7 +179,8 @@ USER_ROLE = os.environ.get("SHIELD_USER_ROLE", "")
 MAX_RETRIES = int(os.environ.get("API_MAX_RETRIES", "2"))
 MAX_PAGES = int(os.environ.get("API_MAX_PAGES", "1"))  # >1 enables cursor auto-pagination
 
-server = Server("@@SERVER_NAME@@")
+mcp = FastMCP("@@SERVER_NAME@@")
+server = mcp._mcp_server          # low-level handlers (typed dispatch below)
 _http = httpx.AsyncClient(timeout=30)
 
 _TOOLS_META = json.loads(@@TOOLS_REPR@@)
@@ -396,13 +397,24 @@ async def call_tool(name, arguments):
     return [TextContent(type="text", text=text)]
 
 
-async def main():
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+@mcp.custom_route("/health", methods=["GET"])
+async def _health(request):
+    return JSONResponse({"status": "ok", "server": "@@SERVER_NAME@@"})
+
+
+def main():
+    # MCP_TRANSPORT=http serves Streamable HTTP on $PORT (cloud); default stdio (desktop).
+    transport = os.environ.get("MCP_TRANSPORT", "stdio").lower()
+    if transport in ("http", "streamable-http", "streamable_http"):
+        mcp.settings.host = os.environ.get("HOST", "0.0.0.0")
+        mcp.settings.port = int(os.environ.get("PORT", "8080"))
+        mcp.run("streamable-http")
+    else:
+        mcp.run("stdio")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
 '''
 
 

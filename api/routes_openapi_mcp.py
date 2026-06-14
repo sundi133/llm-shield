@@ -32,6 +32,7 @@ from core.openapi.codegen.typescript_typed_gen import (
     generate_typescript_typed_server, generate_typed_package_json,
 )
 from core.openapi.codegen.llm_enhance import enhance_tool_descriptions
+from core.openapi.codegen.deploy_kit import deploy_files
 from core.mcp.enforcement import enforce_tool_call, sanitize_tool_result
 
 router = APIRouter(prefix="/v1/openapi", tags=["openapi-mcp"])
@@ -66,6 +67,7 @@ class GenerateRequest(BaseModel):
     include_risky: bool = False
     shield_enforce: bool = True       # bake Shield enforcement into the output
     enhance: bool = False             # LLM-improve weak tool descriptions
+    deploy: bool = True               # also emit Dockerfile + platform manifests
     server_name: str = "generated-mcp"
     title: str = "Generated API"
     agent_key: str = "generated-agent"
@@ -247,7 +249,8 @@ async def generate_server(body: GenerateRequest, request: Request):
             files["requirements.txt"] = "mcp\nhttpx\n"
         else:
             files["server.py"] = generate_python_typed_server(tools, security=security, **kw)
-            files["requirements.txt"] = "mcp\nhttpx\npydantic\n"
+            # uvicorn for the Streamable-HTTP transport (cloud deploy)
+            files["requirements.txt"] = "mcp\nhttpx\npydantic\nuvicorn\n"
     if lang in ("typescript", "both"):
         if body.style == "table":
             files["src/index.ts"] = generate_typescript_server(tools, **kw)
@@ -255,6 +258,12 @@ async def generate_server(body: GenerateRequest, request: Request):
         else:
             files["src/index.ts"] = generate_typescript_typed_server(tools, security=security, **kw)
             files["package.json"] = generate_typed_package_json(body.server_name)
+
+    if body.deploy:
+        # Pick the kit for the primary runnable language ("both" -> python).
+        kit_lang = "typescript" if lang == "typescript" else "python"
+        for fname, content in deploy_files(kit_lang, body.server_name).items():
+            files.setdefault(fname, content)
 
     return {
         "success": True,
