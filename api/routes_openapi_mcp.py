@@ -24,6 +24,7 @@ from core.openapi.security import extract_security
 from core.openapi.normalize import default_base_url
 from core.openapi.upstream_call import build_request, execute
 from core.openapi.codegen.python_gen import generate_python_server
+from core.openapi.codegen.python_typed_gen import generate_python_typed_server
 from core.openapi.codegen.typescript_gen import (
     generate_typescript_server, generate_package_json,
 )
@@ -56,6 +57,7 @@ class GenerateRequest(BaseModel):
     spec: Any
     base_url: Optional[str] = None    # falls back to the spec's servers[]
     language: str = "python"          # python | typescript | both
+    style: str = "typed"             # typed (Pydantic, per-op fns) | table (compact)
     include_risky: bool = False
     shield_enforce: bool = True       # bake Shield enforcement into the output
     enhance: bool = False             # LLM-improve weak tool descriptions
@@ -235,8 +237,12 @@ async def generate_server(body: GenerateRequest, request: Request):
               server_name=body.server_name, agent_key=body.agent_key)
     files: dict[str, str] = {}
     if lang in ("python", "both"):
-        files["server.py"] = generate_python_server(tools, security=security, **kw)
-        files["requirements.txt"] = "mcp\nhttpx\n"
+        if body.style == "table":
+            files["server.py"] = generate_python_server(tools, security=security, **kw)
+            files["requirements.txt"] = "mcp\nhttpx\n"
+        else:
+            files["server.py"] = generate_python_typed_server(tools, security=security, **kw)
+            files["requirements.txt"] = "mcp\nhttpx\npydantic\n"
     if lang in ("typescript", "both"):
         files["src/index.ts"] = generate_typescript_server(tools, **kw)
         files["package.json"] = generate_package_json(body.server_name)
