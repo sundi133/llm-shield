@@ -167,7 +167,7 @@ async def _handle_tool_call(name: str, arguments: dict, request: Request) -> str
             if KILLSWITCH_ENABLED and tenant_id and is_tool_disabled(tenant_id, tool_name):
                 return f"BLOCKED — tool '{tool_name}' is disabled via kill switch. Do NOT execute."
 
-            from guardrails.agentic.tools.tool_allowlist import ToolAllowlistGuardrail
+            from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
             guard = ToolAllowlistGuardrail()
             context = {
                 "tool_name": tool_name,
