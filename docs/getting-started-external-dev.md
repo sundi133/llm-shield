@@ -24,12 +24,22 @@ delivered over the API or as self-contained code (public dependencies only).
 ---
 
 ## Prerequisites (from your platform / security team)
-- `SHIELD_URL` — e.g. `https://shield.yourco.com`
+- `SHIELD_URL` — the Shield **data-plane** endpoint (the full app that serves
+  guardrails/MCP, e.g. a RunPod URL like `https://xxxx.api.runpod.ai`). This is
+  **not** the admin/portal URL — the control plane doesn't serve MCP routes.
 - a tenant **API key** (`X-API-Key`)
+- **(only if the data plane is behind an auth proxy, e.g. RunPod)** a bearer
+  **auth token** sent as `Authorization: Bearer <token>`.
 
 ```bash
-SHIELD=https://shield.yourco.com ; KEY='X-API-Key: your-tenant-key'
+SHIELD=https://your-shield-data-plane        # full app, not the admin URL
+KEY='X-API-Key: your-tenant-key'
+TOKEN='Authorization: Bearer your-proxy-token'   # only if behind a proxy; else omit
 ```
+
+> Every MCP call needs the tenant key, **and** the bearer token if the data
+> plane is proxied. A `401` on `/health` means the proxy is rejecting the
+> request before it reaches Shield → add/fix the bearer token.
 
 ## Which path?
 
@@ -66,9 +76,13 @@ pip install -r requirements.txt          # mcp, httpx, pydantic, uvicorn
 # cloud / on-prem (Streamable HTTP on :8080, health at /health)
 MCP_TRANSPORT=http API_BASE_URL=https://api.mycompany.com \
 SHIELD_URL=$SHIELD SHIELD_API_KEY=your-tenant-key \
+SHIELD_AUTH_TOKEN=your-proxy-token \      # only if the data plane is proxied (RunPod)
 SHIELD_AGENT_KEY=my-agent SHIELD_USER_ROLE=reader \
 python server.py
 ```
+> If Shield is behind a proxy and you **don't** set `SHIELD_AUTH_TOKEN`, the
+> enforcement call gets a `401` and the server **fails open** (allows the call).
+> Set the token so enforcement actually runs.
 
 **4. Connect your MCP client:**
 ```json
@@ -77,6 +91,7 @@ python server.py
     // — or local stdio —
     // "command": "python", "args": ["server.py"],
     // "env": { "API_BASE_URL": "...", "SHIELD_URL": "...", "SHIELD_API_KEY": "...",
+    //          "SHIELD_AUTH_TOKEN": "...proxy bearer if any...",
     //          "SHIELD_AGENT_KEY": "my-agent", "SHIELD_USER_ROLE": "reader" }
 }}}
 ```
@@ -103,10 +118,11 @@ pip install votal           # public package — no repo
 from votal import VotalShield
 
 shield = VotalShield(
-    shield_url="https://shield.yourco.com",
+    shield_url="https://your-shield-data-plane",   # the full app (e.g. RunPod), not the admin URL
     api_key="your-tenant-key",
     agent_id="my-agent",
     user_role="reader",
+    auth_token="your-proxy-token",                 # only if behind a proxy (RunPod); else omit
 )
 
 # Option 1 — wrap a tool: RBAC check + output sanitization on every call
@@ -127,11 +143,15 @@ for permitted tools and `allowed=False` with a reason for blocked ones.
 
 ## Path C — guardrail tools in your MCP client (no code)
 
-Add Shield's own MCP server to your client config:
+Add Shield's own MCP server to your client config (use the **data-plane** URL;
+add the bearer header too if it's proxied):
 ```json
 { "mcpServers": { "shield": {
-    "url": "https://shield.yourco.com/mcp",
-    "headers": { "X-API-Key": "your-tenant-key" }
+    "url": "https://your-shield-data-plane/mcp",
+    "headers": {
+      "X-API-Key": "your-tenant-key",
+      "Authorization": "Bearer your-proxy-token"
+    }
 }}}
 ```
 Your agent gains tools it can call around its own actions:

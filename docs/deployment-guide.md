@@ -76,8 +76,9 @@ You get the server (`server.py` / `src/index.ts`) plus: `Dockerfile`,
 | `API_BASE_URL` | the upstream API base URL |
 | `MCP_TRANSPORT` | `http` for deploys (Dockerfile default) |
 | `PORT` / `HOST` | listen port / interface (default `8080` / `0.0.0.0`) |
-| `SHIELD_URL` | Shield endpoint — **omit to run ungoverned** |
+| `SHIELD_URL` | Shield **data-plane** endpoint (the full app, e.g. a RunPod URL) — **omit to run ungoverned**. Not the admin/portal URL. |
 | `SHIELD_API_KEY`, `SHIELD_AGENT_KEY`, `SHIELD_USER_ROLE` | Shield enforcement context |
+| `SHIELD_AUTH_TOKEN` | bearer for a proxied data plane (e.g. RunPod) — sent as `Authorization: Bearer`. **Required if the endpoint is proxied**, else enforcement calls 401 and the server fails open. |
 | upstream auth | per the spec's security schemes (e.g. `API_TOKEN`, `API_KEY_*`, `OAUTH_CLIENT_ID/SECRET`) |
 | `API_MAX_PAGES` | `>1` enables auto-pagination |
 
@@ -147,7 +148,8 @@ Shield's LLM content guardrails).
 { "mcpServers": { "my-mcp": {
     "command": "python", "args": ["server.py"],
     "env": { "API_BASE_URL": "https://api.yourcompany.com",
-             "SHIELD_URL": "https://your-shield", "SHIELD_API_KEY": "...",
+             "SHIELD_URL": "https://your-shield-data-plane", "SHIELD_API_KEY": "...",
+             "SHIELD_AUTH_TOKEN": "...proxy bearer if any...",
              "SHIELD_AGENT_KEY": "my-agent", "SHIELD_USER_ROLE": "reader" }
 }}}
 ```

@@ -11,9 +11,14 @@ Tests, in order:
 
 Usage:
     pip install requests mcp httpx pydantic uvicorn        # + `votal` for Path B
-    SHIELD_URL=https://shield.votal.ai \\
+    SHIELD_URL=https://your-shield-data-plane \\
     SHIELD_API_KEY=tenant-...your-key... \\
     python mcp_e2e_test.py
+    # If Shield is behind a proxy needing a bearer token (e.g. RunPod):
+    #   SHIELD_AUTH_TOKEN=<runpod-bearer-token>
+
+SHIELD_URL must be the Shield DATA PLANE (the full app, e.g. the RunPod
+endpoint) — not an admin/control-plane URL, which doesn't serve MCP routes.
 
 Exit code 0 if every (non-skipped) check passes, else 1.
 """
@@ -32,11 +37,14 @@ try:
 except ImportError:
     sys.exit("pip install requests")
 
-SHIELD = os.environ.get("SHIELD_URL", "https://shield.votal.ai").rstrip("/")
+SHIELD = os.environ.get("SHIELD_URL", "").rstrip("/")
 KEY = os.environ.get("SHIELD_API_KEY", "")
+TOKEN = os.environ.get("SHIELD_AUTH_TOKEN", "")  # proxy bearer (e.g. RunPod)
 PORT = int(os.environ.get("E2E_PORT", "8390"))
 AGENT = "e2e-" + uuid.uuid4().hex[:8]            # fresh id avoids 409 on re-register
 H = {"X-API-Key": KEY, "Content-Type": "application/json"}
+if TOKEN:
+    H["Authorization"] = "Bearer " + TOKEN
 
 SPEC = {
     "openapi": "3.0.0", "info": {"title": "httpbin", "version": "1.0"},
@@ -68,7 +76,8 @@ def skip(name, why):
 def step_readiness():
     print(f"\n0. Deploy readiness ({SHIELD})")
     try:
-        r = requests.get(f"{SHIELD}/health", timeout=10)
+        # send the bearer too — a proxy (RunPod) gates even /health
+        r = requests.get(f"{SHIELD}/health", headers=H, timeout=10)
         check(r.status_code == 200, "health", r.text[:50])
     except Exception as e:
         return check(False, "health", str(e))
@@ -118,7 +127,7 @@ def step_a():
 def _launch(server, role):
     env = dict(os.environ)
     env.update({"MCP_TRANSPORT": "http", "PORT": str(PORT), "API_BASE_URL": "https://httpbin.org",
-                "SHIELD_URL": SHIELD, "SHIELD_API_KEY": KEY,
+                "SHIELD_URL": SHIELD, "SHIELD_API_KEY": KEY, "SHIELD_AUTH_TOKEN": TOKEN,
                 "SHIELD_AGENT_KEY": AGENT, "SHIELD_USER_ROLE": role})
     return subprocess.Popen([sys.executable, server], env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -180,7 +189,8 @@ def step_b():
         from votal import VotalShield
     except ImportError:
         skip("SDK check_tool", "pip install votal"); return
-    s = VotalShield(shield_url=SHIELD, api_key=KEY, agent_id=AGENT, user_role="reader")
+    s = VotalShield(shield_url=SHIELD, api_key=KEY, agent_id=AGENT,
+                    user_role="reader", auth_token=TOKEN)
     check(s.health(), "sdk health")
     check(s.check_tool("get_demo", user_role="reader").allowed, "reader get_demo allowed")
     g = s.check_tool("send_payment", user_role="reader")
@@ -189,7 +199,12 @@ def step_b():
 
 
 def main():
-    print(f"Shield MCP end-to-end test\n  URL: {SHIELD}\n  key: {'set' if KEY else 'MISSING — most steps will 401'}")
+    if not SHIELD:
+        sys.exit("Set SHIELD_URL to the Shield data-plane endpoint (the full app, "
+                 "e.g. the RunPod URL — not the admin/control-plane URL).")
+    print(f"Shield MCP end-to-end test\n  URL: {SHIELD}\n"
+          f"  key:   {'set' if KEY else 'MISSING — endpoints will 401'}\n"
+          f"  token: {'set (bearer)' if TOKEN else 'none'}")
     if not step_readiness():
         print("\nDeploy not ready (new endpoints 404 or health down). Stopping.")
         sys.exit(1)

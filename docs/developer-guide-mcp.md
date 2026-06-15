@@ -81,8 +81,9 @@ Add it to your MCP client (governance turns on via the `SHIELD_*` env vars):
     "command": "/path/.venv/bin/python", "args": ["/path/server.py"],
     "env": {
       "API_BASE_URL": "https://api.mycompany.com",
-      "SHIELD_URL": "https://shield.internal", "SHIELD_API_KEY": "tenant-key",
-      "SHIELD_AGENT_KEY": "support-bot",       "SHIELD_USER_ROLE": "reader"
+      "SHIELD_URL": "https://shield-data-plane",  "SHIELD_API_KEY": "tenant-key",
+      "SHIELD_AUTH_TOKEN": "proxy-bearer-if-any",
+      "SHIELD_AGENT_KEY": "support-bot",          "SHIELD_USER_ROLE": "reader"
 }}}}
 ```
 

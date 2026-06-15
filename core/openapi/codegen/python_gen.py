@@ -51,6 +51,7 @@ from mcp.types import Tool, TextContent
 BASE_URL = os.environ.get("API_BASE_URL", "@@BASE_URL@@")
 SHIELD_URL = os.environ.get("SHIELD_URL", "")
 SHIELD_API_KEY = os.environ.get("SHIELD_API_KEY", "")
+SHIELD_AUTH_TOKEN = os.environ.get("SHIELD_AUTH_TOKEN", "")  # proxy bearer (e.g. RunPod)
 AGENT_KEY = os.environ.get("SHIELD_AGENT_KEY", "@@AGENT_KEY@@")
 USER_ROLE = os.environ.get("SHIELD_USER_ROLE", "")
 
@@ -74,13 +75,16 @@ async def _shield_allows(name, args):
     if not SHIELD_URL:
         return True, ""
     try:
+        _hdrs = {
+            "X-API-Key": SHIELD_API_KEY,
+            "X-Agent-Key": AGENT_KEY,
+            "X-User-Role": USER_ROLE,
+        }
+        if SHIELD_AUTH_TOKEN:
+            _hdrs["Authorization"] = "Bearer " + SHIELD_AUTH_TOKEN
         r = await _http.post(
             SHIELD_URL.rstrip("/") + "/v1/shield/tool/check",
-            headers={
-                "X-API-Key": SHIELD_API_KEY,
-                "X-Agent-Key": AGENT_KEY,
-                "X-User-Role": USER_ROLE,
-            },
+            headers=_hdrs,
             json={"agent_key": AGENT_KEY, "tool_name": name,
                   "tool_params": args, "user_role": USER_ROLE},
         )
