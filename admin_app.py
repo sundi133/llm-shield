@@ -1791,6 +1791,22 @@ def create_admin_app() -> FastAPI:
             block_reason=result.get("output_block_reason"),
         )
 
+        # Record guardrail effectiveness so the Guardrail Metrics and Board
+        # Report tabs populate. The telemetry call above feeds the Overview's
+        # client-side counts; those two tabs read the *separate* guardrail_metrics
+        # store (get_all_guardrails_summary), which nothing on this path wrote —
+        # which is why they were empty while the Overview had data. Reuse the same
+        # normalized results so guardrail/passed/action field names line up.
+        if tenant_id:
+            try:
+                from storage.guardrail_metrics import record_results_batch
+                batch = (_summarize_guardrail_payload(input_guardrail_result)
+                         + _summarize_guardrail_payload(output_guardrail_result))
+                if batch:
+                    record_results_batch(tenant_id, batch)
+            except Exception:
+                pass
+
         return result
 
     @app.api_route("/playground/proxy/{path:path}", methods=["GET", "POST"])
