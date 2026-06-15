@@ -23,10 +23,15 @@ Or with Docker:
         shield-admin
 """
 
+import asyncio
 import fnmatch
 import json
 import os
 from datetime import datetime
+
+# Strong refs to fire-and-forget background tasks so the event loop doesn't GC
+# them before they finish (per asyncio.create_task docs).
+_BG_TASKS: set = set()
 
 import httpx
 import uvicorn
@@ -1797,15 +1802,24 @@ def create_admin_app() -> FastAPI:
         # store (get_all_guardrails_summary), which nothing on this path wrote —
         # which is why they were empty while the Overview had data. Reuse the same
         # normalized results so guardrail/passed/action field names line up.
+        #
+        # record_results_batch does one *blocking* Redis write per guardrail, so
+        # run it off the response path (background thread, not awaited) — it must
+        # add ~0 latency to the chat/guardrail response. latency_ms above is
+        # already measured, so reported guardrail latency is unaffected regardless.
         if tenant_id:
-            try:
-                from storage.guardrail_metrics import record_results_batch
-                batch = (_summarize_guardrail_payload(input_guardrail_result)
-                         + _summarize_guardrail_payload(output_guardrail_result))
-                if batch:
-                    record_results_batch(tenant_id, batch)
-            except Exception:
-                pass
+            batch = (_summarize_guardrail_payload(input_guardrail_result)
+                     + _summarize_guardrail_payload(output_guardrail_result))
+            if batch:
+                async def _record_metrics(tid=tenant_id, b=batch):
+                    try:
+                        from storage.guardrail_metrics import record_results_batch
+                        await asyncio.to_thread(record_results_batch, tid, b)
+                    except Exception:
+                        pass
+                task = asyncio.create_task(_record_metrics())
+                _BG_TASKS.add(task)
+                task.add_done_callback(_BG_TASKS.discard)
 
         return result
 
