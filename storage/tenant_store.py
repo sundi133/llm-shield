@@ -418,6 +418,34 @@ def resolve_tenant_by_api_key(api_key: str) -> Optional[str]:
     return None
 
 
+def resolve_request_tenant_id(request) -> str:
+    """Best-effort tenant_id for a request.
+
+    Prefers the value the auth middleware put on ``request.state``; otherwise
+    falls back to the ``X-Tenant-ID`` header, then resolves the ``X-API-Key``
+    directly. Some deployments (e.g. a data plane behind an auth proxy) don't
+    run the middleware that populates ``request.state.tenant_id`` for the
+    guardrail endpoints, so without this fallback those requests resolve no
+    tenant and their guardrail metrics are silently dropped. Mirrors the
+    fallback already used by the tool-check route. Returns "" if unresolved.
+    """
+    tid = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
+    if tid:
+        return tid
+    tid = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id") or ""
+    if tid:
+        return tid
+    api_key = request.headers.get("X-API-Key", "").strip()
+    if api_key:
+        try:
+            tid = resolve_tenant_by_api_key(api_key) or ""
+            if not tid and api_key.startswith("sk-test-"):
+                tid = "test-tenant-001"  # shared sandbox tenant
+        except Exception:
+            tid = ""
+    return tid
+
+
 def add_api_key(tenant_id: str, api_key: str):
     """Add an API key for a tenant."""
     key_hash = _hash_key(api_key)

@@ -526,10 +526,15 @@ async def classify_output(request: Request, body: dict):
         if sanitization_meta.get("output_modified"):
             response["sanitized_output"] = output
 
-    # Record guardrail effectiveness metrics
-    if tenant_id:
+    # Record guardrail effectiveness metrics. Fall back to the API key when
+    # middleware didn't set request.state.tenant_id (e.g. data plane behind a
+    # proxy); see routes_classify for rationale. Use a separate variable so the
+    # handler-wide tenant_id that drives enforcement above is left untouched.
+    from storage.tenant_store import resolve_request_tenant_id
+    metrics_tenant_id = tenant_id or resolve_request_tenant_id(request)
+    if metrics_tenant_id:
         from storage.guardrail_metrics import record_results_batch
-        record_results_batch(tenant_id, response.get("guardrail_results", []))
+        record_results_batch(metrics_tenant_id, response.get("guardrail_results", []))
 
     # Log to audit_logger so output guardrail checks appear in tenant telemetry
     blocked = response.get("action") == "block"

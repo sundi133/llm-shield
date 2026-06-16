@@ -246,8 +246,12 @@ async def classify(request: Request, body: dict):
     # No-op for requests without a tenant policy.
     result = apply_policy_mode(result, resolve_mode(tenant_config))
 
-    # Record guardrail effectiveness metrics
-    tenant_id = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
+    # Record guardrail effectiveness metrics. Resolve the tenant from the API
+    # key when middleware didn't set request.state.tenant_id (e.g. data plane
+    # behind a proxy) — otherwise the metrics are silently dropped and the
+    # Guardrail Metrics / Board Report tabs stay empty despite 200 responses.
+    from storage.tenant_store import resolve_request_tenant_id
+    tenant_id = resolve_request_tenant_id(request)
     if tenant_id:
         from storage.guardrail_metrics import record_results_batch
         record_results_batch(tenant_id, result.get("guardrail_results", []))
