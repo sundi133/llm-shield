@@ -39,6 +39,21 @@ def _result_dict(r) -> dict:
     }
 
 
+def _record_metrics(tenant_id: Optional[str], results: list[dict]) -> None:
+    """Record guardrail effectiveness for the proxy / openapi-call enforcement
+    path so these RBAC/allowlist decisions appear in the Guardrail Metrics and
+    Board Report tabs — the same store the chat gateway writes. Without this,
+    tool calls routed through the proxy or /v1/openapi/call were invisible
+    there. Fire-and-forget; never affects the enforcement decision."""
+    if not tenant_id or not results:
+        return
+    try:
+        from storage.guardrail_metrics import record_results_batch
+        record_results_batch(tenant_id, results)
+    except Exception:
+        pass
+
+
 async def enforce_tool_call(
     tool_name: str,
     arguments: Optional[dict],
@@ -74,6 +89,7 @@ async def enforce_tool_call(
             "details": {"administrative": True, "tool_name": tool_name},
         }]
         decision = policy_mode.apply(results, allowed=False, action="block", mode=mode)
+        _record_metrics(tenant_id, results)
         return _shape(decision, results, risk)
 
     # Per-request tenant config for the allowlist guard (mirrors the gateway).
@@ -123,6 +139,7 @@ async def enforce_tool_call(
             break
 
     decision = policy_mode.apply(results, allowed=allowed, action=action, mode=mode)
+    _record_metrics(tenant_id, results)
     return _shape(decision, results, risk)
 
 
