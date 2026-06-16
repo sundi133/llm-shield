@@ -176,6 +176,27 @@ async def _handle_tool_call(name: str, arguments: dict, request: Request) -> str
                 "tenant_id": tenant_id,
             }
             result = await guard.check("", context)
+
+            # Record so MCP-driven tool checks show in the Guardrail Metrics /
+            # Board Report tabs (same store as /v1/shield/tool/check). Resolve the
+            # tenant from the API key if middleware didn't set it. Fire-and-forget.
+            try:
+                rec_tenant = tenant_id
+                if not rec_tenant:
+                    from storage.tenant_store import resolve_tenant_by_api_key
+                    rec_tenant = resolve_tenant_by_api_key(
+                        request.headers.get("X-API-Key", "").strip())
+                if rec_tenant:
+                    from storage.guardrail_metrics import record_results_batch
+                    record_results_batch(rec_tenant, [{
+                        "guardrail": result.guardrail_name,
+                        "passed": result.passed,
+                        "action": result.action,
+                        "latency_ms": getattr(result, "latency_ms", 0.0) or 0.0,
+                    }])
+            except Exception:
+                pass
+
             if not result.passed and result.action == "block":
                 return f"BLOCKED — tool '{tool_name}': {result.message}. Do NOT execute."
             return f"ALLOWED — tool '{tool_name}' is authorized. Proceed."
