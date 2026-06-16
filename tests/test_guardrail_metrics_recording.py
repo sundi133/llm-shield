@@ -19,33 +19,30 @@ import pytest
 
 
 # ── minimal fake Redis covering exactly the ops the metrics store uses ──
-class _FakePipe:
-    def __init__(self, store):
-        self.store = store
-        self.ops = []
-
-    def hincrby(self, key, field, n):
-        self.ops.append((key, field, n)); return self
-
-    def hincrbyfloat(self, key, field, n):
-        self.ops.append((key, field, n)); return self
-
-    def expire(self, key, ttl):
-        return self
-
-    def execute(self):
-        for key, field, n in self.ops:
-            h = self.store.setdefault(key, {})
-            h[field] = h.get(field, 0) + n
-        self.ops = []
-
-
 class FakeRedis:
+    """Mimics the Upstash REST client used in production: direct ops only.
+
+    Its pipeline API differs from redis-py (no ``transaction=`` kwarg, and it
+    executes via ``.exec()`` not ``.execute()``), so ``pipeline()`` here raises —
+    that locks in the fix: if record_result ever reverts to a redis-py-style
+    pipeline, this test fails instead of silently dropping metrics again.
+    """
+
     def __init__(self):
         self.store = {}
 
-    def pipeline(self, transaction=True):
-        return _FakePipe(self.store)
+    def hincrby(self, key, field, n=1):
+        h = self.store.setdefault(key, {})
+        h[field] = int(h.get(field, 0)) + n
+        return h[field]
+
+    def hincrbyfloat(self, key, field, n):
+        h = self.store.setdefault(key, {})
+        h[field] = float(h.get(field, 0)) + n
+        return h[field]
+
+    def expire(self, key, ttl):
+        return True
 
     def hgetall(self, key):
         # decode_responses=True semantics: str keys/values
@@ -53,6 +50,11 @@ class FakeRedis:
 
     def scan(self, cursor=0, match="*", count=100):
         return 0, [k for k in self.store if fnmatch.fnmatch(k, match)]
+
+    def pipeline(self, *args, **kwargs):
+        raise TypeError(
+            "Upstash pipeline API differs from redis-py; record_result must use "
+            "direct calls (see guardrail_metrics.record_result)")
 
 
 @pytest.fixture
