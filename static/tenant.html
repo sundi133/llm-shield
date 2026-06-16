@@ -10655,8 +10655,17 @@ async function testSIEM() {
 }
 
 // ── Guardrail Metrics ────────────────────
+// Centered spinner shown while a metrics/report API call is in flight.
+function _metricsSpinner(msg) {
+  return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0.75rem;padding:2rem;color:var(--text-dim);">
+    <span style="display:inline-block;width:22px;height:22px;border:3px solid var(--border);border-top:3px solid var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;"></span>
+    <span style="font-size:12px;">${msg || 'Loading…'}</span>
+  </div>`;
+}
+
 async function loadGuardrailMetrics() {
   const el = document.getElementById('guardrail-metrics-content');
+  el.innerHTML = _metricsSpinner('Loading guardrail metrics…');
   try {
     const data = await apiCall('/v1/tenant/me/guardrails/metrics?days=30');
     const gs = data.guardrails || [];
@@ -10694,6 +10703,10 @@ async function loadGuardrailMetrics() {
 
 // ── Board Report ─────────────────────────
 async function loadBoardReport() {
+  document.getElementById('board-report-cards').innerHTML =
+    `<div style="grid-column:1/-1;">${_metricsSpinner('Loading board report…')}</div>`;
+  ['board-trend-chart', 'board-threats', 'board-incidents', 'board-coverage']
+    .forEach(id => { const n = document.getElementById(id); if (n) n.innerHTML = _metricsSpinner(''); });
   try {
     const data = await apiCall('/v1/tenant/me/board-report?days=30');
     const s = data.summary || {};
