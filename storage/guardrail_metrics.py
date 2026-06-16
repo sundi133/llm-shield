@@ -51,23 +51,25 @@ def record_result(
     today = datetime.utcnow().strftime("%Y-%m-%d")
     key = _key(tenant_id, guardrail_name, today)
 
+    # Direct calls (not a pipeline). The Upstash REST client used in production
+    # has a different pipeline API than redis-py (no transaction= kwarg, and it
+    # executes via .exec() not .execute()), so a pipeline here raised and was
+    # silently swallowed — metrics never recorded while audit_log (direct calls)
+    # worked. Mirror audit_log and call directly; works on both clients.
     try:
-        pipe = r.pipeline(transaction=False)
-        pipe.hincrby(key, "total", 1)
+        r.hincrby(key, "total", 1)
         if passed:
-            pipe.hincrby(key, "passed", 1)
+            r.hincrby(key, "passed", 1)
+        elif action == "block":
+            r.hincrby(key, "blocked", 1)
+        elif action == "warn":
+            r.hincrby(key, "warned", 1)
         else:
-            if action == "block":
-                pipe.hincrby(key, "blocked", 1)
-            elif action == "warn":
-                pipe.hincrby(key, "warned", 1)
-            else:
-                pipe.hincrby(key, "logged", 1)
+            r.hincrby(key, "logged", 1)
         if latency_ms > 0:
-            pipe.hincrbyfloat(key, "latency_sum_ms", latency_ms)
-            pipe.hincrby(key, "latency_count", 1)
-        pipe.expire(key, _METRICS_TTL_DAYS * 86400)
-        pipe.execute()
+            r.hincrbyfloat(key, "latency_sum_ms", latency_ms)
+            r.hincrby(key, "latency_count", 1)
+        r.expire(key, _METRICS_TTL_DAYS * 86400)
     except Exception as e:
         logger.debug(f"guardrail_metrics record failed: {e}")
 
