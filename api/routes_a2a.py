@@ -34,12 +34,32 @@ logger = logging.getLogger("votal.routes_a2a")
 router = APIRouter(tags=["a2a"])
 
 
+def _unauthorized():
+    return JSONResponse(
+        status_code=401,
+        content={"error": "Authentication required: provide a tenant API key "
+                          "(X-API-Key) — A2A task endpoints are tenant-scoped."},
+    )
+
+
+async def _get_task_scoped(task_id: str, tenant_id: str):
+    """Fetch a task only if it belongs to this tenant.
+
+    Returns None for both "missing" and "another tenant's task" so the caller
+    cannot tell them apart (no cross-tenant existence oracle / IDOR).
+    """
+    task = await get_task(task_id)
+    if task is None or (getattr(task, "tenant_id", "") or "") != tenant_id:
+        return None
+    return task
+
+
 # ── Agent Card discovery ────────────────────────────────────────────────
 
 
 @router.get("/.well-known/agent.json")
 async def agent_card(request: Request):
-    """Serve the A2A Agent Card for discovery."""
+    """Serve the A2A Agent Card for discovery (intentionally public)."""
     base_url = str(request.base_url).rstrip("/")
     tenant_id = getattr(request.state, "tenant_id", "") or ""
     return build_agent_card(base_url=base_url, tenant_id=tenant_id)
@@ -63,14 +83,17 @@ async def a2a_send_task(request: Request):
                 parts: [{"type": "text", "text": "..."}]
             metadata: optional dict
     """
+    from storage.tenant_store import resolve_request_tenant_id
+    tenant_id = resolve_request_tenant_id(request)
+    if not tenant_id:
+        return _unauthorized()
+
     body = await request.json()
     msg_id = body.get("id")
     params = body.get("params", {})
     message = params.get("message", {})
     task_id = params.get("id")
     metadata = params.get("metadata", {})
-
-    tenant_id = getattr(request.state, "tenant_id", "") or ""
 
     # Extract text content for guardrail checking
     text_parts = [
@@ -101,7 +124,7 @@ async def a2a_send_task(request: Request):
 
     # Create or continue task
     if task_id:
-        task = await get_task(task_id)
+        task = await _get_task_scoped(task_id, tenant_id)
         if task is None:
             return JSONResponse(
                 status_code=404,
@@ -153,8 +176,12 @@ async def a2a_send_task(request: Request):
 
 @router.get("/a2a/tasks/{task_id}")
 async def a2a_get_task(task_id: str, request: Request):
-    """Get task status and results."""
-    task = await get_task(task_id)
+    """Get task status and results (tenant-scoped)."""
+    from storage.tenant_store import resolve_request_tenant_id
+    tenant_id = resolve_request_tenant_id(request)
+    if not tenant_id:
+        return _unauthorized()
+    task = await _get_task_scoped(task_id, tenant_id)
     if task is None:
         return JSONResponse(
             status_code=404,
@@ -165,9 +192,22 @@ async def a2a_get_task(task_id: str, request: Request):
 
 @router.post("/a2a/tasks/{task_id}/cancel")
 async def a2a_cancel_task(task_id: str, request: Request):
-    """Cancel a running task."""
+    """Cancel a running task (tenant-scoped)."""
+    from storage.tenant_store import resolve_request_tenant_id
+    tenant_id = resolve_request_tenant_id(request)
+    if not tenant_id:
+        return _unauthorized()
+
     body = await request.json()
     msg_id = body.get("id")
+
+    # Confirm the task belongs to this tenant before cancelling.
+    if await _get_task_scoped(task_id, tenant_id) is None:
+        return JSONResponse(content={
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {"code": -32602, "message": f"task {task_id} not found"},
+        })
 
     task = await cancel_task(task_id)
     if task is None:
@@ -194,6 +234,11 @@ async def a2a_subscribe(request: Request):
     Query params:
         task_id: Task ID to subscribe to
     """
+    from storage.tenant_store import resolve_request_tenant_id
+    tenant_id = resolve_request_tenant_id(request)
+    if not tenant_id:
+        return _unauthorized()
+
     task_id = request.query_params.get("task_id", "")
     if not task_id:
         return JSONResponse(
@@ -204,7 +249,7 @@ async def a2a_subscribe(request: Request):
     async def event_stream():
         last_status = ""
         for _ in range(120):  # Max 2 minutes of polling
-            task = await get_task(task_id)
+            task = await _get_task_scoped(task_id, tenant_id)
             if task is None:
                 yield f"data: {json.dumps({'error': 'task not found'})}\n\n"
                 return
