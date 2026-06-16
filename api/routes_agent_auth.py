@@ -351,7 +351,65 @@ def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
     allowed = True
     role_name: Optional[str] = None
 
-    # RBAC: role → tool + role → data_scope
+    # Per-tenant authorization (takes precedence over global/static RBAC).
+    # If the tenant explicitly registered this agent, the tenant's config is
+    # authoritative: enforce the tenant's allowed tools rather than the global
+    # ruleset. Without this, the cap-mint path consulted only the global static
+    # RBAC and ignored per-tenant roles entirely.
+    from guardrails.agentic.rbac_guard import _load_agent_entry, _registry_agent_status
+    agent_entry = _load_agent_entry(identity.agent_id, identity.tenant_id)
+    if agent_entry is not None:
+        status = _registry_agent_status(identity.agent_id, identity.tenant_id) or "active"
+        if status != "active":
+            allowed = False
+            reasons.append(f"agent '{identity.agent_id}' is disabled for this tenant")
+        else:
+            allowed_tools = set(agent_entry.get("tools", []) or [])
+            for perms in (agent_entry.get("role_permissions", {}) or {}).values():
+                allowed_tools.update(perms or [])
+            # Fail closed: a registered agent with no permitted tools gets nothing.
+            if not allowed_tools or body.tool not in allowed_tools:
+                allowed = False
+                reasons.append(
+                    f"tenant policy does not permit agent '{identity.agent_id}' "
+                    f"to use tool '{body.tool}'")
+            else:
+                # Object-level (target) authorization. Previously the agent could
+                # name any `resource` and get a signed cap for it. Enforce the
+                # resource against the agent's declared scope patterns, binding
+                # {user_sub}/{tenant_id} to the *authenticated* principal so an
+                # agent can't mint a cap for another user's/tenant's records.
+                patterns = agent_entry.get("allowed_resources", []) or []
+                require_scope = bool(agent_entry.get("require_resource_scope", False))
+                if patterns:
+                    import fnmatch
+                    expanded = [
+                        p.replace("{user_sub}", identity.user_sub or "\x00")
+                         .replace("{tenant_id}", identity.tenant_id or "\x00")
+                        for p in patterns
+                    ]
+                    if not any(fnmatch.fnmatch(body.resource, p) for p in expanded):
+                        allowed = False
+                        reasons.append(
+                            f"resource '{body.resource}' is outside the allowed "
+                            f"scope for agent '{identity.agent_id}'")
+                elif require_scope:
+                    # Strict mode: no resource policy configured ⇒ deny rather
+                    # than issue an unbounded capability.
+                    allowed = False
+                    reasons.append(
+                        "resource scoping is required for this agent but no "
+                        "allowed_resources are configured")
+        return {
+            "allowed": allowed,
+            "reasons": reasons,
+            "agent_id": identity.agent_id,
+            "role": "tenant-registry",
+            "tool": body.tool,
+            "resource": body.resource,
+        }
+
+    # RBAC: role → tool + role → data_scope (global/static fallback)
     role = rbac_enforcer.resolve_role(identity.agent_id)
     if role is None:
         # Unknown agent: deny by default — but only if RBAC has any roles
