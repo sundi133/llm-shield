@@ -143,6 +143,30 @@ def _require_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="admin key required")
 
 
+def _require_registered_agent(tenant_id: str, agent_id: str) -> None:
+    """Reject token issuance for an agent the tenant hasn't registered.
+
+    Only enforced when the tenant runs in managed mode (it has a registry).
+    A missing ``status`` is treated as active (legacy-safe); no registry entry
+    means the agent is not registered and is rejected. Tenants with no registry
+    at all stay in permissive/bootstrap mode (unchanged).
+    """
+    from guardrails.agentic.rbac_guard import _load_agent_entry, _tenant_has_registry
+    if not _tenant_has_registry(tenant_id):
+        return
+    entry = _load_agent_entry(agent_id, tenant_id)
+    if entry is None:
+        raise HTTPException(
+            status_code=403,
+            detail=f"agent '{agent_id}' is not registered for this tenant",
+        )
+    if entry.get("status", "active") != "active":
+        raise HTTPException(
+            status_code=403,
+            detail=f"agent '{agent_id}' is not active for this tenant",
+        )
+
+
 # ─── Endpoints ──────────────────────────────────────────────────────────
 
 
@@ -155,6 +179,7 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
     the agent token. v1 takes the claims directly, gated by admin key.
     """
     _require_admin(request)
+    _require_registered_agent(body.tenant_id, body.agent_id)
     try:
         token = mint_agent_token(
             user_sub=body.user_sub,
@@ -356,7 +381,9 @@ def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
     # authoritative: enforce the tenant's allowed tools rather than the global
     # ruleset. Without this, the cap-mint path consulted only the global static
     # RBAC and ignored per-tenant roles entirely.
-    from guardrails.agentic.rbac_guard import _load_agent_entry, _registry_agent_status
+    from guardrails.agentic.rbac_guard import (
+        _load_agent_entry, _registry_agent_status, _tenant_has_registry,
+    )
     agent_entry = _load_agent_entry(identity.agent_id, identity.tenant_id)
     if agent_entry is not None:
         status = _registry_agent_status(identity.agent_id, identity.tenant_id) or "active"
@@ -409,7 +436,22 @@ def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
             "resource": body.resource,
         }
 
-    # RBAC: role → tool + role → data_scope (global/static fallback)
+    # The agent is NOT in the tenant registry. If the tenant runs in managed
+    # mode (it has registered agents), an unregistered agent_id is rogue —
+    # deny it outright rather than fall through to the global ruleset. This is
+    # the fix for a rogue/unregistered agent obtaining a capability.
+    if _tenant_has_registry(identity.tenant_id):
+        return {
+            "allowed": False,
+            "reasons": [f"agent '{identity.agent_id}' is not registered for this tenant"],
+            "agent_id": identity.agent_id,
+            "role": "tenant-registry",
+            "tool": body.tool,
+            "resource": body.resource,
+        }
+
+    # Tenant has no registry (bootstrap / single-tenant / dev): fall back to the
+    # global/static RBAC ruleset (unchanged behavior).
     role = rbac_enforcer.resolve_role(identity.agent_id)
     if role is None:
         # Unknown agent: deny by default — but only if RBAC has any roles
@@ -580,6 +622,7 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
     allowed, err = rate_limit_token_issuance(tenant_id)
     if not allowed:
         raise HTTPException(status_code=429, detail=err or "rate limit exceeded")
+    _require_registered_agent(tenant_id, body.agent_id)
     try:
         token = mint_agent_token(
             user_sub=body.user_sub,
