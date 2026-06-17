@@ -28,9 +28,10 @@ def _identity(agent_id="agent-1", tenant_id="bankco", user_sub="user-42"):
         tenant_id=tenant_id, build_hash="b", model_version="m", session_id="s")
 
 
-def _patch_registry(monkeypatch, entry, status="active"):
+def _patch_registry(monkeypatch, entry, status="active", has_registry=True):
     monkeypatch.setattr(rbac_guard, "_load_agent_entry", lambda a, t: entry)
     monkeypatch.setattr(rbac_guard, "_registry_agent_status", lambda a, t: status)
+    monkeypatch.setattr(rbac_guard, "_tenant_has_registry", lambda t: has_registry)
 
 
 # ── Fix 4: per-tenant tool authorization ───────────────────────────────
@@ -105,10 +106,21 @@ def test_no_resource_policy_does_not_block_tool(monkeypatch):
     assert d["allowed"] is True
 
 
-# ── Fallback: agent not registered for the tenant → global/static RBAC ──
-def test_unregistered_agent_falls_back_to_global(monkeypatch):
-    # not in tenant registry → global path; unknown agent denied (static config has agents)
+# ── Rogue / unregistered agent in a MANAGED tenant (has a registry) → deny ──
+def test_unregistered_agent_in_managed_tenant_denied(monkeypatch):
     monkeypatch.setattr(rbac_guard, "_load_agent_entry", lambda a, t: None)
+    monkeypatch.setattr(rbac_guard, "_tenant_has_registry", lambda t: True)
+    d = _decide_authz(_identity(agent_id="rogue-agent"),
+                      CapMintRequest(tool="lookup_employee", resource="x"))
+    assert d["allowed"] is False
+    assert d["role"] == "tenant-registry"
+    assert any("not registered" in r for r in d["reasons"])
+
+
+# ── Unregistered agent in an UNMANAGED tenant (no registry) → global fallback ──
+def test_unregistered_agent_no_registry_falls_back(monkeypatch):
+    monkeypatch.setattr(rbac_guard, "_load_agent_entry", lambda a, t: None)
+    monkeypatch.setattr(rbac_guard, "_tenant_has_registry", lambda t: False)
     d = _decide_authz(_identity(agent_id="totally-unknown"),
                       CapMintRequest(tool="send_payment", resource="acct/1"))
     assert d["role"] != "tenant-registry"

@@ -40,6 +40,36 @@ def _load_agent_entry(agent_key: str, tenant_id: str) -> Optional[dict]:
         return None
 
 
+def _tenant_has_registry(tenant_id: str) -> bool:
+    """True if the tenant has registered any agents.
+
+    Decides whether the agent-identity and capability endpoints enforce
+    registry membership strictly. A tenant that has registered agents is in
+    *managed* mode: only its registered, active agents may obtain tokens and
+    capabilities — an unregistered ("rogue") agent_id is rejected. A tenant
+    with no registry at all stays in permissive/bootstrap mode (unchanged), so
+    single-tenant/dev setups and existing tests are not affected.
+    """
+    if not tenant_id:
+        return False
+    try:
+        from storage.tenant_store import _get_redis, _fallback_store
+        import json as _json
+
+        r = _get_redis()
+        key = f"agents:{tenant_id}"
+        raw = r.get(key) if r else None
+        if not raw:
+            raw = _fallback_store.get(key)
+        if not raw:
+            return False
+        agents = _json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+        return bool(isinstance(agents, dict) and agents)
+    except Exception as e:
+        logger.debug(f"Registry presence check failed for tenant {tenant_id}: {e}")
+        return False
+
+
 def _resolve_role_from_registry(
     agent_key: str,
     tool_name: str,
