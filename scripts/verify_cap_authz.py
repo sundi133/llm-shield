@@ -14,21 +14,26 @@ Asserts the post-fix Pass Criteria from the bug-reproduction report, using two
 Exit 0 if every check passes, else 1. Read-only except the (expected-to-fail)
 mint attempts; no secrets are printed.
 
-Usage:
-    pip install requests
-    export SHIELD_URL="https://kebrpqdbp1log1.api.runpod.ai"
-    export RUNPOD_TOKEN="..."          # proxy bearer
-    export TENANT_API_KEY="..."        # tenant key
+Pass values as CLI args (preferred) or env vars; CLI wins.
 
-Defaults match this tenant's registry (customer-service-agent / test-oidc-agent).
-Override for a different tenant:
-    AGENT=customer-service-agent          # registered; does NOT own CROSS_TOOL
-    OWNER_AGENT=test-oidc-agent           # registered; owns CROSS_TOOL
-    OWNED_TOOL=customer_profile_get       # AGENT owns this
-    CROSS_TOOL=prescribe_medication       # OWNER_AGENT owns; AGENT does not
-    ROGUE_AGENT=rogue-agent  USER_SUB=verify-user
+    pip install requests
+    python scripts/verify_cap_authz.py \
+      --shield-url https://kebrpqdbp1log1.api.runpod.ai \
+      --runpod-token "$RUNPOD_TOKEN" --tenant-api-key "$TENANT_API_KEY" \
+      --agent customer-service-agent --owner-agent test-oidc-agent \
+      --owned-tool customer_profile_get --cross-tool prescribe_medication
+
+Equivalent env vars: SHIELD_URL, RUNPOD_TOKEN, TENANT_API_KEY, AGENT,
+OWNER_AGENT, OWNED_TOOL, CROSS_TOOL, ROGUE_AGENT, USER_SUB.
+
+Roles:
+    --agent        registered; does NOT own --cross-tool
+    --owner-agent  registered; owns --cross-tool
+    --owned-tool   a tool --agent owns
+    --cross-tool   owned by --owner-agent, not by --agent
 """
 
+import argparse
 import os
 import sys
 
@@ -37,15 +42,32 @@ try:
 except ImportError:
     sys.exit("pip install requests")
 
-SHIELD = os.environ.get("SHIELD_URL", "").rstrip("/")
-TOKEN = os.environ.get("RUNPOD_TOKEN", "")
-KEY = os.environ.get("TENANT_API_KEY", "")
-AGENT = os.environ.get("AGENT", "customer-service-agent")
-OWNER_AGENT = os.environ.get("OWNER_AGENT", "test-oidc-agent")
-OWNED_TOOL = os.environ.get("OWNED_TOOL", "customer_profile_get")
-CROSS_TOOL = os.environ.get("CROSS_TOOL", "prescribe_medication")
-ROGUE = os.environ.get("ROGUE_AGENT", "rogue-agent")
-USER_SUB = os.environ.get("USER_SUB", "verify-user")
+
+def _arg(p, flag, env, default=None, required=False):
+    p.add_argument(flag, default=os.environ.get(env, default), required=required)
+
+
+_p = argparse.ArgumentParser(description="Verify Agent IdP / capability authorization on a live Shield.")
+_arg(_p, "--shield-url", "SHIELD_URL")
+_arg(_p, "--runpod-token", "RUNPOD_TOKEN")
+_arg(_p, "--tenant-api-key", "TENANT_API_KEY")
+_arg(_p, "--agent", "AGENT", "customer-service-agent")
+_arg(_p, "--owner-agent", "OWNER_AGENT", "test-oidc-agent")
+_arg(_p, "--owned-tool", "OWNED_TOOL", "customer_profile_get")
+_arg(_p, "--cross-tool", "CROSS_TOOL", "prescribe_medication")
+_arg(_p, "--rogue-agent", "ROGUE_AGENT", "rogue-agent")
+_arg(_p, "--user-sub", "USER_SUB", "verify-user")
+_a = _p.parse_args()
+
+SHIELD = (_a.shield_url or "").rstrip("/")
+TOKEN = _a.runpod_token or ""
+KEY = _a.tenant_api_key or ""
+AGENT = _a.agent
+OWNER_AGENT = _a.owner_agent
+OWNED_TOOL = _a.owned_tool
+CROSS_TOOL = _a.cross_tool
+ROGUE = _a.rogue_agent
+USER_SUB = _a.user_sub
 
 AUTH = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 TENANT = {**AUTH, "X-API-Key": KEY}
