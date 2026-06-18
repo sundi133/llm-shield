@@ -21,6 +21,7 @@ Runs on RunPod (GPU) with a built-in Qwen3-8B backend, or proxy to any OpenAI-co
 - **Audit logging** — every admin action logged with actor, IP, before/after snapshots
 - **Runtime config** — toggle guardrails without restarting; tenants can self-serve policy edits via portal
 - **NIST AI RMF / OWASP LLM / ISO 42001 compliance mapping** — see `docs/compliance-mapping.md`
+- **Security & compliance evaluation response** (agent testing, governance, data protection, DESC AI Policy / ISR / Dubai Data Law / OWASP LLM coverage, external-model support, MCP, monitoring): see [docs/security-evaluation-response.md](docs/security-evaluation-response.md) or [docs.shield.votal.ai/security-evaluation/](https://docs.shield.votal.ai/security-evaluation/)
 
 ## Architecture
 
