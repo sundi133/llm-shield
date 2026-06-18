@@ -1,5 +1,7 @@
 # Votal Shield (LLM Shield)
 
+📚 **Documentation: [docs.shield.votal.ai](https://docs.shield.votal.ai/)**
+
 AI guardrails platform that sits between your application and your LLM. Inspects inputs, enforces policies, scans outputs, secures agentic tool-calling workflows, and provides **multi-tenant isolation** with per-tenant guardrail policies stored in Redis.
 
 Runs on RunPod (GPU) with a built-in Qwen3-8B backend, or proxy to any OpenAI-compatible API.
