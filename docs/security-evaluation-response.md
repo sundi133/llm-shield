@@ -201,6 +201,28 @@ The mappings below support your assessment with the evidence each control produc
 | LLM10 Unbounded Consumption | Rate limits, length limits, token/cost controls | Covered |
 | LLM03 Supply Chain / LLM04 Data Poisoning | Model build and lifecycle, governed by your MLOps | Out of scope |
 
+### OWASP Agentic AI threats (Agentic Security Initiative)
+
+OWASP also maintains an agentic AI threat taxonomy. Shield's coverage of those threats:
+
+| Agentic threat | Shield coverage | Status |
+|---|---|---|
+| T1 Memory poisoning | Input guardrails screen retrieved/context content; the agent memory store is governed by the customer | Partial |
+| T2 Tool misuse | RBAC, tool allowlist, tool ownership, tool-call validation, capability tokens, kill switch | Covered |
+| T3 Privilege compromise | Least-privilege RBAC, capability scoping, deny by default, no cross-agent tool use | Covered |
+| T4 Resource overload | Rate limits, input length limits, token/cost controls | Covered |
+| T5 Cascading hallucination | Output guardrails, bias and toxicity checks, human confirmation; factuality is not verified | Partial |
+| T6 Intent breaking and goal manipulation | Prompt-injection/adversarial guardrail, topic restriction, monitor/enforce | Covered |
+| T7 Misaligned and deceptive behavior | Guardrails, audit lineage, human oversight; behavioral alignment is shared | Partial |
+| T8 Repudiation and untraceability | Immutable, tamper-evident audit lineage; SIEM export | Covered |
+| T9 Identity spoofing and impersonation | Signed, build-bound agent identity; capability verify; rogue-agent denial | Covered |
+| T10 Overwhelming human-in-the-loop | Sensitive-action confirmation, rate limits, monitor mode | Partial |
+| T11 Unexpected code execution / RCE | Tool-call validation, allowlist, input guardrails; tool runtime owned by the customer | Partial |
+| T12 Agent communication poisoning | Guardrails and sanitization on tool and inter-agent messages via the MCP proxy | Partial |
+| T13 Rogue agents in multi-agent systems | Agent registry, shadow-agent detection, rogue and cross-agent denial, kill switch | Covered |
+| T14 Human attacks on multi-agent systems | RBAC, authentication, audit; some vectors are organizational | Partial |
+| T15 Human manipulation | Output guardrails and audit; social engineering of users is largely out of scope | Out of scope |
+
 ### Dubai Data Law (Law No. 26 of 2015)
 
 | Requirement | How Shield supports it |
