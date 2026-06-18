@@ -62,8 +62,18 @@ Votal's red-team testing capability is model-agnostic. The target model is reach
 | ChatGPT (gpt-4o) | openai | gpt-4o |
 | DeepSeek-V3 (via Together AI) | together | deepseek-ai/DeepSeek-V3 |
 | GLM-5.1 (via NVIDIA NIM) | nim | z-ai/glm-5.1 |
+| Claude (Sonnet) | anthropic | claude-3-5-sonnet |
+| Gemini 2.5 Pro | google | gemini-2.5-pro |
+| Llama 3.3-70B | groq | llama-3.3-70b-versatile |
+| Mistral Large | mistral | mistral-large-latest |
+| Cohere Command R+ | cohere | command-r-plus |
+| GPT-4o (Azure OpenAI) | azure | azure/gpt-4o |
+| Claude (AWS Bedrock) | bedrock | anthropic.claude-3-5-sonnet |
+| Any model (OpenRouter) | openrouter | openrouter/&lt;vendor&gt;/&lt;model&gt; |
+| Self-hosted (vLLM) | custom | &lt;your-model&gt; (OpenAI-compatible) |
+| Local (Ollama) | ollama | llama3.1 |
 
-Other supported providers: Anthropic, Azure OpenAI, OpenRouter (any model), HuggingFace endpoints, and any custom OpenAI-compatible gateway (LiteLLM, vLLM, Ollama). Attack-generation and judge models can be chosen independently of the target.
+The list above is representative, not exhaustive. Any model exposed over an OpenAI-compatible endpoint is supported, including HuggingFace router and dedicated endpoints. Attack-generation and judge models can be chosen independently of the target.
 
 **Validation approach**
 
