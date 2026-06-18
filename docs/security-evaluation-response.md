@@ -31,18 +31,25 @@ The control mapping is a first draft: control IDs are placeholders to be reconci
 
 ---
 
-## How a request flows through Shield (end to end)
+## How a request flows through Shield
 
-Every governed action passes through the same pipeline. Each stage can allow, sanitize, or block, and every decision is logged.
+Shield enforces along two paths. The runtime (chat) path runs inline on every request. The capability pattern is a separate, high-assurance flow for signed, single-use tool grants, exposed through dedicated endpoints rather than the chat path.
+
+**Runtime (chat) path, inline**
 
 1. Input guardrails: screen the message (injection, PII, toxicity, topic).
-2. RBAC authorization: is this agent/role allowed to call this tool?
-3. Data-policy input check: redact or block sensitive fields in the arguments.
-4. Capability mint: issue a signed, single-use grant scoped to exactly one tool.
-5. Tool-side verify: confirm signature and expiry; burn the one-time nonce.
-6. Tool executes: only if every prior stage passed.
-7. Data-policy output check and output guardrails: sanitize or redact the response.
-8. Audit, telemetry, and SIEM: record who, what, when, and the decision.
+2. LLM: the model produces a response, which may include tool calls.
+3. Tool RBAC: if the model returns tool calls, each is authorized (role to tool) before it runs.
+4. Output guardrails: scan and sanitize or redact the response before it is returned.
+5. Audit, telemetry, and SIEM: record who, what, when, and the decision.
+
+**Capability pattern (separate endpoints, high-assurance)**
+
+For high-assurance actions a signed, single-use capability is minted and verified through separate endpoints (not the chat path):
+
+1. Mint: `POST /v1/shield/cap/mint` issues a capability scoped to exactly one tool.
+2. Verify: `POST /v1/shield/cap/verify` checks signature and expiry, and burns the one-time nonce.
+3. Tool executes only after the capability verifies.
 
 ---
 
@@ -66,7 +73,6 @@ Votal's red-team testing capability is model-agnostic. The target model is reach
 | Gemini 2.5 Pro | google | gemini-2.5-pro |
 | Llama 3.3-70B | groq | llama-3.3-70b-versatile |
 | Mistral Large | mistral | mistral-large-latest |
-| Cohere Command R+ | cohere | command-r-plus |
 | GPT-4o (Azure OpenAI) | azure | azure/gpt-4o |
 | Claude (AWS Bedrock) | bedrock | anthropic.claude-3-5-sonnet |
 | Any model (OpenRouter) | openrouter | openrouter/&lt;vendor&gt;/&lt;model&gt; |
@@ -224,7 +230,7 @@ RESULT: all checks passed
 
 ### Step 4: control at runtime
 
-- **Identity and RBAC:** every invocation is authorized against the role-to-tool matrix before execution.
+- **Identity and RBAC:** in the chat path RBAC runs after the LLM; each tool call the model proposes is authorized against the role-to-tool matrix before it runs.
 - **Capability tokens:** sensitive actions require a signed, single-use grant scoped to one tool, verified at the tool boundary, so a leaked or replayed grant cannot be reused.
 - **Guardrails:** injection, PII, toxicity, and topic checks run on input and output, in monitor (dry-run) or enforce mode.
 - **Kill switch:** an operator can instantly disable a tool or agent; the next call is blocked.
@@ -236,14 +242,16 @@ RESULT: all checks passed
 
 Governance is configured per tenant in the policy registry and enforced at runtime on every request.
 
-### Policy registry: registered use cases
+### Agent registry: registered agents
 
-| Use case | Agent | Policy ID | Controls enabled | Test |
-|---|---|---|---|---|
-| HR salary update | people-ops-agent | POL-HR-001 | RBAC, PII, capability token, audit | Passed |
-| Banking assistant topic restriction | banking-agent | POL-BNK-002 | Topic restriction, injection, toxicity | Passed |
-| External Claude gateway | external-model-agent | POL-EXT-003 | Input/output guardrails, PII redaction, audit | Passed |
-| Healthcare records (OIDC roles) | clinical-agent | POL-HLT-004 | RBAC by role, PII, output sanitization, audit | Passed |
+Each agent is registered per tenant with these fields: agent_id, name, description, tools, role_permissions, agent_permissions, and status. (Policy IDs apply to separate data-protection policies, not to agent registry entries.)
+
+| Agent id | Tools | Roles | Status |
+|---|---|---|---|
+| people-ops-agent | update_salary, send_hr_email | hr_admin, recruiter | active |
+| people-directory-agent | lookup_employee, get_compensation, get_pto_balance | employee | active |
+| banking-agent | get_account, get_statement, send_payment | reader, admin | active |
+| clinical-agent | patient_lookup, view_records, check_vitals | doctor, nurse | active |
 
 ### RBAC-based controls for agent invocation
 
@@ -251,12 +259,13 @@ Each agent has a cryptographic identity and an explicit role-to-tool permission 
 
 ```json
 POST /v1/agents/authorize
-  headers: X-Agent-Key: people-ops-agent, X-User-Role: hr_admin
-  body:    { "tool_name": "update_salary" }
+  { "agent_id": "people-ops-agent", "tool_name": "update_salary",
+    "user_role": "hr_admin" }
   -> { "allowed": true }
 
 # Same agent, a tool its role does not own:
-  body:    { "tool_name": "delete_records" }
+  { "agent_id": "people-ops-agent", "tool_name": "delete_records",
+    "user_role": "hr_admin" }
   -> { "allowed": false,
        "reason": "Tool delete_records not available for agent people-ops-agent" }
 ```
@@ -462,7 +471,7 @@ POST /mcp/message
 | CEF / LEEF normalization | Field-mapped event normalization | On request |
 | Delivery / retry | At-least-once with retry/backoff | Configurable |
 
-SOAR automation: a webhook alert can trigger a SOAR playbook, which can call the Shield kill-switch API to contain an incident (for example, disable a tool so subsequent calls return 403 until re-enabled).
+SOAR automation: a webhook alert can trigger a SOAR playbook that calls the Shield kill-switch API to contain an incident, for example `POST /v1/shield/tools/update_salary/disable` with `{ "tenant_id": "<tenant>", "reason": "SOAR auto-containment" }`, after which calls to that tool return 403 until it is re-enabled.
 
 ### Evidence by phase
 
