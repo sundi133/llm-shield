@@ -23,9 +23,9 @@ Evidence-backed answers to common security and governance evaluation questions. 
 
 ## Downloads
 
-- [Evaluation response (Word)]({{ "/assets/evaluation/Votal-Shield-Evaluation-Response.docx" | relative_url }}) — the full response in document form.
-- [DESC / ISR control mapping (PDF)]({{ "/assets/evaluation/Votal-Shield-DESC-ISR-Control-Mapping.pdf" | relative_url }}) — print-ready control mapping workbook (DRAFT v0.1).
-- [DESC / ISR control mapping (Excel)]({{ "/assets/evaluation/Votal-Shield-DESC-ISR-Control-Mapping.xlsx" | relative_url }}) — editable workbook (DRAFT v0.1).
+- [Evaluation response (Word)]({{ "/assets/evaluation/Votal-Shield-Evaluation-Response.docx" | relative_url }}): the full response in document form.
+- [DESC / ISR control mapping (PDF)]({{ "/assets/evaluation/Votal-Shield-DESC-ISR-Control-Mapping.pdf" | relative_url }}): print-ready control mapping workbook (DRAFT v0.1).
+- [DESC / ISR control mapping (Excel)]({{ "/assets/evaluation/Votal-Shield-DESC-ISR-Control-Mapping.xlsx" | relative_url }}): editable workbook (DRAFT v0.1).
 
 The control mapping is a first draft: control IDs are placeholders to be reconciled with the customer's official DESC / ISR catalog, and items are marked Covered, Partial, or Out of scope honestly. Provide the validated version with your compliance team.
 
