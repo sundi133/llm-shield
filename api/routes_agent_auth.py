@@ -290,10 +290,12 @@ async def verify_capability(body: CapVerifyRequest):
         recovered_tenant = None
         recovered_agent = None
         try:
-            from core.capabilities import _b64url_decode
-            import json as _json
-            payload_b64 = body.cap_token.split(".", 1)[0]
-            _claims = _json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+            # Recover from the cap token's PAYLOAD (claims) without verifying.
+            # NB: a JWT is header.payload.signature — the claims are the
+            # second segment, so we must use the JWT-aware decoder rather
+            # than grabbing split(".")[0] (which is the header).
+            from core.jwt_utils import decode_jwt_unverified
+            _claims = decode_jwt_unverified(body.cap_token)
             recovered_tenant = _claims.get("tenant_id")
             recovered_agent = _claims.get("agent_id")
         except Exception:

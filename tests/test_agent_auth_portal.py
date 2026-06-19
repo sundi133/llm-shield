@@ -189,6 +189,28 @@ class TestRecordingOnRoutes:
         assert totals[stats.EVENT_CAP_INVALID] == 1
         assert totals[stats.EVENT_CAP_REPLAY] == 0
 
+    def test_invalid_agent_token_records_token_rejected(self, client):
+        # A token with intact claims but a broken signature: the identity
+        # middleware must reject it (401) AND count it as token_rejected,
+        # attributed to the tenant recovered from the unverified claims.
+        token = _mint(client)
+        head, payload, sig = token.split(".")
+        bad_sig = (sig[:-4] + "AAAA") if not sig.endswith("AAAA") else (sig[:-4] + "BBBB")
+        tampered = f"{head}.{payload}.{bad_sig}"
+        r = client.post(
+            "/v1/shield/cap/mint",
+            headers={"X-Agent-Token": tampered},
+            json={"tool": "t", "resource": "r"},
+        )
+        assert r.status_code == 401, r.text
+        totals = stats.get_counters("t1")["totals"]
+        assert totals[stats.EVENT_TOKEN_REJECTED] == 1
+        rejected = next(
+            e for e in stats.get_recent("t1")
+            if e["event"] == stats.EVENT_TOKEN_REJECTED
+        )
+        assert rejected["agent_id"] == "billing-bot"
+
     def test_revoke_records_event(self, client):
         client.post(
             "/v1/shield/auth/revoke",

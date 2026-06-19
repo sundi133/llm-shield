@@ -47,6 +47,27 @@ class AgentIdentityMiddleware(BaseHTTPMiddleware):
             identity = verify_agent_token(token)
         except TokenError as e:
             logger.info(f"agent_token rejected: {e}")
+            # Telemetry: count the rejection. Recover tenant/agent from the
+            # token's (unverified) claims so the portal can attribute it —
+            # an expired/revoked/wrong-key token still has decodable claims.
+            try:
+                from storage import agent_auth_stats as _stats
+                from core.jwt_utils import decode_jwt_unverified
+                _t = _a = None
+                try:
+                    _c = decode_jwt_unverified(token)
+                    _t = _c.get("tenant_id")
+                    _a = _c.get("agent_id")
+                except Exception:
+                    pass
+                _stats.record(
+                    tenant_id=_t,
+                    event=_stats.EVENT_TOKEN_REJECTED,
+                    agent_id=_a,
+                    reason=str(e)[:240],
+                )
+            except Exception:
+                pass
             return JSONResponse(
                 status_code=401,
                 content={"error": "invalid_agent_token", "detail": str(e)},
