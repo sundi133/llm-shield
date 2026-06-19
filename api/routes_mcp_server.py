@@ -3,18 +3,28 @@
 Implements MCP over SSE so any MCP-compatible client (Claude Desktop,
 Cursor, Windsurf, Claude Code) can connect directly with just a URL.
 
+This router runs on the DATA PLANE (core/app.py), where the guardrail
+models live — the tool handlers call classify()/the guardrails in-process,
+so it must not be mounted on the control/admin plane, which has no models
+and only proxies. Point MCP clients at the data-plane base URL (set
+SHIELD_PUBLIC_BASE_URL so the initialize handshake advertises it).
+
 No SDK required on client side — just add to MCP config:
   {
     "mcpServers": {
       "votal-shield": {
-        "url": "https://shield.votal.ai/mcp/sse",
-        "headers": { "X-API-Key": "your-tenant-api-key" }
+        "url": "https://<your-data-plane-host>/mcp/sse",
+        "headers": {
+          "X-API-Key": "your-tenant-api-key",
+          "Authorization": "Bearer <data-plane-proxy-token>"
+        }
       }
     }
   }
 """
 
 import json
+import os
 import uuid
 import asyncio
 
@@ -22,6 +32,25 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 
 router = APIRouter(prefix="/mcp", tags=["mcp-server"])
+
+
+def _public_base_url(request: Request) -> str:
+    """Resolve the externally-visible base URL.
+
+    request.base_url reflects the host the app binds to, which behind a
+    proxy (RunPod / Railway) is an internal IP:port. Advertising that in
+    the MCP `initialize` metadata leaks internal infra, so prefer an
+    explicit SHIELD_PUBLIC_BASE_URL, then standard proxy forwarding
+    headers, and only fall back to request.base_url as a last resort.
+    """
+    configured = os.environ.get("SHIELD_PUBLIC_BASE_URL", "").strip()
+    if configured:
+        return configured.rstrip("/")
+    fwd_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+    if fwd_host:
+        proto = request.headers.get("x-forwarded-proto", "https").split(",")[0].strip() or "https"
+        return f"{proto}://{fwd_host}".rstrip("/")
+    return str(request.base_url).rstrip("/")
 
 # MCP tool definitions
 MCP_TOOLS = [
@@ -253,7 +282,7 @@ async def mcp_message(request: Request):
     params = body.get("params", {})
 
     if method == "initialize":
-        base_url = str(request.base_url).rstrip("/")
+        base_url = _public_base_url(request)
         return JSONResponse(content={
             "jsonrpc": "2.0",
             "id": msg_id,
