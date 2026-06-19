@@ -64,4 +64,7 @@ class ScopeBoundariesGuardrail(BaseGuardrail):
 
     @staticmethod
     def _matches(value: str, patterns: list[str]) -> bool:
+        # Ensure that the value being matched against patterns is treated as a literal string
+        # and not interpreted as a pattern itself. fnmatch is safe for this use case as it
+        # treats the 'name' argument as a literal string to be matched against 'pat'.
         return any(fnmatch.fnmatch(value, p) for p in patterns)
