@@ -73,6 +73,13 @@ the IdP (session killed), the EDR (device non-compliant), or the SIEM. Shield
 speaks the OpenID **Shared Signals Framework (SSF)** and the **Continuous Access
 Evaluation Protocol (CAEP)** so risk flows both ways.
 
+![How Shield emits and consumes CAEP/SSF signals with your IdP, EDR and SIEM]({{ "/assets/images/caep-emit-consume.png" | relative_url }})
+
+In plain terms: **emit** = Shield tells your other tools when it revokes an agent
+(they drop it too); **consume** = your tools tell Shield when they see risk (a
+compromised device, a killed user session) and Shield revokes the agent — even if
+Shield itself saw nothing. Everyone reacts to the same alarm, in real time.
+
 - **Emit** — on a revoke, Shield builds a signed CAEP `session-revoked`
   **Security Event Token (SET, RFC 8417)** and pushes it to a configured
   receiver, so the rest of your stack drops the agent too.
