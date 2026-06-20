@@ -130,3 +130,13 @@ def test_ssf_configuration_lists_events(client):
     r = client.get("/v1/shield/ssf/.well-known/ssf-configuration")
     assert r.status_code == 200
     assert caep.EVT_SESSION_REVOKED in r.json()["events_supported"]
+
+
+def test_ssf_configuration_uses_public_host_not_internal(client):
+    r = client.get(
+        "/v1/shield/ssf/.well-known/ssf-configuration",
+        headers={"x-forwarded-host": "shield.votal.ai", "x-forwarded-proto": "https"},
+    )
+    cfg = r.json()["configuration_endpoint"]
+    assert cfg.startswith("https://shield.votal.ai/")
+    assert "testserver" not in cfg
