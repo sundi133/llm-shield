@@ -64,6 +64,22 @@ outstanding capability tokens — so the next action cannot execute.
 After a revoke, the agent must obtain a fresh identity token to act again — a new
 token is unaffected (only the revoked instance id is blocked for the TTL).
 
+### Manual revoke — tenant self-service
+
+A tenant can revoke its own misbehaving agent with **only its API key** — no
+platform admin key:
+
+```bash
+curl -X POST "$SHIELD/v1/tenant/me/agent-auth/revoke" \
+  -H "X-API-Key: <tenant-key>" -H "Content-Type: application/json" \
+  -d '{"agent_instance_id": "<instance-id>", "reason": "investigating"}'
+```
+
+The instance is matched against the tenant that minted it, so a tenant can only
+revoke instances it owns (revoking another tenant's instance returns 403/404).
+The admin endpoint `POST /v1/shield/auth/revoke` remains for platform operators
+(cross-tenant, by `agent_instance_id` / `user_sub` / `jti`).
+
 ---
 
 ## 2. CAEP / SSF — continuous signals
@@ -72,6 +88,13 @@ Auto-revoke is internal to Shield. Real environments also learn about risk from
 the IdP (session killed), the EDR (device non-compliant), or the SIEM. Shield
 speaks the OpenID **Shared Signals Framework (SSF)** and the **Continuous Access
 Evaluation Protocol (CAEP)** so risk flows both ways.
+
+![How Shield emits and consumes CAEP/SSF signals with your IdP, EDR and SIEM]({{ "/assets/images/caep-emit-consume.png" | relative_url }})
+
+In plain terms: **emit** = Shield tells your other tools when it revokes an agent
+(they drop it too); **consume** = your tools tell Shield when they see risk (a
+compromised device, a killed user session) and Shield revokes the agent — even if
+Shield itself saw nothing. Everyone reacts to the same alarm, in real time.
 
 - **Emit** — on a revoke, Shield builds a signed CAEP `session-revoked`
   **Security Event Token (SET, RFC 8417)** and pushes it to a configured

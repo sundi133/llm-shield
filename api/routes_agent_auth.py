@@ -51,7 +51,10 @@ from storage.agent_auth_stats import (
     get_recent,
     record as record_event,
 )
-from storage.revocation import revoke_instance, revoke_jti, revoke_user
+from storage.revocation import (
+    revoke_instance, revoke_jti, revoke_user,
+    record_instance_owner, instance_owner,
+)
 
 logger = logging.getLogger("votal.routes_agent_auth")
 
@@ -198,6 +201,9 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
         tenant_id=body.tenant_id, event=EVENT_TOKEN_ISSUED,
         agent_id=body.agent_id, user_sub=body.user_sub,
     )
+    # Track owning tenant so it can later self-service-revoke this instance.
+    record_instance_owner(body.agent_instance_id, body.tenant_id,
+                          ttl=body.ttl_seconds + 3600)
     return AgentTokenResponse(agent_token=token, expires_in=body.ttl_seconds)
 
 
@@ -643,4 +649,35 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
         tenant_id=tenant_id, event=EVENT_TOKEN_ISSUED,
         agent_id=body.agent_id, user_sub=body.user_sub,
     )
+    # Track owning tenant so it can later self-service-revoke this instance.
+    record_instance_owner(body.agent_instance_id, tenant_id,
+                          ttl=body.ttl_seconds + 3600)
     return AgentTokenResponse(agent_token=token, expires_in=body.ttl_seconds)
+
+
+class TenantRevokeRequest(BaseModel):
+    agent_instance_id: str = Field(..., description="Instance to revoke (must belong to the calling tenant)")
+    reason: Optional[str] = None
+
+
+@tenant_router.post("/revoke")
+async def revoke_tenant(body: TenantRevokeRequest, request: Request):
+    """Self-service revoke for the calling tenant (customer-facing).
+
+    Auth: tenant API key (X-API-Key). A tenant may revoke ONLY an agent
+    instance it minted; revoking an instance owned by another tenant (or an
+    unknown instance) returns 403/404 so this can't be used to attack others.
+    No platform admin key required.
+    """
+    tenant_id = _require_tenant(request)
+    owner = instance_owner(body.agent_instance_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="unknown or expired agent_instance_id")
+    if owner != tenant_id:
+        raise HTTPException(status_code=403, detail="agent_instance_id does not belong to this tenant")
+    revoke_instance(body.agent_instance_id)
+    record_event(
+        tenant_id=tenant_id, event=EVENT_REVOKE,
+        reason=f"tenant-self-service:instance:{body.agent_instance_id}"[:240],
+    )
+    return {"status": "revoked", "agent_instance_id": body.agent_instance_id}

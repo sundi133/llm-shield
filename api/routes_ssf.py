@@ -32,7 +32,10 @@ router = APIRouter(prefix="/v1/shield/ssf", tags=["ssf"])
 
 @router.get("/.well-known/ssf-configuration")
 async def ssf_configuration(request: Request):
-    base = str(request.base_url).rstrip("/")
+    # Use the public base URL (SHIELD_PUBLIC_BASE_URL / forwarded headers) so the
+    # transmitter metadata never advertises the internal proxy host:port.
+    from api.routes_mcp_server import _public_base_url
+    base = _public_base_url(request)
     return {
         "issuer": issuer(),
         "spec_version": "1_0",
