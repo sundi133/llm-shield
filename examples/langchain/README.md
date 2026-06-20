@@ -142,3 +142,28 @@ USER_ROLE=user  python shield_langchain_agent.py    # create_ticket blocked by S
 Keep `register_agent()` commented out and run the script. Because the agent
 isn't registered, Shield tracks it (and its tools) as shadow items, printed at
 the end and visible in the tenant portal under **Agents → Shadow Discovery**.
+
+## Validate the agentic IdP end-to-end (asserting test)
+
+`agentic_idp_e2e_test.py` is a **validating** counterpart to `langchain_e2e.py`:
+it asserts the full agent Identity-Provider lifecycle and exits non-zero on any
+failure. It covers identity (register, rogue-agent denial, token mint),
+capabilities (mint → verify → **replay rejected** → **wrong-tool rejected**),
+**RBAC denial** (least privilege), **input guardrail** block, **revocation**,
+and **audit/telemetry** counters — plus an optional real LangChain agent turn
+through the shielded tools.
+
+```bash
+export LLM_SHIELD_URL="https://<data-plane-host>"   # required
+export API_KEY="<tenant X-API-Key>"                 # required
+export ADMIN_KEY="<X-Admin-Key>"                    # for the revocation step
+export RUNPOD_TOKEN="<proxy bearer>"                # if behind RunPod
+# optional (enables step 11 — a real LangChain agent turn):
+export LITELLM_URL="..."; export OPENAI_API_KEY="..."; export LLM_MODEL="gpt-4o-mini"
+
+python3 agentic_idp_e2e_test.py     # prints PASS/FAIL per scenario; exit 0 = all passed
+```
+
+The agentic-IdP plane (steps 1-10) needs only Shield. The LangChain agent turn
+(step 11) runs only when LLM creds are present. See also
+[Continuous Identity & Auto-Revoke](../../docs/continuous-identity.md).
