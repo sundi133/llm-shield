@@ -287,6 +287,16 @@ async def classify(request: Request, body: dict):
         },
     })
 
+    # Closed-loop auto-revoke (opt-in): if a high-signal guardrail tripped on a
+    # request that carries a verified agent identity, revoke that agent instance
+    # (kills its token + outstanding caps). No-op unless SHIELD_ENABLE_AUTO_REVOKE
+    # is set and an agent identity is present; never breaks this response.
+    try:
+        from core.auto_revoke import autorevoke_from_request
+        await autorevoke_from_request(request, tenant_id, guardrail_results)
+    except Exception:
+        pass
+
     return result
 
 
