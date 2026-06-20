@@ -324,9 +324,14 @@ def verify_cap(
         )
 
     # cap_id revocation reuses the jti revocation list
-    from storage.revocation import is_jti_revoked
+    from storage.revocation import is_jti_revoked, is_instance_revoked
     if is_jti_revoked(claims["cap_id"]):
         raise CapabilityError("cap revoked")
+    # Instance revocation invalidates ALL of that instance's outstanding caps,
+    # not just its agent token. This is what makes a single auto-revoke (or a
+    # manual instance revoke) "burn the caps" — caps carry agent_instance_id.
+    if is_instance_revoked(claims["agent_instance_id"]):
+        raise CapabilityError("cap revoked (agent instance revoked)")
 
     # Burn nonce (one-shot)
     if burn_nonce:

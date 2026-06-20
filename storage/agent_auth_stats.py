@@ -37,12 +37,13 @@ EVENT_CAP_VERIFIED   = "cap_verified"
 EVENT_CAP_REPLAY     = "cap_replay"      # nonce already used
 EVENT_CAP_INVALID    = "cap_invalid"     # bad sig / expired / wrong tool
 EVENT_REVOKE         = "revoke"
+EVENT_AUTO_REVOKE    = "auto_revoke"     # closed-loop: guardrail/risk trip -> revoke
 
 ALL_EVENTS = (
     EVENT_TOKEN_ISSUED, EVENT_TOKEN_REJECTED,
     EVENT_CAP_MINTED, EVENT_CAP_DENIED,
     EVENT_CAP_VERIFIED, EVENT_CAP_REPLAY, EVENT_CAP_INVALID,
-    EVENT_REVOKE,
+    EVENT_REVOKE, EVENT_AUTO_REVOKE,
 )
 
 # Storage tuning
