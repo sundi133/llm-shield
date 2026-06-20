@@ -149,8 +149,10 @@ PY="$(command -v python3 || true)"
 if [ -z "$PY" ]; then sk "python3 not found"
 elif [ ! -f "$VALIDATOR" ]; then sk "validator not found at $VALIDATOR"
 elif ! "$PY" -c "import requests" >/dev/null 2>&1; then sk "python 'requests' not installed (pip install requests)"
-elif [ -z "$ADMIN_KEY" ]; then sk "set ADMIN_KEY to run the full agentic-IdP validator"
 else
+  # Runs with just the tenant key. ADMIN_KEY is optional and only enables the
+  # MANUAL revoke sub-test; without it the validator uses closed-loop auto-revoke.
+  [ -z "$ADMIN_KEY" ] && echo "  (no ADMIN_KEY: revoke step uses auto-revoke; needs SHIELD_ENABLE_AUTO_REVOKE=true on the deploy)"
   echo "  running $VALIDATOR ..."
   LLM_SHIELD_URL="$SHIELD_URL" API_KEY="$TENANT_KEY" ADMIN_KEY="$ADMIN_KEY" \
     RUNPOD_TOKEN="$RUNPOD_TOKEN" AGENT_ID="${AGENT_ID}" \

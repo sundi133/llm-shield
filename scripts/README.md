@@ -34,9 +34,12 @@ Requires on the deployment: `SHIELD_ENABLE_AUTO_REVOKE=true` (auto-revoke) and
 `SHIELD_SSF_RECEIVER_TOKEN` (SSF receiver). See [Continuous Identity docs](../docs/continuous-identity.md).
 
 Section 5 also runs the **agentic-IdP end-to-end validator**
-(`examples/langchain/agentic_idp_e2e_test.py`) when `ADMIN_KEY` is set and
-`python3` + `requests` are available — covering identity, capability
-mint/verify/replay, RBAC denial, guardrails, revocation, and audit in one shot.
+(`examples/langchain/agentic_idp_e2e_test.py`) when `python3` + `requests` are
+available — covering identity, capability mint/verify/replay, RBAC denial,
+guardrails, revocation, and audit in one shot. It runs with just the tenant key;
+`ADMIN_KEY` is optional and only enables the **manual** revoke sub-test (without
+it, the revoke step uses closed-loop auto-revoke, which needs
+`SHIELD_ENABLE_AUTO_REVOKE=true` on the deployment).
 
 ### `mcp_e2e_test.py` — MCP integration end-to-end
 Deploy readiness (`/health`, `/v1/openapi/*`), MCP `initialize` / `tools/list` /
