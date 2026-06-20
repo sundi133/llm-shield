@@ -141,6 +141,24 @@ else
     || sk "SSF receiver returned $RC (set SSF_RECEIVER_TOKEN to test the accept path)"
 fi
 
+# ------------------------------------------------------ 5. Agentic IdP (LangChain validator)
+hdr "5. Agentic IdP end-to-end (LangChain validator)"
+SDIR="$(cd "$(dirname "$0")" && pwd)"
+VALIDATOR="$SDIR/../examples/langchain/agentic_idp_e2e_test.py"
+PY="$(command -v python3 || true)"
+if [ -z "$PY" ]; then sk "python3 not found"
+elif [ ! -f "$VALIDATOR" ]; then sk "validator not found at $VALIDATOR"
+elif ! "$PY" -c "import requests" >/dev/null 2>&1; then sk "python 'requests' not installed (pip install requests)"
+elif [ -z "$ADMIN_KEY" ]; then sk "set ADMIN_KEY to run the full agentic-IdP validator"
+else
+  echo "  running $VALIDATOR ..."
+  LLM_SHIELD_URL="$SHIELD_URL" API_KEY="$TENANT_KEY" ADMIN_KEY="$ADMIN_KEY" \
+    RUNPOD_TOKEN="$RUNPOD_TOKEN" AGENT_ID="${AGENT_ID}" \
+    "$PY" "$VALIDATOR"; rc=$?
+  [ "$rc" -eq 0 ] && ok "agentic-IdP validator: all scenarios passed" \
+    || no "agentic-IdP validator reported failures (exit $rc) - see its output above"
+fi
+
 # ------------------------------------------------------ summary
 hdr "Summary"
 printf "PASS=%d  FAIL=%d  SKIP=%d\n" "$PASS" "$FAIL" "$SKIP"
