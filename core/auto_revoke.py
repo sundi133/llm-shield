@@ -114,6 +114,19 @@ async def maybe_auto_revoke(
         except Exception:
             pass
 
+        # CAEP/SSF: tell the wider ecosystem (IdP/EDR/SIEM) to drop this agent too.
+        try:
+            from core.caep import emit_session_revoked
+            await emit_session_revoked(
+                agent_instance_id=agent_instance_id,
+                user_sub=user_sub,
+                agent_id=agent_id,
+                tenant_id=tenant_id,
+                reason=reason or trigger,
+            )
+        except Exception:
+            pass
+
         logger.warning(
             "auto-revoke: instance=%s agent=%s trigger=%s reason=%s",
             agent_instance_id, agent_id, trigger, (reason or "")[:160],
