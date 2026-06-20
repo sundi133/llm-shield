@@ -552,3 +552,49 @@ class TestQuietDenial:
             if e["event"] == stats.EVENT_CAP_DENIED
         )
         assert "not permitted" in denial["reason"]
+
+
+class TestTenantSelfServiceRevoke:
+    """A tenant revokes its OWN agent instance with only its API key (no admin)."""
+
+    def _mint_tenant(self, client, agent="billing-bot", inst="inst-ssr", tenant="t1"):
+        # register so the tenant token endpoint allows it
+        from core.rbac import enforcer
+        return client.post(
+            "/v1/tenant/me/agent-auth/agent-token",
+            headers={"X-API-Key": tenant},
+            json={"user_sub": "u", "agent_id": agent, "agent_instance_id": inst,
+                  "build_hash": "b", "model_version": "m", "session_id": "s"},
+        )
+
+    def test_tenant_revokes_own_instance(self, client, monkeypatch):
+        from core.rbac import enforcer
+        monkeypatch.setattr(enforcer, "_agents", {"billing-bot": "admin"})
+        monkeypatch.setattr(enforcer, "_roles", {})
+        r = self._mint_tenant(client, inst="inst-own")
+        assert r.status_code == 200, r.text
+        rv = client.post("/v1/tenant/me/agent-auth/revoke",
+                         headers={"X-API-Key": "t1"},
+                         json={"agent_instance_id": "inst-own"})
+        assert rv.status_code == 200, rv.text
+        from storage.revocation import is_instance_revoked
+        assert is_instance_revoked("inst-own") is True
+        assert stats.get_counters("t1")["totals"][stats.EVENT_REVOKE] >= 1
+
+    def test_tenant_cannot_revoke_other_tenants_instance(self, client, monkeypatch):
+        from core.rbac import enforcer
+        monkeypatch.setattr(enforcer, "_agents", {"billing-bot": "admin"})
+        monkeypatch.setattr(enforcer, "_roles", {})
+        self._mint_tenant(client, inst="inst-t1", tenant="t1")  # owned by t1
+        rv = client.post("/v1/tenant/me/agent-auth/revoke",
+                         headers={"X-API-Key": "t2"},        # different tenant
+                         json={"agent_instance_id": "inst-t1"})
+        assert rv.status_code == 403, rv.text
+        from storage.revocation import is_instance_revoked
+        assert is_instance_revoked("inst-t1") is False
+
+    def test_revoke_unknown_instance_404(self, client):
+        rv = client.post("/v1/tenant/me/agent-auth/revoke",
+                         headers={"X-API-Key": "t1"},
+                         json={"agent_instance_id": "no-such-instance"})
+        assert rv.status_code == 404

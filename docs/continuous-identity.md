@@ -64,6 +64,22 @@ outstanding capability tokens — so the next action cannot execute.
 After a revoke, the agent must obtain a fresh identity token to act again — a new
 token is unaffected (only the revoked instance id is blocked for the TTL).
 
+### Manual revoke — tenant self-service
+
+A tenant can revoke its own misbehaving agent with **only its API key** — no
+platform admin key:
+
+```bash
+curl -X POST "$SHIELD/v1/tenant/me/agent-auth/revoke" \
+  -H "X-API-Key: <tenant-key>" -H "Content-Type: application/json" \
+  -d '{"agent_instance_id": "<instance-id>", "reason": "investigating"}'
+```
+
+The instance is matched against the tenant that minted it, so a tenant can only
+revoke instances it owns (revoking another tenant's instance returns 403/404).
+The admin endpoint `POST /v1/shield/auth/revoke` remains for platform operators
+(cross-tenant, by `agent_instance_id` / `user_sub` / `jti`).
+
 ---
 
 ## 2. CAEP / SSF — continuous signals

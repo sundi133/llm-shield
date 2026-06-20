@@ -26,6 +26,9 @@ DEFAULT_REVOKE_TTL = 3600
 _INSTANCE_KEY = "shield:revoke:instance:"
 _JTI_KEY = "shield:revoke:jti:"
 _USER_KEY = "shield:revoke:user:"
+# Maps an agent instance -> the tenant that minted it, so a tenant can
+# self-service-revoke ONLY its own instances (no cross-tenant revocation).
+_OWNER_KEY = "shield:owner:instance:"
 
 
 def _set(key: str, ttl: int) -> None:
@@ -82,11 +85,56 @@ def is_user_revoked(user_sub: str) -> bool:
     return _exists(_USER_KEY + user_sub)
 
 
+def record_instance_owner(agent_instance_id: str, tenant_id: str,
+                          ttl: int = DEFAULT_REVOKE_TTL) -> None:
+    """Remember which tenant minted an instance, so it can self-revoke it later."""
+    if not agent_instance_id or not tenant_id:
+        return
+    key = _OWNER_KEY + agent_instance_id
+    r = _get_redis()
+    if r:
+        try:
+            r.set(key, tenant_id, ex=ttl)
+            return
+        except Exception:
+            pass
+    _fallback_store[key] = f"{tenant_id}|{int(time.time()) + ttl}"
+
+
+def instance_owner(agent_instance_id: str) -> Optional[str]:
+    """Return the tenant_id that owns this instance, or None if unknown/expired."""
+    if not agent_instance_id:
+        return None
+    key = _OWNER_KEY + agent_instance_id
+    r = _get_redis()
+    if r:
+        try:
+            v = r.get(key)
+            if v is None:
+                return None
+            return v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
+        except Exception:
+            pass
+    raw = _fallback_store.get(key)
+    if not raw:
+        return None
+    val, _, exp = raw.partition("|")
+    if exp:
+        try:
+            if int(exp) < int(time.time()):
+                _fallback_store.pop(key, None)
+                return None
+        except ValueError:
+            pass
+    return val
+
+
 def clear_all_for_tests() -> None:
     """Wipe revocation entries from the fallback store. Tests only."""
     keys = [
         k for k in list(_fallback_store.keys())
-        if k.startswith(_INSTANCE_KEY) or k.startswith(_JTI_KEY) or k.startswith(_USER_KEY)
+        if k.startswith(_INSTANCE_KEY) or k.startswith(_JTI_KEY)
+        or k.startswith(_USER_KEY) or k.startswith(_OWNER_KEY)
     ]
     for k in keys:
         _fallback_store.pop(k, None)
