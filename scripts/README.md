@@ -41,6 +41,15 @@ guardrails, revocation, and audit in one shot. It runs with just the tenant key;
 it, the revoke step uses closed-loop auto-revoke, which needs
 `SHIELD_ENABLE_AUTO_REVOKE=true` on the deployment).
 
+### `guard_external_agent.sh` - one-shot guardrail proxy for an external agent
+Stands up the Shield-guardrailed LiteLLM proxy, mints a tenant virtual key, and
+runs a benign/injection gate test - then prints the Base URL + key + model to
+paste into Hermes / openclaw. See [Guard an external agent](../docs/guard-external-agent.md).
+```bash
+SHIELD_URL=$RUNPOD_HOST RUNPOD_TOKEN=$RUNPOD_TOKEN TENANT_API_KEY=$TENANT_API_KEY \
+  OPENAI_API_KEY=... ./scripts/guard_external_agent.sh
+```
+
 ### `mcp_e2e_test.py` — MCP integration end-to-end
 Deploy readiness (`/health`, `/v1/openapi/*`), MCP `initialize` / `tools/list` /
 `tools/call`, and the OpenAPI→MCP import/call enforcement path.

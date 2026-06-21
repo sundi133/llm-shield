@@ -1,0 +1,46 @@
+# LiteLLM proxy config that puts Votal Shield guardrails in front of ANY model.
+# Point an external agent (openclaw, hermes-agent, ...) at this proxy's /v1 URL +
+# a virtual key, and every request/response is guardrailed regardless of model.
+#
+# Start:  litellm --config config/litellm_guardrails.example.yaml --port 4000
+# Needs:  pip install "litellm[proxy]"  and the model provider key(s) in env.
+
+model_list:
+  # The ACTUAL LLMs the agents (openclaw, hermes-agent, ...) route to.
+  # model_name is the id the agent selects; agents are the CLIENTS, not models here.
+  - model_name: gpt-4o
+    litellm_params:
+      model: gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+  # add any others the agents may use, e.g. OpenRouter / vLLM / DeepSeek / Qwen:
+  # - model_name: deepseek-v3
+  #   litellm_params: { model: openrouter/deepseek/deepseek-chat, api_key: os.environ/OPENROUTER_API_KEY }
+
+# Register the Votal guardrail for input (pre) and output (post).
+# default_on: true => runs on EVERY request, so vanilla OpenAI clients (external
+# agents) are covered without sending any custom "guardrails" field.
+guardrails:
+  - guardrail_name: votal-input-guard
+    litellm_params:
+      guardrail: votal_guardrail.VotalGuardrail
+      mode: pre_call
+      default_on: true
+  - guardrail_name: votal-output-guard
+    litellm_params:
+      guardrail: votal_guardrail.VotalGuardrail
+      mode: post_call
+      default_on: true
+
+# Read by VotalGuardrail.__init__ — where Shield lives + the proxy bearer.
+votal_guardrail:
+  api_base: "https://<your-runpod-shield-host>"   # Shield DATA PLANE (your RUNPOD_HOST). Literal value (no os.environ expansion here).
+  api_token: ""                                   # leave blank — VotalGuardrail reads RUNPOD_TOKEN from the environment first
+  last_k_messages: 3
+
+# Master key for managing virtual keys (set a strong value via env in prod).
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
