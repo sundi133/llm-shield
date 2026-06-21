@@ -85,6 +85,7 @@ permalink: /
 | Pick the right deployment shape | [Installation Guide]({{ "/installation-guide/" | relative_url }}) |
 | Run on-prem with HA | [On-Premises Deployment]({{ "/on-premises-deployment-guide/" | relative_url }}) |
 | Wire up agents (LangChain / CrewAI / OpenAI) | [Agentic Integration]({{ "/agentic-integration-guide/" | relative_url }}) |
+| Use your existing IdP (Okta / Entra / Google) | [Identity Provider Interoperability]({{ "/idp-interoperability/" | relative_url }}) |
 | Map to NIST / OWASP / ISO controls | [Compliance Mapping]({{ "/compliance-mapping/" | relative_url }}) |
 
 ## Two deployment modes

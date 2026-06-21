@@ -171,5 +171,7 @@ Auth decisions are counted per tenant and exposed at
 This is the runtime **response** layer of the Votal platform: detect (guardrails),
 decide (RBAC + capabilities), and now **respond** (auto-revoke) and **interoperate**
 (CAEP/SSF). It pairs with the [Developer Guide — MCP & APIs]({{ "/developer-guide-mcp/" | relative_url }})
-(how agents get governed tool access) and the
+(how agents get governed tool access), the
+[Identity Provider Interoperability]({{ "/idp-interoperability/" | relative_url }})
+guide (how Shield trusts identities from your existing IdP over OIDC/OAuth), and the
 [Security & Compliance evaluation]({{ "/security-evaluation/" | relative_url }}).
