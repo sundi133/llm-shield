@@ -206,3 +206,20 @@ python3 examples/langchain/middleware_demo.py
 ```
 Prints PASS/FAIL for: benign input passes, injection blocked, output sanitized,
 forbidden tool blocked, allowed tool runs.
+
+### More middleware demos (RBAC, data policy, agentic IdP)
+
+Same pattern as `middleware_demo.py` (live Shield, no model required, PASS/FAIL):
+
+| File | Shows |
+|---|---|
+| `middleware_demo_rbac.py` | role -> tool RBAC: same tool allowed for one role, blocked for another |
+| `middleware_demo_rbac_data_policy.py` | RBAC + data policy: forbidden tool blocked, and a sensitive tool **output** sanitized/redacted by Shield |
+| `middleware_demo_idp.py` | agentic IdP at the tool boundary: per-process identity token + per-tool-call capability mint/verify (single-use), forbidden tool blocked, capability replay rejected |
+
+```bash
+export LLM_SHIELD_URL="$RUNPOD_HOST"; export TENANT_API_KEY="$TENANT_API_KEY"; export RUNPOD_TOKEN="$RUNPOD_TOKEN"
+python3 examples/langchain/middleware_demo_rbac.py
+python3 examples/langchain/middleware_demo_rbac_data_policy.py
+python3 examples/langchain/middleware_demo_idp.py
+```
