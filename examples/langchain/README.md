@@ -190,3 +190,19 @@ refusal), `after_model` runs output guardrails (sanitize or block), and
 the tool never runs). Config via constructor args or env (`LLM_SHIELD_URL`,
 `TENANT_API_KEY`, `RUNPOD_TOKEN`, `agent_key`, `user_role`); toggle layers with
 `check_input` / `check_output` / `check_tools`.
+
+### Test the middleware locally
+
+`middleware_demo.py` validates `VotalAIGuardrail` against a live Shield with no
+model required (it exercises the hooks directly), then optionally runs a real
+`create_agent` turn:
+
+```bash
+pip install langchain langchain-openai requests
+export LLM_SHIELD_URL="$RUNPOD_HOST"; export TENANT_API_KEY="$TENANT_API_KEY"; export RUNPOD_TOKEN="$RUNPOD_TOKEN"
+python3 examples/langchain/middleware_demo.py
+# optional live agent turn:
+#   export MODEL_BASE_URL=... MODEL_API_KEY=... MODEL_NAME=gpt-4o
+```
+Prints PASS/FAIL for: benign input passes, injection blocked, output sanitized,
+forbidden tool blocked, allowed tool runs.
