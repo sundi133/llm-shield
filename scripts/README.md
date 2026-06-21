@@ -41,6 +41,17 @@ guardrails, revocation, and audit in one shot. It runs with just the tenant key;
 it, the revoke step uses closed-loop auto-revoke, which needs
 `SHIELD_ENABLE_AUTO_REVOKE=true` on the deployment).
 
+### `verify_oidc_interop.py` - prove OIDC interop with a real IdP
+Runs Shield's own OIDC validator (core/oauth/oidc_client) against any IdP:
+discovery -> JWKS -> optional id_token validation. Prints PASS/FAIL + a
+copy-paste evidence line for the Agentic Identity validation 1-pager. Verified
+live against Google and Microsoft Entra (discovery + JWKS).
+```bash
+python3 scripts/verify_oidc_interop.py --issuer https://accounts.google.com
+python3 scripts/verify_oidc_interop.py --issuer https://<tenant>.okta.com \
+  --audience <client_id> --id-token "<paste id_token>"   # full validation
+```
+
 ### `guard_external_agent.sh` - one-shot guardrail proxy for an external agent
 Stands up the Shield-guardrailed LiteLLM proxy, mints a tenant virtual key, and
 runs a benign/injection gate test - then prints the Base URL + key + model to
