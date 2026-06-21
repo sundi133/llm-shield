@@ -167,3 +167,26 @@ python3 agentic_idp_e2e_test.py     # prints PASS/FAIL per scenario; exit 0 = al
 The agentic-IdP plane (steps 1-10) needs only Shield. The LangChain agent turn
 (step 11) runs only when LLM creds are present. See also
 [Continuous Identity & Auto-Revoke](../../docs/continuous-identity.md).
+
+## One-line middleware: VotalAIGuardrail
+
+For LangChain's `create_agent(middleware=[...])`, `votalai_middleware.py` provides a
+single drop-in that replaces separate input/PII/safety middlewares with Shield:
+
+```python
+from langchain.agents import create_agent
+from votalai_middleware import VotalAIGuardrail
+
+agent = create_agent(
+    model="gpt-5.5",
+    tools=[search_tool, send_email_tool],
+    middleware=[VotalAIGuardrail()],   # input + output guardrails + tool RBAC
+)
+```
+
+It hooks the agent loop: `before_model` runs Shield input guardrails (unsafe ->
+refusal), `after_model` runs output guardrails (sanitize or block), and
+`wrap_tool_call` checks each tool against Shield RBAC + kill switch (blocked ->
+the tool never runs). Config via constructor args or env (`LLM_SHIELD_URL`,
+`TENANT_API_KEY`, `RUNPOD_TOKEN`, `agent_key`, `user_role`); toggle layers with
+`check_input` / `check_output` / `check_tools`.
