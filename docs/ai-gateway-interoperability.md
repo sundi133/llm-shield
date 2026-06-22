@@ -76,8 +76,9 @@ on the Shield **data plane**. No SDK required.
 | Endpoint | Purpose | Body |
 |---|---|---|
 | `POST {SHIELD_URL}/guardrails/input` | Input safety (pre-call) | `{"message": "<user text>"}` |
-| `POST {SHIELD_URL}/guardrails/output` | Output validation / sanitization, and tool-arg checks | `{"output": "<text>"}` or `{"output": "...", "context": {"tool_name": "...", "tool_input": {...}, "agent_id": "...", "user_role": "...", "stage": "input"}}` |
-| `POST {SHIELD_URL}/v1/shield/tool/check` | Tool RBAC (per tool call) | `{"agent_key": "...", "tool_name": "...", "user_role": "...", "tool_params": {...}}` |
+| `POST {SHIELD_URL}/guardrails/output` | Output validation / sanitization, **and tool-argument DLP** (with `context.stage="input"`) | `{"output": "<text>"}` or `{"output": "...", "context": {"tool_name": "...", "tool_input": {...}, "agent_id": "...", "user_role": "...", "stage": "input"}}` |
+| `POST {SHIELD_URL}/v1/shield/tool/check` | Tool **RBAC + injection validation** (authorization only — no content DLP) | `{"agent_key": "...", "tool_name": "...", "user_role": "...", "tool_params": {...}}` |
+| `POST {SHIELD_URL}/v1/shield/tool/output` | **Tool-result DLP** — sanitize/redact/block tool output | `{"tool_output": "<result>", "context": {"tool_name": "...", "user_role": "..."}}` |
 
 **Headers** (per request):
 
@@ -103,7 +104,58 @@ on the Shield **data plane**. No SDK required.
 When `safe` is `false`, the gateway should block (or sanitize, if the response
 carries sanitized content) and surface the triggered `guardrail_results`.
 
-## 4. LiteLLM (Validated)
+## 4. Tool-call DLP (arguments + results)
+
+For agentic tool calls, Shield enforces **two independent things** — keep them
+straight:
+
+- **RBAC / authorization** — *may this role call this tool with these params?*
+- **DLP / data policy** — *what sensitive data is allowed to pass through the
+  tool's arguments and results?* (PII, secrets/credentials, role-restricted,
+  regulated, and internal-system data — redact, mask, or block.)
+
+They run at **different endpoints**, so a gateway that only does the RBAC call
+will **not** get content DLP. Wire up all three points:
+
+| Stage | Call | Enforces |
+|---|---|---|
+| Tool **arguments** (before execution) | `POST /guardrails/output` with `context.stage="input"` and the tool context | DLP on args (regex + AI sanitization, redact/mask/block) **+** RBAC |
+| Tool **authorization** | `POST /v1/shield/tool/check` | RBAC, data-access scope, injection/payload validation — **no content DLP** |
+| Tool **results** (after execution) | `POST /v1/shield/tool/output` | DLP on the result (LLM sanitization → `allow` / `redact` / `block`) |
+
+{: .warning }
+> **`/v1/shield/tool/check` is authorization-only.** If your integration calls
+> only that endpoint, tool arguments and results are **not** DLP-scanned. To get
+> redaction/blocking of sensitive data, also call `/guardrails/output`
+> (`stage="input"`) on the arguments and `/v1/shield/tool/output` on the result.
+
+**Recommended per-tool-call sequence:**
+
+```
+1. /v1/shield/tool/check        → RBAC + validation   (deny → don't run the tool)
+2. /guardrails/output (input)   → DLP on arguments     (redact/block sensitive args)
+3.            run the tool
+4. /v1/shield/tool/output       → DLP on the result    (redact/block sensitive output)
+```
+
+The shipped **LiteLLM plugin already does the DLP calls**:
+`votal_guardrail.py` sends each tool call to `/guardrails/output` with
+`stage:"input"` and the full tool context, so tool-argument DLP runs
+automatically; the RBAC `tool/check` call is used on the streaming path. If you
+build a **webhook/plugin/sidecar** integration yourself (Portkey, Kong, custom),
+replicate steps 1–4 above.
+
+**MCP note.** Over MCP, `shield_check_tool` is RBAC/allowlist only — you must
+also call `shield_sanitize_output` on the result to get DLP. (See
+[Developer Guide — MCP & APIs](/developer-guide-mcp/).)
+
+**Current limitations.**
+- DLP scans the whole `tool_args` payload, not per-field — there's no
+  "redact only the SSN field" today.
+- On the streaming path the tool check fires at stream end, after chunks have
+  been emitted; use non-streaming hooks if you need to block before any output.
+
+## 5. LiteLLM (Validated)
 
 Shield ships a native LiteLLM guardrail: **`VotalGuardrail(CustomGuardrail)`** in
 [`votal_guardrail.py`](https://github.com/sundi133/llm-shield/blob/main/votal_guardrail.py).
@@ -186,7 +238,7 @@ SHIELD_URL=$RUNPOD_HOST RUNPOD_TOKEN=$RUNPOD_TOKEN TENANT_API_KEY=$TENANT_API_KE
 
 See [Guard an External Agent](/guard-external-agent/) for the full walkthrough.
 
-## 5. Portkey (webhook pattern)
+## 6. Portkey (webhook pattern)
 
 Portkey Guardrails support a **custom webhook** check: Portkey POSTs the request
 (or response) to your endpoint and acts on the returned verdict. Point that
@@ -208,7 +260,7 @@ Attach the **before-request** hook for input safety and the **after-request**
 hook for output validation. Mark the webhook **deny-on-failure** if you want
 fail-closed behavior.
 
-## 6. Kong AI Gateway (plugin pattern)
+## 7. Kong AI Gateway (plugin pattern)
 
 Kong's AI plugins run on the request/response lifecycle. Call Shield from either
 a small **custom plugin** or a **pre-function/post-function** snippet:
@@ -221,35 +273,37 @@ a small **custom plugin** or a **pre-function/post-function** snippet:
 Inject the tenant `x-api-key` and proxy `Authorization` header from Kong
 consumer/credentials config so each route maps to the right Shield tenant.
 
-## 7. Cloudflare AI Gateway & other proxies
+## 8. Cloudflare AI Gateway & other proxies
 
 Cloudflare AI Gateway focuses on caching, rate-limiting, and observability and
 does not expose a general-purpose external guardrail webhook for arbitrary
 request/response mutation today. The reliable pattern is to **front it with the
-LiteLLM proxy** (section 4) or the framework-free sidecar (section 8), which then
+LiteLLM proxy** (section 5) or the framework-free sidecar (section 9), which then
 calls Shield. The same applies to any gateway without a guard extension point.
 
-## 8. Any OpenAI-compatible gateway (sidecar pattern)
+## 9. Any OpenAI-compatible gateway (sidecar pattern)
 
 If you can't (or don't want to) modify the gateway, wrap it with a guard:
 
 - **LiteLLM proxy in front** — the universal shim. Point LiteLLM at the
   gateway's OpenAI-compatible base URL as a model, enable `VotalGuardrail`
-  (section 4), and send traffic to LiteLLM instead. Works for any
+  (section 5), and send traffic to LiteLLM instead. Works for any
   OpenAI-compatible upstream.
 - **Framework-free sidecar** —
   [`examples/guarded_chat.py`](https://github.com/sundi133/llm-shield/blob/main/examples/guarded_chat.py)
   does input-guard → call model/agent → output-guard against the same Shield
   endpoints, with no gateway at all. Good for custom HTTP agents.
 
-## 9. What you get
+## 10. What you get
 
 Regardless of gateway, the guard runs at the proxy layer, so:
 
 - **No app code changes** — protection is configured at the gateway.
 - **Any model/provider** behind the gateway is covered uniformly.
 - **Per-tenant policies** via the tenant `x-api-key`.
-- **Tool RBAC** for agentic tool calls via `x-agent-key` + `x-user-role`.
+- **Tool RBAC + DLP** for agentic tool calls — authorization via `x-agent-key` +
+  `x-user-role`, and data-policy sanitization on tool arguments and results
+  (see [section 4](#4-tool-call-dlp-arguments--results)).
 - Pairs with [Continuous Identity & Auto-Revoke](/continuous-identity/): a
   guardrail trip on an identified agent can revoke it in real time.
 
