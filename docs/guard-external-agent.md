@@ -107,3 +107,10 @@ Use one virtual key per tenant (step 3) so each agent's traffic attributes to th
 right tenant. The guardrail pipeline is shared; tenant-specific behavior (RBAC,
 limits, data clearance) is per key. See
 [Multi-tenant architecture]({{ "/multi-tenant-architecture/" | relative_url }}).
+
+## Other gateways
+This guide uses LiteLLM. To put Shield in front of **Portkey, Kong AI Gateway,
+Cloudflare AI Gateway, or any OpenAI-compatible gateway**, see
+[AI Gateway & Proxy Interoperability]({{ "/ai-gateway-interoperability/" | relative_url }}),
+which documents the stateless guardrail HTTP API and the plugin/webhook/sidecar
+integration patterns.
