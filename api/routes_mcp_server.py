@@ -142,19 +142,81 @@ MCP_TOOLS = [
 ]
 
 
+def _oauth_claims(authorization: str) -> dict | None:
+    """Validate a Shield-issued OAuth access token from an Authorization header.
+
+    Returns the claims if the bearer is a valid Shield OAuth access token,
+    else None. Safe and additive: a non-Shield bearer (e.g. the RunPod proxy
+    token) simply fails verification and yields None, so X-API-Key auth is
+    unaffected.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization[7:].strip()
+    try:
+        from core.jwt_utils import is_jwt_format, decode_jwt
+        if not token or not is_jwt_format(token):
+            return None
+        from core.agent_tokens import get_signer
+        claims = decode_jwt(token, get_signer(), audience="shield-oauth")
+        if claims.get("token_type") != "access_token":
+            return None
+        return claims
+    except Exception:
+        return None
+
+
+def _resolve_identity(request: Request) -> tuple[str, str, str]:
+    """Resolve (tenant_id, agent_key, user_role) for an MCP request.
+
+    Order, each field independently: request.state (set by middleware) ->
+    explicit identity headers (X-Agent-Key / X-User-Role) -> tenant via
+    X-API-Key -> a Shield OAuth Bearer access token (tenant_id + developer
+    sub). Falls back to "mcp-agent" only when no identity is supplied, so
+    existing X-API-Key-only callers keep working unchanged.
+    """
+    tenant_id = agent_key = user_role = ""
+    st = getattr(request, "state", None)
+    if st is not None:
+        tenant_id = getattr(st, "tenant_id", "") or ""
+        agent_key = getattr(st, "agent_key", "") or ""
+        user_role = getattr(st, "user_role", "") or ""
+
+    h = getattr(request, "headers", None)
+    if h is None:
+        return tenant_id, (agent_key or "mcp-agent"), user_role
+    agent_key = agent_key or h.get("x-agent-key", "").strip()
+    user_role = user_role or h.get("x-user-role", "").strip()
+
+    if not tenant_id:
+        api_key = h.get("x-api-key", "").strip()
+        if api_key:
+            try:
+                from storage.tenant_store import resolve_tenant_by_api_key
+                tenant_id = resolve_tenant_by_api_key(api_key) or ""
+            except Exception:
+                pass
+
+    if not tenant_id or not agent_key:
+        claims = _oauth_claims(h.get("authorization", ""))
+        if claims:
+            tenant_id = tenant_id or (claims.get("tenant_id") or "")
+            sub = claims.get("sub") or ""
+            if not agent_key and sub:
+                agent_key = f"oauth:{sub}"  # per-developer identity from token subject
+
+    return tenant_id, (agent_key or "mcp-agent"), user_role
+
+
 def _get_tenant_info(request: Request) -> tuple[str, str]:
-    """Extract tenant_id and agent_key from request state."""
-    tenant_id = ""
-    agent_key = "mcp-agent"
-    if hasattr(request, "state"):
-        tenant_id = getattr(request.state, "tenant_id", "") or ""
-        agent_key = getattr(request.state, "agent_key", "mcp-agent") or "mcp-agent"
+    """Back-compat shim: (tenant_id, agent_key). Prefer _resolve_identity."""
+    tenant_id, agent_key, _ = _resolve_identity(request)
     return tenant_id, agent_key
 
 
 async def _handle_tool_call(name: str, arguments: dict, request: Request) -> str:
     """Execute an MCP tool call against Shield endpoints internally."""
-    tenant_id, agent_key = _get_tenant_info(request)
+    tenant_id, agent_key, user_role = _resolve_identity(request)
 
     if name == "shield_check_input":
         try:
@@ -201,7 +263,7 @@ async def _handle_tool_call(name: str, arguments: dict, request: Request) -> str
             context = {
                 "tool_name": tool_name,
                 "agent_key": agent_key,
-                "user_role": arguments.get("user_role", "developer"),
+                "user_role": arguments.get("user_role") or user_role or "developer",
                 "tenant_id": tenant_id,
             }
             result = await guard.check("", context)
@@ -251,7 +313,7 @@ async def _handle_tool_call(name: str, arguments: dict, request: Request) -> str
             from storage.tool_killswitch import disable_tool
             tool_name = arguments["tool_name"]
             reason = arguments.get("reason", "Disabled via MCP")
-            disable_tool(tenant_id, tool_name, reason=reason, actor="mcp-client")
+            disable_tool(tenant_id, tool_name, reason=reason, actor=agent_key or "mcp-client")
             return f"Tool '{tool_name}' has been DISABLED globally."
         except Exception as e:
             return f"ERROR — disable failed: {e}"

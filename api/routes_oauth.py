@@ -44,6 +44,28 @@ async def oauth_metadata(request: Request):
     return build_server_metadata(base_url)
 
 
+@router.get("/.well-known/oauth-protected-resource")
+async def oauth_protected_resource(request: Request):
+    """RFC 9728 Protected Resource Metadata.
+
+    Lets MCP clients (IDEs) discover that this deployment is an OAuth-protected
+    resource and which authorization server issues its tokens. Prefers
+    SHIELD_PUBLIC_BASE_URL so the advertised host is the public one behind a
+    proxy, falling back to the request host.
+    """
+    base_url = (
+        os.environ.get("SHIELD_PUBLIC_BASE_URL", "").strip().rstrip("/")
+        or str(request.base_url).rstrip("/")
+    )
+    return {
+        "resource": base_url,
+        "authorization_servers": [base_url],
+        "scopes_supported": ["shield", "guardrails", "agent"],
+        "bearer_methods_supported": ["header"],
+        "resource_documentation": f"{base_url}/docs",
+    }
+
+
 # ── JWKS endpoint ──────────────────────────────────────────────────────
 
 
