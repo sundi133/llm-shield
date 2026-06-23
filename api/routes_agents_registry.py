@@ -84,6 +84,20 @@ def _validate_agent_body(body: dict) -> None:
     if status is not None and status not in ("active", "inactive", "disabled"):
         raise HTTPException(status_code=400, detail="status must be active, inactive, or disabled")
 
+    allowed_resources = body.get("allowed_resources")
+    if allowed_resources is not None:
+        if not isinstance(allowed_resources, list):
+            raise HTTPException(status_code=400, detail="allowed_resources must be a list")
+        if len(allowed_resources) > _MAX_TOOLS_PER_AGENT:
+            raise HTTPException(status_code=400, detail=f"too many allowed_resources (max {_MAX_TOOLS_PER_AGENT})")
+        for r in allowed_resources:
+            if not isinstance(r, str) or not r or len(r) > _MAX_STRING_LEN:
+                raise HTTPException(status_code=400, detail="each allowed_resources entry must be a non-empty string")
+
+    rrs = body.get("require_resource_scope")
+    if rrs is not None and not isinstance(rrs, bool):
+        raise HTTPException(status_code=400, detail="require_resource_scope must be a boolean")
+
 def get_tenant_from_api_key(request: Request) -> str:
     """Resolve the caller's tenant for registry operations.
 
@@ -603,6 +617,14 @@ async def create_agent(request: Request):
             "tools": [_sanitize_string(t, _MAX_TOOL_NAME_LEN) for t in body.get("tools", [])],
             "role_permissions": _sanitize_value(body.get("role_permissions", {})),
             "agent_permissions": _sanitize_value(body.get("agent_permissions", {})),
+            # Object-level (target) authorization. allowed_resources are fnmatch
+            # patterns (may use {user_sub}/{tenant_id}) the cap-mint path enforces
+            # against the requested resource. Secure-by-default: scoping required
+            # unless the tenant explicitly opts the agent out.
+            "allowed_resources": [
+                _sanitize_string(r, _MAX_STRING_LEN) for r in body.get("allowed_resources", [])
+            ],
+            "require_resource_scope": bool(body.get("require_resource_scope", True)),
             "status": body.get("status", "active"),
             "created_at": now,
             "updated_at": now,
@@ -645,6 +667,12 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
             sanitized["description"] = _sanitize_string(sanitized["description"])
         if "tools" in sanitized:
             sanitized["tools"] = [_sanitize_string(t, _MAX_TOOL_NAME_LEN) for t in sanitized.get("tools", [])]
+        if "allowed_resources" in sanitized:
+            sanitized["allowed_resources"] = [
+                _sanitize_string(r, _MAX_STRING_LEN) for r in sanitized.get("allowed_resources", [])
+            ]
+        if "require_resource_scope" in sanitized:
+            sanitized["require_resource_scope"] = bool(sanitized["require_resource_scope"])
 
         # Prevent overriding immutable fields
         sanitized.pop("created_at", None)

@@ -54,6 +54,14 @@ def hash_client_secret(secret: str) -> str:
     return hashlib.sha256(secret.encode()).hexdigest()
 
 
+def verify_client_secret(secret: str, secret_hash: str) -> bool:
+    """Constant-time check of a presented client secret against its stored hash."""
+    import hmac
+    if not secret or not secret_hash:
+        return False
+    return hmac.compare_digest(hash_client_secret(secret), secret_hash)
+
+
 async def save_client(client: OAuthClient) -> None:
     """Save an OAuth client."""
     data = asdict(client)

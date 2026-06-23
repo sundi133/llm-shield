@@ -36,7 +36,8 @@ def _patch_registry(monkeypatch, entry, status="active", has_registry=True):
 
 # ── Fix 4: per-tenant tool authorization ───────────────────────────────
 def test_tenant_agent_allowed_tool(monkeypatch):
-    _patch_registry(monkeypatch, {"tools": ["get_account", "send_payment"]})
+    _patch_registry(monkeypatch, {"tools": ["get_account", "send_payment"],
+                                  "allowed_resources": ["acct/*"]})
     d = _decide_authz(_identity(), CapMintRequest(tool="send_payment", resource="acct/1"))
     assert d["allowed"] is True
     assert d["role"] == "tenant-registry"
@@ -49,7 +50,8 @@ def test_tenant_agent_tool_not_permitted(monkeypatch):
 
 
 def test_tenant_agent_role_permissions_unioned(monkeypatch):
-    _patch_registry(monkeypatch, {"role_permissions": {"admin": ["send_payment"]}})
+    _patch_registry(monkeypatch, {"role_permissions": {"admin": ["send_payment"]},
+                                  "allowed_resources": ["acct/*"]})
     d = _decide_authz(_identity(), CapMintRequest(tool="send_payment", resource="acct/1"))
     assert d["allowed"] is True
 
@@ -98,9 +100,30 @@ def test_require_resource_scope_with_none_configured_denied(monkeypatch):
     assert d["allowed"] is False
 
 
-def test_no_resource_policy_does_not_block_tool(monkeypatch):
-    # backward compatible: without allowed_resources / require flag, tool authz alone applies
+def test_no_resource_policy_denied_by_default(monkeypatch):
+    # Secure-by-default: with no allowed_resources and require flag unset, an
+    # agent must NOT get an unbounded cap aimed at any target.
+    monkeypatch.delenv("SHIELD_REQUIRE_RESOURCE_SCOPE", raising=False)
     _patch_registry(monkeypatch, {"tools": ["read_inbox"]})
+    d = _decide_authz(_identity(),
+                      CapMintRequest(tool="read_inbox", resource="anything/here"))
+    assert d["allowed"] is False
+    assert any("resource scoping is required" in r for r in d["reasons"])
+
+
+def test_no_resource_policy_allowed_when_default_disabled(monkeypatch):
+    # Operators can relax the global default for migration/bootstrap.
+    monkeypatch.setenv("SHIELD_REQUIRE_RESOURCE_SCOPE", "false")
+    _patch_registry(monkeypatch, {"tools": ["read_inbox"]})
+    d = _decide_authz(_identity(),
+                      CapMintRequest(tool="read_inbox", resource="anything/here"))
+    assert d["allowed"] is True
+
+
+def test_explicit_require_false_opts_agent_out(monkeypatch):
+    # A specific agent may opt out even when the global default requires scoping.
+    monkeypatch.setenv("SHIELD_REQUIRE_RESOURCE_SCOPE", "true")
+    _patch_registry(monkeypatch, {"tools": ["read_inbox"], "require_resource_scope": False})
     d = _decide_authz(_identity(),
                       CapMintRequest(tool="read_inbox", resource="anything/here"))
     assert d["allowed"] is True

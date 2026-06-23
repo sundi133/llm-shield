@@ -135,19 +135,48 @@ async def oauth_authorize(request: Request):
             content={"error": "invalid_client", "error_description": "unknown client_id"},
         )
 
-    # Validate redirect_uri against registered URIs
-    if redirect_uri and client.redirect_uris and redirect_uri not in client.redirect_uris:
+    # Enforce EXACT redirect_uri match. A client with no registered redirect_uris
+    # cannot use the authorization-code flow (a code must only ever be sent to a
+    # pre-registered URL); an omitted redirect_uri defaults only when exactly one
+    # is registered.
+    if not client.redirect_uris:
         return JSONResponse(
             status_code=400,
-            content={"error": "invalid_request", "error_description": "redirect_uri not registered"},
+            content={"error": "invalid_request", "error_description": "client has no registered redirect_uris"},
         )
-    if not redirect_uri and client.redirect_uris:
+    if redirect_uri:
+        if redirect_uri not in client.redirect_uris:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "invalid_request", "error_description": "redirect_uri not registered"},
+            )
+    elif len(client.redirect_uris) == 1:
         redirect_uri = client.redirect_uris[0]
+    else:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "invalid_request", "error_description": "redirect_uri required"},
+        )
 
-    # For MCP / machine-to-machine: auto-approve (no consent screen needed).
-    # In a user-facing deployment, this would render a consent page.
-    # The user_sub is derived from the tenant's admin identity.
-    user_sub = f"client:{client_id}"
+    # Resource-owner authorization (consent). Auto-approving with no login let a
+    # stranger trade a code for a valid tenant token. Require the request to be
+    # authenticated as the client's tenant (X-API-Key) before issuing a code,
+    # unless an operator explicitly enables auto-approve for a trusted M2M
+    # deployment via SHIELD_OAUTH_AUTO_APPROVE. (Pure M2M should instead use the
+    # client_credentials grant with a client secret.)
+    if os.environ.get("SHIELD_OAUTH_AUTO_APPROVE", "").strip().lower() in ("1", "true", "yes", "on"):
+        user_sub = f"client:{client_id}"
+    else:
+        from storage.tenant_store import resolve_tenant_by_api_key
+        api_key = request.headers.get("X-API-Key", "").strip()
+        caller_tenant = resolve_tenant_by_api_key(api_key) if api_key else ""
+        if not caller_tenant or caller_tenant != (client.tenant_id or "\x00"):
+            return JSONResponse(
+                status_code=401,
+                content={"error": "access_denied",
+                         "error_description": "login/consent required: present the tenant X-API-Key that owns this client"},
+            )
+        user_sub = f"tenant:{caller_tenant}"
 
     # Issue authorization code
     from storage.oauth_store import save_auth_code, AuthorizationCode
@@ -216,6 +245,9 @@ async def oauth_token(request: Request):
             return JSONResponse(status_code=400, content=result)
         return result
 
+    elif grant_type == "client_credentials":
+        return await _handle_client_credentials(body, request)
+
     elif grant_type == "urn:ietf:params:oauth:grant-type:token-exchange":
         return await _handle_token_exchange(body, request)
 
@@ -227,6 +259,57 @@ async def oauth_token(request: Request):
                 "error_description": f"unsupported grant_type: {grant_type}",
             },
         )
+
+
+async def _handle_client_credentials(body: dict, request: Request) -> JSONResponse:
+    """OAuth 2.0 client-credentials grant — the M2M path.
+
+    A confidential client (registered with a secret and the client_credentials
+    grant) presents client_id + client_secret and receives an access token bound
+    to its own tenant. No user, no redirect, no browser — and crucially, the
+    secret proves the caller is the legitimately-registered client, so a stranger
+    cannot obtain a token.
+    """
+    from storage.oauth_store import get_client, verify_client_secret
+
+    client_id = (body.get("client_id") or "").strip()
+    client_secret = body.get("client_secret") or ""
+    if not client_id or not client_secret:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "invalid_client", "error_description": "client_id and client_secret required"},
+        )
+
+    client = await get_client(client_id)
+    if client is None or not client.client_secret_hash:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "invalid_client", "error_description": "unknown or non-confidential client"},
+        )
+    if not verify_client_secret(client_secret, client.client_secret_hash):
+        return JSONResponse(
+            status_code=401,
+            content={"error": "invalid_client", "error_description": "invalid client credentials"},
+        )
+    if "client_credentials" not in (client.grant_types or []):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "unauthorized_client",
+                     "error_description": "client is not authorized for the client_credentials grant"},
+        )
+
+    access_token = issue_access_token(
+        client_id=client_id,
+        scope=client.scope or "shield",
+        tenant_id=client.tenant_id,
+        user_sub=f"client:{client_id}",
+    )
+    return JSONResponse(content={
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "expires_in": 600,
+        "scope": client.scope or "shield",
+    })
 
 
 async def _handle_token_exchange(body: dict, request: Request) -> JSONResponse:

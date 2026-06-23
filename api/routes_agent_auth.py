@@ -370,6 +370,20 @@ async def revoke(body: RevokeRequestExt, request: Request):
 # ─── Internal AuthZ decision ────────────────────────────────────────────
 
 
+def _resource_scope_default() -> bool:
+    """Secure-by-default: require resource (object-level) scoping.
+
+    When a registered agent declares no ``allowed_resources`` and does not set
+    ``require_resource_scope`` explicitly, deny rather than mint an unbounded
+    capability the agent could aim at any target (including another tenant's
+    records). Operators can flip the global default with
+    ``SHIELD_REQUIRE_RESOURCE_SCOPE=false`` for migration/bootstrap.
+    """
+    import os
+    return os.environ.get("SHIELD_REQUIRE_RESOURCE_SCOPE", "true").strip().lower() \
+        not in ("0", "false", "no", "off")
+
+
 def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
     """Compose the AuthZ verdict.
 
@@ -415,7 +429,8 @@ def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
                 # {user_sub}/{tenant_id} to the *authenticated* principal so an
                 # agent can't mint a cap for another user's/tenant's records.
                 patterns = agent_entry.get("allowed_resources", []) or []
-                require_scope = bool(agent_entry.get("require_resource_scope", False))
+                _rrs = agent_entry.get("require_resource_scope")
+                require_scope = _resource_scope_default() if _rrs is None else bool(_rrs)
                 if patterns:
                     import fnmatch
                     expanded = [
