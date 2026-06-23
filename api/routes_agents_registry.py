@@ -619,12 +619,17 @@ async def create_agent(request: Request):
             "agent_permissions": _sanitize_value(body.get("agent_permissions", {})),
             # Object-level (target) authorization. allowed_resources are fnmatch
             # patterns (may use {user_sub}/{tenant_id}) the cap-mint path enforces
-            # against the requested resource. Secure-by-default: scoping required
-            # unless the tenant explicitly opts the agent out.
+            # against the requested resource. Backward compatible: enforcement is
+            # opt-in — declaring allowed_resources turns it on (strict deny when
+            # the requested resource is out of scope); an agent with no resource
+            # policy keeps its prior behavior unless require_resource_scope is set
+            # explicitly or SHIELD_REQUIRE_RESOURCE_SCOPE=true globally.
             "allowed_resources": [
                 _sanitize_string(r, _MAX_STRING_LEN) for r in body.get("allowed_resources", [])
             ],
-            "require_resource_scope": bool(body.get("require_resource_scope", True)),
+            "require_resource_scope": bool(
+                body.get("require_resource_scope", bool(body.get("allowed_resources")))
+            ),
             "status": body.get("status", "active"),
             "created_at": now,
             "updated_at": now,

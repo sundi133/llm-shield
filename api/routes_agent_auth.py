@@ -371,17 +371,19 @@ async def revoke(body: RevokeRequestExt, request: Request):
 
 
 def _resource_scope_default() -> bool:
-    """Secure-by-default: require resource (object-level) scoping.
+    """Global fallback for strict resource scoping when an agent sets neither
+    ``allowed_resources`` nor ``require_resource_scope``.
 
-    When a registered agent declares no ``allowed_resources`` and does not set
-    ``require_resource_scope`` explicitly, deny rather than mint an unbounded
-    capability the agent could aim at any target (including another tenant's
-    records). Operators can flip the global default with
-    ``SHIELD_REQUIRE_RESOURCE_SCOPE=false`` for migration/bootstrap.
+    Default OFF for backward compatibility: existing agents that never declared
+    a resource policy keep working unchanged. Object-level enforcement still
+    activates per-agent the moment an agent declares ``allowed_resources``
+    (patterns are enforced) or sets ``require_resource_scope: true``. Operators
+    who want strict deny-by-default everywhere set
+    ``SHIELD_REQUIRE_RESOURCE_SCOPE=true``.
     """
     import os
-    return os.environ.get("SHIELD_REQUIRE_RESOURCE_SCOPE", "true").strip().lower() \
-        not in ("0", "false", "no", "off")
+    return os.environ.get("SHIELD_REQUIRE_RESOURCE_SCOPE", "false").strip().lower() \
+        in ("1", "true", "yes", "on")
 
 
 def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:

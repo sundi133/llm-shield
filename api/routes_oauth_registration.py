@@ -82,6 +82,13 @@ async def register_client(request: Request):
     tenant_id = (getattr(request.state, "tenant_id", "") or "")
     if not tenant_id and api_key:
         tenant_id = resolve_tenant_by_api_key(api_key) or ""
+    if not tenant_id and api_key.startswith("sk-test-"):
+        # sandbox key → shared sandbox tenant (matches registry/quickstart ergonomics)
+        try:
+            from api.routes_agents_registry import _ensure_sandbox_tenant
+            tenant_id = _ensure_sandbox_tenant()
+        except Exception:
+            tenant_id = ""
     if not tenant_id:
         return JSONResponse(
             status_code=401,

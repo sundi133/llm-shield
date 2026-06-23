@@ -384,7 +384,8 @@ else
         fail "D2: JWKS endpoint ($_CODE)"
     fi
 
-    # Dynamic client registration
+    # Dynamic client registration (registration now requires a tenant key)
+    _H1="X-API-Key: ${TENANT_KEY:-test}" _H2="" _H3="" \
     _curl POST "/oauth/register" '{
         "client_name": "Test MCP Client",
         "redirect_uris": ["http://localhost:3000/callback"],

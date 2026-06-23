@@ -323,7 +323,7 @@ KEYS=$(echo "$_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdi
 step "17. OAUTH — dynamic client registration"
 # ─────────────────────────────────────────────────────────────────────────
 
-_curl POST /oauth/register \
+_curl POST /oauth/register -H "X-API-Key: $TK" \
     -d '{"client_name":"E2E Test Client","redirect_uris":["http://localhost:3000/cb"],"grant_types":["authorization_code"]}'
 
 CID=$(_j client_id)

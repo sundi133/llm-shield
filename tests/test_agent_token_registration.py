@@ -25,11 +25,9 @@ import guardrails.agentic.rbac_guard as rbac_guard
 # the HR tenant's registry from the report
 HR_REGISTRY = {
     "people-directory-agent": {"status": "active",
-        "tools": ["lookup_employee", "get_compensation", "get_pto_balance"],
-        "allowed_resources": ["employee/*"]},
+        "tools": ["lookup_employee", "get_compensation", "get_pto_balance"]},
     "people-ops-agent": {"status": "active",
-        "tools": ["update_salary", "send_hr_email"],
-        "allowed_resources": ["employee/*"]},
+        "tools": ["update_salary", "send_hr_email"]},
 }
 
 
