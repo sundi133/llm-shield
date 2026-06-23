@@ -174,13 +174,38 @@ agent can call inside its loop. No SDK, no codegen.
 }}}
 ```
 
-| Tool | When the agent calls it | Result |
-|---|---|---|
-| `shield_check_input` | before processing user input | `SAFE` / `BLOCKED` (prompt-injection, toxicity, PII…) |
-| `shield_check_output` | before returning a reply | `SAFE` / `SAFE (sanitized)` / `BLOCKED` |
-| `shield_check_tool` | before executing a tool | `ALLOWED` / `BLOCKED` (role allowlist + kill switch) |
-| `shield_sanitize_output` | after a tool returns | `CLEAN` / `SANITIZED` / `BLOCKED` (data policy) |
-| `shield_disable_tool` / `shield_enable_tool` | incident response | kill switch on/off |
+Drop the `Authorization` line if your data plane isn't behind a proxy.
+Streamable-HTTP-capable clients can use `…/mcp/message` instead of `…/mcp/sse`.
+
+**Claude Code (one command):**
+
+```bash
+claude mcp add votal-shield --transport sse https://<your-data-plane-host>/mcp/sse \
+  --header "X-API-Key: <tenant-api-key>" \
+  --header "Authorization: Bearer <data-plane-proxy-token>"
+```
+
+**Client only speaks stdio?** Point it at the wrapper server:
+
+```json
+{ "mcpServers": { "votal-shield": {
+    "command": "python",
+    "args": ["/path/to/llm-shield/mcp/votal_shield_server.py"],
+    "env": {
+      "VOTAL_SHIELD_URL": "https://<your-data-plane-host>",
+      "VOTAL_API_KEY": "<tenant-api-key>"
+    }
+}}}
+```
+
+| Tool | Arguments | When the agent calls it | Result |
+|---|---|---|---|
+| `shield_check_input` | `message` | before processing user input | `SAFE` / `BLOCKED` (prompt-injection, toxicity, PII…) |
+| `shield_check_output` | `output` | before returning a reply | `SAFE` / `SAFE (sanitized)` / `BLOCKED` |
+| `shield_check_tool` | `tool_name`, `arguments`, `user_role` | before executing a tool | `ALLOWED` / `BLOCKED` (role allowlist + kill switch) |
+| `shield_sanitize_output` | `tool_name`, `output` | after a tool returns | `CLEAN` / `SANITIZED` / `BLOCKED` (data policy) |
+| `shield_disable_tool` | `tool_name`, `reason` | incident response | kill switch on |
+| `shield_enable_tool` | `tool_name` | incident response | kill switch off |
 
 Test it with the Streamable-HTTP transport (`POST /mcp/message`). `initialize`
 and `tools/list` need no key; `tools/call` needs the headers above:
