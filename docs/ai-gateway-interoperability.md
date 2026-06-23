@@ -155,6 +155,33 @@ also call `shield_sanitize_output` on the result to get DLP. (See
 - On the streaming path the tool check fires at stream end, after chunks have
   been emitted; use non-streaming hooks if you need to block before any output.
 
+### Identity tiers — RBAC/DLP work with or without the agentic IdP
+
+RBAC and tool-call DLP are **standalone** — they do **not** require Shield's
+agentic identity layer. You can adopt them in an afternoon and add verifiable
+agent identity later, without re-architecting.
+
+| Tier | Identity basis | What you get |
+|---|---|---|
+| **Standalone** (default) | tenant `x-api-key` + caller-asserted `x-agent-key` / `x-user-role` | Full RBAC + tool-argument/result DLP, per-tenant policy. No token minting. |
+| **+ Agentic IdP** (opt-in) | signed, build-bound agent identity tokens (`X-Agent-Token`) + single-use capability tokens | Cryptographically **verified** identity, per-call **capabilities**, and instant **revocation** (instance / token / user) |
+
+How it behaves:
+
+- The agent-identity middleware is **additive, not gating**: if no `X-Agent-Token`
+  is present the request passes through unchanged; a token is verified only when
+  sent. So the same RBAC/DLP endpoints serve both tiers.
+- Only `POST /v1/shield/cap/mint` (single-use capabilities) actually requires a
+  signed agent token — the RBAC and DLP endpoints never do.
+
+{: .warning }
+> **Standalone identity is caller-asserted.** Without the agentic IdP,
+> `x-agent-key` / `x-user-role` are trusted as sent — set them at a layer you
+> control (your gateway/app), not from untrusted client input. The agentic IdP
+> is what makes agent identity **tamper-proof and revocable**. See
+> [Agentic Integration](/agentic-integration-guide/) and
+> [Continuous Identity & Auto-Revoke](/continuous-identity/).
+
 ## 5. LiteLLM (Validated)
 
 Shield ships a native LiteLLM guardrail: **`VotalGuardrail(CustomGuardrail)`** in
