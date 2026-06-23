@@ -11,9 +11,28 @@ examples/
 ├── crewai/            # Multi-agent CrewAI crew with per-agent RBAC
 ├── anthropic/         # Anthropic Claude tool-use agent with Shield
 ├── idp/               # Identity Provider integration guide (Okta, Auth0, Azure AD, Keycloak)
+├── mcp_guarded_agent.py   # Guard an agent turn via Shield's MCP server (stdlib-only, runnable)
 ├── deep_agent_shield.py   # Advanced async integration (httpx)
 └── policy_management_example.py
 ```
+
+### Guard an agent over MCP (no dependencies)
+
+`mcp_guarded_agent.py` shows the **cooperative** model: an agent connects to
+Shield's own MCP server and calls the `shield_*` guardrail tools at each step of
+a turn — input → tool call → tool result → final reply. It stubs the LLM and the
+business tool, so it runs with just stdlib and a tenant key:
+
+```bash
+export SHIELD_URL=https://<your-data-plane-host>
+export TENANT_KEY=sk-test-demo        # any sk-test- key hits the sandbox tenant
+# export RUNPOD_TOKEN=...              # only if the data plane is behind a proxy
+python3 examples/mcp_guarded_agent.py
+```
+
+It demonstrates three outcomes: a benign turn passing, a prompt-injection input
+blocked, and an RBAC denial. For non-bypassable enforcement, pair it with the
+gateway/proxy paths (see the MCP developer guide).
 
 ## Quick Start
 
