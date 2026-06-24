@@ -88,6 +88,7 @@ permalink: /
 | Use Shield in your IDE (Cursor / Claude / VS Code) | [Connect Shield to Your IDE]({{ "/connect-your-ide/" | relative_url }}) |
 | Use your existing IdP (Okta / Entra / Google) | [Identity Provider Interoperability]({{ "/idp-interoperability/" | relative_url }}) |
 | Add guardrails at your AI gateway (LiteLLM / Portkey / Kong) | [AI Gateway & Proxy Interoperability]({{ "/ai-gateway-interoperability/" | relative_url }}) |
+| Plan an enterprise rollout / cover agents you didn't build | [Enterprise Integration Architecture]({{ "/enterprise-integration-architecture/" | relative_url }}) |
 | Map to NIST / OWASP / ISO controls | [Compliance Mapping]({{ "/compliance-mapping/" | relative_url }}) |
 
 ## Two deployment modes
