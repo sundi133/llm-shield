@@ -45,7 +45,13 @@ from fastapi.staticfiles import StaticFiles
 from api.routes_tenant import router as tenant_router, global_router as tenant_audit_router
 from api.routes_tenant_self import router as tenant_self_router
 from api.routes_agents_registry import router as agents_registry_router
-from api.routes_governance import router as governance_router
+try:
+    from api.routes_governance import router as governance_router
+except Exception as _gov_import_err:  # optional module — never crash-loop the portal
+    governance_router = None
+    import logging as _logging
+    _logging.getLogger("admin_app").warning(
+        "governance routes unavailable: %s", _gov_import_err)
 from api.routes_data_policies import router as data_policies_router
 from api.routes_agentic_control_plane import router as agentic_control_plane_router
 from api.routes_guardrail_metrics import router as guardrail_metrics_router
@@ -1055,7 +1061,8 @@ def create_admin_app() -> FastAPI:
     app.include_router(tenant_audit_router)     # /v1/admin/audit, /v1/admin/dashboard
     app.include_router(tenant_self_router)      # /v1/tenant/* (includes policies and custom policy CRUD)
     app.include_router(agents_registry_router)  # /v1/agents/* (registry, roles, tool policies)
-    app.include_router(governance_router)       # /v1/governance/* (inventory, used-vs-granted, reviews)
+    if governance_router is not None:
+        app.include_router(governance_router)   # /v1/governance/* (inventory, used-vs-granted, reviews)
     app.include_router(data_policies_router)    # /v1/data-policies/*
     app.include_router(agentic_control_plane_router)  # /v1/tenant/me/agentic/*
     app.include_router(guardrail_metrics_router)       # /v1/tenant/me/guardrails/metrics
