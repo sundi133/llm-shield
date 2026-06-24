@@ -1,0 +1,35 @@
+name: Tests
+
+# Gate: run the offline test suite on every PR and on pushes to main.
+# The suite runs without a model/GPU or live Redis (in-process fallback),
+# so it is a fast, deterministic merge gate. Enable "Require status checks
+# to pass" on main in branch protection to make this blocking.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run test suite
+        # `python -m pytest` puts the repo root on sys.path so the top-level
+        # packages (core/, api/, storage/) import without a src layout.
+        run: python -m pytest tests -q

@@ -155,7 +155,7 @@ def test_classify_requires_auth(app_with_auth):
     from starlette.testclient import TestClient
 
     client = TestClient(app_with_auth)
-    resp = client.post("/classify", json={"message": "hello"})
+    resp = client.post("/guardrails/input", json={"message": "hello"})
     assert resp.status_code == 401
 
 
@@ -165,7 +165,7 @@ def test_classify_with_valid_key(app_with_auth):
 
     client = TestClient(app_with_auth)
     resp = client.post(
-        "/classify",
+        "/guardrails/input",
         json={"message": "hello"},
         headers={"Authorization": "Bearer test-key-123"},
     )
