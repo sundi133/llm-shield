@@ -1969,6 +1969,11 @@
         Tool Registry
         <span id="nav-badge-tools" class="nav-badge"></span>
       </div>
+      <div class="nav-item" data-tab="governance">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        Governance
+        <span id="nav-badge-governance" class="nav-badge"></span>
+      </div>
       <div class="nav-item" data-tab="usage">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
         Usage
@@ -2176,6 +2181,46 @@
         </div>
         <div id="roles-overview-content">Loading roles...</div>
       </div>
+    </div>
+
+    <!-- Governance -->
+    <div id="tab-governance" class="tab-pane hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+        <div>
+          <h2 style="margin:0;">Agent Governance</h2>
+          <div class="page-desc">Access intelligence grounded in real runtime activity: agent inventory (including shadow agents), used‑vs‑granted least‑privilege, and access‑review campaigns.</div>
+        </div>
+        <div style="display:flex;gap:0.5rem;">
+          <button class="small" onclick="loadGovernance()">Refresh</button>
+          <button class="small" onclick="startReviewCampaign()">Start access review</button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:1.5rem;margin-bottom:1rem;font-size:12px;color:var(--text-muted);">
+        <div>Agents: <b id="gov-count" style="color:var(--text);">–</b></div>
+        <div>Registered: <b id="gov-registered" style="color:var(--text);">–</b></div>
+        <div>Shadow: <b id="gov-shadow" style="color:#b45309;">–</b></div>
+      </div>
+
+      <div style="overflow:auto;border:1px solid var(--border);border-radius:8px;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr style="text-align:left;background:var(--bg-subtle,#f6f8fb);">
+            <th style="padding:0.5rem 0.75rem;">Agent</th>
+            <th style="padding:0.5rem 0.75rem;">Status</th>
+            <th style="padding:0.5rem 0.75rem;">Granted tools</th>
+            <th style="padding:0.5rem 0.75rem;">Recently used</th>
+            <th style="padding:0.5rem 0.75rem;">Last seen</th>
+            <th style="padding:0.5rem 0.75rem;"></th>
+          </tr></thead>
+          <tbody id="gov-agents-body"><tr><td colspan="6" style="padding:1rem;color:var(--text-muted);">Loading…</td></tr></tbody>
+        </table>
+      </div>
+
+      <div id="gov-usage" style="margin-top:1rem;"></div>
+
+      <h3 style="margin:1.5rem 0 0.5rem;">Access reviews</h3>
+      <div id="gov-reviews"></div>
+      <div id="gov-review-detail" style="margin-top:1rem;"></div>
     </div>
 
     <!-- Agents -->
@@ -10663,6 +10708,142 @@ function _metricsSpinner(msg) {
   </div>`;
 }
 
+// ── Governance: inventory + used-vs-granted + access reviews ────────────
+function _govEsc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function _govWhen(ts) { return ts ? new Date(ts * 1000).toLocaleString() : '—'; }
+
+async function loadGovernance() {
+  const body = document.getElementById('gov-agents-body');
+  body.innerHTML = '<tr><td colspan="6" style="padding:1rem;color:var(--text-muted);">Loading…</td></tr>';
+  try {
+    const data = await apiCall('/v1/governance/agents');
+    document.getElementById('gov-count').textContent = data.count;
+    document.getElementById('gov-registered').textContent = data.registered_count;
+    document.getElementById('gov-shadow').textContent = data.shadow_count;
+    body.innerHTML = (data.agents || []).map(a => {
+      const badge = a.registered
+        ? '<span style="color:#15803d;font-weight:600;">'+_govEsc(a.status)+'</span>'
+        : '<span style="color:#b45309;font-weight:600;">shadow</span>';
+      return `<tr style="border-top:1px solid var(--border);">
+        <td style="padding:0.5rem 0.75rem;font-weight:600;">${_govEsc(a.agent_id)}</td>
+        <td style="padding:0.5rem 0.75rem;">${badge}</td>
+        <td style="padding:0.5rem 0.75rem;">${(a.granted_tools||[]).length}</td>
+        <td style="padding:0.5rem 0.75rem;">${_govEsc((a.recent_tools_used||[]).join(', ') || '—')}</td>
+        <td style="padding:0.5rem 0.75rem;">${_govWhen(a.last_seen)}</td>
+        <td style="padding:0.5rem 0.75rem;"><button class="small" onclick="govShowUsage('${_govEsc(a.agent_id)}')">Used vs granted</button></td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="6" style="padding:1rem;color:var(--text-muted);">No agents yet.</td></tr>';
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="6" style="padding:1rem;color:#b91c1c;">${_govEsc(e.message)}</td></tr>`;
+  }
+  loadGovReviews();
+}
+
+async function govShowUsage(agentId) {
+  const el = document.getElementById('gov-usage');
+  el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Loading usage…</div>';
+  try {
+    const u = await apiCall(`/v1/governance/agents/${encodeURIComponent(agentId)}/usage`);
+    const chip = (arr, color) => (arr||[]).map(t => `<span style="display:inline-block;background:${color};color:#fff;border-radius:10px;padding:1px 8px;margin:2px;font-size:11px;">${_govEsc(t)}</span>`).join('') || '<span style="color:var(--text-muted);">none</span>';
+    el.innerHTML = `<div style="border:1px solid var(--border);border-radius:8px;padding:1rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;"><b>Used vs granted — ${_govEsc(agentId)}</b>
+        <button class="small" onclick="document.getElementById('gov-usage').innerHTML=''">Close</button></div>
+      <div style="margin-top:0.5rem;font-size:12px;"><b>Unused grants</b> (least‑privilege candidates): <div>${chip(u.unused_grants,'#6b7280')}</div></div>
+      <div style="margin-top:0.5rem;font-size:12px;"><b style="color:#b91c1c;">Used but not granted</b> (drift — investigate): <div>${chip(u.used_not_granted,'#b91c1c')}</div></div>
+      <div style="margin-top:0.5rem;font-size:12px;"><b>Used tools</b>: <div>${chip(u.used_tools,'#15803d')}</div></div>
+      <div style="margin-top:0.5rem;font-size:11px;color:var(--text-muted);">${_govEsc(u.window)} · ${_govEsc(u.note)}</div>
+    </div>`;
+  } catch (e) { el.innerHTML = `<div style="color:#b91c1c;font-size:12px;">${_govEsc(e.message)}</div>`; }
+}
+
+async function startReviewCampaign() {
+  const name = prompt('Name this access review (e.g. "Q3 agent certification"):', 'Access review');
+  if (name === null) return;
+  try {
+    const r = await apiCall('/v1/governance/reviews', { method: 'POST', body: JSON.stringify({ name }) });
+    showToast('Review campaign created', 'success');
+    govOpenReview(r.campaign.campaign_id);
+    loadGovReviews();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function loadGovReviews() {
+  const el = document.getElementById('gov-reviews');
+  try {
+    const data = await apiCall('/v1/governance/reviews');
+    const rows = (data.campaigns || []).map(c => `<tr style="border-top:1px solid var(--border);">
+      <td style="padding:0.4rem 0.75rem;">${_govEsc(c.name)}</td>
+      <td style="padding:0.4rem 0.75rem;">${_govEsc(c.status)}</td>
+      <td style="padding:0.4rem 0.75rem;">${_govWhen(c.created_at)}</td>
+      <td style="padding:0.4rem 0.75rem;"><button class="small" onclick="govOpenReview('${_govEsc(c.campaign_id)}')">Open</button></td>
+    </tr>`).join('');
+    el.innerHTML = rows
+      ? `<table style="width:100%;border-collapse:collapse;font-size:12px;border:1px solid var(--border);border-radius:8px;"><thead><tr style="text-align:left;background:var(--bg-subtle,#f6f8fb);"><th style="padding:0.4rem 0.75rem;">Campaign</th><th style="padding:0.4rem 0.75rem;">Status</th><th style="padding:0.4rem 0.75rem;">Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<div style="color:var(--text-muted);font-size:12px;">No campaigns yet — start one above.</div>';
+  } catch (e) { el.innerHTML = `<div style="color:#b91c1c;font-size:12px;">${_govEsc(e.message)}</div>`; }
+}
+
+async function govOpenReview(cid) {
+  const el = document.getElementById('gov-review-detail');
+  el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Loading campaign…</div>';
+  try {
+    const { campaign: c } = await apiCall(`/v1/governance/reviews/${encodeURIComponent(cid)}`);
+    const open = c.status === 'open';
+    let rows = '';
+    (c.items || []).forEach(it => (it.tools || []).forEach(t => {
+      const recColor = t.recommendation === 'revoke' ? '#b45309' : (t.recommendation === 'investigate' ? '#b91c1c' : '#15803d');
+      const sel = t.recommendation === 'investigate'
+        ? '<span style="color:#b91c1c;font-size:11px;">drift — review grant</span>'
+        : (open
+            ? `<select data-agent="${_govEsc(it.agent_id)}" data-tool="${_govEsc(t.tool)}" class="gov-dec" style="font-size:11px;">
+                 <option value="">—</option>
+                 <option value="keep" ${t.decision==='keep'?'selected':''}>keep</option>
+                 <option value="revoke" ${t.decision==='revoke'?'selected':''}>revoke</option></select>`
+            : _govEsc(t.decision));
+      rows += `<tr style="border-top:1px solid var(--border);">
+        <td style="padding:0.35rem 0.75rem;">${_govEsc(it.agent_id)}</td>
+        <td style="padding:0.35rem 0.75rem;">${_govEsc(t.tool)}</td>
+        <td style="padding:0.35rem 0.75rem;color:${recColor};">${_govEsc(t.recommendation)}</td>
+        <td style="padding:0.35rem 0.75rem;">${sel}</td></tr>`;
+    }));
+    el.innerHTML = `<div style="border:1px solid var(--border);border-radius:8px;padding:1rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <b>${_govEsc(c.name)} <span style="color:var(--text-muted);font-weight:400;">(${_govEsc(c.status)}, ${c.progress.decided}/${c.progress.total} decided)</span></b>
+        <div>${open ? `<button class="small" onclick="govSaveDecisions('${_govEsc(cid)}')">Save</button> <button class="small" onclick="govCloseReview('${_govEsc(cid)}')">Close &amp; apply revokes</button>` : '<span style="color:var(--text-muted);font-size:12px;">closed</span>'}</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:0.75rem;"><thead><tr style="text-align:left;color:var(--text-muted);"><th style="padding:0.35rem 0.75rem;">Agent</th><th style="padding:0.35rem 0.75rem;">Tool</th><th style="padding:0.35rem 0.75rem;">Recommendation</th><th style="padding:0.35rem 0.75rem;">Decision</th></tr></thead><tbody>${rows}</tbody></table>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:0.5rem;">Revoke removes the tool grant from the agent on close; live capabilities expire within ~60s.</div>
+    </div>`;
+  } catch (e) { el.innerHTML = `<div style="color:#b91c1c;font-size:12px;">${_govEsc(e.message)}</div>`; }
+}
+
+function _govCollectDecisions() {
+  return Array.from(document.querySelectorAll('.gov-dec')).filter(s => s.value).map(s => ({
+    agent_id: s.getAttribute('data-agent'), tool: s.getAttribute('data-tool'), decision: s.value,
+  }));
+}
+
+async function govSaveDecisions(cid) {
+  try {
+    await apiCall(`/v1/governance/reviews/${encodeURIComponent(cid)}/decisions`, {
+      method: 'POST', body: JSON.stringify({ decisions: _govCollectDecisions() }) });
+    showToast('Decisions saved', 'success');
+    govOpenReview(cid);
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function govCloseReview(cid) {
+  if (!confirm('Close this review and apply all revoke decisions? This removes those tool grants.')) return;
+  try {
+    await apiCall(`/v1/governance/reviews/${encodeURIComponent(cid)}/decisions`, {
+      method: 'POST', body: JSON.stringify({ decisions: _govCollectDecisions() }) });
+    const r = await apiCall(`/v1/governance/reviews/${encodeURIComponent(cid)}/close`, { method: 'POST' });
+    const n = (r.applied_actions || []).filter(a => a.action === 'revoked').length;
+    showToast(`Review closed — ${n} grant(s) revoked`, 'success');
+    govOpenReview(cid); loadGovReviews(); loadGovernance();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
 async function loadGuardrailMetrics() {
   const el = document.getElementById('guardrail-metrics-content');
   el.innerHTML = _metricsSpinner('Loading guardrail metrics…');
@@ -10820,6 +11001,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'guardrail-metrics') loadGuardrailMetrics();
     if (tab === 'board-report') loadBoardReport();
     if (tab === 'agents') loadAgentData();
+    if (tab === 'governance') loadGovernance();
     if (tab === 'tool-policies') switchTPSubtab('data-policies');
     if (tab === 'usage') loadUsage();
     if (tab === 'activity') loadActivity();

@@ -15,12 +15,41 @@ These are portal/query endpoints, safe to cache.
 """
 from __future__ import annotations
 
+import secrets
+import time
+
 from fastapi import APIRouter, HTTPException, Request
 
-from api.routes_agents_registry import get_tenant_from_api_key, get_redis_data
+from api.routes_agents_registry import get_tenant_from_api_key, get_redis_data, _save_agents
 from storage import agent_auth_stats as stats
+from storage.tenant_store import kv_get, kv_set
 
 router = APIRouter(prefix="/v1/governance", tags=["governance"])
+
+_MAX_NAME_LEN = 200
+
+
+def _rev_index_key(tenant_id: str) -> str:
+    return f"governance:reviews:{tenant_id}"
+
+
+def _rev_key(tenant_id: str, campaign_id: str) -> str:
+    return f"governance:reviews:{tenant_id}:{campaign_id}"
+
+
+def _with_progress(c: dict) -> dict:
+    """Annotate a campaign with decided/total (excluding informational drift rows)."""
+    total = decided = 0
+    for it in c.get("items", []):
+        for ti in it.get("tools", []):
+            if ti.get("recommendation") == "investigate":
+                continue
+            total += 1
+            if ti.get("decision", "pending") != "pending":
+                decided += 1
+    out = dict(c)
+    out["progress"] = {"decided": decided, "total": total}
+    return out
 
 
 def _granted_tools(entry: dict) -> list[str]:
@@ -134,3 +163,163 @@ async def governance_agent_usage(agent_id: str, request: Request):
         "note": ("Usage is derived from the runtime auth-event buffer (bounded to recent "
                  "activity), not full history. Longer-retention usage analytics is roadmap."),
     }
+
+
+# ── Phase 3 — access-review / certification campaigns ────────────────────
+#
+# Read/write on the portal path only (registry KV). The guard path
+# (cap/mint, tools/call) is never touched, so guarded traffic has no added
+# latency. Closing a campaign mutates the agent registry exactly as a manual
+# agent edit does; cap-mint/RBAC read the registry, so revokes take effect on
+# the next mint/check (live caps expire on their own, ≤60s).
+
+
+def _build_items(tenant_id: str) -> list[dict]:
+    """Snapshot current entitlements + recommendations (from used-vs-granted)."""
+    registered = get_redis_data(f"agents:{tenant_id}") or {}
+    activity = _activity_index(tenant_id)
+    items: list[dict] = []
+    for aid, entry in registered.items():
+        granted = _granted_tools(entry)
+        used = activity.get(aid, {}).get("tools", set())
+        tools = [{
+            "tool": t,
+            "recommendation": "revoke" if t not in used else "keep",  # unused grant → suggest revoke
+            "decision": "pending", "reviewer": None, "decided_at": None, "note": None,
+        } for t in granted]
+        for t in sorted(used - set(granted)):  # drift: used but not granted — informational
+            tools.append({
+                "tool": t, "recommendation": "investigate", "decision": "pending",
+                "reviewer": None, "decided_at": None, "note": "used but not granted",
+            })
+        items.append({
+            "agent_id": aid, "registered": True,
+            "snapshot_tools": granted,
+            "snapshot_resources": entry.get("allowed_resources", []) or [],
+            "tools": tools,
+        })
+    return items
+
+
+@router.post("/reviews")
+async def create_review(request: Request):
+    """Create an access-review campaign, pre-populated with recommendations."""
+    tenant_id = get_tenant_from_api_key(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = (body.get("name") or "Access review").strip()[:_MAX_NAME_LEN]
+    created_by = (body.get("reviewer") or request.headers.get("x-user-role") or "tenant").strip()[:128]
+    now = int(time.time())
+    campaign = {
+        "campaign_id": f"rev-{now}-{secrets.token_hex(3)}",
+        "name": name, "created_at": now, "created_by": created_by,
+        "due_at": body.get("due_at"), "status": "open",
+        "items": _build_items(tenant_id),
+    }
+    kv_set(_rev_key(tenant_id, campaign["campaign_id"]), campaign)
+    idx = kv_get(_rev_index_key(tenant_id)) or {"campaigns": []}
+    idx.setdefault("campaigns", []).append({
+        "campaign_id": campaign["campaign_id"], "name": name, "status": "open",
+        "created_at": now, "due_at": campaign["due_at"],
+    })
+    kv_set(_rev_index_key(tenant_id), idx)
+    return {"campaign": _with_progress(campaign)}
+
+
+@router.get("/reviews")
+async def list_reviews(request: Request):
+    tenant_id = get_tenant_from_api_key(request)
+    idx = kv_get(_rev_index_key(tenant_id)) or {"campaigns": []}
+    return {"tenant_id": tenant_id, "campaigns": idx.get("campaigns", [])}
+
+
+@router.get("/reviews/{campaign_id}")
+async def get_review(campaign_id: str, request: Request):
+    tenant_id = get_tenant_from_api_key(request)
+    campaign = kv_get(_rev_key(tenant_id, campaign_id))
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    return {"campaign": _with_progress(campaign)}
+
+
+@router.post("/reviews/{campaign_id}/decisions")
+async def submit_decisions(campaign_id: str, request: Request):
+    """Record keep/revoke decisions: body {"decisions":[{agent_id,tool,decision,note}]}."""
+    tenant_id = get_tenant_from_api_key(request)
+    campaign = kv_get(_rev_key(tenant_id, campaign_id))
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    if campaign.get("status") != "open":
+        raise HTTPException(status_code=409, detail="campaign is closed")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reviewer = (body.get("reviewer") or request.headers.get("x-user-role") or "tenant").strip()[:128]
+    dmap = {}
+    for d in body.get("decisions", []) or []:
+        if d.get("decision") in ("keep", "revoke"):
+            dmap[(d.get("agent_id"), d.get("tool"))] = d
+    now = int(time.time())
+    for it in campaign["items"]:
+        for ti in it["tools"]:
+            d = dmap.get((it["agent_id"], ti["tool"]))
+            if d:
+                ti["decision"] = d["decision"]
+                ti["reviewer"] = reviewer
+                ti["decided_at"] = now
+                ti["note"] = (d.get("note") or "")[:_MAX_NAME_LEN]
+    kv_set(_rev_key(tenant_id, campaign_id), campaign)
+    return {"campaign": _with_progress(campaign)}
+
+
+@router.post("/reviews/{campaign_id}/close")
+async def close_review(campaign_id: str, request: Request):
+    """Close the campaign and APPLY revoke decisions to the registry (idempotent)."""
+    tenant_id = get_tenant_from_api_key(request)
+    campaign = kv_get(_rev_key(tenant_id, campaign_id))
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    if campaign.get("status") == "closed":
+        return {"campaign": _with_progress(campaign),
+                "applied_actions": campaign.get("applied_actions", []), "already_closed": True}
+
+    agents = get_redis_data(f"agents:{tenant_id}") or {}
+    applied: list[dict] = []
+    now = int(time.time())
+    for it in campaign["items"]:
+        entry = agents.get(it["agent_id"])
+        for ti in it["tools"]:
+            if ti.get("decision") != "revoke" or ti.get("recommendation") == "investigate":
+                continue
+            tool = ti["tool"]
+            if entry is None:
+                applied.append({"agent_id": it["agent_id"], "tool": tool, "action": "skipped",
+                                "reason": "agent no longer exists"})
+                continue
+            removed = False
+            if tool in (entry.get("tools") or []):
+                entry["tools"] = [t for t in entry["tools"] if t != tool]
+                removed = True
+            for role, perms in (entry.get("role_permissions") or {}).items():
+                if tool in (perms or []):
+                    entry["role_permissions"][role] = [t for t in perms if t != tool]
+                    removed = True
+            entry["updated_at"] = now
+            applied.append({"agent_id": it["agent_id"], "tool": tool,
+                            "action": "revoked" if removed else "skipped",
+                            "reason": None if removed else "grant already absent"})
+    _save_agents(tenant_id, agents)
+
+    campaign["status"] = "closed"
+    campaign["closed_at"] = now
+    campaign["applied_actions"] = applied
+    kv_set(_rev_key(tenant_id, campaign_id), campaign)
+    idx = kv_get(_rev_index_key(tenant_id)) or {"campaigns": []}
+    for c in idx.get("campaigns", []):
+        if c.get("campaign_id") == campaign_id:
+            c["status"] = "closed"
+    kv_set(_rev_index_key(tenant_id), idx)
+    return {"campaign": _with_progress(campaign), "applied_actions": applied}
