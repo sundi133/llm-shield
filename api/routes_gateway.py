@@ -214,6 +214,7 @@ async def _stream_chat_completion(
     role_name: str | None,
     last_user_msg: str,
     start_time: datetime,
+    tenant_id: str = "",
 ):
     """Proxy a chat completion stream while preserving OpenAI-style SSE."""
     client = httpx.AsyncClient(timeout=300)
@@ -507,6 +508,7 @@ async def shield_chat_completions(request: Request):
             role_name=role_name,
             last_user_msg=last_user_msg,
             start_time=start_time,
+            tenant_id=tenant_id,
         )
 
     # Proxy to LLM
