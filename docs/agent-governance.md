@@ -30,6 +30,23 @@ writes when a review closes). Nothing here runs on the guard path
 Authenticate with your tenant `X-API-Key`. In the tenant portal this is the
 **Governance** tab.
 
+## Where this runs (deployment)
+
+Shield runs as two independent planes that share Redis:
+
+| Plane | Hardware | Responsibilities |
+|---|---|---|
+| **Data plane** (guardrail server) | GPU (vLLM, ~9B guardrail model) | Pre/post-call inspection, agent & tool access control, the LLM-based checks (~250 ms) |
+| **Admin & tenant plane** (portal) | CPU only, no GPU | Policy management, the tenant portal, and **governance** (inventory, used-vs-granted, reviews) |
+
+Governance is **pure control-plane logic — no model, no GPU**, so it lives on the
+admin/tenant plane and the portal's Governance tab calls it there. Both planes
+read the **same Redis** (registry, auth-event activity), so governance sees a
+consistent view of entitlements and runtime usage regardless of which plane
+served a request. Because nothing here touches the GPU data plane's inference
+path, governance adds **zero load to the guardrail server** — you can scale the
+portal independently of the GPU fleet.
+
 ## 1. Agent inventory
 
 `GET /v1/governance/agents` merges:
