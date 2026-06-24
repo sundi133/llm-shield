@@ -370,6 +370,22 @@ async def revoke(body: RevokeRequestExt, request: Request):
 # ─── Internal AuthZ decision ────────────────────────────────────────────
 
 
+def _resource_scope_default() -> bool:
+    """Global fallback for strict resource scoping when an agent sets neither
+    ``allowed_resources`` nor ``require_resource_scope``.
+
+    Default OFF for backward compatibility: existing agents that never declared
+    a resource policy keep working unchanged. Object-level enforcement still
+    activates per-agent the moment an agent declares ``allowed_resources``
+    (patterns are enforced) or sets ``require_resource_scope: true``. Operators
+    who want strict deny-by-default everywhere set
+    ``SHIELD_REQUIRE_RESOURCE_SCOPE=true``.
+    """
+    import os
+    return os.environ.get("SHIELD_REQUIRE_RESOURCE_SCOPE", "false").strip().lower() \
+        in ("1", "true", "yes", "on")
+
+
 def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
     """Compose the AuthZ verdict.
 
@@ -415,7 +431,8 @@ def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
                 # {user_sub}/{tenant_id} to the *authenticated* principal so an
                 # agent can't mint a cap for another user's/tenant's records.
                 patterns = agent_entry.get("allowed_resources", []) or []
-                require_scope = bool(agent_entry.get("require_resource_scope", False))
+                _rrs = agent_entry.get("require_resource_scope")
+                require_scope = _resource_scope_default() if _rrs is None else bool(_rrs)
                 if patterns:
                     import fnmatch
                     expanded = [

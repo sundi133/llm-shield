@@ -98,9 +98,30 @@ def test_require_resource_scope_with_none_configured_denied(monkeypatch):
     assert d["allowed"] is False
 
 
-def test_no_resource_policy_does_not_block_tool(monkeypatch):
-    # backward compatible: without allowed_resources / require flag, tool authz alone applies
+def test_no_resource_policy_allowed_by_default(monkeypatch):
+    # Backward compatible: with no allowed_resources and require flag unset and
+    # no global env, behavior is unchanged (tool authz alone applies).
+    monkeypatch.delenv("SHIELD_REQUIRE_RESOURCE_SCOPE", raising=False)
     _patch_registry(monkeypatch, {"tools": ["read_inbox"]})
+    d = _decide_authz(_identity(),
+                      CapMintRequest(tool="read_inbox", resource="anything/here"))
+    assert d["allowed"] is True
+
+
+def test_no_resource_policy_denied_when_global_enforce(monkeypatch):
+    # Opt-in strict mode: operators can require scoping everywhere.
+    monkeypatch.setenv("SHIELD_REQUIRE_RESOURCE_SCOPE", "true")
+    _patch_registry(monkeypatch, {"tools": ["read_inbox"]})
+    d = _decide_authz(_identity(),
+                      CapMintRequest(tool="read_inbox", resource="anything/here"))
+    assert d["allowed"] is False
+    assert any("resource scoping is required" in r for r in d["reasons"])
+
+
+def test_explicit_require_false_opts_agent_out(monkeypatch):
+    # A specific agent may opt out even when the global default requires scoping.
+    monkeypatch.setenv("SHIELD_REQUIRE_RESOURCE_SCOPE", "true")
+    _patch_registry(monkeypatch, {"tools": ["read_inbox"], "require_resource_scope": False})
     d = _decide_authz(_identity(),
                       CapMintRequest(tool="read_inbox", resource="anything/here"))
     assert d["allowed"] is True

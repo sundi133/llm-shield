@@ -214,6 +214,7 @@ def build_server_metadata(base_url: str) -> dict:
         "grant_types_supported": [
             "authorization_code",
             "refresh_token",
+            "client_credentials",
             "urn:ietf:params:oauth:grant-type:token-exchange",
         ],
         "token_endpoint_auth_methods_supported": [
