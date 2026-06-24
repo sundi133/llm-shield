@@ -123,10 +123,34 @@ action, short-lived, scoped, revocable, and audited.*
 
 ---
 
+## ROUND 4 — MCP & integration (when the dev drives the call)
+
+### Set up in 3 steps (~15 min — show this live)
+1. **Credentials** — data-plane URL (`https://<id>.api.runpod.ai`) + a tenant API key (`sk-test-…` = zero-setup sandbox).
+2. **Connect — pick one:** IDE/agent → add Shield's MCP server (`claude mcp add votal-shield --transport sse <url>/mcp/sse --header "X-API-Key: …"`); **gateway** → enable the Shield guardrail in LiteLLM/Portkey/Kong (`default_on: true`); **own loop** → call the stateless HTTP API.
+3. **Turn on + prove it** — fire one `tools/call` to `shield_check_input` with an injection string → it returns `BLOCKED`. (Do this live; a real-time block beats a slide.)
+
+### Q10 · Developer — "How does MCP actually apply guardrails?"
+**Two roles, mechanism-first:** (1) **Guardrails *as* MCP tools** — Shield's MCP server exposes `shield_check_input / check_tool / sanitize_output / check_output`; the agent calls them at each step (input → tool → result → reply). (2) **Guardrails *on* the MCP boundary** — Shield proxies the agent's MCP traffic: filters `tools/list` to the role, enforces every `tools/call`, sanitizes results.
+*Jab — "Which do I need?"* → "Self-checks for cooperation, the proxy for guarantees, both for defense-in-depth."
+
+### Q11 · Security Architect — "Can the agent just skip the MCP guardrails?"
+**Say it plainly:** the MCP **self-check** tools are *cooperative* — only run if the agent calls them (great for IDEs/defense-in-depth, not a sole control). The **gateway / transparent-proxy** path is *non-bypassable* — Shield is in the call path, so a tool can't be reached without passing through. **Use the proxy for anything that matters.**
+⚠️ **Verify:** don't pitch MCP self-checks as enforcement — pair with the proxy/gateway.
+
+### Q12 · Security Architect — "Over MCP, is it just RBAC, or real DLP on tool data?"
+**Both, as distinct checks:** `shield_check_tool` = role→tool authorization (+ injection/payload validation); **DLP** runs separately on tool **arguments** (`/guardrails/output` stage=input) and tool **results** (`/v1/shield/tool/output` or `shield_sanitize_output`) — redact/mask/block PII, secrets, regulated & role-restricted data.
+*Jab — "So tool/check alone protects data?"* → "No — that's authorization only; add the sanitize call for content DLP. We document the distinction so no one assumes otherwise."
+
+### Q13 · Developer — "How do I get per-developer identity in an IDE, not one shared key?"
+Send `X-Agent-Key` + `X-User-Role` headers (or an OAuth bearer) → identity flows into RBAC + audit instead of a generic `mcp-agent`. Auth today is header-based (`X-API-Key`); full hands-free IDE OAuth is roadmap.
+
+---
+
 ## Reflexes to drill
 - **Kill-chains beat walls** — for "can attacker do X," list independent layers that must *all* fail.
 - **Turn exit/SPOF questions into value** — "how do I leave" → "here's what you'd give up"; "single point of failure" → "here's where we're *not* in the path."
 - **Calibrated honesty** — every ⚠️ is a spot where the honest answer wins the security/compliance buyer.
 
 ## Glossary (fast)
-**AuthN** = who you are · **AuthZ** = what you may do · **LDAP/AD** = your internal user directory · **IdP** (Keycloak/Okta) = login system in front of LDAP · **OIDC** = standard for issuing/checking login badges · **JWT** = the signed badge · **JWKS** = public page of the IdP's public keys (what we "sync") · **Agent token** = Shield badge proving *who* (~15 min, per process) · **Capability/cap** = one-action permit (≤60s, single-use) · **Nonce** = one-time value that blocks replay · **RBAC** = permissions by role (from LDAP group) · **Clearance** = data sensitivity ceiling · **Revocation** = instant kill switch (instance / user / token).
+**AuthN** = who you are · **AuthZ** = what you may do · **LDAP/AD** = your internal user directory · **IdP** (Keycloak/Okta) = login system in front of LDAP · **OIDC** = standard for issuing/checking login badges · **JWT** = the signed badge · **JWKS** = public page of the IdP's public keys (what we "sync") · **Agent token** = Shield badge proving *who* (~15 min, per process) · **Capability/cap** = one-action permit (≤60s, single-use) · **Nonce** = one-time value that blocks replay · **RBAC** = permissions by role (from LDAP group) · **Clearance** = data sensitivity ceiling · **Revocation** = instant kill switch (instance / user / token) · **MCP** = Model Context Protocol — how agents/IDEs connect to tools; Shield both *serves* guardrails as MCP tools and *proxies* MCP traffic to enforce them · **Cooperative** = agent must call the check (advisory) · **Non-bypassable** = Shield in the call path (enforced) · **DLP** = data-loss prevention: redact/block PII, secrets, regulated data on tool args & results.
