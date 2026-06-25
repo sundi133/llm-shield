@@ -284,10 +284,29 @@ the registry enforces *which servers/tools exist at all*).
 
 ¹ `shield_check_tool` does role allowlist + kill switch, not the full capability-token flow.
 
-> **Capability tokens & signed agent identity** (`/v1/shield/cap/mint` + `/verify`,
-> single-use nonce; `X-Agent-Token`) are the high-assurance, per-action layer.
-> They are **not** MCP tools — see the
-> [Agentic integration guide]({{ "/agentic-integration-guide/" | relative_url }}).
+### AgentIDP is REST-only (by design)
+
+The agentic IdP — **agent identity tokens** (`/v1/tenant/me/agent-auth/agent-token`)
+and **single-use capability tokens** (`/v1/shield/cap/mint`, `/v1/shield/cap/verify`,
+nonce-burned, short-TTL, `X-Agent-Token`) — is the high-assurance, per-action
+layer. It is intentionally **not exposed as MCP tools.**
+
+**Why:** MCP is the *cooperative* channel the agent itself drives. Credential
+**issuance** is a control-plane action authenticated with tenant/agent
+credentials; exposing it as an agent-callable MCP tool would let an agent request
+its own capabilities over the same channel it operates on — a privilege-escalation
+smell. So minting/verification stay on REST, called by your app/orchestrator (and
+tool servers), not by the model loop.
+
+| Operation | Where | Auth |
+|---|---|---|
+| Mint agent identity token | `POST /v1/tenant/me/agent-auth/agent-token` | tenant `X-API-Key` |
+| Mint capability (per action) | `POST /v1/shield/cap/mint` | `X-Agent-Token` |
+| Verify capability (tool server) | `POST /v1/shield/cap/verify` | asymmetric / public |
+
+See the [Agentic integration guide]({{ "/agentic-integration-guide/" | relative_url }}).
+(If a tool server needs MCP-native verification, a read-only `cap/verify` MCP tool
+could be added later — issuance stays REST-only.)
 
 ---
 
