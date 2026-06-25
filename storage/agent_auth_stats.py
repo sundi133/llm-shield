@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from typing import Optional
 
@@ -53,6 +54,25 @@ COUNTER_TTL_SECONDS = 14 * 24 * 3600   # 14 days
 # Fallback store keys
 _COUNTER_PREFIX = "shield:authstats:counter:"
 _RECENT_PREFIX = "shield:authstats:recent:"
+
+# Per-(agent, tool) last-used index for access-hygiene ("unused N days").
+# Separate from the bounded recent buffer so governance can compute real
+# time-since-use, not just "in the last 50 events".
+_LASTSEEN_PREFIX = "shield:usage:lastseen:"
+_LASTSEEN_SEP = "\x1f"  # unit separator — won't collide with agent_id/tool
+# Events that count as positive *use* of a tool (vs denials/replays/invalids).
+_USAGE_EVENTS = (EVENT_CAP_MINTED, EVENT_CAP_VERIFIED)
+
+
+def _lastseen_key(tenant_id: str) -> str:
+    return f"{_LASTSEEN_PREFIX}{tenant_id}"
+
+
+def _lastseen_ttl_seconds() -> int:
+    try:
+        return max(1, int(os.environ.get("SHIELD_GOVERNANCE_LASTSEEN_TTL_DAYS", "120"))) * 86400
+    except Exception:
+        return 120 * 86400
 
 
 def _today_utc() -> str:
@@ -88,6 +108,8 @@ def record(
     """
     if not tenant_id or event not in ALL_EVENTS:
         return
+    if event in _USAGE_EVENTS:
+        _update_last_seen(tenant_id, agent_id, tool)  # self-contained; never raises
     try:
         import uuid as _uuid
         entry = {
@@ -150,7 +172,76 @@ def record(
         logger.warning(f"agent_auth_stats.record failed (event={event}): {e}")
 
 
+def _update_last_seen(tenant_id: str, agent_id: Optional[str], tool: Optional[str]) -> None:
+    """Stamp the last-used time for (agent, tool). Fire-and-forget; never raises.
+
+    One HSET on the same path record() already writes — used by governance to
+    compute "unused N days" (access hygiene), not for any automatic action.
+    """
+    if not (tenant_id and agent_id and tool):
+        return
+    try:
+        now = int(time.time())
+        lk = _lastseen_key(tenant_id)
+        field = f"{agent_id}{_LASTSEEN_SEP}{tool}"
+        r = _get_redis()
+        if r:
+            try:
+                r.hset(lk, field, now)
+                r.expire(lk, _lastseen_ttl_seconds())
+                return
+            except Exception as e:
+                logger.warning(
+                    f"_update_last_seen Redis write failed for tenant={tenant_id}: "
+                    f"{type(e).__name__}: {e}. Falling back to in-process store.")
+        # in-process fallback
+        d = _fallback_store.get(lk)
+        if not isinstance(d, dict):
+            d = {}
+        d[field] = now
+        _fallback_store[lk] = d
+    except Exception as e:
+        logger.warning(f"_update_last_seen failed: {e}")
+
+
 # ── Reading ─────────────────────────────────────────────────────────────
+
+
+def get_last_seen(tenant_id: str) -> dict[tuple[str, str], int]:
+    """Return {(agent_id, tool): last_ts} for a tenant, merging Redis + fallback.
+
+    The basis for time-since-use / "unused N days" access-hygiene signals.
+    """
+    out: dict[tuple[str, str], int] = {}
+    lk = _lastseen_key(tenant_id)
+
+    def _ingest(items):
+        for k, v in items:
+            ks = k.decode() if isinstance(k, bytes) else k
+            vs = v.decode() if isinstance(v, bytes) else v
+            if _LASTSEEN_SEP not in ks:
+                continue
+            agent_id, tool = ks.split(_LASTSEEN_SEP, 1)
+            try:
+                ts = int(vs)
+            except (TypeError, ValueError):
+                continue
+            key = (agent_id, tool)
+            if ts > out.get(key, 0):
+                out[key] = ts
+
+    r = _get_redis()
+    if r:
+        try:
+            _ingest((r.hgetall(lk) or {}).items())
+        except Exception as e:
+            logger.warning(
+                f"get_last_seen Redis read failed for tenant={tenant_id}: "
+                f"{type(e).__name__}: {e}. Using in-process fallback only.")
+    d = _fallback_store.get(lk)
+    if isinstance(d, dict):
+        _ingest(d.items())
+    return out
 
 
 def get_counters(tenant_id: str, days: int = 7) -> dict:
@@ -263,12 +354,14 @@ def clear_for_tests(tenant_id: Optional[str] = None) -> None:
         keys = [
             k for k in list(_fallback_store.keys())
             if k.startswith(_COUNTER_PREFIX) or k.startswith(_RECENT_PREFIX)
+            or k.startswith(_LASTSEEN_PREFIX)
         ]
     else:
         keys = [
             k for k in list(_fallback_store.keys())
             if k.startswith(_COUNTER_PREFIX + tenant_id + ":")
             or k == _RECENT_PREFIX + tenant_id
+            or k == _LASTSEEN_PREFIX + tenant_id
         ]
     for k in keys:
         _fallback_store.pop(k, None)
