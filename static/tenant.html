@@ -10791,7 +10791,7 @@ async function govOpenReview(cid) {
     const open = c.status === 'open';
     let rows = '';
     (c.items || []).forEach(it => (it.tools || []).forEach(t => {
-      const recColor = t.recommendation === 'revoke' ? '#b45309' : (t.recommendation === 'investigate' ? '#b91c1c' : '#15803d');
+      const recColor = t.recommendation === 'investigate' ? '#b91c1c' : (t.recommendation === 'keep' ? '#15803d' : '#b45309');
       const sel = t.recommendation === 'investigate'
         ? '<span style="color:#b91c1c;font-size:11px;">drift — review grant</span>'
         : (open

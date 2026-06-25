@@ -95,9 +95,12 @@ Certify each agent's entitlements on a schedule, then apply the decisions.
 | `POST` | `/v1/governance/reviews/{id}/decisions` | Record `keep`/`revoke` per (agent, tool) |
 | `POST` | `/v1/governance/reviews/{id}/close` | Close and **apply** revokes (idempotent) |
 
-**Recommendations are pre-filled** from used-vs-granted: unused grants →
-`revoke`, drift (used-but-not-granted) → `investigate`, otherwise `keep`. The
-reviewer confirms or overrides.
+**Recommendations are pre-filled** from used-vs-granted: no recent activity →
+`review` (a stale-grant candidate — not a hard revoke, since the usage window is
+bounded), drift (used-but-not-granted) → `investigate`, used → `keep`. The
+reviewer then chooses keep or revoke per grant. A future longer-retention usage
+signal will let `review` graduate to a confident `revoke` for grants unused over
+a real time window.
 
 **On close**, each `revoke` removes that tool grant from the agent in the
 registry. RBAC and capability minting read the registry, so the change takes
