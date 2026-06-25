@@ -88,23 +88,36 @@ def test_enforce_tool_call_no_tenant_is_noop(fake_redis):
     assert get_all_guardrails_summary("bankco", days=30) == []
 
 
-def test_shield_check_tool_records_metrics(fake_redis):
-    """The hosted MCP shield_check_tool path records its allowlist decision."""
-    from api.routes_mcp_server import _handle_tool_call
-    from storage.guardrail_metrics import get_all_guardrails_summary
+def test_shield_check_tool_delegates_to_full_pipeline(monkeypatch):
+    """MCP shield_check_tool routes through the SAME /v1/shield/tool/check
+    handler (full RBAC + data-policy + validation pipeline), which is what
+    records guardrail metrics — not a narrow allowlist-only path.
 
+    (Metric recording itself is check_tool's responsibility, covered by the
+    tool/check endpoint tests; here we pin the delegation + verdict mapping.)
+    """
+    from api.routes_mcp_server import _handle_tool_call
+
+    seen = {}
+
+    async def fake_check_tool(body, request):
+        seen["tool"] = body.tool_name
+        seen["role"] = body.user_role
+        return {"allowed": False, "guardrail_results": [
+            {"guardrail": "rbac_guard", "passed": False, "action": "block",
+             "message": "role 'reader' not permitted"}]}
+
+    monkeypatch.setattr("api.routes_tool.check_tool", fake_check_tool)
     state = types.SimpleNamespace(tenant_id="bankco", agent_key="mcp-agent")
-    request = types.SimpleNamespace(state=state, headers={"X-API-Key": "k"})
+    request = types.SimpleNamespace(state=state, headers={}, client=None)
 
     out = asyncio.run(_handle_tool_call(
         "shield_check_tool",
         {"tool_name": "send_payment", "user_role": "reader"},
         request))
 
-    assert out.startswith(("ALLOWED", "BLOCKED")), out
-    summary = get_all_guardrails_summary("bankco", days=30)
-    assert summary, "shield_check_tool did not record guardrail metrics"
-    assert any(g["guardrail"] == "tool_allowlist" for g in summary)
+    assert out.startswith("BLOCKED"), out
+    assert seen["tool"] == "send_payment" and seen["role"] == "reader"
 
 
 if __name__ == "__main__":

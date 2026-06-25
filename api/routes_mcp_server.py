@@ -214,21 +214,60 @@ def _get_tenant_info(request: Request) -> tuple[str, str]:
     return tenant_id, agent_key
 
 
+def _populate_request_state(request: Request, tenant_id: str, agent_key: str, user_role: str) -> None:
+    """Give delegated REST handlers the same tenant context the middleware sets
+    on a direct call. /mcp/* bypasses the tenant middleware, so without this the
+    classify/tool handlers run with NO tenant_config and default config — which
+    is the root of the MCP-vs-REST parity gaps (tenant guardrails + data
+    policies never applied)."""
+    st = request.state
+    if tenant_id:
+        if not getattr(st, "tenant_id", None):
+            st.tenant_id = tenant_id
+        if not getattr(st, "tenant_config", None):
+            try:
+                from storage.tenant_store import get_tenant
+                st.tenant_config = get_tenant(tenant_id)
+            except Exception:
+                pass
+    if agent_key and not getattr(st, "agent_key", None):
+        st.agent_key = agent_key
+    if user_role and not getattr(st, "user_role", None):
+        st.user_role = user_role
+
+
+def _is_blocked(result: dict) -> bool:
+    """A guardrail result is a block if it says so by any signal the direct
+    REST responses use: safe=False, action=block, or a failing blocking
+    guardrail. (Matches /guardrails/* semantics; avoids defaulting to safe.)"""
+    if result.get("safe") is False:
+        return True
+    if result.get("action") == "block":
+        return True
+    return any(
+        (not g.get("passed", True)) and g.get("action") == "block"
+        for g in (result.get("guardrail_results") or [])
+    )
+
+
 async def _handle_tool_call(name: str, arguments: dict, request: Request) -> str:
-    """Execute an MCP tool call against Shield endpoints internally."""
+    """Execute an MCP tool call against Shield endpoints internally.
+
+    Delegates to the SAME handler functions the REST endpoints use, with tenant
+    context populated on request.state, so MCP and direct REST stay at parity.
+    """
     tenant_id, agent_key, user_role = _resolve_identity(request)
+    _populate_request_state(request, tenant_id, agent_key, user_role)
 
     if name == "shield_check_input":
         try:
             from api.routes_classify import classify
-            body = {"message": arguments["message"]}
-            result = await classify(request, body)
+            result = await classify(request, {"message": arguments["message"]})
         except Exception as e:
             return f"ERROR — input check failed: {e}"
-        safe = result.get("safe", True)
-        if safe:
+        if not _is_blocked(result):
             return "SAFE — all guardrails passed. Proceed with processing."
-        triggered = [g for g in result.get("guardrail_results", []) if not g.get("passed")]
+        triggered = [g for g in result.get("guardrail_results", []) if not g.get("passed", True)]
         names = [g.get("guardrail", "?") for g in triggered]
         reasons = [g.get("message", "") for g in triggered]
         return f"BLOCKED — triggered: {', '.join(names)}. Reasons: {'; '.join(reasons)}. Do NOT proceed."
@@ -236,77 +275,57 @@ async def _handle_tool_call(name: str, arguments: dict, request: Request) -> str
     elif name == "shield_check_output":
         try:
             from api.routes_classify_output import classify_output
-            body = {"output": arguments["output"]}
-            result = await classify_output(request, body)
+            result = await classify_output(request, {"output": arguments["output"]})
         except Exception as e:
             return f"ERROR — output check failed: {e}"
-        safe = result.get("safe", True)
         sanitized = result.get("sanitized_output")
-        if safe:
-            if sanitized and sanitized != arguments["output"]:
-                return f"SAFE (sanitized) — use this version:\n\n{sanitized}"
-            return "SAFE — output passed all guardrails."
-        return "BLOCKED — output violates guardrails. Do NOT return this to the user."
+        if _is_blocked(result):
+            return "BLOCKED — output violates guardrails. Do NOT return this to the user."
+        if sanitized and sanitized != arguments["output"]:
+            return f"SAFE (sanitized) — use this version:\n\n{sanitized}"
+        return "SAFE — output passed all guardrails."
 
     elif name == "shield_check_tool":
+        # Parity: delegate to the SAME full pipeline as /v1/shield/tool/check
+        # (RBAC + data-access + tool-call validation + kill switch + ...),
+        # not just the allowlist.
         try:
-            from storage.tool_killswitch import is_tool_disabled
-            from core.feature_flags import KILLSWITCH_ENABLED
-
-            tool_name = arguments["tool_name"]
-
-            if KILLSWITCH_ENABLED and tenant_id and is_tool_disabled(tenant_id, tool_name):
-                return f"BLOCKED — tool '{tool_name}' is disabled via kill switch. Do NOT execute."
-
-            from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
-            guard = ToolAllowlistGuardrail()
-            context = {
-                "tool_name": tool_name,
-                "agent_key": agent_key,
-                "user_role": arguments.get("user_role") or user_role or "developer",
-                "tenant_id": tenant_id,
-            }
-            result = await guard.check("", context)
-
-            # Record so MCP-driven tool checks show in the Guardrail Metrics /
-            # Board Report tabs (same store as /v1/shield/tool/check). Resolve the
-            # tenant from the API key if middleware didn't set it. Fire-and-forget.
-            try:
-                rec_tenant = tenant_id
-                if not rec_tenant:
-                    from storage.tenant_store import resolve_tenant_by_api_key
-                    rec_tenant = resolve_tenant_by_api_key(
-                        request.headers.get("X-API-Key", "").strip())
-                if rec_tenant:
-                    from storage.guardrail_metrics import record_results_batch
-                    record_results_batch(rec_tenant, [{
-                        "guardrail": result.guardrail_name,
-                        "passed": result.passed,
-                        "action": result.action,
-                        "latency_ms": getattr(result, "latency_ms", 0.0) or 0.0,
-                    }])
-            except Exception:
-                pass
-
-            if not result.passed and result.action == "block":
-                return f"BLOCKED — tool '{tool_name}': {result.message}. Do NOT execute."
-            return f"ALLOWED — tool '{tool_name}' is authorized. Proceed."
+            from api.routes_tool import check_tool, ToolCheckRequest
+            body = ToolCheckRequest(
+                agent_key=agent_key or "mcp-agent",
+                tool_name=arguments["tool_name"],
+                user_role=arguments.get("user_role") or user_role or None,
+                tool_params=arguments.get("arguments") or {},
+            )
+            result = await check_tool(body, request)
         except Exception as e:
             return f"ERROR — tool check failed: {e}"
+        tname = arguments["tool_name"]
+        if not result.get("allowed", True):
+            triggered = [g for g in result.get("guardrail_results", []) if not g.get("passed", True)]
+            reasons = "; ".join(g.get("message", "") for g in triggered) or "policy violation"
+            return f"BLOCKED — tool '{tname}': {reasons}. Do NOT execute."
+        return f"ALLOWED — tool '{tname}' is authorized. Proceed."
 
     elif name == "shield_sanitize_output":
+        # Parity: delegate to the SAME tool-output DLP as /v1/shield/tool/output
+        # (ToolOutputSanitizationGuardrail), not generic output classification.
         try:
-            from api.routes_classify_output import classify_output
-            body = {"output": arguments["output"], "tool_name": arguments["tool_name"]}
-            result = await classify_output(request, body)
-            sanitized = result.get("sanitized_output", arguments["output"])
-            if not result.get("safe", True):
-                return "BLOCKED — tool output violates data policy. Do NOT use."
-            if sanitized != arguments["output"]:
-                return f"SANITIZED — use this version:\n\n{sanitized}"
-            return "CLEAN — no sanitization needed."
+            from api.routes_tool import check_tool_output, ToolOutputRequest
+            body = ToolOutputRequest(
+                tool_name=arguments["tool_name"],
+                tool_output=arguments["output"],
+                agent_key=agent_key or None,
+            )
+            result = await check_tool_output(body, request)
         except Exception as e:
             return f"ERROR — output sanitization failed: {e}"
+        if not result.get("allowed", True):
+            return "BLOCKED — tool output violates data policy. Do NOT use."
+        sanitized = result.get("sanitized_output")
+        if sanitized is not None and sanitized != arguments["output"]:
+            return f"SANITIZED — use this version:\n\n{sanitized}"
+        return "CLEAN — no sanitization needed."
 
     elif name == "shield_disable_tool":
         try:
