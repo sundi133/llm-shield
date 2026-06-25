@@ -33,7 +33,9 @@ def test_wrong_plural_path_does_not_exist():
 
 def _fake_request(tenant_id=""):
     state = types.SimpleNamespace(tenant_id=tenant_id, agent_key="mcp-agent")
-    return types.SimpleNamespace(state=state)
+    # shield_check_tool now delegates to the full /v1/shield/tool/check handler,
+    # which reads request.headers and request.client — provide them.
+    return types.SimpleNamespace(state=state, headers={}, client=None)
 
 
 def test_shield_check_tool_returns_decision_not_import_error():
