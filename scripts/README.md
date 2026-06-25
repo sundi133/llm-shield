@@ -57,6 +57,17 @@ Deploy readiness (`/health`, `/v1/openapi/*`), MCP `initialize` / `tools/list` /
 SHIELD_URL=… TENANT_KEY=… RUNPOD_TOKEN=… python3 scripts/mcp_e2e_test.py
 ```
 
+### `mcp_parity_smoke.sh` — MCP-vs-direct-REST parity (HR QA findings)
+Paired checks: for each scenario (off-topic input, SSN output, external-recipient
+tool call, sensitive tool-output DLP, + a benign control) it calls BOTH the MCP
+tool and the matching REST endpoint and asserts they agree. Use a tenant that has
+the relevant guardrail/data policies. Exits non-zero on any mismatch.
+```bash
+SHIELD_URL=$RUNPOD_HOST TENANT_KEY=… RUNPOD_TOKEN=… \
+  [DIR_AGENT=people-directory-agent OPS_AGENT=people-ops-agent] \
+  ./scripts/mcp_parity_smoke.sh
+```
+
 ### `verify_cap_authz.py` — capability authorization verifier
 Asserts the cap-authz Pass Criteria (registered-agent gating, cross-agent and
 rogue-agent denial) against a live tenant, using two registered agents that own
