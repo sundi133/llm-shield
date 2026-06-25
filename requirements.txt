@@ -16,3 +16,4 @@ pytest
 pytest-asyncio
 cryptography>=42
 PyJWT[crypto]>=2.8
+python-multipart
