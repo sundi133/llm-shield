@@ -184,7 +184,12 @@ def _build_items(tenant_id: str) -> list[dict]:
         used = activity.get(aid, {}).get("tools", set())
         tools = [{
             "tool": t,
-            "recommendation": "revoke" if t not in used else "keep",  # unused grant → suggest revoke
+            # "review" (not "revoke") for no recent activity: a bounded usage
+            # window means "not seen lately", not "provably dead" — surface it
+            # for human review rather than overstating confidence. (A hard
+            # "revoke" recommendation is reserved for unused-over-a-real-window,
+            # which needs longer-retention usage — roadmap.)
+            "recommendation": "review" if t not in used else "keep",
             "decision": "pending", "reviewer": None, "decided_at": None, "note": None,
         } for t in granted]
         for t in sorted(used - set(granted)):  # drift: used but not granted — informational

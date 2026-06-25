@@ -102,10 +102,11 @@ def test_create_review_snapshots_with_recommendations(client):
     assert c["status"] == "open"
     billing = next(i for i in c["items"] if i["agent_id"] == "billing-agent")
     recs = {t["tool"]: t["recommendation"] for t in billing["tools"]}
-    # used → keep; unused grants → revoke; used-but-not-granted → investigate
+    # used → keep; no recent activity → review (not a hard revoke);
+    # used-but-not-granted → investigate
     assert recs["get_invoice"] == "keep"
-    assert recs["send_email"] == "revoke"
-    assert recs["refund"] == "revoke"
+    assert recs["send_email"] == "review"
+    assert recs["refund"] == "review"
     assert recs["wire_transfer"] == "investigate"
     # progress excludes the informational 'investigate' row (3 decidable tools)
     assert c["progress"]["total"] == 3 and c["progress"]["decided"] == 0
