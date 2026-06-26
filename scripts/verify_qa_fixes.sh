@@ -11,6 +11,10 @@
 #   export TENANT_ID="hr-helpdesk-agent"              # optional (scoping assert)
 #   export MASTER_KEY="<global/master key>"           # optional (admin checks)
 #   export AGENT_KEY="people-directory-agent"         # optional
+#   export PROXY_BEARER="<RunPod proxy token>"        # optional: sent as
+#                                                     #   Authorization: Bearer
+#                                                     #   for hosts behind a
+#                                                     #   RunPod/Cloudflare proxy
 #   bash scripts/verify_qa_fixes.sh
 #
 # Exit code: 0 if all hard checks PASS, 1 if any FAIL. WARNs do not fail.
@@ -22,6 +26,13 @@ TENANT_KEY="${TENANT_KEY:-}"
 TENANT_ID="${TENANT_ID:-hr-helpdesk-agent}"
 MASTER_KEY="${MASTER_KEY:-}"
 AGENT_KEY="${AGENT_KEY:-people-directory-agent}"
+PROXY_BEARER="${PROXY_BEARER:-}"
+
+# When the data plane sits behind a RunPod/Cloudflare proxy, every request must
+# carry Authorization: Bearer <proxy token> or the proxy returns 401 before the
+# request reaches Shield. Apply it to all calls when set.
+PROXY_HDR=()
+[ -n "$PROXY_BEARER" ] && PROXY_HDR=(-H "Authorization: Bearer $PROXY_BEARER")
 
 # --- prereqs --------------------------------------------------------------
 for bin in curl jq; do
@@ -38,9 +49,9 @@ warn() { printf "  \033[33mWARN\033[0m  %s\n" "$1"; WARN=$((WARN+1)); }
 hdr()  { printf "\n\033[1m%s\033[0m\n" "$1"; }
 
 # GET status code only
-code() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
+code() { curl -s -o /dev/null -w "%{http_code}" "${PROXY_HDR[@]}" "$@"; }
 # GET/POST returning "<body>\n<code>"
-call() { curl -s -w $'\n%{http_code}' "$@"; }
+call() { curl -s -w $'\n%{http_code}' "${PROXY_HDR[@]}" "$@"; }
 body() { sed '$d' <<<"$1"; }
 status(){ tail -n1 <<<"$1"; }
 
