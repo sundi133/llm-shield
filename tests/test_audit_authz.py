@@ -55,15 +55,31 @@ def test_scope_master_key_returns_none_global():
         assert routes_audit._resolve_audit_scope(req) is None
 
 
-def test_scope_auth_disabled_allows_global():
+def test_scope_auth_disabled_no_identity_rejected(monkeypatch):
+    """Global audit must NOT be served to an unidentified caller even when the
+    global auth middleware is disabled (e.g. auth delegated to a proxy)."""
+    from fastapi import HTTPException
+
+    monkeypatch.delenv("SHIELD_ADMIN_KEY", raising=False)
     req = _FakeRequest()
+    with patch("config.schema.config", _Cfg(enabled=False, api_keys=[])):
+        with pytest.raises(HTTPException) as exc:
+            routes_audit._resolve_audit_scope(req)
+        assert exc.value.status_code == 401
+
+
+def test_scope_admin_key_allows_global(monkeypatch):
+    """A valid X-Admin-Key grants the global view even with auth disabled."""
+    monkeypatch.setenv("SHIELD_ADMIN_KEY", "super-admin")
+    req = _FakeRequest(headers={"X-Admin-Key": "super-admin"})
     with patch("config.schema.config", _Cfg(enabled=False, api_keys=[])):
         assert routes_audit._resolve_audit_scope(req) is None
 
 
-def test_scope_no_key_rejected():
+def test_scope_no_key_rejected(monkeypatch):
     from fastapi import HTTPException
 
+    monkeypatch.delenv("SHIELD_ADMIN_KEY", raising=False)
     req = _FakeRequest()
     with patch("config.schema.config", _Cfg(enabled=True, api_keys=["master-key"])):
         with pytest.raises(HTTPException) as exc:
@@ -71,9 +87,10 @@ def test_scope_no_key_rejected():
         assert exc.value.status_code == 401
 
 
-def test_scope_invalid_key_rejected():
+def test_scope_invalid_key_rejected(monkeypatch):
     from fastapi import HTTPException
 
+    monkeypatch.delenv("SHIELD_ADMIN_KEY", raising=False)
     req = _FakeRequest(headers={"X-API-Key": "not-the-key"})
     with patch("config.schema.config", _Cfg(enabled=True, api_keys=["master-key"])):
         with pytest.raises(HTTPException) as exc:
