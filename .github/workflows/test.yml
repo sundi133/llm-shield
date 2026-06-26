@@ -33,3 +33,16 @@ jobs:
         # `python -m pytest` puts the repo root on sys.path so the top-level
         # packages (core/, api/, storage/) import without a src layout.
         run: python -m pytest tests -q
+
+  extension:
+    name: extension (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Validate manifest + run edge engine tests
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"
+          node --test extension/test/*.mjs
