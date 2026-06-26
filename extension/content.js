@@ -50,7 +50,12 @@
     const r = (globalThis.ShieldRules || {}).evaluate ? globalThis.ShieldRules.evaluate(text, bundle || {}) : { decision: "allow" };
     if (r.decision === "block") { overlay("Blocked — sensitive content: " + r.reasons.join(", ")); return; }
     if (r.decision === "redact") { writeText(el, r.redacted); overlay("Redacted sensitive data — review, then press Enter to send."); return; }
-    if (flags.escalate) {
+    // T1 — local heuristic classifier (injection / secrets) before the server hop
+    const t1 = (globalThis.ShieldClassifier || {}).classify
+      ? globalThis.ShieldClassifier.classify(text) : { label: "clean" };
+    if (t1.label === "malicious") { overlay("Blocked — " + (t1.reasons.join(", ") || "high-risk prompt")); return; }
+    const mustEscalate = flags.escalate || t1.label === "suspicious";
+    if (mustEscalate) {
       overlay("Checking with Shield…", true);
       const e = await chrome.runtime.sendMessage({ type: "escalate", text }).catch(() => ({}));
       hide();
