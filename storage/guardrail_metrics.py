@@ -33,6 +33,134 @@ def _get_redis():
     return _gr()
 
 
+# Max hashes per pipeline round-trip. Keeps a single request bounded while
+# still collapsing hundreds of per-day reads into a few calls.
+_BATCH_CHUNK = 200
+
+
+def _decode_hash(data: dict) -> dict:
+    """Normalize a hash dict to str keys/values (redis-py may return bytes)."""
+    if data and isinstance(next(iter(data.keys())), bytes):
+        return {
+            k.decode(): (v.decode() if isinstance(v, bytes) else v)
+            for k, v in data.items()
+        }
+    return data or {}
+
+
+def _batch_hgetall(r, keys: list[str]) -> dict:
+    """Fetch many hashes with as few round-trips as possible.
+
+    Uses the client's pipeline when available — ``.execute()`` on redis-py,
+    ``.exec()`` on the Upstash REST client — and **falls back to sequential
+    ``hgetall`` on ANY deviation** (no pipeline support, wrong result shape,
+    or an error). The fallback is byte-for-byte the prior behavior, so values
+    are always correct; only latency improves when pipelining is available.
+
+    This is why correctness can't regress: the in-memory FakeRedis used in
+    tests raises on ``pipeline()`` and simply takes the sequential path.
+    """
+    out: dict = {}
+    for start in range(0, len(keys), _BATCH_CHUNK):
+        chunk = keys[start:start + _BATCH_CHUNK]
+        out.update(_hgetall_chunk(r, chunk))
+    return out
+
+
+def _hgetall_chunk(r, chunk: list[str]) -> dict:
+    if not chunk:
+        return {}
+    try:
+        pipe = r.pipeline()
+        for k in chunk:
+            pipe.hgetall(k)
+        if hasattr(pipe, "execute"):       # redis-py
+            results = pipe.execute()
+        elif hasattr(pipe, "exec"):        # upstash_redis REST client
+            results = pipe.exec()
+        else:
+            raise AttributeError("pipeline has no executor")
+        if not isinstance(results, list) or len(results) != len(chunk):
+            raise ValueError("unexpected pipeline result shape")
+        return {k: (results[i] or {}) for i, k in enumerate(chunk)}
+    except Exception:
+        # Fallback: identical to the original per-key sequential reads.
+        out: dict = {}
+        for k in chunk:
+            try:
+                out[k] = r.hgetall(k) or {}
+            except Exception:
+                out[k] = {}
+        return out
+
+
+def _compute_effectiveness(guardrail_name: str, days: int, dated_data: list) -> dict:
+    """Aggregate per-day hashes into the effectiveness summary.
+
+    ``dated_data`` is a list of ``(date_str, raw_hash)`` in i=0..days-1 order
+    (today first), exactly as the prior per-day loop produced. This is the
+    single source of truth for the math so the single-guardrail and all-guardrail
+    paths return identical values.
+    """
+    totals = {"total": 0, "passed": 0, "blocked": 0, "warned": 0, "logged": 0}
+    latency_sum = 0.0
+    latency_count = 0
+    daily = []
+
+    for date, raw in dated_data:
+        data = _decode_hash(raw)
+        if not data:
+            continue
+        day_total = int(data.get("total", 0))
+        day_passed = int(data.get("passed", 0))
+        day_blocked = int(data.get("blocked", 0))
+        day_warned = int(data.get("warned", 0))
+        day_logged = int(data.get("logged", 0))
+
+        totals["total"] += day_total
+        totals["passed"] += day_passed
+        totals["blocked"] += day_blocked
+        totals["warned"] += day_warned
+        totals["logged"] += day_logged
+
+        latency_sum += float(data.get("latency_sum_ms", 0))
+        latency_count += int(data.get("latency_count", 0))
+
+        daily.append({
+            "date": date,
+            "total": day_total,
+            "passed": day_passed,
+            "blocked": day_blocked,
+            "warned": day_warned,
+            "logged": day_logged,
+        })
+
+    daily.reverse()  # oldest first
+
+    t = totals["total"] or 1
+    avg_lat = latency_sum / latency_count if latency_count else 0.0
+
+    trend = "stable"
+    if len(daily) >= 14:
+        recent = sum(d["blocked"] for d in daily[-7:])
+        previous = sum(d["blocked"] for d in daily[-14:-7])
+        if recent > previous * 1.2:
+            trend = "up"
+        elif recent < previous * 0.8:
+            trend = "down"
+
+    return {
+        "guardrail": guardrail_name,
+        "days": days,
+        **totals,
+        "pass_rate": round(totals["passed"] / t, 4),
+        "block_rate": round(totals["blocked"] / t, 4),
+        "avg_latency_ms": round(avg_lat, 2),
+        "daily": daily,
+        "trend": trend,
+    }
+
+
 def record_result(
     tenant_id: str,
     guardrail_name: str,
@@ -116,75 +244,14 @@ def get_effectiveness(
                 "pass_rate": 0.0, "block_rate": 0.0, "avg_latency_ms": 0.0,
                 "daily": [], "trend": "stable"}
 
-    totals = {"total": 0, "passed": 0, "blocked": 0, "warned": 0, "logged": 0}
-    latency_sum = 0.0
-    latency_count = 0
-    daily = []
-
-    for i in range(days):
-        date = (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
-        key = _key(tenant_id, guardrail_name, date)
-        try:
-            data = r.hgetall(key)
-            if not data:
-                continue
-            # Decode bytes if needed
-            if isinstance(list(data.keys())[0], bytes):
-                data = {k.decode(): v.decode() if isinstance(v, bytes) else v for k, v in data.items()}
-
-            day_total = int(data.get("total", 0))
-            day_passed = int(data.get("passed", 0))
-            day_blocked = int(data.get("blocked", 0))
-            day_warned = int(data.get("warned", 0))
-            day_logged = int(data.get("logged", 0))
-
-            totals["total"] += day_total
-            totals["passed"] += day_passed
-            totals["blocked"] += day_blocked
-            totals["warned"] += day_warned
-            totals["logged"] += day_logged
-
-            ls = float(data.get("latency_sum_ms", 0))
-            lc = int(data.get("latency_count", 0))
-            latency_sum += ls
-            latency_count += lc
-
-            daily.append({
-                "date": date,
-                "total": day_total,
-                "passed": day_passed,
-                "blocked": day_blocked,
-                "warned": day_warned,
-                "logged": day_logged,
-            })
-        except Exception:
-            continue
-
-    daily.reverse()  # oldest first
-
-    t = totals["total"] or 1
-    avg_lat = latency_sum / latency_count if latency_count else 0.0
-
-    # Trend: compare last 7 days block rate vs previous 7 days
-    trend = "stable"
-    if len(daily) >= 14:
-        recent = sum(d["blocked"] for d in daily[-7:])
-        previous = sum(d["blocked"] for d in daily[-14:-7])
-        if recent > previous * 1.2:
-            trend = "up"
-        elif recent < previous * 0.8:
-            trend = "down"
-
-    return {
-        "guardrail": guardrail_name,
-        "days": days,
-        **totals,
-        "pass_rate": round(totals["passed"] / t, 4),
-        "block_rate": round(totals["blocked"] / t, 4),
-        "avg_latency_ms": round(avg_lat, 2),
-        "daily": daily,
-        "trend": trend,
-    }
+    dates = [
+        (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
+        for i in range(days)
+    ]
+    keys = [_key(tenant_id, guardrail_name, d) for d in dates]
+    fetched = _batch_hgetall(r, keys)
+    dated_data = [(dates[i], fetched.get(keys[i], {})) for i in range(days)]
+    return _compute_effectiveness(guardrail_name, days, dated_data)
 
 
 def get_all_guardrails_summary(
@@ -221,9 +288,30 @@ def get_all_guardrails_summary(
         logger.debug(f"guardrail_metrics scan failed: {e}")
         return []
 
+    if not guardrail_names:
+        return []
+
+    # Build every (guardrail, day) key once and fetch them in a single batched
+    # read instead of guardrails x days sequential round-trips. The previous
+    # per-guardrail get_effectiveness loop did one hgetall per day per guardrail
+    # (e.g. 22 x 30 = ~660 calls), which exceeded the upstream proxy timeout for
+    # tenants with many guardrails. Values are unchanged — same _compute path.
+    dates = [
+        (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
+        for i in range(days)
+    ]
+    keys_by_name = {
+        name: [_key(tenant_id, name, d) for d in dates]
+        for name in guardrail_names
+    }
+    all_keys = [k for ks in keys_by_name.values() for k in ks]
+    fetched = _batch_hgetall(r, all_keys)
+
     results = []
     for name in guardrail_names:
-        eff = get_effectiveness(tenant_id, name, days=days)
+        ks = keys_by_name[name]
+        dated_data = [(dates[i], fetched.get(ks[i], {})) for i in range(days)]
+        eff = _compute_effectiveness(name, days, dated_data)
         if eff["total"] > 0:
             results.append({
                 "guardrail": name,
