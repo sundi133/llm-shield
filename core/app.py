@@ -43,6 +43,7 @@ from api.routes_agent_policy import router as agent_policy_router
 from api.routes_data_policies import router as data_policies_router
 from api.routes_agents_registry import router as agents_registry_router
 from api.routes_governance import router as governance_router
+from api.routes_edge import router as edge_router
 from api.routes_rbac_test import router as rbac_test_router
 from api.routes_agent_chat import router as agent_chat_router
 from api.routes_killswitch import router as killswitch_router
@@ -122,6 +123,7 @@ def create_app() -> FastAPI:
     app.include_router(data_policies_router)
     app.include_router(agents_registry_router)
     app.include_router(governance_router)
+    app.include_router(edge_router)
     app.include_router(rbac_test_router)
     app.include_router(agent_chat_router)
     app.include_router(killswitch_router)

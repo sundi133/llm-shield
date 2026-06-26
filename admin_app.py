@@ -52,6 +52,13 @@ except Exception as _gov_import_err:  # optional module — never crash-loop the
     import logging as _logging
     _logging.getLogger("admin_app").warning(
         "governance routes unavailable: %s", _gov_import_err)
+try:
+    from api.routes_edge import router as edge_router
+except Exception as _edge_import_err:  # optional module — never crash-loop the portal
+    edge_router = None
+    import logging as _logging
+    _logging.getLogger("admin_app").warning(
+        "edge routes unavailable: %s", _edge_import_err)
 from api.routes_data_policies import router as data_policies_router
 from api.routes_agentic_control_plane import router as agentic_control_plane_router
 from api.routes_guardrail_metrics import router as guardrail_metrics_router
@@ -1063,6 +1070,8 @@ def create_admin_app() -> FastAPI:
     app.include_router(agents_registry_router)  # /v1/agents/* (registry, roles, tool policies)
     if governance_router is not None:
         app.include_router(governance_router)   # /v1/governance/* (inventory, used-vs-granted, reviews)
+    if edge_router is not None:
+        app.include_router(edge_router)         # /v1/edge/policy-bundle (edge fast-path rules)
     app.include_router(data_policies_router)    # /v1/data-policies/*
     app.include_router(agentic_control_plane_router)  # /v1/tenant/me/agentic/*
     app.include_router(guardrail_metrics_router)       # /v1/tenant/me/guardrails/metrics
