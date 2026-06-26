@@ -26,6 +26,7 @@ from api.routes_classify import router as classify_router
 from api.routes_gateway import router as gateway_router
 from api.routes_config import router as config_router
 from api.routes_audit import router as audit_router
+from api.routes_guardrail_metrics import router as guardrail_metrics_router
 from api.routes_mcp import router as mcp_router
 from api.routes_action import router as action_router
 from api.routes_topic import router as topic_router
@@ -106,6 +107,10 @@ def create_app() -> FastAPI:
     app.include_router(gateway_router)
     app.include_router(config_router)
     app.include_router(audit_router)
+    # Guardrail effectiveness metrics — also mounted on the admin plane. The data
+    # plane (this app) must serve it too, else portal/CLI metrics calls against
+    # the data-plane host 404 (QA tel-004). Read-only, off the guard path.
+    app.include_router(guardrail_metrics_router)
     app.include_router(mcp_router)
     app.include_router(action_router)
     app.include_router(tool_router)
