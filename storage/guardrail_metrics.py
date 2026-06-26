@@ -74,10 +74,14 @@ def _hgetall_chunk(r, chunk: list[str]) -> dict:
         pipe = r.pipeline()
         for k in chunk:
             pipe.hgetall(k)
-        if hasattr(pipe, "execute"):       # redis-py
-            results = pipe.execute()
-        elif hasattr(pipe, "exec"):        # upstash_redis REST client
+        # IMPORTANT ordering: the upstash_redis Pipeline exposes BOTH .exec()
+        # (run the batch -> list) and .execute(command) (queue one command ->
+        # Pipeline). Calling .execute() with no args raises, so prefer .exec().
+        # redis-py has only .execute() and no .exec(), so it falls through.
+        if hasattr(pipe, "exec"):          # upstash_redis REST client
             results = pipe.exec()
+        elif hasattr(pipe, "execute"):     # redis-py
+            results = pipe.execute()
         else:
             raise AttributeError("pipeline has no executor")
         if not isinstance(results, list) or len(results) != len(chunk):
