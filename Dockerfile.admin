@@ -58,6 +58,7 @@ COPY api/routes_tenant.py api/
 COPY api/routes_tenant_self.py api/
 COPY api/routes_agents_registry.py api/
 COPY api/routes_governance.py api/
+COPY api/routes_edge.py api/
 COPY api/routes_custom_policies.py api/
 COPY api/routes_data_policies.py api/
 COPY api/routes_audit.py api/
