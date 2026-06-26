@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Votal Shield — settings</title>
+  <style>
+    body { font: 14px/1.5 system-ui; max-width: 540px; margin: 24px auto; color: #1f2733; }
+    h1 { font-size: 18px; color: #16213e; }
+    label { display: block; margin: 12px 0 4px; font-weight: 600; }
+    input[type=text], input[type=password] { width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; }
+    .row { margin: 12px 0; }
+    .muted { color: #5b6675; font-size: 12px; }
+    button { margin-top: 16px; background: #16213e; color: #fff; border: 0; padding: 9px 16px; border-radius: 8px; cursor: pointer; }
+    #status { margin-left: 10px; color: #1e7a52; }
+  </style>
+</head>
+<body>
+  <h1>🛡️ Votal Shield — AI Guardrails</h1>
+  <p class="muted">Checks prompts against your tenant policy before they reach web AI tools. Rules run locally (offline); ambiguous prompts are escalated to Shield.</p>
+
+  <label>Shield data-plane URL</label>
+  <input id="shieldUrl" type="text" placeholder="https://&lt;your-data-plane-host&gt;" />
+
+  <label>Tenant API key</label>
+  <input id="tenantKey" type="password" placeholder="X-API-Key" />
+
+  <label>Proxy bearer (optional, if behind a proxy)</label>
+  <input id="proxyToken" type="password" placeholder="RUNPOD_TOKEN / Authorization Bearer" />
+
+  <div class="row"><label><input id="escalate" type="checkbox" /> Escalate locally-clean prompts to Shield (server is source of truth)</label></div>
+  <div class="row"><label><input id="enabled" type="checkbox" /> Extension enabled</label></div>
+
+  <button id="save">Save</button><span id="status"></span>
+  <script src="options.js"></script>
+</body>
+</html>

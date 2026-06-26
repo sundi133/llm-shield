@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Votal Shield — AI Guardrails",
+  "version": "0.1.0",
+  "description": "Block or redact sensitive prompts before they reach web AI tools; escalate ambiguous cases to Shield.",
+  "permissions": ["storage"],
+  "optional_host_permissions": ["https://*/*"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://claude.ai/*",
+    "https://m365.cloud.microsoft/*",
+    "https://copilot.microsoft.com/*",
+    "https://www.perplexity.ai/*"
+  ],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "options_page": "options.html",
+  "action": { "default_title": "Votal Shield" },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://claude.ai/*",
+        "https://m365.cloud.microsoft/*",
+        "https://copilot.microsoft.com/*",
+        "https://www.perplexity.ai/*"
+      ],
+      "js": ["rules.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}
