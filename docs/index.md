@@ -89,6 +89,7 @@ permalink: /
 | Use your existing IdP (Okta / Entra / Google) | [Identity Provider Interoperability]({{ "/idp-interoperability/" | relative_url }}) |
 | Add guardrails at your AI gateway (LiteLLM / Portkey / Kong) | [AI Gateway & Proxy Interoperability]({{ "/ai-gateway-interoperability/" | relative_url }}) |
 | Stop data leaking into web AI (ChatGPT / Gemini / Claude) | [Edge Fast-Path (Browser DLP)]({{ "/edge-fast-path/" | relative_url }}) |
+| Enforce MCP tool allowlists at runtime (not just client-side) | [MCP Runtime Enforcement]({{ "/mcp-runtime-enforcement/" | relative_url }}) |
 | Plan an enterprise rollout / cover agents you didn't build | [Enterprise Integration Architecture]({{ "/enterprise-integration-architecture/" | relative_url }}) |
 | Build a feature the right way (spec-first) | [Spec Template (how we build)]({{ "/spec-template/" | relative_url }}) |
 | Map to NIST / OWASP / ISO controls | [Compliance Mapping]({{ "/compliance-mapping/" | relative_url }}) |
