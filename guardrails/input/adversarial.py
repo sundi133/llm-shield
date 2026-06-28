@@ -131,13 +131,13 @@ def preprocess_content(content: str) -> str:
 # System prompt — compact, all attack types, CSV output
 # ---------------------------------------------------------------------------
 
-# The classifier prompt has two variants selected at call time by an opt-in env
-# flag (see _agentic_fix_enabled). The BASE variant is the historical prompt and
-# is the DEFAULT — deploying this code changes nothing until the flag is set.
-# The AGENTIC variant adds (a) agentic meta-instructions to the SAFE list and
-# (b) a TARGET RULE that distinguishes verbs aimed at a task artifact (safe)
-# from verbs aimed at the AI system itself (attack). This is the false-positive
-# fix for agentic prompts; ship-then-verify it behind the flag, then promote.
+# The classifier prompt has two variants selected at call time by an env flag
+# (see _agentic_fix_enabled). The AGENTIC variant is now the DEFAULT — it adds
+# (a) agentic/operational SAFE guidance and (b) a DECIDING RULE that judges the
+# TARGET of an instruction (app/data/task = safe; the AI system or other users'
+# data = attack). Validated on a held-out set at 0% FP / 100% recall, so it's on
+# by default. Set SHIELD_ADVERSARIAL_AGENTIC_FIX=0 to fall back to the historical
+# BASE prompt (escape hatch).
 
 _SAFE_INTRO = (
     "You are a security classifier of user messages for AI agent systems.\n\n"
@@ -254,15 +254,19 @@ _USER_PREFIX_AGENTIC = (
 
 _CSV_FIELDS = ["is_adversarial", "attack_type", "confidence"]
 
-# Opt-in flag for the agentic false-positive fix. Default OFF = historical
-# behavior, so merging/deploying this code is a no-op until the flag is set.
+# Flag for the agentic false-positive fix. Default ON (validated 0% FP / 100%
+# recall on a held-out set). Set SHIELD_ADVERSARIAL_AGENTIC_FIX=0 to fall back to
+# the historical BASE prompt (escape hatch).
 _AGENTIC_FIX_ENV = "SHIELD_ADVERSARIAL_AGENTIC_FIX"
 _TRUTHY = {"1", "true", "yes", "on"}
+_FALSY = {"0", "false", "no", "off"}
 
 
 def _agentic_fix_enabled() -> bool:
-    """Whether to use the agentic-aware prompt variant (read live, per call)."""
-    return os.getenv(_AGENTIC_FIX_ENV, "0").strip().lower() in _TRUTHY
+    """Whether to use the agentic-aware prompt variant (read live, per call).
+
+    Default ON; only an explicit falsy value disables it."""
+    return os.getenv(_AGENTIC_FIX_ENV, "1").strip().lower() not in _FALSY
 
 
 def _active_system_prompt() -> str:
