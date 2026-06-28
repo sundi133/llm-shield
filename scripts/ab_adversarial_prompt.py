@@ -36,8 +36,12 @@ if ROOT not in sys.path:
 
 # Point the LLM backend at local vLLM unless the caller overrode it.
 os.environ.setdefault("LLM_BACKEND_URL", "http://127.0.0.1:8000")
+# Default to the agentic fix ON — the whole point of this harness is to test the
+# new prompt. Override with SHIELD_ADVERSARIAL_AGENTIC_FIX=0 to get the baseline.
+os.environ.setdefault("SHIELD_ADVERSARIAL_AGENTIC_FIX", "1")
 
 from guardrails.input.adversarial import AdversarialGuardrail  # noqa: E402
+from guardrails.input import adversarial as _adv  # noqa: E402
 
 
 def _load_corpus():
@@ -60,8 +64,9 @@ def percentile(values, p):
 async def main():
     corpus = _load_corpus()
     g = AdversarialGuardrail()
-    print(f"backend = {os.environ['LLM_BACKEND_URL']}  |  prompt = working tree "
-          f"(guardrails/input/adversarial.py)\n")
+    mode = "AGENTIC-FIX (new)" if _adv._agentic_fix_enabled() else "BASE (baseline)"
+    print(f"backend = {os.environ['LLM_BACKEND_URL']}  |  prompt = {mode}  "
+          f"(SHIELD_ADVERSARIAL_AGENTIC_FIX={os.environ.get('SHIELD_ADVERSARIAL_AGENTIC_FIX','0')})\n")
 
     benign_total = benign_fp = attack_total = attack_miss = 0
     fps = []

@@ -27,6 +27,7 @@ from guardrails.agentic.tool.tool_output_sanitization import ToolOutputSanitizat
 from guardrails.agentic.tool.tool_use_control import ToolUseControlGuardrail
 from guardrails.agentic.tool.tool_call_rate_limiting import ToolCallRateLimitingGuardrail
 from guardrails.agentic.tool.sensitive_action_confirmation import SensitiveActionConfirmationGuardrail
+from guardrails.agentic.tool.indirect_injection_detection import IndirectInjectionGuardrail
 from guardrails.base import _request_configs
 from core import policy_mode
 from core.risk import score_tool
@@ -219,10 +220,25 @@ async def sanitize_tool_result(
     }
     r = await guard.check("", context)
     sanitized = (r.details or {}).get("sanitized_output", output)
+    blocked = (not r.passed and r.action == "block")
+
+    # Provenance-aware indirect-injection scan on the INGESTED tool result
+    # (opt-in via SHIELD_INDIRECT_INJECTION_SCAN; monitor-first, deterministic).
+    # Records detections so the real false-positive rate can be observed before
+    # SHIELD_INDIRECT_INJECTION_BLOCK is enabled; only replaces output on block.
+    inj = IndirectInjectionGuardrail()
+    if inj.scan_enabled():
+        ir = await inj.check("", {**context, "content_source": "tool_result"})
+        if not (ir.passed and ir.action == "pass"):
+            _record_metrics(tenant_id, [_result_dict(ir)])
+            if not ir.passed and ir.action == "block":
+                sanitized = "[blocked: indirect prompt injection detected in tool output]"
+                blocked = True
+
     return {
         "sanitized_output": sanitized,
         "action": r.action,
-        "blocked": (not r.passed and r.action == "block"),
+        "blocked": blocked,
     }
 
 
