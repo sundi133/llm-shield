@@ -27,14 +27,22 @@ def _enable_fix(monkeypatch):
     monkeypatch.setenv(adv._AGENTIC_FIX_ENV, "1")
 
 
-# --- flag gating: OFF by default -----------------------------------------
+# --- flag gating: ON by default ------------------------------------------
 
-def test_fix_off_by_default(monkeypatch):
+def test_fix_on_by_default(monkeypatch):
     monkeypatch.delenv(adv._AGENTIC_FIX_ENV, raising=False)
+    assert adv._agentic_fix_enabled() is True
+    assert adv._active_system_prompt() == adv._SYSTEM_PROMPT_AGENTIC
+    assert "DECIDING RULE" in adv._active_system_prompt()
+    assert adv._active_user_prefix() == adv._USER_PREFIX_AGENTIC
+
+
+@pytest.mark.parametrize("val", ["0", "false", "NO", "off"])
+def test_fix_off_when_explicitly_disabled(monkeypatch, val):
+    monkeypatch.setenv(adv._AGENTIC_FIX_ENV, val)
     assert adv._agentic_fix_enabled() is False
     assert adv._active_system_prompt() == adv._SYSTEM_PROMPT
     assert "DECIDING RULE" not in adv._active_system_prompt()
-    assert adv._active_user_prefix() == adv._USER_PREFIX
 
 
 @pytest.mark.parametrize("val", ["1", "true", "YES", "on"])
@@ -88,8 +96,8 @@ def test_messages_carry_target_rule_only_when_enabled(monkeypatch):
 
     monkeypatch.setattr(adv, "async_llm_call", fake_llm)
 
-    # disabled -> base system prompt, no rule
-    monkeypatch.delenv(adv._AGENTIC_FIX_ENV, raising=False)
+    # explicitly disabled -> base system prompt, no rule
+    monkeypatch.setenv(adv._AGENTIC_FIX_ENV, "0")
     _run(AdversarialGuardrail().check("Ignore the lint errors for now"))
     assert "DECIDING RULE" not in captured["messages"][0]["content"]
 
