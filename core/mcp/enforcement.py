@@ -16,6 +16,7 @@ may use) and risk-annotation of tool listings.
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from guardrails.agentic.rbac_guard import RBACGuard
@@ -23,10 +24,43 @@ from guardrails.agentic.data_access_guard import DataAccessGuard
 from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
 from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuardrail
 from guardrails.agentic.tool.tool_output_sanitization import ToolOutputSanitizationGuardrail
+from guardrails.agentic.tool.tool_use_control import ToolUseControlGuardrail
+from guardrails.agentic.tool.tool_call_rate_limiting import ToolCallRateLimitingGuardrail
+from guardrails.agentic.tool.sensitive_action_confirmation import SensitiveActionConfirmationGuardrail
 from guardrails.agentic.tool.indirect_injection_detection import IndirectInjectionGuardrail
 from guardrails.base import _request_configs
 from core import policy_mode
 from core.risk import score_tool
+
+_TRUTHY = {"1", "true", "yes", "on"}
+_MCP_PARITY_ENV = "SHIELD_MCP_TOOL_PARITY"
+
+
+def _mcp_parity_enabled() -> bool:
+    """Opt-in: run the FULL REST tool-call guard chain on the MCP path too.
+
+    Default off => the MCP path keeps its historical 4-guard behavior
+    (non-breaking). When on, the extra guards the REST path runs
+    (routes_tool._CHECK_GUARDS) are added so MCP and REST enforce identically.
+    """
+    return os.getenv(_MCP_PARITY_ENV, "0").strip().lower() in _TRUTHY
+
+
+def _tool_guard_chain() -> list:
+    """The ordered guard chain enforce_tool_call runs on a tools/call.
+
+    Base chain is the historical 4 guards. With SHIELD_MCP_TOOL_PARITY on, the
+    extra guards the REST path (routes_tool._CHECK_GUARDS) runs are appended so
+    an MCP-routed agent can't take a sensitive/destructive action without the
+    confirmation/rate-limit the REST path requires. Extracted as a helper so the
+    parity regression test can pin the set without driving Redis/policy.
+    """
+    guards = [RBACGuard(), DataAccessGuard(),
+              ToolAllowlistGuardrail(), ToolCallValidationGuardrail()]
+    if _mcp_parity_enabled():
+        guards += [ToolUseControlGuardrail(), ToolCallRateLimitingGuardrail(),
+                   SensitiveActionConfirmationGuardrail()]
+    return guards
 
 
 def _result_dict(r) -> dict:
@@ -114,11 +148,11 @@ async def enforce_tool_call(
         "X-User-Role": user_role,
     }
 
+    guards = _tool_guard_chain()
     token = _request_configs.set(configs) if configs else None
     results: list[dict] = []
     try:
-        for guard in (RBACGuard(), DataAccessGuard(),
-                      ToolAllowlistGuardrail(), ToolCallValidationGuardrail()):
+        for guard in guards:
             if not getattr(guard, "enabled", True):
                 continue
             r = await guard.check("", context)
