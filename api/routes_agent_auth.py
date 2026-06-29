@@ -386,6 +386,20 @@ def _resource_scope_default() -> bool:
         in ("1", "true", "yes", "on")
 
 
+def _enforce_cap_clearance() -> bool:
+    """Whether to enforce the clearance ceiling on the tenant-registry mint path.
+
+    Default OFF for backward compatibility (deep-idp-009): the registry path
+    historically never checked clearance_max, so registry agents that don't yet
+    declare a ceiling would otherwise be capped to 'public' and lose legitimate
+    higher-clearance mints. Operators opt in with SHIELD_ENFORCE_CAP_CLEARANCE=
+    true once their agent entries declare clearance_max.
+    """
+    import os
+    return os.environ.get("SHIELD_ENFORCE_CAP_CLEARANCE", "false").strip().lower() \
+        in ("1", "true", "yes", "on")
+
+
 def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
     """Compose the AuthZ verdict.
 
@@ -452,6 +466,20 @@ def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
                     reasons.append(
                         "resource scoping is required for this agent but no "
                         "allowed_resources are configured")
+
+                # Clearance ceiling (deep-idp-009). The non-registry path enforces
+                # this; the registry path historically did not, so a registry
+                # agent could mint a cap at ANY clearance. The agent's ceiling
+                # comes from its registry entry's clearance_max (default 'public').
+                if allowed and _enforce_cap_clearance():
+                    from core.rbac import _CLEARANCE_LEVELS
+                    ceiling = agent_entry.get("clearance_max", "public")
+                    if (_CLEARANCE_LEVELS.get(body.clearance_max, 0)
+                            > _CLEARANCE_LEVELS.get(ceiling, 0)):
+                        allowed = False
+                        reasons.append(
+                            f"clearance_max '{body.clearance_max}' exceeds agent "
+                            f"clearance ceiling '{ceiling}'")
         return {
             "allowed": allowed,
             "reasons": reasons,
