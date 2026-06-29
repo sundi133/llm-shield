@@ -350,21 +350,18 @@ async def _handle_tool_call(name: str, arguments: dict, request: Request) -> str
 
 # ── Streamable HTTP transport (MCP 2025-03-26 spec) ──────────────────────
 
-@router.post("/message")
-async def mcp_message(request: Request):
-    """Handle MCP JSON-RPC messages over HTTP POST.
-
-    This is the Streamable HTTP transport — the recommended MCP transport.
-    Client sends JSON-RPC request, server responds with JSON-RPC response.
-    """
-    body = await request.json()
+async def _dispatch_mcp_message(body: dict, request: Request) -> dict:
+    """Handle ONE MCP JSON-RPC message; returns the response content dict."""
+    if not isinstance(body, dict):
+        return {"jsonrpc": "2.0", "id": None,
+                "error": {"code": -32600, "message": "Invalid Request"}}
     method = body.get("method", "")
     msg_id = body.get("id")
-    params = body.get("params", {})
+    params = body.get("params", {}) or {}
 
     if method == "initialize":
         base_url = _public_base_url(request)
-        return JSONResponse(content={
+        return {
             "jsonrpc": "2.0",
             "id": msg_id,
             "result": {
@@ -379,36 +376,53 @@ async def mcp_message(request: Request):
                     },
                 },
             },
-        })
-
+        }
     elif method == "notifications/initialized":
-        return JSONResponse(content={"jsonrpc": "2.0", "id": msg_id, "result": {}})
-
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
     elif method == "tools/list":
-        return JSONResponse(content={
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "result": {"tools": MCP_TOOLS},
-        })
-
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": MCP_TOOLS}}
     elif method == "tools/call":
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
         result_text = await _handle_tool_call(tool_name, arguments, request)
-        return JSONResponse(content={
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "result": {
-                "content": [{"type": "text", "text": result_text}],
-            },
-        })
-
+        return {"jsonrpc": "2.0", "id": msg_id,
+                "result": {"content": [{"type": "text", "text": result_text}]}}
     else:
-        return JSONResponse(content={
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "error": {"code": -32601, "message": f"Method not found: {method}"},
-        })
+        return {"jsonrpc": "2.0", "id": msg_id,
+                "error": {"code": -32601, "message": f"Method not found: {method}"}}
+
+
+@router.post("/message")
+async def mcp_message(request: Request):
+    """Handle MCP JSON-RPC messages over HTTP POST (Streamable HTTP transport).
+
+    Accepts a single JSON-RPC object OR a JSON-RPC batch (array). A batch is
+    processed per-message and returns an array of responses; a malformed request
+    or a failing sub-request yields a JSON-RPC error object rather than HTTP 500
+    (deep-mcp-005: a batch body previously crashed on body.get()).
+    """
+    body = await request.json()
+
+    if isinstance(body, list):
+        if not body:  # empty batch is invalid per JSON-RPC
+            return JSONResponse(content={"jsonrpc": "2.0", "id": None,
+                "error": {"code": -32600, "message": "Invalid Request: empty batch"}})
+        responses = []
+        for item in body:
+            try:
+                responses.append(await _dispatch_mcp_message(item, request))
+            except Exception as e:
+                responses.append({"jsonrpc": "2.0",
+                    "id": item.get("id") if isinstance(item, dict) else None,
+                    "error": {"code": -32603, "message": f"Internal error: {e}"}})
+        return JSONResponse(content=responses)
+
+    try:
+        return JSONResponse(content=await _dispatch_mcp_message(body, request))
+    except Exception as e:
+        return JSONResponse(content={"jsonrpc": "2.0",
+            "id": body.get("id") if isinstance(body, dict) else None,
+            "error": {"code": -32603, "message": f"Internal error: {e}"}})
 
 
 # ── SSE transport (legacy, for clients that don't support Streamable HTTP) ──
