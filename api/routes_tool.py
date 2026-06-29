@@ -104,6 +104,25 @@ def _cp_result(name: str, passed: bool, action: str, message: str, details: Opti
     }
 
 
+def _reconcile_agent_identity(header_agent: str, body_agent: str) -> "Optional[str]":
+    """Anti-spoof for the direct tool path (deep-rbac-009).
+
+    The MCP path derives the agent identity from the authenticated X-Agent-Key
+    header; the direct path historically trusted body.agent_key verbatim, so a
+    caller authenticated as agent A could put agent B in the body and borrow B's
+    tool permissions. If both are present and disagree, that's impersonation.
+    Returns an error message to block on, or None when there's no conflict
+    (header absent, body absent, or they match) to preserve single-source flows.
+    """
+    header_agent = (header_agent or "").strip()
+    body_agent = (body_agent or "").strip()
+    if header_agent and body_agent and header_agent != body_agent:
+        return (f"Agent identity mismatch: authenticated agent '{header_agent}' "
+                f"does not match body agent_key '{body_agent}'. The body "
+                f"agent_key cannot differ from the authenticated agent.")
+    return None
+
+
 def _emit_tool_check_telemetry(
     *,
     trace_id: str,
@@ -220,6 +239,34 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         or request.headers.get("X-User-Role")
         or request.headers.get("x-user-role")
     )
+
+    # Anti-spoof: the body agent_key may not impersonate a different authenticated
+    # agent (X-Agent-Key header). Mirrors the MCP path, which derives identity
+    # from the header. Closes deep-rbac-009 (direct/MCP parity).
+    _id_err = _reconcile_agent_identity(
+        request.headers.get("X-Agent-Key") or request.headers.get("x-agent-key") or "",
+        body.agent_key or "",
+    )
+    if _id_err:
+        results = [{
+            "guardrail": "agent_identity",
+            "passed": False,
+            "action": "block",
+            "message": _id_err,
+            "details": {
+                "header_agent": (request.headers.get("X-Agent-Key")
+                                 or request.headers.get("x-agent-key") or "").strip(),
+                "body_agent": body.agent_key,
+            },
+            "latency_ms": 0.0,
+        }]
+        if tenant_id:
+            log_decision(
+                tenant_id=tenant_id, action="block", guardrail="agent_identity",
+                agent_key=body.agent_key, tool_name=body.tool_name, user_role=user_role,
+                session_id=body.session_id, reason=_id_err, source_ip=source_ip,
+            )
+        return {"allowed": False, "action": "block", "guardrail_results": results}
 
     # Kill switch check — immediate block if tool is globally disabled (enterprise feature)
     if KILLSWITCH_ENABLED and tenant_id and is_tool_disabled(tenant_id, body.tool_name):
