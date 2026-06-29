@@ -65,17 +65,22 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
         policies_text = self._load_policies_text(tenant_id)
 
         try:
-            prompt = (
+            # Prefill optimization: the static instruction + the tenant policy
+            # text are stable across requests, so they go in the SYSTEM message
+            # (vLLM prefix-caches it); only the variable tool output goes in the
+            # user message. Same information, reordered so the policy block isn't
+            # re-prefilled on every call. (Stable-prefix-first; see APC.)
+            system_content = f"{_SYSTEM}\n\nData policies:\n{policies_text}"
+            user_content = (
                 f"Tool: {tool_name}\n"
                 f"User role: {user_role}\n\n"
-                f"Tool output:\n{tool_output[:4000]}\n\n"
-                f"Data policies:\n{policies_text}"
+                f"Tool output:\n{tool_output[:4000]}"
             )
 
             llm_response = await async_llm_call(
                 messages=[
-                    {"role": "system", "content": _SYSTEM},
-                    {"role": "user", "content": prompt},
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": user_content},
                 ],
                 max_tokens=60,
                 temperature=0,
