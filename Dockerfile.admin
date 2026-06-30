@@ -106,6 +106,7 @@ COPY guardrails/agentic/__init__.py guardrails/agentic/
 COPY guardrails/agentic/rbac_guard.py guardrails/agentic/
 COPY guardrails/agentic/data_access_guard.py guardrails/agentic/
 COPY guardrails/agentic/identity/ guardrails/agentic/identity/
+COPY guardrails/agentic/scope/ guardrails/agentic/scope/
 COPY guardrails/agentic/intent/ guardrails/agentic/intent/
 COPY guardrails/agentic/taint/ guardrails/agentic/taint/
 COPY guardrails/agentic/tool/ guardrails/agentic/tool/
