@@ -17,6 +17,8 @@ groups:
     items:
       - { title: Guardrails Catalog, url: /guardrails/ }
       - { title: Agentic Guardrails, url: /agentic-guardrails-guide/ }
+      - { title: Role-Based Access (RBAC), url: /rbac/ }
+      - { title: Tool Data Policies, url: /tool-data-policies/ }
       - { title: Policy Lifecycle, url: /policy-lifecycle/ }
       - { title: Compliance Mapping, url: /compliance-mapping/ }
 
