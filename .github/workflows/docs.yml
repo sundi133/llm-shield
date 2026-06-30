@@ -1,0 +1,62 @@
+name: Deploy docs to GitHub Pages
+
+# Build the Just-the-Docs site in docs/ with Jekyll 4 (the docs/Gemfile), then
+# publish to Pages. Replaces the legacy GitHub Pages branch build, which used
+# Jekyll 3.10 and could not run a modern just-the-docs theme.
+#
+# One-time setup: Settings -> Pages -> Build and deployment -> Source = GitHub
+# Actions. (Until that is set, the legacy Jekyll-3 build keeps running.)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel an in-flight deploy; queue instead.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: docs
+
+      - uses: actions/configure-pages@v5
+
+      - name: Build with Jekyll
+        working-directory: docs
+        env:
+          JEKYLL_ENV: production
+        # baseurl stays "" (custom domain docs.shield.votal.ai); the CNAME file
+        # in docs/ is copied into _site automatically.
+        run: bundle exec jekyll build --destination _site --trace
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
