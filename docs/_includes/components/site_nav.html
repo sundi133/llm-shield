@@ -1,0 +1,40 @@
+{%- comment -%}
+  OVERRIDE of just-the-docs components/site_nav.html.
+
+  Renders the sidebar from _data/navigation.yml as flat, caps-header groups
+  (Pepper-SAST style) instead of the theme's auto-generated nav_order tree.
+  Reuses the theme's nav-list / nav-list-item / nav-list-link classes so links
+  keep their styling; the caps group label is a non-link .nav-category styled in
+  _sass/custom/custom.scss. Active state is set by matching page.url.
+
+  Theme contract reproduced: <nav id="site-nav" class="site-nav"> with a
+  <ul class="nav-list">. Pinned theme: just-the-docs v0.12.0.
+{%- endcomment -%}
+<nav aria-label="Main" id="site-nav" class="site-nav">
+  {%- if site.data.navigation and site.data.navigation.groups -%}
+  <ul class="nav-list">
+    {%- for group in site.data.navigation.groups -%}
+      {%- if group.title -%}
+      <li class="nav-category" aria-hidden="true">{{ group.title }}</li>
+      {%- endif -%}
+      {%- for item in group.items -%}
+        {%- assign is_active = false -%}
+        {%- if page.url == item.url -%}{%- assign is_active = true -%}{%- endif -%}
+        <li class="nav-list-item{% if is_active %} active{% endif %}">
+          <a href="{{ item.url | relative_url }}" class="nav-list-link{% if is_active %} active{% endif %}">{{ item.title }}</a>
+        </li>
+      {%- endfor -%}
+    {%- endfor -%}
+  </ul>
+  {%- else -%}
+    {%- comment -%} Fallback to the theme's auto nav if the data file is missing. {%- endcomment -%}
+    {% assign pages_top_size = site.html_pages
+          | where_exp:"item", "item.title != nil"
+          | where_exp:"item", "item.parent == nil"
+          | where_exp:"item", "item.nav_exclude != true"
+          | size %}
+    {% if pages_top_size > 0 %}
+      {% include components/nav/pages.html pages=site.html_pages all=include.all %}
+    {% endif %}
+  {%- endif -%}
+</nav>
