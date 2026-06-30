@@ -1,11 +1,19 @@
 ---
-title: Enterprise RBAC Configuration
+title: Enterprise RBAC & Data Policies (Reference)
 layout: default
-nav_order: 14
+nav_exclude: true
 permalink: /enterprise-role-configuration/
+description: Deeper reference and industry examples. For setup, see the focused RBAC and Tool Data Policies guides.
 ---
 
-# Enterprise Role-Based Access Control Configuration
+# Enterprise RBAC & Data Policies — Reference
+
+{: .note }
+> **This guide has been split into two focused how-tos.** Start there:
+> - **[Role-Based Access (RBAC)](/rbac/)** — control *which roles may call which tools* (`role_permissions`, `/v1/shield/tool/check`).
+> - **[Tool Data Policies](/tool-data-policies/)** — control *what data a role may see* in a tool's inputs/outputs.
+>
+> The material below remains as deeper reference and industry examples.
 
 ## Overview
 
