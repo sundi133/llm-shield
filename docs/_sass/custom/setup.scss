@@ -20,4 +20,4 @@ $base-button-color: #ffffff;
 
 // Layout — use (most of) the page width like docs.sast.votal.ai instead of the
 // theme's default narrow 800px column. Dial this one number to taste.
-$content-width: 1400px;
+$content-width: 87.5rem; // ~1400px; rem so it is unit-compatible with the theme's $nav-width (16.5rem)
