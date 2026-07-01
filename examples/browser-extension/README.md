@@ -1,13 +1,26 @@
 # Shield Prompt Guard (POC)
 
-A minimal Chrome MV3 extension that screens **claude.ai** prompts through Votal
-Shield's `/guardrails/input` **before** they are sent. Best-effort client-side
-DLP / shadow-AI visibility — **not** a security boundary (a user can disable it).
+A minimal Chrome MV3 extension that screens prompts on **public AI tools**
+through Votal Shield's `/guardrails/input` **before** they are sent. Best-effort
+client-side shadow-AI DLP / visibility — **not** a security boundary (a user can
+disable it).
+
+## Supported sites
+| Site | Host |
+|---|---|
+| Claude | `claude.ai` |
+| ChatGPT | `chatgpt.com`, `chat.openai.com` |
+| Gemini | `gemini.google.com` |
+| Microsoft Copilot | `copilot.microsoft.com` |
+
+Selectors are per-site (see `SITES` in `content.js`); adding another site is a
+few lines. Generic fallbacks are appended so a minor markup change still has a
+chance of working.
 
 ## What it does
-- Intercepts the send action on claude.ai (Enter key + send button).
+- Intercepts the send action on each site (Enter key + send button).
 - Sends the composer text to Shield from the **background service worker**
-  (so it bypasses claude.ai's page CSP and can attach the RunPod `Authorization`
+  (so it bypasses the page CSP and can attach the RunPod `Authorization`
   bearer + tenant `X-API-Key` headers).
 - **monitor** mode: flags (yellow banner) but always sends. **enforce** mode:
   blocks on a Shield block verdict (red banner). **off**: does nothing.
@@ -31,8 +44,8 @@ The screened prompts appear in your Shield **Telemetry** (as `unknown-agent`,
 endpoint `/guardrails/input`) — same pipe as the Claude Code hook.
 
 ## Known limits (by design — this is a POC)
-- **Brittle**: depends on claude.ai's DOM. If the composer/send markup changes,
-  update the selectors in `content.js` (`getComposer`, `isSendButton`).
+- **Brittle**: depends on each site's DOM. If a site's composer/send markup
+  changes, update that site's entry in the `SITES` map in `content.js`.
 - **Bypassable**: disabling the extension or using the API directly evades it.
   It's a nudge/visibility layer, not enforcement.
 - **Output is post-hoc**: only prompts are screened here; model responses stream

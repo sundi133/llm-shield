@@ -1,17 +1,27 @@
 {
   "manifest_version": 3,
   "name": "Shield Prompt Guard (POC)",
-  "version": "0.1.0",
-  "description": "Screens claude.ai prompts through Votal Shield /guardrails/input before they are sent. POC / best-effort client-side DLP.",
+  "version": "0.2.0",
+  "description": "Screens prompts on public AI tools (Claude, ChatGPT, Gemini, Copilot) through Votal Shield /guardrails/input before they are sent. POC / best-effort client-side shadow-AI DLP.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://claude.ai/*",
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://copilot.microsoft.com/*",
     "https://*.api.runpod.ai/*"
   ],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
-      "matches": ["https://claude.ai/*"],
+      "matches": [
+        "https://claude.ai/*",
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://copilot.microsoft.com/*"
+      ],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
