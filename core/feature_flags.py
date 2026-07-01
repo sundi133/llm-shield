@@ -29,3 +29,28 @@ WEBHOOKS_ENABLED = _is_enabled("SHIELD_ENABLE_WEBHOOKS")
 TAINT_TRACKING_ENABLED = _is_enabled("SHIELD_ENABLE_TAINT_TRACKING")
 GOAL_DRIFT_ENABLED = _is_enabled("SHIELD_ENABLE_GOAL_DRIFT")
 CERT_IDENTITY_ENABLED = _is_enabled("SHIELD_ENABLE_CERT_IDENTITY")
+
+
+def a2a_enforce_mode() -> str:
+    """Resolve the A2A inter-agent authorization enforcement mode.
+
+    Returns one of:
+        "off"      — default; A2A runs only content guardrails (current behavior).
+        "monitor"  — run delegation/RBAC/identity guards, log would-blocks to the
+                     decision audit, but ALLOW the task (dry-run).
+        "on"       — enforce; reject the task on an authz block verdict.
+
+    Read live from the environment (not cached at import) so tests and rollout
+    can flip it per request without a restart.
+
+    Deliberately NOT auto-enabled by ``SHIELD_ENABLE_ENTERPRISE``: this guard
+    sits on the A2A request path and turning it to "on" can reject inter-agent
+    traffic that was previously allowed, so it must be opted into explicitly
+    (secure-by-default but non-breaking — see the A2A enforcement spec).
+    """
+    val = os.environ.get("SHIELD_A2A_ENFORCE", "").strip().lower()
+    if val in ("on", "enforce", "true", "1", "yes"):
+        return "on"
+    if val in ("monitor", "dry-run", "dryrun", "warn"):
+        return "monitor"
+    return "off"

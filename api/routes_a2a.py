@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -30,8 +31,24 @@ from core.a2a.task import (
     update_task_status,
 )
 
+# Inter-agent authorization guards (reused from the REST/MCP paths). These are
+# all tier="fast" (deterministic, no vLLM) — see the A2A enforcement spec.
+from guardrails.agentic.scope.delegation_control import DelegationControlGuardrail
+from guardrails.agentic.rbac_guard import RBACGuard
+from guardrails.agentic.identity.cert_identity import CertIdentityGuardrail
+from core.feature_flags import a2a_enforce_mode, DECISION_AUDIT_ENABLED
+from storage.decision_audit import log_decision
+
 logger = logging.getLogger("votal.routes_a2a")
 router = APIRouter(tags=["a2a"])
+
+# Order mirrors the /tool/check + /agent/check chains: identity reconciliation,
+# then delegation depth/cycle/clearance, then role->tool/scope, then trust level.
+_A2A_AUTHZ_GUARDS = [
+    ("delegation_control", DelegationControlGuardrail),
+    ("rbac_guard", RBACGuard),
+    ("cert_identity", CertIdentityGuardrail),
+]
 
 
 def _unauthorized():
@@ -121,6 +138,43 @@ async def a2a_send_task(request: Request):
                 }],
             },
         })
+
+    # Inter-agent authorization (delegation / RBAC / identity). Off by default;
+    # "monitor" logs would-blocks; "on" enforces. See SHIELD_A2A_ENFORCE.
+    enforce_mode = a2a_enforce_mode()
+    if enforce_mode != "off":
+        # session_id scopes the delegation chain to this A2A conversation; for a
+        # new task we persist it into metadata so follow-up messages reuse it.
+        session_id = metadata.get("session_id") or task_id or uuid.uuid4().hex
+        if not task_id:
+            metadata = {**metadata, "session_id": session_id}
+        authz = await _run_a2a_authz(request, tenant_id, params, session_id)
+        if authz["blocked"]:
+            _audit_a2a_authz(
+                request, tenant_id, authz,
+                agent_key=_a2a_auth_agent(request)
+                or (metadata.get("from_agent") or ""),
+                tool_name=metadata.get("tool_name", "") or "",
+                session_id=session_id, mode=enforce_mode,
+            )
+            if enforce_mode == "on":
+                return JSONResponse(content={
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {
+                        "id": task_id or "rejected",
+                        "status": {"state": TaskStatus.FAILED},
+                        "artifacts": [{
+                            "parts": [{
+                                "type": "text",
+                                "text": f"Blocked by inter-agent authorization: {authz['reason']}",
+                            }],
+                        }],
+                    },
+                })
+            logger.warning(
+                "A2A authz would-block (monitor mode, allowed): %s", authz["reason"]
+            )
 
     # Create or continue task
     if task_id:
@@ -308,3 +362,130 @@ async def _run_output_guardrails(text: str, request: Request) -> dict:
     except Exception as e:
         logger.warning(f"A2A output guardrail check failed: {e}")
         return {}
+
+
+# ── Inter-agent authorization (delegation / RBAC / identity) ───────────────
+
+
+def _reconcile_a2a_identity(auth_agent: str, claimed_agent: str) -> "str | None":
+    """Anti-spoof for A2A: the authenticated agent cannot differ from the
+    claimed ``metadata.from_agent``. Mirrors the direct tool path (deep-rbac-009).
+    Returns an error string to block on, or None when there's no conflict.
+    """
+    auth_agent = (auth_agent or "").strip()
+    claimed_agent = (claimed_agent or "").strip()
+    if auth_agent and claimed_agent and auth_agent != claimed_agent:
+        return (
+            f"Agent identity mismatch: authenticated agent '{auth_agent}' does "
+            f"not match metadata.from_agent '{claimed_agent}'. The claimed agent "
+            f"cannot differ from the authenticated agent."
+        )
+    return None
+
+
+def _a2a_auth_agent(request: Request) -> str:
+    """The authenticated agent identity for this request (X-Agent-Key), as set
+    by middleware on ``request.state.agent_key`` (falling back to the header)."""
+    state_agent = getattr(getattr(request, "state", None), "agent_key", "") or ""
+    return (
+        state_agent
+        or request.headers.get("X-Agent-Key")
+        or request.headers.get("x-agent-key")
+        or ""
+    ).strip()
+
+
+async def _run_a2a_authz(
+    request: Request, tenant_id: str, params: dict, session_id: str
+) -> dict:
+    """Run the inter-agent authorization chain for an A2A task.
+
+    Returns ``{"blocked": bool, "reason": str, "results": [...]}``.
+
+    Skips (not blocked, no results) when no agent identity is asserted, so
+    existing A2A callers that don't claim an agent are unaffected. A definite
+    policy verdict blocks; a guard *exception* (infra/lookup failure) is
+    fail-open per the spec.
+    """
+    metadata = params.get("metadata", {}) or {}
+    auth_agent = _a2a_auth_agent(request)
+    claimed_agent = (metadata.get("from_agent") or "").strip()
+
+    id_err = _reconcile_a2a_identity(auth_agent, claimed_agent)
+    if id_err:
+        return {
+            "blocked": True,
+            "reason": id_err,
+            "results": [{
+                "guardrail": "agent_identity", "passed": False, "action": "block",
+                "message": id_err,
+                "details": {"auth_agent": auth_agent, "from_agent": claimed_agent},
+            }],
+        }
+
+    effective_agent = auth_agent or claimed_agent
+    if not effective_agent:
+        return {"blocked": False, "reason": "", "results": []}
+
+    context = {
+        "agent_key": effective_agent,
+        "delegate_to": metadata.get("to_agent"),
+        "tool_name": metadata.get("tool_name"),
+        "user_role": metadata.get("user_role", "") or "",
+        "session_id": session_id,
+        "tenant_id": tenant_id,
+        "trust_level": getattr(getattr(request, "state", None), "trust_level", None),
+        "identity_method": getattr(getattr(request, "state", None), "identity_method", None),
+    }
+
+    results: list[dict] = []
+    for name, cls in _A2A_AUTHZ_GUARDS:
+        try:
+            guard = cls()
+            if not guard.enabled:
+                continue
+            r = await guard.check("", context)
+        except Exception as e:  # fail-open on guard ERROR, not on a verdict
+            logger.warning(f"A2A authz guard {name} errored (fail-open): {e}")
+            continue
+        results.append({
+            "guardrail": r.guardrail_name, "passed": r.passed,
+            "action": r.action, "message": r.message, "details": r.details,
+        })
+        if not r.passed and r.action == "block":
+            break
+
+    blocked = any((not x["passed"]) and x["action"] == "block" for x in results)
+    reason = "; ".join(
+        x["message"] for x in results if not x["passed"]
+    ) if blocked else ""
+    return {"blocked": blocked, "reason": reason, "results": results}
+
+
+def _audit_a2a_authz(
+    request: Request, tenant_id: str, authz: dict, *,
+    agent_key: str, tool_name: str, session_id: str, mode: str,
+) -> None:
+    """Record A2A authz would-blocks to the decision audit (both modes)."""
+    if not (DECISION_AUDIT_ENABLED and tenant_id):
+        return
+    for res in authz.get("results", []):
+        if res.get("passed"):
+            continue
+        try:
+            log_decision(
+                tenant_id=tenant_id,
+                action=res.get("action", "block"),
+                guardrail=res.get("guardrail", "?"),
+                agent_key=agent_key or "",
+                tool_name=tool_name or "",
+                session_id=session_id,
+                reason=res.get("message", ""),
+                source_ip=request.client.host if request.client else "",
+                metadata={
+                    **(res.get("details") or {}),
+                    "endpoint": "/a2a/tasks/send", "mode": mode,
+                },
+            )
+        except Exception as e:
+            logger.warning(f"A2A decision audit write failed: {e}")

@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "shieldUrl":  { "type": "string", "description": "Shield data-plane base URL (policy-pushed; overrides local)." },
+    "tenantKey":  { "type": "string", "description": "Tenant X-API-Key (policy-pushed; overrides local)." },
+    "proxyToken": { "type": "string", "description": "RunPod bearer token (policy-pushed; overrides local)." },
+    "deviceId":   { "type": "string", "description": "Device / asset identifier injected by MDM policy, e.g. ${machine_name} or an asset tag." },
+    "mode":       { "type": "string", "enum": ["off", "warn", "enforce"], "description": "Screening mode (policy-pushed; overrides local)." }
+  }
+}
