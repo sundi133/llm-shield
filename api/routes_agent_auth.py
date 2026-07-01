@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import logging
+import time
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -28,9 +29,12 @@ from core.capabilities import (
     CAP_DEFAULT_TTL_SECONDS,
     CAP_MAX_TTL_SECONDS,
     CapabilityError,
+    CapClaims,
+    delegation_narrowing_mode,
     mint_cap,
     verify_cap,
 )
+from core.jwt_utils import decode_jwt_unverified
 from core.agent_auth_safety import (
     public_denial_payload,
     rate_limit_cap_mint,
@@ -89,6 +93,14 @@ class CapMintRequest(BaseModel):
     scope_constraints: List[str] = Field(default_factory=list)
     clearance_max: str = Field("public")
     ttl_seconds: int = Field(CAP_DEFAULT_TTL_SECONDS, ge=1, le=CAP_MAX_TTL_SECONDS)
+    parent_cap_token: Optional[str] = Field(
+        None,
+        description=(
+            "Parent capability for delegated minting. When set, the child is "
+            "narrowed against the verified parent (scope union, clearance/exp "
+            "clamp) per SHIELD_CAP_DELEGATION_NARROWING."
+        ),
+    )
 
 
 class CapMintResponse(BaseModel):
@@ -207,6 +219,86 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
     return AgentTokenResponse(agent_token=token, expires_in=body.ttl_seconds)
 
 
+def _resolve_parent_delegation(
+    identity: IdentityTuple, body: CapMintRequest,
+) -> tuple[Optional[CapClaims], Optional[str], dict]:
+    """Handle ``body.parent_cap_token`` per SHIELD_CAP_DELEGATION_NARROWING.
+
+    Returns ``(parent_claims, passthrough_parent_cap_id, decision_extras)``:
+      - enforce: (verified parent, None, extras)   -> mint applies narrowing
+      - warn:    (None, parent.cap_id, extras)     -> parent verified, linkage
+                 stamped, narrowing computed + logged but NOT applied (and no
+                 parent_scope embedded, so the verify backstop stays disarmed)
+      - off:     (None, unverified cap_id, {})     -> legacy passthrough
+
+    Raises HTTPException 400 (malformed) / 403 (invalid parent or identity
+    mismatch). Invalid parents reject in BOTH enforce and warn modes — a
+    dangling delegation reference is a correctness bug, not a rollout knob.
+    """
+    mode = delegation_narrowing_mode()
+    try:
+        unverified = decode_jwt_unverified(body.parent_cap_token)
+    except Exception:
+        raise HTTPException(status_code=400, detail="malformed parent_cap_token")
+
+    if mode == "off":
+        # Escape hatch: today's dormant behavior — stamp the id, verify nothing.
+        pid = unverified.get("cap_id")
+        return None, (str(pid) if pid else None), {}
+
+    try:
+        # expected_tool is the parent's own tool: tautological on purpose —
+        # it exercises the full verification path (sig/exp/revocation/aud)
+        # without constraining which tool the child may target (the child's
+        # tool/resource is independently authorized by _decide_authz).
+        parent = verify_cap(
+            body.parent_cap_token,
+            expected_tool=str(unverified.get("tool", "")),
+            burn_nonce=False,  # referencing a parent is not consuming it
+        )
+    except CapabilityError as e:
+        record_event(
+            tenant_id=identity.tenant_id, event=EVENT_CAP_DENIED,
+            agent_id=identity.agent_id, user_sub=identity.user_sub,
+            tool=body.tool, resource=body.resource,
+            reason=f"parent_invalid: {e}"[:240],
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=public_denial_payload([f"parent capability invalid: {e}"]),
+        )
+
+    # Delegation must not cross user or tenant boundaries.
+    if parent.user_sub != identity.user_sub or parent.tenant_id != identity.tenant_id:
+        record_event(
+            tenant_id=identity.tenant_id, event=EVENT_CAP_DENIED,
+            agent_id=identity.agent_id, user_sub=identity.user_sub,
+            tool=body.tool, resource=body.resource,
+            reason="parent_identity_mismatch",
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=public_denial_payload(["parent capability identity mismatch"]),
+        )
+
+    if mode == "warn":
+        missing = sorted(set(parent.scope) - set(body.scope_constraints))
+        logger.warning(
+            "cap delegation narrowing (warn mode, not applied): agent=%s "
+            "parent_cap=%s would add constraints %s",
+            identity.agent_id, parent.cap_id, missing,
+        )
+        extras = {
+            "delegated": True,
+            "delegation_mode": "warn",
+            "narrowing_applied": False,
+            "would_add_constraints": missing,
+        }
+        return None, parent.cap_id, extras
+
+    return parent, None, {"delegated": True, "parent_cap_id": parent.cap_id}
+
+
 @router.post("/cap/mint", response_model=CapMintResponse)
 async def mint_capability(
     body: CapMintRequest,
@@ -240,6 +332,14 @@ async def mint_capability(
             detail=public_denial_payload(decision["reasons"]),
         )
 
+    # Delegated mint: resolve + verify the parent per the narrowing mode.
+    parent_claims: Optional[CapClaims] = None
+    passthrough_pid: Optional[str] = None
+    delegation_extras: dict = {}
+    if body.parent_cap_token:
+        parent_claims, passthrough_pid, delegation_extras = \
+            _resolve_parent_delegation(identity, body)
+
     try:
         cap = mint_cap(
             identity=identity,
@@ -248,9 +348,19 @@ async def mint_capability(
             scope=body.scope_constraints,
             clearance_max=body.clearance_max,
             ttl_seconds=body.ttl_seconds,
+            parent_cap_id=passthrough_pid,
+            parent_claims=parent_claims,
         )
     except CapabilityError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # expires_in must reflect the exp clamp when the parent expires sooner.
+    effective_ttl = body.ttl_seconds
+    if parent_claims is not None:
+        effective_ttl = max(1, min(body.ttl_seconds,
+                                   parent_claims.exp - int(time.time())))
+    if delegation_extras:
+        decision = {**decision, **delegation_extras}
 
     record_event(
         tenant_id=identity.tenant_id, event=EVENT_CAP_MINTED,
@@ -269,7 +379,7 @@ async def mint_capability(
         }
     return CapMintResponse(
         cap_token=cap,
-        expires_in=body.ttl_seconds,
+        expires_in=effective_ttl,
         decision=public_decision,
     )
 
@@ -319,21 +429,24 @@ async def verify_capability(body: CapVerifyRequest):
         agent_id=claims.agent_id, user_sub=claims.user_sub,
         tool=claims.tool, resource=claims.resource,
     )
-    return CapVerifyResponse(
-        valid=True,
-        claims={
-            "user_sub": claims.user_sub,
-            "agent_id": claims.agent_id,
-            "agent_instance_id": claims.agent_instance_id,
-            "tool": claims.tool,
-            "resource": claims.resource,
-            "scope": claims.scope,
-            "clearance_max": claims.clearance_max,
-            "tenant_id": claims.tenant_id,
-            "cap_id": claims.cap_id,
-            "exp": claims.exp,
-        },
-    )
+    resp_claims = {
+        "user_sub": claims.user_sub,
+        "agent_id": claims.agent_id,
+        "agent_instance_id": claims.agent_instance_id,
+        "tool": claims.tool,
+        "resource": claims.resource,
+        "scope": claims.scope,
+        "clearance_max": claims.clearance_max,
+        "tenant_id": claims.tenant_id,
+        "cap_id": claims.cap_id,
+        "exp": claims.exp,
+    }
+    # Delegation linkage (additive; present only on delegated caps).
+    if claims.parent_cap_id:
+        resp_claims["parent_cap_id"] = claims.parent_cap_id
+    if claims.parent_scope is not None:
+        resp_claims["parent_scope"] = claims.parent_scope
+    return CapVerifyResponse(valid=True, claims=resp_claims)
 
 
 class RevokeRequestExt(RevokeRequest):

@@ -55,6 +55,27 @@ logger = logging.getLogger("votal.capabilities")
 CAP_MAX_TTL_SECONDS = 60
 CAP_DEFAULT_TTL_SECONDS = 30
 
+# ── Delegation narrowing (spec: docs/specs/cap-delegation-narrowing.md) ──
+# Cap `scope` entries are CONSTRAINTS (verifier-enforced restrictions), not
+# OAuth-style permissions — so a NARROWER child carries MORE constraints:
+#     set(parent.scope) ⊆ set(child.scope)
+# Ceiling-like claims clamp the other way: clearance_max and exp only go DOWN.
+MAX_DELEGATED_SCOPE_ENTRIES = 256
+
+_CLEARANCE_RANK = {"public": 0, "internal": 1, "confidential": 2, "restricted": 3}
+
+
+def delegation_narrowing_mode() -> str:
+    """SHIELD_CAP_DELEGATION_NARROWING = enforce (default) | warn | off.
+
+    Read at call time (same pattern as SHIELD_ENFORCE_CAP_CLEARANCE).
+    Default is enforce: the delegation path had zero callers before this
+    shipped, so there is no legacy traffic to break — secure by default,
+    non-breaking by construction. `off` is the escape hatch.
+    """
+    raw = os.environ.get("SHIELD_CAP_DELEGATION_NARROWING", "enforce").strip().lower()
+    return raw if raw in ("enforce", "warn", "off") else "enforce"
+
 
 class CapabilityError(Exception):
     """Raised when a capability token fails to mint or verify."""
@@ -187,6 +208,10 @@ class CapClaims:
     kid: str
     parent_cap_id: Optional[str] = None
     tenant_id: str = ""
+    # Parent's scope list, embedded at mint on the delegation path so the
+    # verifier can enforce narrowing with zero I/O. None for non-delegated
+    # and legacy tokens.
+    parent_scope: Optional[List[str]] = None
 
 
 # ── Mint / verify ────────────────────────────────────────────────────────
@@ -201,6 +226,7 @@ def mint_cap(
     clearance_max: str = "public",
     ttl_seconds: int = CAP_DEFAULT_TTL_SECONDS,
     parent_cap_id: Optional[str] = None,
+    parent_claims: Optional[CapClaims] = None,
     signer: Optional[CapSigner] = None,
 ) -> str:
     """Mint a capability token.
@@ -208,6 +234,13 @@ def mint_cap(
     The caller MUST have already run the guardrail pipeline and confirmed
     the action is allowed. This function does not re-check policy — it
     freezes the decision into a verifiable artifact.
+
+    Delegation: pass ``parent_claims`` (the *verified* parent cap) to mint a
+    narrowed child — parent constraints propagate (scope union), ceilings
+    clamp (clearance_max, exp), and ``parent_cap_id``/``parent_scope`` are
+    stamped so verify_cap can enforce the invariant with zero I/O. The bare
+    ``parent_cap_id`` kwarg remains as the legacy unverified passthrough;
+    ``parent_claims`` wins when both are given.
     """
     if ttl_seconds <= 0 or ttl_seconds > CAP_MAX_TTL_SECONDS:
         raise CapabilityError(
@@ -220,6 +253,27 @@ def mint_cap(
 
     signer = signer or get_cap_signer()
     now = int(time.time())
+    exp = now + ttl_seconds
+
+    parent_scope_claim: Optional[List[str]] = None
+    if parent_claims is not None:
+        # Narrowing math (spec §4). Constraints union — child carries ALL
+        # parent constraints, may add its own (stable order, deduped).
+        if parent_claims.exp <= now:
+            raise CapabilityError("parent capability already expired")
+        merged = list(dict.fromkeys([*(scope or []), *parent_claims.scope]))
+        if len(merged) > MAX_DELEGATED_SCOPE_ENTRIES:
+            raise CapabilityError(
+                f"delegated scope union exceeds {MAX_DELEGATED_SCOPE_ENTRIES} entries"
+            )
+        scope = merged
+        # Ceilings only go down.
+        if _CLEARANCE_RANK[clearance_max] > _CLEARANCE_RANK[parent_claims.clearance_max]:
+            clearance_max = parent_claims.clearance_max
+        exp = min(exp, parent_claims.exp)
+        parent_cap_id = parent_claims.cap_id
+        parent_scope_claim = list(parent_claims.scope)
+
     cap_id = uuid.uuid4().hex
     claims = {
         "iss": _expected_cap_issuer(),
@@ -234,11 +288,15 @@ def mint_cap(
         "clearance_max": clearance_max,
         "nonce": uuid.uuid4().hex,
         "iat": now,
-        "exp": now + ttl_seconds,
+        "exp": exp,
         "cap_id": cap_id,
         "parent_cap_id": parent_cap_id,
         "kid": signer.kid,
     }
+    if parent_scope_claim is not None:
+        # Only delegated caps carry parent_scope — its presence is what arms
+        # the verify_cap backstop, keeping legacy tokens untouched.
+        claims["parent_scope"] = parent_scope_claim
     try:
         return encode_jwt(claims, signer)
     except JWTError as e:
@@ -306,6 +364,17 @@ def verify_cap(
         if k not in claims:
             raise CapabilityError(f"missing claim: {k}")
 
+    # Delegation narrowing backstop (claim-driven, zero I/O). scope entries
+    # are constraints, so a narrower child is a SUPERSET of its parent's
+    # scope. Fires only for tokens minted through the delegation path
+    # (parent_scope embedded at mint) — legacy/non-delegated tokens skip it.
+    parent_scope = claims.get("parent_scope")
+    if parent_scope is not None:
+        if not set(parent_scope).issubset(set(claims["scope"] or [])):
+            raise CapabilityError(
+                "cap scope wider than parent (delegation narrowing violated)"
+            )
+
     # Issuer + audience binding (H1). Cap aud must NOT equal the agent-token
     # aud — that prevents a leaked agent-token from being verified as a cap.
     if claims["iss"] != _expected_cap_issuer():
@@ -355,4 +424,5 @@ def verify_cap(
         kid=kid,
         parent_cap_id=claims.get("parent_cap_id"),
         tenant_id=claims.get("tenant_id", ""),
+        parent_scope=claims.get("parent_scope"),
     )
