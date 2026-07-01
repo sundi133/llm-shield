@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Shield Prompt Guard (POC)",
+  "version": "0.1.0",
+  "description": "Screens claude.ai prompts through Votal Shield /guardrails/input before they are sent. POC / best-effort client-side DLP.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://claude.ai/*",
+    "https://*.api.runpod.ai/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Shield Prompt Guard"
+  }
+}
