@@ -22,6 +22,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 
 from api.routes_agents_registry import get_tenant_from_api_key, get_redis_data, _save_agents
+from core import behavioral_risk as risk
 from storage import agent_auth_stats as stats
 from storage.tenant_store import kv_get, kv_set
 
@@ -579,3 +580,129 @@ async def restore_trim(trim_id: str, request: Request):
                   restored_by=(request.headers.get("x-user-role") or "tenant").strip()[:128])
     _store_trim(tenant_id, record)
     return {"trim": record}
+
+
+# ── Phase 5 — behavioral risk (baseline + deviation scoring) ─────────────
+#
+# Spec: docs/specs/behavioral-risk-blocking.md. Scoring runs HERE on the
+# governance plane; the resulting flag is persisted onto the agent's
+# registry entry, which cap-mint already loads — so enforcement (in
+# routes_agent_auth._decide_authz, behind SHIELD_BEHAVIORAL_RISK=enforce)
+# costs the guard path zero additional I/O. Default mode is `monitor`:
+# flags are computed and visible, the hot path never consults them.
+
+
+def _baselines_key(tenant_id: str) -> str:
+    return f"governance:baselines:{tenant_id}"
+
+
+def _risk_report_key(tenant_id: str) -> str:
+    return f"governance:risk:{tenant_id}:last"
+
+
+def _events_by_agent(tenant_id: str) -> dict:
+    by_agent: dict[str, list] = {}
+    for e in stats.get_recent(tenant_id, limit=stats.RECENT_BUFFER_MAX):
+        aid = e.get("agent_id")
+        if aid:
+            by_agent.setdefault(aid, []).append(e)
+    return by_agent
+
+
+@router.post("/risk/baselines/rebuild")
+async def rebuild_baselines(request: Request):
+    """Recompute + persist behavioral baselines for all agents in the buffer."""
+    tenant_id = get_tenant_from_api_key(request)
+    if risk.behavioral_risk_mode() == "off":
+        return {"mode": "off", "rebuilt": False}
+    now = int(time.time())
+    registered = get_redis_data(f"agents:{tenant_id}") or {}
+    by_agent = _events_by_agent(tenant_id)
+    baselines = {
+        aid: risk.build_baseline(events, now)
+        for aid, events in by_agent.items() if aid in registered
+    }
+    kv_set(_baselines_key(tenant_id), baselines)
+    return {
+        "tenant_id": tenant_id, "rebuilt": True, "computed_at": now,
+        "agents": {aid: b["events_analyzed"] for aid, b in baselines.items()},
+        "min_baseline_events": risk.min_baseline_events(),
+    }
+
+
+@router.get("/risk/baselines")
+async def get_baselines(request: Request):
+    tenant_id = get_tenant_from_api_key(request)
+    return {"tenant_id": tenant_id,
+            "baselines": kv_get(_baselines_key(tenant_id)) or {}}
+
+
+@router.post("/risk/evaluate")
+async def evaluate_risk(request: Request):
+    """Score recent activity vs baselines; write (medium/high) / clear (low)
+    flags on registry entries; persist the report."""
+    tenant_id = get_tenant_from_api_key(request)
+    mode = risk.behavioral_risk_mode()
+    if mode == "off":
+        return {"mode": "off", "evaluated": False}
+
+    now = int(time.time())
+    win = risk.window_seconds()
+    baselines = kv_get(_baselines_key(tenant_id)) or {}
+    agents = get_redis_data(f"agents:{tenant_id}") or {}
+    by_agent = _events_by_agent(tenant_id)
+
+    results: dict = {}
+    dirty = False
+    for aid, entry in agents.items():
+        current = [e for e in by_agent.get(aid, [])
+                   if int(e.get("ts") or 0) >= now - win]
+        verdict = risk.score_activity(current, baselines.get(aid), now)
+        results[aid] = verdict
+        if verdict["level"] in ("medium", "high"):
+            entry["behavioral_risk"] = {
+                "score": verdict["score"], "level": verdict["level"],
+                "signals": verdict["signals"], "evaluated_at": now,
+                "expires_at": now + risk.flag_ttl_seconds(),
+            }
+            dirty = True
+        elif verdict["level"] == "low" and "behavioral_risk" in entry:
+            # De-escalation clears the flag — no lingering stale blocks.
+            del entry["behavioral_risk"]
+            dirty = True
+    if dirty:
+        _save_agents(tenant_id, agents)
+
+    report = {"tenant_id": tenant_id, "mode": mode, "evaluated_at": now,
+              "window_seconds": win, "results": results}
+    kv_set(_risk_report_key(tenant_id), report)
+    return report
+
+
+@router.get("/risk")
+async def current_risk(request: Request):
+    """Current flags per agent (read straight off the registry entries)."""
+    tenant_id = get_tenant_from_api_key(request)
+    agents = get_redis_data(f"agents:{tenant_id}") or {}
+    flags = {aid: e["behavioral_risk"] for aid, e in agents.items()
+             if e.get("behavioral_risk")}
+    return {"tenant_id": tenant_id, "mode": risk.behavioral_risk_mode(),
+            "flags": flags,
+            "last_report": kv_get(_risk_report_key(tenant_id))}
+
+
+@router.post("/risk/{agent_id}/clear")
+async def clear_risk(agent_id: str, request: Request):
+    """Human step-up approval: remove an agent's behavioral-risk flag."""
+    tenant_id = get_tenant_from_api_key(request)
+    agents = get_redis_data(f"agents:{tenant_id}") or {}
+    entry = agents.get(agent_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="agent not registered")
+    if "behavioral_risk" not in entry:
+        raise HTTPException(status_code=404, detail="no behavioral-risk flag set")
+    cleared = entry.pop("behavioral_risk")
+    entry["updated_at"] = int(time.time())
+    _save_agents(tenant_id, agents)
+    return {"agent_id": agent_id, "cleared": cleared,
+            "cleared_by": (request.headers.get("x-user-role") or "tenant").strip()[:128]}

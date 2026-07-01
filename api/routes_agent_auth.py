@@ -41,6 +41,7 @@ from core.agent_auth_safety import (
     rate_limit_token_issuance,
     verbose_reasons_enabled,
 )
+from core.behavioral_risk import behavioral_risk_mode
 from core.identity import IdentityTuple, get_identity_from_request
 from core.rbac import enforcer as rbac_enforcer
 from storage.agent_auth_stats import (
@@ -537,6 +538,22 @@ def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
     )
     agent_entry = _load_agent_entry(identity.agent_id, identity.tenant_id)
     if agent_entry is not None:
+        # Behavioral risk gate (spec: docs/specs/behavioral-risk-blocking.md).
+        # Zero added I/O — the flag rides on the registry entry this function
+        # already loaded. Consulted only in enforce mode (default: monitor,
+        # hot path unchanged); expired flags fail safe to allow.
+        if behavioral_risk_mode() == "enforce":
+            _br = agent_entry.get("behavioral_risk") or {}
+            if _br.get("level") in ("medium", "high") \
+                    and int(_br.get("expires_at") or 0) > int(time.time()):
+                allowed = False
+                if _br.get("level") == "high":
+                    reasons.append(
+                        "behavioral risk block (high): "
+                        + ", ".join((_br.get("signals") or [])[:3]))
+                else:
+                    reasons.append(
+                        "behavioral risk: step-up approval required (medium)")
         status = _registry_agent_status(identity.agent_id, identity.tenant_id) or "active"
         if status != "active":
             allowed = False
