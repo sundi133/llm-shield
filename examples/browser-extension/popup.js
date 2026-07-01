@@ -18,13 +18,16 @@ document.getElementById("test").addEventListener("click", () => {
   result.className = "";
   chrome.runtime.sendMessage({ type: "shield-test" }, (r) => {
     if (!r) { result.textContent = "No response."; result.className = "bad"; return; }
+    const id = r.identity || {};
+    const idLine =
+      "\nas: " + (id.email || "(no email)") + "\ndevice: " + (id.deviceId || "(none)");
     if (r.error) {
-      result.textContent = "✗ " + r.error + "\n(fail-open: prompts would send unscreened)";
+      result.textContent = "✗ " + r.error + "\n(fail-open: prompts would send unscreened)" + idLine;
       result.className = "bad";
     } else {
       result.textContent =
         "✓ Reached Shield. mode=" + r.mode +
-        (r.reason ? "\nguards: " + r.reason : "\nverdict: pass");
+        (r.reason ? "\nguards: " + r.reason : "\nverdict: pass") + idLine;
       result.className = "ok";
     }
   });

@@ -40,8 +40,26 @@ chance of working.
    jailbreak-style prompt in `enforce` mode to see a block.
 
 ## Verify it reached Shield
-The screened prompts appear in your Shield **Telemetry** (as `unknown-agent`,
-endpoint `/guardrails/input`) — same pipe as the Claude Code hook.
+The screened prompts appear in your Shield **Telemetry**, endpoint
+`/guardrails/input` — same pipe as the Claude Code hook. With attribution
+configured (below) the **agent column shows the user's email** instead of
+`unknown-agent`.
+
+## Attribution (who + which device)
+The background worker attaches identity to every screened prompt:
+- **`X-Agent-Key`** = corporate email from `chrome.identity.getProfileUserInfo()`
+  (reliable on managed Chrome where the user is signed into the corp account),
+  falling back to the device id.
+- **`X-Device-Id`** = a device/asset id from **managed policy** (`storage.managed`
+  → `deviceId`), falling back to a stable per-install UUID.
+- The email + device id are also included in the request body (`user_email`,
+  `device_id`) for audit.
+
+A true hardware serial is **not** available to a normal extension (browser
+sandbox). On **ChromeOS managed devices** only, `chrome.enterprise.deviceAttributes`
+can provide the real serial/asset id — not available on Windows/macOS.
+
+> Attribution is employee monitoring — deploy via corporate policy with notice.
 
 ## Known limits (by design — this is a POC)
 - **Brittle**: depends on each site's DOM. If a site's composer/send markup
@@ -53,10 +71,25 @@ endpoint `/guardrails/input`) — same pipe as the Claude Code hook.
 - **Token storage**: keys live in `chrome.storage.local` (plaintext-ish). Fine
   for a POC/demo; for fleet rollout use managed policy + a short-lived token.
 
-## Fleet rollout (later)
-Package + push via Chrome Enterprise **managed policy** to all users; pre-seed
-config via `storage.managed`. That turns this into a real shadow-AI DLP control
-across the org (covers claude.ai, and the same pattern extends to ChatGPT/Gemini).
+## Fleet rollout (Chrome Enterprise)
+Force-install and configure via **managed policy** — no per-user setup. The
+schema is in `managed_schema.json`; admins push values under
+`3rdparty.extensions.<extension-id>.policy`, e.g.:
+
+```json
+{
+  "shieldUrl":  "https://shield.yourco.internal",
+  "tenantKey":  "altayer-retail-key",
+  "proxyToken": "rpa_...",
+  "deviceId":   "${machine_name}",
+  "mode":       "enforce"
+}
+```
+
+Managed values **override** local config, so users can't change the endpoint or
+disable enforcement. `${machine_name}` (and other policy variables) let the OS
+inject the device identifier. Cross-platform: same code on Chrome/Edge for
+**Windows, macOS, Linux, ChromeOS**.
 
 ## Files
 | File | Role |
