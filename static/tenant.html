@@ -4501,7 +4501,7 @@ openssl x509 -in agent.crt -fingerprint -sha256 -noout
 
 <!-- Add Policy Modal -->
 <div id="add-policy-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 2rem;">
-  <div style="background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; max-width: 600px; width: 100%; box-shadow: var(--shadow-lg);">
+  <div style="background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; max-width: 600px; width: 100%; box-shadow: var(--shadow-lg); max-height: calc(100vh - 4rem); overflow-y: auto;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);">
       <div style="font-size: 16px; font-weight: 600;" id="add-policy-title">Add Policy</div>
       <button onclick="closeAddPolicy()" style="background: transparent; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">&times;</button>
