@@ -2371,12 +2371,12 @@
       <!-- Custom Policy Modal -->
       <div id="custom-policy-modal" class="modal hidden">
         <div class="modal-overlay" onclick="hideCustomPolicyModal()"></div>
-        <div class="modal-content" style="width: 860px; max-width: 90vw; max-height: 80vh; background: #ffffff; border: none; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05); overflow: hidden; position: relative; display: flex; flex-direction: column;">
+        <div class="modal-content" style="width: 860px; max-width: 90vw; max-height: 92vh; background: #ffffff; border: none; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05); overflow: hidden; position: relative; display: flex; flex-direction: column;">
           <div class="modal-header" style="background: var(--bg-2); border-bottom: 1px solid var(--border); padding: 1rem 1.5rem; position: relative; flex-shrink: 0;">
             <h3 id="custom-policy-modal-title" style="margin: 0; font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.025em;">Create Custom Policy</h3>
             <button onclick="hideCustomPolicyModal()" style="position: absolute; top: 1rem; right: 1.5rem; background: var(--bg-3); border: none; font-size: 18px; color: var(--text-muted); cursor: pointer; padding: 0; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 8px; transition: all 0.2s;" onmouseover="this.style.background='var(--bg)'; this.style.color='var(--text)'" onmouseout="this.style.background='var(--bg-3)'; this.style.color='var(--text-muted)'">×</button>
           </div>
-          <div class="modal-body" style="padding: 1.25rem 1.5rem; flex: 1; overflow-y: auto; min-height: 0;">
+          <div class="modal-body" style="padding: 1rem 1.5rem; flex: 1; overflow-y: auto; min-height: 0;">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
               <div class="field">
                 <label for="custom-policy-name" style="display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 0.375rem; text-transform: uppercase; letter-spacing: 0.025em;">Policy Name *</label>
@@ -2409,7 +2409,7 @@
                   <option value="brand-safety">🏷️ Brand Safety</option>
                 </select>
               </div>
-              <textarea id="custom-policy-prompt" placeholder="Describe what content should be flagged. Be specific and clear..." style="width: 100%; height: 120px; padding: 0.875rem; background: #f9fafb; border: 2px solid #e5e7eb; border-radius: 8px; color: #111827; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.5; resize: vertical; transition: all 0.2s; box-sizing: border-box;" onfocus="this.style.borderColor='#6366f1'; this.style.background='#ffffff'; this.style.boxShadow='0 0 0 3px rgba(99, 102, 241, 0.1)'" onblur="this.style.borderColor='#e5e7eb'; this.style.background='#f9fafb'; this.style.boxShadow='none'" maxlength="2000"></textarea>
+              <textarea id="custom-policy-prompt" placeholder="Describe what content should be flagged. Be specific and clear..." style="width: 100%; height: 84px; padding: 0.75rem 0.875rem; background: #f9fafb; border: 2px solid #e5e7eb; border-radius: 8px; color: #111827; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.5; resize: vertical; transition: all 0.2s; box-sizing: border-box;" onfocus="this.style.borderColor='#6366f1'; this.style.background='#ffffff'; this.style.boxShadow='0 0 0 3px rgba(99, 102, 241, 0.1)'" onblur="this.style.borderColor='#e5e7eb'; this.style.background='#f9fafb'; this.style.boxShadow='none'" maxlength="2000"></textarea>
               <div style="font-size: 11px; color: #9ca3af; margin-top: 0.375rem; text-align: right;">
                 <span id="custom-policy-prompt-count">0</span>/2000 characters
               </div>
