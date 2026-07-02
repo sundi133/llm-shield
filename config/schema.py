@@ -1,7 +1,10 @@
+import logging
 import os
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 # Module-level singleton config
 config: Optional["ShieldConfig"] = None
@@ -164,67 +167,77 @@ def load_config(path: Optional[str] = None) -> ShieldConfig:
         config = ShieldConfig()
         return config
 
-    with open(path, "r") as f:
-        raw = yaml.safe_load(f) or {}
+    # Parse the file. A corrupt or schema-invalid config must NOT crash-loop the
+    # data plane (create_app -> load_config runs at boot), so any failure here
+    # falls back to built-in defaults instead of raising.
+    try:
+        with open(path, "r") as f:
+            raw = yaml.safe_load(f) or {}
 
-    # Parse guardrails section
-    guardrails = {}
-    for name, gcfg in raw.get("guardrails", {}).items():
-        guardrails[name] = GuardrailConfig(**gcfg)
+        # Parse guardrails section
+        guardrails = {}
+        for name, gcfg in raw.get("guardrails", {}).items():
+            guardrails[name] = GuardrailConfig(**gcfg)
 
-    # Parse RBAC section
-    rbac_raw = raw.get("rbac", {})
-    roles = {}
-    for role_name, role_data in rbac_raw.get("roles", {}).items():
-        role_data.pop("name", None)
-        roles[role_name] = RBACRole(name=role_name, **role_data)
-    agents = rbac_raw.get("agents", {})
-    rbac = RBACConfig(roles=roles, agents=agents)
+        # Parse RBAC section
+        rbac_raw = raw.get("rbac", {})
+        roles = {}
+        for role_name, role_data in rbac_raw.get("roles", {}).items():
+            role_data.pop("name", None)
+            roles[role_name] = RBACRole(name=role_name, **role_data)
+        agents = rbac_raw.get("agents", {})
+        rbac = RBACConfig(roles=roles, agents=agents)
 
-    # Parse pipeline section
-    pipeline_raw = raw.get("pipeline", {})
-    pipeline = PipelineConfig(**pipeline_raw)
+        # Parse pipeline section
+        pipeline_raw = raw.get("pipeline", {})
+        pipeline = PipelineConfig(**pipeline_raw)
 
-    # Parse llm_backend section
-    llm_backend = raw.get(
-        "llm_backend",
-        {
-            "url": "http://127.0.0.1:8000",
-            "model_path": "/models/Qwen3-8B-Q4_K_M.gguf",
-            "draft_model_path": "/models/Qwen3-0.6B-Q4_K_M.gguf",
-        },
-    )
+        # Parse llm_backend section
+        llm_backend = raw.get(
+            "llm_backend",
+            {
+                "url": "http://127.0.0.1:8000",
+                "model_path": "/models/Qwen3-8B-Q4_K_M.gguf",
+                "draft_model_path": "/models/Qwen3-0.6B-Q4_K_M.gguf",
+            },
+        )
 
-    # Parse auth section
-    auth_raw = raw.get("auth", {})
-    auth = AuthConfig(**auth_raw)
+        # Parse auth section
+        auth_raw = raw.get("auth", {})
+        auth = AuthConfig(**auth_raw)
 
-    # Env var SHIELD_API_KEYS adds keys (comma-separated)
+        # Parse audit_logging section
+        audit_logging = raw.get("audit_logging", {"enabled": False})
+
+        # Parse telemetry section
+        telemetry = raw.get("telemetry", {})
+
+        config = ShieldConfig(
+            guardrails=guardrails,
+            rbac=rbac,
+            pipeline=pipeline,
+            auth=auth,
+            audit_logging=audit_logging,
+            telemetry=telemetry,
+            llm_backend=llm_backend,
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to load config from %s (%s: %s); falling back to built-in "
+            "defaults. Fix or remove the file to restore custom config.",
+            path, type(e).__name__, e,
+        )
+        config = ShieldConfig()
+
+    # Apply env overrides to whichever config we ended with (file OR fallback),
+    # so a corrupt file can never silently drop authentication.
     env_keys = os.getenv("SHIELD_API_KEYS", "")
     if env_keys:
         for key in env_keys.split(","):
             key = key.strip()
-            if key and key not in auth.api_keys:
-                auth.api_keys.append(key)
+            if key and key not in config.auth.api_keys:
+                config.auth.api_keys.append(key)
+    if os.getenv("SHIELD_AUTH_ENABLED", "").lower() in ("true", "1", "yes"):
+        config.auth.enabled = True
 
-    # SHIELD_AUTH_ENABLED=true/1 can force-enable auth
-    env_auth = os.getenv("SHIELD_AUTH_ENABLED", "")
-    if env_auth.lower() in ("true", "1", "yes"):
-        auth.enabled = True
-
-    # Parse audit_logging section
-    audit_logging = raw.get("audit_logging", {"enabled": False})
-
-    # Parse telemetry section
-    telemetry = raw.get("telemetry", {})
-
-    config = ShieldConfig(
-        guardrails=guardrails,
-        rbac=rbac,
-        pipeline=pipeline,
-        auth=auth,
-        audit_logging=audit_logging,
-        telemetry=telemetry,
-        llm_backend=llm_backend,
-    )
     return config
