@@ -6198,7 +6198,7 @@ function renderTelemetryEntries(entries) {
                       <div class="telemetry-section-title">Message</div>
                       <div class="telemetry-message-full">${escapeHtml(entry.message || '(empty message)')}</div>
                     </div>
-                    ${entry.block_reason ? `<div><div class="telemetry-section-title">Block Reason</div><div class="telemetry-message-full" style="color:#fca5a5;">${escapeHtml(entry.block_reason)}</div></div>` : ''}
+                    ${entry.block_reason ? `<div><div class="telemetry-section-title">Block Reason</div><div class="telemetry-message-full" style="color:#b91c1c;font-weight:500;">${escapeHtml(entry.block_reason)}</div></div>` : ''}
                     <div>
                       <div class="telemetry-section-title">Tool Calls</div>
                       <div class="telemetry-tool-grid">${renderTelemetryToolRows(entry.tool_calls || [])}</div>
