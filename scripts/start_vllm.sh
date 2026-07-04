@@ -9,6 +9,31 @@ SKIP_VLLM="${SKIP_VLLM:-false}"
 
 if [ "$SKIP_VLLM" = "true" ]; then
   echo "SKIP_VLLM=true — skipping local vLLM server, using external LLM backend."
+
+  if [ "${LLM_BACKEND_TYPE:-vllm}" = "ollama" ]; then
+    # Ollama backend (local `ollama serve` or ollama.com cloud).
+    # Fail fast on misconfiguration; never block boot on reachability.
+    if [ -z "$LLM_BACKEND_URL" ]; then
+      echo "ERROR: LLM_BACKEND_TYPE=ollama requires LLM_BACKEND_URL (e.g. https://ollama.com or http://127.0.0.1:11434)."
+      exit 1
+    fi
+    if [ -z "$LLM_MODEL_NAME" ]; then
+      echo "ERROR: LLM_BACKEND_TYPE=ollama requires LLM_MODEL_NAME (e.g. gemma4:31b)."
+      exit 1
+    fi
+    OLLAMA_KEY="${OLLAMA_API_KEY:-$LLM_BACKEND_API_KEY}"
+    echo "Ollama backend: URL=$LLM_BACKEND_URL MODEL=$LLM_MODEL_NAME API key set: $([ -n "$OLLAMA_KEY" ] && echo yes || echo no)"
+    # Warn-only reachability check — a transiently unreachable backend must
+    # not crash-loop the data plane.
+    AUTH_HEADER=""
+    [ -n "$OLLAMA_KEY" ] && AUTH_HEADER="Authorization: Bearer $OLLAMA_KEY"
+    if curl -s -f -m 10 ${AUTH_HEADER:+-H "$AUTH_HEADER"} "$LLM_BACKEND_URL/v1/models" > /dev/null 2>&1; then
+      echo "Ollama backend reachable."
+    else
+      echo "WARNING: Ollama backend not reachable at $LLM_BACKEND_URL/v1/models (continuing anyway)."
+    fi
+  fi
+
   echo "Starting Python application..."
 else
   echo "Starting vLLM server in background..."
