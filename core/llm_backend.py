@@ -13,15 +13,22 @@ LLM_DEBUG = os.environ.get("LLM_DEBUG", "false").lower() in ("true", "1", "yes")
 
 
 def parse_llm_json(raw: str) -> dict:
-    """Parse JSON from LLM, fixing common model quirks like extra spaces in keys.
+    """Parse JSON from LLM, fixing common model quirks.
 
-    Models sometimes generate keys like 'is_  adversarial' instead of 'is_adversarial'.
-    This function cleans up such malformed keys before parsing.
+    Handles:
+    - markdown code fences: some models (e.g. gemma4 on ollama.com) wrap
+      their JSON in ```json ... ``` even when a schema is requested, which
+      makes json.loads fail with "Expecting value: line 1 column 1 (char 0)"
+    - extra spaces in keys: 'is_  adversarial' instead of 'is_adversarial'
     """
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```\s*$", "", cleaned)
     cleaned = re.sub(
         r'"([^"]*?)\s{2,}([^"]*?)"(\s*:)',
         lambda m: f'"{m.group(1)}{m.group(2)}"{m.group(3)}',
-        raw,
+        cleaned,
     )
     return json.loads(cleaned)
 
