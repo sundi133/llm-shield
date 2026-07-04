@@ -23,6 +23,9 @@ jobs:
           - name: admin
             dockerfile: Dockerfile.admin
             image: llm-shield-admin
+          - name: ollama
+            dockerfile: Dockerfile.ollama
+            image: llm-shield-ollama
 
     name: Build ${{ matrix.name }}
     steps:
