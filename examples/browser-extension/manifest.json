@@ -12,7 +12,8 @@
     "https://gemini.google.com/*",
     "https://copilot.microsoft.com/*",
     "https://*.api.runpod.ai/*",
-    "https://*.up.railway.app/*"
+    "https://*.up.railway.app/*",
+    "https://llm-shield-production-0c4c.up.railway.app/*"
   ],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
