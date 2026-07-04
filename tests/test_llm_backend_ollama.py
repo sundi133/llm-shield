@@ -294,3 +294,30 @@ async def test_async_llm_call_native_endpoint_and_adaptation(monkeypatch):
     assert kwargs["json"]["think"] is False
     assert result["choices"][0]["message"]["content"] == '{"safe": true}'
     assert result["_timing"]["server_url"] == "https://ollama.com"
+
+
+# ---------------------------------------------------------------------------
+# parse_llm_json: markdown fence stripping (gemma4 on ollama.com fences its
+# JSON even when a format schema is requested)
+# ---------------------------------------------------------------------------
+
+def test_parse_llm_json_strips_json_fence():
+    raw = '```json\n{"violates_policy": true, "confidence": 1.0}\n```'
+    assert llm_backend.parse_llm_json(raw) == {
+        "violates_policy": True,
+        "confidence": 1.0,
+    }
+
+
+def test_parse_llm_json_strips_bare_fence():
+    raw = '```\n{"ok": true}\n```'
+    assert llm_backend.parse_llm_json(raw) == {"ok": True}
+
+
+def test_parse_llm_json_plain_json_unchanged():
+    assert llm_backend.parse_llm_json('{"ok": true}') == {"ok": True}
+
+
+def test_parse_llm_json_backticks_inside_strings_untouched():
+    raw = '{"reasoning": "use ```code``` blocks"}'
+    assert llm_backend.parse_llm_json(raw) == {"reasoning": "use ```code``` blocks"}
