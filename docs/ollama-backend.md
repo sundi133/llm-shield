@@ -82,14 +82,17 @@ OLLAMA_API_KEY=<secret>
 
 ## Behavior details
 
-- Calls go to `{LLM_BACKEND_URL}/v1/chat/completions` (Ollama's
-  OpenAI-compatible endpoint) with `Authorization: Bearer` when a key is set.
+- Calls go to `{LLM_BACKEND_URL}/api/chat` (Ollama's native endpoint) with
+  `Authorization: Bearer` when a key is set. The native endpoint is used
+  instead of the OpenAI-compatible one because it honors `think: false`
+  (thinking models otherwise spend the whole token budget on reasoning and
+  return empty content) and enforces JSON schemas server-side via `format`.
+- Thinking is disabled by default. Set `OLLAMA_THINK=true` to enable it, or
+  `OLLAMA_THINK=auto` to omit the parameter for models that reject it.
 - Startup fails fast if `LLM_BACKEND_URL` or `LLM_MODEL_NAME` is missing, and
   logs a warning (without blocking boot) if the host is unreachable.
-- Guardrails that request structured JSON output use `response_format` with a
-  JSON schema; use a recent Ollama version that supports structured outputs.
-- Qwen-specific thinking suppression (`/no_think`) is appended only when
-  `LLM_MODEL_NAME` contains `qwen`; other models get clean system prompts.
+- Guardrails that request structured JSON output (custom and role-based
+  policies) map their schema to the native `format` field automatically.
 - Latency: guardrail checks now include a network round trip to the Ollama
   host. A nearby host keeps this small; a remote cloud host adds WAN latency
   to every guarded call. The choice is yours per deployment.
