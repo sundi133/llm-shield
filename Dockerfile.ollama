@@ -1,0 +1,57 @@
+FROM python:3.11-slim
+
+# Slim CPU-only data plane: the guardrail LLM runs on an external Ollama
+# host (local `ollama serve` or ollama.com cloud) — no GPU, no vLLM stack.
+
+# Install system tools needed at runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /runpod
+
+# App dependencies only — no local LLM server in this image.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY handler.py .
+COPY config/ config/
+COPY core/ core/
+COPY guardrails/ guardrails/
+COPY api/ api/
+COPY storage/ storage/
+COPY static/ static/
+COPY scripts/ scripts/
+
+# Create logs directory for telemetry file logging
+RUN mkdir -p logs && chmod 755 logs
+
+# Telemetry / SIEM defaults (non-secret). Inject secrets at RUNTIME via
+# RunPod Secrets — never bake them into the image; this image may be public:
+#   OLLAMA_API_KEY={{ RUNPOD_SECRET_OLLAMA_API_KEY }}   (ollama.com cloud only)
+#   REDIS_URL={{ RUNPOD_SECRET_REDIS_URL }}
+#   SHIELD_ADMIN_KEY={{ RUNPOD_SECRET_SHIELD_ADMIN_KEY }}
+ENV VOTAL_ES_ENABLED=true
+ENV VOTAL_ES_INDEX=votal-shield-logs
+
+# Ollama backend mode: no local LLM server is started.
+# Required at runtime:
+#   LLM_BACKEND_URL   e.g. https://ollama.com  or  http://host:11434
+#   LLM_MODEL_NAME    e.g. gemma4:31b
+#   OLLAMA_API_KEY    only for ollama.com cloud
+# NOTE: prompts inspected by guardrails are sent to this backend — pointing
+# at ollama.com is an explicit data-egress decision by the operator.
+ENV LLM_BACKEND_TYPE=ollama
+ENV SKIP_VLLM=true
+
+# Only the main application port — no local LLM server port.
+EXPOSE 80
+
+# Startup script lives in scripts/ and is copied above; its SKIP_VLLM branch
+# validates the ollama config and skips any local LLM startup.
+RUN cp /runpod/scripts/start_vllm.sh /start-services.sh \
+    && chmod +x /start-services.sh
+
+ENTRYPOINT []
+CMD ["/start-services.sh"]

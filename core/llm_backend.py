@@ -143,6 +143,29 @@ def _get_env_backend_url() -> Optional[str]:
     return url or None
 
 
+def _get_backend_type() -> str:
+    """Backend type: 'vllm' (default), 'litellm', or 'ollama'."""
+    return os.getenv("LLM_BACKEND_TYPE", "vllm").strip().lower()
+
+
+def _get_backend_api_key() -> Optional[str]:
+    """API key for authenticated backends (e.g. ollama.com cloud)."""
+    return os.getenv("OLLAMA_API_KEY") or os.getenv("LLM_BACKEND_API_KEY") or None
+
+
+def _auth_headers() -> dict:
+    """Authorization headers for the LLM backend, if configured.
+
+    Only attached in ollama mode (ollama.com cloud needs a Bearer key;
+    local `ollama serve` needs none). Never log the key itself.
+    """
+    if _get_backend_type() == "ollama":
+        key = _get_backend_api_key()
+        if key:
+            return {"Authorization": f"Bearer {key}"}
+    return {}
+
+
 def _get_servers_config() -> list[dict]:
     """Get server configs from yaml. Falls back to single-server default."""
     env_url = _get_env_backend_url()
@@ -346,8 +369,17 @@ def _build_payload(
     temperature: float,
     response_format: Optional[dict],
 ) -> dict:
-    """Build the request payload for llama-server or LiteLLM."""
-    messages = _ensure_no_think(messages)
+    """Build the request payload for llama-server, LiteLLM, or Ollama."""
+    litellm = os.getenv("ENABLE_LITELLM") == "true"
+    backend_type = _get_backend_type()
+    ollama = not litellm and backend_type == "ollama"
+
+    # '/no_think' is Qwen-specific prompt text. vLLM/LiteLLM modes always
+    # append it (unchanged behavior); ollama mode appends it only for Qwen
+    # models so gemma/gpt-oss/etc. get clean system prompts.
+    if not ollama or "qwen" in os.getenv("LLM_MODEL_NAME", "").lower():
+        messages = _ensure_no_think(messages)
+
     payload = {
         "messages": messages,
         "max_tokens": max_tokens,
@@ -355,12 +387,15 @@ def _build_payload(
     }
 
     # Add model field for LiteLLM mode
-    if os.getenv("ENABLE_LITELLM") == "true":
+    if litellm:
         # Use the model name from LiteLLM config; "default" is the alias
         # set in router_settings.model_group_alias by the config generator,
         # and works regardless of which provider was selected.
         model_name = os.getenv("LLM_MODEL_NAME", "default")
         payload["model"] = model_name
+    elif ollama:
+        # Ollama's OpenAI-compatible endpoint requires an explicit model.
+        payload["model"] = os.getenv("LLM_MODEL_NAME", "")
     else:
         # vLLM mode - add chat template kwargs
         payload["chat_template_kwargs"] = {"enable_thinking": False}
@@ -411,6 +446,7 @@ def llm_call(
     res = session.post(
         endpoint_url,
         json=payload,
+        headers=_auth_headers() or None,
         timeout=300,
     )
     if res.status_code >= 400:
@@ -438,6 +474,7 @@ async def async_llm_call(
     res = await client.post(
         endpoint_url,
         json=payload,
+        headers=_auth_headers() or None,
     )
     if res.status_code >= 400:
         _print_llm_response(endpoint_url, res.status_code, res.text)
