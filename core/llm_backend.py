@@ -153,6 +153,11 @@ def _get_backend_api_key() -> Optional[str]:
     return os.getenv("OLLAMA_API_KEY") or os.getenv("LLM_BACKEND_API_KEY") or None
 
 
+def _is_ollama_mode() -> bool:
+    """True when the backend is Ollama (LiteLLM mode takes precedence)."""
+    return os.getenv("ENABLE_LITELLM") != "true" and _get_backend_type() == "ollama"
+
+
 def _auth_headers() -> dict:
     """Authorization headers for the LLM backend, if configured.
 
@@ -363,6 +368,61 @@ def _ensure_no_think(messages: list) -> list:
     return messages
 
 
+def _build_ollama_payload(
+    messages: list,
+    max_tokens: int,
+    temperature: float,
+    response_format: Optional[dict],
+) -> dict:
+    """Build a native Ollama /api/chat payload.
+
+    Native API instead of OpenAI-compat because:
+    - `think: false` actually disables thinking (compat endpoint ignores it,
+      and thinking models then return empty content under low max_tokens);
+    - `format` enforces a JSON schema server-side for response_format
+      guardrails (custom_policy, role_based_policy).
+    No /no_think prompt hack needed — `think` is first-class here.
+    """
+    payload = {
+        "model": os.getenv("LLM_MODEL_NAME", ""),
+        "messages": messages,
+        "stream": False,
+        "options": {"temperature": temperature, "num_predict": max_tokens},
+    }
+    # OLLAMA_THINK: false (default) | true | auto ("auto" omits the field for
+    # models that reject the parameter).
+    think = os.getenv("OLLAMA_THINK", "false").strip().lower()
+    if think in ("true", "false"):
+        payload["think"] = think == "true"
+    if response_format:
+        payload["format"] = response_format
+    return payload
+
+
+def _adapt_ollama_response(data: dict) -> dict:
+    """Adapt a native Ollama /api/chat response to the OpenAI shape callers expect.
+
+    Error responses ({"error": ...}) pass through unchanged — callers treat a
+    missing choices key as an LLM failure, same as an OpenAI-style error.
+    """
+    if not isinstance(data, dict) or "message" not in data:
+        return data
+    msg = data.get("message") or {}
+    return {
+        "model": data.get("model"),
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": msg.get("role", "assistant"),
+                    "content": msg.get("content", ""),
+                },
+                "finish_reason": data.get("done_reason", "stop"),
+            }
+        ],
+    }
+
+
 def _build_payload(
     messages: list,
     max_tokens: int,
@@ -370,16 +430,10 @@ def _build_payload(
     response_format: Optional[dict],
 ) -> dict:
     """Build the request payload for llama-server, LiteLLM, or Ollama."""
-    litellm = os.getenv("ENABLE_LITELLM") == "true"
-    backend_type = _get_backend_type()
-    ollama = not litellm and backend_type == "ollama"
+    if _is_ollama_mode():
+        return _build_ollama_payload(messages, max_tokens, temperature, response_format)
 
-    # '/no_think' is Qwen-specific prompt text. vLLM/LiteLLM modes always
-    # append it (unchanged behavior); ollama mode appends it only for Qwen
-    # models so gemma/gpt-oss/etc. get clean system prompts.
-    if not ollama or "qwen" in os.getenv("LLM_MODEL_NAME", "").lower():
-        messages = _ensure_no_think(messages)
-
+    messages = _ensure_no_think(messages)
     payload = {
         "messages": messages,
         "max_tokens": max_tokens,
@@ -387,15 +441,12 @@ def _build_payload(
     }
 
     # Add model field for LiteLLM mode
-    if litellm:
+    if os.getenv("ENABLE_LITELLM") == "true":
         # Use the model name from LiteLLM config; "default" is the alias
         # set in router_settings.model_group_alias by the config generator,
         # and works regardless of which provider was selected.
         model_name = os.getenv("LLM_MODEL_NAME", "default")
         payload["model"] = model_name
-    elif ollama:
-        # Ollama's OpenAI-compatible endpoint requires an explicit model.
-        payload["model"] = os.getenv("LLM_MODEL_NAME", "")
     else:
         # vLLM mode - add chat template kwargs
         payload["chat_template_kwargs"] = {"enable_thinking": False}
@@ -430,6 +481,19 @@ def _chat_completions_url(server_url: str) -> str:
     return f"{_normalize_server_url(server_url)}/v1/chat/completions"
 
 
+def _endpoint_url(server_url: str) -> str:
+    """Endpoint for the configured backend.
+
+    Ollama mode uses the native /api/chat endpoint, NOT the OpenAI-compat
+    /v1/chat/completions: the compat endpoint ignores the `think` parameter,
+    so thinking models burn the whole token budget on reasoning and return
+    empty content (breaks response_format guardrails like custom_policy).
+    """
+    if _is_ollama_mode():
+        return f"{_normalize_server_url(server_url)}/api/chat"
+    return _chat_completions_url(server_url)
+
+
 def llm_call(
     messages: list,
     max_tokens: int = 10,
@@ -440,7 +504,7 @@ def llm_call(
     """Synchronous LLM call routed to the correct server."""
     url = get_server_url(guardrail_name)
     payload = _build_payload(messages, max_tokens, temperature, response_format)
-    endpoint_url = _chat_completions_url(url)
+    endpoint_url = _endpoint_url(url)
     _print_llm_request(endpoint_url, payload)
     session = _get_shared_session()
     res = session.post(
@@ -451,7 +515,10 @@ def llm_call(
     )
     if res.status_code >= 400:
         _print_llm_response(endpoint_url, res.status_code, res.text)
-    return res.json()
+    result = res.json()
+    if _is_ollama_mode():
+        result = _adapt_ollama_response(result)
+    return result
 
 
 async def async_llm_call(
@@ -469,7 +536,7 @@ async def async_llm_call(
 
     llm_start = time.perf_counter()
     client = _get_shared_client()
-    endpoint_url = _chat_completions_url(url)
+    endpoint_url = _endpoint_url(url)
     _print_llm_request(endpoint_url, payload)
     res = await client.post(
         endpoint_url,
@@ -479,6 +546,8 @@ async def async_llm_call(
     if res.status_code >= 400:
         _print_llm_response(endpoint_url, res.status_code, res.text)
     result = res.json()
+    if _is_ollama_mode():
+        result = _adapt_ollama_response(result)
     llm_ms = (time.perf_counter() - llm_start) * 1000
 
     post_start = time.perf_counter()
