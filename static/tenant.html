@@ -4254,6 +4254,21 @@ if __name__ == "__main__":
         <div class="page-title">Guardrail Effectiveness</div>
         <div class="page-desc">Track pass/block rates, latency, and trends for every guardrail.</div>
       </div>
+      <div class="card" style="margin-bottom:1rem;">
+        <div class="card-header">
+          <div><div class="card-title">Issues Dashboard</div></div>
+          <div style="display:flex;gap:0.5rem;align-items:center;">
+            <select id="gd-days" onchange="loadGuardrailDashboard()" style="font-size:12px;padding:0.25rem 0.5rem;border:1px solid var(--border);border-radius:6px;">
+              <option value="7">Last 7 days</option>
+              <option value="30" selected>Last 30 days</option>
+            </select>
+            <button class="small" onclick="loadGuardrailDashboard()">Refresh</button>
+          </div>
+        </div>
+        <div id="guardrail-dashboard-content" style="min-height:200px;">
+          <div style="text-align:center;color:var(--text-dim);padding:2rem;">Loading dashboard...</div>
+        </div>
+      </div>
       <div class="card">
         <div class="card-header">
           <div><div class="card-title">All Guardrails (Last 30 Days)</div></div>
@@ -10845,6 +10860,129 @@ async function govCloseReview(cid) {
   } catch (e) { showToast(e.message, 'error'); }
 }
 
+// ── Guardrail Issues Dashboard (DLP-style, /guardrails/dashboard) ────────
+const _GD_SEV = {
+  critical: { label: 'Critical', color: '#7f1d1d' },
+  high:     { label: 'High',     color: '#dc2626' },
+  medium:   { label: 'Medium',   color: '#d97706' },
+  low:      { label: 'Low',      color: '#eab308' },
+};
+
+function _gdSevChip(sev) {
+  const s = _GD_SEV[sev] || _GD_SEV.low;
+  return `<span style="display:inline-block;background:${s.color};color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600;">${s.label}</span>`;
+}
+
+// Stacked severity bar (critical -> low, proportional widths).
+function _gdSeverityBar(bySev, total) {
+  if (!total) return '';
+  const segs = Object.keys(_GD_SEV)
+    .filter(k => bySev[k] > 0)
+    .map(k => `<div title="${_GD_SEV[k].label}: ${bySev[k]}" style="flex:${bySev[k]};background:${_GD_SEV[k].color};"></div>`)
+    .join('');
+  return `<div style="display:flex;height:10px;border-radius:5px;overflow:hidden;min-width:220px;">${segs}</div>`;
+}
+
+// Inline-SVG daily chart: stacked blocked (red) + warned (amber) bars.
+function _gdDailyChart(daily) {
+  const days = daily || [];
+  if (!days.length || !days.some(d => d.blocked + d.warned > 0)) {
+    return '<div style="color:var(--text-dim);font-size:12px;padding:1.5rem;text-align:center;">No blocked or warned checks in this window.</div>';
+  }
+  const W = 640, H = 120, pad = 4;
+  const max = Math.max(...days.map(d => d.blocked + d.warned), 1);
+  const bw = (W - pad * 2) / days.length;
+  const bars = days.map((d, i) => {
+    const x = pad + i * bw;
+    const hb = (d.blocked / max) * (H - 20);
+    const hw = (d.warned / max) * (H - 20);
+    const yw = H - 4 - hw, yb = yw - hb;
+    return `<g><title>${_govEsc(d.date)} — blocked ${d.blocked}, warned ${d.warned}</title>
+      <rect x="${x + 1}" y="${yw}" width="${Math.max(bw - 2, 1)}" height="${hw}" fill="#d97706" rx="1"></rect>
+      <rect x="${x + 1}" y="${yb}" width="${Math.max(bw - 2, 1)}" height="${hb}" fill="#dc2626" rx="1"></rect></g>`;
+  }).join('');
+  const first = days[0] ? days[0].date : '', last = days[days.length - 1] ? days[days.length - 1].date : '';
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;" preserveAspectRatio="none">${bars}</svg>
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);"><span>${_govEsc(first)}</span><span>${_govEsc(last)}</span></div>`;
+}
+
+function _gdTopTable(title, rows, keyField, keyHeader, extra) {
+  const body = (rows || []).map(r => `<tr style="border-top:1px solid var(--border);">
+      <td style="padding:0.35rem 0.6rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_govEsc(r[keyField])}">${extra ? extra(r) : ''}${_govEsc(r[keyField])}</td>
+      <td style="padding:0.35rem 0.6rem;text-align:right;color:#dc2626;font-weight:600;">${r.blocked}</td>
+      <td style="padding:0.35rem 0.6rem;text-align:right;color:#d97706;">${r.warned}</td>
+    </tr>`).join('');
+  return `<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+    <div style="padding:0.5rem 0.6rem;font-weight:600;font-size:12px;background:var(--bg-subtle,#f6f8fb);">${title}</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="text-align:left;color:var(--text-muted);">
+        <th style="padding:0.35rem 0.6rem;">${keyHeader}</th>
+        <th style="padding:0.35rem 0.6rem;text-align:right;">Blocked</th>
+        <th style="padding:0.35rem 0.6rem;text-align:right;">Warned</th></tr></thead>
+      <tbody>${body || `<tr><td colspan="3" style="padding:0.75rem;color:var(--text-muted);">None in window.</td></tr>`}</tbody>
+    </table></div>`;
+}
+
+async function loadGuardrailDashboard() {
+  const el = document.getElementById('guardrail-dashboard-content');
+  el.innerHTML = _metricsSpinner('Loading dashboard…');
+  const days = (document.getElementById('gd-days') || {}).value || 30;
+  try {
+    const d = await apiCall(`/v1/tenant/me/guardrails/dashboard?days=${days}`);
+    const s = d.summary || { blocked: 0, warned: 0, total: 0, by_severity: {} };
+    const bySev = s.by_severity || {};
+    if (!s.total && !(d.daily || []).length) {
+      el.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:2rem;">No guardrail issues recorded yet. Events appear after guardrails flag or block requests.</div>';
+      return;
+    }
+    const sevLegend = Object.keys(_GD_SEV).map(k =>
+      `<span style="font-size:11px;color:var(--text-muted);margin-right:0.75rem;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${_GD_SEV[k].color};margin-right:4px;"></span>${_GD_SEV[k].label} <b>${bySev[k] || 0}</b></span>`).join('');
+    const recent = (d.recent_blocked || []).map(e => `<tr style="border-top:1px solid var(--border);">
+        <td style="padding:0.35rem 0.6rem;white-space:nowrap;color:var(--text-muted);">${e.ts ? new Date(e.ts * 1000).toLocaleString() : '—'}</td>
+        <td style="padding:0.35rem 0.6rem;">${_govEsc(e.agent_key)}</td>
+        <td style="padding:0.35rem 0.6rem;">${_govEsc(e.device_id)}</td>
+        <td style="padding:0.35rem 0.6rem;">${(e.guardrails || []).map(g => `<span style="display:inline-block;background:#fee2e2;color:#991b1b;border-radius:8px;padding:0 6px;margin:1px;font-size:11px;">${_govEsc(g)}</span>`).join('')}</td>
+        <td style="padding:0.35rem 0.6rem;color:var(--text-muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_govEsc(e.message)}">${_govEsc(e.message)}</td>
+      </tr>`).join('');
+    el.innerHTML = `
+      <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem;">
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Active issues (${d.days}d)</div>
+          <div style="font-size:32px;font-weight:700;line-height:1.1;">${s.total}</div>
+        </div>
+        <div style="flex:1;min-width:240px;">
+          ${_gdSeverityBar(bySev, s.total)}
+          <div style="margin-top:0.4rem;">${sevLegend}</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:11px;color:var(--text-muted);">Blocked <b style="color:#dc2626;">${s.blocked}</b> · Warned <b style="color:#d97706;">${s.warned}</b></div>
+          ${d.truncated ? `<div style="font-size:10px;color:var(--text-muted);">based on the most recent ${d.scanned.toLocaleString()} events</div>` : ''}
+        </div>
+      </div>
+      <div style="margin-bottom:1rem;">
+        <div style="font-size:12px;font-weight:600;margin-bottom:0.25rem;">Daily blocked / warned checks</div>
+        ${_gdDailyChart(d.daily)}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin-bottom:1rem;">
+        ${_gdTopTable('Top issues', d.top_issues, 'guardrail', 'Guardrail / policy', r => _gdSevChip(r.severity) + ' ')}
+        ${_gdTopTable('Top users', d.top_users, 'agent_key', 'User / agent')}
+        ${_gdTopTable('Top devices', d.top_devices, 'device_id', 'Device')}
+      </div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+        <div style="padding:0.5rem 0.6rem;font-weight:600;font-size:12px;background:var(--bg-subtle,#f6f8fb);">Recent blocked events</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr style="text-align:left;color:var(--text-muted);">
+            <th style="padding:0.35rem 0.6rem;">When</th><th style="padding:0.35rem 0.6rem;">User</th>
+            <th style="padding:0.35rem 0.6rem;">Device</th><th style="padding:0.35rem 0.6rem;">Guardrails</th>
+            <th style="padding:0.35rem 0.6rem;">Message</th></tr></thead>
+          <tbody>${recent || `<tr><td colspan="5" style="padding:0.75rem;color:var(--text-muted);">No blocked events in window.</td></tr>`}</tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = `<div style="text-align:center;color:#b91c1c;padding:2rem;">${_govEsc(e.message)}</div>`;
+  }
+}
+
 async function loadGuardrailMetrics() {
   const el = document.getElementById('guardrail-metrics-content');
   el.innerHTML = _metricsSpinner('Loading guardrail metrics…');
@@ -10999,7 +11137,7 @@ document.addEventListener('click', (e) => {
       console.log('Architecture tab loaded');
     }
     if (tab === 'siem') loadSIEMData();
-    if (tab === 'guardrail-metrics') loadGuardrailMetrics();
+    if (tab === 'guardrail-metrics') { loadGuardrailDashboard(); loadGuardrailMetrics(); }
     if (tab === 'board-report') loadBoardReport();
     if (tab === 'agents') loadAgentData();
     if (tab === 'governance') loadGovernance();

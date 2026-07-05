@@ -552,6 +552,7 @@ async def classify_output(request: Request, body: dict):
             "tenant_id": tenant_id or "",
             "user_role": user_role or "",
             "stage": "output",
+            "device_id": request.headers.get("x-device-id", ""),
             "blocked": blocked,
             "block_reason": "; ".join(gr.get("message", "") for gr in guardrail_results if not gr.get("passed")) if blocked else None,
             "session_id": context.get("session_id", ""),
