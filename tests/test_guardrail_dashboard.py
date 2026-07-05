@@ -264,6 +264,59 @@ def test_dashboard_route_not_swallowed_by_metrics_param_route():
     assert resp2.json()["guardrail"] == "toxicity"
 
 
+# ── device_id capture on the guard path feeds the dashboard ──────────────
+
+def test_guardrails_input_captures_device_id(fake_redis, monkeypatch):
+    """POST /guardrails/input with X-Device-Id lands device_id in the audit
+    metadata, and the dashboard surfaces it under top_devices."""
+    import asyncio
+    from fastapi.testclient import TestClient
+    from fastapi import FastAPI
+    from api.routes_classify import router as classify_router
+    import storage.audit_log as audit_log_mod
+
+    # audit_logger.log defers to a thread pool; make it synchronous so the
+    # write is visible before the assertion.
+    async def sync_log(self, entry):
+        self._write_sync(entry)
+    monkeypatch.setattr(audit_log_mod.AuditLogger, "log", sync_log)
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def fake_tenant(request, call_next):
+        request.state.tenant_id = "bankco"
+        request.state.tenant_config = None
+        return await call_next(request)
+
+    monkeypatch.setattr(
+        "storage.tenant_store.resolve_request_tenant_id", lambda req: "bankco",
+        raising=False)
+
+    app.include_router(classify_router)
+    client = TestClient(app)
+
+    resp = client.post(
+        "/guardrails/input",
+        json={"message": "hello world", "device_id": "BODY-DEV"},
+        headers={"X-Device-Id": "LAPTOP-42", "X-Agent-Key": "alice@co.com"},
+    )
+    assert resp.status_code == 200
+
+    entries = fake_redis.zsets.get("audit:bankco", [])
+    assert entries, "audit entry should be written"
+    record = json.loads(entries[-1][1])
+    # header wins over body
+    assert record["metadata"]["device_id"] == "LAPTOP-42"
+
+    # body fallback when no header
+    resp2 = client.post("/guardrails/input",
+                        json={"message": "hi again", "device_id": "BODY-DEV"})
+    assert resp2.status_code == 200
+    record2 = json.loads(fake_redis.zsets["audit:bankco"][-1][1])
+    assert record2["metadata"]["device_id"] == "BODY-DEV"
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

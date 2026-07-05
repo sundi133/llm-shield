@@ -259,6 +259,9 @@ async def classify(request: Request, body: dict):
     # Log to audit_logger so input guardrail checks appear in tenant telemetry
     agent_key = (getattr(request.state, "agent_key", None) if hasattr(request, "state") else None) or body.get("agent_key", "")
     role_name = (getattr(request.state, "role_name", None) if hasattr(request, "state") else None) or ""
+    # Device attribution for the guardrails dashboard (browser extension sends
+    # X-Device-Id / body device_id). Header/dict reads only — no added I/O.
+    device_id = request.headers.get("x-device-id", "") or str(body.get("device_id") or "")
     root_action = result.get("action", "pass")  # pass, log, warn, redact, or block
     blocked = root_action == "block"
     guardrail_results = result.get("guardrail_results", [])
@@ -276,6 +279,7 @@ async def classify(request: Request, body: dict):
             "tenant_id": tenant_id,
             "user_role": role_name,
             "stage": "input",
+            "device_id": device_id,
             "blocked": blocked,
             "block_reason": "; ".join(gr.get("message", "") for gr in guardrail_results if not gr.get("passed")) if blocked else None,
             "session_id": body.get("session_id", ""),
