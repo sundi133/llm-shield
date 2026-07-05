@@ -74,8 +74,12 @@ can provide the real serial/asset id — not available on Windows/macOS.
   (plaintext-ish). For fleet rollout push keys via managed policy instead.
 
 ## Fleet rollout (Chrome Enterprise)
-Force-install and configure via **managed policy** — no per-user setup. The
-schema is in `managed_schema.json`; admins push values under
+Force-install and configure via **managed policy** — no per-user setup. For
+the full no-store path (self-hosted signed `.crx` + `update.xml` +
+`ExtensionInstallForcelist`, per-platform policy delivery, rollout
+verification), see [`docs/enterprise-install.md`](../../docs/enterprise-install.md).
+
+The config schema is in `managed_schema.json`; admins push values under
 `3rdparty.extensions.<extension-id>.policy`, e.g.:
 
 ```json
