@@ -258,6 +258,213 @@ def get_effectiveness(
     return _compute_effectiveness(guardrail_name, days, dated_data)
 
 
+# ── DLP-style dashboard aggregation (read-only, admin plane) ──────────────
+#
+# Severity is DERIVED at query time, never stored, so the guard path stays
+# untouched and the mapping can be tuned without a migration. A blocked event
+# from one of these guardrails is Critical; any other block is High; warns are
+# Medium; log-only triggers are Low.
+_CRITICAL_GUARDRAILS = {
+    "adversarial_detection",
+    "system_prompt_leak",
+    "custom_policy_input",
+}
+_CRITICAL_PREFIXES = ("pii",)
+
+# Upper bound on audit entries parsed per dashboard request. The audit ZSET
+# can hold up to AUDIT_MAX_ENTRIES (1M); reading it all would stall the admin
+# plane. The response carries scanned/truncated so the UI can say "based on
+# the most recent N events" instead of silently under-counting.
+_DASHBOARD_MAX_SCAN = 20_000
+
+
+def _is_critical_guardrail(name: str) -> bool:
+    return name in _CRITICAL_GUARDRAILS or name.startswith(_CRITICAL_PREFIXES)
+
+
+def _event_severity(action: str, triggered: list) -> str:
+    if action == "block":
+        if any(_is_critical_guardrail(str(t)) for t in triggered):
+            return "critical"
+        return "high"
+    if action == "warn":
+        return "medium"
+    return "low"
+
+
+def _issue_severity(name: str, blocked: int, warned: int) -> str:
+    if blocked and _is_critical_guardrail(name):
+        return "critical"
+    if blocked:
+        return "high"
+    if warned:
+        return "medium"
+    return "low"
+
+
+def _empty_dashboard(tenant_id: str, days: int) -> dict:
+    return {
+        "tenant_id": tenant_id,
+        "days": days,
+        "scanned": 0,
+        "truncated": False,
+        "summary": {
+            "blocked": 0, "warned": 0, "total": 0,
+            "by_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+        },
+        "daily": [],
+        "top_issues": [],
+        "top_users": [],
+        "top_devices": [],
+        "recent_blocked": [],
+    }
+
+
+def _fetch_audit_window(r, tenant_id: str, days: int, max_scan: int) -> list:
+    """Most-recent-first raw audit JSON strings within the window, bounded."""
+    key = f"audit:{tenant_id}"
+    min_score = (datetime.utcnow() - timedelta(days=days)).timestamp()
+    try:
+        try:
+            # Upstash REST client signature
+            return r.zrevrangebyscore(key, "+inf", min_score, offset=0, count=max_scan) or []
+        except TypeError:
+            # redis-py signature
+            return r.zrevrangebyscore(key, "+inf", min_score, start=0, num=max_scan) or []
+    except Exception as e:
+        logger.debug(f"dashboard audit read failed: {e}")
+        return []
+
+
+def _daily_totals(tenant_id: str, days: int) -> list[dict]:
+    """Per-day blocked/warned/passed guardrail-check counts across all
+    guardrails, oldest first. Reuses the effectiveness store, so the numbers
+    count guardrail checks (a request may run several)."""
+    summary_rows = get_all_guardrails_summary(tenant_id, days=days)
+    if not summary_rows:
+        return []
+    # get_all_guardrails_summary drops the daily series, so re-aggregate from
+    # per-guardrail effectiveness. One batched fetch per guardrail set.
+    dates = [
+        (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
+        for i in range(days)
+    ]
+    totals = {d: {"date": d, "blocked": 0, "warned": 0, "passed": 0, "total": 0}
+              for d in dates}
+    r = _get_redis()
+    if not r:
+        return []
+    names = [row["guardrail"] for row in summary_rows]
+    keys_by_name = {n: [_key(tenant_id, n, d) for d in dates] for n in names}
+    all_keys = [k for ks in keys_by_name.values() for k in ks]
+    fetched = _batch_hgetall(r, all_keys)
+    for n in names:
+        for i, d in enumerate(dates):
+            data = _decode_hash(fetched.get(keys_by_name[n][i], {}))
+            if not data:
+                continue
+            totals[d]["blocked"] += int(data.get("blocked", 0))
+            totals[d]["warned"] += int(data.get("warned", 0))
+            totals[d]["passed"] += int(data.get("passed", 0))
+            totals[d]["total"] += int(data.get("total", 0))
+    return [totals[d] for d in reversed(dates)]  # oldest first
+
+
+def get_blocked_dashboard(
+    tenant_id: str,
+    days: int = 30,
+    max_scan: int = _DASHBOARD_MAX_SCAN,
+) -> dict:
+    """DLP-style dashboard: severity split, daily trend, top issues, top
+    users/devices, and recent blocked events. Read-only aggregation over the
+    existing guardrail-metrics hashes and audit ZSET; nothing is written.
+    """
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        days = 30
+    days = max(1, min(days, 90))
+    out = _empty_dashboard(tenant_id, days)
+    r = _get_redis()
+    if not r or not tenant_id:
+        return out
+
+    out["daily"] = _daily_totals(tenant_id, days)
+
+    raw_entries = _fetch_audit_window(r, tenant_id, days, max_scan)
+    out["scanned"] = len(raw_entries)
+    out["truncated"] = len(raw_entries) >= max_scan
+
+    by_severity = out["summary"]["by_severity"]
+    issue_counts: dict = {}     # guardrail -> {blocked, warned}
+    user_counts: dict = {}      # agent_key -> {blocked, warned}
+    device_counts: dict = {}    # device_id -> {blocked, warned}
+    recent_blocked: list = []
+
+    for raw in raw_entries:
+        try:
+            entry = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(entry, dict):
+            continue
+
+        action = entry.get("action_taken", "pass")
+        triggered = entry.get("guardrails_triggered") or []
+        if action not in ("block", "warn") and not triggered:
+            continue  # clean pass: not an issue
+
+        metadata = entry.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        agent = entry.get("agent_key") or "(unknown)"
+        device = metadata.get("device_id") or "(unknown)"
+
+        sev = _event_severity(action, triggered)
+        by_severity[sev] += 1
+        out["summary"]["total"] += 1
+        if action == "block":
+            out["summary"]["blocked"] += 1
+        elif action == "warn":
+            out["summary"]["warned"] += 1
+
+        bucket = "blocked" if action == "block" else "warned"
+        for name in triggered:
+            c = issue_counts.setdefault(str(name), {"blocked": 0, "warned": 0})
+            c[bucket] += 1
+        u = user_counts.setdefault(agent, {"blocked": 0, "warned": 0})
+        u[bucket] += 1
+        d = device_counts.setdefault(device, {"blocked": 0, "warned": 0})
+        d[bucket] += 1
+
+        if action == "block" and len(recent_blocked) < 10:
+            recent_blocked.append({
+                "ts": entry.get("ts", 0),
+                "timestamp": entry.get("timestamp", ""),
+                "agent_key": agent,
+                "device_id": device,
+                "guardrails": [str(t) for t in triggered],
+                "message": str(entry.get("input_text", ""))[:120],
+            })
+
+    def _top10(counts: dict, label: str) -> list[dict]:
+        rows = [{label: k, **v} for k, v in counts.items()]
+        rows.sort(key=lambda x: (x["blocked"], x["warned"]), reverse=True)
+        return rows[:10]
+
+    out["top_issues"] = [
+        {"guardrail": row["guardrail"],
+         "count": row["blocked"] + row["warned"],
+         "blocked": row["blocked"], "warned": row["warned"],
+         "severity": _issue_severity(row["guardrail"], row["blocked"], row["warned"])}
+        for row in _top10(issue_counts, "guardrail")
+    ]
+    out["top_users"] = _top10(user_counts, "agent_key")
+    out["top_devices"] = _top10(device_counts, "device_id")
+    out["recent_blocked"] = recent_blocked
+    return out
+
+
 def get_all_guardrails_summary(
     tenant_id: str,
     days: int = 30,
