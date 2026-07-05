@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Shield Prompt Guard (POC)",
-  "version": "0.3.0",
-  "description": "Screens prompts on public AI tools (Claude, ChatGPT, Gemini, Copilot) through Votal Shield /guardrails/input before they are sent. POC / best-effort client-side shadow-AI DLP.",
-  "permissions": ["storage", "identity", "identity.email"],
+  "name": "Shield Prompt Guard",
+  "version": "1.0.0",
+  "description": "Screens prompts on public AI tools (Claude, ChatGPT, Gemini, Copilot) through your organization's Votal Shield guardrails before they are sent.",
+  "permissions": ["storage"],
   "storage": { "managed_schema": "managed_schema.json" },
   "host_permissions": [
     "https://claude.ai/*",
@@ -11,8 +11,7 @@
     "https://chat.openai.com/*",
     "https://gemini.google.com/*",
     "https://copilot.microsoft.com/*",
-    "https://*.api.runpod.ai/*",
-    "https://*.up.railway.app/*"
+    "https://api.guardrails.votal.ai/*"
   ],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
@@ -29,8 +28,20 @@
     }
   ],
   "options_page": "options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Shield Prompt Guard"
+    "default_title": "Shield Prompt Guard",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   }
 }

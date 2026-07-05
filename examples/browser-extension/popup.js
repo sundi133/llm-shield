@@ -20,7 +20,7 @@ document.getElementById("test").addEventListener("click", () => {
     if (!r) { result.textContent = "No response."; result.className = "bad"; return; }
     const id = r.identity || {};
     const idLine =
-      "\nas: " + (id.email || "(no email)") + "\ndevice: " + (id.deviceId || "(none)");
+      "\nas: " + (id.userId || "(no policy userId)") + "\ndevice: " + (id.deviceId || "(none)");
     if (r.error) {
       result.textContent = "✗ " + r.error + "\n(fail-open: prompts would send unscreened)" + idLine;
       result.className = "bad";

@@ -17,15 +17,15 @@
   <h1>Shield Prompt Guard — Settings</h1>
 
   <label>Shield URL</label>
-  <input id="shieldUrl" placeholder="https://kebrpqdbp1log1.api.runpod.ai" />
-  <div class="hint">Base URL of your Shield data plane. The extension appends <code>/guardrails/input</code>.</div>
+  <input id="shieldUrl" placeholder="https://api.guardrails.votal.ai" />
+  <div class="hint">Base URL of your Shield data plane (default: <code>https://api.guardrails.votal.ai</code>). The extension appends <code>/guardrails/input</code>.</div>
 
   <label>Tenant API key (X-API-Key)</label>
   <input id="tenantKey" placeholder="bank-co-key" />
 
-  <label>RunPod proxy token (Authorization: Bearer)</label>
-  <input id="proxyToken" type="password" placeholder="rpa_..." />
-  <div class="hint">Only needed if your endpoint is behind RunPod's gateway. Stored in local extension storage.</div>
+  <label>Proxy bearer token (Authorization: Bearer) — optional</label>
+  <input id="proxyToken" type="password" />
+  <div class="hint">Only needed if your endpoint sits behind a gateway that requires a bearer. Stored in local extension storage.</div>
 
   <label>Mode</label>
   <select id="mode">
