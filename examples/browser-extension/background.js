@@ -27,7 +27,7 @@ async function getConfig() {
 }
 
 // A stable per-install id, generated once — the fallback when neither a
-// policy-pushed deviceId nor a corporate email is available.
+// policy-pushed userId nor a policy-pushed deviceId is available.
 async function getInstallId() {
   const { installId } = await chrome.storage.local.get("installId");
   if (installId) return installId;
@@ -36,18 +36,15 @@ async function getInstallId() {
   return id;
 }
 
-// Who + which device sent this prompt.
-//  - email:    corporate account via chrome.identity (best "who" on managed Chrome)
-//  - deviceId: MDM-policy value if present, else the per-install id
+// Who + which device sent this prompt. The extension itself collects no PII;
+// identity is whatever the org's MDM policy injects (storage.managed):
+//  - userId:   employee id / AD account / email — the org's choice
+//  - deviceId: machine name or asset tag, else the per-install id
 async function resolveIdentity() {
-  let email = "";
-  try {
-    const info = await chrome.identity.getProfileUserInfo({ accountStatus: "ANY" });
-    email = (info && info.email) || "";
-  } catch (_) {}
   const managed = await getManaged();
+  const userId = (managed.userId || "").trim();
   const deviceId = (managed.deviceId || "").trim() || (await getInstallId());
-  return { email, deviceId };
+  return { userId, deviceId };
 }
 
 // Returns { block, warn, reason, error?, mode, identity }
@@ -62,14 +59,14 @@ async function screen(text) {
   if (cfg.proxyToken) headers["Authorization"] = "Bearer " + cfg.proxyToken;
   // Attribution: X-Agent-Key drives the Telemetry "agent" column; device is
   // carried alongside for audit.
-  const who = identity.email || identity.deviceId;
+  const who = identity.userId || identity.deviceId;
   if (who) headers["X-Agent-Key"] = who;
   if (identity.deviceId) headers["X-Device-Id"] = identity.deviceId;
 
   const url = cfg.shieldUrl.replace(/\/+$/, "") + "/guardrails/input";
   const body = JSON.stringify({
     message: text,
-    user_email: identity.email || undefined,
+    user_id: identity.userId || undefined,
     device_id: identity.deviceId || undefined,
   });
 
