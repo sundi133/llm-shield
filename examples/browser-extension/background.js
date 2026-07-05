@@ -1,10 +1,15 @@
 // Background service worker — does the actual Shield call.
 // Runs in the extension origin (not the page), so it is NOT subject to the AI
-// site's Content-Security-Policy and CAN attach the RunPod bearer, tenant
-// X-API-Key, and identity/attribution headers. Content script talks to it via
-// sendMessage.
+// site's Content-Security-Policy and CAN attach the optional proxy bearer,
+// tenant X-API-Key, and identity/attribution headers. Content script talks to
+// it via sendMessage.
 
-const DEFAULTS = { shieldUrl: "", tenantKey: "", proxyToken: "", mode: "warn" };
+const DEFAULTS = {
+  shieldUrl: "https://api.guardrails.votal.ai",
+  tenantKey: "",
+  proxyToken: "",
+  mode: "warn",
+};
 
 // Managed (policy-pushed) config wins over local config where set. Lets a
 // Chrome Enterprise admin force the endpoint/keys/mode/deviceId for the fleet.
@@ -22,7 +27,7 @@ async function getConfig() {
   const pick = (k) =>
     managed[k] != null && managed[k] !== "" ? managed[k] : local[k];
   const out = {};
-  for (const k of Object.keys(DEFAULTS)) out[k] = pick(k) ?? DEFAULTS[k];
+  for (const k of Object.keys(DEFAULTS)) out[k] = pick(k) || DEFAULTS[k];
   return out;
 }
 

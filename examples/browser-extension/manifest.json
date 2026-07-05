@@ -11,8 +11,7 @@
     "https://chat.openai.com/*",
     "https://gemini.google.com/*",
     "https://copilot.microsoft.com/*",
-    "https://*.api.runpod.ai/*",
-    "https://*.up.railway.app/*"
+    "https://api.guardrails.votal.ai/*"
   ],
   "background": { "service_worker": "background.js" },
   "content_scripts": [

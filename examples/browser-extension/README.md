@@ -20,7 +20,7 @@ chance of working.
 ## What it does
 - Intercepts the send action on each site (Enter key + send button).
 - Sends the composer text to Shield from the **background service worker**
-  (so it bypasses the page CSP and can attach the RunPod `Authorization`
+  (so it bypasses the page CSP and can attach the optional `Authorization`
   bearer + tenant `X-API-Key` headers).
 - **monitor** mode: flags (yellow banner) but always sends. **enforce** mode:
   blocks on a Shield block verdict (red banner). **off**: does nothing.
@@ -31,9 +31,9 @@ chance of working.
 1. Chrome → `chrome://extensions` → toggle **Developer mode** (top right).
 2. **Load unpacked** → select this `shield-prompt-guard/` folder.
 3. Click the extension icon → **Settings**, fill in:
-   - **Shield URL** — e.g. `https://kebrpqdbp1log1.api.runpod.ai`
+   - **Shield URL** — default `https://api.guardrails.votal.ai`
    - **Tenant API key** — e.g. `bank-co-key`
-   - **RunPod proxy token** — `rpa_…` (only if behind RunPod's gateway)
+   - **Proxy bearer token** — optional, only if behind a gateway
    - **Mode** — start on `monitor`.
 4. Extension popup → **Test connection** → expect `✓ Reached Shield`.
 5. Open claude.ai, type a prompt, hit Enter — watch for the banner. Try a
@@ -80,14 +80,17 @@ schema is in `managed_schema.json`; admins push values under
 
 ```json
 {
-  "shieldUrl":  "https://shield.yourco.internal",
+  "shieldUrl":  "https://api.guardrails.votal.ai",
   "tenantKey":  "altayer-retail-key",
-  "proxyToken": "rpa_...",
   "deviceId":   "${machine_name}",
   "userId":     "jane.doe@yourco.com",
   "mode":       "enforce"
 }
 ```
+
+> The manifest only grants host access to `api.guardrails.votal.ai`. Pointing
+> `shieldUrl` at a self-hosted endpoint requires adding that host to
+> `host_permissions` in `manifest.json` (one line) and repackaging.
 
 Managed values **override** local config, so users can't change the endpoint or
 disable enforcement. `${machine_name}` (and other policy variables) let the OS
