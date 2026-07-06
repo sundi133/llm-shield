@@ -189,5 +189,158 @@
     true
   );
 
+  // ── file attachment screening ─────────────────────────────────────────────
+  // Same capture-screen-replay idea as the send interceptors above, applied to
+  // the three ways a file reaches the composer: picker (<input type=file>
+  // change), drag-and-drop, and paste. Fail-open: screening problems show a
+  // banner but never eat the file.
+
+  const FILE_MAX_BYTES = 10 * 1024 * 1024; // mirror of background's cap
+
+  let bypassFileChange = false;
+  let bypassDrop = false;
+  let bypassPaste = false;
+
+  function readAsB64(file) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onerror = () => reject(fr.error || new Error("read failed"));
+      fr.onload = () => {
+        const s = String(fr.result || "");
+        resolve(s.slice(s.indexOf(",") + 1)); // strip data:...;base64, prefix
+      };
+      fr.readAsDataURL(file);
+    });
+  }
+
+  function screenOneFile(file) {
+    return new Promise(async (resolve) => {
+      if (file.size > FILE_MAX_BYTES) {
+        // don't read 100MB into memory just to skip it
+        resolve({ block: false, note: "too large to screen" });
+        return;
+      }
+      let dataB64 = "";
+      try {
+        dataB64 = await readAsB64(file);
+      } catch (_) {
+        resolve({ block: false, error: "could not read file" });
+        return;
+      }
+      try {
+        chrome.runtime.sendMessage(
+          { type: "shield-screen-file",
+            file: { name: file.name, mime: file.type, size: file.size, dataB64 } },
+          (r) => resolve(r || { block: false })
+        );
+      } catch (_) {
+        resolve({ block: false }); // extension context gone -> fail open
+      }
+    });
+  }
+
+  // Screens every file; any block blocks the whole batch.
+  async function guardFiles(files) {
+    const list = Array.from(files || []);
+    if (!list.length) return { allow: true };
+    for (const f of list) {
+      const v = await screenOneFile(f);
+      if (v.error) {
+        banner("warn", "Shield unreachable — attachment '" + f.name + "' sent unscreened (" + v.error + ")");
+        continue; // fail-open
+      }
+      if (v.note && !v.block && !v.warn) {
+        banner("warn", "Attachment '" + f.name + "' " + v.note + " — sent unscreened");
+        continue;
+      }
+      if (v.block) {
+        banner("block", "Blocked by Shield: attachment '" + f.name + "' (" + (v.reason || "policy violation") + ")");
+        return { allow: false };
+      }
+      if (v.warn) {
+        banner("warn", "Shield flagged attachment '" + f.name + "' (" + (v.reason || "flagged") + ") — allowed in monitor mode");
+      }
+    }
+    return { allow: true };
+  }
+
+  function rebuildDataTransfer(files) {
+    const dt = new DataTransfer();
+    for (const f of files) dt.items.add(f);
+    return dt;
+  }
+
+  // 1. File picker: <input type="file"> change
+  document.addEventListener(
+    "change",
+    async (e) => {
+      const input = e.target;
+      if (!input || input.type !== "file" || !input.files || !input.files.length) return;
+      if (bypassFileChange) { bypassFileChange = false; return; }
+      e.stopImmediatePropagation(); // hold the site's handler until screened
+      const files = Array.from(input.files);
+      const { allow } = await guardFiles(files);
+      if (!allow) {
+        input.value = ""; // clear the selection so the site never sees it
+        return;
+      }
+      bypassFileChange = true;
+      input.dispatchEvent(new Event("change", { bubbles: true })); // approved replay
+    },
+    true
+  );
+
+  // 2. Drag-and-drop onto the page
+  document.addEventListener(
+    "drop",
+    async (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return; // text drags pass through
+      if (bypassDrop) { bypassDrop = false; return; }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const target = e.target;
+      const kept = Array.from(files);
+      const { allow } = await guardFiles(kept);
+      if (!allow) return;
+      try {
+        bypassDrop = true;
+        target.dispatchEvent(new DragEvent("drop", {
+          bubbles: true, cancelable: true, dataTransfer: rebuildDataTransfer(kept),
+        }));
+      } catch (_) {
+        bypassDrop = false;
+        banner("warn", "Attachment approved — please drop it again");
+      }
+    },
+    true
+  );
+
+  // 3. Paste with files (screenshots, copied files)
+  document.addEventListener(
+    "paste",
+    async (e) => {
+      const files = e.clipboardData && e.clipboardData.files;
+      if (!files || !files.length) return; // plain text paste passes through
+      if (bypassPaste) { bypassPaste = false; return; }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const target = e.target;
+      const kept = Array.from(files);
+      const { allow } = await guardFiles(kept);
+      if (!allow) return;
+      try {
+        bypassPaste = true;
+        target.dispatchEvent(new ClipboardEvent("paste", {
+          bubbles: true, cancelable: true, clipboardData: rebuildDataTransfer(kept),
+        }));
+      } catch (_) {
+        bypassPaste = false;
+        banner("warn", "Attachment approved — please paste it again");
+      }
+    },
+    true
+  );
+
   console.log("[Shield Prompt Guard] active on " + CFG.name);
 })();

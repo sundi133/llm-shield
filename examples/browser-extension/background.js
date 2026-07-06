@@ -95,10 +95,74 @@ async function screen(text) {
   }
 }
 
+// ── file attachment screening ─────────────────────────────────────────────
+const FILE_MAX_BYTES = 10 * 1024 * 1024; // keep in sync with SHIELD_FILE_MAX_BYTES
+
+function fileTimeoutMs(size) {
+  // base 12s + 2s per MB, capped at 30s — uploads take longer than text.
+  return Math.min(12000 + Math.ceil(size / 1048576) * 2000, 30000);
+}
+
+function b64ToBlob(b64, type) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: type || "application/octet-stream" });
+}
+
+// Returns { block, warn, reason, error?, note?, mode, identity }
+async function screenFile(meta) {
+  const cfg = await getConfig();
+  const identity = await resolveIdentity();
+  if (cfg.mode === "off") return { block: false, warn: false, reason: "", mode: "off", identity };
+  if (!cfg.shieldUrl) return { block: false, warn: false, reason: "", error: "no shieldUrl configured", mode: cfg.mode, identity };
+  if (meta.size > FILE_MAX_BYTES) {
+    // fail-open above the cap — the server would 413 anyway; skip the upload
+    return { block: false, warn: false, reason: "", note: "too large to screen", mode: cfg.mode, identity };
+  }
+
+  const headers = {};
+  if (cfg.tenantKey) headers["X-API-Key"] = cfg.tenantKey;
+  if (cfg.proxyToken) headers["Authorization"] = "Bearer " + cfg.proxyToken;
+  const who = identity.userId || identity.deviceId;
+  if (who) headers["X-Agent-Key"] = who;
+  if (identity.deviceId) headers["X-Device-Id"] = identity.deviceId;
+  // NOTE: no Content-Type header — fetch sets the multipart boundary itself.
+
+  const form = new FormData();
+  form.append("file", b64ToBlob(meta.dataB64, meta.mime), meta.name || "attachment");
+  if (identity.deviceId) form.append("device_id", identity.deviceId);
+
+  const url = cfg.shieldUrl.replace(/\/+$/, "") + "/guardrails/file";
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), fileTimeoutMs(meta.size));
+    const resp = await fetch(url, { method: "POST", headers, body: form, signal: ctrl.signal });
+    clearTimeout(t);
+    if (!resp.ok) return { block: false, warn: false, reason: "", error: "HTTP " + resp.status, mode: cfg.mode, identity };
+    const data = await resp.json();
+    const flagged = data.safe === false || data.action === "block";
+    const reason =
+      (data.guardrail_results || [])
+        .filter((g) => g && g.passed === false)
+        .map((g) => g.guardrail)
+        .join(", ") || (data.action || "");
+    const note = data.file && data.file.note ? data.file.note : undefined;
+    if (cfg.mode === "warn") return { block: false, warn: flagged, reason, note, mode: "warn", identity };
+    return { block: flagged, warn: false, reason, note, mode: "enforce", identity };
+  } catch (e) {
+    return { block: false, warn: false, reason: "", error: String(e), mode: cfg.mode, identity };
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === "shield-screen") {
     screen(String(msg.text || "")).then(sendResponse);
     return true; // async
+  }
+  if (msg && msg.type === "shield-screen-file") {
+    screenFile(msg.file || {}).then(sendResponse);
+    return true;
   }
   if (msg && msg.type === "shield-test") {
     screen("Shield connection test from browser extension").then(sendResponse);
