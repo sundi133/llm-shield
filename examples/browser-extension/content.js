@@ -384,5 +384,5 @@
     true
   );
 
-  console.log("[Shield Prompt Guard] active on " + CFG.name);
+  console.log("[VotalAI Guardrails] active on " + CFG.name);
 })();
