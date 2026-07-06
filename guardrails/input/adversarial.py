@@ -254,6 +254,11 @@ _USER_PREFIX_AGENTIC = (
 
 _CSV_FIELDS = ["is_adversarial", "attack_type", "confidence"]
 
+
+def _block_on_untyped() -> bool:
+    """Escape hatch: block on is_adversarial verdicts with attack_type=none."""
+    return os.getenv("SHIELD_ADVERSARIAL_BLOCK_ON_UNTYPED", "").lower() in ("1", "true", "yes")
+
 # Flag for the agentic false-positive fix. Default ON (validated 0% FP / 100%
 # recall on a held-out set). Set SHIELD_ADVERSARIAL_AGENTIC_FIX=0 to fall back to
 # the historical BASE prompt (escape hatch).
@@ -438,6 +443,21 @@ class AdversarialGuardrail(BaseGuardrail):
         elapsed = (time.perf_counter() - start) * 1000
 
         if is_adversarial and confidence >= confidence_threshold:
+            # "Adversarial but no attack type" is self-contradictory — the
+            # model claims danger it cannot name. Observed in production as a
+            # confident false positive on benign documents, so it warns
+            # instead of blocking. SHIELD_ADVERSARIAL_BLOCK_ON_UNTYPED=true
+            # restores the old hard-block behavior.
+            if attack_type in ("none", "") and not _block_on_untyped():
+                return GuardrailResult(
+                    passed=False,
+                    action="warn",
+                    guardrail_name=self.name,
+                    message=(f"Unsafe [none] (confidence: {confidence:.2f}) — "
+                             "demoted to warn: no attack type identified"),
+                    details=result,
+                    latency_ms=elapsed,
+                )
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,
