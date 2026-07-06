@@ -161,7 +161,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; // async
   }
   if (msg && msg.type === "shield-screen-file") {
-    screenFile(msg.file || {}).then(sendResponse);
+    // The rejection handler matters: a throw before screenFile's own
+    // try/catch (e.g. atob on bad base64) would otherwise leave the message
+    // channel open forever and hang the content script fail-closed.
+    screenFile(msg.file || {}).then(sendResponse, () =>
+      sendResponse({ block: false, warn: false, reason: "", error: "file screening failed" }));
     return true;
   }
   if (msg && msg.type === "shield-test") {

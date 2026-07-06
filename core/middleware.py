@@ -239,7 +239,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         "/v1/agents",
         "/v1/data-policies",
     )
-    _GUARDED_EXACT = {"/classify", "/classify_output", "/guardrails/input", "/guardrails/output"}
+    _GUARDED_EXACT = {"/classify", "/classify_output", "/guardrails/input", "/guardrails/output", "/guardrails/file"}
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path

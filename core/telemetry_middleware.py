@@ -141,11 +141,15 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         source_ip = request.client.host if request.client else ""
         user_agent = request.headers.get("user-agent", "")
 
-        # Efficiently parse request body once
+        # Efficiently parse request body once. Multipart uploads (file
+        # screening) are skipped entirely: buffering a 10MB attachment here
+        # would double its memory footprint and json.loads can never succeed
+        # on multipart bytes anyway.
         body_dict = None
         input_text = ""
+        is_multipart = "multipart/form-data" in request.headers.get("content-type", "")
         try:
-            body_bytes = await request.body()
+            body_bytes = b"" if is_multipart else await request.body()
             if body_bytes:
                 body_dict = json.loads(body_bytes)
                 # Extract input text efficiently in one pass

@@ -332,19 +332,40 @@ _TEXTLIKE_EXTS = {
 _TEXTLIKE_CONTENT_TYPES = ("application/json", "application/xml", "text/")
 
 
-def _extract_pdf(data: bytes) -> str:
+def _extract_pdf(data: bytes, max_chars: int) -> str:
     from pypdf import PdfReader
     reader = PdfReader(io.BytesIO(data))
-    return "\n".join((page.extract_text() or "") for page in reader.pages)
+    parts: list[str] = []
+    total = 0
+    for page in reader.pages:
+        t = page.extract_text() or ""
+        if t:
+            parts.append(t)
+            total += len(t)
+        if total > max_chars:  # don't parse a 500-page PDF to keep 20k chars
+            break
+    return "\n".join(parts)
 
 
-def _extract_docx(data: bytes) -> str:
+def _extract_docx(data: bytes, max_chars: int) -> str:
     import docx
     document = docx.Document(io.BytesIO(data))
-    parts = [p.text for p in document.paragraphs]
+    parts: list[str] = []
+    total = 0
+    for p in document.paragraphs:
+        if p.text:
+            parts.append(p.text)
+            total += len(p.text)
+        if total > max_chars:
+            return "\n".join(parts)
     for table in document.tables:
         for row in table.rows:
-            parts.extend(cell.text for cell in row.cells)
+            for cell in row.cells:
+                if cell.text:
+                    parts.append(cell.text)
+                    total += len(cell.text)
+            if total > max_chars:
+                return "\n".join(parts)
     return "\n".join(parts)
 
 
@@ -373,10 +394,10 @@ def _extract_file_text(filename: str, content_type: str, data: bytes,
         if ext in _TEXTLIKE_EXTS or ctype.startswith(_TEXTLIKE_CONTENT_TYPES):
             return data[: max_chars * 4].decode("utf-8", errors="replace"), None
         if ext == "pdf" or ctype == "application/pdf":
-            return _extract_pdf(data), None
-        if ext == "docx":
-            return _extract_docx(data), None
-        if ext == "xlsx":
+            return _extract_pdf(data, max_chars), None
+        if ext == "docx" or ctype == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            return _extract_docx(data, max_chars), None
+        if ext == "xlsx" or ctype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
             return _extract_xlsx(data, max_chars), None
         return "", "content not screenable (unsupported type)"
     except ImportError:
@@ -402,14 +423,42 @@ async def screen_file(
     max_chars = _file_extract_max_chars()
 
     data = await file.read(max_bytes + 1)
+    filename = file.filename or "attachment"
     if len(data) > max_bytes:
+        # Audit BEFORE rejecting: an oversize attachment is the most likely
+        # bulk-exfiltration shape, so it must leave a trace even though it
+        # can't be screened.
+        from storage.tenant_store import resolve_request_tenant_id
+        await audit_logger.log({
+            "agent_key": (getattr(request.state, "agent_key", None) if hasattr(request, "state") else None)
+                         or request.headers.get("x-agent-key", ""),
+            "endpoint": "/guardrails/file",
+            "input_text": f"file:{filename}: (oversize, not screened)",
+            "action_taken": "pass",
+            "guardrails_triggered": [],
+            "latency_ms": 0,
+            "metadata": {
+                "kind": "agent_chat_telemetry",
+                "tenant_id": resolve_request_tenant_id(request),
+                "stage": "input",
+                "device_id": request.headers.get("x-device-id", "") or device_id,
+                "blocked": False,
+                "session_id": session_id,
+                "file": {"name": filename, "size": len(data),
+                         "content_type": file.content_type or "",
+                         "oversize": True},
+            },
+        })
         raise HTTPException(status_code=413,
                             detail=f"file exceeds {max_bytes} byte limit")
 
-    filename = file.filename or "attachment"
     start = datetime.now()
 
-    text, note = _extract_file_text(filename, file.content_type or "", data, max_chars)
+    # Extraction is CPU-bound (pypdf/docx/openpyxl); run it off the event loop
+    # so a pathological document can't stall concurrent guard-path requests.
+    import asyncio
+    text, note = await asyncio.to_thread(
+        _extract_file_text, filename, file.content_type or "", data, max_chars)
     truncated = len(text) > max_chars
     if truncated:
         text = text[:max_chars]
@@ -430,7 +479,8 @@ async def screen_file(
         from storage.guardrail_metrics import record_results_batch
         record_results_batch(tenant_id, result.get("guardrail_results", []))
 
-    agent_key = (getattr(request.state, "agent_key", None) if hasattr(request, "state") else None) or ""
+    agent_key = ((getattr(request.state, "agent_key", None) if hasattr(request, "state") else None)
+                 or request.headers.get("x-agent-key", ""))
     dev = request.headers.get("x-device-id", "") or device_id
     root_action = result.get("action", "pass")
     blocked = root_action == "block"
