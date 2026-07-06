@@ -197,9 +197,27 @@
 
   const FILE_MAX_BYTES = 10 * 1024 * 1024; // mirror of background's cap
 
-  let bypassFileChange = false;
-  let bypassDrop = false;
-  let bypassPaste = false;
+  // Cached mode so interceptors can no-op synchronously when mode=off — the
+  // event must be cancelled before any await, so we can't ask the background
+  // worker first. Managed policy wins over local, like getConfig().
+  let shieldMode = "warn";
+  async function refreshShieldMode() {
+    try {
+      let managedMode = "";
+      try {
+        managedMode = ((await chrome.storage.managed.get("mode")) || {}).mode || "";
+      } catch (_) {}
+      const local = (await chrome.storage.local.get("mode")) || {};
+      shieldMode = managedMode || local.mode || "warn";
+    } catch (_) {}
+  }
+  refreshShieldMode();
+  try { chrome.storage.onChanged.addListener(refreshShieldMode); } catch (_) {}
+
+  // Approved synthetic events are marked directly (not via a global flag) so
+  // an unrelated event of the same type can never consume the approval while
+  // a screen is in flight.
+  const approvedEvents = new WeakSet();
 
   function readAsB64(file) {
     return new Promise((resolve, reject) => {
@@ -213,20 +231,18 @@
     });
   }
 
-  function screenOneFile(file) {
-    return new Promise(async (resolve) => {
-      if (file.size > FILE_MAX_BYTES) {
-        // don't read 100MB into memory just to skip it
-        resolve({ block: false, note: "too large to screen" });
-        return;
-      }
-      let dataB64 = "";
-      try {
-        dataB64 = await readAsB64(file);
-      } catch (_) {
-        resolve({ block: false, error: "could not read file" });
-        return;
-      }
+  async function screenOneFile(file) {
+    if (file.size > FILE_MAX_BYTES) {
+      // don't read 100MB into memory just to skip it
+      return { block: false, note: "too large to screen" };
+    }
+    let dataB64 = "";
+    try {
+      dataB64 = await readAsB64(file);
+    } catch (_) {
+      return { block: false, error: "could not read file" };
+    }
+    return new Promise((resolve) => {
       try {
         chrome.runtime.sendMessage(
           { type: "shield-screen-file",
@@ -239,34 +255,53 @@
     });
   }
 
-  // Screens every file; any block blocks the whole batch.
+  // Screens all files concurrently; any block blocks the whole batch.
   async function guardFiles(files) {
     const list = Array.from(files || []);
     if (!list.length) return { allow: true };
-    for (const f of list) {
-      const v = await screenOneFile(f);
-      if (v.error) {
-        banner("warn", "Shield unreachable — attachment '" + f.name + "' sent unscreened (" + v.error + ")");
-        continue; // fail-open
-      }
-      if (v.note && !v.block && !v.warn) {
-        banner("warn", "Attachment '" + f.name + "' " + v.note + " — sent unscreened");
-        continue;
-      }
+    const verdicts = await Promise.all(list.map(screenOneFile));
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i], v = verdicts[i];
       if (v.block) {
         banner("block", "Blocked by Shield: attachment '" + f.name + "' (" + (v.reason || "policy violation") + ")");
         return { allow: false };
       }
-      if (v.warn) {
+    }
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i], v = verdicts[i];
+      if (v.error) {
+        banner("warn", "Shield unreachable — attachment '" + f.name + "' sent unscreened (" + v.error + ")");
+      } else if (v.note === "too large to screen") {
+        banner("warn", "Attachment '" + f.name + "' too large to screen — sent unscreened");
+      } else if (v.note && !v.warn) {
+        banner("warn", "Attachment '" + f.name + "': " + v.note + " (filename screened)");
+      } else if (v.warn) {
         banner("warn", "Shield flagged attachment '" + f.name + "' (" + (v.reason || "flagged") + ") — allowed in monitor mode");
       }
     }
     return { allow: true };
   }
 
-  function rebuildDataTransfer(files) {
+  // Reads must happen synchronously in the event handler — DataTransfer is
+  // neutered once the handler returns / awaits.
+  function captureStringItems(dt) {
+    const out = [];
+    try {
+      for (const type of dt.types || []) {
+        if (type === "Files") continue;
+        const v = dt.getData(type);
+        if (v) out.push([type, v]);
+      }
+    } catch (_) {}
+    return out;
+  }
+
+  function rebuildDataTransfer(files, stringItems) {
     const dt = new DataTransfer();
     for (const f of files) dt.items.add(f);
+    for (const [type, value] of stringItems || []) {
+      try { dt.setData(type, value); } catch (_) {}
+    }
     return dt;
   }
 
@@ -274,18 +309,19 @@
   document.addEventListener(
     "change",
     async (e) => {
+      if (shieldMode === "off") return;
       const input = e.target;
       if (!input || input.type !== "file" || !input.files || !input.files.length) return;
-      if (bypassFileChange) { bypassFileChange = false; return; }
+      if (approvedEvents.has(e)) return;
       e.stopImmediatePropagation(); // hold the site's handler until screened
-      const files = Array.from(input.files);
-      const { allow } = await guardFiles(files);
+      const { allow } = await guardFiles(input.files);
       if (!allow) {
         input.value = ""; // clear the selection so the site never sees it
         return;
       }
-      bypassFileChange = true;
-      input.dispatchEvent(new Event("change", { bubbles: true })); // approved replay
+      const replay = new Event("change", { bubbles: true });
+      approvedEvents.add(replay);
+      input.dispatchEvent(replay);
     },
     true
   );
@@ -294,22 +330,25 @@
   document.addEventListener(
     "drop",
     async (e) => {
+      if (shieldMode === "off") return;
       const files = e.dataTransfer && e.dataTransfer.files;
       if (!files || !files.length) return; // text drags pass through
-      if (bypassDrop) { bypassDrop = false; return; }
+      if (approvedEvents.has(e)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       const target = e.target;
       const kept = Array.from(files);
+      const strings = captureStringItems(e.dataTransfer);
       const { allow } = await guardFiles(kept);
       if (!allow) return;
       try {
-        bypassDrop = true;
-        target.dispatchEvent(new DragEvent("drop", {
-          bubbles: true, cancelable: true, dataTransfer: rebuildDataTransfer(kept),
-        }));
+        const replay = new DragEvent("drop", {
+          bubbles: true, cancelable: true,
+          dataTransfer: rebuildDataTransfer(kept, strings),
+        });
+        approvedEvents.add(replay);
+        target.dispatchEvent(replay);
       } catch (_) {
-        bypassDrop = false;
         banner("warn", "Attachment approved — please drop it again");
       }
     },
@@ -320,22 +359,25 @@
   document.addEventListener(
     "paste",
     async (e) => {
+      if (shieldMode === "off") return;
       const files = e.clipboardData && e.clipboardData.files;
       if (!files || !files.length) return; // plain text paste passes through
-      if (bypassPaste) { bypassPaste = false; return; }
+      if (approvedEvents.has(e)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       const target = e.target;
       const kept = Array.from(files);
+      const strings = captureStringItems(e.clipboardData);
       const { allow } = await guardFiles(kept);
       if (!allow) return;
       try {
-        bypassPaste = true;
-        target.dispatchEvent(new ClipboardEvent("paste", {
-          bubbles: true, cancelable: true, clipboardData: rebuildDataTransfer(kept),
-        }));
+        const replay = new ClipboardEvent("paste", {
+          bubbles: true, cancelable: true,
+          clipboardData: rebuildDataTransfer(kept, strings),
+        });
+        approvedEvents.add(replay);
+        target.dispatchEvent(replay);
       } catch (_) {
-        bypassPaste = false;
         banner("warn", "Attachment approved — please paste it again");
       }
     },

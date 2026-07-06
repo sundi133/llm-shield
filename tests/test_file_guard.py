@@ -201,7 +201,7 @@ def test_corrupt_docx_fails_open_with_note(client):
 def test_missing_extraction_lib_fails_open(client, monkeypatch):
     import api.routes_classify as rc
 
-    def boom(data):
+    def boom(data, max_chars):
         raise ImportError("pypdf not installed")
     monkeypatch.setattr(rc, "_extract_pdf", boom)
     r = _upload(client, "doc.pdf", _pdf_bytes("whatever"), "application/pdf")
@@ -217,6 +217,27 @@ def test_extraction_truncation_flag(client, monkeypatch):
     body = r.json()
     assert body["file"]["extraction_truncated"] is True
     assert body["file"]["extracted_chars"] == 10
+
+
+# ── guard-path integration invariants ─────────────────────────────────────
+
+def test_file_endpoint_is_middleware_guarded():
+    """Regression guard: /guardrails/file MUST be in ShieldMiddleware's
+    guarded set or tenant_config/agent_key/tenant_id are never populated —
+    tenant guardrails would silently not run on files and monitor-mode
+    tenants would get enforce."""
+    from core.middleware import ShieldMiddleware
+    assert "/guardrails/file" in ShieldMiddleware._GUARDED_EXACT
+
+
+def test_docx_content_type_without_extension(client):
+    """Browsers set the OOXML content type reliably; extension may be absent."""
+    r = client.post(
+        "/guardrails/file",
+        files={"file": ("upload", io.BytesIO(_docx_bytes(f"{BAD} inside")),
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+    )
+    assert r.json()["action"] == "block"
 
 
 # ── side effects: audit metadata + guardrail metrics ──────────────────────
@@ -267,7 +288,8 @@ def test_audit_and_metrics_side_effects(client, monkeypatch):
     monkeypatch.setattr(audit_log_mod.AuditLogger, "log", sync_log)
 
     resp = _upload(client, "leak.txt", f"{BAD} data".encode(), "text/plain",
-                   headers={"X-Device-Id": "LAPTOP-42"},
+                   headers={"X-Device-Id": "LAPTOP-42",
+                            "X-Agent-Key": "alice@co.com"},
                    form={"session_id": "sess-1"})
     assert resp.status_code == 200
 
@@ -280,10 +302,38 @@ def test_audit_and_metrics_side_effects(client, monkeypatch):
     assert entries, "audit entry should be written"
     record = json.loads(entries[-1][0])
     assert record["endpoint"] == "/guardrails/file"
+    assert record["agent_key"] == "alice@co.com"  # header fallback
     assert record["metadata"]["device_id"] == "LAPTOP-42"
     assert record["metadata"]["file"]["name"] == "leak.txt"
     assert record["metadata"]["session_id"] == "sess-1"
     assert record["input_text"].startswith("file:leak.txt:")
+
+
+def test_oversize_leaves_audit_trace(client, monkeypatch):
+    """Oversize attachments are the most likely bulk-exfil shape — the 413
+    must still write an audit entry before rejecting."""
+    from storage import tenant_store
+    import storage.audit_log as audit_log_mod
+
+    r = FakeRedis()
+    monkeypatch.setattr(tenant_store, "_get_redis", lambda: r)
+    monkeypatch.setattr(tenant_store, "resolve_request_tenant_id",
+                        lambda req: "bankco", raising=False)
+
+    async def sync_log(self, entry):
+        self._write_sync(entry)
+    monkeypatch.setattr(audit_log_mod.AuditLogger, "log", sync_log)
+
+    monkeypatch.setenv("SHIELD_FILE_MAX_BYTES", "100")
+    resp = _upload(client, "dump.zip", b"x" * 200,
+                   headers={"X-Device-Id": "LAPTOP-42"})
+    assert resp.status_code == 413
+
+    entries = r.zsets.get("audit:bankco", [])
+    assert entries, "oversize rejection must be audited"
+    record = json.loads(entries[-1][0])
+    assert record["metadata"]["file"]["oversize"] is True
+    assert record["metadata"]["file"]["name"] == "dump.zip"
 
 
 if __name__ == "__main__":
