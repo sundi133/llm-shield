@@ -19,13 +19,21 @@ chance of working.
 
 ## What it does
 - Intercepts the send action on each site (Enter key + send button).
+- **Intercepts file attachments** (file picker, drag-and-drop, paste) and
+  screens them through Shield's `/guardrails/file` **before** the site
+  receives the file. Text-like files, PDF, DOCX and XLSX are extracted
+  server-side and run through the same input guardrails; other types are
+  screened by filename. Blocked files never reach the site.
 - Sends the composer text to Shield from the **background service worker**
   (so it bypasses the page CSP and can attach the optional `Authorization`
   bearer + tenant `X-API-Key` headers).
 - **monitor** mode: flags (yellow banner) but always sends. **enforce** mode:
   blocks on a Shield block verdict (red banner). **off**: does nothing.
-- **Fail-open**: if Shield is unreachable/slow (12s timeout) the prompt sends
-  unscreened with a "Shield unreachable" banner — it never traps your chat.
+- **Fail-open**: if Shield is unreachable/slow (12s timeout for text; 12s +
+  2s/MB up to 30s for files) the content sends unscreened with a "Shield
+  unreachable" banner — it never traps your chat. Attachments over **10 MB**
+  are not screened (banner notes it); size cap is `SHIELD_FILE_MAX_BYTES`
+  server-side.
 
 ## Install (Load unpacked)
 1. Chrome → `chrome://extensions` → toggle **Developer mode** (top right).
@@ -70,6 +78,10 @@ can provide the real serial/asset id — not available on Windows/macOS.
   It's a nudge/visibility layer, not enforcement.
 - **Output is post-hoc**: only prompts are screened here; model responses stream
   into the DOM and would need separate (after-the-fact) redaction.
+- **Attachments**: images/scans are not OCR'd (filename-only screening);
+  extraction covers the first ~20k chars of a document (`SHIELD_FILE_EXTRACT_MAX_CHARS`),
+  so content hidden deep in a huge file can slip past; >10 MB files pass
+  unscreened with a banner note.
 - **Token storage**: locally-entered keys live in `chrome.storage.local`
   (plaintext-ish). For fleet rollout push keys via managed policy instead.
 

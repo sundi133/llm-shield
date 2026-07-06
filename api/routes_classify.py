@@ -1,9 +1,11 @@
 """Classify endpoint — runs all specified guardrails in a single call."""
 
+import io
+import os
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
@@ -301,6 +303,179 @@ async def classify(request: Request, body: dict):
     except Exception:
         pass
 
+    return result
+
+
+# ── file attachment screening ─────────────────────────────────────────────
+#
+# POST /guardrails/file screens an uploaded attachment through the SAME input
+# pipeline as /guardrails/input. Server-side extraction so the browser
+# extension (and any client) has one policy point. Data plane only — admin
+# never mounts this router, so the extraction deps stay out of the admin image.
+#
+# Fail-open by design (visibility layer): extraction problems produce a
+# filename-only screen plus a `note`, never a 500.
+
+def _file_max_bytes() -> int:
+    return int(os.getenv("SHIELD_FILE_MAX_BYTES", str(10 * 1024 * 1024)))
+
+
+def _file_extract_max_chars() -> int:
+    return int(os.getenv("SHIELD_FILE_EXTRACT_MAX_CHARS", "20000"))
+
+
+_TEXTLIKE_EXTS = {
+    "txt", "csv", "tsv", "json", "jsonl", "md", "markdown", "xml", "html",
+    "htm", "yaml", "yml", "log", "sql", "sh", "py", "js", "ts", "java",
+    "c", "cpp", "go", "rb", "rs", "php", "ini", "cfg", "toml", "env",
+}
+_TEXTLIKE_CONTENT_TYPES = ("application/json", "application/xml", "text/")
+
+
+def _extract_pdf(data: bytes) -> str:
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(data))
+    return "\n".join((page.extract_text() or "") for page in reader.pages)
+
+
+def _extract_docx(data: bytes) -> str:
+    import docx
+    document = docx.Document(io.BytesIO(data))
+    parts = [p.text for p in document.paragraphs]
+    for table in document.tables:
+        for row in table.rows:
+            parts.extend(cell.text for cell in row.cells)
+    return "\n".join(parts)
+
+
+def _extract_xlsx(data: bytes, max_chars: int) -> str:
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    parts: list[str] = []
+    total = 0
+    for ws in wb.worksheets:
+        for row in ws.iter_rows(values_only=True):
+            line = " ".join(str(v) for v in row if v is not None)
+            if line:
+                parts.append(line)
+                total += len(line)
+            if total > max_chars:  # stop reading a huge workbook early
+                return "\n".join(parts)
+    return "\n".join(parts)
+
+
+def _extract_file_text(filename: str, content_type: str, data: bytes,
+                       max_chars: int) -> tuple[str, Optional[str]]:
+    """Best-effort text extraction. Returns (text, note). Never raises."""
+    ext = (filename.rsplit(".", 1)[-1] if "." in filename else "").lower()
+    ctype = (content_type or "").lower()
+    try:
+        if ext in _TEXTLIKE_EXTS or ctype.startswith(_TEXTLIKE_CONTENT_TYPES):
+            return data[: max_chars * 4].decode("utf-8", errors="replace"), None
+        if ext == "pdf" or ctype == "application/pdf":
+            return _extract_pdf(data), None
+        if ext == "docx":
+            return _extract_docx(data), None
+        if ext == "xlsx":
+            return _extract_xlsx(data, max_chars), None
+        return "", "content not screenable (unsupported type)"
+    except ImportError:
+        return "", "extraction unavailable (missing library)"
+    except Exception as e:
+        return "", f"extraction failed ({type(e).__name__})"
+
+
+@router.post("/guardrails/file")
+async def screen_file(
+    request: Request,
+    file: UploadFile = File(...),
+    session_id: str = Form(""),
+    device_id: str = Form(""),
+):
+    """Screen a file attachment through the input guardrail pipeline.
+
+    Same verdict shape as /guardrails/input plus a `file` block. The screened
+    text is "filename: {name}\\n\\n{extracted}" so a sensitive filename alone
+    can trip policies even when the content is not extractable.
+    """
+    max_bytes = _file_max_bytes()
+    max_chars = _file_extract_max_chars()
+
+    data = await file.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413,
+                            detail=f"file exceeds {max_bytes} byte limit")
+
+    filename = file.filename or "attachment"
+    start = datetime.now()
+
+    text, note = _extract_file_text(filename, file.content_type or "", data, max_chars)
+    truncated = len(text) > max_chars
+    if truncated:
+        text = text[:max_chars]
+    if not text and note is None:
+        note = "no extractable text"
+    screened = f"filename: {filename}\n\n{text}" if text else f"filename: {filename}"
+
+    tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
+    if tenant_config and "input_guardrails" in tenant_config:
+        result = await _classify_tenant(screened, tenant_config["input_guardrails"], {}, start)
+    else:
+        result = await _classify_with_defaults(screened, {}, start)
+    result = apply_policy_mode(result, resolve_mode(tenant_config))
+
+    from storage.tenant_store import resolve_request_tenant_id
+    tenant_id = resolve_request_tenant_id(request)
+    if tenant_id:
+        from storage.guardrail_metrics import record_results_batch
+        record_results_batch(tenant_id, result.get("guardrail_results", []))
+
+    agent_key = (getattr(request.state, "agent_key", None) if hasattr(request, "state") else None) or ""
+    dev = request.headers.get("x-device-id", "") or device_id
+    root_action = result.get("action", "pass")
+    blocked = root_action == "block"
+    guardrail_results = result.get("guardrail_results", [])
+    triggered = [gr["guardrail"] for gr in guardrail_results if not gr.get("passed")]
+
+    await audit_logger.log({
+        "agent_key": agent_key,
+        "endpoint": "/guardrails/file",
+        "input_text": f"file:{filename}: {text[:400]}",
+        "action_taken": root_action,
+        "guardrails_triggered": triggered,
+        "latency_ms": result.get("inference_time_ms", 0),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id,
+            "user_role": "",
+            "stage": "input",
+            "device_id": dev,
+            "blocked": blocked,
+            "block_reason": "; ".join(gr.get("message", "") for gr in guardrail_results if not gr.get("passed")) if blocked else None,
+            "session_id": session_id,
+            "file": {
+                "name": filename,
+                "size": len(data),
+                "content_type": file.content_type or "",
+                "extracted_chars": len(text),
+                "extraction_truncated": truncated,
+            },
+            "tool_calls": [],
+            "tool_call_count": 0,
+            "input_guardrails": [{"guardrail": gr["guardrail"], "passed": gr["passed"], "action": gr["action"], "message": gr.get("message", "")} for gr in guardrail_results],
+            "output_guardrails": [],
+            "usage": {},
+        },
+    })
+
+    result["file"] = {
+        "name": filename,
+        "size": len(data),
+        "content_type": file.content_type or "",
+        "extracted_chars": len(text),
+        "extraction_truncated": truncated,
+        "note": note,
+    }
     return result
 
 

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Shield Prompt Guard",
-  "version": "1.0.0",
-  "description": "Screens prompts to Claude, ChatGPT, Gemini and Copilot through your organization's Votal Shield guardrails before they are sent.",
+  "version": "1.1.0",
+  "description": "Screens prompts and file attachments to Claude, ChatGPT, Gemini and Copilot through your organization's Votal Shield guardrails.",
   "permissions": ["storage"],
   "storage": { "managed_schema": "managed_schema.json" },
   "host_permissions": [
