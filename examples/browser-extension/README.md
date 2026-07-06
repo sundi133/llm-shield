@@ -1,4 +1,4 @@
-# Shield Prompt Guard
+# VotalAI Guardrails
 
 A minimal Chrome MV3 extension that screens prompts on **public AI tools**
 through Votal Shield's `/guardrails/input` **before** they are sent. Best-effort

@@ -102,7 +102,7 @@
   function screen(text) {
     return new Promise((resolve) => {
       try {
-        chrome.runtime.sendMessage({ type: "shield-screen", text }, (r) =>
+        chrome.runtime.sendMessage({ type: "shield-screen", text, origin: CFG.name }, (r) =>
           resolve(r || { block: false })
         );
       } catch (_) {
@@ -246,7 +246,7 @@
       try {
         chrome.runtime.sendMessage(
           { type: "shield-screen-file",
-            file: { name: file.name, mime: file.type, size: file.size, dataB64 } },
+            file: { name: file.name, mime: file.type, size: file.size, dataB64, origin: CFG.name } },
           (r) => resolve(r || { block: false })
         );
       } catch (_) {
@@ -384,5 +384,5 @@
     true
   );
 
-  console.log("[Shield Prompt Guard] active on " + CFG.name);
+  console.log("[VotalAI Guardrails] active on " + CFG.name);
 })();

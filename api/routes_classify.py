@@ -264,6 +264,8 @@ async def classify(request: Request, body: dict):
     # Device attribution for the guardrails dashboard (browser extension sends
     # X-Device-Id / body device_id). Header/dict reads only — no added I/O.
     device_id = request.headers.get("x-device-id", "") or str(body.get("device_id") or "")
+    # Destination = the AI site the prompt was headed to (claude.ai, etc.).
+    destination = request.headers.get("x-shield-destination", "")
     root_action = result.get("action", "pass")  # pass, log, warn, redact, or block
     blocked = root_action == "block"
     guardrail_results = result.get("guardrail_results", [])
@@ -282,6 +284,7 @@ async def classify(request: Request, body: dict):
             "user_role": role_name,
             "stage": "input",
             "device_id": device_id,
+            "destination": destination,
             "blocked": blocked,
             "block_reason": "; ".join(gr.get("message", "") for gr in guardrail_results if not gr.get("passed")) if blocked else None,
             "session_id": body.get("session_id", ""),
@@ -540,6 +543,7 @@ async def screen_file(
             "user_role": "",
             "stage": "input",
             "device_id": dev,
+            "destination": request.headers.get("x-shield-destination", ""),
             "blocked": blocked,
             "block_reason": "; ".join(gr.get("message", "") for gr in guardrail_results if not gr.get("passed")) if blocked else None,
             "session_id": session_id,

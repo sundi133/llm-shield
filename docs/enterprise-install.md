@@ -1,6 +1,6 @@
-# Shield Prompt Guard: Enterprise Install (without the Chrome Web Store)
+# VotalAI Guardrails: Enterprise Install (without the Chrome Web Store)
 
-Managed Chrome and Edge fleets can force-install Shield Prompt Guard directly
+Managed Chrome and Edge fleets can force-install VotalAI Guardrails directly
 from a Votal-hosted package. No Chrome Web Store listing is involved, the
 extension appears in every managed browser pre-configured, and end users
 cannot disable or remove it.
@@ -116,7 +116,7 @@ Notes:
 
 ## 5. Verify a rollout
 
-1. On a managed machine, open `chrome://extensions`. Shield Prompt Guard
+1. On a managed machine, open `chrome://extensions`. VotalAI Guardrails
    shows an "Installed by your administrator" badge and no Remove button.
 2. Open `chrome://policy` and confirm `ExtensionInstallForcelist` and the
    `3rdparty` block are present with status OK.
