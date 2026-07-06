@@ -324,6 +324,43 @@ def _file_extract_max_chars() -> int:
     return int(os.getenv("SHIELD_FILE_EXTRACT_MAX_CHARS", "20000"))
 
 
+def _file_warn_only_guardrails() -> set:
+    """Guardrails whose block verdicts are demoted to warn for FILE screens.
+
+    A document merely discussing attacks is not an attack — nothing in an
+    uploaded file executes — so the LLM adversarial classifier (prone to
+    false positives on security-adjacent prose) must not hard-block files.
+    Deterministic content policies (PII, keywords, custom policies, regex)
+    keep their configured actions. Set SHIELD_FILE_WARN_ONLY_GUARDRAILS=""
+    to restore blocking, or extend the comma-separated list.
+    """
+    raw = os.getenv("SHIELD_FILE_WARN_ONLY_GUARDRAILS", "adversarial_detection")
+    return {s.strip() for s in raw.split(",") if s.strip()}
+
+
+def _demote_file_verdicts(result: dict) -> dict:
+    """Rewrite block -> warn for warn-only guardrails and recompute the root
+    action/safe with the same severity ranking _build_response uses."""
+    warn_only = _file_warn_only_guardrails()
+    if not warn_only:
+        return result
+    changed = False
+    for gr in result.get("guardrail_results", []):
+        if not gr.get("passed") and gr.get("guardrail") in warn_only and gr.get("action") == "block":
+            gr["action"] = "warn"
+            gr["message"] = (gr.get("message") or "") + " (demoted to warn for file screening)"
+            changed = True
+    if changed:
+        severity = {"pass": 0, "log": 1, "warn": 2, "redact": 3, "block": 4}
+        failed = [g for g in result.get("guardrail_results", []) if not g.get("passed")]
+        root = "pass"
+        if failed:
+            root = max(failed, key=lambda g: severity.get(g.get("action"), 0)).get("action", "pass")
+        result["action"] = root
+        result["safe"] = root != "block"
+    return result
+
+
 _TEXTLIKE_EXTS = {
     "txt", "csv", "tsv", "json", "jsonl", "md", "markdown", "xml", "html",
     "htm", "yaml", "yml", "log", "sql", "sh", "py", "js", "ts", "java",
@@ -471,6 +508,9 @@ async def screen_file(
         result = await _classify_tenant(screened, tenant_config["input_guardrails"], {}, start)
     else:
         result = await _classify_with_defaults(screened, {}, start)
+    # Files block only on real policy violations; LLM-judgment guardrails are
+    # demoted to warn BEFORE policy mode is applied (see _file_warn_only_guardrails).
+    result = _demote_file_verdicts(result)
     result = apply_policy_mode(result, resolve_mode(tenant_config))
 
     from storage.tenant_store import resolve_request_tenant_id

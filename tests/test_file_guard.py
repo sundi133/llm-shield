@@ -219,6 +219,90 @@ def test_extraction_truncation_flag(client, monkeypatch):
     assert body["file"]["extracted_chars"] == 10
 
 
+# ── files block only on real policy violations ────────────────────────────
+
+def test_warn_only_guardrail_demoted_on_files(client, monkeypatch):
+    """A block from a warn-only guardrail (default: adversarial_detection;
+    keyword used here as the stand-in since it blocks deterministically)
+    becomes a warn on /guardrails/file — file passes with visibility."""
+    monkeypatch.setenv("SHIELD_FILE_WARN_ONLY_GUARDRAILS", "keyword_blocklist")
+    r = _upload(client, "paper.txt", f"discusses {BAD} responsibly".encode(), "text/plain")
+    body = r.json()
+    assert body["safe"] is True
+    assert body["action"] == "warn"
+    kw = next(g for g in body["guardrail_results"] if g["guardrail"] == "keyword_blocklist")
+    assert kw["action"] == "warn"
+    assert "demoted to warn for file screening" in kw["message"]
+
+
+def test_warn_only_escape_hatch_restores_blocking(client, monkeypatch):
+    monkeypatch.setenv("SHIELD_FILE_WARN_ONLY_GUARDRAILS", "")
+    r = _upload(client, "notes.txt", f"contains {BAD}".encode(), "text/plain")
+    assert r.json()["action"] == "block"
+
+
+def test_demotion_does_not_affect_other_guardrails(client, monkeypatch):
+    """Default warn-only set is adversarial_detection only — keyword blocks
+    still block files (this is the existing behavior test, re-asserted with
+    the demotion code in place)."""
+    monkeypatch.delenv("SHIELD_FILE_WARN_ONLY_GUARDRAILS", raising=False)
+    r = _upload(client, "notes.txt", f"contains {BAD}".encode(), "text/plain")
+    assert r.json()["action"] == "block"
+
+
+def test_demote_recomputes_root_action_with_mixed_failures():
+    """Demoted guardrail + a real block -> root action stays block."""
+    from api.routes_classify import _demote_file_verdicts
+    result = {
+        "safe": False, "action": "block",
+        "guardrail_results": [
+            {"guardrail": "adversarial_detection", "passed": False, "action": "block", "message": "Unsafe [none]"},
+            {"guardrail": "pii_detection", "passed": False, "action": "block", "message": "SSN found"},
+        ],
+    }
+    out = _demote_file_verdicts(result)
+    assert out["action"] == "block" and out["safe"] is False
+    adv = next(g for g in out["guardrail_results"] if g["guardrail"] == "adversarial_detection")
+    assert adv["action"] == "warn"
+
+
+def test_adversarial_untyped_verdict_warns_not_blocks(monkeypatch):
+    """is_adversarial=true with attack_type=none is a contradiction — warn.
+    A typed attack still blocks; the escape hatch restores old behavior."""
+    import asyncio
+    import guardrails.input.adversarial as adv_mod
+
+    async def fake_llm(csv):
+        async def call(**kwargs):
+            return {"choices": [{"message": {"content": csv}}]}
+        return call
+
+    guard = adv_mod.AdversarialGuardrail.__new__(adv_mod.AdversarialGuardrail)
+    guard.name = "adversarial_detection"
+    guard._temp_config = {"action": "block"}  # configured_action reads this
+
+    def run(csv):
+        async def go():
+            monkeypatch.setattr(adv_mod, "async_llm_call", await fake_llm(csv))
+            return await guard._check_single("some text", [], 0.5)
+        return asyncio.run(go())
+
+    untyped = run("true,none,1.0")
+    assert untyped.passed is False and untyped.action == "warn"
+    assert "demoted to warn" in untyped.message
+
+    typed = run("true,prompt_injection,0.9")
+    assert typed.passed is False and typed.action == "block"
+
+    monkeypatch.setenv("SHIELD_ADVERSARIAL_BLOCK_ON_UNTYPED", "true")
+    untyped_hatch = run("true,none,1.0")
+    assert untyped_hatch.action == "block"
+
+    monkeypatch.delenv("SHIELD_ADVERSARIAL_BLOCK_ON_UNTYPED")
+    clean = run("false,none,0.1")
+    assert clean.passed is True
+
+
 # ── guard-path integration invariants ─────────────────────────────────────
 
 def test_file_endpoint_is_middleware_guarded():
