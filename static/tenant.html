@@ -10883,6 +10883,26 @@ function _gdSeverityBar(bySev, total) {
   return `<div style="display:flex;height:10px;border-radius:5px;overflow:hidden;min-width:220px;">${segs}</div>`;
 }
 
+// Small inline-SVG brand badge for an AI destination. Self-contained (no
+// external image loads, CSP-safe); simple white glyphs on brand color rather
+// than pixel-copied trademarks.
+function _gdDestLogo(name) {
+  const badge = (bg, inner) =>
+    `<span style="display:inline-flex;width:16px;height:16px;border-radius:4px;background:${bg};align-items:center;justify-content:center;vertical-align:middle;margin-right:6px;flex:0 0 auto;">${inner}</span>`;
+  const burst = '<svg width="11" height="11" viewBox="0 0 24 24"><g stroke="#fff" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="3" x2="12" y2="21"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/><line x1="18.4" y1="5.6" x2="5.6" y2="18.4"/></g></svg>';
+  const ring = '<svg width="10" height="10" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="none" stroke="#fff" stroke-width="3"/></svg>';
+  const spark = '<svg width="12" height="12" viewBox="0 0 24 24"><path d="M12 2C13 8 16 11 22 12C16 13 13 16 12 22C11 16 8 13 2 12C8 11 11 8 12 2Z" fill="#fff"/></svg>';
+  const loop = '<svg width="11" height="11" viewBox="0 0 24 24"><path d="M12 4a8 8 0 108 8" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>';
+  const dot = '<span style="width:6px;height:6px;border-radius:50%;background:#fff;"></span>';
+  switch (name) {
+    case 'Claude':  return badge('#D97757', burst);
+    case 'ChatGPT': return badge('#10A37F', ring);
+    case 'Gemini':  return badge('#4285F4', spark);
+    case 'Copilot': return badge('#0A6ED1', loop);
+    default:        return badge('#94a3b8', dot);
+  }
+}
+
 // Inline-SVG daily chart: stacked blocked (red) + warned (amber) bars.
 function _gdDailyChart(daily) {
   const days = daily || [];
@@ -10939,6 +10959,7 @@ async function loadGuardrailDashboard() {
       `<span style="font-size:11px;color:var(--text-muted);margin-right:0.75rem;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${_GD_SEV[k].color};margin-right:4px;"></span>${_GD_SEV[k].label} <b>${bySev[k] || 0}</b></span>`).join('');
     const recent = (d.recent_blocked || []).map(e => `<tr style="border-top:1px solid var(--border);">
         <td style="padding:0.35rem 0.6rem;white-space:nowrap;color:var(--text-muted);">${e.ts ? new Date(e.ts * 1000).toLocaleString() : '—'}</td>
+        <td style="padding:0.35rem 0.6rem;white-space:nowrap;">${_gdDestLogo(e.destination)}${_govEsc(e.destination)}</td>
         <td style="padding:0.35rem 0.6rem;">${_govEsc(e.agent_key)}</td>
         <td style="padding:0.35rem 0.6rem;">${_govEsc(e.device_id)}</td>
         <td style="padding:0.35rem 0.6rem;">${(e.guardrails || []).map(g => `<span style="display:inline-block;background:#fee2e2;color:#991b1b;border-radius:8px;padding:0 6px;margin:1px;font-size:11px;">${_govEsc(g)}</span>`).join('')}</td>
@@ -10965,6 +10986,7 @@ async function loadGuardrailDashboard() {
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin-bottom:1rem;">
         ${_gdTopTable('Top issues', d.top_issues, 'guardrail', 'Guardrail / policy', r => _gdSevChip(r.severity) + ' ')}
+        ${_gdTopTable('Top destinations', d.top_destinations, 'destination', 'AI destination', r => _gdDestLogo(r.destination))}
         ${_gdTopTable('Top users', d.top_users, 'agent_key', 'User / agent')}
         ${_gdTopTable('Top devices', d.top_devices, 'device_id', 'Device')}
       </div>
@@ -10972,10 +10994,11 @@ async function loadGuardrailDashboard() {
         <div style="padding:0.5rem 0.6rem;font-weight:600;font-size:12px;background:var(--bg-subtle,#f6f8fb);">Recent blocked events</div>
         <table style="width:100%;border-collapse:collapse;font-size:12px;">
           <thead><tr style="text-align:left;color:var(--text-muted);">
-            <th style="padding:0.35rem 0.6rem;">When</th><th style="padding:0.35rem 0.6rem;">User</th>
+            <th style="padding:0.35rem 0.6rem;">When</th><th style="padding:0.35rem 0.6rem;">Destination</th>
+            <th style="padding:0.35rem 0.6rem;">User</th>
             <th style="padding:0.35rem 0.6rem;">Device</th><th style="padding:0.35rem 0.6rem;">Guardrails</th>
             <th style="padding:0.35rem 0.6rem;">Message</th></tr></thead>
-          <tbody>${recent || `<tr><td colspan="5" style="padding:0.75rem;color:var(--text-muted);">No blocked events in window.</td></tr>`}</tbody>
+          <tbody>${recent || `<tr><td colspan="6" style="padding:0.75rem;color:var(--text-muted);">No blocked events in window.</td></tr>`}</tbody>
         </table>
       </div>`;
   } catch (e) {

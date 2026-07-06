@@ -292,6 +292,25 @@ def _event_severity(action: str, triggered: list) -> str:
     return "low"
 
 
+# Maps the AI-site host the extension reports (X-Shield-Destination) to a
+# friendly product name for the dashboard. Unknown hosts pass through as-is;
+# empty (non-extension API traffic) buckets as "(unknown)".
+_DESTINATION_LABELS = {
+    "claude.ai": "Claude",
+    "chatgpt.com": "ChatGPT",
+    "chat.openai.com": "ChatGPT",
+    "gemini.google.com": "Gemini",
+    "copilot.microsoft.com": "Copilot",
+}
+
+
+def _destination_label(host) -> str:
+    h = str(host or "").lower().strip()
+    if not h:
+        return "(unknown)"
+    return _DESTINATION_LABELS.get(h, h)
+
+
 def _issue_severity(name: str, blocked: int, warned: int) -> str:
     if blocked and _is_critical_guardrail(name):
         return "critical"
@@ -316,6 +335,7 @@ def _empty_dashboard(tenant_id: str, days: int) -> dict:
         "top_issues": [],
         "top_users": [],
         "top_devices": [],
+        "top_destinations": [],
         "recent_blocked": [],
     }
 
@@ -396,9 +416,10 @@ def get_blocked_dashboard(
     out["truncated"] = len(raw_entries) >= max_scan
 
     by_severity = out["summary"]["by_severity"]
-    issue_counts: dict = {}     # guardrail -> {blocked, warned}
-    user_counts: dict = {}      # agent_key -> {blocked, warned}
-    device_counts: dict = {}    # device_id -> {blocked, warned}
+    issue_counts: dict = {}       # guardrail -> {blocked, warned}
+    user_counts: dict = {}        # agent_key -> {blocked, warned}
+    device_counts: dict = {}      # device_id -> {blocked, warned}
+    destination_counts: dict = {} # AI site (Claude/ChatGPT/...) -> {blocked, warned}
     recent_blocked: list = []
 
     for raw in raw_entries:
@@ -419,6 +440,7 @@ def get_blocked_dashboard(
             metadata = {}
         agent = entry.get("agent_key") or "(unknown)"
         device = metadata.get("device_id") or "(unknown)"
+        destination = _destination_label(metadata.get("destination"))
 
         sev = _event_severity(action, triggered)
         by_severity[sev] += 1
@@ -436,6 +458,8 @@ def get_blocked_dashboard(
         u[bucket] += 1
         d = device_counts.setdefault(device, {"blocked": 0, "warned": 0})
         d[bucket] += 1
+        dest = destination_counts.setdefault(destination, {"blocked": 0, "warned": 0})
+        dest[bucket] += 1
 
         if action == "block" and len(recent_blocked) < 10:
             recent_blocked.append({
@@ -443,6 +467,7 @@ def get_blocked_dashboard(
                 "timestamp": entry.get("timestamp", ""),
                 "agent_key": agent,
                 "device_id": device,
+                "destination": destination,
                 "guardrails": [str(t) for t in triggered],
                 "message": str(entry.get("input_text", ""))[:120],
             })
@@ -461,6 +486,7 @@ def get_blocked_dashboard(
     ]
     out["top_users"] = _top10(user_counts, "agent_key")
     out["top_devices"] = _top10(device_counts, "device_id")
+    out["top_destinations"] = _top10(destination_counts, "destination")
     out["recent_blocked"] = recent_blocked
     return out
 

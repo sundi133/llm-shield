@@ -53,7 +53,7 @@ async function resolveIdentity() {
 }
 
 // Returns { block, warn, reason, error?, mode, identity }
-async function screen(text) {
+async function screen(text, origin) {
   const cfg = await getConfig();
   const identity = await resolveIdentity();
   if (cfg.mode === "off") return { block: false, warn: false, reason: "", mode: "off", identity };
@@ -62,11 +62,12 @@ async function screen(text) {
   const headers = { "Content-Type": "application/json" };
   if (cfg.tenantKey) headers["X-API-Key"] = cfg.tenantKey;
   if (cfg.proxyToken) headers["Authorization"] = "Bearer " + cfg.proxyToken;
-  // Attribution: X-Agent-Key drives the Telemetry "agent" column; device is
-  // carried alongside for audit.
+  // Attribution: X-Agent-Key drives the Telemetry "agent" column; device and
+  // destination (the AI site being sent to) are carried alongside for audit.
   const who = identity.userId || identity.deviceId;
   if (who) headers["X-Agent-Key"] = who;
   if (identity.deviceId) headers["X-Device-Id"] = identity.deviceId;
+  if (origin) headers["X-Shield-Destination"] = origin;
 
   const url = cfg.shieldUrl.replace(/\/+$/, "") + "/guardrails/input";
   const body = JSON.stringify({
@@ -127,6 +128,7 @@ async function screenFile(meta) {
   const who = identity.userId || identity.deviceId;
   if (who) headers["X-Agent-Key"] = who;
   if (identity.deviceId) headers["X-Device-Id"] = identity.deviceId;
+  if (meta.origin) headers["X-Shield-Destination"] = meta.origin;
   // NOTE: no Content-Type header — fetch sets the multipart boundary itself.
 
   const form = new FormData();
@@ -157,7 +159,7 @@ async function screenFile(meta) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === "shield-screen") {
-    screen(String(msg.text || "")).then(sendResponse);
+    screen(String(msg.text || ""), msg.origin).then(sendResponse);
     return true; // async
   }
   if (msg && msg.type === "shield-screen-file") {

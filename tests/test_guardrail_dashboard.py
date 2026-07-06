@@ -148,6 +148,35 @@ def test_dashboard_aggregates_summary_and_tops(fake_redis):
     assert today["blocked"] == 2 and today["passed"] == 1
 
 
+def test_top_destinations_normalized(fake_redis):
+    """metadata.destination host -> friendly product label, ranked; missing
+    host buckets as (unknown)."""
+    from storage.guardrail_metrics import get_blocked_dashboard
+    r = fake_redis
+
+    def ev(dest):
+        rec = json.dumps({
+            "ts": time.time(), "agent_key": "a", "action_taken": "block",
+            "guardrails_triggered": ["toxicity"], "input_text": "x",
+            "metadata": {"destination": dest} if dest is not None else {},
+        })
+        r.zadd("audit:bankco", {rec: time.time()})
+
+    for _ in range(3):
+        ev("claude.ai")
+    ev("chatgpt.com")
+    ev("chat.openai.com")   # also ChatGPT
+    ev(None)                # no destination -> (unknown)
+
+    out = get_blocked_dashboard("bankco", days=30)
+    dests = {row["destination"]: row["blocked"] for row in out["top_destinations"]}
+    assert dests["Claude"] == 3
+    assert dests["ChatGPT"] == 2   # chatgpt.com + chat.openai.com merged
+    assert dests["(unknown)"] == 1
+    # newest-first recent event carries a labeled destination
+    assert out["recent_blocked"][0]["destination"] in {"Claude", "ChatGPT", "(unknown)"}
+
+
 def test_severity_mapping_rules(fake_redis):
     from storage.guardrail_metrics import _event_severity
     assert _event_severity("block", ["adversarial_detection"]) == "critical"
