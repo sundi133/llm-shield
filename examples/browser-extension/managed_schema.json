@@ -6,6 +6,7 @@
     "proxyToken": { "type": "string", "description": "Optional Authorization bearer for a fronting proxy/gateway (policy-pushed; overrides local)." },
     "deviceId":   { "type": "string", "description": "Device / asset identifier injected by MDM policy, e.g. ${machine_name} or an asset tag." },
     "userId":     { "type": "string", "description": "User identifier injected by MDM policy (employee id, AD account, or email — the org's choice). Drives the Telemetry agent column." },
-    "mode":       { "type": "string", "enum": ["off", "warn", "enforce"], "description": "Screening mode (policy-pushed; overrides local)." }
+    "mode":       { "type": "string", "enum": ["off", "warn", "enforce"], "description": "Screening mode (policy-pushed; overrides local)." },
+    "timeoutMs":  { "type": "integer", "description": "Fail-open timeout for a text screen in milliseconds (default 20000; file screens add 2000/MB). Clamped to 1000-60000." }
   }
 }

@@ -34,6 +34,10 @@
     <option value="off">off</option>
   </select>
 
+  <label>Screening timeout (ms)</label>
+  <input id="timeoutMs" type="number" placeholder="20000" min="1000" max="60000" />
+  <div class="hint">How long to wait for Shield before failing open and sending unscreened. Default 20000 (20s). File screens add 2s per MB on top. Clamped to 1000-60000.</div>
+
   <div><button id="save">Save</button><span id="status"></span></div>
 
   <script src="options.js"></script>

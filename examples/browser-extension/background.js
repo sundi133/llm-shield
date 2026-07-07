@@ -9,7 +9,16 @@ const DEFAULTS = {
   tenantKey: "",
   proxyToken: "",
   mode: "warn",
+  timeoutMs: 20000, // fail-open deadline for a text screen (see resolveTimeoutMs)
 };
+
+// Resolve the configured screening timeout, clamped to a sane range. Local
+// storage returns a string (from the options input); managed policy returns
+// an integer — both coerce here. Falls back to the default on junk values.
+function resolveTimeoutMs(cfg) {
+  const n = parseInt(cfg.timeoutMs, 10);
+  return Number.isFinite(n) && n >= 1000 ? Math.min(n, 60000) : 20000;
+}
 
 // Managed (policy-pushed) config wins over local config where set. Lets a
 // Chrome Enterprise admin force the endpoint/keys/mode/deviceId for the fleet.
@@ -78,7 +87,7 @@ async function screen(text, origin) {
 
   try {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 12000); // fail-open on slow/cold worker
+    const t = setTimeout(() => ctrl.abort(), resolveTimeoutMs(cfg)); // fail-open on slow/cold worker
     const resp = await fetch(url, { method: "POST", headers, body, signal: ctrl.signal });
     clearTimeout(t);
     if (!resp.ok) return { block: false, warn: false, reason: "", error: "HTTP " + resp.status, mode: cfg.mode, identity };
@@ -99,9 +108,10 @@ async function screen(text, origin) {
 // ── file attachment screening ─────────────────────────────────────────────
 const FILE_MAX_BYTES = 10 * 1024 * 1024; // keep in sync with SHIELD_FILE_MAX_BYTES
 
-function fileTimeoutMs(size) {
-  // base 12s + 2s per MB, capped at 30s — uploads take longer than text.
-  return Math.min(12000 + Math.ceil(size / 1048576) * 2000, 30000);
+function fileTimeoutMs(size, base) {
+  // configured base + 2s per MB, capped at base + 18s — uploads take longer
+  // than text, and the headroom scales with the configured timeout.
+  return Math.min(base + Math.ceil(size / 1048576) * 2000, base + 18000);
 }
 
 function b64ToBlob(b64, type) {
@@ -138,7 +148,7 @@ async function screenFile(meta) {
   const url = cfg.shieldUrl.replace(/\/+$/, "") + "/guardrails/file";
   try {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), fileTimeoutMs(meta.size));
+    const t = setTimeout(() => ctrl.abort(), fileTimeoutMs(meta.size, resolveTimeoutMs(cfg)));
     const resp = await fetch(url, { method: "POST", headers, body: form, signal: ctrl.signal });
     clearTimeout(t);
     if (!resp.ok) return { block: false, warn: false, reason: "", error: "HTTP " + resp.status, mode: cfg.mode, identity };
