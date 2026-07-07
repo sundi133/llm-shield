@@ -1,4 +1,4 @@
-const FIELDS = ["shieldUrl", "tenantKey", "proxyToken", "mode"];
+const FIELDS = ["shieldUrl", "tenantKey", "proxyToken", "mode", "timeoutMs"];
 
 async function load() {
   const c = await chrome.storage.local.get(FIELDS);
