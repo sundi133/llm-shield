@@ -76,7 +76,27 @@ Per platform:
   all desktop platforms from one console.
 - **Microsoft Edge**: identical policy name under
   `HKLM\Software\Policies\Microsoft\Edge` (Windows) or `com.microsoft.Edge`
-  (macOS). The same `.crx` and `update.xml` serve both browsers.
+  (macOS). The same `.crx` and `update.xml` serve both browsers. See the
+  Edge note below.
+
+### Microsoft Edge (same extension, no rebuild)
+
+The extension is standard Chromium MV3 and runs on Edge with **no code
+changes** — the `chrome.*` APIs and every manifest key it uses are supported
+identically. Only two things differ, and both are the admin's, not the
+extension's:
+
+- **Policy location**: force-install (`ExtensionInstallForcelist`) and the
+  `3rdparty` managed-storage config live under the Edge policy namespace
+  (`.../Policies/Microsoft/Edge`), not Google Chrome's. Same key names, same
+  values.
+- **Distribution**: to force-install by ID, either publish to the
+  **Microsoft Edge Add-ons** store (a separate Partner Center submission from
+  the Chrome Web Store) or self-host the `.crx` + `update.xml` and point the
+  Edge forcelist at the update URL — the same self-host path described above.
+  Edge can also install from the Chrome Web Store, but only if the user
+  enables "Allow extensions from other stores," which is not suitable for a
+  managed control.
 
 ## 4. Customer IT: configuration policy (managed storage)
 

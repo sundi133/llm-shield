@@ -11,6 +11,7 @@ examples/
 ├── crewai/            # Multi-agent CrewAI crew with per-agent RBAC
 ├── anthropic/         # Anthropic Claude tool-use agent with Shield
 ├── idp/               # Identity Provider integration guide (Okta, Auth0, Azure AD, Keycloak)
+├── mcp_server/            # Deployable MCP server (FastMCP) that guards its own tools via Shield
 ├── mcp_guarded_agent.py   # Guard an agent turn via Shield's MCP server (stdlib-only, runnable)
 ├── deep_agent_shield.py   # Advanced async integration (httpx)
 └── policy_management_example.py
@@ -33,6 +34,15 @@ python3 examples/mcp_guarded_agent.py
 It demonstrates three outcomes: a benign turn passing, a prompt-injection input
 blocked, and an RBAC denial. For non-bypassable enforcement, pair it with the
 gateway/proxy paths (see the MCP developer guide).
+
+### Deploy your own guarded MCP server
+
+`mcp_server/` is a **deployable** remote MCP server (FastMCP, streamable-HTTP)
+that guards the tools *it* exposes: role→tool RBAC (`/v1/shield/tool/check`),
+input screening (`/guardrails/input`), and output sanitization
+(`/v1/shield/tool/output`). Set `SHIELD_URL` + `SHIELD_TENANT_KEY`, deploy to
+Railway (or any container host), and point an MCP client at `/mcp`. See
+[`mcp_server/README.md`](mcp_server/README.md).
 
 ## Quick Start
 
