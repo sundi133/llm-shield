@@ -37,16 +37,23 @@
   }
   function hide() { if (_ov && _ov.parentNode) _ov.parentNode.removeChild(_ov); _ov = null; }
 
+  const SEND_BUTTON_SELECTOR = ['button[data-testid="send-button"]', 'button[aria-label*="Send" i]',
+    'button[aria-label*="Submit" i]', 'button[type="submit"]'].join(", ");
+
   function findSendButton(near) {
-    const sels = ['button[data-testid="send-button"]', 'button[aria-label*="Send" i]',
-      'button[aria-label*="Submit" i]', 'button[type="submit"]'];
-    for (const s of sels) { const b = document.querySelector(s); if (b) return b; }
-    return null;
+    const b = document.querySelector(SEND_BUTTON_SELECTOR);
+    return b || null;
+  }
+
+  function findComposer() {
+    const el = document.activeElement;
+    if (isEditable(el)) return el;
+    return document.querySelector('textarea, [contenteditable="true"]');
   }
 
   async function gate(el) {
     const text = (readText(el) || "").trim();
-    if (!text) { PASS.add(el); resend(el); return; }
+    if (!text) { resend(el); return; }
     const r = (globalThis.ShieldRules || {}).evaluate ? globalThis.ShieldRules.evaluate(text, bundle || {}) : { decision: "allow" };
     if (r.decision === "block") { overlay("Blocked — sensitive content: " + r.reasons.join(", ")); return; }
     if (r.decision === "redact") { writeText(el, r.redacted); overlay("Redacted sensitive data — review, then press Enter to send."); return; }
@@ -61,13 +68,17 @@
       hide();
       if (e && e.blocked) { overlay("Blocked by Shield policy."); return; }
     }
-    PASS.add(el);
     resend(el);
   }
 
   function resend(el) {
     const btn = findSendButton(el);
+    // Programmatic button clicks are isTrusted=false, so the click
+    // interceptor below ignores them — no PASS token needed on this path.
+    // (Adding one anyway would leak: an unconsumed token lets the NEXT
+    // genuine Enter keypress bypass the gate entirely.)
     if (btn) { btn.click(); return; }
+    PASS.add(el);
     el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   }
 
@@ -76,6 +87,23 @@
     const el = ev.target;
     if (!isEditable(el)) return;
     if (PASS.has(el)) { PASS.delete(el); return; }  // our own re-send — let it through
+    ev.preventDefault();
+    ev.stopPropagation();
+    gate(el);
+  }, true);
+
+  // Clicking the site's Send button previously bypassed the gate entirely —
+  // only the Enter key was intercepted. Capture-phase click listener closes
+  // that path. isTrusted=false clicks (our own resend()) pass through; page
+  // scripts could synthesize such clicks, but the threat model here is the
+  // user's own accidental paste/submit, not an adversarial host page.
+  document.addEventListener("click", function (ev) {
+    if (!ev.isTrusted) return;
+    const target = ev.target;
+    const btn = target && target.closest ? target.closest(SEND_BUTTON_SELECTOR) : null;
+    if (!btn) return;
+    const el = findComposer();
+    if (!el) return;
     ev.preventDefault();
     ev.stopPropagation();
     gate(el);
