@@ -12,38 +12,11 @@ through it.
 """
 
 import json
-import os
 import sys
 import urllib.error
 import urllib.request
 
-# ── .env loader (stdlib; handles `export KEY=VAL` and quotes) ─────────
-
-
-def load_env(path=".env"):
-    env = {}
-    if not os.path.exists(path):
-        return env
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("export "):
-                line = line[len("export "):]
-            if "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            env[k.strip()] = v.strip().strip('"').strip("'")
-    return env
-
-
-_ENV = load_env(os.environ.get("ENV_FILE", ".env"))
-
-
-def cfg(key, default=""):
-    return os.environ.get(key) or _ENV.get(key) or default
-
+from _env import cfg
 
 SHIELD = cfg("SHIELD_URL", "http://api.guardrails.votal.ai").rstrip("/")
 TENANT_KEY = cfg("TENANT_KEY") or cfg("TENANT_API_KEY")
