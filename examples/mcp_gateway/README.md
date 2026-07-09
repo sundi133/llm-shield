@@ -79,7 +79,8 @@ configured, on an unmodified server.
 > **Reachability:** the gateway connects to the upstream **from the data-plane
 > process**. If `SHIELD_URL` is remote (`api.guardrails.votal.ai`), it can't reach
 > your `localhost:9100` — run Shield locally for the demo, or expose the upstream
-> (ngrok / deploy) and point `UPSTREAM_URL` at the public address.
+> (ngrok / deploy) and point `UPSTREAM_URL` at the public address. For a no-tunnel
+> setup, deploy the upstream to Railway: see [RAILWAY.md](RAILWAY.md).
 
 ## What to notice
 
