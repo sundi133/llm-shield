@@ -18,15 +18,39 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
-from core.mcp.enforcement import (
-    enforce_tool_call, sanitize_tool_result, filter_tools_for_role,
-)
+# Default enforcement backend: the in-process guard pipeline. Kept as a module
+# reference so MCPProxy(enforcer=None) is byte-identical to the historical
+# behavior. An alternate backend (e.g. core.mcp.http_enforcer.HTTPEnforcer, which
+# calls Shield's guard endpoints over HTTP) can be injected without changing this
+# file — both run the SAME checks, so the two enforcement paths can't drift.
+from core.mcp import enforcement as _inprocess_enforcement
 
 
 class UpstreamClient(Protocol):
     """Minimal surface the proxy needs from an upstream MCP server."""
     async def list_tools(self) -> list[dict]: ...
     async def call_tool(self, name: str, arguments: dict) -> Any: ...
+
+
+class Enforcer(Protocol):
+    """Pluggable Shield enforcement backend.
+
+    The in-process ``core.mcp.enforcement`` module satisfies this structurally
+    (it exposes these three names at module level), and so does any object with
+    the same surface — e.g. an HTTP backend for a thin-edge gateway.
+    """
+    async def enforce_tool_call(
+        self, name: str, arguments: dict, *, agent_key: str, user_role: Optional[str],
+        tenant_id: Optional[str], tenant_config: Optional[dict],
+    ) -> dict: ...
+    async def sanitize_tool_result(
+        self, name: str, raw: Any, *, agent_key: str, tenant_id: Optional[str],
+        user_role: Optional[str],
+    ) -> dict: ...
+    def filter_tools_for_role(
+        self, tools: list[dict], *, agent_key: str, user_role: Optional[str],
+        tenant_id: Optional[str],
+    ) -> list[dict]: ...
 
 
 # Optional sink for recording decisions to audit/SIEM. Kept injectable so the
@@ -41,10 +65,14 @@ class MCPProxy:
         *,
         on_decision: Optional[DecisionSink] = None,
         scan_descriptions: bool = False,
+        enforcer: Optional[Enforcer] = None,
     ):
         self._upstream = upstream
         self._on_decision = on_decision
         self._scan_descriptions = scan_descriptions
+        # None -> in-process pipeline (unchanged default). Inject to relocate
+        # enforcement (e.g. HTTP to a central Shield) without touching this class.
+        self._enforcer: Enforcer = enforcer or _inprocess_enforcement
 
     async def list_tools(
         self, *, agent_key: str, user_role: Optional[str], tenant_id: Optional[str]
@@ -52,7 +80,7 @@ class MCPProxy:
         tools = await self._upstream.list_tools()
         if self._scan_descriptions:
             tools = await self._scan_for_poisoning(tools)
-        return filter_tools_for_role(
+        return self._enforcer.filter_tools_for_role(
             tools, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id
         )
 
@@ -69,7 +97,7 @@ class MCPProxy:
         """Returns an MCP-style result dict:
         {content: [...], isError: bool, shield: <decision>}.
         """
-        decision = await enforce_tool_call(
+        decision = await self._enforcer.enforce_tool_call(
             name, arguments, agent_key=agent_key, user_role=user_role,
             tenant_id=tenant_id, tenant_config=tenant_config,
         )
@@ -81,7 +109,7 @@ class MCPProxy:
 
         raw = await self._upstream.call_tool(name, arguments)
 
-        san = await sanitize_tool_result(
+        san = await self._enforcer.sanitize_tool_result(
             name, raw, agent_key=agent_key, tenant_id=tenant_id, user_role=user_role
         )
         if san["blocked"]:
