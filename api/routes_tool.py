@@ -71,6 +71,10 @@ class ToolCheckRequest(BaseModel):
     estimated_tokens: Optional[int] = None
     approval_request_id: Optional[str] = None
     execution_grant_id: Optional[str] = None
+    # Non-fakeable HITL: a signed approval (or break-glass) grant from the approve
+    # endpoint. When present it is the authoritative, cryptographic proof of human
+    # approval — verified here, not trusted as a status flag. See core/approvals.py.
+    approval_grant: Optional[str] = None
 
 
 class ToolOutputRequest(BaseModel):
@@ -425,7 +429,30 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 agent_key=body.agent_key,
             )
             if approval_rule:
-                if body.approval_request_id:
+                if body.approval_grant:
+                    # Non-fakeable path: verify the signed grant, bound to the exact
+                    # tool + arguments + session. Beats the status-flag path below,
+                    # which a Redis-level attacker could forge.
+                    from core.approvals import ApprovalError, params_hash, verify_grant
+                    try:
+                        claims = verify_grant(
+                            body.approval_grant,
+                            expected_tool=body.tool_name,
+                            expected_params_hash=params_hash(body.tool_params),
+                            expected_session=body.session_id or "",
+                        )
+                        results.append(_cp_result(
+                            "approval_grant", True, "pass",
+                            "Break-glass override accepted" if claims.breakglass
+                            else "Signed approval grant accepted",
+                            {"grant_id": claims.grant_id, "approvers": claims.approvers,
+                             "breakglass": claims.breakglass},
+                        ))
+                    except ApprovalError as e:
+                        results.append(_cp_result("approval_grant", False, "block", str(e), {}))
+                        _final_result = {"allowed": False, "action": "block", "guardrail_results": results}
+                        return _final_result
+                elif body.approval_request_id:
                     ok, msg, approval = consume_approval_request(
                         tenant_id,
                         body.approval_request_id,

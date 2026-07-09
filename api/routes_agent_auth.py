@@ -89,6 +89,12 @@ class CapMintRequest(BaseModel):
     scope_constraints: List[str] = Field(default_factory=list)
     clearance_max: str = Field("public")
     ttl_seconds: int = Field(CAP_DEFAULT_TTL_SECONDS, ge=1, le=CAP_MAX_TTL_SECONDS)
+    # HITL (L3, non-bypassable). For tools marked approval_required, a signed
+    # approval/break-glass grant must be presented; tool_params + session bind it
+    # to the exact intended call.
+    approval_grant: Optional[str] = Field(None, description="Signed approval grant")
+    tool_params: Optional[dict] = Field(None, description="Intended tool params (binds the grant)")
+    session_id: Optional[str] = Field(None, description="Conversation/session id")
 
 
 class CapMintResponse(BaseModel):
@@ -240,6 +246,71 @@ async def mint_capability(
             detail=public_denial_payload(decision["reasons"]),
         )
 
+    # HITL gate (L3, non-bypassable): if this tool requires human approval, a valid
+    # signed grant bound to (tool, resource, params, this instance, session) must be
+    # presented before the cap is minted. No grant -> open an approval request.
+    approvers_for_event = None
+    from storage.agentic_control_plane import (
+        create_approval_request,
+        find_matching_approval_rule,
+        get_control_plane_config,
+    )
+
+    approval_rule = find_matching_approval_rule(
+        get_control_plane_config(identity.tenant_id),
+        tool_name=body.tool, workflow="default", agent_key=identity.agent_id,
+    )
+    if approval_rule:
+        from core.approvals import ApprovalError, params_hash, verify_grant
+
+        if body.approval_grant:
+            try:
+                gclaims = verify_grant(
+                    body.approval_grant,
+                    expected_tool=body.tool,
+                    expected_resource=body.resource,
+                    expected_params_hash=params_hash(body.tool_params),
+                    expected_instance=identity.agent_instance_id,
+                    expected_session=body.session_id,
+                )
+            except ApprovalError as e:
+                record_event(
+                    tenant_id=identity.tenant_id, event=EVENT_CAP_DENIED,
+                    agent_id=identity.agent_id, user_sub=identity.user_sub,
+                    tool=body.tool, resource=body.resource, reason=f"approval:{e}"[:240],
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail=public_denial_payload([f"approval grant invalid: {e}"]),
+                )
+            approvers_for_event = "breakglass" if gclaims.breakglass else "approved"
+        else:
+            req = create_approval_request(
+                identity.tenant_id,
+                agent_key=identity.agent_id,
+                tool_name=body.tool,
+                session_id=body.session_id or "",
+                workflow="default",
+                tool_params=body.tool_params,
+                rule=approval_rule,
+                agent_instance_id=identity.agent_instance_id,
+                resource=body.resource,
+            )
+            record_event(
+                tenant_id=identity.tenant_id, event=EVENT_CAP_DENIED,
+                agent_id=identity.agent_id, user_sub=identity.user_sub,
+                tool=body.tool, resource=body.resource, reason="approval_required",
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "reason": "approval_required",
+                    "request_id": req["request_id"],
+                    "required_approvals": req["required_approvals"],
+                    "expires_at": req["expires_at"],
+                },
+            )
+
     try:
         cap = mint_cap(
             identity=identity,
@@ -256,6 +327,7 @@ async def mint_capability(
         tenant_id=identity.tenant_id, event=EVENT_CAP_MINTED,
         agent_id=identity.agent_id, user_sub=identity.user_sub,
         tool=body.tool, resource=body.resource,
+        reason=approvers_for_event or "",
     )
     # In quiet mode return only what the caller needs to use the cap;
     # the full decision (role, reasons, etc.) goes to the audit log.
@@ -365,6 +437,61 @@ async def revoke(body: RevokeRequestExt, request: Request):
         )
 
     return {"status": "revoked", "entries": revoked, "ttl_seconds": body.ttl_seconds}
+
+
+class BreakglassRequest(BaseModel):
+    tenant_id: str
+    agent_id: str
+    agent_instance_id: str
+    tool: str
+    resource: str
+    session_id: str = ""
+    tool_params: Optional[dict] = None
+    reason: str = Field(..., min_length=1, description="Why the override is needed (audited)")
+    ttl_seconds: Optional[int] = Field(None, ge=1, le=3600)
+
+
+@router.post("/breakglass")
+async def breakglass(body: BreakglassRequest, request: Request):
+    """Emergency human override: mint a time-boxed break-glass approval grant.
+
+    Elevated (admin) + mandatory reason + loud audit. The grant is accepted by
+    tool/check exactly like a normal approval grant, but is flagged break-glass so
+    every use is attributable. Bind it to the intended call (tool + params + session).
+    """
+    _require_admin(request)
+    from core.approvals import mint_grant, params_hash
+
+    authorized_by = request.headers.get("x-admin-sub", "").strip() or "admin"
+    grant = mint_grant(
+        tenant_id=body.tenant_id,
+        agent_id=body.agent_id,
+        agent_instance_id=body.agent_instance_id,
+        session_id=body.session_id,
+        tool=body.tool,
+        resource=body.resource,
+        params_hash=params_hash(body.tool_params),
+        approvers=[],
+        request_id="breakglass",
+        breakglass=True,
+        reason=body.reason,
+        authorized_by=authorized_by,
+        ttl_seconds=body.ttl_seconds,
+    )
+    from storage.admin_audit import log_admin_action
+
+    log_admin_action(
+        action="breakglass_used",
+        actor=authorized_by,
+        tenant_id=body.tenant_id,
+        source_ip=request.client.host if request.client else "",
+        metadata={"tool": body.tool, "resource": body.resource, "reason": body.reason},
+    )
+    logging.getLogger("votal.agent_auth").warning(
+        f"BREAK-GLASS used by {authorized_by} for tool={body.tool!r} "
+        f"tenant={body.tenant_id!r}: {body.reason}"
+    )
+    return {"status": "issued", "breakglass": True, "approval_grant": grant}
 
 
 # ─── Internal AuthZ decision ────────────────────────────────────────────
