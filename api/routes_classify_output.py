@@ -13,7 +13,7 @@ from guardrails.base import _request_configs
 from guardrails.registry import get_by_stage, get_guardrail
 from storage.policy_store import check_tool_authorization, get_tool_policies
 from storage.audit_log import audit_logger
-from core.llm_backend import llm_call
+from core.llm_backend import async_llm_call
 
 router = APIRouter()
 
@@ -754,8 +754,19 @@ async def _perform_llm_validation(
             tool_output=tool_output[:500]  # Limit output length for prompt
         )
 
-        # Call LLM for validation
-        llm_response = await llm_call(validation_prompt)
+        # Call LLM for validation. Previously this awaited the SYNC llm_call
+        # with a bare string as `messages`, which always raised and made the
+        # except-branch reject every validation whenever a tenant enabled
+        # llm_validation on a tool policy.
+        response = await async_llm_call(
+            messages=[{"role": "user", "content": validation_prompt}],
+            max_tokens=100,
+            temperature=0,
+        )
+        if "choices" not in response:
+            error = response.get("error", {}).get("message", str(response))
+            raise ValueError(f"LLM error: {error}")
+        llm_response = response["choices"][0]["message"]["content"]
 
         # Parse response
         response_text = llm_response.strip().upper()
