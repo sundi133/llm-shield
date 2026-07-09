@@ -131,14 +131,17 @@ def _mint_request_grant(req: dict[str, Any], method: str) -> str:
         {"sub": a.get("approver", ""), "method": method, "at": a.get("approved_at")}
         for a in req.get("approvals", [])
     ]
+    # Cap/mint (L3) requests carry the real instance + resource; cooperative
+    # (tool/check) requests don't, so fall back to agent_key + a session resource.
+    instance = req.get("agent_instance_id") or req.get("agent_key", "")
+    resource = req.get("resource") or f"session:{req.get('session_id', '')}"
     return mint_grant(
         tenant_id=req.get("tenant_id", ""),
         agent_id=req.get("agent_key", ""),
-        # Cooperative approvals carry no per-instance identity; bind what we have.
-        agent_instance_id=req.get("agent_key", ""),
+        agent_instance_id=instance,
         session_id=req.get("session_id", ""),
         tool=req.get("tool_name", ""),
-        resource=f"session:{req.get('session_id', '')}",
+        resource=resource,
         params_hash=params_hash(req.get("tool_params")),
         approvers=approvers,
         request_id=req.get("request_id", ""),

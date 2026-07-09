@@ -77,9 +77,21 @@ only. For enforcement, use the signed `approval_grant` described here. Existing
 `approval_request_id` (status-flag) handling still works for backward compatibility
 but is weaker than a signed grant; prefer `approval_grant`.
 
-## Scope / follow-up
+## Enforcement points
 
-Enforcement is wired at the cooperative `tool/check` path (which carries the tool
-arguments). Gating `cap/mint` for the non-bypassable L3 executor path is a planned
-addition (it needs a `params_hash` on the mint request) — see the spec's open
-questions.
+Approval is enforced at **both** gates:
+
+- **Cooperative `tool/check`** — pass `approval_grant` alongside the call; verified
+  against `(tool, params, session)`.
+- **Non-bypassable `cap/mint` (L3)** — for approval_required tools, the mint is
+  refused unless a valid grant is presented, bound to `(tool, resource, params,
+  **this agent instance**, session)`. Flow mirrors `tool/check`:
+  ```
+  agent -> cap/mint {tool, resource, tool_params, session_id}   # no grant
+        -> 403 {reason:"approval_required", request_id}
+  human -> approve -> approval_grant
+  agent -> cap/mint {..., approval_grant}  -> 200 {cap_token}    # grant verified + minted
+  ```
+  Because the tool executor lives outside the (untrusted) sandbox and only accepts
+  a verified cap, an agent that never obtains an approved cap cannot perform the
+  action — even if it ignores `tool/check` entirely.
