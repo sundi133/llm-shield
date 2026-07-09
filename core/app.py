@@ -104,6 +104,28 @@ def create_app() -> FastAPI:
 
     app.add_middleware(AuthMiddleware)       # runs first
 
+    # Opt-in CORS for browser-based callers (e.g. the bundled extension, which
+    # calls /guardrails/input and /v1/edge/policy-bundle from a
+    # chrome-extension:// origin). Default (unset) adds no middleware and no
+    # CORS headers — unchanged behavior. Added after AuthMiddleware so it runs
+    # BEFORE auth: preflight OPTIONS requests carry no API key and must
+    # short-circuit here, not 401 in auth. Never use "*" in production —
+    # /guardrails/input is tenant-key-authenticated.
+    cors_origins = [
+        o.strip()
+        for o in os.getenv("SHIELD_CORS_ALLOW_ORIGINS", "").split(",")
+        if o.strip()
+    ]
+    if cors_origins:
+        from fastapi.middleware.cors import CORSMiddleware
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type", "X-API-Key", "Authorization"],
+            max_age=600,
+        )
+
     # Added last → outermost → runs first on the request path: redirect
     # insecure HTTP→HTTPS before any auth/processing. Gated by FORCE_HTTPS.
     if HTTPSRedirectMiddleware is not None:
