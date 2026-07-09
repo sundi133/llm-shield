@@ -1,19 +1,31 @@
 """Agents Registry API - Direct Redis access for tenant data."""
 
+import os
 import re
 import json
 
 from fastapi import APIRouter, HTTPException, Request
-from storage.tenant_store import resolve_tenant_by_api_key, _get_redis
+from storage.tenant_store import (
+    resolve_tenant_by_api_key,
+    kv_get,
+    kv_set,
+    kv_delete,
+)
 
 router = APIRouter(prefix="/v1/agents", tags=["agents-registry"])
 
 _VALID_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_MAX_STRING_LEN = 500
+_MAX_TOOL_NAME_LEN = 128
+_MAX_TOOLS_PER_AGENT = 200
 
 
 def _validate_agent_id(agent_id: str) -> None:
-    """Reject agent IDs that contain path-traversal or special characters."""
+    """Reject agent IDs that contain path-traversal or special characters.
+
+    IEMLabs VAPT finding 8.7 (Improper Input Validation, May 2026).
+    """
     if not agent_id or not _VALID_ID_RE.match(agent_id):
         raise HTTPException(
             status_code=400,
@@ -21,38 +33,133 @@ def _validate_agent_id(agent_id: str) -> None:
         )
 
 
-def _sanitize_string(value: str) -> str:
-    """Strip HTML/JS tags from user-provided strings to prevent stored XSS."""
+def _sanitize_string(value: str, max_len: int = _MAX_STRING_LEN) -> str:
+    """Strip HTML/JS tags from user-provided strings to prevent stored XSS.
+
+    IEMLabs VAPT finding 8.7 (Improper Input Validation, May 2026).
+    """
     if not isinstance(value, str):
         return value
-    return _HTML_TAG_RE.sub("", value)
+    cleaned = _HTML_TAG_RE.sub("", value)
+    return cleaned[:max_len]
+
+
+def _sanitize_value(value, max_len: int = _MAX_STRING_LEN):
+    """Recursively sanitize strings within dicts and lists."""
+    if isinstance(value, str):
+        return _sanitize_string(value, max_len)
+    if isinstance(value, dict):
+        return {_sanitize_string(str(k), _MAX_TOOL_NAME_LEN): _sanitize_value(v, max_len) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_value(item, max_len) for item in value[:_MAX_TOOLS_PER_AGENT]]
+    return value
+
+
+def _validate_agent_body(body: dict) -> None:
+    """Validate agent registration/update body fields.
+
+    IEMLabs VAPT finding 8.7 (Improper Input Validation, May 2026).
+    """
+    name = body.get("name", "")
+    if isinstance(name, str) and len(name) > _MAX_STRING_LEN:
+        raise HTTPException(status_code=400, detail=f"name must be at most {_MAX_STRING_LEN} characters")
+
+    desc = body.get("description", "")
+    if isinstance(desc, str) and len(desc) > _MAX_STRING_LEN:
+        raise HTTPException(status_code=400, detail=f"description must be at most {_MAX_STRING_LEN} characters")
+
+    tools = body.get("tools", [])
+    if not isinstance(tools, list):
+        raise HTTPException(status_code=400, detail="tools must be a list")
+    if len(tools) > _MAX_TOOLS_PER_AGENT:
+        raise HTTPException(status_code=400, detail=f"too many tools (max {_MAX_TOOLS_PER_AGENT})")
+    for t in tools:
+        if not isinstance(t, str) or not _VALID_ID_RE.match(t):
+            raise HTTPException(
+                status_code=400,
+                detail=f"tool name must be 1-128 alphanumeric/hyphen/underscore characters, got: {str(t)[:50]}",
+            )
+
+    status = body.get("status")
+    if status is not None and status not in ("active", "inactive", "disabled"):
+        raise HTTPException(status_code=400, detail="status must be active, inactive, or disabled")
+
+    allowed_resources = body.get("allowed_resources")
+    if allowed_resources is not None:
+        if not isinstance(allowed_resources, list):
+            raise HTTPException(status_code=400, detail="allowed_resources must be a list")
+        if len(allowed_resources) > _MAX_TOOLS_PER_AGENT:
+            raise HTTPException(status_code=400, detail=f"too many allowed_resources (max {_MAX_TOOLS_PER_AGENT})")
+        for r in allowed_resources:
+            if not isinstance(r, str) or not r or len(r) > _MAX_STRING_LEN:
+                raise HTTPException(status_code=400, detail="each allowed_resources entry must be a non-empty string")
+
+    rrs = body.get("require_resource_scope")
+    if rrs is not None and not isinstance(rrs, bool):
+        raise HTTPException(status_code=400, detail="require_resource_scope must be a boolean")
 
 def get_tenant_from_api_key(request: Request) -> str:
-    """Get tenant ID directly from API key via Redis lookup."""
-    api_key = request.headers.get("X-API-Key", "").strip()
+    """Resolve the caller's tenant for registry operations.
 
+    Resolution order, kept consistent with the AuthMiddleware so the same
+    credential works for both /tool/check and agent registration:
+      1. Tenant already resolved by AuthMiddleware (request.state.tenant_id),
+         populated when SHIELD_AUTH_ENABLED is on and a tenant key validated.
+      2. X-API-Key → tenant via the apikey:* mapping.
+      3. The ``sk-test-`` sandbox key → the auto-provisioned test tenant, so the
+         zero-setup quickstart works without first minting a real key.
+    """
+    state_tenant = getattr(getattr(request, "state", None), "tenant_id", None)
+    if state_tenant:
+        return state_tenant
+
+    api_key = request.headers.get("X-API-Key", "").strip()
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
 
     tenant_id = resolve_tenant_by_api_key(api_key)
-    if not tenant_id:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+    if tenant_id:
+        return tenant_id
 
-    return tenant_id
+    if api_key.startswith("sk-test-"):
+        return _ensure_sandbox_tenant()
+
+    raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+_SANDBOX_TENANT_ID = "test-tenant-001"
+
+
+def _ensure_sandbox_tenant() -> str:
+    """Provision the shared sandbox tenant on first use (matches auth.py)."""
+    from storage.tenant_store import get_tenant, create_tenant
+
+    if not get_tenant(_SANDBOX_TENANT_ID):
+        create_tenant(_SANDBOX_TENANT_ID, {
+            "name": "Test Healthcare Organization",
+            "plan": "enterprise",
+            "description": "Test tenant for healthcare AI agents",
+            "industry": "healthcare",
+            "compliance_frameworks": ["hipaa"],
+            "created_at": "2026-04-08T00:00:00Z",
+        })
+    return _SANDBOX_TENANT_ID
+
 
 def get_redis_data(key: str):
-    """Get data from Redis using the same connection as tenant_store."""
-    redis_client = _get_redis()
-    if redis_client:
-        try:
-            data = redis_client.get(key)
-            if data:
-                if isinstance(data, str):
-                    return json.loads(data)
-                return data
-        except Exception as e:
-            print(f"Redis error getting {key}: {e}")
-    return None
+    """Get registry data, Redis-or-fallback (works without Redis in local dev)."""
+    return kv_get(key)
+
+
+def _save_agents(tenant_id: str, agents: dict) -> None:
+    """Persist the tenant's agents and invalidate the middleware cache so
+    enable/disable toggles take effect immediately."""
+    kv_set(f"agents:{tenant_id}", agents)
+    try:
+        from core.middleware import invalidate_registry_cache
+        invalidate_registry_cache(tenant_id)
+    except Exception:
+        pass
 
 
 @router.get("/registry")
@@ -181,11 +288,7 @@ async def save_all_tool_policies(request: Request):
         import time as _time
         body["updated_at"] = int(_time.time())
 
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(policies_key, json.dumps(body))
-        else:
-            raise Exception("Redis connection not available")
+        kv_set(policies_key, body)
 
         return {"success": True, "message": "Tool policies saved"}
 
@@ -211,11 +314,7 @@ async def delete_tool_policy(tool_name: str, request: Request):
 
         del policies[tool_name]
 
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(policies_key, json.dumps(policies))
-        else:
-            raise Exception("Redis connection not available")
+        kv_set(policies_key, policies)
 
         return {"success": True, "message": f"Tool policy '{tool_name}' deleted"}
 
@@ -252,12 +351,8 @@ async def dismiss_unregistered(item_type: str, item_id: str, request: Request):
     try:
         tenant_id = get_tenant_from_api_key(request)
         key = f"unregistered:{tenant_id}"
-        redis_client = _get_redis()
-        if not redis_client:
-            raise Exception("Redis connection not available")
 
-        raw = redis_client.get(key)
-        data = json.loads(raw) if raw and isinstance(raw, str) else (raw or {})
+        data = kv_get(key) or {}
         if not isinstance(data, dict):
             data = {}
 
@@ -265,7 +360,7 @@ async def dismiss_unregistered(item_type: str, item_id: str, request: Request):
         if item_id in section:
             del section[item_id]
             data[item_type] = section
-            redis_client.set(key, json.dumps(data))
+            kv_set(key, data)
 
         return {"success": True, "message": f"Dismissed {item_type[:-1]} '{item_id}'"}
     except HTTPException:
@@ -274,9 +369,79 @@ async def dismiss_unregistered(item_type: str, item_id: str, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Shadow agent approval / blocking ──────────────────────────────────────
+
+
+@router.post("/unregistered/{agent_id}/block")
+async def block_shadow_agent(agent_id: str, request: Request):
+    """Block a specific shadow agent. Adds it to the tenant's blocked_agents list.
+
+    The agent is rejected with 403 on all future calls, even if
+    block_unregistered_agents is False.
+    """
+    _validate_agent_id(agent_id)
+    tenant_id = get_tenant_from_api_key(request)
+
+    from storage.tenant_store import get_tenant, update_tenant
+    config = get_tenant(tenant_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    blocked = config.get("blocked_agents", [])
+    if agent_id not in blocked:
+        blocked.append(agent_id)
+        update_tenant(tenant_id, {"blocked_agents": blocked})
+
+    return {
+        "success": True,
+        "action": "blocked",
+        "agent_id": agent_id,
+        "blocked_agents": blocked,
+    }
+
+
+@router.post("/unregistered/{agent_id}/allow")
+async def allow_shadow_agent(agent_id: str, request: Request):
+    """Allow a previously blocked shadow agent. Removes it from blocked_agents.
+
+    To fully approve a shadow agent, register it via POST /v1/agents/registry
+    with its tools and role_permissions. This endpoint only unblocks.
+    """
+    _validate_agent_id(agent_id)
+    tenant_id = get_tenant_from_api_key(request)
+
+    from storage.tenant_store import get_tenant, update_tenant
+    config = get_tenant(tenant_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    blocked = config.get("blocked_agents", [])
+    if agent_id in blocked:
+        blocked.remove(agent_id)
+        update_tenant(tenant_id, {"blocked_agents": blocked})
+
+    return {
+        "success": True,
+        "action": "allowed",
+        "agent_id": agent_id,
+        "blocked_agents": blocked,
+    }
+
+
 @router.post("/seed-test-data")
 async def seed_test_data():
-    """Seed test tenant with sample agents and policies data."""
+    """Seed test tenant with sample agents and policies data.
+
+    Test/dev utility only. It mints a working tenant API key, so it refuses to
+    run in production to avoid exposing a well-known credential in a live
+    deployment. The key itself is read from SEED_TEST_API_KEY rather than
+    hardcoded.
+    """
+    if os.environ.get("ENVIRONMENT", "").lower() in ("production", "prod"):
+        raise HTTPException(
+            status_code=403,
+            detail="seed-test-data is disabled in production",
+        )
     try:
         tenant_id = "test-tenant-001"
 
@@ -392,18 +557,32 @@ async def seed_test_data():
             }
         ]
 
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(f"agents:{tenant_id}", json.dumps(agents))
-            redis_client.set(f"policies:{tenant_id}", json.dumps(policies))
+        _save_agents(tenant_id, agents)
+        kv_set(f"policies:{tenant_id}", policies)
+
+        # Register the tenant and map the test API key to it so the tenant
+        # portal can actually sign in. Without this apikey->tenant mapping,
+        # resolve_tenant_by_api_key() returns None and every authenticated
+        # route 401s even though the agent data exists.
+        from storage.tenant_store import create_tenant, get_tenant, add_api_key
+        test_api_key = os.environ.get("SEED_TEST_API_KEY", "sk-test-healthcare")
+        if not get_tenant(tenant_id):
+            create_tenant(tenant_id, {
+                "name": "Test Healthcare Organization",
+                "plan": "enterprise",
+                "description": "Test tenant for healthcare AI agents",
+                "industry": "healthcare",
+                "compliance_frameworks": ["hipaa"],
+            }, api_keys=[test_api_key])
         else:
-            raise Exception("Redis connection not available")
+            add_api_key(tenant_id, test_api_key)
 
         return {
             "success": True,
             "message": f"Test data seeded for tenant {tenant_id}",
             "agents_count": len(agents),
-            "policies_count": len(policies)
+            "policies_count": len(policies),
+            "api_key": test_api_key,
         }
 
     except Exception as e:
@@ -421,6 +600,7 @@ async def create_agent(request: Request):
         if not agent_id:
             raise HTTPException(status_code=400, detail="agent_id is required")
         _validate_agent_id(agent_id)
+        _validate_agent_body(body)
 
         agents_key = f"agents:{tenant_id}"
         agents = get_redis_data(agents_key) or {}
@@ -434,19 +614,28 @@ async def create_agent(request: Request):
             "agent_id": agent_id,
             "name": _sanitize_string(body.get("name", agent_id)),
             "description": _sanitize_string(body.get("description", "")),
-            "tools": body.get("tools", []),
-            "role_permissions": body.get("role_permissions", {}),
-            "agent_permissions": body.get("agent_permissions", {}),
+            "tools": [_sanitize_string(t, _MAX_TOOL_NAME_LEN) for t in body.get("tools", [])],
+            "role_permissions": _sanitize_value(body.get("role_permissions", {})),
+            "agent_permissions": _sanitize_value(body.get("agent_permissions", {})),
+            # Object-level (target) authorization. allowed_resources are fnmatch
+            # patterns (may use {user_sub}/{tenant_id}) the cap-mint path enforces
+            # against the requested resource. Backward compatible: enforcement is
+            # opt-in — declaring allowed_resources turns it on (strict deny when
+            # the requested resource is out of scope); an agent with no resource
+            # policy keeps its prior behavior unless require_resource_scope is set
+            # explicitly or SHIELD_REQUIRE_RESOURCE_SCOPE=true globally.
+            "allowed_resources": [
+                _sanitize_string(r, _MAX_STRING_LEN) for r in body.get("allowed_resources", [])
+            ],
+            "require_resource_scope": bool(
+                body.get("require_resource_scope", bool(body.get("allowed_resources")))
+            ),
             "status": body.get("status", "active"),
             "created_at": now,
             "updated_at": now,
         }
 
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(agents_key, json.dumps(agents))
-        else:
-            raise Exception("Redis connection not available")
+        _save_agents(tenant_id, agents)
 
         return {
             "success": True,
@@ -464,7 +653,9 @@ async def create_agent(request: Request):
 async def update_agent(agent_id: str, agent_data: dict, request: Request):
     """Update an existing agent."""
     try:
+        _validate_agent_id(agent_id)
         tenant_id = get_tenant_from_api_key(request)
+        _validate_agent_body(agent_data)
 
         # Get existing agents
         agents_key = f"agents:{tenant_id}"
@@ -473,24 +664,32 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
         if agent_id not in agents:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if "name" in agent_data:
-            agent_data["name"] = _sanitize_string(agent_data["name"])
-        if "description" in agent_data:
-            agent_data["description"] = _sanitize_string(agent_data["description"])
+        # Sanitize all string fields recursively
+        sanitized = _sanitize_value(agent_data)
+        if "name" in sanitized:
+            sanitized["name"] = _sanitize_string(sanitized["name"])
+        if "description" in sanitized:
+            sanitized["description"] = _sanitize_string(sanitized["description"])
+        if "tools" in sanitized:
+            sanitized["tools"] = [_sanitize_string(t, _MAX_TOOL_NAME_LEN) for t in sanitized.get("tools", [])]
+        if "allowed_resources" in sanitized:
+            sanitized["allowed_resources"] = [
+                _sanitize_string(r, _MAX_STRING_LEN) for r in sanitized.get("allowed_resources", [])
+            ]
+        if "require_resource_scope" in sanitized:
+            sanitized["require_resource_scope"] = bool(sanitized["require_resource_scope"])
+
+        # Prevent overriding immutable fields
+        sanitized.pop("created_at", None)
 
         agents[agent_id] = {
             **agents[agent_id],
-            **agent_data,
+            **sanitized,
             "agent_id": agent_id,
             "updated_at": int(__import__('time').time())
         }
 
-        # Save to Redis
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(agents_key, json.dumps(agents))
-        else:
-            raise Exception("Redis connection not available")
+        _save_agents(tenant_id, agents)
 
         return {
             "success": True,
@@ -508,6 +707,7 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
 async def delete_agent(agent_id: str, request: Request):
     """Delete an agent."""
     try:
+        _validate_agent_id(agent_id)
         tenant_id = get_tenant_from_api_key(request)
 
         # Get existing agents
@@ -520,12 +720,7 @@ async def delete_agent(agent_id: str, request: Request):
         # Remove agent
         deleted_agent = agents.pop(agent_id)
 
-        # Save to Redis
-        redis_client = _get_redis()
-        if redis_client:
-            redis_client.set(agents_key, json.dumps(agents))
-        else:
-            raise Exception("Redis connection not available")
+        _save_agents(tenant_id, agents)
 
         return {
             "success": True,

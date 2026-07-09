@@ -23,21 +23,55 @@ Or with Docker:
         shield-admin
 """
 
+import asyncio
 import fnmatch
 import json
 import os
 from datetime import datetime
 
+# Strong refs to fire-and-forget background tasks so the event loop doesn't GC
+# them before they finish (per asyncio.create_task docs).
+_BG_TASKS: set = set()
+
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
+
+# Set HTTPX_SSL_VERIFY=0 to disable SSL verification for internal OC/K8s calls
+_HTTPX_VERIFY = os.environ.get("HTTPX_SSL_VERIFY", "1") not in ("0", "false", "no")
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.routes_tenant import router as tenant_router, global_router as tenant_audit_router
 from api.routes_tenant_self import router as tenant_self_router
 from api.routes_agents_registry import router as agents_registry_router
+try:
+    from api.routes_governance import router as governance_router
+except Exception as _gov_import_err:  # optional module — never crash-loop the portal
+    governance_router = None
+    import logging as _logging
+    _logging.getLogger("admin_app").warning(
+        "governance routes unavailable: %s", _gov_import_err)
+try:
+    from api.routes_edge import router as edge_router
+except Exception as _edge_import_err:  # optional module — never crash-loop the portal
+    edge_router = None
+    import logging as _logging
+    _logging.getLogger("admin_app").warning(
+        "edge routes unavailable: %s", _edge_import_err)
 from api.routes_data_policies import router as data_policies_router
+from api.routes_agentic_control_plane import router as agentic_control_plane_router
+from api.routes_guardrail_metrics import router as guardrail_metrics_router
+from api.routes_siem import router as siem_router
+from api.routes_evidence import router as evidence_router
+from api.routes_board_report import router as board_report_router
+
+# Runtime tool-check routes (RBAC + data policy enforcement)
+_tool_router = None
+try:
+    from api.routes_tool import router as _tool_router
+except ImportError:
+    pass
 from core.auth import AuthMiddleware
 from core.middleware import ShieldMiddleware
 from storage.audit_log import audit_logger
@@ -47,6 +81,9 @@ _killswitch_router = None
 _decisions_router = None
 _webhooks_router = None
 _agent_identity_router = None
+_agent_auth_router = None
+_agent_auth_tenant_router = None
+_AgentIdentityMiddleware = None
 
 try:
     from api.routes_killswitch import router as _killswitch_router
@@ -62,6 +99,36 @@ except Exception:
     pass
 try:
     from api.routes_agent_identity import router as _agent_identity_router
+except Exception:
+    pass
+try:
+    from api.routes_agent_auth import (
+        router as _agent_auth_router,
+        tenant_router as _agent_auth_tenant_router,
+    )
+    from core.agent_identity_middleware import AgentIdentityMiddleware as _AgentIdentityMiddleware
+except Exception as _e:
+    # cryptography missing or new modules not present — agent-auth tab will
+    # show "Failed to load" in the portal but the rest of admin still works.
+    pass
+
+# OAuth 2.1 / OIDC / A2A routes (graceful — admin still boots without them)
+_oauth_router = None
+_oauth_registration_router = None
+_oidc_admin_router = None
+_a2a_router = None
+
+try:
+    from api.routes_oauth import router as _oauth_router
+    from api.routes_oauth_registration import router as _oauth_registration_router
+except Exception:
+    pass
+try:
+    from api.routes_oidc_admin import router as _oidc_admin_router
+except Exception:
+    pass
+try:
+    from api.routes_a2a import router as _a2a_router
 except Exception:
     pass
 
@@ -197,6 +264,9 @@ def _get_data_policy(tool_policies: dict, tool_name: str, user_role: str | None,
 
     result = {"input": None, "output": None,
               "sanitization": tp.get("data_sanitization"),
+              "action": "allow",
+              "redaction_level": None,
+              "data_scope": [],
               "input_rules": [], "output_rules": []}
 
     if user_role and user_role in role_restrictions:
@@ -212,6 +282,9 @@ def _get_data_policy(tool_policies: dict, tool_name: str, user_role: str | None,
         dp = data_policies.get(tool_name) or {}
         for rp in dp.get("role_policies", []):
             if rp.get("role") == user_role:
+                result["action"] = rp.get("action", "allow")
+                result["redaction_level"] = rp.get("redaction_level")
+                result["data_scope"] = rp.get("data_scope", [])
                 result["input_rules"] = rp.get("input_rules", [])
                 result["output_rules"] = rp.get("output_rules", [])
                 break
@@ -250,7 +323,7 @@ def _load_data_policies(tenant_id: str | None) -> dict:
 # records the violation and leaves the payload untouched so the tool still
 # functions; "block" records the violation and signals the caller to refuse.
 
-_VALID_ACTIONS = {"detect", "redact", "block"}
+_VALID_ACTIONS = {"detect", "redact", "mask", "block"}
 
 
 def _resolve_action(rule: dict, default_action: str) -> str:
@@ -301,6 +374,14 @@ def _apply_sanitization(text: str, rules: list[dict],
         if effective == "redact":
             replacement = rule.get("replacement", "[REDACTED]")
             sanitized = compiled.sub(replacement, sanitized)
+        elif effective == "mask":
+            # Partial mask: keep first and last chars, mask the middle
+            def _partial_mask(m):
+                val = m.group(0)
+                if len(val) <= 4:
+                    return "*" * len(val)
+                return val[0] + "*" * (len(val) - 2) + val[-1]
+            sanitized = compiled.sub(_partial_mask, sanitized)
 
         violations.append({
             "pattern_id": rule.get("pattern_id", "unknown"),
@@ -433,59 +514,81 @@ def _track_unregistered(tenant_id: str, agent_key: str | None,
 async def _validate_data_rules(
     client, shield_url: str, content: str, rules: list[str],
     tool_name: str, stage: str, api_key: str, auth_token: str = "",
+    user_role: str = "",
 ) -> dict | None:
-    """Validate content against free-form rules using the Shield server's vLLM.
-    Returns {"passed": bool, "violations": [...]} or None on failure."""
-    if not rules or not shield_url or not content:
+    """Validate content against data policy rules using /v1/data-policies/validate.
+
+    Calls the Shield server's dedicated data policy validation endpoint which
+    checks regex sanitization rules, role-level access, AND free-form
+    input/output rules via the Shield's built-in LLM.
+    Returns {"passed": bool, "reason": str, ...} or None on failure.
+    """
+    if not rules or not content or not shield_url:
         return None
-    prompt = (
-        f"You are a data policy validator for the tool '{tool_name}' ({stage} stage).\n"
-        f"Check if the following content violates ANY of these rules:\n\n"
-    )
-    for i, rule in enumerate(rules, 1):
-        prompt += f"{i}. {rule}\n"
-    prompt += (
-        f"\nContent to validate:\n{content}\n\n"
-        "Output ONLY one CSV line: violated,rule_number,explanation\n"
-        "Examples:\n"
-        "false,0,No violations found\n"
-        "true,2,Contains SSN which violates rule 2\n"
-    )
-    headers = {"Content-Type": "application/json", "X-API-Key": api_key}
+
+    url = f"{shield_url.rstrip('/')}/v1/data-policies/validate"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["X-API-Key"] = api_key
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
+
+    body = {
+        "data": content,
+        "tool_name": tool_name,
+        "user_role": user_role,
+        "stage": stage,
+    }
+
+    print(f"[data-policy] POST {url} for {tool_name}/{stage} content_length={len(content)} content={content[:300]}", flush=True)
+    print(f"[data-policy] request_body={json.dumps(body)[:500]}", flush=True)
     try:
-        resp = await client.post(
-            f"{shield_url.rstrip('/')}/v1/chat/completions",
-            json={
-                "model": "votal-ai/vai35-4B",
-                "messages": [
-                    {"role": "system", "content": "You are a strict data policy validator. Output ONLY the CSV line."},
-                    {"role": "user", "content": prompt},
-                ],
-                "max_tokens": 60,
-                "temperature": 0,
-            },
-            headers=headers,
-        )
+        resp = await client.post(url, json=body, headers=headers)
+        print(f"[data-policy] Response status={resp.status_code}", flush=True)
         if resp.status_code != 200:
+            print(f"[data-policy] Error: {resp.text[:500]}", flush=True)
             return None
+
         data = resp.json()
-        raw = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        line = raw.strip().split("\n")[0].strip()
-        parts = [p.strip() for p in line.split(",", 2)]
-        violated = parts[0].lower() == "true" if parts else False
-        rule_num = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-        explanation = parts[2] if len(parts) > 2 else ""
-        return {
-            "passed": not violated,
-            "violated_rule": rules[rule_num - 1] if violated and 0 < rule_num <= len(rules) else None,
-            "explanation": explanation,
-            "stage": stage,
-            "tool": tool_name,
-        }
-    except Exception:
+        print(f"[data-policy] Response: {json.dumps(data)[:500]}", flush=True)
+
+        result = data.get("validation_result", {})
+        compliant = result.get("compliant", True)
+        violations = result.get("violations", [])
+
+        if not compliant and violations:
+            reasons = [v.get("pattern", "") for v in violations if v.get("pattern")]
+            reason = "; ".join(reasons) if reasons else "Data policy violation"
+            return {
+                "passed": False,
+                "violated_rule": rules[0] if rules else None,
+                "reason": reason,
+                "explanation": reason,
+                "stage": stage,
+                "tool": tool_name,
+                "violations": violations,
+            }
+
+        return {"passed": True, "stage": stage, "tool": tool_name}
+    except Exception as e:
+        print(f"[data-policy] Exception: {e}", flush=True)
         return None
+
+
+def _make_tools_schemaless(tools: list[dict]) -> list[dict]:
+    """Strip fixed schemas — keep only name + description."""
+    out = []
+    for tool in tools:
+        func = tool.get("function", {})
+        out.append({
+            "type": "function",
+            "function": {
+                "name": func.get("name", ""),
+                "description": func.get("description", ""),
+                "parameters": {"type": "object"},
+            },
+        })
+    return out
 
 
 def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
@@ -510,7 +613,7 @@ def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
             if raw:
                 tools = json.loads(raw)
                 if tools:
-                    return tools
+                    return _make_tools_schemaless(tools)
         except Exception:
             pass
 
@@ -542,8 +645,8 @@ def _load_tenant_tools(tenant_id: str | None, tenant_config: dict | None,
         return [
             {"type": "function", "function": {
                 "name": name,
-                "strict": True,
-                **_tool_stub_meta(name, registry=registry),
+                "description": _tool_stub_description(name, registry=registry),
+                "parameters": {"type": "object"},
             }}
             for name in sorted(tool_names)
         ]
@@ -571,9 +674,8 @@ def _parse_verb_noun(name: str) -> tuple[str, str]:
     return "", " ".join(parts)
 
 
-def _tool_stub_meta(name: str, registry: dict | None = None) -> dict:
-    """Generate description + parameters following OpenAI function calling
-    best practices (strict mode, clear descriptions, additionalProperties).
+def _tool_stub_description(name: str, registry: dict | None = None) -> str:
+    """Generate a description for a tool stub — schemaless, no parameter schema.
 
     Checks the agent registry for a tool description first, then derives
     a meaningful description from the tool name itself.
@@ -584,12 +686,9 @@ def _tool_stub_meta(name: str, registry: dict | None = None) -> dict:
             if name in tool_descs:
                 td = tool_descs[name]
                 if isinstance(td, str):
-                    return {"description": td, "parameters": _infer_params(name)}
+                    return td
                 if isinstance(td, dict):
-                    return {
-                        "description": td.get("description", f"Perform {name.replace('_', ' ')}"),
-                        "parameters": td.get("parameters", _infer_params(name)),
-                    }
+                    return td.get("description", f"Perform {name.replace('_', ' ')}")
 
     verb, noun = _parse_verb_noun(name)
 
@@ -626,9 +725,7 @@ def _tool_stub_meta(name: str, registry: dict | None = None) -> dict:
         "verify": f"Verify {noun}.",
     }
 
-    desc = desc_map.get(verb, f"Perform the '{name.replace('_', ' ')}' operation.")
-
-    return {"description": desc, "parameters": _infer_params(name, verb)}
+    return desc_map.get(verb, f"Perform the '{name.replace('_', ' ')}' operation.")
 
 
 def _infer_params(name: str, verb: str = "") -> dict:
@@ -690,8 +787,36 @@ def _check_rbac(tool_name: str, agent_key: str, user_role: str | None,
     def _matches(name: str, patterns: list) -> bool:
         return any(fnmatch.fnmatch(name, p) for p in patterns)
 
-    # --- 1. Check agent registry ---
+    # --- 0. Non-active agent: blocked outright, before any permission logic.
+    # Fail-closed: any registered status other than "active" (disabled,
+    # inactive, tampered value) blocks; missing status = legacy = active. ---
     agent_entry = (registry or {}).get(agent_key)
+    _status = agent_entry.get("status", "active") if agent_entry else None
+    if _status is not None and _status != "active":
+        return {
+            "allowed": False, "action": "block",
+            "message": f"Agent '{agent_key}' is not active (status: {_status}). "
+                       f"Re-enable it in the Agent Registry to allow tool calls.",
+            "source": "agent_status",
+        }
+
+    # Agent-to-agent: a non-active CALLING agent must not act through another
+    # agent either.
+    if calling_agent:
+        caller_entry = (registry or {}).get(calling_agent)
+        _cstatus = caller_entry.get("status", "active") if caller_entry else None
+        if _cstatus is not None and _cstatus != "active":
+            return {
+                "allowed": False, "action": "block",
+                "message": f"Calling agent '{calling_agent}' is not active "
+                           f"(status: {_cstatus}). Re-enable it in the Agent "
+                           f"Registry to allow delegation.",
+                "source": "agent_status",
+                "calling_agent": calling_agent,
+                "caller_allowed": False,
+            }
+
+    # --- 1. Check agent registry ---
     if agent_entry:
         agent_tools = agent_entry.get("tools") or []
         role_perms = agent_entry.get("role_permissions") or {}
@@ -843,6 +968,53 @@ def _simulate_tool(name: str, args: dict) -> dict:
     return result
 
 
+async def _llm_simulate_tool(
+    name: str, args: dict, llm_base_url: str, llm_key: str = "",
+    llm_model: str = "gpt-4o-mini",
+) -> dict | None:
+    """Use the LLM to generate a realistic simulated tool response."""
+    base = llm_base_url.rstrip("/")
+    url = f"{base}/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if llm_key:
+        headers["Authorization"] = f"Bearer {llm_key}"
+
+    prompt = (
+        f"You are simulating the response of a tool called '{name}'.\n"
+        f"The tool was called with these arguments: {json.dumps(args)}\n\n"
+        f"Generate a realistic JSON response that this tool would return. "
+        f"Include plausible sample data (names, dates, IDs, etc.) that matches the tool's purpose. "
+        f"Return ONLY valid JSON, no markdown or explanation."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30, verify=_HTTPX_VERIFY) as client:
+            resp = await client.post(url, json={
+                "model": llm_model,
+                "messages": [
+                    {"role": "system", "content": "You generate realistic simulated API responses. Return ONLY valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 500,
+                "temperature": 0.7,
+            }, headers=headers)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        raw = (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+        # Extract JSON from response
+        json_match = __import__("re").search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+        json_str = json_match.group(1).strip() if json_match else raw
+        start = json_str.find("{")
+        if start == -1:
+            start = json_str.find("[")
+        if start >= 0:
+            return json.loads(json_str[start:])
+        return json.loads(json_str)
+    except Exception as e:
+        print(f"[simulate] LLM simulation failed: {e}", flush=True)
+        return None
+
+
 def _extract_block_reason(guardrail_result: dict) -> str:
     """Pull a human-readable block reason from a guardrail response."""
     reasons = []
@@ -860,16 +1032,56 @@ def create_admin_app() -> FastAPI:
         description="Lightweight tenant management UI and admin APIs.",
     )
 
-    # Middleware: auth first (last added = first executed in Starlette)
+    # Middleware: auth first (last added = first executed in Starlette).
+    # Order: AuthMiddleware → mTLS → SPIFFE → AgentIdentity → Shield → SecurityHeaders
+    try:
+        from core.security_headers import SecurityHeadersMiddleware
+        app.add_middleware(SecurityHeadersMiddleware)  # runs last (sets response headers)
+    except ImportError as e:
+        # Security headers are a required control — never fail silently.
+        # If you see this in logs, core/security_headers.py is missing from
+        # the deployed image (check Dockerfile.admin COPY lines).
+        print(f"[SECURITY] WARNING: SecurityHeadersMiddleware NOT loaded: {e}", flush=True)
     app.add_middleware(ShieldMiddleware)
+    if _AgentIdentityMiddleware:
+        app.add_middleware(_AgentIdentityMiddleware)
+    # Optional workload identity middleware (on-prem, no cloud deps)
+    try:
+        from core.oauth.spiffe_middleware import SPIFFEMiddleware
+        from core.mtls_middleware import MTLSMiddleware
+        app.add_middleware(SPIFFEMiddleware)
+        app.add_middleware(MTLSMiddleware)
+    except Exception:
+        pass
     app.add_middleware(AuthMiddleware)
+
+    # Outermost (added last → runs first): redirect insecure HTTP→HTTPS before
+    # any auth/processing. Gated by FORCE_HTTPS env var.
+    try:
+        from core.security_headers import HTTPSRedirectMiddleware
+        app.add_middleware(HTTPSRedirectMiddleware)
+    except ImportError:
+        pass
 
     # Mount admin + tenant routers
     app.include_router(tenant_router)           # /v1/admin/tenants/*
     app.include_router(tenant_audit_router)     # /v1/admin/audit, /v1/admin/dashboard
     app.include_router(tenant_self_router)      # /v1/tenant/* (includes policies and custom policy CRUD)
     app.include_router(agents_registry_router)  # /v1/agents/* (registry, roles, tool policies)
+    if governance_router is not None:
+        app.include_router(governance_router)   # /v1/governance/* (inventory, used-vs-granted, reviews)
+    if edge_router is not None:
+        app.include_router(edge_router)         # /v1/edge/policy-bundle (edge fast-path rules)
     app.include_router(data_policies_router)    # /v1/data-policies/*
+    app.include_router(agentic_control_plane_router)  # /v1/tenant/me/agentic/*
+    app.include_router(guardrail_metrics_router)       # /v1/tenant/me/guardrails/metrics
+    app.include_router(siem_router)                    # /v1/tenant/me/siem
+    app.include_router(evidence_router)                # /v1/tenant/me/compliance/*
+    app.include_router(board_report_router)             # /v1/tenant/me/board-report
+
+    # Runtime: tool RBAC + data policy enforcement
+    if _tool_router:
+        app.include_router(_tool_router)           # /v1/shield/tool/check, /v1/shield/tool/output
 
     if _audit_router:
         app.include_router(_audit_router)       # /v1/shield/audit, /v1/shield/stats
@@ -887,6 +1099,20 @@ def create_admin_app() -> FastAPI:
         app.include_router(_webhooks_router)         # /v1/shield/webhooks/*
     if _agent_identity_router:
         app.include_router(_agent_identity_router)   # /v1/shield/agent/identity/*
+    if _agent_auth_router:
+        app.include_router(_agent_auth_router)         # /v1/shield/auth/*, /v1/shield/cap/*
+    if _agent_auth_tenant_router:
+        app.include_router(_agent_auth_tenant_router)  # /v1/tenant/me/agent-auth/*
+
+    # OAuth 2.1 / OIDC / A2A routes
+    if _oauth_router:
+        app.include_router(_oauth_router)              # /.well-known/oauth-*, /oauth/*
+    if _oauth_registration_router:
+        app.include_router(_oauth_registration_router) # /oauth/register
+    if _oidc_admin_router:
+        app.include_router(_oidc_admin_router)         # /v1/admin/oidc-providers/*
+    if _a2a_router:
+        app.include_router(_a2a_router)                # /.well-known/agent.json, /a2a/*
 
     # Static files
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -957,9 +1183,45 @@ def create_admin_app() -> FastAPI:
     async def tenant_typo_redirect():
         return RedirectResponse(url="/tenant", status_code=307)
 
+    # ── hCaptcha ──────────────────────────────────────────────
+    @app.get("/captcha-config")
+    async def captcha_config():
+        site_key = os.environ.get("HCAPTCHA_SITE_KEY", "")
+        return {"enabled": bool(site_key), "site_key": site_key}
+
+    @app.post("/verify-captcha")
+    async def verify_captcha(request: Request):
+        body = await request.json()
+        token = body.get("token", "")
+        secret = os.environ.get("HCAPTCHA_SECRET_KEY", "")
+        if not secret:
+            return {"success": True}  # captcha not configured, skip
+        if not token:
+            return JSONResponse({"success": False, "error": "Missing captcha token"}, status_code=400)
+        async with httpx.AsyncClient(verify=_HTTPX_VERIFY) as client:
+            resp = await client.post(
+                "https://api.hcaptcha.com/siteverify",
+                data={"secret": secret, "response": token},
+            )
+            result = resp.json()
+        if result.get("success"):
+            return {"success": True}
+        return JSONResponse({"success": False, "error": "Captcha verification failed"}, status_code=403)
+
     @app.get("/playground")
     async def playground():
         return FileResponse(os.path.join(static_dir, "playground.html"))
+
+    @app.get("/playground/config")
+    async def playground_config():
+        """Serve playground defaults from environment variables."""
+        return {
+            "llm_base_url": os.environ.get("PLAYGROUND_LLM_BASE_URL", ""),
+            "llm_master_key": os.environ.get("PLAYGROUND_LLM_MASTER_KEY", ""),
+            "llm_model": os.environ.get("PLAYGROUND_LLM_MODEL", ""),
+            "shield_endpoint": os.environ.get("PLAYGROUND_SHIELD_ENDPOINT") or os.environ.get("SHIELD_LLM_URL", ""),
+            "shield_token": os.environ.get("PLAYGROUND_SHIELD_TOKEN") or os.environ.get("RUNPOD_TOKEN", ""),
+        }
 
     @app.get("/telemetry")
     async def telemetry_portal():
@@ -1009,29 +1271,12 @@ def create_admin_app() -> FastAPI:
         agent_key = body.get("agent_key", "") or request.headers.get("X-Agent-Key", "")
         user_role = body.get("user_role") or request.headers.get("X-User-Role")
         calling_agent = body.get("calling_agent", "") or request.headers.get("X-Calling-Agent", "")
-        llm_api_key = body.get("llm_api_key")
+        llm_api_key = body.get("llm_master_key", "")
         llm_model = body.get("llm_model", "gpt-4o-mini")
+        llm_base_url = body.get("llm_base_url", "https://api.openai.com/v1").strip().rstrip("/")
         shield_endpoint = body.get("shield_endpoint", "").strip().rstrip("/")
         shield_token = body.get("shield_token", "").strip()
         api_key = request.headers.get("X-API-Key", "")
-
-        if not llm_api_key:
-            return JSONResponse(status_code=400,
-                                content={"error": "llm_api_key is required for the admin playground"})
-
-        default_system = (
-            "You are an AI assistant with access to tools. "
-            "Call a tool ONLY when the user is explicitly requesting an action "
-            "that requires one (e.g. looking up data, performing a transaction, "
-            "running a calculation). For conversational messages — greetings, "
-            "feedback, opinions, follow-up questions, or general discussion — "
-            "respond naturally in plain text without calling any tools. "
-            "When a tool IS needed, pick the semantically correct one. "
-            "Do NOT avoid a tool because it was previously blocked or denied — "
-            "permissions are handled externally, not by you."
-        )
-        if messages and not any(m.get("role") == "system" for m in messages):
-            messages = [{"role": "system", "content": default_system}] + messages
 
         if not messages:
             return JSONResponse(status_code=400, content={"error": "messages required"})
@@ -1049,8 +1294,25 @@ def create_admin_app() -> FastAPI:
         tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
 
         registry = _load_agent_registry(tenant_id)
+
+        # A disabled agent must not converse at all — reject before any
+        # guardrail or LLM call.
+        _agent_entry = (registry or {}).get(agent_key)
+        _agent_status = _agent_entry.get("status", "active") if _agent_entry else None
+        if _agent_status is not None and _agent_status != "active":
+            return JSONResponse(status_code=403, content={
+                "blocked": True,
+                "stage": "agent_status",
+                "block_reason": f"Agent '{agent_key}' is not active "
+                                f"(status: {_agent_status}). Re-enable it in "
+                                f"the Agent Registry to chat.",
+                "agent_key": agent_key,
+                "agent_status": _agent_status,
+            })
+
         tool_policies = _load_tool_policies(tenant_id)
         data_policies = _load_data_policies(tenant_id)
+        print(f"[data-policy] tenant_id={tenant_id} data_policies_keys={list(data_policies.keys()) if data_policies else 'None'}", flush=True)
         registered_tools = _get_registered_tool_names(registry, tool_policies, tenant_config)
 
         user_supplied_tools = body.get("tools")
@@ -1060,6 +1322,27 @@ def create_admin_app() -> FastAPI:
             return JSONResponse(status_code=400, content={
                 "error": "No tool definitions found. Register tools via PUT /v1/tenant/me/tools or agent registry.",
             })
+
+        # Build system prompt with explicit tool names to prevent hallucination
+        tool_names = [t["function"]["name"] for t in tools if isinstance(t, dict) and "function" in t]
+        tool_list = ", ".join(tool_names)
+        default_system = (
+            "You are an AI assistant. You have access to EXACTLY these tools and NO others:\n"
+            f"[{tool_list}]\n\n"
+            "RULES:\n"
+            "1. When the user requests an action, you MUST call one of the tools listed above.\n"
+            "2. You MUST use the EXACT tool name from the list. Do NOT rename, abbreviate, or invent tool names.\n"
+            "3. For example, to look up a customer use 'customer_profile_get', NOT 'account_lookup' or 'get_customer'.\n"
+            "4. If no tool matches the request, respond in plain text.\n"
+            "5. Do NOT avoid a tool because it was previously blocked — permissions are handled externally.\n"
+        )
+        # Always inject/replace system prompt with tool names
+        messages = [m for m in messages if m.get("role") != "system"]
+        messages = [{"role": "system", "content": default_system}] + messages
+        print(f"[agent-chat] ===== NEW REQUEST =====", flush=True)
+        print(f"[agent-chat] system_prompt tool_names={tool_names}", flush=True)
+        print(f"[agent-chat] system_prompt={default_system[:200]}", flush=True)
+        print(f"[agent-chat] messages count={len(messages)} first_role={messages[0].get('role') if messages else 'none'}", flush=True)
 
         # Layer 2: detect shadow tools from developer-supplied definitions
         if user_supplied_tools and tenant_id:
@@ -1084,7 +1367,7 @@ def create_admin_app() -> FastAPI:
         input_guardrail_result = None
         output_guardrail_result = None
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=180, verify=_HTTPX_VERIFY) as client:
             # --- Step 1: Input Guardrails ---
             if shield_endpoint and user_message:
                 input_guardrail_result = await _call_guardrails(
@@ -1117,8 +1400,11 @@ def create_admin_app() -> FastAPI:
 
             # --- Step 2: Call OpenAI ---
             try:
+                llm_headers = {}
+                if llm_api_key:
+                    llm_headers["Authorization"] = f"Bearer {llm_api_key}"
                 resp = await client.post(
-                    "https://api.openai.com/v1/chat/completions",
+                    f"{llm_base_url}/chat/completions",
                     json={
                         "model": llm_model,
                         "messages": messages,
@@ -1127,9 +1413,10 @@ def create_admin_app() -> FastAPI:
                         "max_tokens": 1024,
                         "temperature": 0.3,
                     },
-                    headers={"Authorization": f"Bearer {llm_api_key}"},
+                    headers=llm_headers,
                 )
                 llm_data = resp.json()
+                print(f"[agent-chat] LLM response status={resp.status_code}", flush=True)
             except Exception as e:
                 return JSONResponse(status_code=502, content={"error": f"LLM call failed: {e}"})
 
@@ -1143,23 +1430,94 @@ def create_admin_app() -> FastAPI:
         content = message_obj.get("content") or ""
         raw_calls = message_obj.get("tool_calls") or []
 
+        # Filter out hallucinated tool names — only allow tools in the defined set
+        print(f"[agent-chat] RAW LLM tool_calls={[tc.get('function',{}).get('name','?') for tc in raw_calls]}", flush=True)
+        valid_tool_set = {t["function"]["name"] for t in tools if isinstance(t, dict) and "function" in t}
+        print(f"[agent-chat] valid_tool_set={sorted(valid_tool_set)}", flush=True)
+        filtered_calls = []
+        hallucinated = []
+        for tc in raw_calls:
+            tc_name = (tc.get("function") or {}).get("name", "")
+            if tc_name in valid_tool_set:
+                filtered_calls.append(tc)
+            else:
+                hallucinated.append(tc_name)
+                print(f"[agent-chat] DROPPED hallucinated tool call: {tc_name} (valid: {sorted(valid_tool_set)})", flush=True)
+
+        if hallucinated and not filtered_calls:
+            # LLM only produced hallucinated tools — retry once with stronger prompt
+            print(f"[agent-chat] All tool calls hallucinated ({hallucinated}), retrying with strict prompt", flush=True)
+            retry_msg = {
+                "role": "user",
+                "content": (
+                    f"ERROR: You called tools that do not exist: {', '.join(hallucinated)}. "
+                    f"You can ONLY use these exact tool names: {', '.join(sorted(valid_tool_set))}. "
+                    f"Please try again with the correct tool name."
+                ),
+            }
+            try:
+                retry_resp = await client.post(
+                    f"{llm_base_url}/chat/completions",
+                    json={
+                        "model": llm_model,
+                        "messages": messages + [message_obj, retry_msg],
+                        "tools": tools,
+                        "tool_choice": "auto",
+                        "max_tokens": 1024,
+                        "temperature": 0.1,
+                    },
+                    headers=llm_headers,
+                )
+                retry_data = retry_resp.json()
+                retry_choices = retry_data.get("choices", [])
+                retry_obj = retry_choices[0].get("message", {}) if retry_choices else {}
+                retry_calls = retry_obj.get("tool_calls") or []
+                filtered_calls = [tc for tc in retry_calls if (tc.get("function") or {}).get("name", "") in valid_tool_set]
+                if retry_obj.get("content"):
+                    content = retry_obj["content"]
+                print(f"[agent-chat] Retry returned {len(filtered_calls)} valid tool calls", flush=True)
+            except Exception as e:
+                print(f"[agent-chat] Retry failed: {e}", flush=True)
+
+        raw_calls = filtered_calls
+
         tool_results = []
         data_rule_results = []
         sanitization_results = []
+        print(f"[agent-chat] Processing {len(raw_calls)} tool calls, content={repr(content[:100])}", flush=True)
         for tc in raw_calls:
             func = tc.get("function", {})
             name = func.get("name", "unknown")
-            args = func.get("arguments", "{}")
+            raw_args = func.get("arguments", "{}")
+            print(f"[agent-chat] tool={name} raw_arguments={repr(raw_args[:300]) if isinstance(raw_args, str) else repr(raw_args)}", flush=True)
+            args = raw_args
             if isinstance(args, str):
                 try:
                     args = json.loads(args)
                 except json.JSONDecodeError:
                     args = {"_raw": args}
+            print(f"[agent-chat] tool={name} parsed_args={json.dumps(args)[:300]}", flush=True)
 
-            rbac = _check_rbac(name, agent_key, user_role, tenant_config,
-                              registry=registry, calling_agent=calling_agent or None)
+            # Kill switch — immediately block disabled tools
+            _ks_blocked = False
+            try:
+                from storage.tool_killswitch import is_tool_disabled as _is_disabled
+                if tenant_id and _is_disabled(tenant_id, name):
+                    rbac = {
+                        "allowed": False,
+                        "action": "block",
+                        "message": f"Tool '{name}' is disabled via kill switch",
+                        "source": "tool_killswitch",
+                    }
+                    _ks_blocked = True
+            except Exception:
+                pass
+            if not _ks_blocked:
+                rbac = _check_rbac(name, agent_key, user_role, tenant_config,
+                                  registry=registry, calling_agent=calling_agent or None)
             data_policy = _get_data_policy(tool_policies, name, user_role,
                                            data_policies=data_policies)
+            print(f"[data-policy] tool={name} role={user_role} action={data_policy.get('action')} input_rules={data_policy.get('input_rules')} shield={shield_endpoint}", flush=True)
 
             tool_data_policy_raw  = (data_policies.get(name) or {}) if data_policies else {}
             tool_sanitization_rules = tool_data_policy_raw.get("sanitization_rules", []) or []
@@ -1240,10 +1598,15 @@ def create_admin_app() -> FastAPI:
             ai_output_result: dict | None = None
 
             if rbac["allowed"] and not input_block:
-                # Step 2 (OUTPUT): default is REDACT. The LLM/user never need
-                # the raw payload — a presentation copy is fine. critical still
-                # blocks, and an explicit action="detect" rule just records.
-                simulated = _simulate_tool(name, sanitized_args)
+                # Step 2 (OUTPUT): simulate tool response using LLM if available,
+                # otherwise fall back to hardcoded simulation.
+                simulated = None
+                if llm_base_url:
+                    simulated = await _llm_simulate_tool(
+                        name, sanitized_args, llm_base_url, llm_api_key, llm_model,
+                    )
+                if not simulated:
+                    simulated = _simulate_tool(name, sanitized_args)
                 if regex_enabled:
                     sanitized_output, output_violations = _sanitize_json(
                         simulated, tool_sanitization_rules, default_action="redact",
@@ -1294,30 +1657,58 @@ def create_admin_app() -> FastAPI:
                         else "Sanitization policy blocked tool output"
                     )
 
-                # LLM-validated data rules run on whatever the downstream will
-                # actually see (sanitized_args for input, sanitized_output for
-                # output) so the Shield LLM doesn't need to see raw PII either.
-                if shield_endpoint and data_policy.get("input_rules"):
-                    async with httpx.AsyncClient(timeout=30) as rule_client:
+                # Data policy validation via /v1/data-policies/validate on Shield server
+                if data_policy.get("input_rules") and shield_endpoint:
+                    # Include user message as context when tool args are empty
+                    # so the LLM can evaluate intent even without structured params
+                    content_to_validate = json.dumps(sanitized_args)
+                    is_empty_args = content_to_validate in ("{}", "null", "")
+                    if is_empty_args and user_message:
+                        content_to_validate = json.dumps({
+                            "_user_message": user_message,
+                            "_tool_name": name,
+                            "_note": "Tool args were empty — validate user intent against policy",
+                        })
+                    print(f"[data-policy] VALIDATING tool={name} empty_args={is_empty_args} content={content_to_validate[:500]}", flush=True)
+                    async with httpx.AsyncClient(timeout=60, verify=_HTTPX_VERIFY) as rule_client:
                         input_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
-                            json.dumps(sanitized_args), data_policy["input_rules"],
+                            content_to_validate, data_policy["input_rules"],
                             name, "input", api_key, shield_token,
+                            user_role=user_role or "",
                         )
+                    print(f"[data-policy] input_check for {name}: {input_check}", flush=True)
                     if input_check and not input_check["passed"]:
                         entry["data_rule_violation"] = input_check
                         data_rule_results.append(input_check)
-                if shield_endpoint and data_policy.get("output_rules") and entry.get("simulated_output"):
-                    async with httpx.AsyncClient(timeout=30) as rule_client:
+                if data_policy.get("output_rules") and entry.get("simulated_output") and shield_endpoint:
+                    async with httpx.AsyncClient(timeout=60, verify=_HTTPX_VERIFY) as rule_client:
                         output_check = await _validate_data_rules(
                             rule_client, shield_endpoint,
                             json.dumps(entry["simulated_output"]),
                             data_policy["output_rules"],
                             name, "output", api_key, shield_token,
+                            user_role=user_role or "",
                         )
+                    print(f"[data-policy] output_check for {name}: {output_check}", flush=True)
                     if output_check and not output_check["passed"]:
                         entry["data_rule_violation"] = output_check
                         data_rule_results.append(output_check)
+
+                # --- Enforce data policy action per role ---
+                dp_action = data_policy.get("action", "allow")
+                has_rule_violation = entry.get("data_rule_violation") and not entry["data_rule_violation"].get("passed", True)
+
+                if dp_action == "block" and has_rule_violation:
+                    violation = entry["data_rule_violation"]
+                    reason = violation.get("reason") or violation.get("message") or "Data policy violation"
+                    entry["rbac"]["allowed"] = False
+                    entry["rbac"]["message"] = f"Data policy blocked: {reason}"
+                    entry["data_policy_blocked"] = True
+                elif dp_action == "mask" and has_rule_violation:
+                    entry["data_policy_masked"] = True
+                elif dp_action == "redact" and has_rule_violation:
+                    entry["data_policy_redacted"] = True
 
             if input_detected or output_violations or ai_input_result or ai_output_result:
                 sanitization_meta = {
@@ -1351,7 +1742,7 @@ def create_admin_app() -> FastAPI:
             tool_results.append(entry)
 
         has_blocked = any(
-            not t["rbac"]["allowed"] or t.get("sanitization_blocked")
+            not t["rbac"]["allowed"] or t.get("sanitization_blocked") or t.get("data_policy_blocked")
             for t in tool_results
         )
 
@@ -1367,7 +1758,7 @@ def create_admin_app() -> FastAPI:
 
         # --- Step 4: Output Guardrails ---
         if shield_endpoint and content:
-            async with httpx.AsyncClient(timeout=60) as client:
+            async with httpx.AsyncClient(timeout=60, verify=_HTTPX_VERIFY) as client:
                 output_guardrail_result = await _call_guardrails(
                     client, shield_endpoint, "output",
                     {
@@ -1423,14 +1814,58 @@ def create_admin_app() -> FastAPI:
             block_reason=result.get("output_block_reason"),
         )
 
+        # Record guardrail effectiveness so the Guardrail Metrics and Board
+        # Report tabs populate. The telemetry call above feeds the Overview's
+        # client-side counts; those two tabs read the *separate* guardrail_metrics
+        # store (get_all_guardrails_summary), which nothing on this path wrote —
+        # which is why they were empty while the Overview had data. Reuse the same
+        # normalized results so guardrail/passed/action field names line up.
+        #
+        # record_results_batch does one *blocking* Redis write per guardrail, so
+        # run it off the response path (background thread, not awaited) — it must
+        # add ~0 latency to the chat/guardrail response. latency_ms above is
+        # already measured, so reported guardrail latency is unaffected regardless.
+        if tenant_id:
+            batch = (_summarize_guardrail_payload(input_guardrail_result)
+                     + _summarize_guardrail_payload(output_guardrail_result))
+            if batch:
+                async def _record_metrics(tid=tenant_id, b=batch):
+                    try:
+                        from storage.guardrail_metrics import record_results_batch
+                        await asyncio.to_thread(record_results_batch, tid, b)
+                    except Exception:
+                        pass
+                task = asyncio.create_task(_record_metrics())
+                _BG_TASKS.add(task)
+                task.add_done_callback(_BG_TASKS.discard)
+
         return result
 
     @app.api_route("/playground/proxy/{path:path}", methods=["GET", "POST"])
     async def playground_proxy(path: str, request: Request):
-        """Proxy playground requests to a remote Shield endpoint (avoids CORS)."""
-        target_url = request.headers.get("X-Playground-Target", "").rstrip("/")
-        if not target_url:
+        """Proxy playground requests to a remote Shield endpoint.
+
+        Hardened against SSRF per IEMLabs VAPT finding 8.1 (May 2026):
+        X-Playground-Target is validated by core.url_safety before any
+        connection attempt, redirects are disabled (would bypass the
+        check), and error responses are sanitized (no upstream details
+        leaked to the wire).
+        """
+        import logging as _logging
+        import uuid as _uuid
+        from core.url_safety import UnsafeURLError, validate_outbound_url
+
+        target_url_raw = request.headers.get("X-Playground-Target", "").rstrip("/")
+        if not target_url_raw:
             return JSONResponse({"error": "Missing X-Playground-Target header"}, status_code=400)
+
+        try:
+            target_url = validate_outbound_url(target_url_raw, purpose="playground-proxy")
+        except UnsafeURLError as e:
+            return JSONResponse(
+                {"error": "target URL rejected", "detail": str(e)},
+                status_code=400,
+            )
 
         forward_headers = {"Content-Type": "application/json"}
         if auth := request.headers.get("Authorization"):
@@ -1444,7 +1879,10 @@ def create_admin_app() -> FastAPI:
         if tenant_id := request.headers.get("X-Tenant-ID"):
             forward_headers["X-Tenant-ID"] = tenant_id
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        request_id = _uuid.uuid4().hex[:12]
+        logger = _logging.getLogger("votal.playground_proxy")
+        async with httpx.AsyncClient(timeout=60.0, verify=_HTTPX_VERIFY,
+                                     follow_redirects=False) as client:
             try:
                 if request.method == "GET":
                     resp = await client.get(
@@ -1461,14 +1899,119 @@ def create_admin_app() -> FastAPI:
                 try:
                     data = resp.json()
                 except Exception:
-                    data = {"raw_response": resp.text, "status": resp.status_code}
+                    data = {"raw_response": resp.text[:8192], "status": resp.status_code}
                 return JSONResponse(data, status_code=resp.status_code)
             except httpx.TimeoutException:
-                return JSONResponse({"error": "Upstream request timed out"}, status_code=504)
-            except httpx.ConnectError as e:
-                return JSONResponse({"error": f"Cannot reach endpoint: {e}"}, status_code=502)
+                logger.warning(f"playground-proxy {request_id}: timeout")
+                return JSONResponse(
+                    {"error": "upstream request timed out", "request_id": request_id},
+                    status_code=504,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"playground-proxy {request_id}: upstream error: {type(e).__name__}: {e}"
+                )
+                return JSONResponse(
+                    {"error": "upstream connection failed", "request_id": request_id},
+                    status_code=502,
+                )
+
+    @app.post("/playground/llm-proxy")
+    async def playground_llm_proxy(request: Request):
+        """Proxy LLM requests from the playground so the browser never calls LiteLLM directly.
+
+        Hardened against SSRF and Information Disclosure per IEMLabs VAPT
+        findings 8.1 and 8.3 (May 2026):
+
+          * base_url validated by core.url_safety BEFORE the request.
+            Deny-by-default: only vetted LLM-provider domains are
+            reachable (the proxy attaches the bearer master_key to the
+            outbound call, so an arbitrary host would exfiltrate it).
+            cloud-metadata endpoints, RFC 1918, link-local, and loopback
+            are also rejected as defense-in-depth. Operators extend the
+            list via SHIELD_LLM_PROXY_ALLOWED_HOSTS, or set
+            SHIELD_LLM_PROXY_ALLOW_ANY_HOST=1 to allow arbitrary hosts.
+          * follow_redirects=False prevents a 302-to-internal bypass of
+            the URL check.
+          * Logging captures status + model only; the full LLM response
+            (which may contain user PII or upstream secrets) is NOT
+            logged.
+          * Error responses return generic message + request_id; the
+            real cause is in the server log so support can correlate
+            without leaking internal addresses or stack traces.
+        """
+        import logging as _logging
+        import uuid as _uuid
+        from core.url_safety import UnsafeURLError, validate_proxy_base_url
+
+        body = await request.json()
+        base_url_raw = body.get("base_url", "https://api.openai.com/v1").strip().rstrip("/")
+        master_key = body.get("master_key", "")
+        payload = body.get("payload", {})
+
+        try:
+            base_url = validate_proxy_base_url(base_url_raw, purpose="llm-proxy")
+        except UnsafeURLError as e:
+            return JSONResponse(
+                {"error": "LLM base_url rejected", "detail": str(e)},
+                status_code=400,
+            )
+
+        headers = {"Content-Type": "application/json"}
+        if master_key:
+            headers["Authorization"] = f"Bearer {master_key}"
+
+        request_id = _uuid.uuid4().hex[:12]
+        logger = _logging.getLogger("votal.llm_proxy")
+        logger.info(
+            f"llm-proxy {request_id}: POST {base_url}/chat/completions "
+            f"model={payload.get('model')!r}"
+        )
+        async with httpx.AsyncClient(timeout=180.0, verify=_HTTPX_VERIFY,
+                                     follow_redirects=False) as client:
+            try:
+                resp = await client.post(
+                    f"{base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"raw_response": resp.text[:8192], "status": resp.status_code}
+                logger.info(
+                    f"llm-proxy {request_id}: status={resp.status_code} "
+                    f"resp_bytes={len(resp.content)}"
+                )
+                return JSONResponse(data, status_code=resp.status_code)
+            except httpx.TimeoutException:
+                logger.warning(f"llm-proxy {request_id}: upstream timed out")
+                return JSONResponse(
+                    {"error": "LLM request timed out", "request_id": request_id},
+                    status_code=504,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"llm-proxy {request_id}: upstream error: {type(e).__name__}: {e}"
+                )
+                return JSONResponse(
+                    {"error": "Cannot reach LLM endpoint", "request_id": request_id},
+                    status_code=502,
+                )
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    # M1: refuse multi-worker boot without shared Redis (nonces/rate-limits
+    # would be per-worker, breaking security). Override with env if needed.
+    @app.on_event("startup")
+    async def _agent_auth_safety_check():
+        try:
+            from core.agent_auth_safety import verify_storage_is_multiworker_safe
+            verify_storage_is_multiworker_safe()
+        except ImportError:
+            # New module unavailable (e.g. cryptography missing); admin
+            # still boots, agent-auth tab will degrade.
+            pass
 
     return app
 
@@ -1482,4 +2025,10 @@ if __name__ == "__main__":
     print(f"Starting Votal Shield Admin on {host}:{port}")
     print(f"  Admin portal  → http://localhost:{port}/admin")
     print(f"  Tenant portal → http://localhost:{port}/tenant")
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        proxy_headers=True,
+        forwarded_allow_ips=os.getenv("FORWARDED_ALLOW_IPS", "*"),
+    )

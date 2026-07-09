@@ -117,7 +117,8 @@ class TestWebhookDispatcher:
     @pytest.mark.asyncio
     @patch("storage.webhook_store._get_redis", return_value=None)
     @patch("core.webhook_dispatcher.httpx.AsyncClient")
-    async def test_dispatch_event_sends_to_webhooks(self, mock_client_cls, mock_redis):
+    @patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 443))])
+    async def test_dispatch_event_sends_to_webhooks(self, mock_gai, mock_client_cls, mock_redis):
         # Setup webhook
         create_webhook("t1", {
             "url": "https://hook.example.com",

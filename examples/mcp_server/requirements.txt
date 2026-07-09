@@ -1,0 +1,4 @@
+# Dependencies for the guarded MCP server example (self-contained; not part of
+# Shield's own runtime requirements).
+mcp>=1.2.0     # FastMCP server + streamable-HTTP transport
+httpx>=0.27    # Shield HTTP calls (see shield_guard.py)

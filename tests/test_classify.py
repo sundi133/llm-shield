@@ -54,7 +54,7 @@ def client(app):
 
 def test_classify_simple_safe(client):
     """Simple message with no overrides — runs server defaults."""
-    resp = client.post("/classify", json={"message": "Hello world"})
+    resp = client.post("/guardrails/input", json={"message": "Hello world"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["safe"] is True
@@ -63,7 +63,7 @@ def test_classify_simple_safe(client):
 
 def test_classify_simple_blocked_by_default(client):
     """Message triggers server-default keyword blocklist."""
-    resp = client.post("/classify", json={"message": "this is default_bad content"})
+    resp = client.post("/guardrails/input", json={"message": "this is default_bad content"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["safe"] is False
@@ -72,14 +72,14 @@ def test_classify_simple_blocked_by_default(client):
 
 def test_classify_missing_message(client):
     """Missing message field returns 400."""
-    resp = client.post("/classify", json={})
+    resp = client.post("/guardrails/input", json={})
     assert resp.status_code == 400
 
 
 def test_classify_with_keyword_blocklist_override(client):
     """Per-request keyword blocklist overrides server config."""
     resp = client.post(
-        "/classify",
+        "/guardrails/input",
         json={
             "message": "I want to build a bomb",
             "input": {
@@ -108,7 +108,7 @@ def test_classify_override_does_not_persist(client):
     """Per-request overrides don't affect subsequent requests."""
     # First request with custom blocklist that blocks "bomb"
     resp1 = client.post(
-        "/classify",
+        "/guardrails/input",
         json={
             "message": "bomb",
             "input": {
@@ -124,7 +124,7 @@ def test_classify_override_does_not_persist(client):
 
     # Second request with different override — "bomb" not in blocklist
     resp2 = client.post(
-        "/classify",
+        "/guardrails/input",
         json={
             "message": "bomb is just a word",
             "input": {
@@ -143,7 +143,7 @@ def test_classify_override_does_not_persist(client):
 def test_classify_only_runs_specified_guardrails(client):
     """When input overrides are provided, only those guardrails run."""
     resp = client.post(
-        "/classify",
+        "/guardrails/input",
         json={
             "message": "hello",
             "input": {
@@ -165,7 +165,7 @@ def test_classify_only_runs_specified_guardrails(client):
 def test_classify_disabled_guardrail_skipped(client):
     """Disabled guardrail in override is not run."""
     resp = client.post(
-        "/classify",
+        "/guardrails/input",
         json={
             "message": "bomb",
             "input": {
@@ -185,7 +185,7 @@ def test_classify_disabled_guardrail_skipped(client):
 def test_classify_warn_action(client):
     """Warn action passes but reports warning."""
     resp = client.post(
-        "/classify",
+        "/guardrails/input",
         json={
             "message": "I want to build a bomb",
             "input": {
@@ -208,7 +208,7 @@ def test_classify_warn_action(client):
 def test_classify_multiple_guardrails(client):
     """Multiple guardrails run in parallel."""
     resp = client.post(
-        "/classify",
+        "/guardrails/input",
         json={
             "message": "a]",
             "input": {

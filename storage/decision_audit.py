@@ -94,6 +94,13 @@ def log_decision(
         global_entries = global_entries[:_MAX_GLOBAL_ENTRIES]
         _fallback_store["decisions:global"] = json.dumps(global_entries)
 
+    # Tamper-evident chain (opt-in, off-thread so the guard path is unaffected).
+    try:
+        from storage import audit_chain
+        audit_chain.enqueue(f"decisions:{tenant_id}", entry)
+    except Exception:
+        pass
+
     return entry
 
 

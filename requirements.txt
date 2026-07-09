@@ -14,3 +14,10 @@ redis
 upstash-redis
 pytest
 pytest-asyncio
+cryptography>=42
+PyJWT[crypto]>=2.8
+python-multipart
+# File-attachment screening (/guardrails/file) — server-side text extraction
+pypdf
+python-docx
+openpyxl

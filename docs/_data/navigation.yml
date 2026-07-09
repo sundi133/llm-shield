@@ -1,0 +1,41 @@
+# Sidebar navigation — single source of truth.
+#
+# Rendered by the override at _includes/components/site_nav.html as flat,
+# caps-header groups (Pepper-SAST style). Pages not listed here still build and
+# are reachable by URL/search; they just don't clutter the sidebar.
+#
+# A clean 4-phase progression: learn -> product -> build -> operate.
+groups:
+  - title: Get Started
+    items:
+      - { title: Overview, url: / }
+      - { title: Quickstart, url: /quickstart/ }
+      - { title: FAQ, url: /faq/ }
+      - { title: Glossary, url: /glossary/ }
+
+  - title: Guardrails & Policies
+    items:
+      - { title: Guardrails Catalog, url: /guardrails/ }
+      - { title: Agentic Guardrails, url: /agentic-guardrails-guide/ }
+      - { title: Role-Based Access (RBAC), url: /rbac/ }
+      - { title: Tool Data Policies, url: /tool-data-policies/ }
+      - { title: Policy Lifecycle, url: /policy-lifecycle/ }
+      - { title: Compliance Mapping, url: /compliance-mapping/ }
+
+  - title: Develop
+    items:
+      - { title: Developer Guide — MCP & APIs, url: /developer-guide-mcp/ }
+      - { title: API Reference, url: /api-reference/ }
+      - { title: Connect to Your IDE, url: /connect-your-ide/ }
+      - { title: MCP End-to-End Lab, url: /mcp-e2e-lab/ }
+      - { title: Integrations, url: /integration-guide/ }
+
+  - title: Deploy & Operate
+    items:
+      - { title: Installation, url: /installation-guide/ }
+      - { title: Deployment (MCP Servers), url: /deployment-guide/ }
+      - { title: On-Premises, url: /on-premises-deployment-guide/ }
+      - { title: Multi-Tenant Architecture, url: /multi-tenant-architecture/ }
+      - { title: Architecture, url: /architecture-diagram/ }
+      - { title: Agent Governance, url: /agent-governance/ }
+      - { title: Enterprise Features, url: /enterprise-features/ }

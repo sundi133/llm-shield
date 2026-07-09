@@ -9,6 +9,7 @@ import time
 import uuid
 from typing import Any, Optional
 
+from guardrails.agentic.tool.payload_risk import evaluate_payload_policy_llm
 from storage.tenant_store import _get_redis, _fallback_store
 
 
@@ -164,11 +165,17 @@ def create_approval_request(
     workflow: str,
     tool_params: Optional[dict[str, Any]],
     rule: dict[str, Any],
+    agent_instance_id: Optional[str] = None,
+    resource: Optional[str] = None,
 ) -> dict[str, Any]:
     request = {
         "request_id": f"apr_{uuid.uuid4().hex[:10]}",
         "tenant_id": tenant_id,
         "agent_key": agent_key,
+        # Cap/mint (L3) requests carry the instance + resource so the issued grant
+        # binds them; cooperative (tool/check) requests leave these unset.
+        "agent_instance_id": agent_instance_id,
+        "resource": resource,
         "tool_name": tool_name,
         "session_id": session_id,
         "workflow": workflow,
@@ -215,6 +222,18 @@ def update_approval_request(
         items[idx] = item
         _save_json(_approvals_key(tenant_id), items)
         return item
+    return None
+
+
+def attach_approval_grant(tenant_id: str, request_id: str, grant_token: str) -> Optional[dict[str, Any]]:
+    """Store the signed approval grant on its request (so the agent can poll for it)."""
+    items = _load_json(_approvals_key(tenant_id), [])
+    for idx, item in enumerate(items):
+        if item.get("request_id") == request_id:
+            item["approval_grant"] = grant_token
+            items[idx] = item
+            _save_json(_approvals_key(tenant_id), items)
+            return item
     return None
 
 
@@ -598,7 +617,16 @@ def _nested_get(data: dict[str, Any], dotted_key: str) -> Any:
     return current
 
 
-def evaluate_parameter_policy(tool_name: str, tool_params: dict[str, Any], policy: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+async def evaluate_parameter_policy(tool_name: str, tool_params: dict[str, Any], policy: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+    payload_issue = await evaluate_payload_policy_llm(
+        tool_name,
+        tool_params,
+        tenant_id=policy.get("tenant_id", ""),
+        user_role=policy.get("user_role", ""),
+    )
+    if payload_issue:
+        return False, payload_issue["message"], payload_issue["details"]
+
     required = policy.get("required_fields") or []
     for field in required:
         value = _nested_get(tool_params, field)

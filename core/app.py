@@ -1,19 +1,32 @@
 import os
+import hmac
 import logging
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+import httpx
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config.schema import load_config
 from core.auth import AuthMiddleware
 from core.middleware import ShieldMiddleware
+from core.agent_identity_middleware import AgentIdentityMiddleware
 from core.telemetry_middleware import TelemetryMiddleware
+
+try:
+    from core.security_headers import (
+        HTTPSRedirectMiddleware,
+        SecurityHeadersMiddleware,
+    )
+except ImportError:
+    HTTPSRedirectMiddleware = None
+    SecurityHeadersMiddleware = None
 from api.routes_health import router as health_router
 from api.routes_classify import router as classify_router
 from api.routes_gateway import router as gateway_router
 from api.routes_config import router as config_router
 from api.routes_audit import router as audit_router
+from api.routes_guardrail_metrics import router as guardrail_metrics_router
 from api.routes_mcp import router as mcp_router
 from api.routes_action import router as action_router
 from api.routes_topic import router as topic_router
@@ -25,16 +38,27 @@ from api.routes_tenant import router as tenant_router, global_router as tenant_a
 from api.routes_tenant_self import router as tenant_self_router
 from api.routes_agentic_control_plane import router as tenant_agentic_router
 from api.routes_custom_policies import router as custom_policies_router
+from api.routes_policy_templates import router as policy_templates_router
 from api.routes_policy import router as policy_router
 from api.routes_agent_policy import router as agent_policy_router
 from api.routes_data_policies import router as data_policies_router
 from api.routes_agents_registry import router as agents_registry_router
+from api.routes_governance import router as governance_router
+from api.routes_edge import router as edge_router
 from api.routes_rbac_test import router as rbac_test_router
 from api.routes_agent_chat import router as agent_chat_router
 from api.routes_killswitch import router as killswitch_router
 from api.routes_decisions import router as decisions_router
 from api.routes_webhooks import router as webhooks_router
 from api.routes_agent_identity import router as agent_identity_router
+from api.routes_agent_auth import router as agent_auth_router, tenant_router as agent_auth_tenant_router
+from api.routes_mcp_server import router as mcp_server_router
+from api.routes_openapi_mcp import router as openapi_mcp_router
+from api.routes_ssf import router as ssf_router
+from api.routes_oauth import router as oauth_router
+from api.routes_oauth_registration import router as oauth_registration_router
+from api.routes_oidc_admin import router as oidc_admin_router
+from api.routes_a2a import router as a2a_router
 from storage.audit_log import audit_logger
 
 # Conditional SaaS imports - only load if saas module exists
@@ -57,9 +81,24 @@ def create_app() -> FastAPI:
 
     # Middleware order: Starlette runs them bottom-to-top,
     # so Auth is added last but runs first.
-    app.add_middleware(TelemetryMiddleware)  # runs last (captures response)
+    if SecurityHeadersMiddleware is not None:
+        app.add_middleware(SecurityHeadersMiddleware)  # runs last (sets response headers)
+    app.add_middleware(TelemetryMiddleware)  # captures response telemetry
     app.add_middleware(ShieldMiddleware)
+    app.add_middleware(AgentIdentityMiddleware)  # populates request.state.identity from X-Agent-Token
+
+    # Optional middleware for workload identity (on-prem friendly)
+    from core.mtls_middleware import MTLSMiddleware
+    from core.oauth.spiffe_middleware import SPIFFEMiddleware
+    app.add_middleware(SPIFFEMiddleware)     # populates request.state.spiffe_identity
+    app.add_middleware(MTLSMiddleware)       # populates request.state.mtls_identity
+
     app.add_middleware(AuthMiddleware)       # runs first
+
+    # Added last → outermost → runs first on the request path: redirect
+    # insecure HTTP→HTTPS before any auth/processing. Gated by FORCE_HTTPS.
+    if HTTPSRedirectMiddleware is not None:
+        app.add_middleware(HTTPSRedirectMiddleware)
 
     # Include routers
     app.include_router(health_router)
@@ -68,6 +107,10 @@ def create_app() -> FastAPI:
     app.include_router(gateway_router)
     app.include_router(config_router)
     app.include_router(audit_router)
+    # Guardrail effectiveness metrics — also mounted on the admin plane. The data
+    # plane (this app) must serve it too, else portal/CLI metrics calls against
+    # the data-plane host 404 (QA tel-004). Read-only, off the guard path.
+    app.include_router(guardrail_metrics_router)
     app.include_router(mcp_router)
     app.include_router(action_router)
     app.include_router(tool_router)
@@ -79,16 +122,28 @@ def create_app() -> FastAPI:
     app.include_router(tenant_self_router)
     app.include_router(tenant_agentic_router)
     app.include_router(custom_policies_router)
+    app.include_router(policy_templates_router)
     app.include_router(policy_router)
     app.include_router(agent_policy_router)
     app.include_router(data_policies_router)
     app.include_router(agents_registry_router)
+    app.include_router(governance_router)
+    app.include_router(edge_router)
     app.include_router(rbac_test_router)
     app.include_router(agent_chat_router)
     app.include_router(killswitch_router)
     app.include_router(decisions_router)
     app.include_router(webhooks_router)
     app.include_router(agent_identity_router)
+    app.include_router(agent_auth_router)
+    app.include_router(agent_auth_tenant_router)
+    app.include_router(mcp_server_router)
+    app.include_router(openapi_mcp_router)
+    app.include_router(ssf_router)
+    app.include_router(oauth_router)
+    app.include_router(oauth_registration_router)
+    app.include_router(oidc_admin_router)
+    app.include_router(a2a_router)
 
     # Include SaaS routes only if available
     if SAAS_AVAILABLE:
@@ -108,7 +163,21 @@ def create_app() -> FastAPI:
         return FileResponse(os.path.join(_static_dir, "playground.html"))
 
     @app.get("/admin")
-    async def admin_portal():
+    async def admin_portal(request: Request):
+        admin_key = os.environ.get("SHIELD_ADMIN_KEY", "")
+        if not admin_key:
+            raise HTTPException(
+                status_code=500,
+                detail="SHIELD_ADMIN_KEY not configured — admin endpoints disabled",
+            )
+        provided = request.headers.get("X-Admin-Key", "").strip()
+        if not provided:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing admin key. Use X-Admin-Key header for /admin.",
+            )
+        if not hmac.compare_digest(provided, admin_key):
+            raise HTTPException(status_code=403, detail="Invalid admin key")
         return FileResponse(os.path.join(_static_dir, "admin.html"))
 
     @app.get("/tenant")
@@ -119,12 +188,45 @@ def create_app() -> FastAPI:
     async def telemetry_portal():
         return FileResponse(os.path.join(_static_dir, "telemetry.html"))
 
+    # ── hCaptcha ──────────────────────────────────────────────
+    @app.get("/captcha-config")
+    async def captcha_config():
+        site_key = os.environ.get("HCAPTCHA_SITE_KEY", "")
+        return {"enabled": bool(site_key), "site_key": site_key}
+
+    @app.post("/verify-captcha")
+    async def verify_captcha(request: Request):
+        body = await request.json()
+        token = body.get("token", "")
+        secret = os.environ.get("HCAPTCHA_SECRET_KEY", "")
+        if not secret:
+            return {"success": True}  # captcha not configured, skip
+        if not token:
+            return JSONResponse({"success": False, "error": "Missing captcha token"}, status_code=400)
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.hcaptcha.com/siteverify",
+                data={"secret": secret, "response": token},
+            )
+            result = resp.json()
+        if result.get("success"):
+            return {"success": True}
+        return JSONResponse({"success": False, "error": "Captcha verification failed"}, status_code=403)
+
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
     @app.on_event("startup")
     async def startup_event():
-        # Initialize audit log database
-        await audit_logger.init_db()
+        # M1: refuse to start with >1 worker and no shared Redis store —
+        # nonces/rate-limits/revocation would be per-worker, breaking
+        # security guarantees. Override with SHIELD_ALLOW_INMEMORY_MULTIWORKER=1.
+        try:
+            from core.agent_auth_safety import verify_storage_is_multiworker_safe
+            verify_storage_is_multiworker_safe()
+        except Exception as e:
+            # Re-raise to actually refuse the boot.
+            raise
+        # Audit logging now uses Redis — no init needed
         # Initialize telemetry (ES, Splunk, OTLP, file)
         import asyncio
         from core.telemetry import init_telemetry, flush_loop

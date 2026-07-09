@@ -1,28 +1,28 @@
 guardrails:
   # --- Fast-tier input guardrails (CPU-only) ---
   keyword_blocklist:
-    enabled: true
+    enabled: false
     action: block
     settings:
       keywords: []  # Empty by default - customers can add their own
       case_insensitive: true
 
   length_limit:
-    enabled: true
+    enabled: false
     action: block
     settings:
-      max_chars: 100000  # Increased 10x from 10,000 to 100,000
-      max_tokens: 32000  # Increased proportionally for ~3-4 chars/token ratio
+      max_chars: 1200000  # 1.2M characters (~300K tokens)
+      max_tokens: 500000  # 500K tokens max
       encoding: cl100k_base
 
   regex_pattern:
-    enabled: true
+    enabled: false
     action: block
     settings:
       patterns: []  # Empty by default - customers can add their own patterns
 
   pii_detection:
-    enabled: true
+    enabled: false
     action: warn
     settings:
       entities:
@@ -54,18 +54,23 @@ guardrails:
       window_seconds: 60
 
   system_prompt_leak:
-    enabled: true
+    enabled: false
     action: block
     settings:
       extra_patterns: []
 
   toxicity:
-    enabled: true  # Enable for all customers
+    enabled: true
     action: block
     settings:
       threshold: 0.7
 
   # --- Slow-tier input guardrails (LLM-based) ---
+  payload_risk:
+    enabled: false
+    action: block
+    settings: {}  # Uses tenant data policies from Redis; no hardcoded patterns
+
   adversarial_detection:
     enabled: true
     action: block
@@ -149,7 +154,7 @@ guardrails:
 
   bias_detection:
     enabled: true
-    action: warn
+    action: block
     settings:
       categories:
         - Gender
@@ -160,6 +165,9 @@ guardrails:
         - Disability
         - Socioeconomic
         - Sexual orientation
+        - Nationality
+        - Neurodiversity
+        - Name-based
       threshold: 0.60
       auto_regenerate: false
 
@@ -277,6 +285,8 @@ guardrails:
     enabled: true
     action: block
     settings:
+      approved_email_domains: []
+      approval_threshold_amount: 50000
       schemas:
         execute_sql:
           type: object
@@ -641,6 +651,9 @@ auth:
     - /admin
     - /tenant
     - /static
+
+audit_logging:
+  enabled: true  # Set to false to disable guardrail decision logging to Redis
 
 telemetry:
   enabled: true

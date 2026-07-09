@@ -1,9 +1,11 @@
 """Webhook management routes — CRUD for webhook endpoint configurations."""
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
+from core.auth import verify_tenant_path_access
+from core.url_safety import UnsafeURLError, validate_outbound_url
 from storage.webhook_store import (
     create_webhook,
     get_webhooks,
@@ -13,7 +15,32 @@ from storage.webhook_store import (
 )
 from storage.admin_audit import log_admin_action
 
-router = APIRouter(prefix="/v1/shield/webhooks", tags=["webhooks"])
+router = APIRouter(
+    prefix="/v1/shield/webhooks",
+    tags=["webhooks"],
+    dependencies=[Depends(verify_tenant_path_access)],
+)
+
+
+def _validate_webhook_url(url: str) -> None:
+    """Reject webhook URLs that target internal/metadata addresses (SSRF).
+
+    Webhooks legitimately call arbitrary external endpoints, so we use
+    the network-level filter (block private/loopback/link-local/metadata
+    + non-http(s) schemes) rather than the LLM-provider allowlist.
+
+    Boundary check only (resolve_dns=False): catches bad schemes and
+    internal IP literals/metadata hosts without depending on DNS being
+    reachable. The dispatcher re-validates with full DNS resolution
+    immediately before each delivery, which is the real SSRF guarantee.
+    """
+    try:
+        validate_outbound_url(url, purpose="webhook", resolve_dns=False)
+    except UnsafeURLError:
+        raise HTTPException(
+            status_code=400,
+            detail="Webhook URL is not allowed (must be a public http(s) endpoint)",
+        )
 
 # Supported event types
 VALID_EVENTS = [
@@ -22,6 +49,7 @@ VALID_EVENTS = [
     "tool_enabled",
     "policy_changed",
     "budget_exceeded",
+    "shadow_agent_detected",
 ]
 
 
@@ -65,6 +93,8 @@ async def create_webhook_endpoint(tenant_id: str, body: WebhookCreateRequest, re
             status_code=400,
             detail=f"Invalid event types: {invalid}. Valid: {VALID_EVENTS}"
         )
+
+    _validate_webhook_url(body.url)
 
     webhook = create_webhook(tenant_id, body.model_dump())
 
@@ -120,6 +150,9 @@ async def update_webhook_endpoint(
                 status_code=400,
                 detail=f"Invalid event types: {invalid}. Valid: {VALID_EVENTS}"
             )
+
+    if body.url is not None:
+        _validate_webhook_url(body.url)
 
     updates = body.model_dump(exclude_none=True)
     updated = update_webhook(tenant_id, webhook_id, updates)

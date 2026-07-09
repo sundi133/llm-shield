@@ -4,7 +4,7 @@ import time
 import uuid
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Any
 
 from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
 from guardrails.agentic.tool.tool_use_control import ToolUseControlGuardrail
@@ -13,6 +13,8 @@ from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuard
 from guardrails.agentic.tool.tool_output_sanitization import ToolOutputSanitizationGuardrail
 from guardrails.agentic.tool.sensitive_action_confirmation import SensitiveActionConfirmationGuardrail
 from guardrails.agentic.identity.cert_identity import CertIdentityGuardrail
+from guardrails.agentic.rbac_guard import RBACGuard
+from guardrails.agentic.data_access_guard import DataAccessGuard
 from guardrails.base import _request_configs
 import asyncio
 from core.feature_flags import (
@@ -23,6 +25,8 @@ from storage.tool_killswitch import is_tool_disabled
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
 from core.telemetry import record_event, build_guardrail_event, build_response_event
+from core.policy_mode import resolve_mode, apply as apply_policy_mode
+from storage.audit_log import audit_logger
 from storage.agentic_control_plane import (
     get_control_plane_config,
     find_matching_approval_rule,
@@ -38,6 +42,8 @@ from storage.agentic_control_plane import (
 router = APIRouter(prefix="/v1/shield/tool", tags=["tool"])
 
 _CHECK_GUARDS = [
+    ("rbac_guard", RBACGuard),
+    ("data_access_guard", DataAccessGuard),
     ("tool_allowlist", ToolAllowlistGuardrail),
     ("tool_use_control", ToolUseControlGuardrail),
     ("tool_call_rate_limiting", ToolCallRateLimitingGuardrail),
@@ -65,11 +71,15 @@ class ToolCheckRequest(BaseModel):
     estimated_tokens: Optional[int] = None
     approval_request_id: Optional[str] = None
     execution_grant_id: Optional[str] = None
+    # Non-fakeable HITL: a signed approval (or break-glass) grant from the approve
+    # endpoint. When present it is the authoritative, cryptographic proof of human
+    # approval — verified here, not trusted as a status flag. See core/approvals.py.
+    approval_grant: Optional[str] = None
 
 
 class ToolOutputRequest(BaseModel):
     tool_name: str
-    tool_output: str
+    tool_output: Any
     agent_key: Optional[str] = None
     session_id: Optional[str] = None
     tool_call_id: Optional[str] = None
@@ -96,6 +106,25 @@ def _cp_result(name: str, passed: bool, action: str, message: str, details: Opti
         "details": details or {},
         "latency_ms": 0.0,
     }
+
+
+def _reconcile_agent_identity(header_agent: str, body_agent: str) -> "Optional[str]":
+    """Anti-spoof for the direct tool path (deep-rbac-009).
+
+    The MCP path derives the agent identity from the authenticated X-Agent-Key
+    header; the direct path historically trusted body.agent_key verbatim, so a
+    caller authenticated as agent A could put agent B in the body and borrow B's
+    tool permissions. If both are present and disagree, that's impersonation.
+    Returns an error message to block on, or None when there's no conflict
+    (header absent, body absent, or they match) to preserve single-source flows.
+    """
+    header_agent = (header_agent or "").strip()
+    body_agent = (body_agent or "").strip()
+    if header_agent and body_agent and header_agent != body_agent:
+        return (f"Agent identity mismatch: authenticated agent '{header_agent}' "
+                f"does not match body agent_key '{body_agent}'. The body "
+                f"agent_key cannot differ from the authenticated agent.")
+    return None
 
 
 def _emit_tool_check_telemetry(
@@ -148,6 +177,39 @@ def _emit_tool_check_telemetry(
         guardrail_results=results,
     ))
 
+    # Log to audit_logger so tool checks appear in tenant telemetry tab
+    tool_results = [{
+        "tool_name": tool_name,
+        "arguments": {},
+        "rbac": {
+            "allowed": allowed,
+            "action": action,
+            "message": results[0].get("message", "") if results else "",
+        },
+    }]
+    asyncio.get_event_loop().create_task(audit_logger.log({
+        "agent_key": agent_key,
+        "endpoint": "/v1/shield/tool/check",
+        "input_text": f"tool_check:{tool_name}",
+        "action_taken": action,
+        "guardrails_triggered": blocked_guardrails,
+        "latency_ms": round(latency_ms, 2),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id or "",
+            "user_role": user_role or "",
+            "stage": "complete",
+            "blocked": not allowed,
+            "block_reason": results[0].get("message", "") if results and not allowed else None,
+            "session_id": session_id or "",
+            "tool_calls": tool_results,
+            "tool_call_count": 1,
+            "input_guardrails": [],
+            "output_guardrails": [],
+            "usage": {},
+        },
+    }))
+
 
 @router.post("/check")
 async def check_tool(body: ToolCheckRequest, request: Request):
@@ -160,11 +222,55 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         if hasattr(request, "state")
         else None
     ) or request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
+
+    # Fallback: resolve the tenant directly from the API key when the auth
+    # middleware didn't (e.g. auth disabled in local dev). No-op in production
+    # where middleware already set request.state.tenant_id. Mirrors the
+    # registry routes so /tool/check works with the same credential.
+    if not tenant_id:
+        api_key = request.headers.get("X-API-Key", "").strip()
+        if api_key:
+            try:
+                from storage.tenant_store import resolve_tenant_by_api_key
+                tenant_id = resolve_tenant_by_api_key(api_key)
+                if not tenant_id and api_key.startswith("sk-test-"):
+                    tenant_id = "test-tenant-001"  # shared sandbox tenant
+            except Exception:
+                pass
+
     user_role = (
         body.user_role
         or request.headers.get("X-User-Role")
         or request.headers.get("x-user-role")
     )
+
+    # Anti-spoof: the body agent_key may not impersonate a different authenticated
+    # agent (X-Agent-Key header). Mirrors the MCP path, which derives identity
+    # from the header. Closes deep-rbac-009 (direct/MCP parity).
+    _id_err = _reconcile_agent_identity(
+        request.headers.get("X-Agent-Key") or request.headers.get("x-agent-key") or "",
+        body.agent_key or "",
+    )
+    if _id_err:
+        results = [{
+            "guardrail": "agent_identity",
+            "passed": False,
+            "action": "block",
+            "message": _id_err,
+            "details": {
+                "header_agent": (request.headers.get("X-Agent-Key")
+                                 or request.headers.get("x-agent-key") or "").strip(),
+                "body_agent": body.agent_key,
+            },
+            "latency_ms": 0.0,
+        }]
+        if tenant_id:
+            log_decision(
+                tenant_id=tenant_id, action="block", guardrail="agent_identity",
+                agent_key=body.agent_key, tool_name=body.tool_name, user_role=user_role,
+                session_id=body.session_id, reason=_id_err, source_ip=source_ip,
+            )
+        return {"allowed": False, "action": "block", "guardrail_results": results}
 
     # Kill switch check — immediate block if tool is globally disabled (enterprise feature)
     if KILLSWITCH_ENABLED and tenant_id and is_tool_disabled(tenant_id, body.tool_name):
@@ -264,7 +370,7 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         if tenant_id and cp_config:
             tool_param_policy = (cp_config.get("parameter_policies", {}) or {}).get(body.tool_name)
             if tool_param_policy:
-                ok, msg, details = evaluate_parameter_policy(body.tool_name, body.tool_params or {}, tool_param_policy)
+                ok, msg, details = await evaluate_parameter_policy(body.tool_name, body.tool_params or {}, tool_param_policy)
                 results.append(_cp_result(
                     "parameter_policy",
                     ok,
@@ -323,7 +429,30 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 agent_key=body.agent_key,
             )
             if approval_rule:
-                if body.approval_request_id:
+                if body.approval_grant:
+                    # Non-fakeable path: verify the signed grant, bound to the exact
+                    # tool + arguments + session. Beats the status-flag path below,
+                    # which a Redis-level attacker could forge.
+                    from core.approvals import ApprovalError, params_hash, verify_grant
+                    try:
+                        claims = verify_grant(
+                            body.approval_grant,
+                            expected_tool=body.tool_name,
+                            expected_params_hash=params_hash(body.tool_params),
+                            expected_session=body.session_id or "",
+                        )
+                        results.append(_cp_result(
+                            "approval_grant", True, "pass",
+                            "Break-glass override accepted" if claims.breakglass
+                            else "Signed approval grant accepted",
+                            {"grant_id": claims.grant_id, "approvers": claims.approvers,
+                             "breakglass": claims.breakglass},
+                        ))
+                    except ApprovalError as e:
+                        results.append(_cp_result("approval_grant", False, "block", str(e), {}))
+                        _final_result = {"allowed": False, "action": "block", "guardrail_results": results}
+                        return _final_result
+                elif body.approval_request_id:
                     ok, msg, approval = consume_approval_request(
                         tenant_id,
                         body.approval_request_id,
@@ -383,6 +512,18 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 action = r["action"]
                 break
 
+        # Apply the tenant's enforcement mode. In monitor (dry-run) mode a
+        # would-be block is recorded but not enforced; in enforce mode the
+        # decision above is returned unchanged.
+        decision = apply_policy_mode(results, allowed, action, resolve_mode(tenant_config))
+        allowed = decision["allowed"]
+        action = decision["action"]
+
+        # Record guardrail effectiveness metrics
+        if tenant_id:
+            from storage.guardrail_metrics import record_results_batch
+            record_results_batch(tenant_id, results)
+
         # Log enforcement decisions for non-pass actions (enterprise feature)
         if DECISION_AUDIT_ENABLED and tenant_id and action != "pass":
             for r in results:
@@ -424,7 +565,13 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 workflow_step=body.workflow_step,
             )
 
-        _final_result = {"allowed": allowed, "action": action, "guardrail_results": results}
+        _final_result = {
+            "allowed": allowed,
+            "action": action,
+            "guardrail_results": results,
+            "mode": decision["mode"],
+            "would_block": decision["would_block"],
+        }
         return _final_result
     finally:
         # Emit SIEM telemetry for every tool check decision (all paths)
@@ -449,10 +596,15 @@ async def check_tool(body: ToolCheckRequest, request: Request):
 
 @router.post("/output")
 async def check_tool_output(body: ToolOutputRequest, request: Request):
+    start = time.perf_counter()
     guard = ToolOutputSanitizationGuardrail()
 
     # Extract tenant and user context from headers for policy enforcement
-    tenant_id = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
+    tenant_id = (
+        getattr(request.state, "tenant_id", None)
+        if hasattr(request, "state")
+        else None
+    ) or request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
     user_role = request.headers.get("X-User-Role") or request.headers.get("x-user-role", "user")
 
     context = {
@@ -467,12 +619,47 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
     }
     r = await guard.check(body.tool_output, context)
     sanitized = (r.details or {}).get("sanitized_output", body.tool_output)
+    latency_ms = (time.perf_counter() - start) * 1000
+    result = _format(r)
+
+    # Log to audit_logger so tool output sanitization shows in tenant telemetry
+    blocked_guardrails = [r.guardrail_name] if not r.passed and r.action == "block" else []
+    await audit_logger.log({
+        "agent_key": body.agent_key or "",
+        "endpoint": "/v1/shield/tool/output",
+        "input_text": f"tool_output:{body.tool_name}",
+        "action_taken": r.action,
+        "guardrails_triggered": blocked_guardrails,
+        "latency_ms": round(latency_ms, 2),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id or "",
+            "user_role": user_role or "",
+            "stage": "output_sanitization",
+            "blocked": not r.passed and r.action == "block",
+            "block_reason": r.message if not r.passed else None,
+            "session_id": body.session_id or "",
+            "tool_calls": [{
+                "tool_name": body.tool_name,
+                "arguments": {},
+                "rbac": {
+                    "allowed": r.passed,
+                    "action": r.action,
+                    "message": r.message,
+                },
+            }],
+            "tool_call_count": 1,
+            "input_guardrails": [],
+            "output_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message}],
+            "usage": {},
+        },
+    })
 
     return {
         "allowed": r.passed,
         "action": r.action,
         "sanitized_output": sanitized,
-        "guardrail_results": [_format(r)],
+        "guardrail_results": [result],
     }
 
 

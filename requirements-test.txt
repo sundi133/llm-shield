@@ -1,0 +1,6 @@
+# Test dependencies = runtime deps + extras needed to exercise optional features.
+# Keeps runtime requirements.txt lean while letting CI run the full suite.
+-r requirements.txt
+
+# Optional feature extras the tests exercise:
+mcp            # MCP transparent proxy (core/mcp/upstream.py) + generated MCP servers (codegen tests)

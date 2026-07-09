@@ -344,6 +344,51 @@ def list_tenants(include_deleted: bool = False) -> list[dict]:
     return tenants
 
 
+def kv_get(key: str):
+    """Read a JSON value by raw key, Redis-or-fallback.
+
+    Mirrors the Redis-or-in-memory pattern used throughout this module so
+    callers (e.g. the agent registry routes) work identically whether or not
+    Redis is configured. Returns the decoded value, or None if absent.
+    """
+    r = _get_redis()
+    data = r.get(key) if r else _fallback_store.get(key)
+    if data is None:
+        return None
+    if isinstance(data, (bytes, bytearray)):
+        data = data.decode()
+    if isinstance(data, str):
+        try:
+            return json.loads(data)
+        except (json.JSONDecodeError, ValueError):
+            return data
+    return data
+
+
+def kv_set(key: str, value) -> None:
+    """Write a JSON value by raw key, Redis-or-fallback.
+
+    Lets registry/policy writes succeed in local dev with no Redis instead of
+    raising "Redis connection not available". The in-memory fallback holds the
+    JSON string, matching how RBACGuard reads it back.
+    """
+    payload = json.dumps(value)
+    r = _get_redis()
+    if r:
+        r.set(key, payload)
+    else:
+        _fallback_store[key] = payload
+
+
+def kv_delete(key: str) -> None:
+    """Delete a raw key, Redis-or-fallback."""
+    r = _get_redis()
+    if r:
+        r.delete(key)
+    else:
+        _fallback_store.pop(key, None)
+
+
 def resolve_tenant_by_api_key(api_key: str) -> Optional[str]:
     """Resolve an API key to a tenant ID.
 
@@ -371,6 +416,34 @@ def resolve_tenant_by_api_key(api_key: str) -> Optional[str]:
         _cache_set(cache_key, {"tenant_id": tenant_id})
         return tenant_id
     return None
+
+
+def resolve_request_tenant_id(request) -> str:
+    """Best-effort tenant_id for a request.
+
+    Prefers the value the auth middleware put on ``request.state``; otherwise
+    falls back to the ``X-Tenant-ID`` header, then resolves the ``X-API-Key``
+    directly. Some deployments (e.g. a data plane behind an auth proxy) don't
+    run the middleware that populates ``request.state.tenant_id`` for the
+    guardrail endpoints, so without this fallback those requests resolve no
+    tenant and their guardrail metrics are silently dropped. Mirrors the
+    fallback already used by the tool-check route. Returns "" if unresolved.
+    """
+    tid = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
+    if tid:
+        return tid
+    tid = request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id") or ""
+    if tid:
+        return tid
+    api_key = request.headers.get("X-API-Key", "").strip()
+    if api_key:
+        try:
+            tid = resolve_tenant_by_api_key(api_key) or ""
+            if not tid and api_key.startswith("sk-test-"):
+                tid = "test-tenant-001"  # shared sandbox tenant
+        except Exception:
+            tid = ""
+    return tid
 
 
 def add_api_key(tenant_id: str, api_key: str):

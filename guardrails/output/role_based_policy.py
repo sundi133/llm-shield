@@ -154,11 +154,12 @@ class RoleBasedOutputPolicyGuardrail(BaseGuardrail):
             if action == "block":
                 blocked_tools.append(tool_name)
                 restricted_data_types.update(data_scope)
-            elif action == "redact":
+            elif action in ("redact", "mask"):
                 redaction_rules.append({
                     "tool": tool_name,
                     "data_types": data_scope,
-                    "level": policy.get("redaction_level", "partial")
+                    "level": policy.get("redaction_level", "partial") if action == "mask" else policy.get("redaction_level", "full"),
+                    "action": action,
                 })
 
             # Add output rules if they exist

@@ -1,10 +1,13 @@
 """Data Policies API - Advanced tool-specific data protection with Redis persistence."""
 
 import json
+import logging
 import os
 import time
 
 import httpx
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
 from typing import Dict, List, Optional
@@ -53,10 +56,23 @@ class RoleDataPolicy(BaseModel):
     output_rules: List[str] = []
 
 
+class ScopeMapping(BaseModel):
+    """Maps a tool parameter value to a data scope name for fast-tier RBAC.
+
+    Example: parameter="query_type", values={"billing": "billing", "history": "medical_history"}
+    When the LLM calls patient_lookup(query_type="billing"), the resolved scope "billing"
+    is checked against the role's allowed_data_scopes at the fast tier.
+    """
+    parameter: str                          # tool parameter name (e.g., "query_type")
+    values: Dict[str, str] = {}             # param value → scope name mapping
+    default_scope: Optional[str] = None     # scope when value not in map (None = skip)
+
+
 class ToolDataPolicy(BaseModel):
     tool_name: str
     sanitization_rules: List[DataSanitizationRule] = []
     role_policies: List[RoleDataPolicy] = []
+    scope_mappings: List[ScopeMapping] = []  # fast-tier parameter → scope resolution
     compliance_framework: Optional[str] = None  # hipaa, pci_dss, gdpr
     audit_required: bool = False
     retention_days: Optional[int] = None
@@ -566,9 +582,13 @@ async def validate_data_against_policies(
         data = request.get("data", "")
         tool_name = request.get("tool_name")
         user_role = request.get("user_role")
+        stage = request.get("stage", "input")
+
+        logger.info(f"[validate] RECEIVED tool={tool_name} role={user_role} stage={stage} data_length={len(data)} data={repr(data[:300])}")
 
         all_policies = _load_all(tenant_id)
         policy = all_policies.get(tool_name, {})
+        logger.info(f"[validate] policy_found={bool(policy)} policy_keys={list(policy.keys()) if policy else []}")
 
         violations = []
         sanitized_data = data
@@ -598,15 +618,130 @@ async def validate_data_against_policies(
                 break
 
         role_action = role_policy.get("action", "allow") if role_policy else "allow"
-        if role_action == "block":
-            violations.append({
-                "violation_type": "role_restriction",
-                "data_type": "all",
-                "severity": "critical",
-                "pattern": f"Role '{user_role}' is blocked from this tool's data",
-            })
 
-        risk_level = "high" if any(v["severity"] == "critical" for v in violations) else "medium" if violations else "low"
+        # Check free-form input_rules / output_rules via LLM
+        rules = []
+        if role_policy:
+            rules = role_policy.get("input_rules", []) if stage == "input" else role_policy.get("output_rules", [])
+
+        logger.info(f"[validate] role_policy_found={bool(role_policy)} role_action={role_action} rules_count={len(rules)} stage={stage}")
+        if not rules:
+            logger.info(f"[validate] SKIPPING LLM check — no rules for role={user_role} stage={stage}")
+        elif not data or data in ("{}", "null", ""):
+            logger.info(f"[validate] SKIPPING LLM check — empty data: {repr(data[:50])}")
+        if rules and data and data not in ("{}", "null", ""):
+            rules_text = "\n".join(f"- {r}" for r in rules)
+            _csv_fields = ["compliant", "confidence", "reason"]
+            llm_system = (
+                "You are a strict data policy enforcement engine. You MUST check every value "
+                "against every rule. If rules define an approved allowlist, ONLY those values "
+                "are allowed — anything not on the list is non-compliant.\n"
+                "Respond with ONLY one CSV line: compliant,confidence,reason\n"
+                "Example: false,0.95,recipient domain gmail.com not in approved list\n"
+                "Example: true,0.90,all values comply with policies"
+            )
+            llm_prompt = (
+                f"Tool: {tool_name}\n"
+                f"User role: {user_role}\n"
+                f"Stage: {stage}\n\n"
+                f"Data policy rules:\n{rules_text}\n\n"
+                f"Content to validate:\n{data}\n\n"
+                f"Extract all values (emails, domains, data types, amounts) and check each against every rule."
+            )
+            llm_messages = [
+                {"role": "system", "content": llm_system},
+                {"role": "user", "content": llm_prompt},
+            ]
+
+            raw_content = ""
+
+            if _HAS_INPROC_LLM and async_llm_call is not None:
+                try:
+                    result = await async_llm_call(
+                        messages=llm_messages, max_tokens=80, temperature=0,
+                        guardrail_name="data_policy_validate",
+                    )
+                    if isinstance(result, dict):
+                        choices = result.get("choices", [])
+                        if choices:
+                            raw_content = (choices[0].get("message", {}).get("content") or "").strip()
+                except Exception as e:
+                    logger.error(f"[data-policy-validate] LLM call failed: {e}")
+            else:
+                _shield_url = os.environ.get("SHIELD_LLM_URL") or os.environ.get("RUNPOD_ENDPOINT", "")
+                _shield_token = os.environ.get("RUNPOD_TOKEN", "")
+                if _shield_url:
+                    try:
+                        async with httpx.AsyncClient(timeout=30) as _client:
+                            _resp = await _client.post(
+                                f"{_shield_url.rstrip('/')}/v1/chat/completions",
+                                json={"messages": llm_messages, "max_tokens": 80, "temperature": 0},
+                                headers={"Content-Type": "application/json",
+                                         "Authorization": f"Bearer {_shield_token}"} if _shield_token else {},
+                            )
+                            if _resp.status_code == 200:
+                                _data = _resp.json()
+                                raw_content = (_data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+                    except Exception as e:
+                        logger.error(f"[data-policy-validate] HTTP LLM call failed: {e}")
+
+            llm_result = None
+            if raw_content:
+                try:
+                    from core.llm_backend import parse_csv_response as _parse_csv
+                    llm_result = _parse_csv(raw_content, _csv_fields)
+                except Exception:
+                    llm_result = None
+
+            logger.info(
+                f"[data-policy-validate] tool={tool_name} stage={stage} role={user_role} "
+                f"raw={repr(raw_content[:150])} "
+                f"compliant={llm_result.get('compliant') if llm_result else 'NO_RESPONSE'} "
+                f"reason={repr((llm_result or {}).get('reason', '')[:100])}"
+            )
+
+            if llm_result and llm_result.get("compliant") is False:
+                reason = llm_result.get("reason", "Data policy rule violated")
+                if isinstance(reason, (int, float, bool)):
+                    reason = str(reason)
+                violations.append({
+                    "violation_type": "input_rule_violation" if stage == "input" else "output_rule_violation",
+                    "data_type": "llm_validated",
+                    "severity": "high",
+                    "pattern": reason,
+                    "confidence": float(llm_result.get("confidence", 0.0)),
+                    "rules_checked": rules,
+                })
+
+        # Apply role-level enforcement after rule checks
+        if role_action == "block" and violations:
+            # Role says block when rules are violated — escalate severity
+            for v in violations:
+                v["severity"] = "critical"
+        elif role_action == "mask" and violations:
+            # Role says mask — apply partial masking to sanitized data
+            for v in violations:
+                v["action_applied"] = "mask"
+            # Use the sanitized (regex-replaced) version as the masked output
+            # If no regex rules fired, apply generic masking
+            if sanitized_data == data:
+                sanitized_data = _re.sub(
+                    r'\b[\w.+-]+@[\w-]+\.[\w.]+\b', '[MASKED]', sanitized_data)
+                sanitized_data = _re.sub(
+                    r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', '[MASKED]', sanitized_data)
+                sanitized_data = _re.sub(
+                    r'\b\d{3}-\d{2}-\d{4}\b', '[MASKED]', sanitized_data)
+                sanitized_data = _re.sub(
+                    r'\b(?:\d{4}[- ]?){3}\d{4}\b', '[MASKED]', sanitized_data)
+        elif role_action == "redact" and violations:
+            # Role says redact — use the sanitized (regex-replaced) version
+            for v in violations:
+                v["action_applied"] = "redact"
+            # If no regex rules fired, apply full redaction
+            if sanitized_data == data:
+                sanitized_data = "[REDACTED]"
+
+        risk_level = "high" if any(v["severity"] in ("critical", "high") for v in violations) else "medium" if violations else "low"
 
         return {
             "validation_result": {

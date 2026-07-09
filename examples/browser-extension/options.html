@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>VotalAI Guardrails — Settings</title>
+  <style>
+    body { font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; max-width: 520px; margin: 24px auto; padding: 0 16px; color: #111; }
+    h1 { font-size: 18px; }
+    label { display: block; margin: 14px 0 4px; font-weight: 600; }
+    input, select { width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; }
+    .hint { color: #64748b; font-size: 12px; margin-top: 4px; }
+    button { margin-top: 18px; padding: 9px 16px; border: 0; border-radius: 6px; background: #4f46e5; color: #fff; font-weight: 600; cursor: pointer; }
+    #status { margin-left: 10px; color: #16a34a; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>VotalAI Guardrails — Settings</h1>
+
+  <label>Shield URL</label>
+  <input id="shieldUrl" placeholder="https://api.guardrails.votal.ai" />
+  <div class="hint">Base URL of your Shield data plane (default: <code>https://api.guardrails.votal.ai</code>). The extension appends <code>/guardrails/input</code>.</div>
+
+  <label>Tenant API key (X-API-Key)</label>
+  <input id="tenantKey" placeholder="bank-co-key" />
+
+  <label>Proxy bearer token (Authorization: Bearer) — optional</label>
+  <input id="proxyToken" type="password" />
+  <div class="hint">Only needed if your endpoint sits behind a gateway that requires a bearer. Stored in local extension storage.</div>
+
+  <label>Mode</label>
+  <select id="mode">
+    <option value="warn">monitor — flag but never block (recommended to start)</option>
+    <option value="enforce">enforce — block on a Shield block verdict</option>
+    <option value="off">off</option>
+  </select>
+
+  <label>Screening timeout (ms)</label>
+  <input id="timeoutMs" type="number" placeholder="20000" min="1000" max="60000" />
+  <div class="hint">How long to wait for Shield before failing open and sending unscreened. Default 20000 (20s). File screens add 2s per MB on top. Clamped to 1000-60000.</div>
+
+  <div><button id="save">Save</button><span id="status"></span></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

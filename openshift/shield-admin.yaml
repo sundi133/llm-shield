@@ -1,20 +1,31 @@
 ---
 # OpenShift deployment manifests for shield-admin
-# Image: docker.io/sundi133/llm-shield:latest
+# Image: docker.io/sundi133/llm-shield-admin:latest
 #
 # Usage:
 #   1. Create secrets:  oc create secret generic shield-admin-secrets \
 #                         --from-literal=UPSTASH_REDIS_REST_URL=http://srh:8079 \
 #                         --from-literal=UPSTASH_REDIS_REST_TOKEN=your-token \
-#                         --from-literal=SHIELD_ADMIN_KEY=your-admin-key
+#                         --from-literal=SHIELD_ADMIN_KEY=your-admin-key \
+#                         --from-literal=PLAYGROUND_LLM_BASE_URL=https://your-litellm-proxy/v1 \
+#                         --from-literal=PLAYGROUND_LLM_MASTER_KEY=sk-your-key \
+#                         --from-literal=PLAYGROUND_LLM_MODEL=moonshotai/kimi-k2.5 \
+#                         --from-literal=PLAYGROUND_SHIELD_ENDPOINT=https://your-shield-server \
+#                         --from-literal=PLAYGROUND_SHIELD_TOKEN=your-shield-token
 #   2. Deploy:          oc apply -f openshift/shield-admin.yaml -n sundi133-dev
 #   3. Get route URL:   oc get route shield-admin -o jsonpath='{.spec.host}'
 
 ---
 # Secret — create manually BEFORE applying this file:
 #   oc create secret generic shield-admin-secrets \
-#     --from-literal=REDIS_URL=redis://redis:6379 \
+#     --from-literal=UPSTASH_REDIS_REST_URL=http://srh:8079 \
+#     --from-literal=UPSTASH_REDIS_REST_TOKEN=your-token \
 #     --from-literal=SHIELD_ADMIN_KEY=your-admin-key \
+#     --from-literal=PLAYGROUND_LLM_BASE_URL=https://your-litellm-proxy/v1 \
+#     --from-literal=PLAYGROUND_LLM_MASTER_KEY=sk-your-key \
+#     --from-literal=PLAYGROUND_LLM_MODEL=moonshotai/kimi-k2.5 \
+#     --from-literal=PLAYGROUND_SHIELD_ENDPOINT=https://your-shield-server \
+#     --from-literal=PLAYGROUND_SHIELD_TOKEN=your-shield-token \
 #     -n sundi133-dev
 
 ---
@@ -28,7 +39,7 @@ metadata:
     app: shield-admin
     app.kubernetes.io/part-of: llm-shield
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: shield-admin
@@ -47,6 +58,13 @@ spec:
         - name: init-permissions
           image: busybox:latest
           command: ["sh", "-c", "mkdir -p /app/data /app/log"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
           volumeMounts:
             - name: storage-data
               mountPath: /app/data
@@ -60,6 +78,10 @@ spec:
             - containerPort: 8080
               protocol: TCP
           env:
+            - name: AUDIT_LOGGING_ENABLED
+              value: "true"
+            - name: SHIELD_MAX_MODEL_LEN
+              value: "16384"
             - name: AUDIT_DB_PATH
               value: /app/data/audit.db
             - name: NO_PROXY
@@ -113,16 +135,16 @@ spec:
           emptyDir: {}
         - name: storage-data
           emptyDir:
-            sizeLimit: 8Gi
+            sizeLimit: 500Mi
         - name: logs
           emptyDir:
-            sizeLimit: 1Gi
+            sizeLimit: 500Mi
         - name: reports
           emptyDir:
-            sizeLimit: 100G
+            sizeLimit: 1Gi
         - name: guardrail-reports
           emptyDir:
-            sizeLimit: 100G
+            sizeLimit: 1Gi
 
 ---
 # Service
@@ -180,7 +202,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: shield-admin
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 6
   metrics:
     - type: Resource

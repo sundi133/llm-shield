@@ -1,14 +1,18 @@
 """Classify endpoint — runs all specified guardrails in a single call."""
 
+import io
+import os
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
+from core.policy_mode import resolve_mode, apply_to_response as apply_policy_mode
 from guardrails.base import _request_configs
 from guardrails.registry import get_by_stage, get_guardrail
+from storage.audit_log import audit_logger
 
 router = APIRouter()
 
@@ -234,16 +238,339 @@ async def classify(request: Request, body: dict):
     tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
 
     if tenant_config and "input_guardrails" in tenant_config:
-        # Fast path: tenant config from Redis is already in canonical format.
-        # Skips _NAME_MAP lookup and _translate_settings — no format conversion needed.
-        return await _classify_tenant(message, tenant_config["input_guardrails"], context, start)
+        result = await _classify_tenant(message, tenant_config["input_guardrails"], context, start)
+    elif not input_overrides:
+        result = await _classify_with_defaults(message, context, start)
+    else:
+        result = await _classify_with_overrides(message, input_overrides, context, start)
 
-    # If no per-request guardrail config, run with server defaults
-    if not input_overrides:
-        return await _classify_with_defaults(message, context, start)
+    # Apply the tenant's enforcement mode (monitor = dry-run, enforce = block).
+    # No-op for requests without a tenant policy.
+    result = apply_policy_mode(result, resolve_mode(tenant_config))
 
-    # Apply per-request overrides (external callers may use kebab-case names)
-    return await _classify_with_overrides(message, input_overrides, context, start)
+    # Record guardrail effectiveness metrics. Resolve the tenant from the API
+    # key when middleware didn't set request.state.tenant_id (e.g. data plane
+    # behind a proxy) — otherwise the metrics are silently dropped and the
+    # Guardrail Metrics / Board Report tabs stay empty despite 200 responses.
+    from storage.tenant_store import resolve_request_tenant_id
+    tenant_id = resolve_request_tenant_id(request)
+    if tenant_id:
+        from storage.guardrail_metrics import record_results_batch
+        record_results_batch(tenant_id, result.get("guardrail_results", []))
+
+    # Log to audit_logger so input guardrail checks appear in tenant telemetry
+    agent_key = (getattr(request.state, "agent_key", None) if hasattr(request, "state") else None) or body.get("agent_key", "")
+    role_name = (getattr(request.state, "role_name", None) if hasattr(request, "state") else None) or ""
+    # Device attribution for the guardrails dashboard (browser extension sends
+    # X-Device-Id / body device_id). Header/dict reads only — no added I/O.
+    device_id = request.headers.get("x-device-id", "") or str(body.get("device_id") or "")
+    # Destination = the AI site the prompt was headed to (claude.ai, etc.).
+    destination = request.headers.get("x-shield-destination", "")
+    root_action = result.get("action", "pass")  # pass, log, warn, redact, or block
+    blocked = root_action == "block"
+    guardrail_results = result.get("guardrail_results", [])
+    triggered = [gr["guardrail"] for gr in guardrail_results if not gr.get("passed")]
+
+    await audit_logger.log({
+        "agent_key": agent_key,
+        "endpoint": "/guardrails/input",
+        "input_text": message[:500],
+        "action_taken": root_action,
+        "guardrails_triggered": triggered,
+        "latency_ms": result.get("inference_time_ms", 0),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id,
+            "user_role": role_name,
+            "stage": "input",
+            "device_id": device_id,
+            "destination": destination,
+            "blocked": blocked,
+            "block_reason": "; ".join(gr.get("message", "") for gr in guardrail_results if not gr.get("passed")) if blocked else None,
+            "session_id": body.get("session_id", ""),
+            "tool_calls": [],
+            "tool_call_count": 0,
+            "input_guardrails": [{"guardrail": gr["guardrail"], "passed": gr["passed"], "action": gr["action"], "message": gr.get("message", "")} for gr in guardrail_results],
+            "output_guardrails": [],
+            "usage": {},
+        },
+    })
+
+    # Closed-loop auto-revoke (opt-in): if a high-signal guardrail tripped on a
+    # request that carries a verified agent identity, revoke that agent instance
+    # (kills its token + outstanding caps). No-op unless SHIELD_ENABLE_AUTO_REVOKE
+    # is set and an agent identity is present; never breaks this response.
+    try:
+        from core.auto_revoke import autorevoke_from_request
+        await autorevoke_from_request(request, tenant_id, guardrail_results)
+    except Exception:
+        pass
+
+    return result
+
+
+# ── file attachment screening ─────────────────────────────────────────────
+#
+# POST /guardrails/file screens an uploaded attachment through the SAME input
+# pipeline as /guardrails/input. Server-side extraction so the browser
+# extension (and any client) has one policy point. Data plane only — admin
+# never mounts this router, so the extraction deps stay out of the admin image.
+#
+# Fail-open by design (visibility layer): extraction problems produce a
+# filename-only screen plus a `note`, never a 500.
+
+def _file_max_bytes() -> int:
+    return int(os.getenv("SHIELD_FILE_MAX_BYTES", str(10 * 1024 * 1024)))
+
+
+def _file_extract_max_chars() -> int:
+    return int(os.getenv("SHIELD_FILE_EXTRACT_MAX_CHARS", "20000"))
+
+
+def _file_warn_only_guardrails() -> set:
+    """Guardrails whose block verdicts are demoted to warn for FILE screens.
+
+    A document merely discussing attacks is not an attack — nothing in an
+    uploaded file executes — so the LLM adversarial classifier (prone to
+    false positives on security-adjacent prose) must not hard-block files.
+    Deterministic content policies (PII, keywords, custom policies, regex)
+    keep their configured actions. Set SHIELD_FILE_WARN_ONLY_GUARDRAILS=""
+    to restore blocking, or extend the comma-separated list.
+    """
+    raw = os.getenv("SHIELD_FILE_WARN_ONLY_GUARDRAILS", "adversarial_detection")
+    return {s.strip() for s in raw.split(",") if s.strip()}
+
+
+def _demote_file_verdicts(result: dict) -> dict:
+    """Rewrite block -> warn for warn-only guardrails and recompute the root
+    action/safe with the same severity ranking _build_response uses."""
+    warn_only = _file_warn_only_guardrails()
+    if not warn_only:
+        return result
+    changed = False
+    for gr in result.get("guardrail_results", []):
+        if not gr.get("passed") and gr.get("guardrail") in warn_only and gr.get("action") == "block":
+            gr["action"] = "warn"
+            gr["message"] = (gr.get("message") or "") + " (demoted to warn for file screening)"
+            changed = True
+    if changed:
+        severity = {"pass": 0, "log": 1, "warn": 2, "redact": 3, "block": 4}
+        failed = [g for g in result.get("guardrail_results", []) if not g.get("passed")]
+        root = "pass"
+        if failed:
+            root = max(failed, key=lambda g: severity.get(g.get("action"), 0)).get("action", "pass")
+        result["action"] = root
+        result["safe"] = root != "block"
+    return result
+
+
+_TEXTLIKE_EXTS = {
+    "txt", "csv", "tsv", "json", "jsonl", "md", "markdown", "xml", "html",
+    "htm", "yaml", "yml", "log", "sql", "sh", "py", "js", "ts", "java",
+    "c", "cpp", "go", "rb", "rs", "php", "ini", "cfg", "toml", "env",
+}
+_TEXTLIKE_CONTENT_TYPES = ("application/json", "application/xml", "text/")
+
+
+def _extract_pdf(data: bytes, max_chars: int) -> str:
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(data))
+    parts: list[str] = []
+    total = 0
+    for page in reader.pages:
+        t = page.extract_text() or ""
+        if t:
+            parts.append(t)
+            total += len(t)
+        if total > max_chars:  # don't parse a 500-page PDF to keep 20k chars
+            break
+    return "\n".join(parts)
+
+
+def _extract_docx(data: bytes, max_chars: int) -> str:
+    import docx
+    document = docx.Document(io.BytesIO(data))
+    parts: list[str] = []
+    total = 0
+    for p in document.paragraphs:
+        if p.text:
+            parts.append(p.text)
+            total += len(p.text)
+        if total > max_chars:
+            return "\n".join(parts)
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                if cell.text:
+                    parts.append(cell.text)
+                    total += len(cell.text)
+            if total > max_chars:
+                return "\n".join(parts)
+    return "\n".join(parts)
+
+
+def _extract_xlsx(data: bytes, max_chars: int) -> str:
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    parts: list[str] = []
+    total = 0
+    for ws in wb.worksheets:
+        for row in ws.iter_rows(values_only=True):
+            line = " ".join(str(v) for v in row if v is not None)
+            if line:
+                parts.append(line)
+                total += len(line)
+            if total > max_chars:  # stop reading a huge workbook early
+                return "\n".join(parts)
+    return "\n".join(parts)
+
+
+def _extract_file_text(filename: str, content_type: str, data: bytes,
+                       max_chars: int) -> tuple[str, Optional[str]]:
+    """Best-effort text extraction. Returns (text, note). Never raises."""
+    ext = (filename.rsplit(".", 1)[-1] if "." in filename else "").lower()
+    ctype = (content_type or "").lower()
+    try:
+        if ext in _TEXTLIKE_EXTS or ctype.startswith(_TEXTLIKE_CONTENT_TYPES):
+            return data[: max_chars * 4].decode("utf-8", errors="replace"), None
+        if ext == "pdf" or ctype == "application/pdf":
+            return _extract_pdf(data, max_chars), None
+        if ext == "docx" or ctype == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            return _extract_docx(data, max_chars), None
+        if ext == "xlsx" or ctype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+            return _extract_xlsx(data, max_chars), None
+        return "", "content not screenable (unsupported type)"
+    except ImportError:
+        return "", "extraction unavailable (missing library)"
+    except Exception as e:
+        return "", f"extraction failed ({type(e).__name__})"
+
+
+@router.post("/guardrails/file")
+async def screen_file(
+    request: Request,
+    file: UploadFile = File(...),
+    session_id: str = Form(""),
+    device_id: str = Form(""),
+):
+    """Screen a file attachment through the input guardrail pipeline.
+
+    Same verdict shape as /guardrails/input plus a `file` block. The screened
+    text is "filename: {name}\\n\\n{extracted}" so a sensitive filename alone
+    can trip policies even when the content is not extractable.
+    """
+    max_bytes = _file_max_bytes()
+    max_chars = _file_extract_max_chars()
+
+    data = await file.read(max_bytes + 1)
+    filename = file.filename or "attachment"
+    if len(data) > max_bytes:
+        # Audit BEFORE rejecting: an oversize attachment is the most likely
+        # bulk-exfiltration shape, so it must leave a trace even though it
+        # can't be screened.
+        from storage.tenant_store import resolve_request_tenant_id
+        await audit_logger.log({
+            "agent_key": (getattr(request.state, "agent_key", None) if hasattr(request, "state") else None)
+                         or request.headers.get("x-agent-key", ""),
+            "endpoint": "/guardrails/file",
+            "input_text": f"file:{filename}: (oversize, not screened)",
+            "action_taken": "pass",
+            "guardrails_triggered": [],
+            "latency_ms": 0,
+            "metadata": {
+                "kind": "agent_chat_telemetry",
+                "tenant_id": resolve_request_tenant_id(request),
+                "stage": "input",
+                "device_id": request.headers.get("x-device-id", "") or device_id,
+                "blocked": False,
+                "session_id": session_id,
+                "file": {"name": filename, "size": len(data),
+                         "content_type": file.content_type or "",
+                         "oversize": True},
+            },
+        })
+        raise HTTPException(status_code=413,
+                            detail=f"file exceeds {max_bytes} byte limit")
+
+    start = datetime.now()
+
+    # Extraction is CPU-bound (pypdf/docx/openpyxl); run it off the event loop
+    # so a pathological document can't stall concurrent guard-path requests.
+    import asyncio
+    text, note = await asyncio.to_thread(
+        _extract_file_text, filename, file.content_type or "", data, max_chars)
+    truncated = len(text) > max_chars
+    if truncated:
+        text = text[:max_chars]
+    if not text and note is None:
+        note = "no extractable text"
+    screened = f"filename: {filename}\n\n{text}" if text else f"filename: {filename}"
+
+    tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
+    if tenant_config and "input_guardrails" in tenant_config:
+        result = await _classify_tenant(screened, tenant_config["input_guardrails"], {}, start)
+    else:
+        result = await _classify_with_defaults(screened, {}, start)
+    # Files block only on real policy violations; LLM-judgment guardrails are
+    # demoted to warn BEFORE policy mode is applied (see _file_warn_only_guardrails).
+    result = _demote_file_verdicts(result)
+    result = apply_policy_mode(result, resolve_mode(tenant_config))
+
+    from storage.tenant_store import resolve_request_tenant_id
+    tenant_id = resolve_request_tenant_id(request)
+    if tenant_id:
+        from storage.guardrail_metrics import record_results_batch
+        record_results_batch(tenant_id, result.get("guardrail_results", []))
+
+    agent_key = ((getattr(request.state, "agent_key", None) if hasattr(request, "state") else None)
+                 or request.headers.get("x-agent-key", ""))
+    dev = request.headers.get("x-device-id", "") or device_id
+    root_action = result.get("action", "pass")
+    blocked = root_action == "block"
+    guardrail_results = result.get("guardrail_results", [])
+    triggered = [gr["guardrail"] for gr in guardrail_results if not gr.get("passed")]
+
+    await audit_logger.log({
+        "agent_key": agent_key,
+        "endpoint": "/guardrails/file",
+        "input_text": f"file:{filename}: {text[:400]}",
+        "action_taken": root_action,
+        "guardrails_triggered": triggered,
+        "latency_ms": result.get("inference_time_ms", 0),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id,
+            "user_role": "",
+            "stage": "input",
+            "device_id": dev,
+            "destination": request.headers.get("x-shield-destination", ""),
+            "blocked": blocked,
+            "block_reason": "; ".join(gr.get("message", "") for gr in guardrail_results if not gr.get("passed")) if blocked else None,
+            "session_id": session_id,
+            "file": {
+                "name": filename,
+                "size": len(data),
+                "content_type": file.content_type or "",
+                "extracted_chars": len(text),
+                "extraction_truncated": truncated,
+            },
+            "tool_calls": [],
+            "tool_call_count": 0,
+            "input_guardrails": [{"guardrail": gr["guardrail"], "passed": gr["passed"], "action": gr["action"], "message": gr.get("message", "")} for gr in guardrail_results],
+            "output_guardrails": [],
+            "usage": {},
+        },
+    })
+
+    result["file"] = {
+        "name": filename,
+        "size": len(data),
+        "content_type": file.content_type or "",
+        "extracted_chars": len(text),
+        "extraction_truncated": truncated,
+        "note": note,
+    }
+    return result
 
 
 def _build_response(pipeline_result: PipelineResult, start: datetime) -> dict:

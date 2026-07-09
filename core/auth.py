@@ -3,12 +3,78 @@
 import hashlib
 import hmac
 import os
+import time
+from collections import defaultdict
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 import config.schema as _config_module
+
+
+# ── Brute-force protection (IEMLabs VAPT finding 8.9, May 2026) ──────
+#
+# Track failed auth attempts per client IP. After MAX_FAILED_ATTEMPTS
+# within the WINDOW, subsequent requests from that IP are rejected with
+# 429 until the window expires. This prevents credential stuffing and
+# brute-force attacks on the tenant login without requiring CAPTCHA at
+# the API layer.
+
+_MAX_FAILED_ATTEMPTS = int(os.environ.get("SHIELD_AUTH_MAX_FAILURES", "10"))
+_LOCKOUT_WINDOW_SECS = int(os.environ.get("SHIELD_AUTH_LOCKOUT_SECS", "300"))
+
+# {ip: [(timestamp, ...),]} — in-memory; Redis-backed deployments can
+# override via SHIELD_AUTH_RATE_LIMIT_REDIS=1 in future.
+_failed_attempts: dict[str, list[float]] = defaultdict(list)
+
+_TRUTHY = ("1", "true", "yes", "on")
+
+
+def _client_ip(request: Request) -> str:
+    """Resolve the real client IP for rate-limiting.
+
+    The app runs behind an edge proxy (e.g. Railway), so request.client.host
+    is the proxy's IP — keying the lockout on it would lock out every user
+    at once and never isolate a single attacker. When SHIELD_TRUST_PROXY_HEADERS
+    is enabled we use the last entry of X-Forwarded-For, which is the address
+    the nearest trusted proxy observed and the client cannot forge (the proxy
+    appends it). Without the flag we keep request.client.host so a directly
+    exposed deployment can't be bypassed via a spoofed header.
+    """
+    if os.environ.get("SHIELD_TRUST_PROXY_HEADERS", "").strip().lower() in _TRUTHY:
+        xff = request.headers.get("X-Forwarded-For", "")
+        if xff:
+            parts = [p.strip() for p in xff.split(",") if p.strip()]
+            if parts:
+                return parts[-1]
+    return request.client.host if request.client else "unknown"
+
+
+def _record_auth_failure(client_ip: str) -> None:
+    """Record a failed authentication attempt for the given IP."""
+    now = time.monotonic()
+    _failed_attempts[client_ip].append(now)
+    # Prune old entries outside the window
+    cutoff = now - _LOCKOUT_WINDOW_SECS
+    _failed_attempts[client_ip] = [
+        t for t in _failed_attempts[client_ip] if t > cutoff
+    ]
+
+
+def _is_ip_locked_out(client_ip: str) -> bool:
+    """Check if the IP has exceeded the failure threshold."""
+    now = time.monotonic()
+    cutoff = now - _LOCKOUT_WINDOW_SECS
+    attempts = _failed_attempts.get(client_ip, [])
+    recent = [t for t in attempts if t > cutoff]
+    _failed_attempts[client_ip] = recent  # prune while checking
+    return len(recent) >= _MAX_FAILED_ATTEMPTS
+
+
+def _clear_auth_failures(client_ip: str) -> None:
+    """Clear failure counter on successful auth (reward good behavior)."""
+    _failed_attempts.pop(client_ip, None)
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -28,6 +94,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         cfg = _config_module.config
         path = request.url.path
+        client_ip = _client_ip(request)
+
+        # Brute-force lockout check (finding 8.9)
+        if _is_ip_locked_out(client_ip):
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "Too many failed authentication attempts. Try again later.",
+                },
+                headers={"Retry-After": str(_LOCKOUT_WINDOW_SECS)},
+            )
 
         # Admin routes: always require admin key regardless of auth config
         if path.startswith("/v1/admin/"):
@@ -46,11 +123,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 )
 
             if not hmac.compare_digest(provided, admin_key):
+                _record_auth_failure(client_ip)
                 return JSONResponse(
                     status_code=403,
                     content={"error": "Invalid admin key"},
                 )
 
+            _clear_auth_failures(client_ip)
             return await call_next(request)
 
         if cfg is None or not cfg.auth.enabled:
@@ -103,6 +182,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         })
 
                 if not tenant_id:
+                    _record_auth_failure(client_ip)
                     return JSONResponse(
                         status_code=403,
                         content={"error": "Invalid API key"},
@@ -112,11 +192,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 request.state.tenant_id = tenant_id
 
             except Exception:
+                _record_auth_failure(client_ip)
                 return JSONResponse(
                     status_code=403,
                     content={"error": "Invalid API key"},
                 )
 
+        _clear_auth_failures(client_ip)
         return await call_next(request)
 
 
@@ -181,3 +263,33 @@ def get_tenant_from_request(request: Request) -> str:
         )
 
     return tenant_id
+
+
+def require_tenant_access(tenant_id: str, request: Request) -> None:
+    """Authorize access to a tenant-scoped resource identified in the path.
+
+    Closes IDOR / broken object-level authorization: a tenant-scoped API key
+    may only act on its own tenant_id. Master/global keys (validated against
+    cfg.auth.api_keys) leave request.state.tenant_id unset and remain
+    unrestricted, preserving admin-portal cross-tenant management.
+    """
+    from fastapi import HTTPException
+
+    caller_tenant = getattr(getattr(request, "state", None), "tenant_id", None)
+    if caller_tenant and caller_tenant != tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: API key is not authorized for this tenant.",
+        )
+
+
+def verify_tenant_path_access(request: Request, tenant_id: str | None = None) -> None:
+    """Router dependency that enforces tenant ownership of a path tenant_id.
+
+    FastAPI resolves ``tenant_id`` from the route's path parameter when one
+    exists; routes without a ``{tenant_id}`` path parameter receive ``None``
+    and are left unaffected.
+    """
+    if tenant_id is None:
+        return
+    require_tenant_access(tenant_id, request)

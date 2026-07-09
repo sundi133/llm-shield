@@ -1,16 +1,29 @@
-"""LLM Shield + LangChain Deep Agent Integration
+"""LLM Shield + LangChain Deep Agent Integration (two-plane architecture).
 
-Demonstrates a healthcare AI agent where:
-  - Tools, roles, and agents are loaded dynamically from the tenant's
-    Redis-backed Shield config (not hardcoded)
-  - Every tool call is gated by Shield's RBAC (tool_allowlist intersection)
-  - Input/output guardrails (PII, toxicity, adversarial) run on every turn
-  - Different agent/role combos get different permissions at runtime
+Demonstrates a healthcare AI agent following the two-plane deployment model:
+
+  PLANE 1 — LLM + GUARDRAILS  →  LiteLLM proxy
+      The Deep Agent's model points at the LiteLLM proxy whose config.yaml has
+      the votal.ai guardrails callback configured. Input (PII, toxicity,
+      adversarial) and output guardrails run *inside* the proxy on every turn —
+      this app never calls /guardrails/input or /guardrails/output directly.
+
+  PLANE 2 — AGENTS + RBAC  →  LLM Shield
+      Tools, roles and agents are loaded dynamically from the tenant's
+      Redis-backed Shield config, and every tool call is gated by Shield:
+        - /v1/shield/tool/check   RBAC (tool_allowlist intersection)
+        - /v1/shield/tool/output  output sanitization / redaction
+      Different agent/role combos get different permissions at runtime.
 
 Usage:
+    # Plane 1 — LiteLLM proxy (guardrails configured in its config.yaml)
+    export LITELLM_URL="https://litellm.your-company.com"
+    export LITELLM_API_KEY="sk-litellm-..."
+    export LLM_MODEL="gpt-4o-mini"
+
+    # Plane 2 — LLM Shield
     export SHIELD_URL="https://your-shield.up.railway.app"
     export SHIELD_API_KEY="tenant-...-key-..."
-    export OPENAI_API_KEY="sk-..."
 
     python examples/deep_agent_shield.py
 """
@@ -22,6 +35,25 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
+
+
+# Plane 1: LiteLLM proxy (guardrails run inside it via the votal.ai callback)
+LITELLM_URL = os.environ.get("LITELLM_URL", "https://litellm.your-company.com").rstrip("/")
+LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", os.environ.get("OPENAI_API_KEY", "sk-noop"))
+LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+
+
+def _make_llm():
+    """Build the LangChain model for the Deep Agent, pointed at the LiteLLM
+    proxy (Plane 1) so input/output guardrails run in the proxy."""
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        model=LLM_MODEL,
+        base_url=f"{LITELLM_URL}/v1",   # ← LiteLLM proxy, guardrails live here
+        api_key=LITELLM_API_KEY,
+        temperature=0.1,
+    )
 
 
 # ============================================================================
@@ -142,33 +174,20 @@ class ShieldClient:
             )
             return resp.json()
 
-    async def agent_chat(self, messages: list, agent_key: str, user_role: str,
-                         llm_api_key: str = "", llm_model: str = "gpt-4o-mini") -> dict:
-        """Call /v1/shield/chat/agent — LLM + tools + RBAC in one shot."""
-        body: dict = {
-            "messages": messages,
-            "agent_key": agent_key,
-            "user_role": user_role,
-        }
-        if llm_api_key:
-            body["llm_api_key"] = llm_api_key
-            body["llm_model"] = llm_model
-
-        async with httpx.AsyncClient(timeout=120) as c:
+    async def sanitize_output(self, tool_name: str, output: str,
+                              agent_key: str, user_role: str) -> dict:
+        """Call /v1/shield/tool/output — sanitize/redact a tool's output against
+        the tenant's data policies before the LLM sees it."""
+        async with httpx.AsyncClient(timeout=15) as c:
             resp = await c.post(
-                f"{self.base_url}/v1/shield/chat/agent",
-                json=body,
+                f"{self.base_url}/v1/shield/tool/output",
+                json={
+                    "tool_name": tool_name,
+                    "tool_output": str(output),
+                    "agent_key": agent_key,
+                    "session_id": f"deep-agent-{agent_key}",
+                },
                 headers=self._headers(agent_key, user_role),
-            )
-            return resp.json()
-
-    async def classify_input(self, message: str, agent_key: str = "") -> dict:
-        """Run input guardrails (PII, adversarial, topic, toxicity)."""
-        async with httpx.AsyncClient(timeout=30) as c:
-            resp = await c.post(
-                f"{self.base_url}/guardrails/input",
-                json={"message": message},
-                headers=self._headers(agent_key),
             )
             return resp.json()
 
@@ -300,9 +319,9 @@ def build_shield_tools(shield: ShieldClient, agent_key: str, user_role: str):
     """Build LangChain-compatible tools that enforce Shield RBAC on every call.
 
     Each tool wraps a simulated healthcare function with:
-      1. Pre-execution RBAC check via Shield API
+      1. Pre-execution RBAC check via Shield /v1/shield/tool/check
       2. The actual tool logic (simulated here)
-      3. Post-execution audit logging
+      3. Post-execution output sanitization via Shield /v1/shield/tool/output
     """
     from langchain_core.tools import StructuredTool
     from pydantic import BaseModel, Field, create_model
@@ -351,10 +370,20 @@ def build_shield_tools(shield: ShieldClient, agent_key: str, user_role: str):
                     "role": _role,
                 })
 
+            # Execute (simulated), then sanitize output against data policies.
+            raw_result = f"[simulated] {_tool_name} executed with {kwargs}"
+            san = await shield.sanitize_output(_tool_name, raw_result, _agent, _role)
+            if san.get("action") == "block":
+                return json.dumps({
+                    "status": "OUTPUT_BLOCKED",
+                    "tool": _tool_name,
+                    "reason": "output blocked by data policy",
+                })
+
             return json.dumps({
                 "status": "OK",
                 "tool": _tool_name,
-                "result": f"[simulated] {_tool_name} executed with {kwargs}",
+                "result": san.get("sanitized_output", raw_result),
                 "rbac": rbac_msg,
             })
 
@@ -370,7 +399,7 @@ def build_shield_tools(shield: ShieldClient, agent_key: str, user_role: str):
 
 
 async def create_healthcare_agent(shield: ShieldClient, agent_key: str,
-                                  user_role: str, llm_model: str = "gpt-4o-mini"):
+                                  user_role: str):
     """Create a LangChain Deep Agent with Shield-enforced tools.
 
     Everything is loaded dynamically from the tenant's Redis config:
@@ -390,8 +419,9 @@ async def create_healthcare_agent(shield: ShieldClient, agent_key: str,
     print(f"Tools blocked: {blocked}")
     print(f"{'='*60}\n")
 
+    # Model points at the LiteLLM proxy (Plane 1) so guardrails run in the proxy.
     agent = create_deep_agent(
-        model=f"openai:{llm_model}",
+        model=_make_llm(),
         tools=tools,
         interrupt_on={"delete_patient_record": True},
         memory=[],
@@ -421,10 +451,18 @@ async def demo_check_permissions(shield: ShieldClient):
 
 
 async def demo_agent_chat(shield: ShieldClient):
-    """Run the agent chat endpoint with different agent/role combos."""
-    openai_key = os.environ.get("OPENAI_API_KEY", "")
-    if not openai_key:
-        print("\n[skip] Set OPENAI_API_KEY to run agent chat demos\n")
+    """Drive a Deep Agent (LLM via the LiteLLM proxy) with Shield-gated tools.
+
+    The LLM reasoning + input/output guardrails go through the LiteLLM proxy
+    (Plane 1); each tool the agent calls is gated by Shield RBAC + data policy
+    (Plane 2). The simulated tools return JSON with status OK / BLOCKED.
+    """
+    try:
+        from langchain_deepagents import create_deep_agent  # noqa: F401
+        from langchain_openai import ChatOpenAI  # noqa: F401
+    except ImportError:
+        print("\n[skip] Install langchain-deepagents + langchain-openai to run "
+              "the Deep Agent chat demo\n")
         return
 
     scenarios = [
@@ -455,27 +493,42 @@ async def demo_agent_chat(shield: ShieldClient):
         print(f"  Message: {s['message']}")
         print(f"{'─'*60}")
 
-        result = await shield.agent_chat(
-            messages=[{"role": "user", "content": s["message"]}],
-            agent_key=s["agent_key"],
-            user_role=s["user_role"],
-            llm_api_key=openai_key,
-        )
-
-        if result.get("blocked"):
-            print(f"  ❌ Input blocked: {result.get('block_reason', '')}")
+        try:
+            agent = await create_healthcare_agent(
+                shield, s["agent_key"], s["user_role"]
+            )
+            # LLM call routes through the LiteLLM proxy (guardrails apply there).
+            state = await agent.ainvoke(
+                {"messages": [{"role": "user", "content": s["message"]}]}
+            )
+        except Exception as e:  # noqa: BLE001 — surface proxy-side guardrail blocks
+            msg = str(e)
+            if any(k in msg.lower() for k in ("guardrail", "blocked", "403", "policy")):
+                print(f"  ❌ Input blocked by LiteLLM proxy guardrails")
+            else:
+                print(f"  [error] {msg}")
             continue
 
-        print(f"  LLM: {result.get('text', '(no text)')[:120]}")
-
-        for tc in result.get("tool_calls", []):
-            rbac = tc.get("rbac", {})
-            ok = rbac.get("allowed", False)
-            icon = "✅" if ok else "🚫"
-            print(f"  {icon} {tc['tool_name']}({json.dumps(tc['arguments'])})")
-            print(f"     RBAC: {rbac.get('message', '')}")
-
-        print(f"  ⏱  {result.get('latency_ms', 0):.0f}ms")
+        # Print the agent's final message + any tool results (OK/BLOCKED JSON).
+        for m in state.get("messages", []):
+            content = getattr(m, "content", "") if not isinstance(m, dict) else m.get("content", "")
+            if not content:
+                continue
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, dict) and "status" in parsed:
+                    ok = parsed["status"] == "OK"
+                    icon = "✅" if ok else "🚫"
+                    print(f"  {icon} {parsed.get('tool')}: {parsed.get('result') or parsed.get('reason')}")
+                    continue
+            except (ValueError, TypeError):
+                pass
+        final = state.get("messages", [])
+        if final:
+            last = final[-1]
+            text = getattr(last, "content", "") if not isinstance(last, dict) else last.get("content", "")
+            if text:
+                print(f"  LLM: {str(text)[:120]}")
 
 
 async def demo_tool_checks(shield: ShieldClient):
@@ -518,6 +571,8 @@ async def main():
         return
 
     shield = ShieldClient(base_url=shield_url, api_key=shield_api_key)
+    print(f"[Plane 1] LLM + guardrails via LiteLLM proxy at {LITELLM_URL} (model={LLM_MODEL})")
+    print(f"[Plane 2] Agents + RBAC via LLM Shield at {shield_url}")
 
     # Step 1: Register tool definitions (push schemas to Redis)
     print("\n[1] Registering tool definitions with tenant...")
@@ -533,7 +588,7 @@ async def main():
     # Step 4: Run direct tool permission checks
     await demo_tool_checks(shield)
 
-    # Step 5: Run agent chat scenarios (requires OPENAI_API_KEY)
+    # Step 5: Run Deep Agent scenarios (LLM via LiteLLM proxy, tools via Shield)
     await demo_agent_chat(shield)
 
     # Step 6: (Optional) Create a Deep Agent

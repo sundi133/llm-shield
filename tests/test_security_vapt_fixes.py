@@ -1,0 +1,834 @@
+"""End-to-end tests for the IEMLabs VAPT (May 2026) fixes.
+
+Mapped to report sections:
+  8.1  SSRF                   (High)   — /playground/llm-proxy
+  8.2  IDOR                   (High)   — /v1/tenant/me
+  8.3  Information Disclosure  (Medium) — /playground/llm-proxy
+  8.4  Missing Security Headers (Low)  — all responses
+  8.5  HSTS                    (Low)   — all responses
+  8.6  No Cookie Validation    (Low)   — cookie attributes
+  8.7  Improper Input Validation (Low) — /v1/agents/registry
+  8.8  Clickjacking            (Low)   — X-Frame-Options + CSP
+  8.9  No Captcha / Brute-force (Low)  — auth rate limiting
+  8.10 Autocomplete Enable     (Low)   — HTML autocomplete="off"
+
+Each test reproduces the auditor's attack pattern and asserts it is
+now blocked or the leak is closed.
+"""
+
+from __future__ import annotations
+
+import socket
+from typing import Iterator
+from unittest import mock
+
+import pytest
+from fastapi import FastAPI, Request
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.testclient import TestClient
+
+from api.routes_tenant_self import router as tenant_self_router
+
+
+class _FakeTenantAuth(BaseHTTPMiddleware):
+    """Sets request.state.tenant_id from X-API-Key (mirrors the real
+    AuthMiddleware contract without pulling in its dependencies)."""
+    async def dispatch(self, request, call_next):
+        key = request.headers.get("X-API-Key")
+        if key:
+            # Map test keys to tenant ids: 'acme-key' → 'acme', 'corp-key' → 'corp'
+            tid = key.replace("-key", "")
+            request.state.tenant_id = tid
+        return await call_next(request)
+
+
+# ─── /v1/tenant/me — IDOR (8.2) ───────────────────────────────────────
+
+
+@pytest.fixture
+def tenant_app(monkeypatch) -> Iterator[FastAPI]:
+    # Disable Redis so get_tenant uses fallback
+    from storage import tenant_store
+    monkeypatch.setattr(tenant_store, "_get_redis", lambda: None)
+
+    # Register two tenants in the in-process store
+    from storage.tenant_store import create_tenant
+    try:
+        create_tenant("acme", {"name": "Acme", "plan": "enterprise"})
+    except Exception:
+        pass
+    try:
+        create_tenant("corp", {"name": "Corp", "plan": "enterprise"})
+    except Exception:
+        pass
+
+    app = FastAPI()
+    app.add_middleware(_FakeTenantAuth)
+    app.include_router(tenant_self_router)
+    yield app
+
+
+@pytest.fixture
+def tenant_client(tenant_app):
+    return TestClient(tenant_app)
+
+
+class TestIDORTenantMe:
+    """Finding 8.2: /v1/tenant/me must not leak internal object refs."""
+
+    def test_me_response_drops_agents_list(self, tenant_client):
+        """Previously: response included full agents list (internal IDs).
+        Now: only an agent_count integer, no enumeration."""
+        r = tenant_client.get("/v1/tenant/me", headers={"X-API-Key": "acme-key"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["tenant_id"] == "acme"
+        assert "agents" not in body, \
+            "agent_keys list must NOT be in /v1/tenant/me response (IDOR finding 8.2)"
+        assert "agent_count" in body
+        assert isinstance(body["agent_count"], int)
+
+    def test_me_rejects_header_tenant_id_spoof(self, tenant_client):
+        """An attacker with acme's key tries X-Tenant-Id: corp → reject."""
+        r = tenant_client.get(
+            "/v1/tenant/me",
+            headers={"X-API-Key": "acme-key", "X-Tenant-Id": "corp"},
+        )
+        assert r.status_code == 403
+        assert "does not match" in r.json()["detail"].lower()
+
+    def test_me_rejects_body_tenant_id_spoof_on_put(self, tenant_client):
+        """The PUT /me/policies endpoint must reject a body with a
+        different tenant_id than the one resolved from the API key."""
+        r = tenant_client.put(
+            "/v1/tenant/me/policies",
+            headers={"X-API-Key": "acme-key"},
+            json={"tenant_id": "corp", "input_guardrails": {}},
+        )
+        assert r.status_code == 403
+        assert "does not match" in r.json()["detail"].lower()
+
+    def test_me_no_auth_returns_401(self, tenant_client):
+        r = tenant_client.get("/v1/tenant/me")
+        assert r.status_code == 401
+
+    def test_me_matching_header_passes(self, tenant_client):
+        """X-Tenant-Id that matches the resolved tenant is allowed."""
+        r = tenant_client.get(
+            "/v1/tenant/me",
+            headers={"X-API-Key": "acme-key", "X-Tenant-Id": "acme"},
+        )
+        assert r.status_code == 200
+
+    def test_me_response_has_no_internal_fields(self, tenant_client):
+        """Even with a valid key, internal-only fields stay server-side."""
+        r = tenant_client.get("/v1/tenant/me", headers={"X-API-Key": "acme-key"})
+        body = r.json()
+        for forbidden in ("api_keys", "raw_config", "_internal", "deleted_at"):
+            assert forbidden not in body, f"internal field {forbidden!r} leaked"
+
+
+# ─── /v1/shield/* — path-tenant_id IDOR (BOLA) ───────────────────────
+
+
+@pytest.fixture
+def shield_app(monkeypatch) -> Iterator[FastAPI]:
+    """Mount the path-scoped /v1/shield routers behind the fake tenant
+    auth so we can exercise the require_tenant_access guard."""
+    from storage import tenant_store
+    monkeypatch.setattr(tenant_store, "_get_redis", lambda: None)
+    from storage.tenant_store import create_tenant
+    for tid in ("acme", "corp"):
+        try:
+            create_tenant(tid, {"name": tid, "plan": "enterprise"})
+        except Exception:
+            pass
+
+    from api.routes_policy import router as policy_router
+    from api.routes_webhooks import router as webhooks_router
+    from api.routes_decisions import router as decisions_router
+
+    app = FastAPI()
+    app.add_middleware(_FakeTenantAuth)
+    app.include_router(policy_router)
+    app.include_router(webhooks_router)
+    app.include_router(decisions_router)
+    yield app
+
+
+@pytest.fixture
+def shield_client(shield_app):
+    return TestClient(shield_app)
+
+
+class TestIDORShieldPathScoping:
+    """A tenant key must not reach another tenant's path-scoped resources
+    under /v1/shield/policies, /webhooks, /decisions. Master keys (no
+    tenant_id on request.state) keep cross-tenant access for the admin
+    portal."""
+
+    def test_cross_tenant_policy_list_blocked(self, shield_client):
+        r = shield_client.get("/v1/shield/policies/corp", headers={"X-API-Key": "acme-key"})
+        assert r.status_code == 403
+
+    def test_cross_tenant_bundle_export_blocked(self, shield_client):
+        # The most severe vector: full-config exfiltration.
+        r = shield_client.get(
+            "/v1/shield/policies/corp/bundle/export", headers={"X-API-Key": "acme-key"}
+        )
+        assert r.status_code == 403
+
+    def test_cross_tenant_decisions_blocked(self, shield_client):
+        r = shield_client.get("/v1/shield/decisions/corp", headers={"X-API-Key": "acme-key"})
+        assert r.status_code == 403
+
+    def test_cross_tenant_webhooks_blocked(self, shield_client):
+        r = shield_client.get("/v1/shield/webhooks/corp", headers={"X-API-Key": "acme-key"})
+        assert r.status_code == 403
+
+    def test_own_tenant_allowed(self, shield_client):
+        # Acting on your own tenant must NOT be blocked by the guard.
+        r = shield_client.get("/v1/shield/policies/acme", headers={"X-API-Key": "acme-key"})
+        assert r.status_code != 403
+
+    def test_master_key_cross_tenant_allowed(self, shield_client):
+        # No X-API-Key → no tenant_id on state → treated as master/admin.
+        r = shield_client.get("/v1/shield/policies/corp")
+        assert r.status_code != 403
+
+    def test_non_tenant_route_unaffected(self, shield_client):
+        # POST /v1/shield/policies/test has no tenant_id path param and must
+        # not be forced to 403 by the guard (body validation may still 422).
+        r = shield_client.post("/v1/shield/policies/test", headers={"X-API-Key": "acme-key"}, json={})
+        assert r.status_code != 403
+
+
+# ─── /playground/llm-proxy — SSRF (8.1) + Info Disclosure (8.3) ──────
+
+
+@pytest.fixture
+def admin_app_min(monkeypatch):
+    """Spin up admin_app's playground routes WITHOUT all the heavy
+    LiteLLM / model deps. We only need the two endpoints."""
+    # Force no redis so the bare app boots fast
+    monkeypatch.setenv("UPSTASH_REDIS_REST_URL", "")
+    monkeypatch.setenv("UPSTASH_REDIS_REST_TOKEN", "")
+    monkeypatch.setenv("SHIELD_ADMIN_KEY", "test-admin")
+
+    import admin_app as _admin_app
+    # We can't easily call create_admin_app() here (loads many routers).
+    # Instead, register a minimal FastAPI app with just our two routes
+    # by importing the route functions directly. Use the SAME url_safety
+    # module so changes there are exercised.
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+    import httpx
+    import logging as _logging
+    import uuid as _uuid
+    from core.url_safety import UnsafeURLError, validate_proxy_base_url
+
+    app = FastAPI()
+
+    # Replicate the production handler exactly (this is what's in admin_app)
+    @app.post("/playground/llm-proxy")
+    async def playground_llm_proxy(request: Request):
+        body = await request.json()
+        base_url_raw = body.get("base_url", "https://api.openai.com/v1").strip().rstrip("/")
+        master_key = body.get("master_key", "")
+        payload = body.get("payload", {})
+
+        try:
+            base_url = validate_proxy_base_url(base_url_raw, purpose="llm-proxy")
+        except UnsafeURLError as e:
+            return JSONResponse(
+                {"error": "LLM base_url rejected", "detail": str(e)},
+                status_code=400,
+            )
+
+        headers = {"Content-Type": "application/json"}
+        if master_key:
+            headers["Authorization"] = f"Bearer {master_key}"
+
+        request_id = _uuid.uuid4().hex[:12]
+        logger = _logging.getLogger("votal.llm_proxy")
+        logger.info(f"llm-proxy {request_id}: POST {base_url}/chat/completions model={payload.get('model')!r}")
+        async with httpx.AsyncClient(timeout=180.0, follow_redirects=False) as client:
+            try:
+                resp = await client.post(f"{base_url}/chat/completions", json=payload, headers=headers)
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"raw_response": resp.text[:8192], "status": resp.status_code}
+                logger.info(f"llm-proxy {request_id}: status={resp.status_code} resp_bytes={len(resp.content)}")
+                return JSONResponse(data, status_code=resp.status_code)
+            except httpx.TimeoutException:
+                return JSONResponse({"error": "LLM request timed out", "request_id": request_id}, status_code=504)
+            except Exception as e:
+                logger.warning(f"llm-proxy {request_id}: upstream error: {type(e).__name__}: {e}")
+                return JSONResponse({"error": "Cannot reach LLM endpoint", "request_id": request_id}, status_code=502)
+
+    return app
+
+
+@pytest.fixture
+def admin_client(admin_app_min):
+    return TestClient(admin_app_min)
+
+
+def _stub_getaddrinfo(monkeypatch, resolution_map):
+    import socket as _socket
+    def fake(host, port, *args, **kw):
+        if host in resolution_map:
+            res = resolution_map[host]
+            if res == "GAI_ERROR":
+                raise _socket.gaierror(f"no such host {host}")
+            return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ip, port)) for ip in res]
+        return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("8.8.8.8", port))]
+    monkeypatch.setattr(_socket, "getaddrinfo", fake)
+
+
+class TestSSRFInLLMProxy:
+    """Finding 8.1: SSRF at /playground/llm-proxy via user-supplied base_url."""
+
+    def test_aws_metadata_blocked(self, admin_client):
+        """The auditor's most likely PoC: hit AWS instance metadata."""
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={
+                "base_url": "http://169.254.169.254/latest/meta-data",
+                "master_key": "x",
+                "payload": {"model": "test"},
+            },
+        )
+        assert r.status_code == 400
+        body = r.json()
+        assert body["error"] == "LLM base_url rejected"
+
+    def test_localhost_blocked(self, admin_client):
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={"base_url": "http://127.0.0.1:6379", "payload": {}},
+        )
+        assert r.status_code == 400
+
+    def test_private_ip_blocked(self, admin_client):
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={"base_url": "http://10.0.0.5:8000", "payload": {}},
+        )
+        assert r.status_code == 400
+
+    def test_file_scheme_blocked(self, admin_client):
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={"base_url": "file:///etc/passwd", "payload": {}},
+        )
+        assert r.status_code == 400
+
+    def test_dns_rebinding_blocked(self, admin_client, monkeypatch):
+        """Hostname that resolves to BOTH public + internal must reject.
+
+        Allowlist the host so the request reaches the IP-resolution check
+        (the layer this test is about) rather than the provider gate.
+        """
+        monkeypatch.setenv("SHIELD_LLM_PROXY_ALLOWED_HOSTS", "attacker.example.com")
+        _stub_getaddrinfo(monkeypatch, {
+            "attacker.example.com": ["8.8.8.8", "127.0.0.1"],
+        })
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={"base_url": "https://attacker.example.com", "payload": {}},
+        )
+        assert r.status_code == 400
+
+    def test_allowlist_enforced(self, admin_client, monkeypatch):
+        monkeypatch.setenv("SHIELD_LLM_PROXY_ALLOWED_HOSTS", "api.openai.com")
+        _stub_getaddrinfo(monkeypatch, {"random-public.example.com": ["8.8.8.8"]})
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={"base_url": "https://random-public.example.com", "payload": {}},
+        )
+        assert r.status_code == 400
+
+    def test_external_collaborator_host_blocked_by_default(self, admin_client):
+        """The exact IEMLabs PoC: base_url pointed at an attacker host.
+
+        It is a perfectly public domain (passes the IP filter), so only
+        the provider allowlist stops it. Must be rejected with NO env
+        allowlist configured (deny-by-default).
+        """
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={
+                "base_url": "https://o8xfoo3qzgckd4oyo497ek9h78dz1qpf.oastify.com",
+                "master_key": "sk-my-master-key-123",
+                "payload": {"model": "gpt-4"},
+            },
+        )
+        assert r.status_code == 400
+        assert r.json()["error"] == "LLM base_url rejected"
+
+    def test_master_key_not_exfiltrated_to_unallowed_host(self, admin_client, monkeypatch):
+        """The proxy attaches Authorization: Bearer <master_key>. When the
+        host is rejected, the outbound HTTP call must never happen — so the
+        credential can't leak (findings 8.1 + 8.3)."""
+        import httpx as _httpx
+
+        called = {"n": 0}
+
+        async def spy_post(self, *a, **kw):
+            called["n"] += 1
+            raise AssertionError("outbound request must not be made for a blocked host")
+
+        monkeypatch.setattr(_httpx.AsyncClient, "post", spy_post)
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={
+                "base_url": "https://attacker.evil.example",
+                "master_key": "sk-secret-leak-me",
+                "payload": {"model": "gpt-4"},
+            },
+        )
+        assert r.status_code == 400
+        assert called["n"] == 0
+
+    def test_provider_subdomain_allowed(self, admin_client, monkeypatch):
+        """A subdomain of a known provider (e.g. tenant LiteLLM on Railway)
+        is permitted by the parent-domain match."""
+        _stub_getaddrinfo(monkeypatch, {"litellm-votal.up.railway.app": ["8.8.8.8"]})
+
+        import httpx as _httpx
+
+        async def fake_post(self, url, **kw):
+            class _R:
+                status_code = 200
+                content = b'{"ok":1}'
+                text = '{"ok":1}'
+                def json(self):
+                    return {"ok": 1}
+            return _R()
+
+        monkeypatch.setattr(_httpx.AsyncClient, "post", fake_post)
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={"base_url": "https://litellm-votal.up.railway.app/v1", "payload": {}},
+        )
+        assert r.status_code == 200
+
+
+class TestInfoDisclosureInLLMProxy:
+    """Finding 8.3: error messages must not leak internal upstream info."""
+
+    def test_error_body_does_not_echo_url(self, admin_client):
+        """The rejection message must NOT contain the attacker-supplied
+        URL — otherwise the endpoint becomes a probe to learn server
+        configuration."""
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={"base_url": "http://169.254.169.254/secret-path", "payload": {}},
+        )
+        body_text = r.text
+        assert "169.254.169.254" not in body_text
+        assert "secret-path" not in body_text
+
+    def test_upstream_failure_returns_generic_error_with_request_id(
+        self, admin_client, monkeypatch
+    ):
+        """When the upstream call genuinely fails, response must be
+        a generic message + a correlation id — NOT the raw exception."""
+        monkeypatch.setenv("SHIELD_LLM_PROXY_ALLOWED_HOSTS", "unreachable.example.com")
+        _stub_getaddrinfo(monkeypatch, {"unreachable.example.com": ["8.8.8.8"]})
+
+        # Force the underlying httpx call to raise a ConnectError with
+        # an internals-leaking message; the handler should sanitize.
+        import httpx as _httpx
+        original_post = _httpx.AsyncClient.post
+
+        async def boom(self, *a, **kw):
+            raise _httpx.ConnectError(
+                "OSError: [Errno 113] No route to host (resolved-internal-ip=10.5.5.5)"
+            )
+        monkeypatch.setattr(_httpx.AsyncClient, "post", boom)
+
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={"base_url": "https://unreachable.example.com", "payload": {}},
+        )
+        assert r.status_code == 502
+        body = r.json()
+        assert body["error"] == "Cannot reach LLM endpoint"
+        assert "request_id" in body
+        # The leak: internal IP / errno must NOT be in the response
+        assert "10.5.5.5" not in r.text
+        assert "Errno" not in r.text
+        assert "OSError" not in r.text
+
+
+class TestHappyPath:
+    """Make sure the hardening didn't break legitimate use."""
+
+    def test_legit_request_passes_validation(self, admin_client, monkeypatch):
+        """Public LLM provider URL → URL validation passes; actual HTTP
+        call is mocked to verify the rest of the path."""
+        _stub_getaddrinfo(monkeypatch, {"api.openai.com": ["104.18.6.123"]})
+
+        import httpx as _httpx
+
+        async def fake_post(self, url, **kw):
+            class _Resp:
+                status_code = 200
+                content = b'{"id":"chatcmpl-x"}'
+                text = '{"id":"chatcmpl-x"}'
+                def json(self):
+                    return {"id": "chatcmpl-x", "choices": []}
+            return _Resp()
+        monkeypatch.setattr(_httpx.AsyncClient, "post", fake_post)
+
+        r = admin_client.post(
+            "/playground/llm-proxy",
+            json={
+                "base_url": "https://api.openai.com/v1",
+                "master_key": "sk-test",
+                "payload": {"model": "gpt-4o-mini", "messages": []},
+            },
+        )
+        assert r.status_code == 200
+        assert r.json()["id"] == "chatcmpl-x"
+
+
+# ─── Security Headers (8.4 + 8.5 + 8.8) ─────────────────────────────
+
+
+@pytest.fixture
+def headers_app():
+    """Minimal app with SecurityHeadersMiddleware to test header injection."""
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+    from core.security_headers import SecurityHeadersMiddleware
+
+    app = FastAPI()
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    @app.get("/test")
+    async def test_endpoint():
+        return JSONResponse({"ok": True})
+
+    @app.get("/html")
+    async def html_endpoint():
+        from starlette.responses import HTMLResponse
+        return HTMLResponse("<h1>Hello</h1>")
+
+    @app.get("/cookie")
+    async def cookie_endpoint():
+        resp = JSONResponse({"ok": True})
+        resp.set_cookie("session_id", "abc123")
+        return resp
+
+    return app
+
+
+@pytest.fixture
+def headers_client(headers_app):
+    return TestClient(headers_app)
+
+
+class TestSecurityHeaders:
+    """Findings 8.4, 8.5, 8.8: security headers must be on all responses."""
+
+    def test_x_frame_options_deny(self, headers_client):
+        r = headers_client.get("/test")
+        assert r.headers.get("x-frame-options") == "DENY"
+
+    def test_x_content_type_options(self, headers_client):
+        r = headers_client.get("/test")
+        assert r.headers.get("x-content-type-options") == "nosniff"
+
+    def test_csp_frame_ancestors(self, headers_client):
+        r = headers_client.get("/test")
+        csp = r.headers.get("content-security-policy", "")
+        assert "frame-ancestors 'none'" in csp
+
+    def test_hsts_header(self, headers_client):
+        r = headers_client.get("/test")
+        hsts = r.headers.get("strict-transport-security", "")
+        assert "max-age=31536000" in hsts
+        assert "includeSubDomains" in hsts
+
+    def test_referrer_policy(self, headers_client):
+        r = headers_client.get("/test")
+        assert r.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+
+    def test_permissions_policy(self, headers_client):
+        r = headers_client.get("/test")
+        pp = r.headers.get("permissions-policy", "")
+        assert "camera=()" in pp
+        assert "microphone=()" in pp
+
+    def test_cache_control_on_json(self, headers_client):
+        r = headers_client.get("/test")
+        assert r.headers.get("cache-control") == "no-store"
+
+    def test_headers_on_html_too(self, headers_client):
+        r = headers_client.get("/html")
+        assert r.headers.get("x-frame-options") == "DENY"
+        assert "max-age=31536000" in r.headers.get("strict-transport-security", "")
+
+
+class TestCookieSecurity:
+    """Finding 8.6: cookies must have HttpOnly, Secure, SameSite."""
+
+    def test_cookie_gets_secure_flags(self, headers_client):
+        r = headers_client.get("/cookie")
+        cookie_header = r.headers.get("set-cookie", "")
+        lower = cookie_header.lower()
+        assert "httponly" in lower
+        assert "secure" in lower
+        assert "samesite" in lower
+
+
+# ─── HSTS config + HTTPS enforcement (8.5) ───────────────────────────
+
+
+class TestHSTSConfig:
+    """Finding 8.5: HSTS value is configurable and preload is opt-in."""
+
+    def test_default_hsts_value(self):
+        from core.security_headers import build_hsts_value
+        v = build_hsts_value()
+        assert "max-age=31536000" in v
+        assert "includeSubDomains" in v
+        assert "preload" not in v
+
+    def test_preload_opt_in(self):
+        from core.security_headers import build_hsts_value
+        assert "preload" in build_hsts_value(preload=True, include_subdomains=True)
+
+    def test_preload_requires_subdomains(self):
+        from core.security_headers import build_hsts_value
+        # preload is invalid without includeSubDomains and must be dropped
+        assert "preload" not in build_hsts_value(preload=True, include_subdomains=False)
+
+    def test_custom_max_age(self):
+        from core.security_headers import build_hsts_value
+        assert "max-age=120" in build_hsts_value(max_age=120)
+
+
+class TestHTTPSRedirect:
+    """Finding 8.5: insecure HTTP is redirected to HTTPS (proxy aware)."""
+
+    def _client(self, enabled):
+        from fastapi import FastAPI
+        from core.security_headers import HTTPSRedirectMiddleware
+
+        app = FastAPI()
+        app.add_middleware(HTTPSRedirectMiddleware, enabled=enabled)
+
+        @app.get("/x")
+        async def _x():
+            return {"ok": True}
+
+        @app.get("/healthz")
+        async def _h():
+            return {"status": "ok"}
+
+        return TestClient(app)
+
+    def test_http_redirected_to_https(self):
+        c = self._client(enabled=True)
+        r = c.get("/x", follow_redirects=False)
+        assert r.status_code == 308
+        assert r.headers["location"].startswith("https://")
+
+    def test_health_check_not_redirected(self):
+        c = self._client(enabled=True)
+        assert c.get("/healthz", follow_redirects=False).status_code == 200
+
+    def test_no_loop_when_already_https(self):
+        c = self._client(enabled=True)
+        r = c.get(
+            "/x",
+            headers={"X-Forwarded-Proto": "https"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 200
+
+    def test_disabled_by_default(self):
+        c = self._client(enabled=False)
+        assert c.get("/x", follow_redirects=False).status_code == 200
+
+
+# ─── Input Validation (8.7) ──────────────────────────────────────────
+
+
+class TestInputValidation:
+    """Finding 8.7: /v1/agents/registry must reject HTML and enforce limits."""
+
+    def test_sanitize_string_strips_html(self):
+        from api.routes_agents_registry import _sanitize_string
+        assert _sanitize_string("<script>alert(1)</script>hello") == "alert(1)hello"
+        assert _sanitize_string("<b>bold</b>") == "bold"
+        assert _sanitize_string("clean text") == "clean text"
+
+    def test_sanitize_string_truncates(self):
+        from api.routes_agents_registry import _sanitize_string
+        long = "a" * 1000
+        result = _sanitize_string(long, max_len=100)
+        assert len(result) == 100
+
+    def test_validate_agent_id_rejects_traversal(self):
+        from api.routes_agents_registry import _validate_agent_id
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_agent_id("../../../etc/passwd")
+        assert exc_info.value.status_code == 400
+
+    def test_validate_agent_id_rejects_html(self):
+        from api.routes_agents_registry import _validate_agent_id
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException):
+            _validate_agent_id("<script>alert(1)</script>")
+
+    def test_validate_agent_id_accepts_valid(self):
+        from api.routes_agents_registry import _validate_agent_id
+        # Should not raise
+        _validate_agent_id("healthcare-agent_01")
+
+    def test_sanitize_value_recursive(self):
+        from api.routes_agents_registry import _sanitize_value
+        data = {
+            "name": "<b>Agent</b>",
+            "tools": ["<script>bad</script>tool1"],
+            "nested": {"key": "<img src=x>val"},
+        }
+        result = _sanitize_value(data)
+        assert "<" not in str(result)
+
+    def test_validate_agent_body_rejects_bad_tools(self):
+        from api.routes_agents_registry import _validate_agent_body
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_agent_body({"tools": ["valid_tool", "<script>bad</script>"]})
+        assert exc_info.value.status_code == 400
+
+
+# ─── Brute-force Protection (8.9) ───────────────────────────────────
+
+
+class TestBruteForceProtection:
+    """Finding 8.9: repeated failed auth must trigger lockout."""
+
+    def test_lockout_after_max_failures(self):
+        from core.auth import (
+            _record_auth_failure,
+            _is_ip_locked_out,
+            _clear_auth_failures,
+            _MAX_FAILED_ATTEMPTS,
+        )
+        test_ip = "192.0.2.99"
+        _clear_auth_failures(test_ip)
+
+        # Record failures up to the limit
+        for _ in range(_MAX_FAILED_ATTEMPTS):
+            _record_auth_failure(test_ip)
+
+        assert _is_ip_locked_out(test_ip) is True
+
+        # Clean up
+        _clear_auth_failures(test_ip)
+        assert _is_ip_locked_out(test_ip) is False
+
+    def test_successful_auth_clears_failures(self):
+        from core.auth import (
+            _record_auth_failure,
+            _is_ip_locked_out,
+            _clear_auth_failures,
+        )
+        test_ip = "192.0.2.100"
+        _clear_auth_failures(test_ip)
+
+        # Record some failures
+        for _ in range(5):
+            _record_auth_failure(test_ip)
+
+        # Simulate successful auth
+        _clear_auth_failures(test_ip)
+        assert _is_ip_locked_out(test_ip) is False
+
+
+class TestProxyAwareClientIP:
+    """Behind an edge proxy, the lockout must key on the real client IP
+    (from X-Forwarded-For when trusted), not the shared proxy IP — else
+    one attacker locks out everyone (8.9 hardening)."""
+
+    def _req(self, headers: dict, peer: str = "10.0.0.1"):
+        class _Client:
+            host = peer
+        class _Req:
+            def __init__(self):
+                self.headers = headers
+                self.client = _Client()
+        return _Req()
+
+    def test_uses_peer_ip_by_default(self, monkeypatch):
+        from core.auth import _client_ip
+        monkeypatch.delenv("SHIELD_TRUST_PROXY_HEADERS", raising=False)
+        ip = _client_ip(self._req({"X-Forwarded-For": "1.2.3.4"}, peer="10.0.0.1"))
+        assert ip == "10.0.0.1"  # header ignored when proxy not trusted
+
+    def test_uses_xff_last_entry_when_trusted(self, monkeypatch):
+        from core.auth import _client_ip
+        monkeypatch.setenv("SHIELD_TRUST_PROXY_HEADERS", "1")
+        # client spoofs a fake left entry; proxy appends the real one
+        ip = _client_ip(self._req({"X-Forwarded-For": "9.9.9.9, 203.0.113.7"}))
+        assert ip == "203.0.113.7"
+
+    def test_falls_back_to_peer_when_no_xff(self, monkeypatch):
+        from core.auth import _client_ip
+        monkeypatch.setenv("SHIELD_TRUST_PROXY_HEADERS", "1")
+        ip = _client_ip(self._req({}, peer="10.0.0.5"))
+        assert ip == "10.0.0.5"
+
+
+# ─── Webhook SSRF (defense-in-depth, same class as 8.1) ─────────────
+
+
+class TestWebhookSSRF:
+    def test_validate_rejects_internal_url(self):
+        from api.routes_webhooks import _validate_webhook_url
+        from fastapi import HTTPException
+        for bad in (
+            "http://169.254.169.254/latest/meta-data/",
+            "http://127.0.0.1:6379/",
+            "http://10.0.0.5/hook",
+            "file:///etc/passwd",
+        ):
+            with pytest.raises(HTTPException) as ei:
+                _validate_webhook_url(bad)
+            assert ei.value.status_code == 400
+
+    def test_validate_accepts_public_https(self, monkeypatch):
+        from api.routes_webhooks import _validate_webhook_url
+        _stub_getaddrinfo(monkeypatch, {"hooks.slack.com": ["3.3.3.3"]})
+        _validate_webhook_url("https://hooks.slack.com/services/T/B/x")  # no raise
+
+    @pytest.mark.asyncio
+    async def test_dispatcher_skips_internal_url(self, monkeypatch):
+        """Even if an unsafe URL was stored, dispatch must not dial it."""
+        import core.webhook_dispatcher as wd
+
+        monkeypatch.setattr(
+            wd, "get_webhooks_for_event",
+            lambda tid, ev: [{"url": "http://169.254.169.254/", "secret": "s"}],
+        )
+
+        called = {"n": 0}
+        import httpx as _httpx
+        async def spy_post(self, *a, **kw):
+            called["n"] += 1
+            class _R:
+                status_code = 200
+            return _R()
+        monkeypatch.setattr(_httpx.AsyncClient, "post", spy_post)
+
+        await wd.dispatch_event("t1", "guardrail_blocked", {"x": 1})
+        assert called["n"] == 0

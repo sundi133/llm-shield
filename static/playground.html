@@ -6,21 +6,22 @@
 <title>LLM Shield — Agent Chat Playground</title>
 <style>
 :root {
-  --bg-0: #0a0a0f; --bg-1: #12121a; --bg-2: #1a1a24; --bg-3: #21262d;
-  --border: #27272f; --border-light: #444c56;
-  --text: #f5f5f7; --text-dim: #d4d4d8; --text-muted: #8b949e;
-  --accent: #9bea60; --accent-dim: #6db43d;
-  --success: #3fb950; --success-dim: #238636;
-  --danger: #f85149; --danger-dim: #da3633;
-  --warning: #d29922;
-  --user-bg: #1f3a5f; --assistant-bg: #1c2128;
+  /* Light theme — matches the tenant portal */
+  --bg-0: #f6f7f9; --bg-1: #ffffff; --bg-2: #ffffff; --bg-3: #f1f3f5;
+  --border: #e4e7ec; --border-light: #d0d5dd;
+  --text: #1a1d24; --text-dim: #5b616e; --text-muted: #868c98;
+  --accent: #4f46e5; --accent-dim: #4338ca;
+  --success: #059669; --success-dim: #047857;
+  --danger: #dc2626; --danger-dim: #b91c1c;
+  --warning: #b45309;
+  --user-bg: #eef2ff; --assistant-bg: #f4f6f8;
   --sidebar-width: 280px;
-  --sidebar-bg: #090a0d;
-  --sidebar-surface: #1b1d22;
-  --sidebar-border: #24262d;
-  --sidebar-text: #f5f5f7;
-  --sidebar-text-dim: #9a9ca5;
-  --sidebar-text-muted: #6d7078;
+  --sidebar-bg: #ffffff;
+  --sidebar-surface: #f4f6f8;
+  --sidebar-border: #e4e7ec;
+  --sidebar-text: #1a1d24;
+  --sidebar-text-dim: #5b616e;
+  --sidebar-text-muted: #868c98;
   --type-label: 11px;
   --type-body: 14px;
   --type-meta: 12.5px;
@@ -37,7 +38,7 @@ input, select, textarea, button { font-family: inherit; }
 .header { grid-column: 1 / -1; background: var(--bg-1); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 1.25rem; gap: 0.75rem; z-index: 10; }
 .header h1 { font-size: 1rem; color: var(--text); font-weight: 700; letter-spacing: -0.02em; }
 .header h1 span { color: var(--accent); }
-.header .tag { font-size: 0.65rem; padding: 2px 8px; border-radius: 10px; background: rgba(155, 234, 96, 0.14); color: var(--accent); border: 1px solid rgba(155, 234, 96, 0.28); font-weight: 700; letter-spacing: 0.08em; }
+.header .tag { font-size: 0.65rem; padding: 2px 8px; border-radius: 10px; background: rgba(99, 102, 241, 0.14); color: var(--accent); border: 1px solid rgba(99, 102, 241, 0.28); font-weight: 700; letter-spacing: 0.08em; }
 .header .spacer { flex: 1; }
 .header .status { font-size: var(--type-meta); color: var(--text-muted); font-family: 'SF Mono', 'JetBrains Mono', monospace; }
 
@@ -47,24 +48,28 @@ input, select, textarea, button { font-family: inherit; }
 .sidebar h3 { font-size: var(--type-label); text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--sidebar-text-muted); margin-bottom: 0.7rem; padding: 0 0.8rem; }
 .field { margin-bottom: 0.65rem; padding: 0 0.8rem; }
 .field label { display: block; font-size: var(--type-meta); color: var(--sidebar-text-dim); margin-bottom: 6px; font-weight: 600; }
-.field input, .field select { width: 100%; background: #0f1014; border: 1px solid var(--sidebar-border); border-radius: 10px; color: var(--text-dim); padding: 10px 12px; font-size: var(--type-body); }
-.field input:focus, .field select:focus { outline: none; border-color: var(--accent-dim); box-shadow: 0 0 0 3px rgba(155, 234, 96, 0.08); }
+.field input, .field select { width: 100%; background: #f6f7f9; border: 1px solid var(--sidebar-border); border-radius: 10px; color: var(--text-dim); padding: 10px 12px; font-size: var(--type-body); }
+.field input:focus, .field select:focus { outline: none; border-color: var(--accent-dim); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.08); }
 .field input::placeholder { color: var(--border-light); }
 .btn { padding: 10px 14px; border-radius: 12px; border: 1px solid var(--sidebar-border); font-size: var(--type-body); font-weight: 600; cursor: pointer; transition: all 0.15s; width: calc(100% - 1.6rem); margin: 0 0.8rem; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.btn-primary { background: rgba(155, 234, 96, 0.14); color: var(--accent); border-color: rgba(155, 234, 96, 0.28); }
-.btn-primary:hover:not(:disabled) { background: rgba(155, 234, 96, 0.22); }
-.policy-status { font-size: var(--type-meta); padding: 9px 12px; border-radius: 10px; background: #0f1014; border: 1px solid var(--sidebar-border); margin: 0 0.8rem; }
+.btn-primary { background: rgba(99, 102, 241, 0.14); color: var(--accent); border-color: rgba(99, 102, 241, 0.28); }
+.btn-primary:hover:not(:disabled) { background: rgba(99, 102, 241, 0.22); }
+.policy-status { font-size: var(--type-meta); padding: 9px 12px; border-radius: 10px; background: #f6f7f9; border: 1px solid var(--sidebar-border); margin: 0 0.8rem; }
 .policy-ok { border-color: var(--success-dim); color: var(--success); }
 .policy-none { color: var(--sidebar-text-muted); }
 
 .tool-list { display: flex; flex-direction: column; gap: 6px; padding: 0 0.8rem; }
-.tool-chip { font-size: var(--type-meta); padding: 8px 10px; border-radius: 10px; background: #0f1014; border: 1px solid var(--sidebar-border); display: flex; align-items: center; gap: 8px; }
-.tool-chip .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.tool-chip .dot.allowed { background: var(--success); }
-.tool-chip .dot.blocked { background: var(--danger); }
+.tool-chip { font-size: var(--type-meta); padding: 8px 10px; border-radius: 10px; background: #f6f7f9; border: 1px solid var(--sidebar-border); display: flex; align-items: center; gap: 8px; }
+.tool-chip.chip-blocked { border-color: rgba(248,81,73,0.3); background: rgba(248,81,73,0.04); }
+.tool-chip .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.tool-chip .dot.allowed { background: var(--success); box-shadow: 0 0 4px var(--success); }
+.tool-chip .dot.blocked { background: var(--danger); box-shadow: 0 0 4px var(--danger); }
 .tool-chip .dot.unknown { background: var(--sidebar-text-muted); }
 .tool-chip .name { font-family: 'SF Mono', 'JetBrains Mono', monospace; color: var(--text-dim); }
+.tool-chip .access-label { font-size: 9px; font-weight: 700; margin-left: auto; padding: 1px 5px; border-radius: 4px; }
+.tool-chip .access-label.allowed { background: rgba(16,185,129,0.15); color: #10b981; }
+.tool-chip .access-label.blocked { background: rgba(248,81,73,0.15); color: #f85149; }
 .divider { height: 1px; background: var(--sidebar-border); margin: 0.1rem 0; }
 
 /* --- Chat --- */
@@ -76,10 +81,10 @@ input, select, textarea, button { font-family: inherit; }
 
 .msg { max-width: 85%; border-radius: 12px; padding: 0.75rem 1rem; font-size: var(--type-body); line-height: 1.55; animation: fadeIn 0.2s ease; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-.msg-user { align-self: flex-end; background: var(--user-bg); border: 1px solid #2a5a8f; color: var(--text); border-bottom-right-radius: 4px; }
+.msg-user { align-self: flex-end; background: var(--user-bg); border: 1px solid #c7d2fe; color: var(--text); border-bottom-right-radius: 4px; }
 .msg-assistant { align-self: flex-start; background: var(--assistant-bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .msg-system { align-self: center; background: var(--bg-3); border: 1px solid var(--border); color: var(--text-muted); font-size: 0.78rem; max-width: 70%; text-align: center; }
-.msg-error { align-self: center; background: #2d1b1b; border: 1px solid var(--danger-dim); color: var(--danger); font-size: 0.82rem; max-width: 70%; }
+.msg-error { align-self: center; background: #fef2f2; border: 1px solid var(--danger-dim); color: var(--danger); font-size: 0.82rem; max-width: 70%; }
 
 .msg-assistant .content { white-space: pre-wrap; }
 .msg-meta { font-size: 0.68rem; color: var(--text-muted); margin-top: 6px; font-family: 'SF Mono', 'JetBrains Mono', monospace; }
@@ -87,16 +92,16 @@ input, select, textarea, button { font-family: inherit; }
 /* Tool call cards */
 .tool-calls { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; }
 .tool-card { border-radius: 8px; padding: 0.65rem 0.85rem; border: 1px solid var(--border); }
-.tool-card-allowed { background: #0d2818; border-color: var(--success-dim); }
-.tool-card-blocked { background: #2d1215; border-color: var(--danger-dim); }
-.tool-card-unregistered { background: #2d2510; border-color: var(--warning); }
+.tool-card-allowed { background: #ecfdf5; border-color: var(--success-dim); }
+.tool-card-blocked { background: #fef2f2; border-color: var(--danger-dim); }
+.tool-card-unregistered { background: #fffbeb; border-color: var(--warning); }
 .tool-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .tool-card-header .icon { font-size: 1rem; }
 .tool-card-header .name { font-family: 'SF Mono', 'JetBrains Mono', monospace; font-weight: 600; font-size: var(--type-meta); color: var(--text); }
 .tool-card-header .badge { font-size: 0.65rem; padding: 2px 8px; border-radius: 10px; font-weight: 700; letter-spacing: 0.3px; margin-left: auto; }
 .badge-allowed { background: var(--success-dim); color: #fff; }
 .badge-blocked { background: var(--danger-dim); color: #fff; }
-.tool-card-args { font-family: 'SF Mono', 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text-muted); background: rgba(0,0,0,0.25); padding: 6px 10px; border-radius: 4px; margin-bottom: 6px; white-space: pre-wrap; }
+.tool-card-args { font-family: 'SF Mono', 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text-muted); background: rgba(0,0,0,0.05); padding: 6px 10px; border-radius: 4px; margin-bottom: 6px; white-space: pre-wrap; }
 .tool-card-reason { font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }
 
 /* Input bar */
@@ -118,7 +123,7 @@ input, select, textarea, button { font-family: inherit; }
 
 /* Presets */
 .presets { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-.preset-btn { text-align: left; background: #0f1014; border: 1px solid var(--sidebar-border); border-radius: 12px; color: var(--text-dim); padding: 10px 12px; font-size: var(--type-meta); cursor: pointer; transition: all 0.15s; line-height: 1.4; }
+.preset-btn { text-align: left; background: #f6f7f9; border: 1px solid var(--sidebar-border); border-radius: 12px; color: var(--text-dim); padding: 10px 12px; font-size: var(--type-meta); cursor: pointer; transition: all 0.15s; line-height: 1.4; }
 .preset-btn:hover { border-color: var(--accent); color: var(--text); background: var(--bg-2); }
 .preset-btn .label { font-weight: 700; display: block; margin-bottom: 2px; font-size: var(--type-body); }
 .preset-btn .desc { color: var(--text-muted); font-size: var(--type-meta); }
@@ -136,18 +141,51 @@ input, select, textarea, button { font-family: inherit; }
 
 /* Generate prompts */
 .generate-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
-.generate-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 10px; border: 1px solid rgba(155, 234, 96, 0.28); background: rgba(155, 234, 96, 0.08); color: var(--accent); font-size: var(--type-meta); font-weight: 600; cursor: pointer; transition: all 0.15s; }
-.generate-btn:hover:not(:disabled) { background: rgba(155, 234, 96, 0.18); color: var(--text); }
+.generate-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 10px; border: 1px solid rgba(99, 102, 241, 0.28); background: rgba(99, 102, 241, 0.08); color: var(--accent); font-size: var(--type-meta); font-weight: 600; cursor: pointer; transition: all 0.15s; }
+.generate-btn:hover:not(:disabled) { background: rgba(99, 102, 241, 0.18); color: var(--text); }
 .generate-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .generate-spinner { width: 12px; height: 12px; border: 2px solid var(--accent-dim); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .prompts-hint { font-size: var(--type-meta); color: var(--text-muted); padding: 12px 0; text-align: center; }
+.prompts-loading { display: flex; align-items: center; justify-content: center; gap: 8px; }
 
 @media (max-width: 900px) {
   body { height: auto; overflow: auto; }
   .app { grid-template-columns: 1fr; grid-template-rows: 52px auto 1fr; height: auto; min-height: 100vh; }
   .sidebar { border-right: none; border-bottom: 1px solid var(--sidebar-border); }
   .messages { min-height: 40vh; }
+}
+
+/* ============================================================
+   UI polish layer — playground refinement (consistent with portal feel).
+   Additive only: cascades last, keeps the playground's own green palette.
+   ============================================================ */
+* { scrollbar-width: thin; scrollbar-color: var(--border-light) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: #5b6573; background-clip: padding-box; }
+
+::selection { background: rgba(99, 102, 241, 0.3); color: #fff; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+button { transition: background 0.15s ease, border-color 0.15s ease, transform 0.08s ease, box-shadow 0.15s ease; }
+button:active:not(:disabled) { transform: translateY(1px); }
+
+.field input:hover, .field select:hover { border-color: var(--border-light); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 </style>
 </head>
@@ -167,7 +205,7 @@ input, select, textarea, button { font-family: inherit; }
       <h3>Tenant</h3>
       <div class="field">
         <label>Tenant API Key</label>
-        <input type="password" id="api-key" placeholder="tenant-…-key-…">
+        <input type="password" id="api-key" placeholder="tenant-…-key-…" autocomplete="off">
       </div>
       <button class="btn btn-primary" onclick="loadPolicy()" id="load-btn">Load Policy</button>
       <div class="policy-status policy-none" id="policy-status" style="margin-top:0.5rem;">No policy loaded</div>
@@ -197,17 +235,19 @@ input, select, textarea, button { font-family: inherit; }
       <h3>LLM (for function calling)</h3>
       <div class="llm-config">
         <div class="field">
-          <label>OpenAI API Key</label>
-          <input type="password" id="llm-api-key" placeholder="sk-…">
+          <label>API Base URL</label>
+          <input type="text" id="llm-base-url" placeholder="https://api.openai.com/v1" value="https://api.openai.com/v1">
+        </div>
+        <div class="field">
+          <label>Master Key <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
+          <input type="password" id="llm-master-key" placeholder="sk-… or litellm master key" autocomplete="off">
         </div>
         <div class="field">
           <label>Model</label>
-          <select id="llm-model">
-            <option value="gpt-4o-mini">gpt-4o-mini</option>
-            <option value="gpt-4o">gpt-4o</option>
-            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-            <option value="gpt-4.1-nano">gpt-4.1-nano</option>
-          </select>
+          <input type="text" id="llm-model" placeholder="gpt-4o-mini" value="gpt-4o-mini">
+        </div>
+        <div style="font-size:var(--type-meta);color:var(--text-muted);margin:2px 0 0;padding:0 0.8rem;line-height:1.5;">
+          Works with OpenAI, LiteLLM proxy, or any OpenAI-compatible endpoint.
         </div>
       </div>
     </div>
@@ -217,12 +257,12 @@ input, select, textarea, button { font-family: inherit; }
     <div class="sidebar-section">
       <h3>Shield Guardrails</h3>
       <div class="field">
-        <label>Shield Endpoint <span style="font-weight:400;color:var(--text-muted);">(for guardrails)</span></label>
+        <label>Endpoint</label>
         <input type="text" id="shield-endpoint" placeholder="https://your-shield.api.runpod.ai">
       </div>
       <div class="field">
-        <label>Shield Auth Token <span style="font-weight:400;color:var(--text-muted);">(Bearer)</span></label>
-        <input type="password" id="shield-token" placeholder="rpa_… or Bearer token">
+        <label>Auth Token <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
+        <input type="password" id="shield-token" placeholder="Bearer token" autocomplete="off">
       </div>
       <div style="font-size:var(--type-meta);color:var(--text-muted);margin:2px 0 0;padding:0 0.8rem;line-height:1.5;">
         If set, input &amp; output guardrails run before/after LLM calls. Leave empty to skip guardrails.
@@ -242,13 +282,16 @@ input, select, textarea, button { font-family: inherit; }
 
     <div class="sidebar-section">
       <div class="generate-row">
-        <h3>Quick Prompts</h3>
+        <h3>Test Prompts</h3>
         <button class="generate-btn" id="generate-btn" onclick="generateQuickPrompts()" disabled>
           <span id="generate-icon">✦</span> Generate
         </button>
       </div>
+      <div style="font-size:var(--type-meta);color:var(--text-muted);padding:0 0.8rem 0.5rem;line-height:1.5;">
+        Auto-generated prompts to test your policies. Click any to send it.
+      </div>
       <div class="presets" id="presets">
-        <div class="prompts-hint">Load policy &amp; add OpenAI key to generate</div>
+        <div class="prompts-hint">Load policy to generate</div>
       </div>
     </div>
   </div>
@@ -263,6 +306,7 @@ input, select, textarea, button { font-family: inherit; }
     </div>
     <div class="input-bar">
       <textarea id="msg-input" rows="1" placeholder="Send a message to the AI agent…" onkeydown="handleKey(event)"></textarea>
+      <button class="send-btn" id="clear-btn" onclick="clearChat()" title="Clear chat" style="background:transparent;color:var(--text-muted);font-size:14px;">&#8634;</button>
       <button class="send-btn" id="send-btn" onclick="sendMessage()" disabled title="Send">&#9654;</button>
     </div>
   </div>
@@ -285,8 +329,9 @@ function getConfig() {
     agentKey: selectedAgents[0] || '',
     selectedAgents,
     userRole: $('user-role').value,
-    llmApiKey: $('llm-api-key').value.trim(),
-    llmModel: $('llm-model').value,
+    llmBaseUrl: $('llm-base-url').value.trim() || 'https://api.openai.com/v1',
+    llmMasterKey: $('llm-master-key').value.trim(),
+    llmModel: $('llm-model').value.trim() || 'gpt-4o-mini',
     shieldEndpoint: $('shield-endpoint').value.trim(),
     shieldToken: $('shield-token').value.trim(),
   };
@@ -313,6 +358,12 @@ function usePreset(text) {
 /* --- Messages --- */
 const messagesEl = $('messages');
 let conversationHistory = [];
+
+function clearChat() {
+  conversationHistory = [];
+  messagesEl.innerHTML =
+    '<div class="msg msg-system">Chat cleared. Send a new message to start a fresh conversation.</div>';
+}
 
 function scrollBottom() {
   requestAnimationFrame(() => messagesEl.scrollTop = messagesEl.scrollHeight);
@@ -341,7 +392,10 @@ function addToolCards(toolCalls) {
   for (const tc of toolCalls) {
     const rbacAllowed = tc.rbac && tc.rbac.allowed;
     const sanBlocked = !!tc.sanitization_blocked;
-    const allowed = rbacAllowed && !sanBlocked;
+    const dpBlocked = !!tc.data_policy_blocked;
+    const dpMasked = !!tc.data_policy_masked;
+    const dpRedacted = !!tc.data_policy_redacted;
+    const allowed = rbacAllowed && !sanBlocked && !dpBlocked;
     const isUnreg = tc.unregistered;
     const card = document.createElement('div');
     card.className = 'tool-card ' + (isUnreg ? 'tool-card-unregistered' : allowed ? 'tool-card-allowed' : 'tool-card-blocked');
@@ -387,6 +441,7 @@ function addToolCards(toolCalls) {
         ${isUnreg ? '<span class="badge" style="background:#92400e;color:#fbbf24;">UNREGISTERED</span>' : ''}
         <span class="badge ${allowed ? 'badge-allowed' : 'badge-blocked'}">${allowed ? 'ALLOWED' : 'BLOCKED'}</span>
         ${sanBlocked ? '<span class="badge badge-blocked" title="Critical sanitization pattern matched">SANITIZATION</span>' : ''}
+        ${dpBlocked ? '<span class="badge badge-blocked" title="Data policy violation">DATA POLICY</span>' : ''}
       </div>
       <div class="tool-card-args">${esc(argsStr)}</div>
       <div class="tool-card-reason">${esc(sanReason || rbacMsg)}</div>
@@ -412,8 +467,9 @@ function addGuardrailCard(stage, result, blocked, blockReason) {
 
   const icon = blocked ? '🛡️ ❌' : '🛡️ ✅';
   const label = stage === 'input' ? 'Input Guardrails' : 'Output Guardrails';
-  const action = result.action || 'pass';
-  const time = result.inference_time_ms ? `${Math.round(result.inference_time_ms)}ms` : '';
+  const action = result.action || (result.allowed === false ? 'block' : 'pass');
+  const time = result.inference_time_ms || result.total_latency_ms
+    ? `${Math.round(result.inference_time_ms || result.total_latency_ms)}ms` : '';
 
   let html = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
     <span style="font-size:1rem;">${icon}</span>
@@ -429,14 +485,14 @@ function addGuardrailCard(stage, result, blocked, blockReason) {
     html += `<div style="font-size:0.78rem;color:var(--danger);margin-bottom:6px;">${esc(blockReason)}</div>`;
   }
 
-  const items = result.guardrail_results || [];
+  const items = result.guardrail_results || result.results || [];
   if (items.length) {
     html += '<div style="display:flex;flex-direction:column;gap:3px;">';
     for (const gr of items) {
       const passed = gr.passed !== false;
       const grAction = gr.action || 'pass';
       const dot = passed ? '🟢' : (grAction === 'block' ? '🔴' : '🟡');
-      const name = gr.guardrail || gr.name || '?';
+      const name = gr.guardrail || gr.guardrail_name || gr.name || '?';
       const msg = gr.message || gr.reason || '';
       html += `<div style="font-size:0.72rem;display:flex;align-items:center;gap:6px;padding:3px 8px;
         background:rgba(0,0,0,0.2);border-radius:4px;">
@@ -585,6 +641,10 @@ function setGenerateLoading(on) {
     btn.disabled = true;
     icon.className = 'generate-spinner';
     icon.textContent = '';
+    $('presets').innerHTML =
+      '<div class="prompts-hint prompts-loading">' +
+      '<span class="generate-spinner"></span> Generating test prompts…' +
+      '</div>';
   } else {
     btn.disabled = !POLICY || !getConfig().selectedAgents.length;
     icon.className = '';
@@ -616,7 +676,12 @@ function renderPrompts(prompts) {
     if (p.type === 'blocked') btn.classList.add('preset-blocked');
     if (p.type === 'guardrail') btn.classList.add('preset-guardrail');
     btn.addEventListener('click', () => usePreset(p.prompt));
-    btn.innerHTML = `<span class="label">${esc(p.label)}</span><span class="desc">${esc(p.desc)}</span>`;
+    const statusBadge = p.type === 'blocked'
+      ? '<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(248,81,73,0.2);color:#f85149;margin-left:6px;">BLOCKED</span>'
+      : p.type === 'allowed'
+      ? '<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(16,185,129,0.2);color:#10b981;margin-left:6px;">ALLOWED</span>'
+      : '<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(210,153,34,0.2);color:#d29922;margin-left:6px;">GUARDRAIL</span>';
+    btn.innerHTML = `<span class="label">${esc(p.label)}${statusBadge}</span><span class="desc">${esc(p.desc)}</span>`;
     presetsEl.appendChild(btn);
   }
 }
@@ -624,7 +689,7 @@ function renderPrompts(prompts) {
 function _buildFallbackPrompts() {
   const { allowedTools, blockedTools, role } = PROMPT_CTX;
   const prompts = [];
-  const readable = n => n.replace(/_/g, ' ');
+  const readable = n => n;
   for (const t of allowedTools) {
     prompts.push({ label: `${readable(t)} request`, desc: `Allowed for role ${role}`, prompt: `Can you ${readable(t)} for me?`, type: 'allowed' });
   }
@@ -638,12 +703,12 @@ async function generateQuickPrompts() {
   const cfg = getConfig();
   const { allowedTools, blockedTools, role, agentName, agentDesc, guardrails, selectedAgents } = PROMPT_CTX;
 
-  if (!cfg.llmApiKey) {
+  if (!cfg.llmBaseUrl) {
     const fallback = _buildFallbackPrompts();
     if (fallback.length) {
       renderPrompts(fallback);
     } else {
-      $('presets').innerHTML = '<div class="prompts-hint">Add an OpenAI API key for AI-generated prompts</div>';
+      $('presets').innerHTML = '<div class="prompts-hint">Set an LLM base URL for AI-generated prompts</div>';
     }
     return;
   }
@@ -712,33 +777,59 @@ async function generateQuickPrompts() {
   const prompt = lines.filter(Boolean).join('\n');
 
   try {
-    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+    const resp = await fetch('/playground/llm-proxy', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.llmApiKey}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: cfg.llmModel,
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content: 'Generate the test prompts as JSON.' },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.8,
-        max_tokens: 1200,
+        base_url: cfg.llmBaseUrl,
+        master_key: cfg.llmMasterKey || '',
+        payload: {
+          model: cfg.llmModel,
+          messages: [
+            { role: 'system', content: prompt },
+            { role: 'user', content: 'Generate the test prompts as JSON. Return ONLY the JSON object, no markdown or explanation.' },
+          ],
+          temperature: 0.8,
+          max_tokens: 4096,
+        },
       }),
     });
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
-      throw new Error(err.error?.message || `HTTP ${resp.status}`);
+      throw new Error(err.error?.message || err.error || `HTTP ${resp.status}`);
     }
 
     const data = await resp.json();
-    const parsed = JSON.parse(data.choices[0].message.content);
-    const prompts = Array.isArray(parsed) ? parsed : (parsed.prompts || []);
+    console.log('[Quick Prompts] LLM proxy response:', JSON.stringify(data, null, 2));
+    const msg = data.choices?.[0]?.message || {};
+    const raw = (msg.content || '').trim();
+    console.log('[Quick Prompts] Raw content:', raw);
+    console.log('[Quick Prompts] finish_reason:', data.choices?.[0]?.finish_reason);
+
+    if (!raw && data.choices?.[0]?.finish_reason === 'length') {
+      throw new Error('Model ran out of tokens (spent on reasoning). Try a different model or retry.');
+    }
+    if (!raw) {
+      throw new Error('Model returned empty content. Check model and base URL.');
+    }
+    // Extract JSON from the response — handle markdown fences or plain JSON
+    const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, raw];
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonMatch[1].trim());
+    } catch {
+      // Last resort: find first { or [ and parse from there
+      const start = raw.search(/[\[{]/);
+      if (start === -1) throw new Error('LLM did not return valid JSON. Raw: ' + raw.substring(0, 300));
+      parsed = JSON.parse(raw.slice(start));
+    }
+    const prompts = Array.isArray(parsed) ? parsed : (parsed.prompts || parsed.data || []);
 
     PROMPT_CACHE[key] = prompts;
     renderPrompts(prompts);
   } catch (e) {
+    console.error('[Quick Prompts] Error:', e);
     $('presets').innerHTML = `<div class="prompts-hint" style="color:var(--danger);">Generation failed: ${esc(e.message)}</div>`;
   } finally {
     setGenerateLoading(false);
@@ -812,9 +903,9 @@ function updateToolList() {
     }
 
     const chip = document.createElement('div');
-    chip.className = 'tool-chip';
+    chip.className = 'tool-chip' + (bestStatus === 'blocked' ? ' chip-blocked' : '');
     chip.title = bestTitle;
-    chip.innerHTML = `<span class="dot ${bestStatus}"></span><span class="name">${tool}</span>`;
+    chip.innerHTML = `<span class="dot ${bestStatus}"></span><span class="name">${tool}</span><span class="access-label ${bestStatus}">${bestStatus === 'allowed' ? 'ALLOWED' : 'BLOCKED'}</span>`;
     listEl.appendChild(chip);
   }
 
@@ -896,9 +987,10 @@ async function sendMessage() {
       user_role: cfg.userRole,
     };
 
-    if (cfg.llmApiKey) {
-      body.llm_api_key = cfg.llmApiKey;
+    if (cfg.llmBaseUrl) {
+      body.llm_base_url = cfg.llmBaseUrl;
       body.llm_model = cfg.llmModel;
+      if (cfg.llmMasterKey) body.llm_master_key = cfg.llmMasterKey;
     }
     if (cfg.shieldEndpoint) {
       body.shield_endpoint = cfg.shieldEndpoint;
@@ -955,7 +1047,7 @@ async function sendMessage() {
     } else {
       // Assistant text (only when not blocked)
       if (data.text) {
-        addMessage('assistant', esc(data.text), elapsed + 'ms · ' + (cfg.llmApiKey ? cfg.llmModel : 'built-in'));
+        addMessage('assistant', esc(data.text), elapsed + 'ms · ' + (cfg.llmMasterKey ? cfg.llmModel : 'built-in'));
         conversationHistory.push({ role: 'assistant', content: data.text });
       }
 
@@ -967,18 +1059,29 @@ async function sendMessage() {
         for (const tc of data.tool_calls) {
           const rbacOk = tc.rbac?.allowed;
           const sanBlocked = !!tc.sanitization_blocked;
-          const readable = tc.tool_name.replace(/_/g, ' ');
+          const readable = tc.tool_name;
           if (tc.unregistered) {
             lines.push(`⚠ Tool <strong>${esc(readable)}</strong> is not registered — it was blocked. Register it in your agent registry to enable access.`);
           } else if (sanBlocked) {
             const reason = tc.sanitization_block_reason || 'critical sanitization pattern matched';
             lines.push(`🚫 Tool <strong>${esc(readable)}</strong> blocked — ${esc(reason)}.`);
+          } else if (tc.data_policy_blocked) {
+            const reason = tc.rbac?.message || 'Data policy violation';
+            lines.push(`🛡️ Tool <strong>${esc(readable)}</strong> blocked by data policy — ${esc(reason)}.`);
+          } else if (tc.data_policy_masked) {
+            lines.push(`🔒 Tool <strong>${esc(readable)}</strong> output partially masked by data policy.`);
+          } else if (tc.data_policy_redacted) {
+            lines.push(`🔏 Tool <strong>${esc(readable)}</strong> output redacted by data policy.`);
           } else if (rbacOk) {
-            const argSummary = Object.entries(tc.arguments || {})
-              .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
-              .join(', ');
             const sanitizedNote = tc.sanitization && tc.sanitization.input_modified ? ' <em style="color:#93c5fd;">(sanitized)</em>' : '';
-            lines.push(`✅ Executing <strong>${esc(readable)}</strong>${argSummary ? ' — ' + esc(argSummary) : ''}${sanitizedNote}`);
+            let toolLine = `✅ <strong>${esc(readable)}</strong> executed${sanitizedNote}`;
+            if (tc.simulated_output) {
+              const outStr = typeof tc.simulated_output === 'string'
+                ? tc.simulated_output
+                : JSON.stringify(tc.simulated_output, null, 2);
+              toolLine += `<pre style="margin:6px 0 0;padding:8px 10px;background:rgba(0,0,0,0.05);border-radius:6px;font-size:0.75rem;color:var(--text-dim);white-space:pre-wrap;max-height:150px;overflow-y:auto;">${esc(outStr)}</pre>`;
+            }
+            lines.push(toolLine);
           } else {
             lines.push(`🚫 Sorry, you don't have access to <strong>${esc(readable)}</strong>.`);
           }
@@ -1013,7 +1116,7 @@ async function sendMessage() {
 }
 
 /* --- Persist config in sessionStorage --- */
-const PERSIST_KEYS = ['api-key', 'llm-api-key', 'llm-model', 'shield-endpoint', 'shield-token'];
+const PERSIST_KEYS = ['api-key', 'llm-base-url', 'llm-master-key', 'llm-model', 'shield-endpoint', 'shield-token'];
 function saveConfig() {
   for (const k of PERSIST_KEYS) {
     sessionStorage.setItem('pg_' + k, $(k).value);
@@ -1032,6 +1135,38 @@ PERSIST_KEYS.forEach(id => {
 });
 
 restoreConfig();
+
+// Load playground defaults from server env vars, then tenant session
+(async function initPlayground() {
+  // 1. Fetch server-side defaults from env vars (overrides sessionStorage)
+  try {
+    const resp = await fetch('/playground/config');
+    if (resp.ok) {
+      const cfg = await resp.json();
+      const defaults = {
+        'llm-base-url': cfg.llm_base_url,
+        'llm-master-key': cfg.llm_master_key,
+        'llm-model': cfg.llm_model,
+        'shield-endpoint': cfg.shield_endpoint,
+        'shield-token': cfg.shield_token,
+      };
+      for (const [id, val] of Object.entries(defaults)) {
+        if (val) $(id).value = val;
+      }
+    }
+  } catch (e) { /* server may not have the endpoint */ }
+
+  // 2. Auto-fill API key from tenant portal login session
+  if (!$('api-key').value) {
+    const tenantKey = localStorage.getItem('votal_tenant_key');
+    if (tenantKey) $('api-key').value = tenantKey;
+  }
+
+  saveConfig();
+
+  // 3. Auto-load policy if we have an API key
+  if ($('api-key').value) loadPolicy();
+})();
 </script>
 </body>
 </html>

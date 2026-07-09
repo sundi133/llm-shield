@@ -41,7 +41,7 @@ This document provides comprehensive guidance for deploying LLM Shield Guardrail
 │ ┌─────────────────────────────────────────────────────────────────────────────────────┐ │
 │ │                              API Gateway Layer                                     │ │
 │ │  ┌─────────────────────────────────────────────────────────────────────────────┐   │ │
-│ │  │                        F5 API Gateway                                      │   │ │
+│ │  │                          API Gateway                                       │   │ │
 │ │  │  • Load Balancing  • SSL Termination  • Authentication                     │   │ │
 │ │  │  • Request Routing • Health Checks    • Circuit Breaker                    │   │ │
 │ │  └─────────────────────────────────────────────────────────────────────────────┘   │ │
@@ -135,7 +135,7 @@ This document provides comprehensive guidance for deploying LLM Shield Guardrail
 
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│   Client    │───▶│ F5 Gateway  │───▶│LLM Shield   │───▶│  Lite LLM   │───▶│GPU Workers  │
+│   Client    │───▶│ API Gateway │───▶│LLM Shield   │───▶│  Lite LLM   │───▶│GPU Workers  │
 │ Application │    │             │    │ Guardrails  │    │             │    │(llama.cpp)  │
 └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
        │                   │                  │                  │                  │
@@ -269,7 +269,7 @@ rbac_policies:
 
 ```mermaid
 graph TD
-    A[Client Request] --> B{F5 API Gateway}
+    A[Client Request] --> B{API Gateway}
     B -->|Load Balance| C[LLM Shield Instance]
     C -->|Authenticate| D{Auth Check}
     D -->|✓ Valid| E[Tier 1 Fast Guardrails]

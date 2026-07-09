@@ -28,8 +28,16 @@ services:
       - REDIS_URL=redis://redis:6379
       - SHIELD_ADMIN_KEY=admin123
       - SHIELD_AUTH_ENABLED=true
+      # Auth is enabled, so at least one key must be configured or the middleware
+      # rejects every request with "Auth enabled but no API keys configured".
+      - SHIELD_API_KEYS=sk-test-healthcare
       - PYTHONPATH=/app
       - ENVIRONMENT=development
+      # handler.py defaults PORT to 80; the port mapping below is 8000:8000,
+      # so the app must listen on 8000 inside the container or requests hit nothing.
+      - PORT=8000
+      # 32 workers (the prod default) is overkill for local dev and slow to boot.
+      - WORKERS=4
     volumes:
       # Mount source code for live editing
       - .:/app

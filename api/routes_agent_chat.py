@@ -13,6 +13,8 @@ from datetime import datetime
 from typing import Optional
 
 import httpx
+from core.feature_flags import KILLSWITCH_ENABLED
+from storage.tool_killswitch import is_tool_disabled
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -20,6 +22,9 @@ import config.schema as _config_module
 from core.llm_backend import get_server_url, _get_shared_client, _ensure_no_think
 from core.pipeline import run_input_pipeline, run_output_pipeline
 from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
+from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuardrail
+from guardrails.agentic.rbac_guard import RBACGuard
+from guardrails.agentic.data_access_guard import DataAccessGuard
 from guardrails.base import _request_configs
 from storage.audit_log import audit_logger
 
@@ -30,106 +35,71 @@ HEALTHCARE_TOOLS = [
         "type": "function",
         "function": {
             "name": "patient_lookup",
-            "description": "Look up patient records by ID — returns demographics, medical history, allergies, medications, and recent visits",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string", "description": "Patient identifier, e.g. P-12345"},
-                    "query": {"type": "string", "description": "Specific info: demographics, history, allergies, medications, lab_results"},
-                },
-                "required": ["patient_id"],
-            },
+            "description": "Look up patient records by ID — returns demographics, medical history, allergies, medications, and recent visits. Accepts a patient identifier (e.g. P-12345) and an optional query type (demographics, history, allergies, medications, lab_results).",
+            "parameters": {"type": "object"},
         },
     },
     {
         "type": "function",
         "function": {
             "name": "update_vitals",
-            "description": "Record or update a patient's vital signs",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string"},
-                    "blood_pressure": {"type": "string", "description": "Systolic/diastolic, e.g. 120/80"},
-                    "heart_rate": {"type": "integer", "description": "Beats per minute"},
-                    "temperature": {"type": "number", "description": "Body temperature in °F"},
-                    "respiratory_rate": {"type": "integer", "description": "Breaths per minute"},
-                    "oxygen_saturation": {"type": "number", "description": "SpO2 percentage"},
-                },
-                "required": ["patient_id"],
-            },
+            "description": "Record or update a patient's vital signs including blood pressure, heart rate, temperature, respiratory rate, and oxygen saturation.",
+            "parameters": {"type": "object"},
         },
     },
     {
         "type": "function",
         "function": {
             "name": "prescribe_medication",
-            "description": "Create a new prescription for a patient",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string"},
-                    "medication": {"type": "string", "description": "Drug name and strength, e.g. Lisinopril 10mg"},
-                    "dosage": {"type": "string", "description": "Dosage instructions, e.g. 1 tablet daily"},
-                    "duration": {"type": "string", "description": "Duration, e.g. 30 days"},
-                    "notes": {"type": "string", "description": "Additional prescriber notes"},
-                },
-                "required": ["patient_id", "medication", "dosage"],
-            },
+            "description": "Create a new prescription for a patient. Include the drug name and strength, dosage instructions, duration, and any prescriber notes.",
+            "parameters": {"type": "object"},
         },
     },
     {
         "type": "function",
         "function": {
             "name": "diagnosis_update",
-            "description": "Update or add a diagnosis to a patient's medical record",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string"},
-                    "diagnosis": {"type": "string", "description": "ICD-10 code or description, e.g. E11 - Type 2 Diabetes Mellitus"},
-                    "status": {"type": "string", "enum": ["active", "resolved", "chronic"], "description": "Diagnosis status"},
-                    "notes": {"type": "string", "description": "Clinical notes"},
-                },
-                "required": ["patient_id", "diagnosis"],
-            },
+            "description": "Update or add a diagnosis to a patient's medical record. Provide an ICD-10 code or description, status (active/resolved/chronic), and clinical notes.",
+            "parameters": {"type": "object"},
         },
     },
     {
         "type": "function",
         "function": {
             "name": "surgery_scheduling",
-            "description": "Schedule a surgical procedure for a patient",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string"},
-                    "procedure": {"type": "string", "description": "Procedure name, e.g. Appendectomy"},
-                    "date": {"type": "string", "description": "Preferred date (YYYY-MM-DD)"},
-                    "surgeon": {"type": "string", "description": "Surgeon name or ID"},
-                    "notes": {"type": "string", "description": "Pre-operative notes"},
-                },
-                "required": ["patient_id", "procedure"],
-            },
+            "description": "Schedule a surgical procedure for a patient. Provide procedure name, preferred date, surgeon, and pre-operative notes.",
+            "parameters": {"type": "object"},
         },
     },
     {
         "type": "function",
         "function": {
             "name": "delete_patient_record",
-            "description": "Permanently delete a patient record (requires administrative justification)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patient_id": {"type": "string"},
-                    "reason": {"type": "string", "description": "Justification for deletion (required for audit trail)"},
-                    "confirm": {"type": "boolean", "description": "Must be true to confirm deletion"},
-                },
-                "required": ["patient_id", "reason", "confirm"],
-            },
+            "description": "Permanently delete a patient record. Requires administrative justification and explicit confirmation.",
+            "parameters": {"type": "object"},
         },
     },
 ]
+
+
+def _make_schemaless(tools: list[dict]) -> list[dict]:
+    """Strip fixed schemas from tool definitions — keep only name + description.
+
+    The LLM infers parameters from the description. Guardrails validate
+    whatever the LLM generates via LLM-based data policy checks.
+    """
+    out = []
+    for tool in tools:
+        func = tool.get("function", {})
+        out.append({
+            "type": "function",
+            "function": {
+                "name": func.get("name", ""),
+                "description": func.get("description", ""),
+                "parameters": {"type": "object"},
+            },
+        })
+    return out
 
 
 def _get_upstream_url() -> Optional[str]:
@@ -170,10 +140,13 @@ async def _call_llm(messages: list, tools: list, llm_api_key: str | None = None,
     return resp.json()
 
 
-async def _check_tool_rbac(tool_name: str, agent_key: str,
+async def _check_tool_rbac(tool_name: str, tool_args: dict, agent_key: str,
                            user_role: str | None, tenant_config: dict | None) -> dict:
-    """Run the tool_allowlist guardrail on a single tool call."""
-    guard = ToolAllowlistGuardrail()
+    """Run RBAC, data access, tool allowlist, and parameter validation on a single tool call."""
+    rbac_guard = RBACGuard()
+    data_access_guard = DataAccessGuard()
+    allow_guard = ToolAllowlistGuardrail()
+    validation_guard = ToolCallValidationGuardrail()
 
     configs: dict = {}
     if tenant_config and "input_guardrails" in tenant_config:
@@ -187,11 +160,40 @@ async def _check_tool_rbac(tool_name: str, agent_key: str,
 
     token = _request_configs.set(configs) if configs else None
     try:
-        result = await guard.check("", {
+        context = {
             "agent_key": agent_key,
             "tool_name": tool_name,
             "user_role": user_role,
-        })
+            "tool_params": tool_args or {},
+            "tenant_id": (tenant_config or {}).get("tenant_id", ""),
+        }
+
+        # 1. RBAC guard — role-based tool and data scope access
+        result = await rbac_guard.check("", context)
+        if not result.passed:
+            return {
+                "allowed": False, "action": result.action,
+                "message": result.message, "details": result.details,
+            }
+
+        # 2. Data access guard — clearance level validation
+        result = await data_access_guard.check("", context)
+        if not result.passed:
+            return {
+                "allowed": False, "action": result.action,
+                "message": result.message, "details": result.details,
+            }
+
+        # 3. Tool allowlist — per-agent and per-role allowlist (intersection model)
+        result = await allow_guard.check("", context)
+        if not result.passed:
+            return {
+                "allowed": False, "action": result.action,
+                "message": result.message, "details": result.details,
+            }
+
+        # 4. Parameter validation — LLM-based data policy checks
+        result = await validation_guard.check("", context)
         return {
             "allowed": result.passed,
             "action": result.action,
@@ -231,7 +233,12 @@ def _extract_tool_calls(llm_data: dict) -> tuple[str, list[dict]]:
 
 
 def _load_tenant_tools(tenant_config: dict | None) -> list[dict]:
-    """Load tool definitions from tenant Redis config, fall back to defaults."""
+    """Load tool definitions from tenant Redis config, fall back to defaults.
+
+    All tools are converted to schemaless format — the LLM infers parameters
+    from the description and guardrails validate via LLM-based data policies.
+    """
+    tools = None
     if tenant_config:
         tenant_id = tenant_config.get("tenant_id", "")
         try:
@@ -243,11 +250,9 @@ def _load_tenant_tools(tenant_config: dict | None) -> list[dict]:
                 raw = _fallback_store.get(f"tool_definitions:{tenant_id}")
             if raw:
                 tools = _json.loads(raw)
-                if tools:
-                    return tools
         except Exception:
             pass
-    return HEALTHCARE_TOOLS
+    return _make_schemaless(tools if tools else HEALTHCARE_TOOLS)
 
 
 def _summarize_guardrail_results(results: dict | None) -> list[dict]:
@@ -332,7 +337,7 @@ async def get_agent_tools(request: Request):
     return {
         "tools": tools,
         "tool_names": [t["function"]["name"] for t in tools if "function" in t],
-        "source": "tenant" if tools is not HEALTHCARE_TOOLS else "default",
+        "source": "tenant" if tenant_config and tenant_config.get("tenant_id") else "default",
     }
 
 
@@ -345,7 +350,7 @@ async def agent_chat(request: Request):
     messages = body.get("messages", [])
     agent_key = body.get("agent_key", "")
     user_role = body.get("user_role") or request.headers.get("X-User-Role")
-    llm_api_key = body.get("llm_api_key")
+    llm_api_key = body.get("llm_master_key") or body.get("llm_api_key")
     llm_base_url = body.get("llm_base_url")
     llm_model = body.get("llm_model")
     custom_tools = body.get("tools")
@@ -370,10 +375,16 @@ async def agent_chat(request: Request):
 
     tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
 
+    # Load tools early so we can pass tool names into input guardrail context
+    tools = custom_tools or _load_tenant_tools(tenant_config)
+    tool_names = [t["function"]["name"] for t in tools if "function" in t]
+
     context = {
         "agent_key": agent_key,
         "user_role": user_role,
         "endpoint": "/v1/shield/chat/agent",
+        "tenant_id": (tenant_config or {}).get("tenant_id", ""),
+        "available_tools": tool_names,
     }
 
     last_user_msg = ""
@@ -410,8 +421,7 @@ async def agent_chat(request: Request):
             "guardrail_results": input_result.model_dump(),
         })
 
-    # --- LLM call with tools (tenant-specific from Redis, or defaults) ---
-    tools = custom_tools or _load_tenant_tools(tenant_config)
+    # --- LLM call with tools ---
     try:
         llm_data = await _call_llm(messages, tools, llm_api_key, llm_base_url, llm_model)
     except Exception as e:
@@ -425,13 +435,24 @@ async def agent_chat(request: Request):
 
     content, tool_calls = _extract_tool_calls(llm_data)
 
-    # --- RBAC check per tool call ---
+    # --- Kill switch + RBAC check per tool call ---
+    tenant_id = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
     tool_results: list[dict] = []
     for tc in tool_calls:
-        rbac = await _check_tool_rbac(tc["name"], agent_key, user_role, tenant_config)
+        tool_name = tc["name"]
+        # Kill switch check — immediately block disabled tools
+        if KILLSWITCH_ENABLED and tenant_id and is_tool_disabled(tenant_id, tool_name):
+            rbac = {
+                "allowed": False,
+                "action": "block",
+                "message": f"Tool '{tool_name}' is disabled via kill switch",
+                "source": "tool_killswitch",
+            }
+        else:
+            rbac = await _check_tool_rbac(tool_name, tc["arguments"], agent_key, user_role, tenant_config)
         tool_results.append({
             "tool_call_id": tc.get("id", ""),
-            "tool_name": tc["name"],
+            "tool_name": tool_name,
             "arguments": tc["arguments"],
             "rbac": rbac,
         })
@@ -483,7 +504,7 @@ async def agent_chat(request: Request):
         agent_key=agent_key,
         user_role=user_role,
         last_user_msg=last_user_msg,
-        action_taken="warn" if has_blocked else "pass",
+        action_taken="block" if has_blocked else "pass",
         latency_ms=latency_ms,
         stage="complete",
         tool_results=tool_results,

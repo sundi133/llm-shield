@@ -103,8 +103,8 @@ Frameworks covered:
 | **AU-2** | Event Logging | `TelemetryMiddleware` → Elasticsearch SIEM |
 | **AU-3** | Content of Audit Records | Full event schema (ECS-compliant) with timestamp, source, action, outcome |
 | **AU-6** | Audit Record Review, Analysis, and Reporting | Kibana dashboards, alerts on high-risk events |
-| **AU-9** | Protection of Audit Information | SIEM with API key auth, immutable log storage |
-| **AU-12** | Audit Record Generation | `audit_log` SQLite + ES exporter |
+| **AU-9** | Protection of Audit Information | SIEM with API key auth; append-only Redis stores; cryptographic tamper-evidence on the [tamper-evident audit roadmap](spec-tamper-evident-audit.md) |
+| **AU-12** | Audit Record Generation | `audit_log` (Redis ZSET) + `decision_audit` + ES exporter |
 
 ### Identification and Authentication (IA)
 
@@ -138,7 +138,7 @@ Frameworks covered:
 |---|---|---|
 | **Art. 9** | Risk Management System | Full guardrail pipeline + SIEM telemetry + audit logs |
 | **Art. 10** | Data and Data Governance | `pii_detection`, `data_access_guard`, `memory_pii_scrubbing` |
-| **Art. 12** | Record-Keeping | Audit logs (SQLite) + ES telemetry (immutable event log) |
+| **Art. 12** | Record-Keeping | Audit logs (Redis, append-only) + ES telemetry; cryptographic tamper-evidence on the [roadmap](spec-tamper-evident-audit.md) |
 | **Art. 13** | Transparency and Provision of Information | `guardrail_results` in API responses with reasoning |
 | **Art. 14** | Human Oversight | `sensitive_action_confirmation`, `action_guard`, workflow approval gates |
 | **Art. 15** | Accuracy, Robustness, and Cybersecurity | `adversarial_detection`, `rate_limiter`, `budget_controls`, `regex_pattern` |
@@ -212,7 +212,7 @@ For auditors asking "how do you demonstrate control X?", point to:
 |---|---|
 | **Guardrail config** | `config/default.yaml` + per-tenant configs in Redis |
 | **Event logs** | Elasticsearch index `votal-shield-logs*` |
-| **Audit trail** | SQLite `audit.db` (queryable via `/v1/shield/audit`) |
+| **Audit trail** | Redis append-only stores (`audit:{tenant}`, `decisions:{tenant}`), queryable via `/v1/shield/audit` and `/v1/shield/decisions/{tenant}` |
 | **Per-guardrail metrics** | `votal.guardrail.latency_ms`, `votal.guardrail.passed` in ES |
 | **Risk scoring** | `event.risk_score`, `event.severity` in every event |
 | **Trace correlation** | `trace.id`, `agent.key`, `votal.session_id` across all events |
@@ -240,6 +240,29 @@ agent.key: * AND event.action: "request"
 # SI-4 (Monitoring) — all guardrail activity
 NOT url.path: ("/health" OR "/ping")
 ```
+
+## 9. Auditor evidence pack — a repeatable checklist
+
+When an auditor or customer security team asks for evidence, produce this pack. It
+maps one-to-one to the control tables above and is reproducible on demand.
+
+| # | Evidence item | How to produce it |
+|---|---|---|
+| 1 | **Control inventory** | This document (guardrail → framework control matrix, §1–6). |
+| 2 | **Live guardrail config** | `GET /v1/shield/policies/{tenant}/bundle/export` — the exact enforced policy bundle, versioned. |
+| 3 | **Policy change history** | `GET /v1/shield/policies/{tenant}/{policy}/versions` — who changed what, when, with rollback points. |
+| 4 | **Enforcement decisions** | `GET /v1/shield/decisions/{tenant}?action=block&since=…` — every block/warn with agent, tool, policy, reason, IP, timestamp. |
+| 5 | **Full audit trail** | `GET /v1/shield/audit?since=…&until=…` — all guardrail decisions for the period, tenant-scoped. |
+| 6 | **Blocked-attack samples** | SIEM/Kibana: `event.kind:"alert" AND event.risk_score>=90` (queries in §8). |
+| 7 | **Per-control effectiveness** | Per-guardrail metrics (block rate, latency) from `storage/guardrail_metrics.py` (90-day retention). |
+| 8 | **Identity & least-privilege** | RBAC role→tool matrix (`GET /v1/agents/registry`); agent tokens bound to `agent_instance_id`+`build_hash`; capability scoping. |
+| 9 | **Incident response** | Tool kill-switch history (`/v1/shield/tools/disabled`); webhook alert config; instance revocation (≤1s propagation). |
+| 10 | **Data protection** | PII/secret detection + redaction config; taint-tracking clearance map; residency = self-host / air-gapped deploy (`docs/on-premises-deployment-guide.md`). |
+| 11 | **Integrity of the trail itself** | Once the [tamper-evident audit](spec-tamper-evident-audit.md) ships: `GET /v1/shield/audit/verify` (chain intact) + signed `…/audit/export` bundle verifiable offline. |
+
+**Tip for staged rollout evidence:** run new controls in monitor mode
+(`action: warn|log`) first; the decision audit shows `would_block` volume so you
+can evidence "tuned before enforced" for change-management review.
 
 ## References
 

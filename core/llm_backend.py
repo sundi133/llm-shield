@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import subprocess
@@ -6,17 +7,28 @@ import requests
 import time
 from typing import Optional
 
+logger = logging.getLogger("votal.llm_backend")
+
+LLM_DEBUG = os.environ.get("LLM_DEBUG", "false").lower() in ("true", "1", "yes")
+
 
 def parse_llm_json(raw: str) -> dict:
-    """Parse JSON from LLM, fixing common model quirks like extra spaces in keys.
+    """Parse JSON from LLM, fixing common model quirks.
 
-    Models sometimes generate keys like 'is_  adversarial' instead of 'is_adversarial'.
-    This function cleans up such malformed keys before parsing.
+    Handles:
+    - markdown code fences: some models (e.g. gemma4 on ollama.com) wrap
+      their JSON in ```json ... ``` even when a schema is requested, which
+      makes json.loads fail with "Expecting value: line 1 column 1 (char 0)"
+    - extra spaces in keys: 'is_  adversarial' instead of 'is_adversarial'
     """
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```\s*$", "", cleaned)
     cleaned = re.sub(
         r'"([^"]*?)\s{2,}([^"]*?)"(\s*:)',
         lambda m: f'"{m.group(1)}{m.group(2)}"{m.group(3)}',
-        raw,
+        cleaned,
     )
     return json.loads(cleaned)
 
@@ -138,6 +150,34 @@ def _get_env_backend_url() -> Optional[str]:
     return url or None
 
 
+def _get_backend_type() -> str:
+    """Backend type: 'vllm' (default), 'litellm', or 'ollama'."""
+    return os.getenv("LLM_BACKEND_TYPE", "vllm").strip().lower()
+
+
+def _get_backend_api_key() -> Optional[str]:
+    """API key for authenticated backends (e.g. ollama.com cloud)."""
+    return os.getenv("OLLAMA_API_KEY") or os.getenv("LLM_BACKEND_API_KEY") or None
+
+
+def _is_ollama_mode() -> bool:
+    """True when the backend is Ollama (LiteLLM mode takes precedence)."""
+    return os.getenv("ENABLE_LITELLM") != "true" and _get_backend_type() == "ollama"
+
+
+def _auth_headers() -> dict:
+    """Authorization headers for the LLM backend, if configured.
+
+    Only attached in ollama mode (ollama.com cloud needs a Bearer key;
+    local `ollama serve` needs none). Never log the key itself.
+    """
+    if _get_backend_type() == "ollama":
+        key = _get_backend_api_key()
+        if key:
+            return {"Authorization": f"Bearer {key}"}
+    return {}
+
+
 def _get_servers_config() -> list[dict]:
     """Get server configs from yaml. Falls back to single-server default."""
     env_url = _get_env_backend_url()
@@ -184,12 +224,12 @@ def _wait_for_server(url: str, label: str, max_attempts: int = 60):
         try:
             r = requests.get(f"{url}/health", timeout=2)
             if r.json().get("status") == "ok":
-                print(f"{label} ready!")
+                logger.info("%s ready!", label)
                 return
         except Exception:
             pass
         time.sleep(2)
-        print(f"Waiting for {label}... {i + 1}/{max_attempts}")
+        logger.info("Waiting for %s... %d/%d", label, i + 1, max_attempts)
     raise RuntimeError(f"{label} failed to start")
 
 
@@ -256,8 +296,8 @@ def start_server():
 
     # Clear any RunPod-set GPU restriction so all GPUs are visible
     parent_cuda = os.environ.get("CUDA_VISIBLE_DEVICES", "not set")
-    print(f"Parent CUDA_VISIBLE_DEVICES: {parent_cuda}")
-    print(f"Launching {len(servers)} server(s)...")
+    logger.info("Parent CUDA_VISIBLE_DEVICES: %s", parent_cuda)
+    logger.info("Launching %d server(s)...", len(servers))
 
     for server_cfg in servers:
         url = server_cfg["url"]
@@ -281,7 +321,7 @@ def start_server():
 
         args = _build_server_args(port, model_path, draft_model_path)
         subprocess.Popen(args, env=env)
-        print(f"Started llama-server on port {port} (CUDA_VISIBLE_DEVICES={gpu}) for {guardrail_names}")
+        logger.info("Started llama-server on port %d (CUDA_VISIBLE_DEVICES=%s) for %s", port, gpu, guardrail_names)
 
     # Wait for all servers
     for server_cfg in servers:
@@ -290,29 +330,20 @@ def start_server():
         _wait_for_server(url, f"llama-server (GPU {gpu})")
 
     # Log routing summary
-    print("\n" + "=" * 60)
-    print("LLM BACKEND — SERVER ROUTING")
-    print("=" * 60)
-    print(f"  Servers started: {len(servers)}")
-    print(f"  Model: {model_path}")
-    print(f"    Repo: votal-ai/Qwen3.5-9B-guardrailed-v3-GGUF")
-    print(f"  Draft: {draft_model_path}")
-    print(f"    Repo: votal-ai/Qwen3.5-0.8B-GGUF")
-    print()
+    logger.info("LLM BACKEND — SERVER ROUTING")
+    logger.info("  Servers started: %d", len(servers))
+    logger.info("  Model: %s (votal-ai/Qwen3.5-9B-guardrailed-v3-GGUF)", model_path)
+    logger.info("  Draft: %s (votal-ai/Qwen3.5-0.8B-GGUF)", draft_model_path)
     for server_cfg in servers:
         url = server_cfg["url"]
         gpu = server_cfg.get("gpu", 0)
         names = server_cfg.get("guardrails", ["all"])
-        print(f"  GPU {gpu} → {url}")
-        print(f"    Guardrails: {', '.join(names)}")
-    print()
+        logger.info("  GPU %s → %s | Guardrails: %s", gpu, url, ", ".join(names))
     if _guardrail_server_map:
-        print("  Routing map:")
         for name, url in sorted(_guardrail_server_map.items()):
-            print(f"    {name} → {url}")
+            logger.info("  Routing: %s → %s", name, url)
     else:
-        print(f"  All guardrails → {_default_server_url}")
-    print("=" * 60 + "\n")
+        logger.info("  All guardrails → %s", _default_server_url)
 
 
 def get_server_url(guardrail_name: Optional[str] = None) -> str:
@@ -344,13 +375,71 @@ def _ensure_no_think(messages: list) -> list:
     return messages
 
 
+def _build_ollama_payload(
+    messages: list,
+    max_tokens: int,
+    temperature: float,
+    response_format: Optional[dict],
+) -> dict:
+    """Build a native Ollama /api/chat payload.
+
+    Native API instead of OpenAI-compat because:
+    - `think: false` actually disables thinking (compat endpoint ignores it,
+      and thinking models then return empty content under low max_tokens);
+    - `format` enforces a JSON schema server-side for response_format
+      guardrails (custom_policy, role_based_policy).
+    No /no_think prompt hack needed — `think` is first-class here.
+    """
+    payload = {
+        "model": os.getenv("LLM_MODEL_NAME", ""),
+        "messages": messages,
+        "stream": False,
+        "options": {"temperature": temperature, "num_predict": max_tokens},
+    }
+    # OLLAMA_THINK: false (default) | true | auto ("auto" omits the field for
+    # models that reject the parameter).
+    think = os.getenv("OLLAMA_THINK", "false").strip().lower()
+    if think in ("true", "false"):
+        payload["think"] = think == "true"
+    if response_format:
+        payload["format"] = response_format
+    return payload
+
+
+def _adapt_ollama_response(data: dict) -> dict:
+    """Adapt a native Ollama /api/chat response to the OpenAI shape callers expect.
+
+    Error responses ({"error": ...}) pass through unchanged — callers treat a
+    missing choices key as an LLM failure, same as an OpenAI-style error.
+    """
+    if not isinstance(data, dict) or "message" not in data:
+        return data
+    msg = data.get("message") or {}
+    return {
+        "model": data.get("model"),
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": msg.get("role", "assistant"),
+                    "content": msg.get("content", ""),
+                },
+                "finish_reason": data.get("done_reason", "stop"),
+            }
+        ],
+    }
+
+
 def _build_payload(
     messages: list,
     max_tokens: int,
     temperature: float,
     response_format: Optional[dict],
 ) -> dict:
-    """Build the request payload for llama-server or LiteLLM."""
+    """Build the request payload for llama-server, LiteLLM, or Ollama."""
+    if _is_ollama_mode():
+        return _build_ollama_payload(messages, max_tokens, temperature, response_format)
+
     messages = _ensure_no_think(messages)
     payload = {
         "messages": messages,
@@ -383,29 +472,33 @@ def _build_payload(
 
 def _print_llm_request(endpoint_url: str, payload: dict):
     """Print the exact LLM endpoint and request payload for debugging."""
-    print("\n" + "=" * 60, flush=True)
-    print("LLM REQUEST", flush=True)
-    print("=" * 60, flush=True)
-    print(f"URL: {endpoint_url}", flush=True)
-    print("PAYLOAD:", flush=True)
-    print(json.dumps(payload, indent=2, ensure_ascii=False), flush=True)
-    print("=" * 60 + "\n", flush=True)
+    if not LLM_DEBUG:
+        return
+    logger.debug("LLM REQUEST | URL: %s | PAYLOAD: %s", endpoint_url, json.dumps(payload, ensure_ascii=False))
 
 
 def _print_llm_response(endpoint_url: str, status_code: int, body: str):
     """Print upstream LLM response details when debugging failures."""
-    print("\n" + "=" * 60, flush=True)
-    print("LLM RESPONSE", flush=True)
-    print("=" * 60, flush=True)
-    print(f"URL: {endpoint_url}", flush=True)
-    print(f"STATUS: {status_code}", flush=True)
-    print("BODY:", flush=True)
-    print(body, flush=True)
-    print("=" * 60 + "\n", flush=True)
+    if not LLM_DEBUG:
+        return
+    logger.debug("LLM RESPONSE | URL: %s | STATUS: %d | BODY: %s", endpoint_url, status_code, body)
 
 
 def _chat_completions_url(server_url: str) -> str:
     return f"{_normalize_server_url(server_url)}/v1/chat/completions"
+
+
+def _endpoint_url(server_url: str) -> str:
+    """Endpoint for the configured backend.
+
+    Ollama mode uses the native /api/chat endpoint, NOT the OpenAI-compat
+    /v1/chat/completions: the compat endpoint ignores the `think` parameter,
+    so thinking models burn the whole token budget on reasoning and return
+    empty content (breaks response_format guardrails like custom_policy).
+    """
+    if _is_ollama_mode():
+        return f"{_normalize_server_url(server_url)}/api/chat"
+    return _chat_completions_url(server_url)
 
 
 def llm_call(
@@ -418,17 +511,21 @@ def llm_call(
     """Synchronous LLM call routed to the correct server."""
     url = get_server_url(guardrail_name)
     payload = _build_payload(messages, max_tokens, temperature, response_format)
-    endpoint_url = _chat_completions_url(url)
+    endpoint_url = _endpoint_url(url)
     _print_llm_request(endpoint_url, payload)
     session = _get_shared_session()
     res = session.post(
         endpoint_url,
         json=payload,
+        headers=_auth_headers() or None,
         timeout=300,
     )
     if res.status_code >= 400:
         _print_llm_response(endpoint_url, res.status_code, res.text)
-    return res.json()
+    result = res.json()
+    if _is_ollama_mode():
+        result = _adapt_ollama_response(result)
+    return result
 
 
 async def async_llm_call(
@@ -446,15 +543,18 @@ async def async_llm_call(
 
     llm_start = time.perf_counter()
     client = _get_shared_client()
-    endpoint_url = _chat_completions_url(url)
+    endpoint_url = _endpoint_url(url)
     _print_llm_request(endpoint_url, payload)
     res = await client.post(
         endpoint_url,
         json=payload,
+        headers=_auth_headers() or None,
     )
     if res.status_code >= 400:
         _print_llm_response(endpoint_url, res.status_code, res.text)
     result = res.json()
+    if _is_ollama_mode():
+        result = _adapt_ollama_response(result)
     llm_ms = (time.perf_counter() - llm_start) * 1000
 
     post_start = time.perf_counter()

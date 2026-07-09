@@ -1,0 +1,52 @@
+# GitHub Action: LLM Shield Guardrail Check
+#
+# Add this to .github/workflows/ to run guardrail tests before deploy.
+#
+# Required secrets:
+#   SHIELD_URL       — Shield endpoint URL
+#   SHIELD_API_KEY   — Tenant API key
+#   SHIELD_AUTH_TOKEN — RunPod Bearer token (optional)
+
+name: Shield Guardrail Check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  guardrail-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests pyyaml
+
+      - name: Run guardrail smoke test
+        env:
+          SHIELD_URL: ${{ secrets.SHIELD_URL }}
+          SHIELD_API_KEY: ${{ secrets.SHIELD_API_KEY }}
+          SHIELD_AUTH_TOKEN: ${{ secrets.SHIELD_AUTH_TOKEN }}
+        run: python scripts/shield_ci.py smoke
+
+      - name: Run guardrail test suite
+        if: hashFiles('scripts/test_suite.yaml') != ''
+        env:
+          SHIELD_URL: ${{ secrets.SHIELD_URL }}
+          SHIELD_API_KEY: ${{ secrets.SHIELD_API_KEY }}
+          SHIELD_AUTH_TOKEN: ${{ secrets.SHIELD_AUTH_TOKEN }}
+        run: python scripts/shield_ci.py scan --suite scripts/test_suite.yaml
+
+      - name: Pull effectiveness report
+        if: always()
+        env:
+          SHIELD_URL: ${{ secrets.SHIELD_URL }}
+          SHIELD_API_KEY: ${{ secrets.SHIELD_API_KEY }}
+          SHIELD_AUTH_TOKEN: ${{ secrets.SHIELD_AUTH_TOKEN }}
+        run: python scripts/shield_ci.py report --format markdown --days 7

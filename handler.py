@@ -30,21 +30,13 @@ def _seed_config():
             print(f"Seeded config to {config_path}")
         return
 
-    # Config exists — update llm_backend section from default
-    # This ensures new server configs deploy without manual edits
+    # Config exists — overwrite with the fresh default to pick up any
+    # new guardrail definitions.  The previous yaml.dump approach
+    # stripped quotes and comments, corrupting glob patterns like
+    # "customers.*".  A straight file copy avoids that entirely.
     try:
-        import yaml
-
-        with open(default) as f:
-            default_cfg = yaml.safe_load(f) or {}
-        with open(config_path) as f:
-            persisted_cfg = yaml.safe_load(f) or {}
-
-        if "llm_backend" in default_cfg:
-            persisted_cfg["llm_backend"] = default_cfg["llm_backend"]
-            with open(config_path, "w") as f:
-                yaml.dump(persisted_cfg, f, default_flow_style=False)
-            print(f"Updated llm_backend in {config_path}")
+        shutil.copy2(default, config_path)
+        print(f"Refreshed config from {default}")
     except Exception as e:
         print(f"Config sync failed (non-fatal): {e}")
 
@@ -54,5 +46,20 @@ app = create_app()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "80"))
-    print(f"Starting LLM Shield on port {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    workers = int(os.getenv("WORKERS", "32"))
+    print(f"Starting LLM Shield on port {port} with {workers} workers")
+    backlog = int(os.getenv("BACKLOG", "4096"))
+    limit_concurrency = int(os.getenv("LIMIT_CONCURRENCY", "0")) or None
+    uvicorn.run(
+        "handler:app",
+        host="0.0.0.0",
+        port=port,
+        workers=workers,
+        backlog=backlog,
+        limit_concurrency=limit_concurrency,
+        # Trust the TLS-terminating edge proxy (railway-edge) so the app sees
+        # the original scheme via X-Forwarded-Proto. Required for correct
+        # HTTPS detection / redirects behind the proxy.
+        proxy_headers=True,
+        forwarded_allow_ips=os.getenv("FORWARDED_ALLOW_IPS", "*"),
+    )

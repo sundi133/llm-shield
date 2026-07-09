@@ -1,5 +1,7 @@
 # Votal Shield (LLM Shield)
 
+📚 **Documentation: [docs.shield.votal.ai](https://docs.shield.votal.ai/)**
+
 AI guardrails platform that sits between your application and your LLM. Inspects inputs, enforces policies, scans outputs, secures agentic tool-calling workflows, and provides **multi-tenant isolation** with per-tenant guardrail policies stored in Redis.
 
 Runs on RunPod (GPU) with a built-in Qwen3-8B backend, or proxy to any OpenAI-compatible API.
@@ -21,6 +23,7 @@ Runs on RunPod (GPU) with a built-in Qwen3-8B backend, or proxy to any OpenAI-co
 - **Audit logging** — every admin action logged with actor, IP, before/after snapshots
 - **Runtime config** — toggle guardrails without restarting; tenants can self-serve policy edits via portal
 - **NIST AI RMF / OWASP LLM / ISO 42001 compliance mapping** — see `docs/compliance-mapping.md`
+- **Security & compliance evaluation response** (agent testing, governance, data protection, DESC AI Policy / ISR / Dubai Data Law / OWASP LLM coverage, external-model support, MCP, monitoring): see [docs/security-evaluation-response.md](docs/security-evaluation-response.md) or [docs.shield.votal.ai/security-evaluation/](https://docs.shield.votal.ai/security-evaluation/)
 
 ## Architecture
 
@@ -237,6 +240,141 @@ curl -X POST http://localhost:8080/v1/shield/mcp/register \
 curl -X POST http://localhost:8080/v1/shield/mcp/check \
   -d '{"mcp_server": "db-server", "tool_name": "query", "agent_key": "support-bot-1"}'
 ```
+
+### Data Policies (LLM-Enforced)
+
+Data policies are enforced by the LLM on every tool call — no hardcoded regex patterns. Define rules in plain English and the LLM validates tool inputs/outputs against them.
+
+#### 1. Create a data policy for a tool
+
+```bash
+curl -X POST http://localhost:8080/v1/data-policies/tools/email_send/policy \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool_name": "email_send",
+    "role_policies": [{
+      "role": "branch_manager",
+      "action": "block",
+      "data_scope": ["customer_comms"],
+      "input_rules": [
+        "### Core input policy",
+        "- Allow email only to approved internal domains",
+        "- Block any recipient outside the approved allowlist",
+        "- Block sensitive banking data in subject, body, or attachments unless explicitly allowed for that internal workflow",
+        "- Never allow customer data to be sent to personal mail, partner mail, or public mail",
+        "### Approved domain examples",
+        "- bank.ae",
+        "- ops.bank.ae",
+        "- fraud.bank.ae",
+        "### Blocked domain examples",
+        "- gmail.com",
+        "- outlook.com",
+        "- consultant.com",
+        "- any domain not on the approved list",
+        "### Input policy",
+        "Block if subject, body, or attachments contain:",
+        "- full account number",
+        "- full IBAN",
+        "- full card number",
+        "- CVV",
+        "- Emirates ID",
+        "- passport number",
+        "- full statement",
+        "- transaction history",
+        "- KYC documents",
+        "- internal fraud or compliance notes",
+        "- full customer profile"
+      ],
+      "output_rules": [
+        "Allow only minimum necessary fields for normal servicing:",
+        "- name",
+        "- customer status",
+        "- branch",
+        "- masked account reference",
+        "Redact or mask:",
+        "- Emirates ID",
+        "- passport number",
+        "- full mobile number",
+        "- full address",
+        "- salary",
+        "- KYC risk score"
+      ]
+    }]
+  }'
+```
+
+#### 2. Validate data against a policy
+
+```bash
+# Should be BLOCKED — gmail.com is not in the approved domain list
+curl -X POST http://localhost:8080/v1/data-policies/validate \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": "{\"to\": \"john@gmail.com\", \"subject\": \"Account Details\"}",
+    "tool_name": "email_send",
+    "user_role": "branch_manager",
+    "stage": "input"
+  }'
+```
+
+```json
+{
+  "validation_result": {
+    "compliant": false,
+    "risk_level": "high",
+    "violations_count": 1,
+    "violations": [{
+      "violation_type": "input_rule_violation",
+      "severity": "high",
+      "pattern": "recipient domain gmail.com is not in approved list (bank.ae, ops.bank.ae, fraud.bank.ae)"
+    }]
+  }
+}
+```
+
+```bash
+# Should PASS — bank.ae is an approved domain
+curl -X POST http://localhost:8080/v1/data-policies/validate \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": "{\"to\": \"ops@bank.ae\", \"subject\": \"Audit Complete\"}",
+    "tool_name": "email_send",
+    "user_role": "branch_manager",
+    "stage": "input"
+  }'
+```
+
+```json
+{
+  "validation_result": {
+    "compliant": true,
+    "risk_level": "low",
+    "violations_count": 0,
+    "violations": []
+  }
+}
+```
+
+#### 3. End-to-end: Agent chat with data policy enforcement
+
+```bash
+# The agent chat endpoint automatically validates tool calls against data policies
+curl -X POST http://localhost:8080/v1/shield/chat/agent \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-Agent-Key: customer-service-agent" \
+  -H "X-User-Role: branch_manager" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Email john@gmail.com the account details"}],
+    "agent_key": "customer-service-agent",
+    "user_role": "branch_manager"
+  }'
+```
+
+The LLM will generate an `email_send` tool call, but the data policy will **block** it because `gmail.com` is not in the approved domain list. The response includes the violation details.
 
 ### Agent Action Limits
 

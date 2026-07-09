@@ -12,6 +12,7 @@ from core.pipeline import run_pipeline
 from guardrails.base import _request_configs
 from guardrails.registry import get_by_stage, get_guardrail
 from storage.policy_store import check_tool_authorization, get_tool_policies
+from storage.audit_log import audit_logger
 from core.llm_backend import llm_call
 
 router = APIRouter()
@@ -25,7 +26,7 @@ router = APIRouter()
 # Shield LLM reasons about (robust to obfuscation). Both need to run here,
 # or the whole feature is just a playground toy.
 
-_VALID_ACTIONS = {"detect", "redact", "block"}
+_VALID_ACTIONS = {"detect", "redact", "mask", "block"}
 
 
 def _resolve_rule_action(rule: dict, default_action: str) -> str:
@@ -70,6 +71,13 @@ def _apply_regex_sanitization(text: str, rules: list[dict],
         if effective == "redact":
             replacement = rule.get("replacement", "[REDACTED]")
             sanitized = compiled.sub(replacement, sanitized)
+        elif effective == "mask":
+            def _partial_mask(m):
+                val = m.group(0)
+                if len(val) <= 4:
+                    return "*" * len(val)
+                return val[0] + "*" * (len(val) - 2) + val[-1]
+            sanitized = compiled.sub(_partial_mask, sanitized)
         if effective == "block":
             had_block = True
 
@@ -517,6 +525,49 @@ async def classify_output(request: Request, body: dict):
         response["sanitization"] = sanitization_meta
         if sanitization_meta.get("output_modified"):
             response["sanitized_output"] = output
+
+    # Record guardrail effectiveness metrics. Fall back to the API key when
+    # middleware didn't set request.state.tenant_id (e.g. data plane behind a
+    # proxy); see routes_classify for rationale. Use a separate variable so the
+    # handler-wide tenant_id that drives enforcement above is left untouched.
+    from storage.tenant_store import resolve_request_tenant_id
+    metrics_tenant_id = tenant_id or resolve_request_tenant_id(request)
+    if metrics_tenant_id:
+        from storage.guardrail_metrics import record_results_batch
+        record_results_batch(metrics_tenant_id, response.get("guardrail_results", []))
+
+    # Log to audit_logger so output guardrail checks appear in tenant telemetry
+    blocked = response.get("action") == "block"
+    guardrail_results = response.get("guardrail_results", [])
+    triggered = [gr["guardrail"] for gr in guardrail_results if not gr.get("passed")]
+    await audit_logger.log({
+        "agent_key": agent_id or "",
+        "endpoint": "/guardrails/output",
+        "input_text": f"output_check:{tool_name or 'general'}",
+        "action_taken": "block" if blocked else "pass",
+        "guardrails_triggered": triggered,
+        "latency_ms": response.get("inference_time_ms", 0),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id or "",
+            "user_role": user_role or "",
+            "stage": "output",
+            "device_id": request.headers.get("x-device-id", ""),
+            "blocked": blocked,
+            "block_reason": "; ".join(gr.get("message", "") for gr in guardrail_results if not gr.get("passed")) if blocked else None,
+            "session_id": context.get("session_id", ""),
+            "tool_calls": [{
+                "tool_name": tool_name or "general",
+                "arguments": {},
+                "rbac": {"allowed": not blocked, "action": response.get("action", "pass"), "message": ""},
+            }] if tool_name else [],
+            "tool_call_count": 1 if tool_name else 0,
+            "input_guardrails": [],
+            "output_guardrails": [{"guardrail": gr["guardrail"], "passed": gr["passed"], "action": gr["action"], "message": gr.get("message", "")} for gr in guardrail_results],
+            "usage": {},
+        },
+    })
+
     return response
 
 

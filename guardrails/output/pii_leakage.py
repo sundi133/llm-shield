@@ -25,7 +25,13 @@ _BUILTIN_PATTERNS = {
     "aws_key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
     "date_of_birth": re.compile(
-        r"\b(?:0[1-9]|1[0-2])[/\-](?:0[1-9]|[12]\d|3[01])[/\-](?:19|20)\d{2}\b"
+        # MM/DD/YYYY or MM-DD-YYYY  ...OR...  ISO YYYY-MM-DD / YYYY/MM/DD.
+        # The ISO form was previously missed, leaking DOB like "1991-03-14"
+        # on regex-only deployments (presidio is optional). See QA output-003.
+        r"\b(?:"
+        r"(?:0[1-9]|1[0-2])[/\-](?:0[1-9]|[12]\d|3[01])[/\-](?:19|20)\d{2}"
+        r"|(?:19|20)\d{2}[/\-](?:0[1-9]|1[0-2])[/\-](?:0[1-9]|[12]\d|3[01])"
+        r")\b"
     ),
     "passport_number": re.compile(r"\b[A-Z]{1,2}\d{6,9}\b"),
     "bank_account": re.compile(r"\b\d{8,17}\b"),  # basic routing/account number pattern

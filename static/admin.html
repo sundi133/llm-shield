@@ -9,25 +9,26 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0a0a0f;
-    --bg-2: #12121a;
-    --bg-3: #1a1a24;
-    --bg-hover: #1f1f2c;
-    --border: #27272f;
-    --border-strong: #3a3a45;
-    --text: #e4e4e7;
-    --text-dim: #a1a1aa;
-    --text-muted: #71717a;
-    --accent: #6366f1;
-    --accent-hover: #818cf8;
-    --accent-dim: rgba(99, 102, 241, 0.15);
-    --success: #10b981;
-    --warn: #f59e0b;
-    --danger: #ef4444;
+    /* Light theme — matches the tenant portal */
+    --bg: #f6f7f9;
+    --bg-2: #ffffff;
+    --bg-3: #ffffff;
+    --bg-hover: #f1f3f5;
+    --border: #e4e7ec;
+    --border-strong: #d0d5dd;
+    --text: #1a1d24;
+    --text-dim: #5b616e;
+    --text-muted: #868c98;
+    --accent: #4f46e5;
+    --accent-hover: #4338ca;
+    --accent-dim: rgba(79, 70, 229, 0.10);
+    --success: #059669;
+    --warn: #b45309;
+    --danger: #dc2626;
     --radius: 8px;
     --radius-sm: 6px;
-    --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+    --shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
+    --shadow-lg: 0 4px 12px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -404,6 +405,98 @@
     .main { margin-left: 0; padding: 1.5rem; }
     .app { flex-direction: column; }
   }
+
+  /* ============================================================
+     UI polish layer — dark-theme refinement (matches tenant portal).
+     Additive only: cascades last, overrides nothing JS depends on.
+     ============================================================ */
+
+  * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover { background: #50505e; background-clip: padding-box; }
+
+  ::selection { background: rgba(99, 102, 241, 0.35); color: #fff; }
+
+  :focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 2px; border-radius: 4px; }
+
+  .logo-icon { box-shadow: 0 2px 10px rgba(99, 102, 241, 0.4); transition: transform 0.18s ease; }
+  .logo:hover .logo-icon { transform: scale(1.06) rotate(-3deg); }
+
+  .nav-item { position: relative; transition: background 0.16s ease, color 0.16s ease; }
+  .nav-item.active::before {
+    content: "";
+    position: absolute;
+    left: -0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 17px;
+    border-radius: 0 3px 3px 0;
+    background: var(--accent-hover);
+    box-shadow: 0 0 8px var(--accent-hover);
+  }
+  .nav-item:active { transform: translateY(0.5px); }
+  .nav-icon { transition: transform 0.16s ease; }
+  .nav-item:hover .nav-icon { transform: scale(1.08); }
+
+  .card {
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  }
+  .card:hover { border-color: var(--border-strong); box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.55); }
+
+  .stat {
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .stat:hover {
+    border-color: var(--border-strong);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 28px -14px rgba(0, 0, 0, 0.65);
+  }
+  .stat::after {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  .stat:hover::after { opacity: 0.85; }
+  .stat-value { font-variant-numeric: tabular-nums; }
+
+  button { transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease, box-shadow 0.12s ease; }
+  button:active { transform: translateY(1px); }
+  button.primary { box-shadow: 0 2px 8px -2px rgba(99, 102, 241, 0.5); }
+  button.primary:hover { box-shadow: 0 4px 14px -2px rgba(99, 102, 241, 0.55); }
+  button:disabled, button[disabled] { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  input[type=text]:hover, input[type=password]:hover, textarea:hover { border-color: var(--border-strong); }
+
+  .tab-pane:not(.hidden) { animation: paneIn 0.28s ease both; }
+  @keyframes paneIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  .modal-overlay.active { animation: overlayIn 0.18s ease both; }
+  .modal-overlay.active .modal { animation: modalIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) both; }
+  @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes modalIn { from { opacity: 0; transform: translateY(14px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
 </style>
 </head>
 <body>
@@ -421,10 +514,14 @@
     <div class="login-desc">Enter your admin key to continue</div>
     <div class="field">
       <label>Admin Key</label>
-      <input type="password" id="admin-key-input" placeholder="Enter admin key" autofocus>
+      <input type="password" id="admin-key-input" placeholder="Enter admin key" autofocus autocomplete="off">
+    </div>
+    <div id="hcaptcha-container" class="field hidden" style="display:none;">
+      <div id="hcaptcha-widget"></div>
     </div>
     <button class="primary" style="width: 100%;" onclick="login()">Sign In</button>
     <div id="login-error" class="toast error hidden"></div>
+    <div style="text-align: center; margin-top: 0.75rem;"><a href="/" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">&larr; Back to home</a></div>
   </div>
 </div>
 
@@ -564,7 +661,7 @@
           </div>
           <div class="field">
             <label>API Keys (comma-separated)</label>
-            <input type="text" id="create-api-keys" placeholder="acme-key-abc123">
+            <input type="text" id="create-api-keys" placeholder="acme-key-abc123" autocomplete="off">
           </div>
         </div>
         <div class="field">
@@ -634,14 +731,14 @@
       <div class="field">
         <label>Add new API key</label>
         <div style="display: flex; gap: 0.5rem;">
-          <input type="text" id="new-api-key" placeholder="new-key-value">
+          <input type="text" id="new-api-key" placeholder="new-key-value" autocomplete="off">
           <button class="primary small" onclick="addApiKey()">Add</button>
         </div>
       </div>
       <div class="field">
         <label>Revoke API key</label>
         <div style="display: flex; gap: 0.5rem;">
-          <input type="text" id="del-api-key" placeholder="key-to-remove">
+          <input type="text" id="del-api-key" placeholder="key-to-remove" autocomplete="off">
           <button class="danger small" onclick="removeApiKey()">Revoke</button>
         </div>
       </div>
@@ -681,15 +778,62 @@ function showSuccess(id, msg) {
   setTimeout(() => el.classList.add('hidden'), 3000);
 }
 
-function login() {
+let HCAPTCHA_ENABLED = false;
+let HCAPTCHA_WIDGET_ID = null;
+
+async function initCaptcha() {
+  try {
+    const r = await fetch(`${BASE_URL}/captcha-config`);
+    const cfg = await r.json();
+    if (cfg.enabled && cfg.site_key) {
+      HCAPTCHA_ENABLED = true;
+      const container = document.getElementById('hcaptcha-container');
+      container.classList.remove('hidden');
+      container.style.display = '';
+      // Load hCaptcha script
+      const script = document.createElement('script');
+      script.src = 'https://js.hcaptcha.com/1/api.js?render=explicit';
+      script.async = true;
+      script.onload = () => {
+        HCAPTCHA_WIDGET_ID = hcaptcha.render('hcaptcha-widget', { sitekey: cfg.site_key, theme: 'dark' });
+      };
+      document.head.appendChild(script);
+    }
+  } catch (e) { /* captcha not available, skip */ }
+}
+
+async function login() {
   const key = document.getElementById('admin-key-input').value.trim();
   if (!key) return showError('login-error', 'Enter admin key');
+
+  // Verify captcha if enabled
+  if (HCAPTCHA_ENABLED) {
+    const token = hcaptcha.getResponse(HCAPTCHA_WIDGET_ID);
+    if (!token) return showError('login-error', 'Please complete the captcha');
+    try {
+      const cr = await fetch(`${BASE_URL}/verify-captcha`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      const cd = await cr.json();
+      if (!cd.success) {
+        hcaptcha.reset(HCAPTCHA_WIDGET_ID);
+        return showError('login-error', cd.error || 'Captcha verification failed');
+      }
+    } catch (e) {
+      hcaptcha.reset(HCAPTCHA_WIDGET_ID);
+      return showError('login-error', 'Captcha verification error');
+    }
+  }
+
   fetch(`${BASE_URL}/v1/admin/tenants`, { headers: { 'X-Admin-Key': key } })
     .then(r => r.status === 200
       ? (ADMIN_KEY = key, localStorage.setItem('votal_admin_key', key), showApp())
       : r.json().then(d => showError('login-error', d.error || d.detail || `HTTP ${r.status}`)))
     .catch(e => showError('login-error', 'Connection error: ' + e.message));
 }
+
+initCaptcha();
 
 function logout() {
   localStorage.removeItem('votal_admin_key');
@@ -1024,7 +1168,10 @@ document.getElementById('admin-key-input').addEventListener('keypress', (e) => {
 // Auto-login
 if (ADMIN_KEY) {
   document.getElementById('admin-key-input').value = ADMIN_KEY;
-  login();
+  // Auto-login with stored key — skip captcha (already verified in prior session)
+  fetch(`${BASE_URL}/v1/admin/tenants`, { headers: { 'X-Admin-Key': ADMIN_KEY } })
+    .then(r => r.status === 200 ? showApp() : logout())
+    .catch(() => {});
 }
 </script>
 </body>

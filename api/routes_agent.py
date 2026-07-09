@@ -13,6 +13,7 @@ from guardrails.agentic.monitoring.chain_of_thought_monitoring import ChainOfTho
 from guardrails.agentic.monitoring.context_window_guardrails import ContextWindowGuardrailsGuardrail
 from guardrails.agentic.intent.intent_store import register_goal as _register_goal, get_goal as _get_goal
 from guardrails.base import _request_configs
+from storage.audit_log import audit_logger
 from storage.decision_audit import log_decision
 from core.feature_flags import DECISION_AUDIT_ENABLED
 from storage.agentic_control_plane import get_control_plane_config
@@ -160,6 +161,32 @@ async def check_agent(body: AgentCheckRequest, request: Request):
                     source_ip=request.client.host if request.client else "",
                     metadata=r.get("details"),
                 )
+
+    # Log to telemetry audit
+    triggered = [r["guardrail"] for r in results if not r["passed"]]
+    latency_ms = sum(r.get("latency_ms", 0) for r in results)
+    await audit_logger.log({
+        "agent_key": body.agent_key or "",
+        "endpoint": "/v1/shield/agent/check",
+        "input_text": f"agent_check:{body.action_type or 'general'}",
+        "action_taken": action,
+        "guardrails_triggered": triggered,
+        "latency_ms": round(latency_ms, 2),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id or "",
+            "user_role": "",
+            "stage": "agent_check",
+            "blocked": not allowed,
+            "block_reason": "; ".join(r["message"] for r in results if not r["passed"]) or None,
+            "session_id": body.session_id or "",
+            "tool_calls": [{"tool_name": body.tool_name or "", "rbac": {"allowed": allowed, "message": action}}] if body.tool_name else [],
+            "tool_call_count": 1 if body.tool_name else 0,
+            "input_guardrails": [{"guardrail": r["guardrail"], "passed": r["passed"], "action": r["action"], "message": r.get("message", "")} for r in results],
+            "output_guardrails": [],
+            "usage": {},
+        },
+    })
 
     return {"allowed": allowed, "action": action, "guardrail_results": results}
 

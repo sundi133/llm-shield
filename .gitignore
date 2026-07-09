@@ -1,33 +1,51 @@
+# Python
 __pycache__/
-*.pyc
-.venv/
-.pytest_cache/
-storage/audit.db
+*.py[cod]
 *.egg-info/
 dist/
 build/
-test_votal.sh
+*.egg
 
-# Environment files
-.env
-.env.local
-.env.*.local
+# Virtual environments
+.venv/
+venv/
+lib/
+lib64/
 
-# Claude settings with potentially sensitive data
-.claude/
-.claude/**
-
-# Backup and temporary files
-*.bak
-*.tmp
+# IDE
+.idea/
+.vscode/
 *.swp
-.DS_Store
-test_*.py
-debug_*.py
-compare_*.py
-verify_*.py
-policy.json
+*.swo
 
-# One-off test/debug HTML files
-dynamic_rbac_testing_section.html
-rbac_tool_testing_section.html
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+*.env
+!.env.example
+agent.crt
+agent.key
+
+# Test / build artifacts
+*.log
+*.sqlite
+benchmark_*results*.json
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Tenant env files (auto-generated)
+tenant-*.env
+
+# Terraform
+tf/.terraform/
+tf/*.tfstate
+tf/*.tfstate.backup
+tf/*.tfvars
+!tf/terraform.tfvars.example
+
+# Scripts
+git_loc_by_author.sh

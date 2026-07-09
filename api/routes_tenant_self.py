@@ -118,22 +118,83 @@ def _require_tenant(request: Request) -> str:
     return tenant_id
 
 
+async def _reject_tenant_id_spoof(request: Request, body_dict: Optional[dict] = None) -> None:
+    """Reject requests that try to set/override tenant_id via header or body.
+
+    IDOR defense per IEMLabs VAPT finding 8.2 (May 2026). The only source
+    of truth for tenant_id is the API key resolution in AuthMiddleware /
+    ShieldMiddleware. Any caller-supplied tenant_id MUST equal that
+    resolved value, else we reject — never silently override.
+
+    Reads the raw request body so the check works even when the pydantic
+    model would have silently dropped unknown fields like ``tenant_id``
+    that the attacker added.
+    """
+    resolved = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
+    if not resolved:
+        return  # _require_tenant() will handle the 401
+
+    # 1. Header override attempt
+    header_tid = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+    if header_tid and header_tid != resolved:
+        raise HTTPException(
+            status_code=403,
+            detail="X-Tenant-Id header does not match authenticated tenant",
+        )
+
+    # 2. Body override attempt. Check both the model-parsed dict (if
+    #    provided) AND the raw request JSON so spoofs in unknown fields
+    #    can't sneak past a pydantic model with extras stripped.
+    candidates: list[dict] = []
+    if isinstance(body_dict, dict):
+        candidates.append(body_dict)
+    try:
+        raw = await request.body()
+        if raw:
+            import json as _json
+            parsed = _json.loads(raw)
+            if isinstance(parsed, dict):
+                candidates.append(parsed)
+    except Exception:
+        pass  # non-JSON body or already consumed — fine, header check still runs
+
+    for d in candidates:
+        for k in ("tenant_id", "tenantId", "tenant"):
+            v = d.get(k)
+            if isinstance(v, str) and v and v != resolved:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Body field {k!r} does not match authenticated tenant",
+                )
+
+
 @router.get("/me")
 async def get_my_tenant(request: Request):
-    """Return the current tenant's config (sanitized — no internal fields)."""
+    """Return the current tenant's config (sanitized — no internal fields).
+
+    IEMLabs VAPT finding 8.2 (IDOR, May 2026): the previous response
+    enumerated every agent_key in the tenant's registry — a list of
+    internal object references the caller can then use to probe other
+    endpoints. We now return a count only; callers needing the full
+    list go through /me/agents (also tenant-scoped) where each item is
+    additionally permission-checked.
+    """
+    await _reject_tenant_id_spoof(request)
     tenant_id = _require_tenant(request)
     config = get_tenant(tenant_id)
     if not config:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    agents_from_registry = []
+    agent_count = 0
     try:
         import json as _json
         r = _get_redis()
         if r:
             raw = r.get(f"agents:{tenant_id}")
             if raw:
-                agents_from_registry = list(_json.loads(raw).keys())
+                parsed = _json.loads(raw)
+                if isinstance(parsed, dict):
+                    agent_count = len(parsed)
     except Exception:
         pass
 
@@ -144,7 +205,7 @@ async def get_my_tenant(request: Request):
         "input_guardrails": list(config.get("input_guardrails", {}).keys()),
         "output_guardrails": list(config.get("output_guardrails", {}).keys()),
         "quota": config.get("quota"),
-        "agents": agents_from_registry,
+        "agent_count": agent_count,
     }
 
 
@@ -201,6 +262,7 @@ async def update_my_policies(request: Request, body: TenantSelfUpdateRequest):
     Tenants cannot modify RBAC, quota, plan, or API keys via this route.
     Changes are logged in the admin audit with actor=tenant:<id>.
     """
+    await _reject_tenant_id_spoof(request, body.dict() if body else None)
     tenant_id = _require_tenant(request)
     existing = get_tenant(tenant_id)
     if not existing:
@@ -255,11 +317,18 @@ async def get_my_telemetry(
     status: Optional[str] = Query(None, description="pass, warn, or block"),
     tool_name: Optional[str] = Query(None),
     q: Optional[str] = Query(None, description="Free-text search across message, tool, and reason"),
+    since: Optional[str] = Query(None, description="ISO timestamp — only return entries after this time (e.g. 2026-05-25T00:00:00Z)"),
+    until: Optional[str] = Query(None, description="ISO timestamp — only return entries before this time"),
 ):
     """Return tenant-scoped agent chat telemetry with normalized tool-call status."""
     tenant_id = _require_tenant(request)
 
-    raw_entries = await audit_logger.query(limit=1000, offset=0)
+    filters = {}
+    if since:
+        filters["since"] = since
+    if until:
+        filters["until"] = until
+    raw_entries = await audit_logger.query(limit=1000, offset=0, tenant_id=tenant_id, filters=filters if filters else None)
     telemetry_entries = []
 
     for entry in raw_entries:
@@ -420,6 +489,7 @@ async def create_my_api_key(request: Request, body: dict = None):
     Optional body: {"custom_key": "my-custom-value"} to provide your
     own key value instead of generating one (discouraged — less secure).
     """
+    await _reject_tenant_id_spoof(request, body if isinstance(body, dict) else None)
     tenant_id = _require_tenant(request)
     existing = get_tenant(tenant_id)
     if not existing:
@@ -872,3 +942,49 @@ async def get_policy_limits(request: Request):
             "priority_range": {"min": 1, "max": 1000}
         }
     }
+
+
+# ── Audit ingest: client-side tool-call audit records ────────────────────
+
+
+@router.post("/me/audit")
+async def ingest_audit(request: Request):
+    """Ingest a client-side audit record into the tenant's Redis audit log.
+
+    Used by agent runtimes to write GuardedToolCall records (tool execution
+    outcomes) into the same audit stream as guardrail events. Records appear
+    in the tenant portal's audit log and are queryable via /me/audit/query.
+
+    Controlled by the SHIELD_AUDIT_REDIS feature flag on the client side.
+    """
+    tenant_id = _require_tenant(request)
+    body = await request.json()
+
+    import time as _time
+    record = {
+        "agent_key": body.get("agent_id", ""),
+        "endpoint": "guarded_tool_call",
+        "input_text": f"{body.get('tool_name', '')}({body.get('resource', '')})",
+        "action_taken": "pass" if body.get("executed") else "block",
+        "guardrails_triggered": [body.get("denied_reason")] if body.get("denied_reason") else [],
+        "latency_ms": 0,
+        "metadata": {
+            "kind": "guarded_tool_call",
+            "tenant_id": tenant_id,
+            "tool_name": body.get("tool_name", ""),
+            "resource": body.get("resource", ""),
+            "user_sub": body.get("user_sub", ""),
+            "user_role": body.get("user_role", ""),
+            "session_id": body.get("session_id", ""),
+            "rbac_allowed": body.get("rbac_allowed", False),
+            "cap_minted": body.get("cap_minted", False),
+            "cap_verified": body.get("cap_verified", False),
+            "executed": body.get("executed", False),
+            "output_sanitized": body.get("output_sanitized", False),
+            "denied_reason": body.get("denied_reason"),
+            "status": body.get("status", "unknown"),
+        },
+    }
+
+    await audit_logger.log(record)
+    return {"success": True, "event_type": "guarded_tool_call"}

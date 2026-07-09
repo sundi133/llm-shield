@@ -23,10 +23,31 @@ jobs:
           - name: admin
             dockerfile: Dockerfile.admin
             image: llm-shield-admin
+          - name: ollama
+            dockerfile: Dockerfile.ollama
+            image: llm-shield-ollama
 
     name: Build ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
+
+      # GitHub-hosted runners ship with ~30 GB of preinstalled tooling we
+      # don't use (Android SDK, .NET, GHC, CodeQL, large Hosted Tool Cache).
+      # The vLLM base image alone is ~10 GB; without this step a cache miss
+      # exhausts the ~14 GB free-disk budget and the runner dies with
+      # "No space left on device". Admin/litellm builds don't need this but
+      # the conditional keeps their wall-clock low.
+      - name: Free disk space (vllm only)
+        if: matrix.name == 'vllm'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false   # keep docker layers — we use them
+          swap-storage: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -45,7 +66,11 @@ jobs:
           platforms: linux/amd64
           push: true
           cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          # mode=max maximizes cache hits at the cost of cache size. For the
+          # vllm image that's the wrong tradeoff (cache grows past GHA's
+          # 10 GB-per-scope limit and gets evicted, defeating the purpose).
+          # Use mode=min for vllm; full mode=max for the smaller images.
+          cache-to: type=gha,mode=${{ matrix.name == 'vllm' && 'min' || 'max' }},scope=${{ matrix.name }}
           tags: |
             ${{ env.DOCKERHUB_USER }}/${{ matrix.image }}:v2
             ${{ env.DOCKERHUB_USER }}/${{ matrix.image }}:latest

@@ -1,6 +1,6 @@
 """Memory checking routes — access control, PII scrubbing, injection detection, retention."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from typing import Optional
 
@@ -9,6 +9,7 @@ from guardrails.agentic.memory.memory_guardrails import MemoryGuardrailsGuardrai
 from guardrails.agentic.memory.memory_pii_scrubbing import MemoryPIIScrrubbingGuardrail
 from guardrails.agentic.memory.memory_injection_detection import MemoryInjectionDetectionGuardrail
 from guardrails.agentic.memory.memory_retention_policies import MemoryRetentionPoliciesGuardrail
+from storage.audit_log import audit_logger
 
 router = APIRouter(prefix="/v1/shield/memory", tags=["memory"])
 
@@ -49,7 +50,7 @@ def _format(result):
 
 
 @router.post("/check")
-async def check_memory(body: MemoryCheckRequest):
+async def check_memory(body: MemoryCheckRequest, request: Request):
     context = {
         "agent_key": body.agent_key,
         "operation": body.operation,
@@ -81,6 +82,32 @@ async def check_memory(body: MemoryCheckRequest):
         if not r["passed"]:
             action = r["action"]
             break
+
+    tenant_id = (getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None) or ""
+    triggered = [r["guardrail"] for r in results if not r["passed"]]
+    latency_ms = sum(r.get("latency_ms", 0) for r in results)
+    await audit_logger.log({
+        "agent_key": body.agent_key or "",
+        "endpoint": "/v1/shield/memory/check",
+        "input_text": f"memory_{body.operation}:{body.memory_key}",
+        "action_taken": action,
+        "guardrails_triggered": triggered,
+        "latency_ms": round(latency_ms, 2),
+        "metadata": {
+            "kind": "agent_chat_telemetry",
+            "tenant_id": tenant_id,
+            "user_role": "",
+            "stage": "memory_check",
+            "blocked": not allowed,
+            "block_reason": "; ".join(r["message"] for r in results if not r["passed"]) or None,
+            "session_id": body.session_id or "",
+            "tool_calls": [],
+            "tool_call_count": 0,
+            "input_guardrails": [{"guardrail": r["guardrail"], "passed": r["passed"], "action": r["action"], "message": r.get("message", "")} for r in results],
+            "output_guardrails": [],
+            "usage": {},
+        },
+    })
 
     return {"allowed": allowed, "action": action, "guardrail_results": results}
 

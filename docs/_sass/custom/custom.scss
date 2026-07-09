@@ -228,6 +228,25 @@
   }
 }
 
+// Caps-style group headers (Pepper-SAST look) — rendered by the
+// _includes/components/site_nav.html override from _data/navigation.yml.
+.site-nav .nav-list .nav-category {
+  list-style: none;
+  margin: 0;
+  padding: 1.1rem 0.75rem 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  cursor: default;
+  user-select: none;
+}
+
+.site-nav .nav-list .nav-category:first-child {
+  padding-top: 0.25rem;
+}
+
 // ─── Footer ────────────────────────────────────────────────────────────────
 .site-footer {
   border-top: 1px solid #e5e7eb;

@@ -12,7 +12,7 @@ from core.models import GuardrailResult
 from core.llm_backend import async_llm_call
 from guardrails.base import BaseGuardrail
 from core.text_utils import (
-    estimate_tokens, chunk_text, build_history_messages, trim_history_to_budget,
+    estimate_tokens, chunk_text, adaptive_chunk_budget, build_history_messages, trim_history_to_budget,
 )
 
 _DEFAULT_ENTITIES = [
@@ -174,8 +174,8 @@ class PIIDetectionGuardrail(BaseGuardrail):
             result.latency_ms = (time.perf_counter() - start) * 1000
             return result
 
-        # Chunk and check in parallel — block if ANY chunk has PII
-        chunks = chunk_text(content, content_budget)
+        # Chunk and check in parallel — block if ANY chunk has PII (adaptive sizing)
+        chunks = chunk_text(content, adaptive_chunk_budget(content_tokens, content_budget))
         tasks = [
             self._check_single(chunk, system_prompt, history_messages, entities)
             for chunk in chunks

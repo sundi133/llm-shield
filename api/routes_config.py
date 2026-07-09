@@ -158,8 +158,23 @@ def _persist_config():
             "llm_backend": cfg.llm_backend,
         }
 
-        with open(config_path, "w") as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+        # Atomic write: dump to a temp file in the same directory, then
+        # os.replace() it into place. Prevents a concurrent or partial write
+        # (multiple workers on a shared volume) from leaving a corrupt config
+        # that would crash-loop the data plane on the next boot.
+        import tempfile
+        target_dir = os.path.dirname(config_path) or "."
+        fd, tmp_path = tempfile.mkstemp(dir=target_dir, prefix=".config-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+            os.replace(tmp_path, config_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     except Exception:
         pass  # best-effort — don't crash the API on write failure
 
