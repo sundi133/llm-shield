@@ -116,6 +116,21 @@ class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Inject standard security headers into every HTTP response."""
 
+    # FastAPI's bundled Swagger/ReDoc pages load their JS/CSS from
+    # cdn.jsdelivr.net (and the favicon from fastapi.tiangolo.com). The
+    # default CSP blocks those origins, so /docs rendered as a blank page.
+    # Relax ONLY these two paths; every other route keeps the strict CSP.
+    _DOCS_PATHS = ("/docs", "/redoc")
+    _DOCS_CSP = (
+        "frame-ancestors 'none'; "
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "font-src 'self'; "
+        "img-src 'self' data: https://fastapi.tiangolo.com https://cdn.redoc.ly; "
+        "connect-src 'self'"
+    )
+
     def __init__(self, app, csp: str | None = None, hsts_max_age: int | None = None):
         super().__init__(app)
         self._csp = csp or _DEFAULT_CSP
@@ -132,7 +147,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         headers.setdefault("X-Content-Type-Options", "nosniff")
 
         # Content Security Policy (defence-in-depth, also blocks framing)
-        headers.setdefault("Content-Security-Policy", self._csp)
+        csp = self._DOCS_CSP if request.url.path in self._DOCS_PATHS else self._csp
+        headers.setdefault("Content-Security-Policy", csp)
 
         # 8.5 HTTP Strict Transport Security. Emitted unconditionally: browsers
         # ignore HSTS received over plain HTTP (RFC 6797 sec. 8.1), and emitting
