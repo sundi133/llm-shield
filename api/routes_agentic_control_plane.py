@@ -13,6 +13,7 @@ from storage.agentic_control_plane import (
     set_control_plane_config,
     list_approval_requests,
     update_approval_request,
+    attach_approval_grant,
     issue_execution_grant,
     list_execution_grants,
     revoke_execution_grant,
@@ -122,20 +123,62 @@ async def get_approvals(request: Request, status: Optional[str] = Query(None)):
     }
 
 
+def _mint_request_grant(req: dict[str, Any], method: str) -> str:
+    """Freeze an approved request into a signed, single-use approval grant."""
+    from core.approvals import mint_grant, params_hash
+
+    approvers = [
+        {"sub": a.get("approver", ""), "method": method, "at": a.get("approved_at")}
+        for a in req.get("approvals", [])
+    ]
+    return mint_grant(
+        tenant_id=req.get("tenant_id", ""),
+        agent_id=req.get("agent_key", ""),
+        # Cooperative approvals carry no per-instance identity; bind what we have.
+        agent_instance_id=req.get("agent_key", ""),
+        session_id=req.get("session_id", ""),
+        tool=req.get("tool_name", ""),
+        resource=f"session:{req.get('session_id', '')}",
+        params_hash=params_hash(req.get("tool_params")),
+        approvers=approvers,
+        request_id=req.get("request_id", ""),
+    )
+
+
 @router.post("/approvals/{request_id}/approve")
 async def approve_request(request_id: str, body: ApprovalDecisionRequest, request: Request):
     tenant_id = _tenant_id(request)
+    # Authenticated approver: prefer an SSO-verified identity forwarded by the
+    # portal/gateway (X-Approver-Sub); fall back to the asserted value but record
+    # that it was unauthenticated so the audit + grant reflect the trust level.
+    verified_sub = request.headers.get("x-approver-sub", "").strip()
+    approver = verified_sub or body.approver
+    method = "sso" if verified_sub else "asserted"
+
     updated = update_approval_request(
         tenant_id,
         request_id,
         decision="approve",
-        approver=body.approver,
+        approver=approver,
         reason=body.reason,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Approval request not found")
-    _audit(request, "tenant_approve_agentic_request", tenant_id=tenant_id, metadata={"request_id": request_id})
-    return {"status": "approved", "request": updated}
+
+    grant_token = None
+    if updated.get("status") == "approved":
+        grant_token = _mint_request_grant(updated, method)
+        attach_approval_grant(tenant_id, request_id, grant_token)
+
+    _audit(
+        request, "tenant_approve_agentic_request", tenant_id=tenant_id,
+        metadata={"request_id": request_id, "approver": approver, "approver_method": method,
+                  "granted": bool(grant_token)},
+    )
+    resp: dict[str, Any] = {"status": updated.get("status", "pending"), "request": updated}
+    if grant_token:
+        resp["approval_grant"] = grant_token
+    return resp
 
 
 @router.post("/approvals/{request_id}/deny")

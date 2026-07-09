@@ -219,6 +219,18 @@ def update_approval_request(
     return None
 
 
+def attach_approval_grant(tenant_id: str, request_id: str, grant_token: str) -> Optional[dict[str, Any]]:
+    """Store the signed approval grant on its request (so the agent can poll for it)."""
+    items = _load_json(_approvals_key(tenant_id), [])
+    for idx, item in enumerate(items):
+        if item.get("request_id") == request_id:
+            item["approval_grant"] = grant_token
+            items[idx] = item
+            _save_json(_approvals_key(tenant_id), items)
+            return item
+    return None
+
+
 def consume_approval_request(
     tenant_id: str,
     request_id: str,
