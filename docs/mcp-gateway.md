@@ -19,6 +19,24 @@ server, the gateway when you don't.
 Built on the existing transparent proxy (`core/mcp/proxy_server.py::MCPProxy` +
 `core/mcp/enforcement.py`) — same enforcement, relocated to a proxy.
 
+## Supported MCP methods
+
+| Method | Gateway behavior |
+|---|---|
+| `initialize` | answered locally (capabilities/handshake) |
+| `tools/list` | forwarded, **RBAC-filtered** to what the role may use |
+| `tools/call` | **enforced** (RBAC + tenant data policy), forwarded, **output sanitized** |
+| `resources/list`, `resources/templates/list` | forwarded (passthrough; per-route allowlist is a future add) |
+| `resources/read` | forwarded, then **DLP-sanitized** — resource content is treated like a tool result (PII/secrets redacted; withheld on block) |
+| `prompts/list`, `prompts/get` | forwarded (passthrough; prompt injection screening is a future add) |
+| `notifications/*` | passed through (204, no body) |
+| anything else (`sampling/*`, `completion/*`, `resources/subscribe`, …) | `-32601` not supported (yet) |
+
+`resources/*` + `prompts/*` are on by default; set **`SHIELD_GATEWAY_RESOURCES=0`**
+to serve tools-only (those methods then return `-32601`). Where no policy is
+configured for a method, the gateway **relays** it rather than blocking — it never
+denies a method it has no policy for.
+
 ## 1. Configure a route (per tenant, zero upstream change)
 
 ```bash

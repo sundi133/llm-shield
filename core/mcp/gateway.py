@@ -102,6 +102,28 @@ class MCPGatewayRouter:
             name, arguments, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id,
         )
 
+    # ── resources / prompts (delegate to the pooled proxy) ───────────
+
+    async def list_resources(self, tenant_id, route, *, agent_key, user_role):
+        proxy = await self._proxy(tenant_id, route)
+        return await proxy.list_resources(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id)
+
+    async def list_resource_templates(self, tenant_id, route, *, agent_key, user_role):
+        proxy = await self._proxy(tenant_id, route)
+        return await proxy.list_resource_templates(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id)
+
+    async def read_resource(self, tenant_id, route, uri, *, agent_key, user_role):
+        proxy = await self._proxy(tenant_id, route)
+        return await proxy.read_resource(uri, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id)
+
+    async def list_prompts(self, tenant_id, route, *, agent_key, user_role):
+        proxy = await self._proxy(tenant_id, route)
+        return await proxy.list_prompts(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id)
+
+    async def get_prompt(self, tenant_id, route, name, arguments, *, agent_key, user_role):
+        proxy = await self._proxy(tenant_id, route)
+        return await proxy.get_prompt(name, arguments, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id)
+
     def invalidate(self, tenant_id: str, route: Optional[str] = None) -> None:
         """Drop pooled proxies so the next call re-reads config (call on config change).
 

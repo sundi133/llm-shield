@@ -41,6 +41,70 @@ class MCPUpstream:
         res = await self._session.call_tool(name, arguments or {})
         return _normalize_result(res)
 
+    # ── resources ────────────────────────────────────────────────────
+
+    async def list_resources(self) -> list[dict]:
+        res = await self._session.list_resources()
+        items = _attr(res, "resources", res)
+        return [{
+            "uri": str(_attr(r, "uri", "")),
+            "name": _attr(r, "name", "") or "",
+            "description": _attr(r, "description", "") or "",
+            "mimeType": _attr(r, "mimeType", None) or _attr(r, "mime_type", None),
+        } for r in (items or [])]
+
+    async def read_resource(self, uri: str) -> dict:
+        res = await self._session.read_resource(uri)
+        contents = _attr(res, "contents", res)
+        out: list[dict] = []
+        for c in (contents or []):
+            block = {
+                "uri": str(_attr(c, "uri", uri)),
+                "mimeType": _attr(c, "mimeType", None) or _attr(c, "mime_type", None),
+            }
+            text = _attr(c, "text", None)
+            if text is not None:
+                block["text"] = text
+            else:
+                blob = _attr(c, "blob", None)
+                if blob is not None:
+                    block["blob"] = blob
+            out.append(block)
+        return {"contents": out}
+
+    async def list_resource_templates(self) -> list[dict]:
+        res = await self._session.list_resource_templates()
+        items = _attr(res, "resourceTemplates", None) or _attr(res, "resource_templates", res)
+        return [{
+            "uriTemplate": _attr(t, "uriTemplate", None) or _attr(t, "uri_template", "") or "",
+            "name": _attr(t, "name", "") or "",
+            "description": _attr(t, "description", "") or "",
+        } for t in (items or [])]
+
+    # ── prompts ──────────────────────────────────────────────────────
+
+    async def list_prompts(self) -> list[dict]:
+        res = await self._session.list_prompts()
+        items = _attr(res, "prompts", res)
+        return [{
+            "name": _attr(p, "name", "") or "",
+            "description": _attr(p, "description", "") or "",
+            "arguments": _attr(p, "arguments", None) or [],
+        } for p in (items or [])]
+
+    async def get_prompt(self, name: str, arguments: Optional[dict] = None) -> dict:
+        res = await self._session.get_prompt(name, arguments or {})
+        out_msgs: list[dict] = []
+        for m in (_attr(res, "messages", []) or []):
+            content = _attr(m, "content", None)
+            text = _attr(content, "text", None) if content is not None else None
+            out_msgs.append({
+                "role": _attr(m, "role", "") or "",
+                "content": text if text is not None else (
+                    content if isinstance(content, (str, dict, list)) else str(content)),
+            })
+        return {"description": _attr(res, "description", "") or "", "messages": out_msgs}
+
     async def aclose(self) -> None:
         if self._stack is not None:
             await self._stack.aclose()

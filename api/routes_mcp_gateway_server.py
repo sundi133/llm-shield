@@ -10,6 +10,7 @@ The heavy lifting (enforcement, upstream transport) lives in core/mcp/*; this fi
 is just the JSON-RPC bridge, unit-tested with a fake router.
 """
 
+import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Request
@@ -24,6 +25,11 @@ router = APIRouter(prefix="/gateway", tags=["mcp-gateway-server"])
 _PROTOCOL_VERSION = "2024-11-05"
 # Notifications carry no id and expect no response body.
 _NOTIFICATIONS = {"notifications/initialized", "notifications/cancelled"}
+
+
+def _resources_enabled() -> bool:
+    """resources/* + prompts/* passthrough (default on; off -> those return -32601)."""
+    return os.getenv("SHIELD_GATEWAY_RESOURCES", "1").strip().lower() not in ("0", "false", "no")
 
 
 def _ok(rpc_id: Any, result: dict) -> JSONResponse:
@@ -71,10 +77,41 @@ async def _dispatch(route: str, body: dict, request: Request):
             # MCPProxy already returns an MCP-shaped result (content + isError).
             return _ok(rpc_id, {"content": out.get("content", []), "isError": out.get("isError", False)})
 
+        # resources/* + prompts/* (opt-out via SHIELD_GATEWAY_RESOURCES=0).
+        if _resources_enabled():
+            if method == "resources/list":
+                res = await gateway_router.list_resources(tenant_id, route, agent_key=agent_key, user_role=user_role)
+                return _ok(rpc_id, {"resources": res})
+            if method == "resources/templates/list":
+                res = await gateway_router.list_resource_templates(tenant_id, route, agent_key=agent_key, user_role=user_role)
+                return _ok(rpc_id, {"resourceTemplates": res})
+            if method == "resources/read":
+                uri = params.get("uri")
+                if not uri:
+                    return _err(rpc_id, -32602, "resources/read requires params.uri")
+                out = await gateway_router.read_resource(tenant_id, route, uri, agent_key=agent_key, user_role=user_role)
+                if out.get("blocked"):
+                    return _err(rpc_id, -32000, out.get("reason", "resource blocked by Shield"))
+                return _ok(rpc_id, {"contents": out.get("contents", [])})
+            if method == "prompts/list":
+                res = await gateway_router.list_prompts(tenant_id, route, agent_key=agent_key, user_role=user_role)
+                return _ok(rpc_id, {"prompts": res})
+            if method == "prompts/get":
+                name = params.get("name")
+                if not name:
+                    return _err(rpc_id, -32602, "prompts/get requires params.name")
+                out = await gateway_router.get_prompt(tenant_id, route, name, params.get("arguments") or {},
+                                                      agent_key=agent_key, user_role=user_role)
+                return _ok(rpc_id, out)
+
         return _err(rpc_id, -32601, f"method not supported by the Shield gateway: {method}")
     except GatewayError as e:
         # 404 (no route) -> -32004; server-side -> -32000.
         return _err(rpc_id, -32004 if e.status == 404 else -32000, e.message)
+    except Exception as e:
+        # Upstream that doesn't implement a method (or a transport error) -> a clean
+        # JSON-RPC error, never a 500.
+        return _err(rpc_id, -32603, f"upstream error handling {method}: {e}")
 
 
 @router.post("/{route}/mcp")

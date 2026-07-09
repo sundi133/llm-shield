@@ -48,6 +48,26 @@ class _FakeRouter:
         self.calls.append((tenant, route, name, arguments, agent_key))
         return {"content": [{"type": "text", "text": "ok"}], "isError": False}
 
+    # resources / prompts
+    async def list_resources(self, tenant, route, *, agent_key, user_role):
+        return [{"uri": "file://a", "name": "a"}]
+
+    async def list_resource_templates(self, tenant, route, *, agent_key, user_role):
+        return [{"uriTemplate": "file://{id}", "name": "t"}]
+
+    async def read_resource(self, tenant, route, uri, *, agent_key, user_role):
+        if uri == "file://secret":
+            return {"blocked": True, "reason": "Resource content blocked by Shield data policy", "contents": []}
+        if uri == "file://boom":
+            raise RuntimeError("upstream has no resources")
+        return {"blocked": False, "contents": [{"uri": uri, "text": "hello"}]}
+
+    async def list_prompts(self, tenant, route, *, agent_key, user_role):
+        return [{"name": "greet"}]
+
+    async def get_prompt(self, tenant, route, name, arguments, *, agent_key, user_role):
+        return {"description": "", "messages": [{"role": "user", "content": f"hi {arguments}"}]}
+
 
 def _dispatch(route, body, req, fake=None):
     fake = fake or _FakeRouter()
@@ -95,7 +115,8 @@ def test_unauthenticated_rejected():
 
 
 def test_unknown_method():
-    req = _Req({"jsonrpc": "2.0", "id": 5, "method": "resources/read"})
+    # sampling/* is genuinely unsupported (resources/* + prompts/* are now handled).
+    req = _Req({"jsonrpc": "2.0", "id": 5, "method": "sampling/createMessage"})
     resp, _ = _dispatch("billing", None, req)
     assert _payload(resp)["error"]["code"] == -32601
 
@@ -123,3 +144,53 @@ def test_parse_error():
     req = _Req(_BAD)
     resp, _ = _dispatch("billing", None, req)
     assert _payload(resp)["error"]["code"] == -32700
+
+
+# ── resources / prompts dispatch ─────────────────────────────────────
+
+
+def test_resources_list():
+    resp, _ = _dispatch("r", None, _Req({"jsonrpc": "2.0", "id": 1, "method": "resources/list"}))
+    assert _payload(resp)["result"]["resources"][0]["uri"] == "file://a"
+
+
+def test_resources_templates_list():
+    resp, _ = _dispatch("r", None, _Req({"jsonrpc": "2.0", "id": 1, "method": "resources/templates/list"}))
+    assert _payload(resp)["result"]["resourceTemplates"][0]["name"] == "t"
+
+
+def test_resources_read_ok():
+    req = _Req({"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": "file://a"}})
+    resp, _ = _dispatch("r", None, req)
+    assert _payload(resp)["result"]["contents"][0]["text"] == "hello"
+
+
+def test_resources_read_blocked_is_error():
+    req = _Req({"jsonrpc": "2.0", "id": 3, "method": "resources/read", "params": {"uri": "file://secret"}})
+    resp, _ = _dispatch("r", None, req)
+    assert _payload(resp)["error"]["code"] == -32000
+
+
+def test_resources_read_missing_uri():
+    req = _Req({"jsonrpc": "2.0", "id": 4, "method": "resources/read", "params": {}})
+    resp, _ = _dispatch("r", None, req)
+    assert _payload(resp)["error"]["code"] == -32602
+
+
+def test_prompts_list_and_get():
+    r1, _ = _dispatch("r", None, _Req({"jsonrpc": "2.0", "id": 5, "method": "prompts/list"}))
+    assert _payload(r1)["result"]["prompts"][0]["name"] == "greet"
+    r2, _ = _dispatch("r", None, _Req({"jsonrpc": "2.0", "id": 6, "method": "prompts/get", "params": {"name": "greet", "arguments": {"x": 1}}}))
+    assert "messages" in _payload(r2)["result"]
+
+
+def test_upstream_without_method_is_clean_error():
+    req = _Req({"jsonrpc": "2.0", "id": 7, "method": "resources/read", "params": {"uri": "file://boom"}})
+    resp, _ = _dispatch("r", None, req)
+    assert _payload(resp)["error"]["code"] == -32603  # not a 500
+
+
+def test_flag_off_reverts_to_unsupported(monkeypatch):
+    monkeypatch.setenv("SHIELD_GATEWAY_RESOURCES", "0")
+    resp, _ = _dispatch("r", None, _Req({"jsonrpc": "2.0", "id": 8, "method": "resources/list"}))
+    assert _payload(resp)["error"]["code"] == -32601
