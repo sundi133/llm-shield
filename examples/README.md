@@ -12,6 +12,7 @@ examples/
 ├── anthropic/         # Anthropic Claude tool-use agent with Shield
 ├── idp/               # Identity Provider integration guide (Okta, Auth0, Azure AD, Keycloak)
 ├── mcp_server/            # Deployable MCP server (FastMCP) that guards its own tools via Shield
+├── mcp_gateway/           # Front an UNMODIFIED upstream MCP server via the Shield gateway
 ├── mcp_guarded_agent.py   # Guard an agent turn via Shield's MCP server (stdlib-only, runnable)
 ├── deep_agent_shield.py   # Advanced async integration (httpx)
 └── policy_management_example.py
