@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -501,6 +502,317 @@ def _endpoint_url(server_url: str) -> str:
     return _chat_completions_url(server_url)
 
 
+# ---------------------------------------------------------------------------
+# Guard model mode — SHIELD_GUARD_MODEL_MODE=votal (default) | nemotron | both
+#
+# "votal" is the unmodified, current-production code path (see llm_call /
+# async_llm_call below) -- this section only adds NEW behavior for the
+# nemotron/both modes, gated by an opt-in env var. Nothing here changes
+# behavior when the env var is unset.
+#
+# SCOPE: the mode applies ONLY to guard-classification calls -- those that
+# pass a guardrail_name. Calls without one (the gateway's proxied user chat
+# completions in routes_gateway.py, codegen enhancement) always use the
+# original votal path: routing user chat traffic to a content-safety
+# classifier would break the product, and duplicating it to a second backend
+# in 'both' mode would leak user conversations to an endpoint the tenant
+# never opted into.
+# ---------------------------------------------------------------------------
+
+
+def _get_guard_model_mode() -> str:
+    """Which guard model backend(s) to call: 'votal' (default) | 'nemotron' | 'both'."""
+    return os.getenv("SHIELD_GUARD_MODEL_MODE", "votal").strip().lower()
+
+
+def _get_guard_model_primary() -> str:
+    """In 'both' mode, which model's verdict is authoritative on a tie/no-flag."""
+    return os.getenv("SHIELD_GUARD_MODEL_PRIMARY", "votal").strip().lower()
+
+
+def _resolve_targets(mode: str) -> list[str]:
+    """Ordered list of backend targets to call for this guard-path request."""
+    if mode == "votal":
+        return ["votal"]
+    if mode == "nemotron":
+        return ["nemotron"]
+    if mode == "both":
+        primary = _get_guard_model_primary()
+        if primary not in ("votal", "nemotron"):
+            raise RuntimeError(
+                f"Unknown SHIELD_GUARD_MODEL_PRIMARY={primary!r} (expected 'votal' or 'nemotron')"
+            )
+        secondary = "nemotron" if primary == "votal" else "votal"
+        return [primary, secondary]
+    raise RuntimeError(
+        f"Unknown SHIELD_GUARD_MODEL_MODE={mode!r} (expected 'votal', 'nemotron', or 'both')"
+    )
+
+
+def _get_nemotron_server_url() -> str:
+    """Nemotron backend URL. Required whenever a request targets 'nemotron'.
+
+    Fails fast rather than silently falling back to Votal -- a misconfigured
+    nemotron/both deployment should be loud, not quietly serve Votal traffic
+    under a different name.
+    """
+    url = _normalize_server_url(os.getenv("NEMOTRON_BACKEND_URL", ""))
+    if not url:
+        raise RuntimeError(
+            "NEMOTRON_BACKEND_URL must be set when SHIELD_GUARD_MODEL_MODE is "
+            "'nemotron' or 'both'."
+        )
+    return url
+
+
+def _nemotron_model_name() -> str:
+    return os.getenv("NEMOTRON_MODEL_NAME", "")
+
+
+def _nemotron_auth_headers() -> dict:
+    """Bearer auth for NIM-hosted endpoints; empty for a self-hosted server."""
+    key = os.getenv("NEMOTRON_BACKEND_API_KEY")
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
+def _build_nemotron_payload(
+    messages: list,
+    max_tokens: int,
+    temperature: float,
+    response_format: Optional[dict],
+) -> dict:
+    """Minimal standard OpenAI chat-completions payload for the Nemotron backend.
+
+    Deliberately skips the vLLM-specific extras _build_payload adds for Votal
+    (chat_template_kwargs, /no_think injection): the exact Nemotron hosting
+    (self-hosted vLLM vs an NVIDIA NIM endpoint) isn't resolved yet (see
+    docs/investigation/open-questions.md #1/#2), so this targets the lowest
+    common denominator of the OpenAI-compatible contract both platforms support.
+    """
+    payload = {
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    model_name = _nemotron_model_name()
+    if model_name:
+        payload["model"] = model_name
+    if response_format:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "response",
+                "strict": True,
+                "schema": response_format,
+            },
+        }
+    return payload
+
+
+# Per-guardrail verdict readers for 'both'-mode merging. Merging two models'
+# outputs requires knowing each guardrail's verdict POLARITY -- several
+# guardrails use true=SAFE semantics (tone_enforcement 'compliant',
+# topic_restriction 'related', topic_enforcement 'overall_allowed',
+# factual_grounding 'grounded'), so a naive "true means flagged" OR-merge
+# would let a permissive secondary verdict MASK a primary violation. Only
+# guardrails registered here are merged; anything else (unknown names,
+# multi-line shapes like hallucinated_links, free-text shapes like
+# language_detection) is shadow-logged: the secondary's raw output is
+# attached for comparison but never changes the decision.
+#   kind "csv":  verdict is the first field of a single CSV line
+#   kind "json": verdict is the named boolean field of a JSON object
+#   unsafe_when: the field value that means "flag/block"
+_GUARD_VERDICT_REGISTRY: dict[str, dict] = {
+    "adversarial_detection": {"kind": "csv", "unsafe_when": True},
+    "toxicity": {"kind": "csv", "unsafe_when": True},
+    "pii_detection": {"kind": "csv", "unsafe_when": True},
+    "bias_detection": {"kind": "csv", "unsafe_when": True},
+    "topic_restriction": {"kind": "csv", "unsafe_when": False},
+    "topic_enforcement": {"kind": "csv", "unsafe_when": False},
+    "tone_enforcement": {"kind": "csv", "unsafe_when": False},
+    "factual_grounding": {"kind": "csv", "unsafe_when": False},
+    "custom_policy_input": {"kind": "json", "field": "violates_policy", "unsafe_when": True},
+    "custom_policy_output": {"kind": "json", "field": "violates_policy", "unsafe_when": True},
+    "role_based_input_policy": {"kind": "json", "field": "violates_policy", "unsafe_when": True},
+    "role_based_policy": {"kind": "json", "field": "violates_policy", "unsafe_when": True},
+}
+
+
+def _first_csv_bool(content: str) -> Optional[bool]:
+    """True/False if content is a single CSV line whose first field is an
+    unambiguous boolean token (e.g. 'true,jailbreak,0.97'). None if the shape
+    doesn't match -- e.g. multi-line outputs like hallucinated_links.py's
+    per-URL CSV rows, where a generic merge would corrupt the content.
+    """
+    text = (content or "").strip()
+    if not text or "\n" in text:
+        return None
+    first = text.split(",", 1)[0].strip().strip('"').strip("'").lower()
+    if first in ("true", "yes"):
+        return True
+    if first in ("false", "no"):
+        return False
+    return None
+
+
+def _json_bool_field(content: str, field: str) -> Optional[bool]:
+    """The named boolean field from a JSON completion, or None if the content
+    doesn't parse as JSON with that field as a bool."""
+    try:
+        data = parse_llm_json(content)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get(field)
+    return value if isinstance(value, bool) else None
+
+
+def _verdict_unsafe(guardrail_name: Optional[str], content: str) -> Optional[bool]:
+    """Whether this completion means 'flag/block' for the given guardrail.
+
+    None when the guardrail isn't registered or the content doesn't match its
+    registered shape -- callers must treat None as 'do not merge'.
+    """
+    spec = _GUARD_VERDICT_REGISTRY.get(guardrail_name or "")
+    if spec is None:
+        return None
+    if spec["kind"] == "csv":
+        value = _first_csv_bool(content)
+    else:
+        value = _json_bool_field(content, spec["field"])
+    if value is None:
+        return None
+    return value == spec["unsafe_when"]
+
+
+def _combine_both(
+    primary_result: dict,
+    secondary_result: Optional[dict],
+    guardrail_name: Optional[str],
+) -> tuple[dict, dict]:
+    """OR-combine primary/secondary verdicts for SHIELD_GUARD_MODEL_MODE=both.
+
+    Decision: block if EITHER model flags content unsafe -- the conservative
+    choice for a security guardrail -- applied only for guardrails whose
+    verdict shape AND polarity are registered in _GUARD_VERDICT_REGISTRY.
+    Everything else is shadow-logged (secondary attached to _secondary_model
+    for comparison/benchmarking, decision unchanged): merging without knowing
+    polarity risks a permissive secondary verdict masking a primary violation.
+
+    Returns (response_to_use, secondary_metadata).
+    """
+    secondary_meta: dict = {"raw": None, "merged": False, "error": None}
+
+    if secondary_result is None:
+        return primary_result, secondary_meta
+
+    try:
+        primary_content = primary_result["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return primary_result, secondary_meta
+
+    try:
+        secondary_content = secondary_result["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        secondary_meta["error"] = "secondary response missing choices"
+        return primary_result, secondary_meta
+
+    secondary_meta["raw"] = secondary_content
+
+    primary_unsafe = _verdict_unsafe(guardrail_name, primary_content)
+    secondary_unsafe = _verdict_unsafe(guardrail_name, secondary_content)
+
+    if primary_unsafe is None or secondary_unsafe is None:
+        # Unregistered guardrail or unexpected shape -- shadow-log only.
+        return primary_result, secondary_meta
+
+    secondary_meta["merged"] = True
+    if secondary_unsafe and not primary_unsafe:
+        # Secondary flagged something primary missed. Return secondary's own
+        # response (not a synthetic patch) so its type/confidence/reasoning
+        # stay self-consistent for the calling guardrail's existing parser.
+        return secondary_result, secondary_meta
+
+    return primary_result, secondary_meta
+
+
+def validate_guard_model_config() -> None:
+    """Fail fast on a malformed guard-model configuration.
+
+    Call at data-plane startup (create_app). Without this, a typo'd
+    SHIELD_GUARD_MODEL_MODE or a missing NEMOTRON_BACKEND_URL only raises at
+    call time -- and every LLM guardrail catches call failures and allows by
+    default, so the misconfiguration would silently disable ALL LLM
+    guardrails instead of being loud.
+    """
+    targets = _resolve_targets(_get_guard_model_mode())
+    if "nemotron" in targets:
+        _get_nemotron_server_url()
+
+
+def _dispatch_sync(
+    target: str,
+    guardrail_name: Optional[str],
+    messages: list,
+    max_tokens: int,
+    temperature: float,
+    response_format: Optional[dict],
+) -> dict:
+    """Single synchronous backend call for the given target ('votal' | 'nemotron')."""
+    if target == "nemotron":
+        url = _get_nemotron_server_url()
+        payload = _build_nemotron_payload(messages, max_tokens, temperature, response_format)
+        endpoint_url = _chat_completions_url(url)
+        headers = _nemotron_auth_headers() or None
+    else:
+        url = get_server_url(guardrail_name)
+        payload = _build_payload(messages, max_tokens, temperature, response_format)
+        endpoint_url = _endpoint_url(url)
+        headers = _auth_headers() or None
+
+    _print_llm_request(endpoint_url, payload)
+    session = _get_shared_session()
+    res = session.post(endpoint_url, json=payload, headers=headers, timeout=300)
+    if res.status_code >= 400:
+        _print_llm_response(endpoint_url, res.status_code, res.text)
+    result = res.json()
+    if target == "votal" and _is_ollama_mode():
+        result = _adapt_ollama_response(result)
+    return {"result": result, "server_url": url}
+
+
+async def _dispatch_async(
+    target: str,
+    guardrail_name: Optional[str],
+    messages: list,
+    max_tokens: int,
+    temperature: float,
+    response_format: Optional[dict],
+) -> dict:
+    """Single async backend call for the given target ('votal' | 'nemotron')."""
+    if target == "nemotron":
+        url = _get_nemotron_server_url()
+        payload = _build_nemotron_payload(messages, max_tokens, temperature, response_format)
+        endpoint_url = _chat_completions_url(url)
+        headers = _nemotron_auth_headers() or None
+    else:
+        url = get_server_url(guardrail_name)
+        payload = _build_payload(messages, max_tokens, temperature, response_format)
+        endpoint_url = _endpoint_url(url)
+        headers = _auth_headers() or None
+
+    _print_llm_request(endpoint_url, payload)
+    client = _get_shared_client()
+    res = await client.post(endpoint_url, json=payload, headers=headers)
+    if res.status_code >= 400:
+        _print_llm_response(endpoint_url, res.status_code, res.text)
+    result = res.json()
+    if target == "votal" and _is_ollama_mode():
+        result = _adapt_ollama_response(result)
+    return {"result": result, "server_url": url}
+
+
 def llm_call(
     messages: list,
     max_tokens: int = 10,
@@ -508,24 +820,72 @@ def llm_call(
     response_format: Optional[dict] = None,
     guardrail_name: Optional[str] = None,
 ) -> dict:
-    """Synchronous LLM call routed to the correct server."""
-    url = get_server_url(guardrail_name)
-    payload = _build_payload(messages, max_tokens, temperature, response_format)
-    endpoint_url = _endpoint_url(url)
-    _print_llm_request(endpoint_url, payload)
-    session = _get_shared_session()
-    res = session.post(
-        endpoint_url,
-        json=payload,
-        headers=_auth_headers() or None,
-        timeout=300,
+    """Synchronous LLM call routed per SHIELD_GUARD_MODEL_MODE.
+
+    The mode only applies to guard-classification calls (guardrail_name set);
+    calls without one always use the original votal path (see the guard-model
+    section comment above for why).
+
+    mode=votal (default, unset): identical to the original single-backend
+    behavior below -- no change for existing deployments.
+    mode=nemotron: same call shape, routed to the Nemotron backend.
+    mode=both: calls both sequentially and OR-combines verdicts (see
+    _combine_both); the secondary's failure never blocks the primary result.
+    """
+    mode = _get_guard_model_mode()
+    targets = _resolve_targets(mode) if guardrail_name else ["votal"]
+
+    if len(targets) == 1:
+        target = targets[0]
+        if target == "votal":
+            # Unmodified original code path.
+            url = get_server_url(guardrail_name)
+            payload = _build_payload(messages, max_tokens, temperature, response_format)
+            endpoint_url = _endpoint_url(url)
+            _print_llm_request(endpoint_url, payload)
+            session = _get_shared_session()
+            res = session.post(
+                endpoint_url,
+                json=payload,
+                headers=_auth_headers() or None,
+                timeout=300,
+            )
+            if res.status_code >= 400:
+                _print_llm_response(endpoint_url, res.status_code, res.text)
+            result = res.json()
+            if _is_ollama_mode():
+                result = _adapt_ollama_response(result)
+            return result
+        return _dispatch_sync(
+            target, guardrail_name, messages, max_tokens, temperature, response_format
+        )["result"]
+
+    primary_target, secondary_target = targets
+    primary_dispatched = _dispatch_sync(
+        primary_target, guardrail_name, messages, max_tokens, temperature, response_format
     )
-    if res.status_code >= 400:
-        _print_llm_response(endpoint_url, res.status_code, res.text)
-    result = res.json()
-    if _is_ollama_mode():
-        result = _adapt_ollama_response(result)
-    return result
+
+    secondary_result = None
+    secondary_url = None
+    secondary_error = None
+    try:
+        secondary_dispatched = _dispatch_sync(
+            secondary_target, guardrail_name, messages, max_tokens, temperature, response_format
+        )
+        secondary_result = secondary_dispatched["result"]
+        secondary_url = secondary_dispatched["server_url"]
+    except Exception as e:
+        secondary_error = str(e)
+
+    merged_result, secondary_meta = _combine_both(
+        primary_dispatched["result"], secondary_result, guardrail_name
+    )
+    secondary_meta.update({"target": secondary_target, "server_url": secondary_url})
+    if secondary_error:
+        secondary_meta["error"] = secondary_error
+    if isinstance(merged_result, dict):
+        merged_result["_secondary_model"] = secondary_meta
+    return merged_result
 
 
 async def async_llm_call(
@@ -535,39 +895,120 @@ async def async_llm_call(
     response_format: Optional[dict] = None,
     guardrail_name: Optional[str] = None,
 ) -> dict:
-    """Async LLM call routed to the correct server based on guardrail name."""
-    url = get_server_url(guardrail_name)
-    prep_start = time.perf_counter()
-    payload = _build_payload(messages, max_tokens, temperature, response_format)
-    prep_ms = (time.perf_counter() - prep_start) * 1000
+    """Async LLM call routed per SHIELD_GUARD_MODEL_MODE.
 
+    The mode only applies to guard-classification calls (guardrail_name set);
+    calls without one always use the original votal path (see the guard-model
+    section comment above for why).
+
+    mode=votal (default, unset): identical to the original single-backend
+    behavior below -- no change for existing deployments.
+    mode=nemotron: same call shape, routed to the Nemotron backend.
+    mode=both: calls both concurrently (asyncio.gather -- wall-clock is
+    governed by the slower of the two, not their sum) and OR-combines
+    verdicts (see _combine_both); the secondary's failure never blocks the
+    primary result.
+    """
+    mode = _get_guard_model_mode()
+    targets = _resolve_targets(mode) if guardrail_name else ["votal"]
+
+    if len(targets) == 1 and targets[0] == "votal":
+        # Unmodified original code path.
+        url = get_server_url(guardrail_name)
+        prep_start = time.perf_counter()
+        payload = _build_payload(messages, max_tokens, temperature, response_format)
+        prep_ms = (time.perf_counter() - prep_start) * 1000
+
+        llm_start = time.perf_counter()
+        client = _get_shared_client()
+        endpoint_url = _endpoint_url(url)
+        _print_llm_request(endpoint_url, payload)
+        res = await client.post(
+            endpoint_url,
+            json=payload,
+            headers=_auth_headers() or None,
+        )
+        if res.status_code >= 400:
+            _print_llm_response(endpoint_url, res.status_code, res.text)
+        result = res.json()
+        if _is_ollama_mode():
+            result = _adapt_ollama_response(result)
+        llm_ms = (time.perf_counter() - llm_start) * 1000
+
+        post_start = time.perf_counter()
+        # Inject timing metadata into the response
+        if isinstance(result, dict):
+            result["_timing"] = {
+                "prep_ms": round(prep_ms, 2),
+                "llm_call_ms": round(llm_ms, 2),
+                "guardrail_name": guardrail_name,
+                "server_url": url,
+            }
+        post_ms = (time.perf_counter() - post_start) * 1000
+        if isinstance(result, dict) and "_timing" in result:
+            result["_timing"]["post_ms"] = round(post_ms, 2)
+
+        return result
+
+    if len(targets) == 1:
+        # mode=nemotron
+        llm_start = time.perf_counter()
+        dispatched = await _dispatch_async(
+            targets[0], guardrail_name, messages, max_tokens, temperature, response_format
+        )
+        llm_ms = (time.perf_counter() - llm_start) * 1000
+        result = dispatched["result"]
+        if isinstance(result, dict):
+            result["_timing"] = {
+                "prep_ms": 0.0,
+                "llm_call_ms": round(llm_ms, 2),
+                "guardrail_name": guardrail_name,
+                "server_url": dispatched["server_url"],
+                "guard_model_mode": mode,
+            }
+        return result
+
+    # mode=both
+    primary_target, secondary_target = targets
     llm_start = time.perf_counter()
-    client = _get_shared_client()
-    endpoint_url = _endpoint_url(url)
-    _print_llm_request(endpoint_url, payload)
-    res = await client.post(
-        endpoint_url,
-        json=payload,
-        headers=_auth_headers() or None,
+    primary_dispatched, secondary_dispatched = await asyncio.gather(
+        _dispatch_async(
+            primary_target, guardrail_name, messages, max_tokens, temperature, response_format
+        ),
+        _dispatch_async(
+            secondary_target, guardrail_name, messages, max_tokens, temperature, response_format
+        ),
+        return_exceptions=True,
     )
-    if res.status_code >= 400:
-        _print_llm_response(endpoint_url, res.status_code, res.text)
-    result = res.json()
-    if _is_ollama_mode():
-        result = _adapt_ollama_response(result)
     llm_ms = (time.perf_counter() - llm_start) * 1000
 
-    post_start = time.perf_counter()
-    # Inject timing metadata into the response
-    if isinstance(result, dict):
-        result["_timing"] = {
-            "prep_ms": round(prep_ms, 2),
+    if isinstance(primary_dispatched, Exception):
+        raise primary_dispatched
+
+    secondary_result = None
+    secondary_url = None
+    secondary_error = None
+    if isinstance(secondary_dispatched, Exception):
+        secondary_error = str(secondary_dispatched)
+    else:
+        secondary_result = secondary_dispatched["result"]
+        secondary_url = secondary_dispatched["server_url"]
+
+    merged_result, secondary_meta = _combine_both(
+        primary_dispatched["result"], secondary_result, guardrail_name
+    )
+    secondary_meta.update({"target": secondary_target, "server_url": secondary_url})
+    if secondary_error:
+        secondary_meta["error"] = secondary_error
+
+    if isinstance(merged_result, dict):
+        merged_result["_secondary_model"] = secondary_meta
+        merged_result["_timing"] = {
+            "prep_ms": 0.0,
             "llm_call_ms": round(llm_ms, 2),
             "guardrail_name": guardrail_name,
-            "server_url": url,
+            "server_url": primary_dispatched["server_url"],
+            "guard_model_mode": mode,
+            "primary_target": primary_target,
         }
-    post_ms = (time.perf_counter() - post_start) * 1000
-    if isinstance(result, dict) and "_timing" in result:
-        result["_timing"]["post_ms"] = round(post_ms, 2)
-
-    return result
+    return merged_result

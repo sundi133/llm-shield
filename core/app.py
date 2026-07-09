@@ -79,6 +79,13 @@ def create_app() -> FastAPI:
     # Load configuration (sets module-level singleton in config.schema)
     load_config()
 
+    # Fail fast on a malformed SHIELD_GUARD_MODEL_MODE configuration. Every
+    # LLM guardrail fails open on call errors, so a config typo caught only at
+    # call time would silently disable ALL LLM guardrails instead of crashing
+    # the boot loudly.
+    from core.llm_backend import validate_guard_model_config
+    validate_guard_model_config()
+
     app = FastAPI(title="LLM Shield")
 
     # Middleware order: Starlette runs them bottom-to-top,
