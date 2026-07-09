@@ -37,6 +37,31 @@ the upstream, then calls through the gateway:
 | `wire_transfer` as **admin** | executes |
 | `account_details` as **admin** | executes, but SSN redacted on the way out (output DLP) |
 
+## Bank demo — your real tenant + agent (from .env)
+
+`bank_demo.py` + `bank_upstream.py` are wired to the `customer-service-agent` and
+its five tools, and reproduce your portal's **role → tool matrix** through the
+actual gateway enforcement path. Config comes from a `.env` (stdlib loader — no
+python-dotenv). It does **not** register the agent (your tenant already has it).
+
+```bash
+cd examples/mcp_gateway
+cp .env.example .env            # set TENANT_KEY, SHIELD_URL, AGENT_KEY, UPSTREAM_URL
+pip install -r requirements.txt
+python bank_upstream.py &       # the UNMODIFIED bank server on :9100
+python bank_demo.py
+```
+
+It prints a grid (`OK`/`BLK`, `!` marks any mismatch vs the portal) plus an output
+sanitization check (a `customer_profile_get` result with the SSN redacted). A
+clean run shows **0 mismatches** — the gateway enforces exactly what you
+configured, on an unmodified server.
+
+> **Reachability:** the gateway connects to the upstream **from the data-plane
+> process**. If `SHIELD_URL` is remote (`api.guardrails.votal.ai`), it can't reach
+> your `localhost:9100` — run Shield locally for the demo, or expose the upstream
+> (ngrok / deploy) and point `UPSTREAM_URL` at the public address.
+
 ## What to notice
 
 - `upstream_server.py` has **zero** Shield code — a real customer's server would be
