@@ -25,6 +25,7 @@ import json
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from storage.tenant_store import _fallback_store, _get_redis
@@ -337,7 +338,60 @@ def verify_bundle(bundle: dict) -> dict:
     return _verify_checkpoints(records, bundle.get("checkpoints", []), _verify)
 
 
+# ── background writer (keeps the guard path at +0ms) ─────────────────
+#
+# All three audit writers call enqueue(); a single worker thread serializes the
+# hash-chain appends (which also avoids CAS contention within a process) and
+# periodically checkpoints. Best-effort: a dropped append surfaces as a chain
+# gap on verify rather than blocking or crashing the caller.
+
+_executor: Optional[ThreadPoolExecutor] = None
+_executor_lock = threading.Lock()
+_append_counts: dict[str, int] = {}
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    global _executor
+    if _executor is None:
+        with _executor_lock:
+            if _executor is None:
+                _executor = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="audit-chain"
+                )
+    return _executor
+
+
+def _worker(scope: str, record: dict) -> None:
+    try:
+        append_hashchained(scope, record)
+        n = _append_counts.get(scope, 0) + 1
+        _append_counts[scope] = n
+        ckpt_n = int(os.getenv("SHIELD_AUDIT_CHECKPOINT_N", "100"))
+        if ckpt_n > 0 and n % ckpt_n == 0:
+            checkpoint(scope)
+    except Exception:
+        pass  # best-effort; loss shows up as a gap on verify_chain()
+
+
+def enqueue(scope: str, record: dict) -> None:
+    """Fire-and-forget: chain-append ``record`` off the caller's thread.
+
+    No-op when tamper-evidence is disabled. Never raises to the caller."""
+    if not is_enabled():
+        return
+    try:
+        _get_executor().submit(_worker, scope, record)
+    except Exception:
+        pass
+
+
 # ── test support ─────────────────────────────────────────────────────
+
+
+def flush_for_tests() -> None:
+    """Block until the background writer has drained (single-worker FIFO)."""
+    if _executor is not None:
+        _executor.submit(lambda: None).result()
 
 
 def reset_for_tests() -> None:
@@ -345,3 +399,4 @@ def reset_for_tests() -> None:
     global _signer
     with _signer_lock:
         _signer = None
+    _append_counts.clear()

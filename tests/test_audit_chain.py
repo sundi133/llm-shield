@@ -168,3 +168,126 @@ def test_scopes_are_independent():
     assert len(ac.get_records("t2")) == 3
     assert ac.verify_chain("t1")["valid"] is True
     assert ac.verify_chain("t2")["valid"] is True
+
+
+# ── background enqueue + auto-checkpoint cadence ─────────────────────
+
+
+def test_enqueue_appends_off_thread():
+    ac.enqueue("t1", {"event": "x"})
+    ac.flush_for_tests()
+    assert len(ac.get_records("t1")) == 1
+    assert ac.verify_chain("t1")["valid"] is True
+
+
+def test_enqueue_noop_when_disabled(monkeypatch):
+    monkeypatch.delenv("SHIELD_AUDIT_TAMPER_EVIDENT", raising=False)
+    ac.enqueue("t1", {"event": "x"})
+    ac.flush_for_tests()
+    assert ac.get_records("t1") == []
+
+
+def test_auto_checkpoint_every_n(monkeypatch):
+    monkeypatch.setenv("SHIELD_AUDIT_CHECKPOINT_N", "3")
+    for _ in range(6):
+        ac.enqueue("t1", {"event": "x"})
+    ac.flush_for_tests()
+    cks = ac.get_checkpoints("t1")
+    assert [c["seq"] for c in cks] == [3, 6]
+    assert ac.verify_chain("t1")["valid"] is True
+
+
+# ── writer wiring (decision_audit / admin_audit → chain) ─────────────
+
+
+def test_decision_audit_feeds_chain():
+    with patch("storage.decision_audit._get_redis", return_value=None):
+        from storage.decision_audit import log_decision
+        log_decision(tenant_id="t1", action="block", guardrail="rbac_guard")
+    ac.flush_for_tests()
+    recs = ac.get_records("decisions:t1")
+    assert len(recs) == 1 and recs[0]["action"] == "block"
+    assert ac.verify_chain("decisions:t1")["valid"] is True
+
+
+def test_admin_audit_feeds_chain():
+    with patch("storage.admin_audit._get_redis", return_value=None):
+        from storage.admin_audit import log_admin_action
+        log_admin_action("update_tenant", actor="admin", tenant_id="t1")
+    ac.flush_for_tests()
+    recs = ac.get_records("admin_audit:t1")
+    assert len(recs) == 1 and recs[0]["action"] == "update_tenant"
+
+
+# ── verify / export endpoints ────────────────────────────────────────
+
+
+class _FakeState:
+    def __init__(self, tenant_id=None):
+        self.tenant_id = tenant_id
+
+
+class _FakeRequest:
+    def __init__(self, tenant_id=None, headers=None):
+        self.state = _FakeState(tenant_id)
+        self.headers = headers or {}
+
+
+def test_verify_endpoint_tenant_scoped():
+    import asyncio
+
+    from api import routes_audit
+    ac.append_hashchained("audit:acme", {"event": "e", "action": "pass"})
+    req = _FakeRequest(tenant_id="acme")
+    # A tenant key must be pinned to its own scope even if it passes ?tenant_id.
+    out = asyncio.run(routes_audit.verify_audit_chain(req, store="audit", tenant_id="other"))
+    assert out["valid"] is True and out["checked"] == 1
+
+
+def test_verify_endpoint_409_when_disabled(monkeypatch):
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from api import routes_audit
+    monkeypatch.delenv("SHIELD_AUDIT_TAMPER_EVIDENT", raising=False)
+    req = _FakeRequest(tenant_id="acme")
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(routes_audit.verify_audit_chain(req, store="audit", tenant_id=None))
+    assert ei.value.status_code == 409
+
+
+def test_export_endpoint_bad_store_400():
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from api import routes_audit
+    req = _FakeRequest(tenant_id="acme")
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(routes_audit.export_audit_chain(req, store="bogus", tenant_id=None))
+    assert ei.value.status_code == 400
+
+
+# ── standalone offline verifier script ───────────────────────────────
+
+
+def test_standalone_verifier_script(tmp_path):
+    import subprocess
+    import sys
+
+    _append_many("t1", 4)
+    ac.checkpoint("t1")
+    bundle = ac.export_bundle("t1")
+    good = tmp_path / "bundle.json"
+    good.write_text(json.dumps(bundle))
+    r = subprocess.run([sys.executable, "scripts/verify_audit_bundle.py", str(good)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and "VALID" in r.stdout
+
+    bundle["records"][0]["action"] = "tampered"
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(bundle))
+    r2 = subprocess.run([sys.executable, "scripts/verify_audit_bundle.py", str(bad)],
+                        capture_output=True, text=True)
+    assert r2.returncode == 1 and "TAMPERED" in r2.stdout

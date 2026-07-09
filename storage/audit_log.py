@@ -30,6 +30,15 @@ def _get_redis():
         return None
 
 
+def _chain_append(scope: str, record: dict) -> None:
+    """Append to the tamper-evident chain when enabled (best-effort)."""
+    try:
+        from storage import audit_chain
+        audit_chain.enqueue(scope, record)
+    except Exception:
+        pass
+
+
 class AuditLogger:
     """Async-compatible audit logger backed by Redis."""
 
@@ -98,6 +107,10 @@ class AuditLogger:
                 r.zremrangebyrank(key, 0, count - _MAX_ENTRIES - 1)
             if r.ttl(key) == -1:
                 r.expire(key, _AUDIT_TTL)
+
+            # Tamper-evident chain (opt-in). This already runs in a thread-pool
+            # executor, so appending here is off the guard hot path.
+            _chain_append(f"audit:{tenant_id}" if tenant_id else "audit:global", record)
         except Exception:
             pass
 
