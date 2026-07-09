@@ -121,6 +121,46 @@ class MCPProxy:
             "shield": decision,
         }
 
+    # ── resources ────────────────────────────────────────────────────
+
+    async def list_resources(self, *, agent_key: str, user_role: Optional[str], tenant_id: Optional[str]) -> list[dict]:
+        """Passthrough (v1): forward the upstream's resource list. Room for a
+        per-route allowlist filter later; the gateway never blocks a listing it
+        has no policy for."""
+        return await self._upstream.list_resources()
+
+    async def list_resource_templates(self, *, agent_key: str, user_role: Optional[str], tenant_id: Optional[str]) -> list[dict]:
+        return await self._upstream.list_resource_templates()
+
+    async def read_resource(self, uri: str, *, agent_key: str, user_role: Optional[str], tenant_id: Optional[str]) -> dict:
+        """Fetch a resource and DLP-sanitize its content (it can carry PII/secrets,
+        same as a tool result). Returns {contents, blocked, reason}."""
+        raw = await self._upstream.read_resource(uri)
+        contents = raw.get("contents", []) if isinstance(raw, dict) else (raw or [])
+        out: list[dict] = []
+        for block in contents:
+            text = block.get("text") if isinstance(block, dict) else None
+            if text is not None:
+                san = await self._enforcer.sanitize_tool_result(
+                    uri, text, agent_key=agent_key, tenant_id=tenant_id, user_role=user_role)
+                if san["blocked"]:
+                    return {"blocked": True,
+                            "reason": "Resource content blocked by Shield data policy",
+                            "contents": []}
+                block = {**block, "text": _as_text(san["sanitized_output"])}
+            out.append(block)
+        return {"blocked": False, "contents": out}
+
+    # ── prompts ──────────────────────────────────────────────────────
+
+    async def list_prompts(self, *, agent_key: str, user_role: Optional[str], tenant_id: Optional[str]) -> list[dict]:
+        return await self._upstream.list_prompts()
+
+    async def get_prompt(self, name: str, arguments: Optional[dict], *, agent_key: str, user_role: Optional[str], tenant_id: Optional[str]) -> dict:
+        """Passthrough (v1). Injection-screening of the returned prompt is a
+        flagged follow-up."""
+        return await self._upstream.get_prompt(name, arguments or {})
+
     async def _scan_for_poisoning(self, tools: list[dict]) -> list[dict]:
         """Flag tools whose description looks like an injection/poisoning attempt.
 
