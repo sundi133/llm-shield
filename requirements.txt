@@ -21,3 +21,5 @@ python-multipart
 pypdf
 python-docx
 openpyxl
+# MCP gateway: connect_upstream() uses the MCP client SDK (stdio/SSE/streamable-http)
+mcp>=1.2.0
