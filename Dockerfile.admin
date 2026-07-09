@@ -87,6 +87,7 @@ COPY storage/custom_policies.py storage/
 COPY storage/rate_limiter.py storage/
 COPY storage/policy_store.py storage/
 COPY storage/audit_log.py storage/
+COPY storage/audit_chain.py storage/
 COPY storage/state_store.py storage/
 COPY storage/decision_audit.py storage/
 COPY storage/tool_killswitch.py storage/

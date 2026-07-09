@@ -67,6 +67,15 @@ def log_admin_action(
         except Exception as e:
             logger.warning(f"Failed to write admin audit entry: {e}")
 
+    # Tamper-evident chain (opt-in, off-thread so callers are never blocked).
+    try:
+        from storage import audit_chain
+        audit_chain.enqueue(
+            f"admin_audit:{tenant_id}" if tenant_id else "admin_audit:global", entry
+        )
+    except Exception:
+        pass
+
     logger.info(f"Admin action: {action} by {actor} on tenant={tenant_id}")
     return entry
 

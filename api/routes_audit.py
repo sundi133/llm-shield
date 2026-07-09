@@ -135,3 +135,67 @@ async def get_stats(
 
     stats = await audit_logger.get_stats(since=since_dt, tenant_id=effective_tenant)
     return stats
+
+
+_VALID_STORES = ("audit", "decisions", "admin_audit")
+
+
+def _chain_scope(request: Request, store: str, tenant_id: Optional[str]) -> str:
+    """Authorize the caller and resolve the chain scope string.
+
+    Tenant keys are pinned to their own tenant; master/admin keys may target a
+    specific tenant (or 'global' when none is given). Mirrors _resolve_audit_scope.
+    """
+    if store not in _VALID_STORES:
+        raise HTTPException(status_code=400, detail=f"store must be one of {_VALID_STORES}")
+    scope_tenant = _resolve_audit_scope(request)
+    effective = scope_tenant if scope_tenant is not None else (tenant_id or "global")
+    return f"{store}:{effective}"
+
+
+@router.get("/audit/verify")
+async def verify_audit_chain(
+    request: Request,
+    store: str = Query("audit", description=f"Which audit store: {_VALID_STORES}"),
+    tenant_id: Optional[str] = Query(
+        None, description="Master keys only: verify a specific tenant. Ignored for tenant keys."
+    ),
+):
+    """Verify a tamper-evident audit chain against its signed checkpoints.
+
+    Returns {valid, checked, break_at_seq, reason, last_checkpoint}. A false
+    ``valid`` with a ``break_at_seq`` pinpoints the first altered/missing record.
+    """
+    from storage import audit_chain
+
+    if not audit_chain.is_enabled():
+        raise HTTPException(
+            status_code=409,
+            detail="Tamper-evident audit is not enabled (set SHIELD_AUDIT_TAMPER_EVIDENT=1).",
+        )
+    scope = _chain_scope(request, store, tenant_id)
+    return audit_chain.verify_chain(scope)
+
+
+@router.get("/audit/export")
+async def export_audit_chain(
+    request: Request,
+    store: str = Query("audit", description=f"Which audit store: {_VALID_STORES}"),
+    tenant_id: Optional[str] = Query(
+        None, description="Master keys only: export a specific tenant. Ignored for tenant keys."
+    ),
+):
+    """Export a verifiable audit bundle (records + signed checkpoints + public key).
+
+    An auditor verifies it offline with scripts/verify_audit_bundle.py — no access
+    to Shield or its private key required.
+    """
+    from storage import audit_chain
+
+    if not audit_chain.is_enabled():
+        raise HTTPException(
+            status_code=409,
+            detail="Tamper-evident audit is not enabled (set SHIELD_AUDIT_TAMPER_EVIDENT=1).",
+        )
+    scope = _chain_scope(request, store, tenant_id)
+    return audit_chain.export_bundle(scope)
