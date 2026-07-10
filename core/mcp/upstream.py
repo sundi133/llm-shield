@@ -86,11 +86,20 @@ class MCPUpstream:
     async def list_prompts(self) -> list[dict]:
         res = await self._session.list_prompts()
         items = _attr(res, "prompts", res)
-        return [{
-            "name": _attr(p, "name", "") or "",
-            "description": _attr(p, "description", "") or "",
-            "arguments": _attr(p, "arguments", None) or [],
-        } for p in (items or [])]
+        out: list[dict] = []
+        for p in (items or []):
+            # SDK PromptArgument objects aren't JSON-serializable — normalize to dicts.
+            args = [{
+                "name": _attr(a, "name", "") or "",
+                "description": _attr(a, "description", "") or "",
+                "required": bool(_attr(a, "required", False)),
+            } for a in (_attr(p, "arguments", None) or [])]
+            out.append({
+                "name": _attr(p, "name", "") or "",
+                "description": _attr(p, "description", "") or "",
+                "arguments": args,
+            })
+        return out
 
     async def get_prompt(self, name: str, arguments: Optional[dict] = None) -> dict:
         res = await self._session.get_prompt(name, arguments or {})
