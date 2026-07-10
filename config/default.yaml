@@ -695,9 +695,12 @@ telemetry:
 
 llm_backend:
   # vLLM configuration - model loaded from HuggingFace.
-  # Guardrail model: NVIDIA Nemotron Content Safety (replaces votal-ai/vai35-4B).
-  # Must match the MODEL_NAME the vLLM server is launched with (start_vllm.sh).
-  model_name: "nvidia/Nemotron-3.5-Content-Safety"
+  # Informational: the model actually served is chosen at launch by
+  # SHIELD_GUARD_MODEL_MODE (votal | nemotron | both) in start_vllm.sh --
+  #   votal    -> votal-ai/vai35-4B-v2
+  #   nemotron -> nvidia/Nemotron-3.5-Content-Safety (served as nemotron_moderator)
+  #   both     -> both, on separate ports.
+  model_name: "votal-ai/vai35-4B-v2"
   backend_type: "vllm"
 
   # Single GPU (default) - vLLM server

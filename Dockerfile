@@ -37,12 +37,20 @@ ENV VOTAL_ES_ENABLED=true
 ENV VOTAL_ES_INDEX=votal-shield-logs
 
 # vLLM server configuration.
-# Guardrail model: NVIDIA Nemotron Content Safety (replaces votal-ai/vai35-4B-v2).
-# start_vllm.sh serves this via `vllm ... --model "$MODEL_NAME"`. Override at
-# run time with -e MODEL_NAME=... if a different revision/mirror is needed.
-ENV MODEL_NAME=nvidia/Nemotron-3.5-Content-Safety
+# Guard-model mode selects which model(s) start_vllm.sh serves:
+#   votal    -> VOTAL_MODEL_NAME on VLLM_PORT (default, non-breaking)
+#   nemotron -> NEMOTRON_MODEL on VLLM_PORT
+#   both     -> Votal on VLLM_PORT + Nemotron on NEMOTRON_VLLM_PORT
+# Set -e SHIELD_GUARD_MODEL_MODE=nemotron (or both) at run time to use Nemotron.
+ENV SHIELD_GUARD_MODEL_MODE=votal
+ENV VOTAL_MODEL_NAME=votal-ai/vai35-4B-v2
+ENV NEMOTRON_MODEL=nvidia/Nemotron-3.5-Content-Safety
+ENV NEMOTRON_SERVED_NAME=nemotron_moderator
+# Legacy alias kept for compatibility; start_vllm.sh falls back to it for Votal.
+ENV MODEL_NAME=votal-ai/vai35-4B-v2
 ENV VLLM_HOST=0.0.0.0
 ENV VLLM_PORT=8000
+ENV NEMOTRON_VLLM_PORT=8001
 ENV LLM_BACKEND_TYPE=vllm
 
 # vLLM Performance Optimizations - Cache Directories

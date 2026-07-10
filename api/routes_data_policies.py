@@ -309,10 +309,10 @@ def _build_ai_san_prompt(payload: str, intent: str, stage: str,
 _AI_SAN_GUARDRAIL_NAME = "data_sanitization_ai"
 
 # Default model used when falling back to an HTTP call against a remote
-# Shield LLM. Matches the guardrail model the vLLM server serves
-# (MODEL_NAME in start_vllm.sh) so operators don't need to deploy a second
-# model variant just for sanitization.
-_AI_SAN_DEFAULT_MODEL = "nvidia/Nemotron-3.5-Content-Safety"
+# Shield LLM. Kept identical to the Votal baseline (the default guard-model
+# mode) so operators don't need to deploy a second model variant just for
+# sanitization; override via SHIELD_AI_SAN_MODEL if serving a different model.
+_AI_SAN_DEFAULT_MODEL = os.getenv("SHIELD_AI_SAN_MODEL", "votal-ai/vai35-4B")
 
 
 def _resolve_remote_llm_config(
