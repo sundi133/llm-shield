@@ -260,8 +260,32 @@ def _wait_for_server(url: str, label: str, max_attempts: int = 60):
     raise RuntimeError(f"{label} failed to start")
 
 
+def _assert_safe_model_path(path: str, source: str) -> str:
+    """Reject model paths that contain shell metacharacters or control chars
+    before they're passed to subprocess (CWE-78 defence-in-depth).
+
+    start_server launches llama-server with subprocess.Popen(args) in LIST
+    form and never shell=True, so there is no shell to inject into today. This
+    guard is belt-and-suspenders against a poisoned config file and a future
+    refactor that might introduce a shell: a legitimate model path is a plain
+    filesystem path, so anything with shell metacharacters, whitespace tricks,
+    or NUL/newline bytes is refused rather than executed.
+    """
+    if path and (
+        any(ch in path for ch in ";|&$`><\n\r\t\0")
+        or path.strip() != path
+    ):
+        raise RuntimeError(
+            f"{source} contains unsafe characters and will not be used to "
+            f"launch a subprocess: {path!r}"
+        )
+    return path
+
+
 def _build_server_args(port: int, model_path: str, draft_model_path: str) -> list[str]:
     """Build llama-server command args for a single instance."""
+    _assert_safe_model_path(model_path, "model_path")
+    _assert_safe_model_path(draft_model_path, "draft_model_path")
     args = [
         "/app/llama-server",
         "-m",
