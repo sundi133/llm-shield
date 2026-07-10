@@ -234,16 +234,36 @@ def create_app() -> FastAPI:
         token = body.get("token", "")
         secret = os.environ.get("HCAPTCHA_SECRET_KEY", "")
         if not secret:
-            return {"success": True}  # captcha not configured, skip
+            # Captcha not configured -> disabled by design (non-breaking for
+            # deployments that don't use it). This is a deliberate opt-in
+            # feature, not an auth bypass: nothing security-critical is gated
+            # on this endpoint's result server-side.
+            return {"success": True}
         if not token:
             return JSONResponse({"success": False, "error": "Missing captcha token"}, status_code=400)
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                "https://api.hcaptcha.com/siteverify",
-                data={"secret": secret, "response": token},
-            )
+        try:
+            # Bound the upstream call so a slow/unreachable hCaptcha can't hang
+            # the worker, and FAIL CLOSED on any error/malformed response
+            # rather than treating an unverifiable token as valid (CWE-288).
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    "https://api.hcaptcha.com/siteverify",
+                    data={"secret": secret, "response": token},
+                )
             result = resp.json()
-        if result.get("success"):
+        except Exception:
+            return JSONResponse(
+                {"success": False, "error": "Captcha verification unavailable"},
+                status_code=503,
+            )
+        if not isinstance(result, dict):
+            return JSONResponse({"success": False, "error": "Captcha verification failed"}, status_code=403)
+        # Strict: success must be exactly True. If a hostname is pinned via
+        # env, the verified hostname must match (rejects token replay from a
+        # different site key/origin).
+        expected_host = os.environ.get("HCAPTCHA_EXPECTED_HOSTNAME", "").strip()
+        host_ok = (not expected_host) or (result.get("hostname") == expected_host)
+        if result.get("success") is True and host_ok:
             return {"success": True}
         return JSONResponse({"success": False, "error": "Captcha verification failed"}, status_code=403)
 
