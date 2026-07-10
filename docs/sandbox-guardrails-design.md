@@ -139,6 +139,7 @@ bypass-proof **regardless** of egress (no valid cap ⇒ no side effect).
 | Provider | Egress lockdown today | Recommended posture |
 |---|---|---|
 | **Modal** | Strong — sandboxes can block network / allowlist hosts (`block_network` / restricted egress). | Allowlist only the egress gateway host ⇒ L2 is genuinely non-bypassable. |
+| **K8s Agent Sandbox** (SIG Apps, `agents.x-k8s.io/v1beta1`) | Strong — Kubernetes NetworkPolicy deny-by-default egress + allowlist (CNI-dependent, e.g. Cilium/Calico); gVisor/Kata isolation. | Allowlist only the egress gateway + Shield ⇒ L2 non-bypassable in-cluster. The on-prem/in-VPC option. Per-sandbox ServiceAccount identity composes with Shield's SPIFFE support. Deliver the agent token at claim time — never bake it into a `SandboxTemplate`/warm-pool image. |
 | **E2B** | Partial — sandbox templates + evolving egress controls; not a guaranteed firewall for arbitrary outbound. | Configure agent `base_url`/MCP to the gateway; rely on L3 for anything that matters; document residual risk of ungoverned read-only LLM calls if code reaches the internet directly. |
 | **Daytona** | Partial — runner/network-policy dependent. | Same as E2B: gateway config + L3 executor as the hard boundary; egress allowlist where the runner supports it. |
 
