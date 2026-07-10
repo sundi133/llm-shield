@@ -25,6 +25,12 @@ from litellm.integrations.custom_guardrail import CustomGuardrail
 from litellm.proxy._types import UserAPIKeyAuth
 from litellm.caching.caching import DualCache
 
+# Payload caps, matching examples/mcp_server/shield_guard.py. Shield also caps
+# request sizes server-side; capping here keeps oversize streams from turning
+# into check failures (which now fail closed) or unbounded buffers.
+MAX_GUARD_TEXT_CHARS = 50_000    # text sent to /guardrails/* checks
+MAX_TOOL_ARGS_CHARS = 100_000    # accumulated streaming tool-call arguments
+
 
 class VotalGuardrail(CustomGuardrail):
     """Votal guardrail with input, output, and tool RBAC enforcement."""
@@ -233,7 +239,7 @@ class VotalGuardrail(CustomGuardrail):
             if content:
                 result_resp = await self.client.post(
                     f"{self.api_base}/guardrails/output",
-                    json={"output": content},
+                    json={"output": content[:MAX_GUARD_TEXT_CHARS]},
                     headers=shield_headers,
                 )
 
@@ -370,7 +376,7 @@ class VotalGuardrail(CustomGuardrail):
         try:
             resp = await self.client.post(
                 f"{self.api_base}/guardrails/output",
-                json={"output": content},
+                json={"output": content[:MAX_GUARD_TEXT_CHARS]},
                 headers=shield_headers or {},
             )
             if resp.status_code != 200:
@@ -426,7 +432,14 @@ class VotalGuardrail(CustomGuardrail):
                                     if hasattr(dtc.function, "name") and dtc.function.name:
                                         accumulated_tool_calls[idx]["name"] += dtc.function.name
                                     if hasattr(dtc.function, "arguments") and dtc.function.arguments:
-                                        accumulated_tool_calls[idx]["arguments"] += dtc.function.arguments
+                                        # Bounded buffer: a hostile/buggy upstream cannot grow
+                                        # this without limit. Truncated JSON later fails to
+                                        # parse and is checked as {"_raw": ...} — the RBAC
+                                        # check still runs.
+                                        buf = accumulated_tool_calls[idx]
+                                        room = MAX_TOOL_ARGS_CHARS - len(buf["arguments"])
+                                        if room > 0:
+                                            buf["arguments"] += dtc.function.arguments[:room]
             except Exception:
                 delta_text = None
 
