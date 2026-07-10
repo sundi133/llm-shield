@@ -44,7 +44,7 @@ virtual key scoped to this proxy.
    litellm --config examples/sandbox/gateway/config.yaml --port 4000
    ```
 
-   Confirm the log line `VotalGuardrail initialized ... block_on_failure=True`.
+   Confirm the log line `VotalGuardrail initialized → <your-shield-host> ...`.
 
 4. Mint one virtual key per sandbox (or per agent). LiteLLM intercepts
    `X-API-Key` as its own key, so the Shield tenant key travels in the
@@ -73,28 +73,21 @@ LLM calls through this proxy, and you can budget, rate-limit, and revoke it
 per sandbox with LiteLLM key management. Rotate it with the same cadence as
 the agent token if your threat model requires.
 
-## Fail policy: `block_on_failure` (read before deploying)
+## Fail policy
 
-LiteLLM guardrails default fail-open upstream: if the guard errors or
-Shield is unreachable, traffic passes through unscreened. For a sandbox
-egress gateway the guard IS the enforcement point, so the shipped
-`config.yaml` sets `votal_guardrail.block_on_failure: true` (fail-closed):
-when Shield is unreachable the LLM call is blocked and the sandbox degrades
-to "can compute, cannot call the model".
+This plugin is fail-closed by default: if the guard errors or Shield is
+unreachable, the LLM call is blocked and the sandbox degrades to "can
+compute, cannot call the model". A sandbox egress gateway should stay
+fail-closed.
 
-The trade is availability: a Shield outage stops all sandboxed LLM traffic
-behind this gateway. Set `block_on_failure: false` only if unscreened
-egress during a Shield outage is acceptable in your threat model.
-Non-sandbox deployments of the same plugin may reasonably choose fail-open;
-a sandbox egress gateway should not.
-
-Streaming has one caveat: tool calls arrive as deltas and can only be
-assembled and checked at stream end, after content chunks have been sent.
-With `streaming_tool_rbac: enforce` (the shipped default) a blocked tool
-call fails the request at that point, so the sandbox never receives a
-completed response containing it. `log` restores audit-only behavior for
-clients that gate tool execution themselves. If you need blocking before
-any output at all, disable streaming for guarded routes.
+One streaming caveat: tool calls arrive as deltas and can only be assembled
+and checked at stream end, after content chunks have already been sent, so
+streamed tool-call RBAC at this gateway is audit-only (blocked calls are
+logged, not failed). The client must call `/v1/shield/tool/check` before
+acting on a tool call, and side-effecting tools go through the L3 cap-gated
+executor (`tool_executor.py`) regardless — that is the hard boundary, not
+this gateway. If you need blocking before any output at all, disable
+streaming for guarded routes.
 
 ## Making L2 non-bypassable: provider egress allowlists
 

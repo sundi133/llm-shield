@@ -47,20 +47,10 @@ votal_guardrail:
   api_base: "https://<your-shield-data-plane-host>"  # Shield DATA plane; literal value
   api_token: ""           # blank: reads RUNPOD_TOKEN / SHIELD_API_TOKEN from env
   last_k_messages: 3
-  # Fail policy for the guard itself. LiteLLM guardrails default fail-OPEN
-  # upstream: a guard error or Shield outage lets traffic through unscreened.
-  # A sandbox egress gateway IS the enforcement point (spec section 5), so
-  # this config ships fail-CLOSED: Shield unreachable means the LLM call is
-  # blocked and the sandbox degrades to "can compute, cannot call the model".
-  # The trade is availability: a Shield outage stops sandboxed LLM traffic
-  # behind this gateway. Flip to false only if unscreened egress during an
-  # outage is acceptable in your threat model.
-  block_on_failure: true
-  # Streamed responses: chunks are already sent when tool calls can first be
-  # assembled and checked, so "enforce" fails the request at stream end when
-  # a tool call is blocked. Keep "enforce" for sandboxes; "log" restores the
-  # audit-only behavior for clients that gate tool execution themselves.
-  streaming_tool_rbac: enforce
+  # Fail policy: this plugin is fail-CLOSED by default (a guard error or an
+  # unreachable Shield blocks the LLM call, so the sandbox degrades to "can
+  # compute, cannot call the model"). It is not a config knob here; a sandbox
+  # egress gateway should stay fail-closed regardless.
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY   # set a strong value via env
