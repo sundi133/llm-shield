@@ -1,0 +1,51 @@
+name: Sandbox K8s egress live proof
+
+# Live, non-mocked proof that K8sAgentSandboxProvider's NetworkPolicy
+# actually locks down egress (docs/spec-sandbox-guardrails.md §9 task 5).
+# Unlike the Modal live proof, this needs no vendor account: a `kind`
+# cluster with Calico (NetworkPolicy-capable CNI) is enough, so it runs in
+# ordinary CI rather than manual-dispatch-only. Scoped to the sandbox
+# example code so unrelated PRs don't pay for a kind+Calico bring-up.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "examples/sandbox/**"
+      - ".github/workflows/sandbox-k8s-live.yml"
+  push:
+    branches: [main]
+    paths:
+      - "examples/sandbox/**"
+  workflow_dispatch: {}
+
+jobs:
+  k8s-egress-proof:
+    name: kind + Calico egress lockdown proof
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the kubernetes client
+        run: pip install "kubernetes>=29.0"
+
+      - name: Create kind cluster (default CNI disabled)
+        uses: helm/kind-action@v1.10.0
+        with:
+          config: examples/sandbox/live_tests/kind-calico-config.yaml
+          cluster_name: shield-egress-live
+
+      - name: Install Calico
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
+          kubectl -n kube-system rollout status daemonset/calico-node --timeout=180s
+          kubectl -n kube-system rollout status deployment/calico-kube-controllers --timeout=180s
+          kubectl wait --for=condition=Ready nodes --all --timeout=180s
+
+      - name: Run the egress lockdown proof
+        run: python examples/sandbox/live_tests/k8s_egress_live_test.py

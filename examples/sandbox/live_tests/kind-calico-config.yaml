@@ -1,0 +1,9 @@
+# kind cluster config for the K8s egress live proof (sandbox-k8s-live.yml).
+# Disables kindnet (does not enforce NetworkPolicy) so Calico can be
+# installed instead. podSubnet matches Calico's stock manifest CIDR so no
+# manifest patching is needed.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true
+  podSubnet: "192.168.0.0/16"
