@@ -49,27 +49,36 @@ class _Unavailable(Exception):
 class ShieldGuard:
     """Guards one MCP tool call through Votal Shield.
 
-    Holds the tenant key + agent identity and a shared async HTTP client. All
+    Holds a credential + agent identity and a shared async HTTP client. All
     request-screening methods are coroutines. Construct once at server start and
     reuse across requests (the client is concurrency-safe).
+
+    Credential: a trusted-plane server passes ``tenant_key`` (X-API-Key). An
+    in-sandbox trusted loop (docs/sandbox-guardrails-design.md §4, L1) passes
+    ``agent_token`` instead — the instance-bound token is the only credential
+    a sandbox may hold; the tenant key must never enter one.
     """
 
     def __init__(
         self,
         *,
         base_url: str,
-        tenant_key: str,
+        tenant_key: str = "",
         agent_id: str,
+        agent_token: str = "",
         auth_token: str = "",
         fail_open: bool = False,
         timeout: float = 10.0,
         client: Optional[httpx.AsyncClient] = None,
     ):
-        if not base_url or not tenant_key:
-            raise ValueError("base_url and tenant_key are required")
+        if not base_url or not (tenant_key or agent_token):
+            raise ValueError(
+                "base_url and a credential (tenant_key or agent_token) are required"
+            )
         self.base_url = base_url.rstrip("/")
         self.tenant_key = tenant_key
         self.agent_id = agent_id
+        self.agent_token = agent_token
         self.auth_token = auth_token
         self.fail_open = fail_open
         # Injectable for tests (httpx.MockTransport); real server passes none.
@@ -78,7 +87,11 @@ class ShieldGuard:
     # ── internals ────────────────────────────────────────────────────
 
     def _headers(self) -> dict:
-        h = {"Content-Type": "application/json", "X-API-Key": self.tenant_key}
+        h = {"Content-Type": "application/json"}
+        if self.tenant_key:
+            h["X-API-Key"] = self.tenant_key
+        if self.agent_token:
+            h["X-Agent-Token"] = self.agent_token
         if self.auth_token:  # RunPod / reverse-proxy bearer, if the deploy needs it
             h["Authorization"] = f"Bearer {self.auth_token}"
         return h
