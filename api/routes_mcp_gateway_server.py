@@ -109,9 +109,11 @@ async def _dispatch(route: str, body: dict, request: Request):
         # 404 (no route) -> -32004; server-side -> -32000.
         return _err(rpc_id, -32004 if e.status == 404 else -32000, e.message)
     except Exception as e:
-        # Upstream that doesn't implement a method (or a transport error) -> a clean
-        # JSON-RPC error, never a 500.
-        return _err(rpc_id, -32603, f"upstream error handling {method}: {e}")
+        # Upstream that doesn't implement a method (or a transport/serialization
+        # error) -> a clean JSON-RPC error, never a 500. Include the exception type
+        # so the message is never blank.
+        detail = f"{type(e).__name__}: {e}".rstrip(": ")
+        return _err(rpc_id, -32603, f"error handling {method}: {detail}")
 
 
 @router.post("/{route}/mcp")

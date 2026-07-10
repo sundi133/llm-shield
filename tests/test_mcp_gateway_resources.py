@@ -4,6 +4,7 @@ resources/read is DLP-sanitized; lists + prompts/get pass through. No live upstr
 """
 
 import asyncio
+import json
 import types
 
 import pytest
@@ -110,12 +111,19 @@ def test_adapter_normalizes_sdk_objects():
         async def read_resource(self, uri):
             return ns(contents=[ns(uri=uri, mimeType="text/plain", text="hello")])
         async def list_prompts(self):
-            return ns(prompts=[ns(name="p1", description="dp", arguments=[])])
+            # arguments are SDK PromptArgument objects, NOT dicts (the live bug).
+            return ns(prompts=[ns(name="p1", description="dp",
+                                  arguments=[ns(name="who", description="the customer", required=True)])])
         async def get_prompt(self, name, arguments):
             return ns(description="", messages=[ns(role="user", content=ns(text="hey"))])
 
     up = MCPUpstream(FakeSession())
     assert run(up.list_resources())[0] == {"uri": "file://x", "name": "x", "description": "d", "mimeType": "text/plain"}
     assert run(up.read_resource("file://x"))["contents"][0]["text"] == "hello"
-    assert run(up.list_prompts())[0]["name"] == "p1"
     assert run(up.get_prompt("p1", {}))["messages"][0]["content"] == "hey"   # nested TextContent flattened
+
+    prompts = run(up.list_prompts())
+    assert prompts[0]["name"] == "p1"
+    # arguments must be plain dicts -> JSON-serializable (regression for the live -32603).
+    assert prompts[0]["arguments"] == [{"name": "who", "description": "the customer", "required": True}]
+    json.dumps(prompts)  # must not raise
