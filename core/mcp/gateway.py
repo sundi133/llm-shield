@@ -32,6 +32,30 @@ class GatewayError(Exception):
         self.message = message
 
 
+# Errors that mean "the pooled upstream session is dead" — an MCP streamable-HTTP
+# session (esp. to a stateless_http server) can close between calls. On these we
+# drop the pooled connection and reconnect once. Matched by type name so we don't
+# hard-import anyio.
+_BROKEN_SESSION_NAMES = {
+    "ClosedResourceError", "BrokenResourceError", "EndOfStream",
+    "ConnectionError", "ConnectionResetError", "IncompleteRead",
+}
+
+
+def _is_broken_session(e: Exception) -> bool:
+    if isinstance(e, (ConnectionError, OSError)):
+        return True
+    # Walk the exception + its cause/context chain for a known transport error.
+    seen = set()
+    cur: Optional[BaseException] = e
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if type(cur).__name__ in _BROKEN_SESSION_NAMES:
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
 def build_enforcer(cfg: dict):
     """Pick the enforcement backend from config: in-process (None) or HTTP.
 
@@ -69,11 +93,7 @@ class MCPGatewayRouter:
         self._pool: dict[tuple[str, str], object] = {}
         self._proxy_factory = proxy_factory or _default_proxy_factory
 
-    async def _proxy(self, tenant_id: str, route: str):
-        key = (tenant_id, route)
-        cached = self._pool.get(key)
-        if cached is not None:
-            return cached
+    def _load_cfg(self, tenant_id: str, route: str) -> dict:
         cfg = get_upstream(tenant_id, route)
         if not cfg:
             raise GatewayError(404, f"no upstream configured for route '{route}'")
@@ -85,44 +105,84 @@ class MCPGatewayRouter:
                 "only effective if the upstream accepts connections ONLY from this gateway",
                 tenant_id, route,
             )
+        return cfg
+
+    async def _pooled_proxy(self, tenant_id: str, route: str, cfg: dict):
+        key = (tenant_id, route)
+        cached = self._pool.get(key)
+        if cached is not None:
+            return cached
         proxy = await self._proxy_factory(cfg, tenant_id)
         self._pool[key] = proxy
         return proxy
 
+    async def _call(self, tenant_id: str, route: str, fn):
+        """Run fn against the routed upstream.
+
+        Network transports (http/sse) connect **per call** and close in the same
+        task — a pooled MCP streamable-HTTP session reused across requests/tasks
+        hits anyio cancel-scope / ClosedResourceError bugs. stdio (a long-lived
+        local subprocess) is pooled, with a one-shot reconnect if its session dies.
+        """
+        cfg = self._load_cfg(tenant_id, route)
+        transport = (cfg.get("transport") or "stdio").lower()
+
+        if transport not in ("stdio",):
+            proxy = await self._proxy_factory(cfg, tenant_id)
+            try:
+                return await fn(proxy)
+            finally:
+                up = getattr(proxy, "_upstream", None)
+                if up is not None and hasattr(up, "aclose"):
+                    try:
+                        await up.aclose()
+                    except Exception:
+                        pass
+            # (per-call connect avoids cross-task session lifecycle entirely)
+
+        proxy = await self._pooled_proxy(tenant_id, route, cfg)
+        try:
+            return await fn(proxy)
+        except Exception as e:
+            if not _is_broken_session(e):
+                raise
+            logger.warning("mcp-gateway: %s/%s stdio session broken (%s) — reconnecting",
+                           tenant_id, route, type(e).__name__)
+            self.invalidate(tenant_id, route)
+            return await fn(await self._pooled_proxy(tenant_id, route, cfg))
+
     async def list_tools(self, tenant_id: str, route: str, *, agent_key: str, user_role: Optional[str]):
-        proxy = await self._proxy(tenant_id, route)
-        return await proxy.list_tools(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id)
+        return await self._call(tenant_id, route, lambda p: p.list_tools(
+            agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
 
     async def call_tool(
         self, tenant_id: str, route: str, name: str, arguments: dict,
         *, agent_key: str, user_role: Optional[str],
     ):
-        proxy = await self._proxy(tenant_id, route)
-        return await proxy.call_tool(
-            name, arguments, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id,
-        )
+        return await self._call(tenant_id, route, lambda p: p.call_tool(
+            name, arguments, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
 
     # ── resources / prompts (delegate to the pooled proxy) ───────────
 
     async def list_resources(self, tenant_id, route, *, agent_key, user_role):
-        proxy = await self._proxy(tenant_id, route)
-        return await proxy.list_resources(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id)
+        return await self._call(tenant_id, route, lambda p: p.list_resources(
+            agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
 
     async def list_resource_templates(self, tenant_id, route, *, agent_key, user_role):
-        proxy = await self._proxy(tenant_id, route)
-        return await proxy.list_resource_templates(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id)
+        return await self._call(tenant_id, route, lambda p: p.list_resource_templates(
+            agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
 
     async def read_resource(self, tenant_id, route, uri, *, agent_key, user_role):
-        proxy = await self._proxy(tenant_id, route)
-        return await proxy.read_resource(uri, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id)
+        return await self._call(tenant_id, route, lambda p: p.read_resource(
+            uri, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
 
     async def list_prompts(self, tenant_id, route, *, agent_key, user_role):
-        proxy = await self._proxy(tenant_id, route)
-        return await proxy.list_prompts(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id)
+        return await self._call(tenant_id, route, lambda p: p.list_prompts(
+            agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
 
     async def get_prompt(self, tenant_id, route, name, arguments, *, agent_key, user_role):
-        proxy = await self._proxy(tenant_id, route)
-        return await proxy.get_prompt(name, arguments, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id)
+        return await self._call(tenant_id, route, lambda p: p.get_prompt(
+            name, arguments, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
 
     def invalidate(self, tenant_id: str, route: Optional[str] = None) -> None:
         """Drop pooled proxies so the next call re-reads config (call on config change).
