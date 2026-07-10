@@ -1,0 +1,61 @@
+# LiteLLM egress gateway for sandboxed agents (L2): every LLM call from a
+# sandbox is screened by Votal Shield before it reaches a model.
+#
+# Runs in the CUSTOMER'S TRUSTED PLANE, never inside a sandbox. The broker
+# (examples/sandbox/broker.py) points each sandbox's OPENAI_BASE_URL at this
+# proxy, and the provider's egress allowlist (see README.md) makes it the
+# only network path out, so untrusted code cannot go around it.
+#
+# Start:  litellm --config examples/sandbox/gateway/config.yaml --port 4000
+# Needs:  pip install "litellm[proxy]"; votal_guardrail.py (repo root) on
+#         PYTHONPATH or in the working directory; upstream provider API keys
+#         and LITELLM_MASTER_KEY in env. The Shield tenant key rides in
+#         per-sandbox virtual-key metadata (README.md quickstart) and never
+#         enters a sandbox.
+#
+# Spec: docs/spec-sandbox-guardrails.md (task 4).
+
+model_list:
+  # The upstream models sandboxed agents may call. Add or replace freely;
+  # the guardrails below run for every model in this list.
+  - model_name: gpt-4o
+    litellm_params:
+      model: gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude-opus
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+# Register the Votal guardrail on BOTH hooks. default_on: true means every
+# request is screened; the vanilla OpenAI client inside the sandbox does not
+# know about the guard and cannot opt out of it.
+guardrails:
+  - guardrail_name: votal-input-guard
+    litellm_params:
+      guardrail: votal_guardrail.VotalGuardrail
+      mode: pre_call        # POST {SHIELD}/guardrails/input before the model
+      default_on: true
+  - guardrail_name: votal-output-guard
+    litellm_params:
+      guardrail: votal_guardrail.VotalGuardrail
+      mode: post_call       # POST {SHIELD}/guardrails/output (+ tool-arg DLP)
+      default_on: true
+
+# Read by VotalGuardrail.__init__ (votal_guardrail.py, repo root).
+votal_guardrail:
+  api_base: "https://<your-shield-data-plane-host>"  # Shield DATA plane; literal value
+  api_token: ""           # blank: reads RUNPOD_TOKEN / SHIELD_API_TOKEN from env
+  last_k_messages: 3
+  # Fail policy for the guard itself. LiteLLM guardrails default fail-OPEN
+  # upstream: a guard error or Shield outage lets traffic through unscreened.
+  # A sandbox egress gateway IS the enforcement point (spec section 5), so
+  # this config ships fail-CLOSED: Shield unreachable means the LLM call is
+  # blocked and the sandbox degrades to "can compute, cannot call the model".
+  # The trade is availability: a Shield outage stops sandboxed LLM traffic
+  # behind this gateway. Flip to false only if unscreened egress during an
+  # outage is acceptable in your threat model.
+  block_on_failure: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY   # set a strong value via env

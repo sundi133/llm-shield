@@ -34,6 +34,11 @@ class VotalGuardrail(CustomGuardrail):
         api_base = "http://172.148.110.30:8080"
         api_token = ""
         last_k = 3
+        # Fail policy when the guard itself errors or Shield is unreachable.
+        # Defaults to fail-closed (block). Sandbox egress gateways must keep
+        # it true (docs/spec-sandbox-guardrails.md §5); deployments that
+        # prefer availability over screening may set it false in config.
+        block_on_failure = True
         try:
             import yaml, os, sys
             # Check env var first (highest priority)
@@ -53,13 +58,16 @@ class VotalGuardrail(CustomGuardrail):
                     if not api_token:
                         api_token = votal_cfg.get("api_token", "")
                     last_k = int(votal_cfg.get("last_k_messages", last_k))
+                    block_on_failure = bool(
+                        votal_cfg.get("block_on_failure", block_on_failure)
+                    )
                     break
         except:
             pass
 
         self.api_base = api_base.rstrip("/")
         self.last_k_messages = last_k
-        self.block_on_failure = True
+        self.block_on_failure = block_on_failure
         self.check_every_n_chunks = 20  # streaming check cadence
 
         # Client with optional auth for RunPod/cloud deployments
@@ -71,7 +79,7 @@ class VotalGuardrail(CustomGuardrail):
             headers=client_headers,
         )
 
-        print(f"VotalGuardrail initialized → {self.api_base} (last_k={self.last_k_messages}, auth={'yes' if api_token else 'no'})")
+        print(f"VotalGuardrail initialized → {self.api_base} (last_k={self.last_k_messages}, auth={'yes' if api_token else 'no'}, block_on_failure={self.block_on_failure})")
 
     def _extract_shield_headers(self, data: dict) -> dict:
         """Extract tenant/agent headers from the proxy request to forward to Shield.
