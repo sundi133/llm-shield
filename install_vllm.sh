@@ -4,7 +4,7 @@ set -e
 # ── Config ────────────────────────────────────────────────────────────────────
 VENV=/opt/vllm-venv                  # root disk (fast, 200G)
 CACHE=/workspace/.cache              # NFS fine for caches
-MODEL=${1:-"votal-ai/vai35-4B"}
+MODEL=${1:-"nvidia/Nemotron-3.5-Content-Safety"}
 PORT=${2:-8000}
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'

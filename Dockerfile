@@ -36,8 +36,11 @@ RUN mkdir -p logs && chmod 755 logs
 ENV VOTAL_ES_ENABLED=true
 ENV VOTAL_ES_INDEX=votal-shield-logs
 
-# vLLM server configuration
-ENV MODEL_NAME=votal-ai/vai35-4B-v2
+# vLLM server configuration.
+# Guardrail model: NVIDIA Nemotron Content Safety (replaces votal-ai/vai35-4B-v2).
+# start_vllm.sh serves this via `vllm ... --model "$MODEL_NAME"`. Override at
+# run time with -e MODEL_NAME=... if a different revision/mirror is needed.
+ENV MODEL_NAME=nvidia/Nemotron-3.5-Content-Safety
 ENV VLLM_HOST=0.0.0.0
 ENV VLLM_PORT=8000
 ENV LLM_BACKEND_TYPE=vllm
