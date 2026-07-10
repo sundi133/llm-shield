@@ -187,6 +187,17 @@ class ShieldClient:
             decision=data["decision"],
         )
 
+    def revoke_instance(self, agent_instance_id: str) -> dict:
+        """Self-service revoke: kill every token + cap for one agent instance.
+
+        Ownership is enforced server-side — a tenant can only revoke
+        instances it minted (403/404 otherwise). Propagates in <=1s.
+        """
+        return self._post(
+            "/v1/tenant/me/agent-auth/revoke",
+            {"agent_instance_id": agent_instance_id},
+        )
+
     def verify_cap(
         self,
         cap: "str | Capability",
