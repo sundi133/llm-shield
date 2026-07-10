@@ -1,4 +1,5 @@
-"""Sandbox broker — per-sandbox identity (L0) for agents in E2B / Daytona / Modal.
+"""Sandbox broker — per-sandbox identity (L0) for agents in Modal / K8s Agent
+Sandbox / E2B / Daytona.
 
 Runs in the CUSTOMER'S TRUSTED PLANE, never inside a sandbox. The broker is
 the only component that holds the tenant API key. Each sandbox it launches
@@ -163,6 +164,287 @@ class ModalProvider(SandboxProvider):
         import modal
 
         modal.Sandbox.from_id(provider_id).terminate()
+
+
+def _dns1123(value: str, *, max_len: int = 63) -> str:
+    """Sanitize to a Kubernetes-safe name segment (lowercase alnum + '-')."""
+    safe = "".join(c if c.isalnum() else "-" for c in value.lower())
+    safe = safe.strip("-") or "sbx"
+    return safe[:max_len].rstrip("-") or "sbx"
+
+
+def _egress_network_policy(
+    name: str,
+    namespace: str,
+    pod_selector_labels: dict,
+    *,
+    egress_cidrs: Optional[Sequence[str]] = None,
+    gateway_pod_selector: Optional[dict] = None,
+    allow_dns: bool = True,
+) -> dict:
+    """Build a deny-by-default egress ``NetworkPolicy`` manifest.
+
+    Mirrors ``ModalProvider``'s ``egress_cidrs`` posture using the
+    Kubernetes-native primitive: no rule at all -> every egress packet from
+    a matching pod is dropped (CNI-dependent, e.g. Cilium/Calico — design
+    doc §6). ``gateway_pod_selector`` additionally allows an in-cluster
+    egress gateway by label instead of a fixed CIDR, which is the common
+    case when the gateway also runs in this cluster.
+
+    Pure and side-effect free so it can be unit-tested and reused by the
+    live kind-cluster proof without a real API client.
+    """
+    egress: list = []
+    if allow_dns:
+        egress.append(
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+                        },
+                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                    }
+                ],
+                "ports": [
+                    {"protocol": "UDP", "port": 53},
+                    {"protocol": "TCP", "port": 53},
+                ],
+            }
+        )
+    if gateway_pod_selector:
+        egress.append({"to": [{"podSelector": {"matchLabels": gateway_pod_selector}}]})
+    if egress_cidrs:
+        egress.append({"to": [{"ipBlock": {"cidr": c}} for c in egress_cidrs]})
+    return {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "podSelector": {"matchLabels": dict(pod_selector_labels)},
+            "policyTypes": ["Egress"],
+            "egress": egress,
+        },
+    }
+
+
+class K8sAgentSandboxProvider(SandboxProvider):
+    """Kubernetes SIG [Agent Sandbox](https://agent-sandbox.sigs.k8s.io/)
+    adapter (``agents.x-k8s.io/v1beta1``). The on-prem/in-VPC answer: strong
+    egress lockdown via a Kubernetes ``NetworkPolicy`` (deny-by-default +
+    allowlist, CNI-dependent) instead of a vendor firewall setting, so the
+    L2 non-bypassability claim holds in-cluster (design doc §6).
+
+    Warm-pool constraint (spec §7): pods in a ``SandboxWarmPool`` exist
+    *before* they are claimed, so the per-instance token must be delivered
+    at claim time — never baked into a ``SandboxTemplate``/warm-pool image,
+    where every pod in the pool would share it. This adapter delivers it as
+    a **per-claim Secret**, referenced by the claim's pod via
+    ``valueFrom.secretKeyRef`` — never as a literal value on the claim spec.
+
+    Thin by design (spec §9 task 5): the CRD is ``v1beta1`` and may churn.
+    ``kubernetes`` (the generic client, not a project-specific SDK) is
+    imported lazily so this module needs no cluster access to import or
+    unit-test. API clients (``core_v1``/``networking_v1``/``custom_objects``)
+    can be injected directly for tests; when omitted, real ones are built
+    from the ambient kubeconfig / in-cluster config on first use.
+    """
+
+    name = "k8s-agent-sandbox"
+
+    GROUP = "agents.x-k8s.io"
+    VERSION = "v1beta1"
+    PLURAL = "sandboxclaims"
+
+    def __init__(
+        self,
+        namespace: str,
+        warm_pool_name: str,
+        *,
+        egress_cidrs: Optional[Sequence[str]] = None,
+        gateway_pod_selector: Optional[dict] = None,
+        allow_dns: bool = True,
+        core_v1=None,
+        networking_v1=None,
+        custom_objects=None,
+    ):
+        self.namespace = namespace
+        self.warm_pool_name = warm_pool_name
+        self.egress_cidrs = list(egress_cidrs) if egress_cidrs is not None else None
+        self.gateway_pod_selector = gateway_pod_selector
+        self.allow_dns = allow_dns
+        self._core_v1 = core_v1
+        self._networking_v1 = networking_v1
+        self._custom_objects = custom_objects
+
+    def _clients(self):
+        if self._core_v1 is None or self._networking_v1 is None or self._custom_objects is None:
+            import kubernetes  # example-local dep; never in root requirements
+
+            try:
+                kubernetes.config.load_incluster_config()
+            except kubernetes.config.ConfigException:
+                kubernetes.config.load_kube_config()
+            self._core_v1 = self._core_v1 or kubernetes.client.CoreV1Api()
+            self._networking_v1 = self._networking_v1 or kubernetes.client.NetworkingV1Api()
+            self._custom_objects = self._custom_objects or kubernetes.client.CustomObjectsApi()
+        return self._core_v1, self._networking_v1, self._custom_objects
+
+    def launch(self, spec: SandboxSpec, env: dict) -> str:
+        core_v1, networking_v1, custom_objects = self._clients()
+        instance_id = env.get("SHIELD_AGENT_INSTANCE_ID") or spec.agent_id
+        claim_name = f"sbx-{_dns1123(instance_id)}"
+        labels = {"agents.x-k8s.io/claim": claim_name}
+
+        core_v1.create_namespaced_secret(
+            namespace=self.namespace,
+            body={
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": claim_name, "namespace": self.namespace},
+                "stringData": dict(env),
+            },
+        )
+        networking_v1.create_namespaced_network_policy(
+            namespace=self.namespace,
+            body=_egress_network_policy(
+                claim_name,
+                self.namespace,
+                labels,
+                egress_cidrs=self.egress_cidrs,
+                gateway_pod_selector=self.gateway_pod_selector,
+                allow_dns=self.allow_dns,
+            ),
+        )
+        claim_body = {
+            "apiVersion": f"{self.GROUP}/{self.VERSION}",
+            "kind": "SandboxClaim",
+            "metadata": {"name": claim_name, "namespace": self.namespace, "labels": labels},
+            "spec": {
+                "warmPoolRef": {"name": self.warm_pool_name},
+                "additionalPodMetadata": {"labels": labels},
+                "env": [
+                    {"name": key, "valueFrom": {"secretKeyRef": {"name": claim_name, "key": key}}}
+                    for key in env
+                ],
+            },
+        }
+        custom_objects.create_namespaced_custom_object(
+            group=self.GROUP,
+            version=self.VERSION,
+            namespace=self.namespace,
+            plural=self.PLURAL,
+            body=claim_body,
+        )
+        return f"{self.namespace}/{claim_name}"
+
+    def terminate(self, provider_id: str) -> None:
+        core_v1, networking_v1, custom_objects = self._clients()
+        namespace, claim_name = provider_id.split("/", 1)
+        custom_objects.delete_namespaced_custom_object(
+            group=self.GROUP,
+            version=self.VERSION,
+            namespace=namespace,
+            plural=self.PLURAL,
+            name=claim_name,
+        )
+        networking_v1.delete_namespaced_network_policy(name=claim_name, namespace=namespace)
+        core_v1.delete_namespaced_secret(name=claim_name, namespace=namespace)
+
+
+class E2BProvider(SandboxProvider):
+    """[E2B](https://e2b.dev) adapter.
+
+    E2B does not offer a guaranteed outbound firewall today (design doc
+    §6, "partial" posture) — there is deliberately no ``egress_cidrs``
+    knob here that would imply otherwise. Egress control for E2B sandboxes
+    comes from the gateway `base_url` configuration (L2) plus the
+    cap-gated tool executor (L3), which is bypass-proof regardless of
+    network posture; the residual read-only-egress risk is documented in
+    spec §5 and must ship in the README verbatim.
+
+    ``e2b`` is imported lazily so this module (and its tests) need no
+    provider SDK installed.
+    """
+
+    name = "e2b"
+
+    def __init__(
+        self,
+        *,
+        default_template: Optional[str] = None,
+        timeout_seconds: int = 600,
+    ):
+        self.default_template = default_template
+        self.timeout_seconds = timeout_seconds
+
+    def launch(self, spec: SandboxSpec, env: dict) -> str:
+        from e2b import Sandbox as E2BSandbox  # example-local dep; never in root requirements
+
+        sandbox = E2BSandbox.create(
+            template=spec.image or self.default_template,
+            envs=dict(env),
+            timeout=self.timeout_seconds,
+        )
+        if spec.entrypoint:
+            sandbox.commands.run(" ".join(spec.entrypoint), background=True)
+        return sandbox.sandbox_id
+
+    def terminate(self, provider_id: str) -> None:
+        from e2b import Sandbox as E2BSandbox
+
+        E2BSandbox.kill(provider_id)
+
+
+class DaytonaProvider(SandboxProvider):
+    """[Daytona](https://daytona.io) adapter.
+
+    Daytona's egress posture is runner/network-policy dependent (design
+    doc §6, "partial") — same as E2B, there is no ``egress_cidrs`` knob
+    here. Rely on the gateway (L2) + cap-gated executor (L3) as the hard
+    boundary; the residual read-only-egress risk is documented in spec §5.
+
+    ``daytona`` is imported lazily so this module (and its tests) need no
+    provider SDK installed.
+    """
+
+    name = "daytona"
+
+    def __init__(
+        self,
+        *,
+        default_snapshot: Optional[str] = None,
+        api_key: Optional[str] = None,
+        api_url: Optional[str] = None,
+    ):
+        self.default_snapshot = default_snapshot
+        self.api_key = api_key
+        self.api_url = api_url
+        self._client = None
+
+    def _daytona(self):
+        if self._client is None:
+            from daytona import Daytona, DaytonaConfig  # example-local dep
+
+            config = DaytonaConfig(api_key=self.api_key, api_url=self.api_url)
+            self._client = Daytona(config)
+        return self._client
+
+    def launch(self, spec: SandboxSpec, env: dict) -> str:
+        from daytona import CreateSandboxFromSnapshotParams
+
+        params = CreateSandboxFromSnapshotParams(
+            snapshot=spec.image or self.default_snapshot,
+            env_vars=dict(env),
+        )
+        sandbox = self._daytona().create(params)
+        if spec.entrypoint:
+            sandbox.process.exec(" ".join(spec.entrypoint), env=dict(env))
+        return sandbox.id
+
+    def terminate(self, provider_id: str) -> None:
+        sandbox = self._daytona().get(provider_id)
+        sandbox.delete()
 
 
 def _is_transient(err: ShieldError) -> bool:
