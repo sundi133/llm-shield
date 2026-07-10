@@ -13,6 +13,19 @@ _request_configs: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVa
 )
 
 
+def safe_float(value, default: float = 0.0) -> float:
+    """Parse a float from LLM/JSON output that may be missing, empty, or non-numeric.
+
+    ``float(result.get("confidence", 0.5))`` throws when the key is present but the
+    value is an empty string (``float("")``) — the LLM returned ``"confidence": ""``.
+    This returns ``default`` on any non-numeric value instead of raising.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class BaseGuardrail(ABC):
     """Abstract base class for all guardrails."""
 
