@@ -6,6 +6,7 @@ import re
 import subprocess
 import requests
 import time
+import urllib.parse
 from typing import Optional
 
 logger = logging.getLogger("votal.llm_backend")
@@ -555,12 +556,25 @@ def _get_nemotron_server_url() -> str:
     Fails fast rather than silently falling back to Votal -- a misconfigured
     nemotron/both deployment should be loud, not quietly serve Votal traffic
     under a different name.
+
+    The URL is operator-set (an env var), not user input, so this is not a
+    user-driven SSRF sink. As defence-in-depth for a new egress path, we
+    still reject anything that isn't a plain http/https URL -- so a typo or a
+    stray file://, gopher://, etc. can't turn into an unexpected request
+    scheme. Host is intentionally NOT restricted: a self-hosted vLLM backend
+    legitimately lives on localhost / a private address.
     """
     url = _normalize_server_url(os.getenv("NEMOTRON_BACKEND_URL", ""))
     if not url:
         raise RuntimeError(
             "NEMOTRON_BACKEND_URL must be set when SHIELD_GUARD_MODEL_MODE is "
             "'nemotron' or 'both'."
+        )
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise RuntimeError(
+            f"NEMOTRON_BACKEND_URL must be an http(s) URL (got scheme "
+            f"{parsed.scheme!r}); refusing to use it as a guard backend."
         )
     return url
 

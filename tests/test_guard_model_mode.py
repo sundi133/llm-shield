@@ -572,3 +572,41 @@ def test_registry_covers_only_known_guardrail_names():
     known = {g.name for g in list_guardrails()}
     for name in llm_backend._GUARD_VERDICT_REGISTRY:
         assert name in known, f"registry entry {name!r} is not a discovered guardrail"
+
+
+# ---------------------------------------------------------------------------
+# Nemotron backend URL scheme validation (defence-in-depth for new egress).
+# The URL is operator-set, not user input, but a bad scheme must be rejected
+# rather than issued as an unexpected request (Pepper CWE-918).
+# ---------------------------------------------------------------------------
+
+
+def test_nemotron_url_accepts_http_and_https(monkeypatch):
+    _clear_guard_mode_env(monkeypatch)
+    for url in ("http://127.0.0.1:8000", "https://nim.example.com/v1"):
+        monkeypatch.setenv("NEMOTRON_BACKEND_URL", url)
+        assert llm_backend._get_nemotron_server_url().startswith(("http://", "https://"))
+
+
+def test_nemotron_url_rejects_non_http_scheme(monkeypatch):
+    _clear_guard_mode_env(monkeypatch)
+    for bad in ("file:///etc/passwd", "gopher://x", "ftp://x"):
+        monkeypatch.setenv("NEMOTRON_BACKEND_URL", bad)
+        with pytest.raises(RuntimeError, match="http"):
+            llm_backend._get_nemotron_server_url()
+
+
+def test_nemotron_url_localhost_is_allowed(monkeypatch):
+    """A self-hosted vLLM backend legitimately lives on localhost/private IPs,
+    so host is NOT restricted -- only the scheme is."""
+    _clear_guard_mode_env(monkeypatch)
+    monkeypatch.setenv("NEMOTRON_BACKEND_URL", "http://localhost:8001")
+    assert llm_backend._get_nemotron_server_url() == "http://localhost:8001"
+
+
+def test_validate_config_rejects_bad_nemotron_scheme(monkeypatch):
+    _clear_guard_mode_env(monkeypatch)
+    monkeypatch.setenv("SHIELD_GUARD_MODEL_MODE", "nemotron")
+    monkeypatch.setenv("NEMOTRON_BACKEND_URL", "file:///etc/passwd")
+    with pytest.raises(RuntimeError, match="http"):
+        llm_backend.validate_guard_model_config()
