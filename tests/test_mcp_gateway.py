@@ -72,9 +72,10 @@ def test_router_404_when_no_config():
     assert ei.value.status == 404
 
 
-def test_router_pools_and_delegates():
-    store.set_upstream("acme", "billing", {"route": "billing", "transport": "http",
-                                           "url": "u", "isolation_ack": True})
+def test_router_pools_stdio_and_delegates():
+    # stdio is the pooled transport (long-lived subprocess); http connects per-call.
+    store.set_upstream("acme", "billing", {"route": "billing", "transport": "stdio",
+                                           "command": "x", "isolation_ack": True})
     made = []
 
     async def factory(cfg, tenant_id):
@@ -90,9 +91,26 @@ def test_router_pools_and_delegates():
     assert made[0].calls[0] == ("pay", {"amt": 5}, "acme")
 
 
+def test_router_http_connects_per_call():
+    # network transports connect+close per call (avoids cross-task session bugs).
+    store.set_upstream("acme", "web", {"route": "web", "transport": "http",
+                                       "url": "u", "isolation_ack": True})
+    made = []
+
+    async def factory(cfg, tenant_id):
+        p = _FakeProxy()
+        made.append(p)
+        return p
+
+    r = MCPGatewayRouter(proxy_factory=factory)
+    run(r.call_tool("acme", "web", "a", {}, agent_key="bot", user_role="reader"))
+    run(r.call_tool("acme", "web", "b", {}, agent_key="bot", user_role="reader"))
+    assert len(made) == 2  # fresh connection each call
+
+
 def test_router_invalidate_rebuilds():
-    store.set_upstream("acme", "billing", {"route": "billing", "transport": "http",
-                                           "url": "u", "isolation_ack": True})
+    store.set_upstream("acme", "billing", {"route": "billing", "transport": "stdio",
+                                           "command": "x", "isolation_ack": True})
     made = []
 
     async def factory(cfg, tenant_id):
@@ -105,6 +123,66 @@ def test_router_invalidate_rebuilds():
     r.invalidate("acme", "billing")
     run(r.list_tools("acme", "billing", agent_key="bot", user_role="reader"))
     assert len(made) == 2  # rebuilt after invalidate
+
+
+class ClosedResourceError(Exception):
+    """Name matches the anyio error the reconnect logic keys off."""
+
+
+def test_router_reconnects_on_broken_session():
+    store.set_upstream("acme", "rr", {"route": "rr", "transport": "stdio", "command": "x", "isolation_ack": True})
+    made = []
+
+    class _P:
+        def __init__(self, ok):
+            self.ok = ok
+
+        async def get_prompt(self, name, arguments, *, agent_key, user_role, tenant_id):
+            if not self.ok:
+                raise ClosedResourceError()          # pooled session died
+            return {"messages": [{"role": "user", "content": "ok"}]}
+
+    seq = [_P(ok=False), _P(ok=True)]
+
+    async def factory(cfg, tenant_id):
+        p = seq[len(made)]
+        made.append(p)
+        return p
+
+    r = MCPGatewayRouter(proxy_factory=factory)
+    out = run(r.get_prompt("acme", "rr", "greet", {}, agent_key="b", user_role="x"))
+    assert out["messages"][0]["content"] == "ok"
+    assert len(made) == 2  # dropped the dead session and reconnected exactly once
+
+
+def test_router_does_not_retry_real_errors():
+    store.set_upstream("acme", "rx", {"route": "rx", "transport": "stdio", "command": "x", "isolation_ack": True})
+    made = []
+
+    class _P:
+        async def call_tool(self, name, arguments, *, agent_key, user_role, tenant_id):
+            raise ValueError("a real bug, not a broken session")
+
+    async def factory(cfg, tenant_id):
+        made.append(1)
+        return _P()
+
+    r = MCPGatewayRouter(proxy_factory=factory)
+    with pytest.raises(ValueError):
+        run(r.call_tool("acme", "rx", "t", {}, agent_key="b", user_role="x"))
+    assert len(made) == 1  # no reconnect for a non-connection error
+
+
+def test_is_broken_session_walks_cause_chain():
+    from core.mcp.gateway import _is_broken_session
+    try:
+        try:
+            raise ClosedResourceError()
+        except Exception as inner:
+            raise RuntimeError("wrapped") from inner
+    except Exception as ex:
+        assert _is_broken_session(ex) is True
+    assert _is_broken_session(ValueError("nope")) is False
 
 
 def test_build_enforcer_selects_backend():
