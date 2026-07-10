@@ -7,10 +7,20 @@ silent assumption (#3 and #4).
 
 ## What was built
 
-`core/llm_backend.py` now supports `SHIELD_GUARD_MODEL_MODE` (`votal` default |
-`nemotron` | `both`), applied at the transport layer so every existing
-guardrail file works unchanged regardless of mode — see the module for the
-full mechanism. This section only records the decisions, not the mechanics.
+`SHIELD_GUARD_MODEL_MODE` (`votal` default | `nemotron` | `both`) selects the
+guard model at **two layers**:
+
+1. **Serving (`scripts/start_vllm.sh`)** — launches the model(s) vLLM actually
+   loads: votal → Votal on `VLLM_PORT`; nemotron → Nemotron on `VLLM_PORT`;
+   both → Votal on `VLLM_PORT` + Nemotron on `NEMOTRON_VLLM_PORT`. In
+   nemotron/both it exports `NEMOTRON_BACKEND_URL` / `NEMOTRON_MODEL_NAME` for
+   the app. (An earlier revision changed only the client URL and never the
+   served model — Sundi flagged that; the real replacement lives here.)
+2. **Client (`core/llm_backend.py`)** — routes guard calls to the served
+   instance(s) at the transport layer, so every existing guardrail file works
+   unchanged; in `both` it fans out to both and merges verdicts.
+
+This section records the decisions, not the mechanics.
 
 ## Decision: three-mode design (open question #3)
 
@@ -70,20 +80,28 @@ decide rather than re-raise the open question. Flag it to Rakesh alongside the
 three-mode design itself before it's presented to Sundi, since it changes
 prod-path *behavior* (when opted in) more than the mode switch alone does.
 
-## Decision: model ID / hosting (open questions #1 / #2) — still not resolved, and this doesn't need them to be
+## Decision: model ID / hosting (open questions #1 / #2) — RESOLVED
 
-The implementation deliberately does not assume either open question is
-resolved:
-- `NEMOTRON_BACKEND_URL` / `NEMOTRON_MODEL_NAME` / `NEMOTRON_BACKEND_API_KEY`
-  are plain env vars pointing at *any* OpenAI-chat-compatible endpoint — a
-  self-hosted vLLM instance serving the HF weights, or an NVIDIA NIM endpoint,
-  both work without a code change, since the payload
-  (`_build_nemotron_payload`) deliberately targets only the lowest common
-  denominator of that contract (no vLLM-specific extras).
-- Verified end-to-end with a stubbed second backend (see
-  `tests/test_guard_model_mode.py`) rather than the real model, since the
-  model ID itself is still unconfirmed. Once Rakesh/Sundi confirm which model
-  + hosting, this is a config change (set the env vars), not a code change.
+- **Model:** `nvidia/Nemotron-3.5-Content-Safety` (confirmed by Sundi; verified
+  on HuggingFace). A Gemma-3-4B-it-based multilingual/multimodal content-safety
+  classifier, served under `--served-model-name nemotron_moderator`, vLLM
+  ≥ 0.11.0. Set as `NEMOTRON_MODEL` in `start_vllm.sh` / Dockerfile.
+- **Hosting:** self-hosted via vLLM in the same image (`start_vllm.sh`), same
+  pattern as the Votal model. An external NIM endpoint still works by setting
+  `SKIP_VLLM=true` + `NEMOTRON_BACKEND_URL` manually.
+- **Verified** with a stubbed vLLM: `start_vllm.sh` launches the right model(s)
+  per mode and hands the client the right URL (`tests/test_start_vllm_modes.py`);
+  client routing/merge covered by `tests/test_guard_model_mode.py`.
+
+### Still to validate on real GPU (follow-up, needs weights + hardware)
+Nemotron Content Safety is a *classifier* with its own I/O contract
+(`chat_template_kwargs` request_categories / custom_policy; output like
+`"User Safety: unsafe, ..."`), **not** the CSV/JSON format the current guardrail
+prompts emit/parse. The serving + routing is done and tested; adapting each
+guardrail's prompt + response parsing to Nemotron's format (and measuring
+accuracy vs. the 95% target) is the next step and can't be done without the
+real model on GPU. Until then, `nemotron`/`both` modes route correctly but the
+classification accuracy is unverified — hence `votal` remains the default.
 
 ## Not touched
 
