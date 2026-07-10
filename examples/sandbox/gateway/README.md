@@ -88,6 +88,14 @@ egress during a Shield outage is acceptable in your threat model.
 Non-sandbox deployments of the same plugin may reasonably choose fail-open;
 a sandbox egress gateway should not.
 
+Streaming has one caveat: tool calls arrive as deltas and can only be
+assembled and checked at stream end, after content chunks have been sent.
+With `streaming_tool_rbac: enforce` (the shipped default) a blocked tool
+call fails the request at that point, so the sandbox never receives a
+completed response containing it. `log` restores audit-only behavior for
+clients that gate tool execution themselves. If you need blocking before
+any output at all, disable streaming for guarded routes.
+
 ## Making L2 non-bypassable: provider egress allowlists
 
 This gateway only screens traffic that reaches it. The claim "untrusted

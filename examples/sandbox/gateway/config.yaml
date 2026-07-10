@@ -56,6 +56,11 @@ votal_guardrail:
   # behind this gateway. Flip to false only if unscreened egress during an
   # outage is acceptable in your threat model.
   block_on_failure: true
+  # Streamed responses: chunks are already sent when tool calls can first be
+  # assembled and checked, so "enforce" fails the request at stream end when
+  # a tool call is blocked. Keep "enforce" for sandboxes; "log" restores the
+  # audit-only behavior for clients that gate tool execution themselves.
+  streaming_tool_rbac: enforce
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY   # set a strong value via env

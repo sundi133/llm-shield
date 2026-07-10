@@ -17,6 +17,8 @@ Single-pane flow (developer calls LiteLLM only):
 """
 
 import json
+import os
+import sys
 import httpx
 from typing import Dict, List, Any, Optional, Union
 from litellm.integrations.custom_guardrail import CustomGuardrail
@@ -30,19 +32,23 @@ class VotalGuardrail(CustomGuardrail):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        # Read settings from config.yaml
-        api_base = "http://172.148.110.30:8080"
-        api_token = ""
+        # Read settings from config.yaml. No hardcoded Shield endpoint:
+        # api_base comes from the config or the environment, or boot fails.
+        api_base = os.environ.get("SHIELD_API_BASE", "") or os.environ.get("SHIELD_URL", "")
+        api_token = os.environ.get("RUNPOD_TOKEN", "") or os.environ.get("SHIELD_API_TOKEN", "")
         last_k = 3
         # Fail policy when the guard itself errors or Shield is unreachable.
         # Defaults to fail-closed (block). Sandbox egress gateways must keep
         # it true (docs/spec-sandbox-guardrails.md §5); deployments that
         # prefer availability over screening may set it false in config.
         block_on_failure = True
+        # Blocked tool calls detected at stream end: "enforce" (default) fails
+        # the request via the guardrail exception; "log" restores the old
+        # audit-only behavior for deployments that gate tool execution
+        # client-side and can tolerate the response completing.
+        streaming_tool_rbac = "enforce"
         try:
-            import yaml, os, sys
-            # Check env var first (highest priority)
-            api_token = os.environ.get("RUNPOD_TOKEN", "") or os.environ.get("SHIELD_API_TOKEN", "")
+            import yaml
             for i, arg in enumerate(sys.argv[:-1]):
                 if arg.startswith("--config="):
                     path = arg.split("=", 1)[1]
@@ -50,7 +56,10 @@ class VotalGuardrail(CustomGuardrail):
                     path = sys.argv[i + 1]
                 else:
                     continue
-                if os.path.exists(path):
+                # Operator-supplied CLI flag (LiteLLM's own --config), not
+                # request input. Canonicalize and require a regular file.
+                path = os.path.realpath(path)
+                if os.path.isfile(path):
                     with open(path) as f:
                         cfg = yaml.safe_load(f) or {}
                     votal_cfg = cfg.get("votal_guardrail", {})
@@ -61,13 +70,24 @@ class VotalGuardrail(CustomGuardrail):
                     block_on_failure = bool(
                         votal_cfg.get("block_on_failure", block_on_failure)
                     )
+                    streaming_tool_rbac = str(
+                        votal_cfg.get("streaming_tool_rbac", streaming_tool_rbac)
+                    )
                     break
         except:
             pass
 
+        if not api_base:
+            raise ValueError(
+                "VotalGuardrail: no Shield endpoint configured. Set "
+                "votal_guardrail.api_base in the LiteLLM config or the "
+                "SHIELD_API_BASE env var."
+            )
+
         self.api_base = api_base.rstrip("/")
         self.last_k_messages = last_k
         self.block_on_failure = block_on_failure
+        self.streaming_tool_rbac = streaming_tool_rbac
         self.check_every_n_chunks = 20  # streaming check cadence
 
         # Client with optional auth for RunPod/cloud deployments
@@ -490,8 +510,37 @@ class VotalGuardrail(CustomGuardrail):
                                 if not gr.get("passed", True):
                                     reason = gr.get("message", "denied")
                                     break
-                            print(f"[VOTAL] Stream tool blocked: {tool_name} — {reason}")
-                            # NOTE: chunks already sent. Log for audit, client must
-                            # still call /v1/shield/tool/check before executing.
+                            if self.streaming_tool_rbac == "log":
+                                # Audit-only opt-out: the client remains
+                                # responsible for gating tool execution.
+                                print(f"[VOTAL] Stream tool blocked (log-only): {tool_name} — {reason}")
+                            else:
+                                # Chunks are already sent; failing the request
+                                # at stream end is the strongest enforcement
+                                # available here. The blocked tool call never
+                                # reaches the client as a completed response.
+                                print(f"[VOTAL] Stream tool blocked: {tool_name} — {reason}")
+                                self.raise_passthrough_exception(
+                                    violation_message=(
+                                        f"Streaming tool call blocked by Votal guardrails: "
+                                        f"{tool_name}. Reason: {reason or 'denied by policy'}"
+                                    ),
+                                    request_data=request_data,
+                                    detection_info={"phase": "stream_tool_rbac", "tool_name": tool_name, **check},
+                                )
+                    elif self.block_on_failure and self.streaming_tool_rbac != "log":
+                        self.raise_passthrough_exception(
+                            violation_message=f"Streaming tool check failed for {tool_name}",
+                            request_data=request_data,
+                            detection_info={"phase": "stream_tool_rbac", "error": resp.status_code},
+                        )
                 except Exception as e:
+                    if "passthrough" in str(type(e).__name__).lower() or "guardrail" in str(type(e).__name__).lower():
+                        raise
                     print(f"[VOTAL] Stream tool/check error for {tool_name}: {e}")
+                    if self.block_on_failure and self.streaming_tool_rbac != "log":
+                        self.raise_passthrough_exception(
+                            violation_message=f"Streaming tool check failed for {tool_name}",
+                            request_data=request_data,
+                            detection_info={"phase": "stream_tool_rbac", "error": str(e)},
+                        )
