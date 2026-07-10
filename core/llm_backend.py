@@ -146,10 +146,31 @@ def _normalize_server_url(url: str) -> str:
     return url.strip().rstrip("/")
 
 
+def _assert_http_url(url: str, source: str) -> str:
+    """Reject anything that isn't a plain http(s) URL before it becomes an
+    outbound request target (CWE-918 defence-in-depth).
+
+    Backend URLs are operator-set (env / config), not user input, so this is
+    not a user-driven SSRF sink -- but validating the scheme means a typo or a
+    stray file://, gopher://, etc. can't turn into an unexpected request. Host
+    is intentionally NOT restricted: a self-hosted vLLM backend legitimately
+    lives on localhost / a private address.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise RuntimeError(
+            f"{source} must be an http(s) URL (got scheme {parsed.scheme!r}); "
+            "refusing to use it as an LLM backend."
+        )
+    return url
+
+
 def _get_env_backend_url() -> Optional[str]:
     """Return an explicit backend URL override from the environment."""
     url = _normalize_server_url(os.getenv("LLM_BACKEND_URL", ""))
-    return url or None
+    if not url:
+        return None
+    return _assert_http_url(url, "LLM_BACKEND_URL")
 
 
 def _get_backend_type() -> str:
@@ -193,14 +214,18 @@ def _get_servers_config() -> list[dict]:
             for server in servers:
                 normalized_server = dict(server)
                 if "url" in normalized_server:
-                    normalized_server["url"] = _normalize_server_url(
-                        normalized_server["url"]
+                    normalized_server["url"] = _assert_http_url(
+                        _normalize_server_url(normalized_server["url"]),
+                        "llm_backend.servers[].url",
                     )
                 normalized_servers.append(normalized_server)
             return normalized_servers
         # Legacy single-server config
-        url = _normalize_server_url(
-            _config_module.config.llm_backend.get("url", "http://127.0.0.1:8000")
+        url = _assert_http_url(
+            _normalize_server_url(
+                _config_module.config.llm_backend.get("url", "http://127.0.0.1:8000")
+            ),
+            "llm_backend.url",
         )
         return [{"url": url, "gpu": 0, "guardrails": ["all"]}]
     return [{"url": "http://127.0.0.1:8000", "gpu": 0, "guardrails": ["all"]}]
@@ -763,6 +788,10 @@ def validate_guard_model_config() -> None:
     targets = _resolve_targets(_get_guard_model_mode())
     if "nemotron" in targets:
         _get_nemotron_server_url()
+    # Also validate the Votal backend URL sources (env + config) so a bad
+    # scheme fails at boot rather than per-request on the guard path.
+    _get_env_backend_url()
+    _get_servers_config()
 
 
 def _dispatch_sync(
