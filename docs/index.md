@@ -94,7 +94,19 @@ permalink: /
 | Build a feature the right way (spec-first) | [Spec Template (how we build)]({{ "/spec-template/" | relative_url }}) |
 | Map to NIST / OWASP / ISO controls | [Compliance Mapping]({{ "/compliance-mapping/" | relative_url }}) |
 
-## Two deployment modes
+## Where it runs
+
+**Managed cloud, self-hosted in your VPC, or fully on-prem / air-gapped — same
+APIs, same guardrails, same policies.** Shield is a container you run wherever you
+need it; nothing is locked to a hosted control plane.
+
+| Model | Runs on | Guide |
+|---|---|---|
+| **Cloud / managed** | RunPod, Cloud Run, Fly, Render | [Quickstart]({{ "/quickstart/" | relative_url }}) |
+| **Self-hosted (your VPC)** | your Kubernetes / VMs | [Installation Guide]({{ "/installation-guide/" | relative_url }}) |
+| **On-prem / air-gapped** | RHEL + NVIDIA GPU, Docker Compose / K8s / OpenShift | [On-Premises Deployment]({{ "/on-premises-deployment-guide/" | relative_url }}) |
+
+## Two container images
 
 1. **Full Shield** (`Dockerfile`) — GPU worker with llama.cpp + all guardrails + admin portals
 2. **Admin-only** (`Dockerfile.admin`) — Lightweight (~150 MB) portal + tenant APIs, no GPU. Runs anywhere (Cloud Run, Fly, Render, laptop).
