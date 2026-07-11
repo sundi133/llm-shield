@@ -9,7 +9,7 @@ import json
 import logging
 from typing import Optional, Any
 
-from guardrails.base import BaseGuardrail
+from guardrails.base import BaseGuardrail, safe_float
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
 
@@ -102,7 +102,7 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
         if isinstance(action, str):
             action = action.lower().strip()
         findings = result.get("findings", "")
-        confidence = float(result.get("confidence", 0.5))
+        confidence = safe_float(result.get("confidence"), 0.5)
 
         if confidence < 0.75:
             action = "allow"

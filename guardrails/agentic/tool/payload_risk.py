@@ -12,6 +12,7 @@ import logging
 from typing import Any, Optional
 
 from core.llm_backend import async_llm_call, parse_csv_response
+from guardrails.base import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ async def evaluate_payload_policy_llm(
         if not result.get("violates_policy"):
             return None
 
-        confidence = float(result.get("confidence", 0.5))
+        confidence = safe_float(result.get("confidence"), 0.5)
         if confidence < 0.75:
             return None
 
@@ -146,7 +147,7 @@ async def evaluate_message_egress_risk_llm(
         if not result.get("violates_policy"):
             return None
 
-        confidence = float(result.get("confidence", 0.5))
+        confidence = safe_float(result.get("confidence"), 0.5)
         if confidence < 0.75:
             return None
 

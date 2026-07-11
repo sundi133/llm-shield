@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Optional
 
-from guardrails.base import BaseGuardrail
+from guardrails.base import BaseGuardrail, safe_float
 from core.llm_backend import async_llm_call, parse_llm_json
 from core.models import GuardrailResult
 
@@ -138,7 +138,7 @@ Respond with ONLY a JSON object in this exact format:
             if not isinstance(result.get("violates_policy"), bool):
                 raise ValueError("Invalid LLM response format")
 
-            confidence = float(result.get("confidence", 0.5))
+            confidence = safe_float(result.get("confidence"), 0.5)
             violates_policy = result["violates_policy"]
 
             # Apply confidence threshold
