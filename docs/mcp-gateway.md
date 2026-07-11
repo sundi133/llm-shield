@@ -117,6 +117,32 @@ token in the route `headers` that the upstream checks — then keep
 `isolation_ack: false` starts in a warned, not-truly-protected state.
 See [mcp-runtime-enforcement.md](mcp-runtime-enforcement.md).
 
+## Run agents in a sandbox (NVIDIA OpenShell)
+
+Sandbox runtimes like [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) give
+**kernel-level isolation** (filesystem, process, and **network egress** control) but
+not semantic guardrails. Pair them: let the sandbox reach **only** the Shield
+gateway, and the agent is *forced* through Shield with no way around it — the
+isolation makes enforcement non-bypassable, by the kernel, not by trusting the agent.
+
+An OpenShell network policy that allowlists just the gateway (deny-all otherwise):
+```yaml
+network_policies:
+  shield_gateway:
+    name: shield-gateway
+    endpoints:
+      - host: api.guardrails.votal.ai      # the ONLY reachable host
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules: [ { allow: { method: "*", path: "/**" } } ]
+    binaries: [ { path: /usr/bin/curl } ]
+```
+Inside the sandbox, `curl` to the gateway succeeds; `curl` to anything else is
+denied at the kernel. Runnable example + verified tests:
+[examples/openshell](../examples/openshell). (OpenShell's *inference* layer can also
+route the agent's model calls to a Shield LLM gateway — a second, complementary hook.)
+
 ## Supported MCP methods
 
 | Method | Gateway behavior |
