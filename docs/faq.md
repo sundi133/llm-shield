@@ -23,6 +23,14 @@ Practical answers about deploying LLM Shield as the runtime guardrails layer in 
 
 ## Deployment
 
+### Do you support both cloud and on-prem?
+
+Yes — the **same** container runs as managed cloud (RunPod / Cloud Run / Fly / Render),
+self-hosted in your own VPC, or fully **on-prem / air-gapped**. Same APIs, same
+guardrails, same per-tenant policies; nothing is tied to a hosted control plane. See
+[Can I run it on-premises or air-gapped?](#can-i-run-it-on-premises-or-air-gapped) below
+and the [On-Premises Deployment Guide]({{ "/on-premises-deployment-guide/" | relative_url }}).
+
 ### How can I deploy LLM Shield?
 
 Three supported shapes:
