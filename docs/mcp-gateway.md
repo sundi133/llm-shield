@@ -117,6 +117,69 @@ token in the route `headers` that the upstream checks — then keep
 `isolation_ack: false` starts in a warned, not-truly-protected state.
 See [mcp-runtime-enforcement.md](mcp-runtime-enforcement.md).
 
+## Connect it to Claude
+
+Point Claude at the **gateway** URL (not the raw upstream) with the identity headers.
+
+**Claude Code** (native header support):
+```bash
+claude mcp add --transport http shield-gateway \
+  https://<shield>/gateway/<route>/mcp \
+  --header "X-API-Key: <tenant-key>" \
+  --header "X-Agent-Key: <agent-id>" \
+  --header "X-User-Role: admin"
+```
+Add `--scope user` to share it across projects (default scope is `local`). Manage
+with `claude mcp list` / `claude mcp get shield-gateway` / `claude mcp remove
+shield-gateway`. (The `sse` transport is deprecated — use `http`.)
+
+**Claude Desktop** — edit `claude_desktop_config.json` (macOS:
+`~/Library/Application Support/Claude/`). Native HTTP:
+```json
+{
+  "mcpServers": {
+    "shield-gateway": {
+      "type": "http",
+      "url": "https://<shield>/gateway/<route>/mcp",
+      "headers": {
+        "X-API-Key": "<tenant-key>",
+        "X-Agent-Key": "<agent-id>",
+        "X-User-Role": "admin"
+      }
+    }
+  }
+}
+```
+If your Desktop lacks native HTTP, bridge it with `mcp-remote`:
+```json
+{
+  "mcpServers": {
+    "shield-gateway": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://<shield>/gateway/<route>/mcp",
+               "--header", "X-API-Key: <tenant-key>",
+               "--header", "X-Agent-Key: <agent-id>",
+               "--header", "X-User-Role: admin"]
+    }
+  }
+}
+```
+Restart Desktop; the server appears under the connectors (🔌) menu.
+
+**Claude.ai (web)** custom connectors expect **OAuth**, not static headers — use
+Claude Code or Desktop for API-key/header auth.
+
+Notes:
+- **Role is fixed per connector** — whatever `X-User-Role` you set applies to every
+  call. Add two connectors (e.g. `shield-admin`, `shield-reader`) with different
+  roles to see allow-vs-block live.
+- **Don't inline secrets** in a committed config. On Desktop/`mcp-remote`, put the
+  key in an env var and reference it — `"--header", "X-API-Key:${SHIELD_KEY}"` with
+  `"env": {"SHIELD_KEY": "<tenant-key>"}` (also avoids a Windows quoting issue with
+  spaces in header values).
+- **Sanity-check the route first** (before wiring Claude): a `tools/list` `curl`
+  should return tools, not `-32004` (see [Troubleshooting](#troubleshooting)).
+
 ## Run agents in a sandbox (NVIDIA OpenShell)
 
 Sandbox runtimes like [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) give
