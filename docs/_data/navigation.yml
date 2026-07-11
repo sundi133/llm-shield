@@ -28,6 +28,8 @@ groups:
       - { title: API Reference, url: /api-reference/ }
       - { title: Connect to Your IDE, url: /connect-your-ide/ }
       - { title: MCP End-to-End Lab, url: /mcp-e2e-lab/ }
+      - { title: MCP Gateway, url: /mcp-gateway/ }
+      - { title: Agent Sandbox (OpenShell), url: /openshell-sandbox/ }
       - { title: Integrations, url: /integration-guide/ }
 
   - title: Deploy & Operate
