@@ -38,6 +38,24 @@ shield-mcp scan stdio:'python my_server.py' --fail-on high   # stricter
 | 3 | target unreachable / MCP handshake failed |
 | 4 | usage error |
 
+### GitHub Actions
+
+```yaml
+# .github/workflows/mcp-audit.yml
+name: mcp-audit
+on: [push, pull_request]
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pipx install shield-mcp
+      - run: shield-mcp scan stdio:'python -m my_server' --fail-on high
+```
+
 ## Connected mode (model verdict)
 
 Offline mode (above) is free and never leaves your machine. Connected mode adds

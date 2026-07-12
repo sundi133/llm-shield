@@ -49,6 +49,31 @@ shield-mcp scan sse:https://example.com/sse
 shield-mcp scan http:https://example.com/mcp --json
 ```
 
+## For indie developers: the 60-second workflow
+
+You found a useful MCP server on GitHub or a registry and you are about to add
+it to Claude Desktop, Cursor, or your own agent. Audit it first.
+
+**1. About to add a server?** Point the scanner at exactly what your client
+would launch. If your `claude_desktop_config.json` would run
+`npx some-mcp-server`, scan that same command:
+
+```bash
+shield-mcp scan stdio:'npx -y some-mcp-server'
+```
+
+A clean exit (0) means no poisoned descriptions, no over-broad tools hiding in
+the metadata. A non-zero exit means read the report before you connect it.
+
+**2. Building your own server?** Run it against your own server before you
+publish, so a contributor cannot slip a poisoned description past review:
+
+```bash
+shield-mcp scan stdio:'python -m my_server' --fail-on high
+```
+
+**3. Wire it into your repo** so every change is checked automatically (below).
+
 ## What it checks (offline, no model, no network)
 
 | Category | Severity | Catches |
@@ -70,6 +95,42 @@ shield-mcp scan http:https://example.com/mcp --json
 | 2 | findings at or above `--fail-on` |
 | 3 | target unreachable, or MCP handshake failed |
 | 4 | usage error |
+
+### GitHub Actions
+
+Drop this in `.github/workflows/mcp-audit.yml` to fail a PR that introduces a
+poisoned or over-broad MCP server:
+
+```yaml
+name: mcp-audit
+on: [push, pull_request]
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pipx install shield-mcp
+      - name: Audit the MCP server
+        run: shield-mcp scan stdio:'python -m my_server' --fail-on high
+```
+
+Use `--json` if you want to upload the report as an artifact or parse it in a
+later step.
+
+### Local pre-commit hook
+
+Block a poisoned description before it is even committed. Add to
+`.git/hooks/pre-commit` (and `chmod +x`):
+
+```bash
+#!/usr/bin/env bash
+shield-mcp scan stdio:'python -m my_server' --fail-on high || {
+  echo "MCP scan failed. See findings above."; exit 1;
+}
+```
 
 ## Connected mode (model verdict)
 
