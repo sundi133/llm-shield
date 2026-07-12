@@ -1,0 +1,62 @@
+name: release shield-mcp (PyPI)
+
+# Builds and (optionally) publishes the standalone MCP scanner package
+# `packages/shield-mcp/` to PyPI. Independent of the main data/admin planes —
+# this only touches the scanner pip package, never a runtime image.
+#
+# Triggers:
+#   - push a tag `shield-mcp-v*`  -> build, check, AND upload to PyPI
+#   - manual "Run workflow"       -> build + twine check only (dry run) unless
+#                                    the `publish` input is set to "true"
+#
+# Requires repo/org secret PYPI_API_TOKEN (a PyPI project-scoped API token).
+# Trusted Publishing (OIDC) is the preferred alternative: configure it on PyPI,
+# add `permissions: id-token: write`, and drop the twine password.
+
+on:
+  push:
+    tags:
+      - "shield-mcp-v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Upload to PyPI (true) or dry-run build + check only (false)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: build + publish
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/shield-mcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Build sdist + wheel
+        run: |
+          rm -rf dist
+          python -m build
+
+      - name: Validate metadata
+        run: twine check dist/*
+
+      # Publish only on a release tag, or an explicit manual publish=true.
+      # A plain "Run workflow" (publish=false) stops here as a dry run.
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/shield-mcp-v') || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload --non-interactive dist/*

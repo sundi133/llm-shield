@@ -3,3 +3,7 @@ __pycache__/
 build/
 dist/
 .pytest_cache/
+*.spec
+shield-mcp-linux-*
+shield-mcp-macos-*
+shield-mcp-windows-*

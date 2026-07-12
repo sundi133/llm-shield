@@ -1,0 +1,34 @@
+{
+  "name": "@votal/mcp-scan",
+  "version": "0.1.0",
+  "description": "npm audit for MCP. Audit any MCP server for tool poisoning, over-broad permissions, and hidden prompt-injection in tool metadata. npx wrapper over the shield-mcp scanner.",
+  "bin": {
+    "mcp-scan": "bin/mcp-scan.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "mcp",
+    "security",
+    "prompt-injection",
+    "tool-poisoning",
+    "audit",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sundi133/llm-shield.git",
+    "directory": "packages/mcp-scan-npm"
+  },
+  "homepage": "https://github.com/sundi133/llm-shield/tree/main/packages/mcp-scan-npm"
+}
