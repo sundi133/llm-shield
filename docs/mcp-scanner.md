@@ -41,6 +41,15 @@ poisoning.
 
 ## Install and run
 
+No install, via npx (JS/TS devs, no Python toolchain needed):
+
+```bash
+npx @votal/mcp-scan stdio:'python my_server.py'
+npx @votal/mcp-scan http:https://example.com/mcp --json
+```
+
+Or install the Python CLI:
+
 ```bash
 pipx install shield-mcp        # or: pip install shield-mcp
 
@@ -48,6 +57,10 @@ shield-mcp scan stdio:'python my_server.py'
 shield-mcp scan sse:https://example.com/sse
 shield-mcp scan http:https://example.com/mcp --json
 ```
+
+The `npx` wrapper runs a local `shield-mcp` if you have one, otherwise it
+downloads a pinned, checksum-verified standalone binary. Same detection engine
+either way.
 
 ## For indie developers: the 60-second workflow
 
@@ -109,16 +122,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: votal/mcp-scan-action@v1
+        with:
+          target: "stdio:python -m my_server"
+          fail-on: high
+```
+
+The action exposes `verdict`, `exit-code`, and the full `report` as step outputs.
+For connected mode, add `shield-url` and `api-key: ${{ secrets.SHIELD_API_KEY }}`
+(the key is masked). If you would rather not depend on the action, install the
+CLI directly instead:
+
+```yaml
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pipx install shield-mcp
-      - name: Audit the MCP server
-        run: shield-mcp scan stdio:'python -m my_server' --fail-on high
+      - run: shield-mcp scan stdio:'python -m my_server' --fail-on high
 ```
-
-Use `--json` if you want to upload the report as an artifact or parse it in a
-later step.
 
 ### Local pre-commit hook
 
