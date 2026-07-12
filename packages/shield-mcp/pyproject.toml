@@ -8,12 +8,18 @@ version = "0.1.0"
 description = "Audit any MCP server for tool poisoning, over-broad permissions, and hidden prompt-injection in tool metadata. npm audit for MCP."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
 authors = [{ name = "Votal / LLM Shield" }]
 keywords = ["mcp", "security", "prompt-injection", "tool-poisoning", "audit"]
 classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
   "Topic :: Security",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
   "mcp>=1.0",
