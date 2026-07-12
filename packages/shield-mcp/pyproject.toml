@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shield-mcp"
+version = "0.1.0"
+description = "Audit any MCP server for tool poisoning, over-broad permissions, and hidden prompt-injection in tool metadata. npm audit for MCP."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Votal / LLM Shield" }]
+keywords = ["mcp", "security", "prompt-injection", "tool-poisoning", "audit"]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Topic :: Security",
+]
+dependencies = [
+  "mcp>=1.0",
+  "httpx>=0.24",
+]
+
+[project.scripts]
+shield-mcp = "shield_mcp.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/sundi133/llm-shield"
+
+[tool.setuptools.packages.find]
+where = ["src"]
