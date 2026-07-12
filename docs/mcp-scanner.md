@@ -39,6 +39,9 @@ payload: a tool whose description tells the model reading it to ignore its
 instructions, exfiltrate secrets, or read `~/.ssh`. This is known as tool
 poisoning.
 
+Curious how well-known servers score? See the [MCP security registry](/registry/),
+which rates public MCP servers 0 to 100 from these same scans.
+
 ## Install and run
 
 No install, via npx (JS/TS devs, no Python toolchain needed):
