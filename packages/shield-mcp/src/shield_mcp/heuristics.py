@@ -247,16 +247,38 @@ def audit_tool(tool: dict) -> list:
 
 def audit_resource(resource: dict) -> list:
     name = resource.get("name") or resource.get("uri") or "<unnamed>"
-    text = "\n".join(
-        p for p in (resource.get("title") or "", resource.get("description") or "") if p
-    )
-    return audit_text(text, kind="resource", name=name)
+    return audit_text(_resource_text(resource), kind="resource", name=name)
 
 
-def audit_prompt(prompt: dict) -> list:
-    name = prompt.get("name") or "<unnamed>"
+def _prompt_text(prompt: dict) -> str:
     parts = [prompt.get("title") or "", prompt.get("description") or ""]
     for arg in prompt.get("arguments") or []:
         if isinstance(arg, dict) and arg.get("description"):
             parts.append(f"{arg.get('name', 'arg')}: {arg['description']}")
-    return audit_text("\n".join(p for p in parts if p), kind="prompt", name=name)
+    return "\n".join(p for p in parts if p)
+
+
+def _resource_text(resource: dict) -> str:
+    return "\n".join(
+        p for p in (resource.get("title") or "", resource.get("description") or "") if p
+    )
+
+
+def audit_prompt(prompt: dict) -> list:
+    name = prompt.get("name") or "<unnamed>"
+    return audit_text(_prompt_text(prompt), kind="prompt", name=name)
+
+
+def subject_texts(catalog) -> list:
+    """Yield (kind, name, text) for every auditable description in a catalog.
+
+    Shared by offline audit and connected mode so both scan exactly the same text.
+    """
+    out = []
+    for t in catalog.tools:
+        out.append(("tool", t.get("name") or "<unnamed>", _tool_text(t)))
+    for r in catalog.resources:
+        out.append(("resource", r.get("name") or r.get("uri") or "<unnamed>", _resource_text(r)))
+    for p in catalog.prompts:
+        out.append(("prompt", p.get("name") or "<unnamed>", _prompt_text(p)))
+    return out

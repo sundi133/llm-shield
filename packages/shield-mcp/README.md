@@ -38,12 +38,25 @@ shield-mcp scan stdio:'python my_server.py' --fail-on high   # stricter
 | 3 | target unreachable / MCP handshake failed |
 | 4 | usage error |
 
-## Free vs connected
+## Connected mode (model verdict)
 
-Offline mode (above) is free and never leaves your machine. Connected mode
-(coming next) sends only the *descriptions being scanned* to a Shield endpoint
-for a model-grade verdict — never your target server's credentials or call
-arguments.
+Offline mode (above) is free and never leaves your machine. Connected mode adds
+Shield's model-backed guardrails on top of the heuristics:
+
+```bash
+shield-mcp scan stdio:'python my_server.py' \
+  --shield-url https://shield.example.com --api-key "$SHIELD_API_KEY"
+# or: SHIELD_URL / SHIELD_API_KEY env, and --offline to force heuristics only
+```
+
+Each scanned description is POSTed to `{shield-url}/guardrails/input`; a
+non-passing guardrail becomes a `source: model` finding merged into the report.
+
+- **Privacy:** only the description text is sent (`{"message": "<desc>"}`) —
+  never the target server's credentials, env, or tool-call arguments.
+- **Fail-open:** if Shield is unreachable / 5xx / auth fails, the scan degrades
+  to the offline verdict and records a note. A network blip never turns a clean
+  scan into a CI failure; heuristic findings still gate normally.
 
 Part of [LLM Shield](https://github.com/sundi133/llm-shield). Spec:
 `docs/spec-mcp-scanner.md`.
