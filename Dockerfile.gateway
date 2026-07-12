@@ -22,6 +22,10 @@ COPY guardrails/ guardrails/
 COPY api/ api/
 COPY storage/ storage/
 
+# The scanner, for the optional boot pre-flight (preflight.scan: true).
+COPY packages/shield-mcp/ packages/shield-mcp/
+RUN pip install --no-cache-dir ./packages/shield-mcp
+
 # User config is mounted here (kept out of the repo `config/` package namespace).
 ENV GATEWAY_CONFIG=/etc/mcp-gateway/gateway.yaml
 ENV PORT=8080

@@ -16,7 +16,7 @@ import logging
 import os
 import sys
 
-from core.mcp.lite import load_gateway_config, build_router, LiteConfig
+from core.mcp.lite import load_gateway_config, build_router, run_preflight, LiteConfig
 
 logger = logging.getLogger("mcp-gateway-lite")
 
@@ -83,6 +83,13 @@ def main(argv=None) -> int:
     except (OSError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+
+    if (lite.preflight or {}).get("scan"):
+        logger.info("preflight: scanning %d upstream(s) with shield-mcp", len(lite.routes))
+        run_preflight(lite)
+        if not lite.routes:
+            print("error: preflight refused every route; nothing to serve", file=sys.stderr)
+            return 1
 
     app, _ = build_app(lite)
     logger.info("serving team=%s routes=%s on %s:%s",

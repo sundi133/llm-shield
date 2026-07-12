@@ -206,3 +206,69 @@ def build_router(lite: LiteConfig, *, proxy_factory=None) -> FileConfigRouter:
     apply_rbac(lite.rbac)
     sink = make_decision_sink(lite.log)
     return FileConfigRouter(lite, on_decision=sink, proxy_factory=proxy_factory)
+
+
+# ── scanner pre-flight (composes with shield-mcp) ──────────────────────
+def route_to_scan_target(cfg: dict):
+    """Reconstruct the `shield-mcp scan` target string for a route, or None."""
+    t = (cfg.get("transport") or "").lower()
+    if t == "stdio":
+        parts = [cfg.get("command", "")] + list(cfg.get("args") or [])
+        joined = " ".join(p for p in parts if p)
+        return f"stdio:{joined}" if joined else None
+    if t in _NETWORK_TRANSPORTS:
+        scheme = "sse" if t == "sse" else "http"
+        url = cfg.get("url")
+        return f"{scheme}:{url}" if url else None
+    return None
+
+
+def _subprocess_scan(target: str, timeout: float = 30.0):
+    """Default pre-flight runner: `shield-mcp scan <target> --json` -> report|None."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["shield-mcp", "scan", target, "--json", "--timeout", str(int(timeout))],
+            capture_output=True, text=True, timeout=timeout + 30,
+        )
+    except Exception:
+        return None
+    if proc.returncode in (0, 2):
+        try:
+            return json.loads(proc.stdout)
+        except (ValueError, json.JSONDecodeError):
+            return None
+    return None
+
+
+def run_preflight(lite: LiteConfig, *, runner=None, timeout: float = 30.0) -> list:
+    """Scan each route with shield-mcp; warn (front anyway) or refuse (drop the
+    route) on a high-risk verdict, per `preflight.on_finding`. Mutates lite.routes
+    on refuse. Returns [{route, verdict, action}]. Fail-soft: an unscannable route
+    is left in place with a note.
+    """
+    runner = runner or _subprocess_scan
+    on_finding = (lite.preflight or {}).get("on_finding", "warn")
+    results = []
+    for name, cfg in list(lite.routes.items()):
+        target = route_to_scan_target(cfg)
+        report = runner(target, timeout) if target else None
+        verdict = (report or {}).get("verdict")
+        action = "ok"
+        if report is None:
+            action = "unscannable"
+            logger.warning("preflight: route '%s' could not be scanned; fronting it", name)
+        elif verdict == "fail":  # scanner gates on critical (tool poisoning / encoded)
+            if on_finding == "refuse":
+                lite.routes.pop(name, None)
+                action = "refused"
+                logger.error("preflight: route '%s' is HIGH-RISK; refusing to front it", name)
+            else:
+                action = "warned"
+                logger.warning("preflight: route '%s' is HIGH-RISK; fronting it anyway "
+                               "(set preflight.on_finding: refuse to block)", name)
+        else:
+            logger.info("preflight: route '%s' scanned clean", name)
+        results.append({"route": name, "verdict": verdict, "action": action})
+    return results
