@@ -6,12 +6,14 @@ from pathlib import Path
 import pytest
 from unittest.mock import patch
 
-# The `shield-mcp` scanner is a standalone pip package under packages/ with a
-# src layout. Put its src on sys.path so its tests (tests/test_shield_mcp_*.py)
+# Standalone pip packages under packages/ use a src layout. Put their src dirs on
+# sys.path so their tests (tests/test_shield_mcp_*.py, tests/test_mcp_registry_*.py)
 # run under the repo's `pytest tests` gate without a separate install step.
-_SHIELD_MCP_SRC = Path(__file__).resolve().parent.parent / "packages" / "shield-mcp" / "src"
-if _SHIELD_MCP_SRC.is_dir() and str(_SHIELD_MCP_SRC) not in sys.path:
-    sys.path.insert(0, str(_SHIELD_MCP_SRC))
+_PACKAGE_ROOT = Path(__file__).resolve().parent.parent / "packages"
+for _pkg in ("shield-mcp", "mcp-registry"):
+    _src = _PACKAGE_ROOT / _pkg / "src"
+    if _src.is_dir() and str(_src) not in sys.path:
+        sys.path.insert(0, str(_src))
 
 from config.schema import (
     ShieldConfig,
