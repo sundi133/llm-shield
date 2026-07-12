@@ -1,0 +1,83 @@
+name: "MCP Scan"
+description: "Audit an MCP server for tool poisoning, over-broad permissions, and hidden prompt-injection in tool metadata."
+branding:
+  icon: "shield"
+  color: "purple"
+
+inputs:
+  target:
+    description: "MCP server to scan: stdio:'<cmd args>' | sse:<url> | http:<url>"
+    required: true
+  fail-on:
+    description: "Minimum severity that fails the step (info|low|medium|high|critical)"
+    required: false
+    default: "critical"
+  json:
+    description: "Print the raw JSON report to the log"
+    required: false
+    default: "false"
+  timeout:
+    description: "Per-target timeout in seconds"
+    required: false
+    default: "20"
+  shield-url:
+    description: "Enable connected mode: model verdict via {url}/guardrails/input"
+    required: false
+    default: ""
+  api-key:
+    description: "Tenant API key for connected mode. MUST be a secret (it is masked)."
+    required: false
+    default: ""
+  offline:
+    description: "Force heuristics only, even if shield-url is set"
+    required: false
+    default: "false"
+  version:
+    description: "Pin the shield-mcp version to install (default: latest)"
+    required: false
+    default: ""
+
+outputs:
+  exit-code:
+    description: "The scanner exit code (0 clean, 2 findings, 3 unreachable, 4 usage)"
+    value: ${{ steps.scan.outputs.exit-code }}
+  verdict:
+    description: "pass | fail"
+    value: ${{ steps.scan.outputs.verdict }}
+  report:
+    description: "The full --json report document"
+    value: ${{ steps.scan.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install shield-mcp
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        if command -v shield-mcp >/dev/null 2>&1; then
+          echo "using existing shield-mcp: $(command -v shield-mcp)"
+        else
+          python -m pip install --upgrade pip
+          python -m pip install "shield-mcp${INPUT_VERSION:+==$INPUT_VERSION}"
+        fi
+
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        # Passed as env (not ${{ }} interpolation) to avoid shell injection via inputs.
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_JSON: ${{ inputs.json }}
+        INPUT_TIMEOUT: ${{ inputs.timeout }}
+        INPUT_OFFLINE: ${{ inputs.offline }}
+        SHIELD_URL: ${{ inputs.shield-url }}
+        SHIELD_API_KEY: ${{ inputs.api-key }}
+      run: bash "$GITHUB_ACTION_PATH/scan.sh"
