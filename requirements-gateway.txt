@@ -1,0 +1,13 @@
+# Small-team MCP gateway (docker run edition). Slim: no redis, no torch/vLLM.
+# The in-process allowlist + logging path needs only these; model-backed guards
+# degrade gracefully (LLM checks fail-open over HTTP) and full model DLP is opt-in
+# via enforcement_backend: http to a Shield backend.
+fastapi
+uvicorn
+httpx
+mcp>=1.2
+pyyaml
+pydantic
+pydantic-settings
+requests
+tiktoken

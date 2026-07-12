@@ -1,0 +1,17 @@
+# Small-team MCP gateway. `docker compose -f docker-compose.gateway.yml up`.
+services:
+  mcp-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    image: shield-mcp-gateway
+    ports:
+      - "8080:8080"
+    volumes:
+      # Your config; edit examples/mcp_gateway_lite/gateway.yaml or point elsewhere.
+      - ./examples/mcp_gateway_lite/gateway.yaml:/etc/mcp-gateway/gateway.yaml:ro
+    environment:
+      GATEWAY_CONFIG: /etc/mcp-gateway/gateway.yaml
+      PORT: "8080"
+      # SHIELD_GATEWAY_FAIL_OPEN: "1"   # open on enforcement error (default: closed)
+    restart: unless-stopped

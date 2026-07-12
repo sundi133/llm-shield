@@ -1,0 +1,32 @@
+# Small-team MCP gateway config. One file: upstreams + allowlist + logging.
+# See docs/mcp-gateway-lite.md.
+
+team: acme                       # a label for this deployment (the fixed tenant id)
+
+log:
+  format: json                   # json | text
+  path: "-"                      # "-" = stdout (docker logs), or a file path
+
+preflight:
+  scan: false                    # scan each upstream with shield-mcp at boot
+  on_finding: warn               # warn | refuse
+
+routes:
+  - route: files                 # agents connect at /gateway/files/mcp
+    transport: stdio             # stdio | sse | http
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"]
+    scan_descriptions: true      # annotate poisoned tool descriptions
+    isolation_ack: true          # I confirm this upstream only accepts THIS gateway
+
+rbac:
+  roles:
+    reader:
+      allowed_tools: ["read_file", "list_directory"]   # [] = all tools
+      denied_tools: []
+    admin:
+      allowed_tools: []          # allow all
+      denied_tools: []
+  agents:
+    coding-agent: reader         # X-Agent-Key -> role
+    ops-agent: admin
