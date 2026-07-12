@@ -168,10 +168,14 @@ class MCPProxy:
         (does not drop) so the operator decides — and it's surfaced in discovery.
         """
         try:
-            from guardrails.input.adversarial_detection import AdversarialDetectionGuardrail
+            # The guardrail's registered `name` is "adversarial_detection", but the
+            # module is `adversarial` and the class is `AdversarialGuardrail`. Using
+            # the name as an import path (as this once did) raised ImportError that
+            # the except-clause swallowed, silently no-op'ing the whole scan.
+            from guardrails.input.adversarial import AdversarialGuardrail
         except Exception:
             return tools
-        guard = AdversarialDetectionGuardrail()
+        guard = AdversarialGuardrail()
         out = []
         for t in tools:
             desc = t.get("description") or ""
