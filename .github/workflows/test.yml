@@ -46,3 +46,17 @@ jobs:
         run: |
           node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"
           node --test extension/test/*.mjs
+
+  mcp-scan-npm:
+    name: mcp-scan npm wrapper (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Test + publish dry-run
+        working-directory: packages/mcp-scan-npm
+        run: |
+          node --test
+          npm pack --dry-run
