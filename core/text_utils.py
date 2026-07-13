@@ -116,3 +116,57 @@ def trim_history_to_budget(
         removed = history_messages.pop(0)
         history_tokens -= estimate_tokens(removed["content"])
     return history_messages, history_tokens
+
+
+# Multi-turn awareness for the custom-policy guardrails (input + output).
+# Shared so both stages behave identically. Off by default per policy; the env
+# var is the operator-level kill switch.
+_CUSTOM_POLICY_DEFAULT_TURNS = 6
+_CUSTOM_POLICY_SLOT_CONTEXT = 4096   # 8196 max-model-len / 2, matches adversarial
+_CUSTOM_POLICY_OUTPUT_TOKENS = 200   # custom_policy max_tokens
+_CUSTOM_POLICY_OVERHEAD_TOKENS = 64  # chat template / role framing slack
+
+
+def custom_policy_history_turns() -> int:
+    """Max prior turns to feed opted-in custom policies.
+
+    Reads SHIELD_CUSTOM_POLICY_HISTORY_TURNS (default 6). Returning 0 is the
+    operator kill switch: history injection is skipped even for policies that
+    set multi_turn=true. Invalid values fall back to the default.
+    """
+    raw = os.getenv("SHIELD_CUSTOM_POLICY_HISTORY_TURNS")
+    if raw is None:
+        return _CUSTOM_POLICY_DEFAULT_TURNS
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return _CUSTOM_POLICY_DEFAULT_TURNS
+
+
+def build_policy_messages(
+    eval_prompt: str,
+    context: Optional[dict],
+    max_turns: int,
+    slot_context: int = _CUSTOM_POLICY_SLOT_CONTEXT,
+) -> list[dict]:
+    """Build the LLM messages for a custom-policy evaluation.
+
+    With max_turns <= 0 or no prior turns, returns the single-message prompt
+    unchanged (byte-identical to the pre-multi-turn path). Otherwise prepends the
+    budget-trimmed prior turns before the evaluation prompt, so the model judges
+    the current message in conversational context. Same shaping adversarial uses.
+    """
+    base = [{"role": "user", "content": eval_prompt}]
+    if max_turns <= 0:
+        return base
+    history = build_history_messages(context, max_turns=max_turns)
+    if not history:
+        return base
+    reserved = (
+        estimate_tokens(eval_prompt)
+        + _CUSTOM_POLICY_OUTPUT_TOKENS
+        + _CUSTOM_POLICY_OVERHEAD_TOKENS
+    )
+    available = max(0, slot_context - reserved)
+    history, _ = trim_history_to_budget(history, available)
+    return history + base
