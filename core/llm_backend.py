@@ -12,6 +12,40 @@ logger = logging.getLogger("votal.llm_backend")
 LLM_DEBUG = os.environ.get("LLM_DEBUG", "false").lower() in ("true", "1", "yes")
 
 
+def _extract_first_json_object(s: str) -> Optional[str]:
+    """Return the first balanced {...} object in s, or None.
+
+    Brace-matches while respecting string literals and escapes, so prose
+    wrapped around a JSON object (e.g. "Yes, that violates it: {...}") still
+    yields the object.
+    """
+    start = s.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(s)):
+        c = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        else:
+            if c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    return s[start:i + 1]
+    return None
+
+
 def parse_llm_json(raw: str) -> dict:
     """Parse JSON from LLM, fixing common model quirks.
 
@@ -20,6 +54,11 @@ def parse_llm_json(raw: str) -> dict:
       their JSON in ```json ... ``` even when a schema is requested, which
       makes json.loads fail with "Expecting value: line 1 column 1 (char 0)"
     - extra spaces in keys: 'is_  adversarial' instead of 'is_adversarial'
+    - prose wrapped around the object: backends without guided decoding
+      (ollama's `format` is a hint, not a constraint like vLLM's) sometimes
+      emit an explanation around the JSON — fall back to extracting the first
+      balanced {...}. Clean JSON (what vLLM always returns) hits json.loads on
+      the first try, so that path is unchanged.
     """
     cleaned = raw.strip()
     if cleaned.startswith("```"):
@@ -30,7 +69,13 @@ def parse_llm_json(raw: str) -> dict:
         lambda m: f'"{m.group(1)}{m.group(2)}"{m.group(3)}',
         cleaned,
     )
-    return json.loads(cleaned)
+    try:
+        return json.loads(cleaned)
+    except (ValueError, json.JSONDecodeError):
+        obj = _extract_first_json_object(cleaned)
+        if obj is not None:
+            return json.loads(obj)  # may still raise -> caller handles it
+        raise
 
 
 def parse_csv_response(raw: str, fields: list[str]) -> dict:
@@ -390,6 +435,14 @@ def _build_ollama_payload(
       guardrails (custom_policy, role_based_policy).
     No /no_think prompt hack needed — `think` is first-class here.
     """
+    if response_format:
+        # Ollama's `format` is only a hint (unlike vLLM's guided decoding), so
+        # reasoning models sometimes answer in prose and ignore it. Reinforcing
+        # "JSON only" on the last user message reliably flips them to JSON.
+        # Ollama-only: the vLLM path (the `else` branch of _build_payload) never
+        # runs this, so the GPU behavior is untouched.
+        messages = _reinforce_json_only(messages)
+
     payload = {
         "model": os.getenv("LLM_MODEL_NAME", ""),
         "messages": messages,
@@ -404,6 +457,29 @@ def _build_ollama_payload(
     if response_format:
         payload["format"] = response_format
     return payload
+
+
+_JSON_ONLY_HINT = (
+    "\n\nIMPORTANT: Respond with ONLY the JSON object — no prose, no markdown, "
+    "no code fences, no explanation. Output must start with { and end with }."
+)
+
+
+def _reinforce_json_only(messages: list) -> list:
+    """Append a JSON-only instruction to the last user message (copy, not mutate).
+
+    Idempotent and only touches the last user turn; if there is none, appends a
+    user message carrying the hint.
+    """
+    out = [dict(m) for m in messages]
+    for m in reversed(out):
+        if m.get("role") == "user":
+            content = m.get("content") or ""
+            if isinstance(content, str) and "ONLY the JSON object" not in content:
+                m["content"] = content + _JSON_ONLY_HINT
+            return out
+    out.append({"role": "user", "content": _JSON_ONLY_HINT.strip()})
+    return out
 
 
 def _adapt_ollama_response(data: dict) -> dict:
