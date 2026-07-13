@@ -175,6 +175,51 @@ sent**, never the target server's credentials, env, or tool-call arguments. If
 Shield is unreachable it **fails open**: the scan degrades to the offline verdict
 with a note, so a network blip never fails a clean CI run.
 
+## Deep scan (agentic, advisory)
+
+The default scan is per-description: it checks each tool in isolation. Deep scan
+(`--deep`) adds an LLM agent that reasons over the **whole** tool surface at once,
+catching holistic risks a per-description check cannot see:
+
+- **cross-tool privilege escalation**: a `read_file` tool plus an `http_post`
+  tool combine into an exfiltration path, even though neither description is
+  poisoned on its own;
+- **dangerous capability combinations**;
+- **semantic over-reach**: a tool named `get_status` whose description quietly
+  allows writes.
+
+Three complementary layers:
+
+| layer | how | determinism |
+|---|---|---|
+| default (offline) | regex + decode heuristics per description | deterministic, CI gate |
+| connected (`--shield-url`) | one model classification per description | model verdict |
+| deep (`--deep`) | a multi-step LLM agent over the whole surface | advisory |
+
+```bash
+# OpenAI-compatible backend (OpenAI, Ollama, vLLM, ...)
+shield-mcp scan stdio:'python my_server.py' \
+  --deep --deep-url https://api.openai.com/v1 --deep-model gpt-4o \
+  --deep-api-key "$OPENAI_API_KEY"
+
+# native Anthropic (pip install shield-mcp[deep])
+shield-mcp scan stdio:'python my_server.py' \
+  --deep --deep-provider anthropic --deep-api-key "$ANTHROPIC_API_KEY"
+# default model: claude-opus-4-8
+```
+
+**Advisory by default.** Deep findings are shown as `source: agent` but **do not
+change the exit code** (a non-deterministic LLM verdict must never fail your
+build). Opt them into the gate with `--deep-fail high`. `--deep-max-steps`
+(default 4) bounds the agent's cost.
+
+**Safety.** Deep scan **only reasons over metadata** and never executes the target
+server's tools. It sends **only** the tool/resource/prompt names and descriptions
+to the configured LLM, never credentials, env, headers, or arguments. Because it
+feeds attacker-controlled descriptions to an LLM, the agent is instructed to treat
+them as untrusted data and only ever returns findings (it never acts on them). If
+the LLM is unreachable it **fails open** with a note.
+
 ---
 
 Source and full options: [`packages/shield-mcp/`](https://github.com/sundi133/llm-shield/tree/main/packages/shield-mcp).

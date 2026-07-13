@@ -26,6 +26,11 @@ dependencies = [
   "httpx>=0.24",
 ]
 
+[project.optional-dependencies]
+# `pip install shield-mcp[deep]` — only needed for `scan --deep --deep-provider anthropic`.
+# The openai-compatible deep provider needs nothing beyond httpx (already required).
+deep = ["anthropic>=0.40"]
+
 [project.scripts]
 shield-mcp = "shield_mcp.cli:main"
 

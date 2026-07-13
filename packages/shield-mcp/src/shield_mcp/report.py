@@ -40,7 +40,8 @@ class Finding:
     subject_name: str
     detail: str
     evidence: str = ""
-    source: str = "heuristic"  # "heuristic" | "model"
+    source: str = "heuristic"  # "heuristic" | "model" | "agent"
+    confidence: Optional[float] = None  # 0..1, set by the agent deep-scan
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -56,17 +57,31 @@ class ScanReport:
     notes: list = field(default_factory=list)  # non-finding info (e.g. model pass skipped)
 
     # ── verdict / exit code ────────────────────────────────────────────
-    def gating_findings(self, fail_on: str) -> list:
-        """Findings at or above the fail_on severity threshold."""
+    def gating_findings(self, fail_on: str, deep_fail: Optional[str] = None) -> list:
+        """Findings that gate the exit code.
+
+        Deterministic findings (heuristic / model) gate at the ``fail_on``
+        threshold. Agent findings (``source == "agent"``, from ``--deep``) are
+        advisory and gate **only** when ``deep_fail`` is set, at that threshold —
+        a non-deterministic LLM verdict never fails CI by default.
+        """
         threshold = severity_rank(fail_on)
-        return [f for f in self.findings if severity_rank(f.severity) >= threshold]
+        deep_threshold = severity_rank(deep_fail) if deep_fail is not None else None
+        out = []
+        for f in self.findings:
+            if getattr(f, "source", "heuristic") == "agent":
+                if deep_threshold is not None and severity_rank(f.severity) >= deep_threshold:
+                    out.append(f)
+            elif severity_rank(f.severity) >= threshold:
+                out.append(f)
+        return out
 
-    def verdict(self, fail_on: str) -> str:
-        return "fail" if self.gating_findings(fail_on) else "pass"
+    def verdict(self, fail_on: str, deep_fail: Optional[str] = None) -> str:
+        return "fail" if self.gating_findings(fail_on, deep_fail) else "pass"
 
-    def exit_code(self, fail_on: str) -> int:
+    def exit_code(self, fail_on: str, deep_fail: Optional[str] = None) -> int:
         # 0 = clean/below threshold, 2 = gating findings present.
-        return 2 if self.gating_findings(fail_on) else 0
+        return 2 if self.gating_findings(fail_on, deep_fail) else 0
 
     def severity_counts(self) -> dict:
         out = {s: 0 for s in SEVERITIES}
@@ -76,7 +91,7 @@ class ScanReport:
         return out
 
     # ── serialization ──────────────────────────────────────────────────
-    def to_dict(self, fail_on: str = "critical") -> dict:
+    def to_dict(self, fail_on: str = "critical", deep_fail: Optional[str] = None) -> dict:
         return {
             "target": self.target,
             "transport": self.transport,
@@ -86,12 +101,14 @@ class ScanReport:
             "findings": [f.to_dict() for f in self.findings],
             "notes": list(self.notes),
             "fail_on": fail_on,
-            "verdict": self.verdict(fail_on),
-            "exit_code": self.exit_code(fail_on),
+            "deep_fail": deep_fail,
+            "verdict": self.verdict(fail_on, deep_fail),
+            "exit_code": self.exit_code(fail_on, deep_fail),
         }
 
-    def to_json(self, fail_on: str = "critical", indent: int = 2) -> str:
-        return json.dumps(self.to_dict(fail_on), indent=indent, sort_keys=False)
+    def to_json(self, fail_on: str = "critical", deep_fail: Optional[str] = None,
+                indent: int = 2) -> str:
+        return json.dumps(self.to_dict(fail_on, deep_fail), indent=indent, sort_keys=False)
 
 
 _SEV_LABEL = {
@@ -103,7 +120,8 @@ _SEV_LABEL = {
 }
 
 
-def render_human(report: ScanReport, fail_on: str = "critical") -> str:
+def render_human(report: ScanReport, fail_on: str = "critical",
+                 deep_fail: Optional[str] = None) -> str:
     """Plain-text report (no color deps; friendly to CI logs)."""
     lines = []
     lines.append(f"MCP scan: {report.target}  [{report.transport}]")
@@ -124,7 +142,17 @@ def render_human(report: ScanReport, fail_on: str = "critical") -> str:
         lines.append("")
         for f in findings:
             tag = _SEV_LABEL.get(f.severity, f.severity.upper())
-            src = "" if f.source == "heuristic" else f" ({f.source})"
+            # agent findings are advisory unless --deep-fail opts them in
+            if getattr(f, "source", "heuristic") == "agent":
+                gates = deep_fail is not None and severity_rank(f.severity) >= severity_rank(deep_fail)
+                src = " (agent, advisory)" if not gates else " (agent)"
+                conf = getattr(f, "confidence", None)
+                if conf is not None:
+                    src += f" conf={conf:.2f}"
+            elif f.source == "heuristic":
+                src = ""
+            else:
+                src = f" ({f.source})"
             lines.append(f"  [{tag}] {f.category}: {f.subject_kind} '{f.subject_name}'{src}")
             lines.append(f"         {f.detail}")
             if f.evidence:
@@ -137,5 +165,6 @@ def render_human(report: ScanReport, fail_on: str = "critical") -> str:
     ) or "clean"
     lines.append("")
     lines.append(f"  summary: {summary}")
-    lines.append(f"  verdict: {report.verdict(fail_on).upper()} (fail-on: {fail_on})")
+    gate = f"fail-on: {fail_on}" + (f", deep-fail: {deep_fail}" if deep_fail else "")
+    lines.append(f"  verdict: {report.verdict(fail_on, deep_fail).upper()} ({gate})")
     return "\n".join(lines)

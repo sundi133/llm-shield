@@ -79,5 +79,22 @@ non-passing guardrail becomes a `source: model` finding merged into the report.
   to the offline verdict and records a note. A network blip never turns a clean
   scan into a CI failure; heuristic findings still gate normally.
 
-Part of [LLM Shield](https://github.com/sundi133/llm-shield). Spec:
-`docs/spec-mcp-scanner.md`.
+## Deep scan (agentic, advisory)
+
+`--deep` adds an LLM agent that reasons over the **whole** tool surface for
+holistic risks a per-description check misses (cross-tool exfil paths, capability
+combinations, semantic over-reach):
+
+```bash
+shield-mcp scan stdio:'python my_server.py' \
+  --deep --deep-url https://api.openai.com/v1 --deep-model gpt-4o --deep-api-key "$OPENAI_API_KEY"
+# or native Anthropic (pip install shield-mcp[deep]):
+shield-mcp scan ... --deep --deep-provider anthropic --deep-api-key "$ANTHROPIC_API_KEY"
+```
+
+Deep findings are `source: agent` and **advisory** — they never change the exit
+code unless you pass `--deep-fail <sev>`. Only metadata is sent to the LLM; the
+agent never executes the target's tools; it fails open if the LLM is unreachable.
+
+Part of [LLM Shield](https://github.com/sundi133/llm-shield). Specs:
+`docs/spec-mcp-scanner.md`, `docs/spec-mcp-scanner-deep.md`.
