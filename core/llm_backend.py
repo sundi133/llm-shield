@@ -60,6 +60,10 @@ def parse_llm_json(raw: str) -> dict:
       balanced {...}. Clean JSON (what vLLM always returns) hits json.loads on
       the first try, so that path is unchanged.
     """
+    if raw is None:
+        # Some backends (e.g. OpenRouter reasoning models truncated at max_tokens)
+        # return message.content=null; surface a clear error instead of AttributeError.
+        raise ValueError("LLM returned null content (no JSON to parse)")
     cleaned = raw.strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", cleaned)
@@ -585,6 +589,15 @@ def _build_openrouter_payload(
             "allow_fallbacks": os.getenv("OPENROUTER_ALLOW_FALLBACKS", "true").lower()
             not in ("0", "false", "no"),
         }
+
+    # Reasoning models (e.g. qwen3.5-27b) emit chain-of-thought in a `reasoning`
+    # field and, under a small max_tokens, burn the whole budget there and return
+    # content=null (finish_reason=length) -> parse_llm_json(None) crashes the
+    # guardrail (which then fails open). Guardrails only need the short JSON
+    # verdict, so disable reasoning by default -- mirrors the ollama /no_think
+    # handling. Escape hatch: OPENROUTER_REASONING=true keeps it on.
+    if os.getenv("OPENROUTER_REASONING", "false").lower() not in ("1", "true", "yes"):
+        payload["reasoning"] = {"enabled": False}
 
     if response_format:
         payload["response_format"] = {
