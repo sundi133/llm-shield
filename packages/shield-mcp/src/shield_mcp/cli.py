@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from shield_mcp.report import SEVERITIES, render_human
 from shield_mcp.scanner import scan_catalog
-from shield_mcp.connect import parse_target, fetch_catalog, ConnectError
+from shield_mcp.connect import parse_target, parse_headers, fetch_catalog, ConnectError
 from shield_mcp.connected import augment
 
 EXIT_CLEAN = 0
@@ -51,6 +51,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="per-target timeout in seconds (default: 20)",
     )
     scan.add_argument(
+        "--header", "-H", action="append", default=[], metavar="'Name: value'",
+        help="request header sent to an sse/http target, e.g. auth "
+             "(-H 'x-api-key: ...'); repeatable. Ignored for stdio targets.",
+    )
+    scan.add_argument(
         "--shield-url", default=None,
         help="enable connected mode: model verdict via {url}/guardrails/input "
              "(or SHIELD_URL). Sends only description text.",
@@ -69,6 +74,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def run_scan(args) -> int:
     try:
         target = parse_target(args.target)
+        target.headers = parse_headers(args.header)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return EXIT_USAGE

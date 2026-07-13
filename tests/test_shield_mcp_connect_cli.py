@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from shield_mcp.connect import parse_target, _normalize, Target, ConnectError
+from shield_mcp.connect import parse_target, parse_headers, _normalize, Target, ConnectError
 from shield_mcp import cli
 
 
@@ -38,6 +38,51 @@ def test_parse_http_prefixed_and_bare():
 def test_parse_bad_targets_raise(bad):
     with pytest.raises(ValueError):
         parse_target(bad)
+
+
+def test_parse_headers_valid_and_invalid():
+    h = parse_headers(["x-api-key: secret", "Authorization: Bearer t"])
+    assert h == {"x-api-key": "secret", "Authorization": "Bearer t"}
+    # value may contain colons (e.g. a URL)
+    assert parse_headers(["X-Url: https://h/p"]) == {"X-Url": "https://h/p"}
+    assert parse_headers([]) == {} and parse_headers(None) == {}
+    for bad in (["no-colon"], [": novalue-name"]):
+        with pytest.raises(ValueError):
+            parse_headers(bad)
+
+
+def test_headers_passed_to_http_client(monkeypatch):
+    import asyncio
+    import shield_mcp.connect as connect
+    from contextlib import asynccontextmanager
+
+    captured = {}
+
+    def fake_streamable(url, headers=None):
+        captured["url"] = url
+        captured["headers"] = headers
+
+        @asynccontextmanager
+        async def _cm():
+            yield (object(), object(), object())
+        return _cm()
+
+    class _FakeSession:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def initialize(self): pass
+        async def list_tools(self): return type("R", (), {"tools": []})()
+        async def list_resources(self): return type("R", (), {"resources": []})()
+        async def list_prompts(self): return type("R", (), {"prompts": []})()
+
+    import mcp.client.streamable_http as sh
+    monkeypatch.setattr(sh, "streamablehttp_client", fake_streamable)
+    monkeypatch.setattr("mcp.ClientSession", _FakeSession)
+
+    t = Target(transport="http", url="https://h/api/mcp", headers={"x-api-key": "k"})
+    asyncio.run(connect.fetch_catalog(t))
+    assert captured["headers"] == {"x-api-key": "k"}
 
 
 def test_normalize_handles_models_dicts_and_objects():
