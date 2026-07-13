@@ -102,6 +102,10 @@ def save_custom_policy(
             "enabled": policy_data.get("enabled", True),
             "confidence_threshold": policy_data.get("confidence_threshold", 0.8),
             "priority": policy_data.get("priority", 100),
+            # Opt-in multi-turn awareness: when true, the guardrail feeds the last
+            # N conversation turns into this policy's LLM evaluation. Default false
+            # keeps existing policies single-turn (byte-identical prompt).
+            "multi_turn": policy_data.get("multi_turn", False),
             "created_at": now.isoformat(),
             "created_by": created_by,
             "updated_at": now.isoformat(),

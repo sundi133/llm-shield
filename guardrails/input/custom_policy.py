@@ -7,6 +7,7 @@ from typing import Dict, Optional
 from guardrails.base import BaseGuardrail, safe_float
 from core.llm_backend import async_llm_call, parse_llm_json
 from core.models import GuardrailResult
+from core.text_utils import build_policy_messages, custom_policy_history_turns
 
 logger = logging.getLogger(__name__)
 
@@ -115,9 +116,15 @@ Respond with ONLY a JSON object in this exact format:
 }}"""
 
         try:
+            # Opt-in multi-turn: prepend prior conversation turns so the policy
+            # LLM judges the current message in context. Off by default -> the
+            # single-message prompt is byte-identical to the pre-multi-turn path.
+            max_turns = custom_policy_history_turns() if policy.get("multi_turn") else 0
+            messages = build_policy_messages(evaluation_prompt, context, max_turns)
+
             # Use guardrail LLM to evaluate
             llm_response = await async_llm_call(
-                messages=[{"role": "user", "content": evaluation_prompt}],
+                messages=messages,
                 max_tokens=200,
                 temperature=0,
                 response_format={

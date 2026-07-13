@@ -424,6 +424,14 @@ async def classify_output(request: Request, body: dict):
     guardrail_overrides = body.get("guardrails")
     context = body.get("context", {})
 
+    # Multi-turn awareness: lift request `messages` into conversation_history so
+    # opted-in custom output policies (and any history-aware guardrail) can judge
+    # the output in context. Mirrors the input route; no-op if already supplied.
+    if "conversation_history" not in context and "messages" in body:
+        context["conversation_history"] = [
+            msg for msg in body["messages"] if msg.get("role") in ("user", "assistant")
+        ]
+
     # Extract tenant, user role, and agent context from headers and body
     tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
     user_role = request.headers.get("X-User-Role") or context.get("user_role", "user")
