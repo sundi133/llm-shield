@@ -259,12 +259,29 @@ def filter_tools_for_role(
 
     entry = _load_agent_entry(agent_key, tenant_id or "")
     role_perms = (entry or {}).get("role_permissions") or {}
-    # If the agent isn't registered, don't silently expose everything — but
-    # don't hide either; that decision belongs to shadow-agent policy. Here we
-    # annotate and pass through, letting enforce_tool_call gate execution.
+    # Prefer registry role_permissions when available. If the tenant is using the
+    # lite file-based RBAC path instead of the registry, fall back to the global
+    # RBAC config populated by apply_rbac() so tools/list matches call-time RBAC.
     allowed_names = None
     if entry is not None and user_role is not None:
         allowed_names = set(role_perms.get(user_role, []))
+    else:
+        try:
+            from core.rbac import enforcer as rbac_enforcer
+
+            role = rbac_enforcer.resolve_role(agent_key)
+        except Exception:
+            role = None
+        if role is not None:
+            denied_names = set(role.denied_tools or [])
+            if role.allowed_tools:
+                allowed_names = set(role.allowed_tools) - denied_names
+            else:
+                allowed_names = {
+                    (t.get("name") or "")
+                    for t in tools
+                    if (t.get("name") or "") not in denied_names
+                }
 
     out: list[dict] = []
     for t in tools:
