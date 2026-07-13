@@ -120,7 +120,8 @@ _SEV_LABEL = {
 }
 
 
-def render_human(report: ScanReport, fail_on: str = "critical") -> str:
+def render_human(report: ScanReport, fail_on: str = "critical",
+                 deep_fail: Optional[str] = None) -> str:
     """Plain-text report (no color deps; friendly to CI logs)."""
     lines = []
     lines.append(f"MCP scan: {report.target}  [{report.transport}]")
@@ -141,7 +142,17 @@ def render_human(report: ScanReport, fail_on: str = "critical") -> str:
         lines.append("")
         for f in findings:
             tag = _SEV_LABEL.get(f.severity, f.severity.upper())
-            src = "" if f.source == "heuristic" else f" ({f.source})"
+            # agent findings are advisory unless --deep-fail opts them in
+            if getattr(f, "source", "heuristic") == "agent":
+                gates = deep_fail is not None and severity_rank(f.severity) >= severity_rank(deep_fail)
+                src = " (agent, advisory)" if not gates else " (agent)"
+                conf = getattr(f, "confidence", None)
+                if conf is not None:
+                    src += f" conf={conf:.2f}"
+            elif f.source == "heuristic":
+                src = ""
+            else:
+                src = f" ({f.source})"
             lines.append(f"  [{tag}] {f.category}: {f.subject_kind} '{f.subject_name}'{src}")
             lines.append(f"         {f.detail}")
             if f.evidence:
@@ -154,5 +165,6 @@ def render_human(report: ScanReport, fail_on: str = "critical") -> str:
     ) or "clean"
     lines.append("")
     lines.append(f"  summary: {summary}")
-    lines.append(f"  verdict: {report.verdict(fail_on).upper()} (fail-on: {fail_on})")
+    gate = f"fail-on: {fail_on}" + (f", deep-fail: {deep_fail}" if deep_fail else "")
+    lines.append(f"  verdict: {report.verdict(fail_on, deep_fail).upper()} ({gate})")
     return "\n".join(lines)
