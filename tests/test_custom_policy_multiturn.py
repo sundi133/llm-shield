@@ -199,6 +199,31 @@ def test_update_custom_policy_toggles_multi_turn(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# API request models must carry multi_turn through to storage. Pydantic drops
+# unknown fields silently, so without this the flag never reaches save/update.
+# --------------------------------------------------------------------------
+
+def test_create_request_model_carries_multi_turn():
+    from api.routes_custom_policies import CustomPolicyRequest
+    body = CustomPolicyRequest(
+        name="p", description="d", prompt="x" * 25, action="block", multi_turn=True,
+    )
+    assert body.dict()["multi_turn"] is True
+    # default is False when omitted (byte-identical to legacy single-turn)
+    default = CustomPolicyRequest(
+        name="p", description="d", prompt="x" * 25, action="block",
+    )
+    assert default.dict()["multi_turn"] is False
+
+
+def test_update_request_model_carries_multi_turn():
+    from api.routes_custom_policies import CustomPolicyUpdateRequest
+    body = CustomPolicyUpdateRequest(multi_turn=True)
+    # handler uses exclude_none=True -> only explicitly-set fields propagate
+    assert body.dict(exclude_none=True) == {"multi_turn": True}
+
+
+# --------------------------------------------------------------------------
 # vLLM/GPU path: a multi-message list must not break the custom vLLM backend
 # --------------------------------------------------------------------------
 

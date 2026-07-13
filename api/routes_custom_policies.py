@@ -48,6 +48,7 @@ class CustomPolicyRequest(BaseModel):
     enabled: Optional[bool] = Field(True, description="Whether policy is enabled")
     confidence_threshold: Optional[float] = Field(0.8, ge=0.5, le=1.0, description="Minimum confidence for violation")
     priority: Optional[int] = Field(100, ge=1, le=1000, description="Policy priority (lower = higher priority)")
+    multi_turn: Optional[bool] = Field(False, description="Feed prior conversation turns into this policy's evaluation")
 
     @validator("stage")
     def validate_stage(cls, v):
@@ -85,6 +86,7 @@ class CustomPolicyUpdateRequest(BaseModel):
     enabled: Optional[bool] = Field(None)
     confidence_threshold: Optional[float] = Field(None, ge=0.5, le=1.0)
     priority: Optional[int] = Field(None, ge=1, le=1000)
+    multi_turn: Optional[bool] = Field(None, description="Feed prior conversation turns into this policy's evaluation")
 
     @validator("stage")
     def validate_stage(cls, v):
