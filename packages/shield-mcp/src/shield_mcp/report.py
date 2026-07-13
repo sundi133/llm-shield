@@ -40,7 +40,8 @@ class Finding:
     subject_name: str
     detail: str
     evidence: str = ""
-    source: str = "heuristic"  # "heuristic" | "model"
+    source: str = "heuristic"  # "heuristic" | "model" | "agent"
+    confidence: Optional[float] = None  # 0..1, set by the agent deep-scan
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -56,17 +57,31 @@ class ScanReport:
     notes: list = field(default_factory=list)  # non-finding info (e.g. model pass skipped)
 
     # ── verdict / exit code ────────────────────────────────────────────
-    def gating_findings(self, fail_on: str) -> list:
-        """Findings at or above the fail_on severity threshold."""
+    def gating_findings(self, fail_on: str, deep_fail: Optional[str] = None) -> list:
+        """Findings that gate the exit code.
+
+        Deterministic findings (heuristic / model) gate at the ``fail_on``
+        threshold. Agent findings (``source == "agent"``, from ``--deep``) are
+        advisory and gate **only** when ``deep_fail`` is set, at that threshold —
+        a non-deterministic LLM verdict never fails CI by default.
+        """
         threshold = severity_rank(fail_on)
-        return [f for f in self.findings if severity_rank(f.severity) >= threshold]
+        deep_threshold = severity_rank(deep_fail) if deep_fail is not None else None
+        out = []
+        for f in self.findings:
+            if getattr(f, "source", "heuristic") == "agent":
+                if deep_threshold is not None and severity_rank(f.severity) >= deep_threshold:
+                    out.append(f)
+            elif severity_rank(f.severity) >= threshold:
+                out.append(f)
+        return out
 
-    def verdict(self, fail_on: str) -> str:
-        return "fail" if self.gating_findings(fail_on) else "pass"
+    def verdict(self, fail_on: str, deep_fail: Optional[str] = None) -> str:
+        return "fail" if self.gating_findings(fail_on, deep_fail) else "pass"
 
-    def exit_code(self, fail_on: str) -> int:
+    def exit_code(self, fail_on: str, deep_fail: Optional[str] = None) -> int:
         # 0 = clean/below threshold, 2 = gating findings present.
-        return 2 if self.gating_findings(fail_on) else 0
+        return 2 if self.gating_findings(fail_on, deep_fail) else 0
 
     def severity_counts(self) -> dict:
         out = {s: 0 for s in SEVERITIES}
@@ -76,7 +91,7 @@ class ScanReport:
         return out
 
     # ── serialization ──────────────────────────────────────────────────
-    def to_dict(self, fail_on: str = "critical") -> dict:
+    def to_dict(self, fail_on: str = "critical", deep_fail: Optional[str] = None) -> dict:
         return {
             "target": self.target,
             "transport": self.transport,
@@ -86,12 +101,14 @@ class ScanReport:
             "findings": [f.to_dict() for f in self.findings],
             "notes": list(self.notes),
             "fail_on": fail_on,
-            "verdict": self.verdict(fail_on),
-            "exit_code": self.exit_code(fail_on),
+            "deep_fail": deep_fail,
+            "verdict": self.verdict(fail_on, deep_fail),
+            "exit_code": self.exit_code(fail_on, deep_fail),
         }
 
-    def to_json(self, fail_on: str = "critical", indent: int = 2) -> str:
-        return json.dumps(self.to_dict(fail_on), indent=indent, sort_keys=False)
+    def to_json(self, fail_on: str = "critical", deep_fail: Optional[str] = None,
+                indent: int = 2) -> str:
+        return json.dumps(self.to_dict(fail_on, deep_fail), indent=indent, sort_keys=False)
 
 
 _SEV_LABEL = {
