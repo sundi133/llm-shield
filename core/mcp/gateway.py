@@ -93,6 +93,25 @@ class MCPGatewayRouter:
         self._pool: dict[tuple[str, str], object] = {}
         self._proxy_factory = proxy_factory or _default_proxy_factory
 
+    @staticmethod
+    def _cfg_with_identity_headers(cfg: dict, *, agent_key: str, user_role: Optional[str]) -> dict:
+        """Forward the gateway-resolved identity to HTTP/SSE upstreams.
+
+        Network transports connect per request, so it is safe to clone the route
+        config and inject per-call identity headers without mutating the stored
+        upstream definition.
+        """
+        if not agent_key and not user_role:
+            return cfg
+        merged = dict(cfg)
+        headers = dict(cfg.get("headers") or {})
+        if agent_key:
+            headers["X-Agent-Key"] = agent_key
+        if user_role:
+            headers["X-User-Role"] = user_role
+        merged["headers"] = headers
+        return merged
+
     def _load_cfg(self, tenant_id: str, route: str) -> dict:
         cfg = get_upstream(tenant_id, route)
         if not cfg:
@@ -116,7 +135,7 @@ class MCPGatewayRouter:
         self._pool[key] = proxy
         return proxy
 
-    async def _call(self, tenant_id: str, route: str, fn):
+    async def _call(self, tenant_id: str, route: str, fn, *, agent_key: str = "", user_role: Optional[str] = None):
         """Run fn against the routed upstream.
 
         Network transports (http/sse) connect **per call** and close in the same
@@ -128,7 +147,10 @@ class MCPGatewayRouter:
         transport = (cfg.get("transport") or "stdio").lower()
 
         if transport not in ("stdio",):
-            proxy = await self._proxy_factory(cfg, tenant_id)
+            proxy = await self._proxy_factory(
+                self._cfg_with_identity_headers(cfg, agent_key=agent_key, user_role=user_role),
+                tenant_id,
+            )
             try:
                 return await fn(proxy)
             finally:
@@ -152,37 +174,72 @@ class MCPGatewayRouter:
             return await fn(await self._pooled_proxy(tenant_id, route, cfg))
 
     async def list_tools(self, tenant_id: str, route: str, *, agent_key: str, user_role: Optional[str]):
-        return await self._call(tenant_id, route, lambda p: p.list_tools(
-            agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
+        return await self._call(
+            tenant_id,
+            route,
+            lambda p: p.list_tools(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
+            agent_key=agent_key,
+            user_role=user_role,
+        )
 
     async def call_tool(
         self, tenant_id: str, route: str, name: str, arguments: dict,
         *, agent_key: str, user_role: Optional[str],
     ):
-        return await self._call(tenant_id, route, lambda p: p.call_tool(
-            name, arguments, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
+        return await self._call(
+            tenant_id,
+            route,
+            lambda p: p.call_tool(name, arguments, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
+            agent_key=agent_key,
+            user_role=user_role,
+        )
 
     # ── resources / prompts (delegate to the pooled proxy) ───────────
 
     async def list_resources(self, tenant_id, route, *, agent_key, user_role):
-        return await self._call(tenant_id, route, lambda p: p.list_resources(
-            agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
+        return await self._call(
+            tenant_id,
+            route,
+            lambda p: p.list_resources(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
+            agent_key=agent_key,
+            user_role=user_role,
+        )
 
     async def list_resource_templates(self, tenant_id, route, *, agent_key, user_role):
-        return await self._call(tenant_id, route, lambda p: p.list_resource_templates(
-            agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
+        return await self._call(
+            tenant_id,
+            route,
+            lambda p: p.list_resource_templates(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
+            agent_key=agent_key,
+            user_role=user_role,
+        )
 
     async def read_resource(self, tenant_id, route, uri, *, agent_key, user_role):
-        return await self._call(tenant_id, route, lambda p: p.read_resource(
-            uri, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
+        return await self._call(
+            tenant_id,
+            route,
+            lambda p: p.read_resource(uri, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
+            agent_key=agent_key,
+            user_role=user_role,
+        )
 
     async def list_prompts(self, tenant_id, route, *, agent_key, user_role):
-        return await self._call(tenant_id, route, lambda p: p.list_prompts(
-            agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
+        return await self._call(
+            tenant_id,
+            route,
+            lambda p: p.list_prompts(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
+            agent_key=agent_key,
+            user_role=user_role,
+        )
 
     async def get_prompt(self, tenant_id, route, name, arguments, *, agent_key, user_role):
-        return await self._call(tenant_id, route, lambda p: p.get_prompt(
-            name, arguments, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id))
+        return await self._call(
+            tenant_id,
+            route,
+            lambda p: p.get_prompt(name, arguments, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
+            agent_key=agent_key,
+            user_role=user_role,
+        )
 
     def invalidate(self, tenant_id: str, route: Optional[str] = None) -> None:
         """Drop pooled proxies so the next call re-reads config (call on config change).
