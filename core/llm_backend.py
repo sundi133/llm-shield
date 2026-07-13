@@ -201,8 +201,9 @@ def _get_backend_type() -> str:
 
 
 def _get_backend_api_key() -> Optional[str]:
-    """API key for authenticated backends (e.g. ollama.com cloud)."""
-    return os.getenv("OLLAMA_API_KEY") or os.getenv("LLM_BACKEND_API_KEY") or None
+    """API key for authenticated backends (e.g. ollama.com cloud, OpenRouter)."""
+    return (os.getenv("OPENROUTER_API_KEY") or os.getenv("OLLAMA_API_KEY")
+            or os.getenv("LLM_BACKEND_API_KEY") or None)
 
 
 def _is_ollama_mode() -> bool:
@@ -210,13 +211,18 @@ def _is_ollama_mode() -> bool:
     return os.getenv("ENABLE_LITELLM") != "true" and _get_backend_type() == "ollama"
 
 
+def _is_openrouter_mode() -> bool:
+    """True when the backend is OpenRouter (OpenAI-compatible, Bearer-authed)."""
+    return os.getenv("ENABLE_LITELLM") != "true" and _get_backend_type() == "openrouter"
+
+
 def _auth_headers() -> dict:
     """Authorization headers for the LLM backend, if configured.
 
-    Only attached in ollama mode (ollama.com cloud needs a Bearer key;
-    local `ollama serve` needs none). Never log the key itself.
+    Attached for Bearer-authed hosted backends — ollama.com cloud and OpenRouter.
+    (Local `ollama serve` / self-hosted vLLM need none.) Never log the key itself.
     """
-    if _get_backend_type() == "ollama":
+    if _get_backend_type() in ("ollama", "openrouter"):
         key = _get_backend_api_key()
         if key:
             return {"Authorization": f"Bearer {key}"}
@@ -512,9 +518,11 @@ def _build_payload(
     temperature: float,
     response_format: Optional[dict],
 ) -> dict:
-    """Build the request payload for llama-server, LiteLLM, or Ollama."""
+    """Build the request payload for llama-server, LiteLLM, Ollama, or OpenRouter."""
     if _is_ollama_mode():
         return _build_ollama_payload(messages, max_tokens, temperature, response_format)
+    if _is_openrouter_mode():
+        return _build_openrouter_payload(messages, max_tokens, temperature, response_format)
 
     messages = _ensure_no_think(messages)
     payload = {
@@ -546,6 +554,50 @@ def _build_payload(
     return payload
 
 
+def _build_openrouter_payload(
+    messages: list,
+    max_tokens: int,
+    temperature: float,
+    response_format: Optional[dict],
+) -> dict:
+    """OpenAI-compatible payload for OpenRouter.
+
+    OpenRouter is OpenAI-shaped, so this is the plain compat body plus:
+    - provider routing (default: DeepInfra, which runs vLLM -> low latency +
+      real guided-decoding structured output). Override with $OPENROUTER_PROVIDERS
+      (comma-separated slugs); $OPENROUTER_ALLOW_FALLBACKS toggles fallback.
+    - `response_format` json_schema strict -> reliable JSON (no ollama-style
+      prose drift), so no `format` hint / reinforcement is needed here.
+    Response comes back OpenAI-shaped, so no `_adapt_*` step.
+    """
+    payload = {
+        "model": os.getenv("LLM_MODEL_NAME", ""),
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+
+    providers = os.getenv("OPENROUTER_PROVIDERS", "deepinfra")
+    order = [p.strip() for p in providers.split(",") if p.strip()]
+    if order:
+        payload["provider"] = {
+            "order": order,
+            "allow_fallbacks": os.getenv("OPENROUTER_ALLOW_FALLBACKS", "true").lower()
+            not in ("0", "false", "no"),
+        }
+
+    if response_format:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "response",
+                "strict": True,
+                "schema": response_format,
+            },
+        }
+    return payload
+
+
 def _print_llm_request(endpoint_url: str, payload: dict):
     """Print the exact LLM endpoint and request payload for debugging."""
     if not LLM_DEBUG:
@@ -561,7 +613,12 @@ def _print_llm_response(endpoint_url: str, status_code: int, body: str):
 
 
 def _chat_completions_url(server_url: str) -> str:
-    return f"{_normalize_server_url(server_url)}/v1/chat/completions"
+    base = _normalize_server_url(server_url)
+    # Tolerate a base that already ends in /v1 (e.g. https://openrouter.ai/api/v1)
+    # so it isn't doubled. vLLM bases (http://host:8000) are unaffected.
+    if base.endswith("/v1"):
+        return f"{base}/chat/completions"
+    return f"{base}/v1/chat/completions"
 
 
 def _endpoint_url(server_url: str) -> str:
