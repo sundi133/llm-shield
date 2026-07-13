@@ -53,10 +53,12 @@ into an image.
 
 ## Option A: slim CPU image (recommended)
 
-`Dockerfile.ollama` builds a small CPU-only data plane with no vLLM stack:
+`Dockerfile.cloud` builds a small CPU-only data plane with no vLLM stack. The
+same image serves any external hosted backend (Ollama, ollama.com cloud, or
+OpenRouter) — pick one at runtime via `LLM_BACKEND_TYPE`:
 
 ```bash
-docker build -f Dockerfile.ollama -t llm-shield:ollama .
+docker build -f Dockerfile.cloud -t llm-shield:ollama .
 
 docker run -p 80:80 \
   -e LLM_BACKEND_URL=https://ollama.com \

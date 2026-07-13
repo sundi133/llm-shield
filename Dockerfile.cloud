@@ -1,7 +1,9 @@
 FROM python:3.11-slim
 
-# Slim CPU-only data plane: the guardrail LLM runs on an external Ollama
-# host (local `ollama serve` or ollama.com cloud) — no GPU, no vLLM stack.
+# Slim CPU-only data plane: the guardrail LLM runs on an external hosted
+# backend — no GPU, no vLLM stack. Works with Ollama (local `ollama serve`
+# or ollama.com cloud) and OpenRouter; select one at runtime via
+# LLM_BACKEND_TYPE (defaults to ollama below; override for OpenRouter).
 
 # Install system tools needed at runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -35,13 +37,18 @@ RUN mkdir -p logs && chmod 755 logs
 ENV VOTAL_ES_ENABLED=true
 ENV VOTAL_ES_INDEX=votal-shield-logs
 
-# Ollama backend mode: no local LLM server is started.
-# Required at runtime:
+# Hosted backend mode: no local LLM server is started.
+# Required at runtime (Ollama, the baked default):
 #   LLM_BACKEND_URL   e.g. https://ollama.com  or  http://host:11434
 #   LLM_MODEL_NAME    e.g. gemma4:31b
 #   OLLAMA_API_KEY    only for ollama.com cloud
+# For OpenRouter instead, override at runtime:
+#   LLM_BACKEND_TYPE=openrouter
+#   LLM_BACKEND_URL=https://openrouter.ai/api/v1
+#   LLM_MODEL_NAME    e.g. qwen/qwen3.5-27b
+#   OPENROUTER_API_KEY
 # NOTE: prompts inspected by guardrails are sent to this backend — pointing
-# at ollama.com is an explicit data-egress decision by the operator.
+# at ollama.com or OpenRouter is an explicit data-egress decision by the operator.
 ENV LLM_BACKEND_TYPE=ollama
 ENV SKIP_VLLM=true
 
