@@ -132,19 +132,30 @@ def test_live_adapter_drives_proxy_enforcement():
     assert {t["name"] for t in visible} == {"get_balance"}
 
 
+def _has_import_error(exc) -> bool:
+    """True if exc is (or an ExceptionGroup containing) an ImportError."""
+    if isinstance(exc, ImportError):
+        return True
+    nested = getattr(exc, "exceptions", None)  # (Base)ExceptionGroup
+    return bool(nested) and any(_has_import_error(e) for e in nested)
+
+
 def test_connect_upstream_clear_error_when_sdk_missing():
-    # The official mcp client SDK isn't importable in this repo env (the local
-    # mcp/ dir shadows it) — connect_upstream must fail with an actionable error,
-    # not a raw ImportError.
+    # connect_upstream must fail with an actionable error, never a raw ImportError:
+    # if the mcp SDK is missing it raises RuntimeError(_SDK_HINT); if the SDK *is*
+    # installed, connecting to `true` fails during the handshake/teardown instead.
+    #
+    # On Python 3.13+ anyio raises a BaseExceptionGroup on that teardown, which is
+    # NOT a subclass of Exception — so catch BaseException and check the whole group
+    # for a leaked ImportError (the one outcome the contract forbids).
     try:
         asyncio.run(connect_upstream({"transport": "stdio", "command": "true"}))
-        assert False, "expected RuntimeError"
     except RuntimeError as e:
         assert "mcp" in str(e).lower()
-    except Exception as e:
-        # If the SDK *is* installed, connecting to `true` fails differently —
-        # that's acceptable (means the import path worked).
-        assert not isinstance(e, ImportError)
+    except BaseException as e:  # noqa: BLE001 - see docstring (may be a BaseExceptionGroup)
+        assert not _has_import_error(e), f"connect_upstream leaked a raw ImportError: {e!r}"
+    else:
+        assert False, "expected connect_upstream to error when connecting to `true`"
 
 
 if __name__ == "__main__":
