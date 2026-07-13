@@ -435,6 +435,14 @@ def _build_ollama_payload(
       guardrails (custom_policy, role_based_policy).
     No /no_think prompt hack needed — `think` is first-class here.
     """
+    if response_format:
+        # Ollama's `format` is only a hint (unlike vLLM's guided decoding), so
+        # reasoning models sometimes answer in prose and ignore it. Reinforcing
+        # "JSON only" on the last user message reliably flips them to JSON.
+        # Ollama-only: the vLLM path (the `else` branch of _build_payload) never
+        # runs this, so the GPU behavior is untouched.
+        messages = _reinforce_json_only(messages)
+
     payload = {
         "model": os.getenv("LLM_MODEL_NAME", ""),
         "messages": messages,
@@ -449,6 +457,29 @@ def _build_ollama_payload(
     if response_format:
         payload["format"] = response_format
     return payload
+
+
+_JSON_ONLY_HINT = (
+    "\n\nIMPORTANT: Respond with ONLY the JSON object — no prose, no markdown, "
+    "no code fences, no explanation. Output must start with { and end with }."
+)
+
+
+def _reinforce_json_only(messages: list) -> list:
+    """Append a JSON-only instruction to the last user message (copy, not mutate).
+
+    Idempotent and only touches the last user turn; if there is none, appends a
+    user message carrying the hint.
+    """
+    out = [dict(m) for m in messages]
+    for m in reversed(out):
+        if m.get("role") == "user":
+            content = m.get("content") or ""
+            if isinstance(content, str) and "ONLY the JSON object" not in content:
+                m["content"] = content + _JSON_ONLY_HINT
+            return out
+    out.append({"role": "user", "content": _JSON_ONLY_HINT.strip()})
+    return out
 
 
 def _adapt_ollama_response(data: dict) -> dict:
