@@ -111,6 +111,23 @@ def test_initialize_and_health():
     assert h["status"] == "ok" and h["team"] == "acme" and h["routes"] == ["files"]
 
 
+def test_tools_list_is_filtered_by_lite_rbac():
+    up = FakeUpstream()
+    lite = _lite()
+    app, router = build_app(lite)
+
+    async def factory(cfg, tid):
+        return MCPProxy(up)
+
+    router._proxy_factory = factory
+    client = TestClient(app)
+    hdr = {"X-Agent-Key": "coding-agent", "X-User-Role": "reader"}
+
+    listed = client.post("/gateway/files/mcp", json=_rpc("tools/list"), headers=hdr)
+    tools = listed.json()["result"]["tools"]
+    assert [t["name"] for t in tools] == ["read_file"]
+
+
 def test_unknown_route_is_jsonrpc_error():
     lite = _lite()
     app, router = build_app(lite)

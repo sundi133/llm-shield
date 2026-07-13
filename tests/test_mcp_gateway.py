@@ -96,16 +96,43 @@ def test_router_http_connects_per_call():
     store.set_upstream("acme", "web", {"route": "web", "transport": "http",
                                        "url": "u", "isolation_ack": True})
     made = []
+    cfgs = []
 
     async def factory(cfg, tenant_id):
         p = _FakeProxy()
         made.append(p)
+        cfgs.append(cfg)
         return p
 
     r = MCPGatewayRouter(proxy_factory=factory)
     run(r.call_tool("acme", "web", "a", {}, agent_key="bot", user_role="reader"))
     run(r.call_tool("acme", "web", "b", {}, agent_key="bot", user_role="reader"))
     assert len(made) == 2  # fresh connection each call
+    assert all(cfg["headers"]["X-Agent-Key"] == "bot" for cfg in cfgs)
+    assert all(cfg["headers"]["X-User-Role"] == "reader" for cfg in cfgs)
+
+
+def test_router_network_transport_preserves_existing_headers_when_forwarding_identity():
+    store.set_upstream("acme", "web", {
+        "route": "web",
+        "transport": "http",
+        "url": "u",
+        "headers": {"Authorization": "Bearer secret"},
+        "isolation_ack": True,
+    })
+    seen = []
+
+    async def factory(cfg, tenant_id):
+        seen.append(cfg)
+        return _FakeProxy()
+
+    r = MCPGatewayRouter(proxy_factory=factory)
+    run(r.list_tools("acme", "web", agent_key="bot", user_role="reader"))
+    assert seen[0]["headers"] == {
+        "Authorization": "Bearer secret",
+        "X-Agent-Key": "bot",
+        "X-User-Role": "reader",
+    }
 
 
 def test_router_invalidate_rebuilds():
