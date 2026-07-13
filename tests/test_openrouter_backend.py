@@ -38,6 +38,11 @@ def test_payload_routes_to_deepinfra_with_json_schema(monkeypatch):
     assert p["provider"] == {"order": ["deepinfra"], "allow_fallbacks": True}
     assert p["response_format"]["type"] == "json_schema"
     assert p["response_format"]["json_schema"]["strict"] is True
+    # OpenAI-strict structured output: every property must be in `required` and
+    # additionalProperties:false, else the model omits fields (violates_policy went missing).
+    sent = p["response_format"]["json_schema"]["schema"]
+    assert sent["required"] == ["violates_policy"]
+    assert sent["additionalProperties"] is False
     assert "chat_template_kwargs" not in p          # vLLM-only, not sent to OpenRouter
     assert "ONLY the JSON object" not in p["messages"][-1]["content"]  # no ollama hint
 
@@ -66,4 +71,6 @@ def test_vllm_and_ollama_unaffected(monkeypatch):
     p = m._build_payload([{"role": "user", "content": "eval"}], 200, 0, SCHEMA)
     assert p["chat_template_kwargs"] == {"enable_thinking": False}   # vLLM path intact
     assert "provider" not in p
+    # vLLM schema is left as-is (lenient guided decoding); strictify only runs on OpenRouter
+    assert "required" not in p["response_format"]["json_schema"]["schema"]
     assert m._auth_headers() == {}                                    # no bearer for local vLLM

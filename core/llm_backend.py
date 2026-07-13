@@ -592,10 +592,30 @@ def _build_openrouter_payload(
             "json_schema": {
                 "name": "response",
                 "strict": True,
-                "schema": response_format,
+                "schema": _strictify_schema(response_format),
             },
         }
     return payload
+
+
+def _strictify_schema(schema: dict) -> dict:
+    """Make an object schema satisfy OpenAI strict structured-output rules.
+
+    OpenAI/OpenRouter strict mode requires EVERY property in `required` and
+    `additionalProperties: false`, else the model may omit fields (that's why
+    `violates_policy`/`confidence` came back missing). vLLM/ollama guided decoding
+    is lenient and doesn't need this — so this only runs on the OpenRouter path,
+    and the shared schema the guardrails pass is left unchanged.
+    """
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return schema
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return schema
+    out = dict(schema)
+    out["required"] = list(props.keys())
+    out["additionalProperties"] = False
+    return out
 
 
 def _print_llm_request(endpoint_url: str, payload: dict):
