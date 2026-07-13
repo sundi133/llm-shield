@@ -28,10 +28,27 @@ class Target:
     command: str = ""       # stdio: executable
     args: list = None       # stdio: argv tail
     url: str = ""           # sse/http
+    headers: dict = None    # sse/http: request headers (e.g. auth)
 
     def __post_init__(self):
         if self.args is None:
             self.args = []
+        if self.headers is None:
+            self.headers = {}
+
+
+def parse_headers(items) -> dict:
+    """Parse ["Name: value", ...] into a dict. Raises ValueError on a bad entry."""
+    headers = {}
+    for item in items or []:
+        if ":" not in item:
+            raise ValueError(f"bad --header {item!r}; expected 'Name: value'")
+        name, _, value = item.partition(":")
+        name = name.strip()
+        if not name:
+            raise ValueError(f"bad --header {item!r}; empty header name")
+        headers[name] = value.strip()
+    return headers
 
 
 def parse_target(spec: str) -> Target:
@@ -95,10 +112,10 @@ async def fetch_catalog(target: Target, *, timeout: float = 20.0) -> Catalog:
             ctx = stdio_client(params)
         elif target.transport == "sse":
             from mcp.client.sse import sse_client
-            ctx = sse_client(target.url)
+            ctx = sse_client(target.url, headers=target.headers or None)
         elif target.transport == "http":
             from mcp.client.streamable_http import streamablehttp_client
-            ctx = streamablehttp_client(target.url)
+            ctx = streamablehttp_client(target.url, headers=target.headers or None)
         else:  # pragma: no cover - parse_target guards this
             raise ConnectError(f"unknown transport {target.transport}")
 

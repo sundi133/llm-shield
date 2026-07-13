@@ -52,6 +52,15 @@ config flag: `stdio:'npx -y @modelcontextprotocol/server-filesystem /data'`.
 > Tip: the fields you would put in a `claude_desktop_config.json` entry
 > (`command` + `args`) are exactly what goes after `stdio:`.
 
+**Authenticated HTTP/SSE server?** If your server requires an auth header (many
+Vercel / hosted MCP servers require an `x-api-key` or `Authorization` header on
+`/api/mcp`), pass it with `-H`, repeatable:
+
+```bash
+shield-mcp scan "http:https://your-app.vercel.app/api/mcp" \
+  -H "x-api-key: $YOUR_KEY"
+```
+
 ## 3. Scan it
 
 ```bash

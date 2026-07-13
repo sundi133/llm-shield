@@ -10,6 +10,9 @@ pipx install shield-mcp        # or: pip install shield-mcp
 shield-mcp scan stdio:'python my_server.py'
 shield-mcp scan sse:https://example.com/sse
 shield-mcp scan http:https://example.com/mcp --json
+
+# authenticated HTTP/SSE server (repeatable -H):
+shield-mcp scan http:https://example.com/api/mcp -H "x-api-key: $KEY"
 ```
 
 ## What it checks (offline, no network, no model)
