@@ -95,6 +95,11 @@ well-understood capability (say an admin `exec` tool), you can raise the gate wi
 `--fail-on critical` (the default) so only poisoning fails CI, and govern the tool
 at runtime in step 6.
 
+**Want a deeper look?** Add `--deep` (with an LLM backend) to have an agent reason
+over your whole tool surface for cross-tool risks a per-description scan misses.
+These findings are advisory and never fail CI unless you opt in. See the
+[deep scan](/mcp-scanner/#deep-scan-agentic-advisory) section.
+
 ## 5. Gate every change in CI
 
 Fail a pull request that introduces a poisoned or over-broad tool. Add
