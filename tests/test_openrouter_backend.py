@@ -6,6 +6,7 @@ import pytest
 def _clean(monkeypatch):
     for k in ("LLM_BACKEND_TYPE", "ENABLE_LITELLM", "LLM_BACKEND_URL", "LLM_MODEL_NAME",
               "OPENROUTER_API_KEY", "OPENROUTER_PROVIDERS", "OPENROUTER_ALLOW_FALLBACKS",
+              "OPENROUTER_REASONING",
               "OLLAMA_API_KEY", "LLM_BACKEND_API_KEY"):
         monkeypatch.delenv(k, raising=False)
 
@@ -45,6 +46,26 @@ def test_payload_routes_to_deepinfra_with_json_schema(monkeypatch):
     assert sent["additionalProperties"] is False
     assert "chat_template_kwargs" not in p          # vLLM-only, not sent to OpenRouter
     assert "ONLY the JSON object" not in p["messages"][-1]["content"]  # no ollama hint
+
+
+def test_reasoning_disabled_by_default(monkeypatch):
+    # Reasoning models (qwen3.5-27b) burn max_tokens in the `reasoning` field and
+    # return content=null -> guardrail crash. Off by default keeps content populated.
+    m = _openrouter(monkeypatch)
+    p = m._build_payload([{"role": "user", "content": "x"}], 200, 0, SCHEMA)
+    assert p["reasoning"] == {"enabled": False}
+
+
+def test_reasoning_escape_hatch(monkeypatch):
+    m = _openrouter(monkeypatch, OPENROUTER_REASONING="true")
+    p = m._build_payload([{"role": "user", "content": "x"}], 200, 0, SCHEMA)
+    assert "reasoning" not in p
+
+
+def test_parse_llm_json_rejects_null_content(monkeypatch):
+    m = _openrouter(monkeypatch)
+    with pytest.raises(ValueError, match="null content"):
+        m.parse_llm_json(None)
 
 
 def test_provider_override_and_no_fallback(monkeypatch):
