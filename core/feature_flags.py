@@ -8,6 +8,7 @@ Enable features by setting environment variables:
     SHIELD_ENABLE_TAINT_TRACKING=true   — Data taint tracking across tool chains
     SHIELD_ENABLE_GOAL_DRIFT=true       — Goal drift detection
     SHIELD_ENABLE_CERT_IDENTITY=true    — Certificate-based agent identity
+    SHIELD_ENABLE_FLIGHT_RECORDER=true  — Forensic incident snapshots on block/kill
 
 Or enable all at once:
     SHIELD_ENABLE_ENTERPRISE=true       — Enables all enterprise features
@@ -29,6 +30,18 @@ WEBHOOKS_ENABLED = _is_enabled("SHIELD_ENABLE_WEBHOOKS")
 TAINT_TRACKING_ENABLED = _is_enabled("SHIELD_ENABLE_TAINT_TRACKING")
 GOAL_DRIFT_ENABLED = _is_enabled("SHIELD_ENABLE_GOAL_DRIFT")
 CERT_IDENTITY_ENABLED = _is_enabled("SHIELD_ENABLE_CERT_IDENTITY")
+
+
+def flight_recorder_enabled() -> bool:
+    """Forensic flight recorder — incident snapshots on containment events.
+
+    Read live from the environment (not cached at import) so tests and rollout
+    can flip it without a restart. Off by default; also turned on by the
+    ``SHIELD_ENABLE_ENTERPRISE`` umbrella flag. Purely additive: when off,
+    capture is a no-op and the retrieval routes 404 (secure-by-default,
+    non-breaking — see docs/spec-flight-recorder.md).
+    """
+    return _is_enabled("SHIELD_ENABLE_FLIGHT_RECORDER")
 
 
 def a2a_enforce_mode() -> str:

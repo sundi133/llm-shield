@@ -83,10 +83,15 @@ _webhooks_router = None
 _agent_identity_router = None
 _agent_auth_router = None
 _agent_auth_tenant_router = None
+_flight_recorder_router = None
 _AgentIdentityMiddleware = None
 
 try:
     from api.routes_killswitch import router as _killswitch_router
+except Exception:
+    pass
+try:
+    from api.routes_flight_recorder import router as _flight_recorder_router
 except Exception:
     pass
 try:
@@ -1103,6 +1108,8 @@ def create_admin_app() -> FastAPI:
         app.include_router(_agent_auth_router)         # /v1/shield/auth/*, /v1/shield/cap/*
     if _agent_auth_tenant_router:
         app.include_router(_agent_auth_tenant_router)  # /v1/tenant/me/agent-auth/*
+    if _flight_recorder_router:
+        app.include_router(_flight_recorder_router)    # /v1/tenant/me/flight-recorder/*
 
     # OAuth 2.1 / OIDC / A2A routes
     if _oauth_router:
