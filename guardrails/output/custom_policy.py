@@ -1,5 +1,6 @@
 """Custom Policy Output Guardrail - Tenant-specific LLM-based policy evaluation for output."""
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, Optional
@@ -40,22 +41,24 @@ class CustomPolicyOutputGuardrail(BaseGuardrail):
                     latency_ms=0.0
                 )
 
-            # Run LLM evaluation for each policy
+            # Evaluate all policies concurrently: each is an independent LLM call,
+            # so wall-clock is the slowest single policy rather than their sum.
+            # (Was sequential with a first-block short-circuit; parallel trades a
+            # possible early exit for far lower guard-path latency, which matters
+            # once multi_turn inflates each policy's prompt.)
             start_time = datetime.now()
-            violations = []
 
-            for policy in enabled_policies:
+            async def _eval(policy):
                 try:
-                    result = await self._evaluate_policy_with_llm(text, policy, context)
-                    if not result["passed"]:
-                        violations.append(result)
-                        # Stop on first blocking violation for performance
-                        if result["action"] == "block":
-                            break
+                    return await self._evaluate_policy_with_llm(text, policy, context)
                 except Exception as e:
                     logger.error(f"Error evaluating output policy {policy['policy_id']}: {e}")
-                    # Continue with other policies if one fails
-                    continue
+                    return None
+
+            results = await asyncio.gather(*[_eval(p) for p in enabled_policies])
+            # enabled_policies is priority-sorted; gather preserves order, so
+            # violations stay in priority order for aggregation.
+            violations = [r for r in results if r is not None and not r["passed"]]
 
             end_time = datetime.now()
             latency_ms = (end_time - start_time).total_seconds() * 1000

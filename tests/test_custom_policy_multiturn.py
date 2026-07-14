@@ -4,6 +4,8 @@ Opt-in per policy (`multi_turn: true`); off by default the LLM prompt is
 byte-identical to the pre-multi-turn single-message path. History injection is
 capped by SHIELD_CUSTOM_POLICY_HISTORY_TURNS (0 = operator kill switch).
 """
+import asyncio
+
 import pytest
 
 from core import text_utils
@@ -221,6 +223,60 @@ def test_update_request_model_carries_multi_turn():
     body = CustomPolicyUpdateRequest(multi_turn=True)
     # handler uses exclude_none=True -> only explicitly-set fields propagate
     assert body.dict(exclude_none=True) == {"multi_turn": True}
+
+
+# --------------------------------------------------------------------------
+# Per-policy LLM calls run concurrently (guard-path latency ~= slowest policy,
+# not the sum). Multi_turn inflates each prompt, so this keeps latency bounded.
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_input_policies_evaluated_concurrently(monkeypatch):
+    import guardrails.input.custom_policy as mod
+    inflight = 0
+    max_inflight = 0
+
+    async def fake(messages, **kwargs):
+        nonlocal inflight, max_inflight
+        inflight += 1
+        max_inflight = max(max_inflight, inflight)
+        await asyncio.sleep(0.05)  # hold the slot so siblings start
+        inflight -= 1
+        return {"choices": [{"message": {"content":
+            '{"violates_policy": false, "confidence": 0.9, '
+            '"reasoning": "ok", "violation_type": null}'}}]}
+
+    monkeypatch.setattr(mod, "async_llm_call", fake)
+    g = CustomPolicyInputGuardrail()
+    policies = [{**POLICY, "policy_id": f"p{i}"} for i in range(3)]
+    g._temp_config = {"settings": {"policies": policies}, "action": "pass"}
+
+    result = await g.check("hello", {})
+    assert result.passed is True
+    assert max_inflight == 3  # all three in flight at once -> concurrent
+
+
+@pytest.mark.asyncio
+async def test_input_all_policies_evaluated_no_early_exit(monkeypatch):
+    # Parallel eval means every policy runs even if an earlier one blocks
+    # (the old sequential path short-circuited on the first block).
+    import guardrails.input.custom_policy as mod
+    calls = []
+
+    async def fake(messages, **kwargs):
+        calls.append(1)
+        return {"choices": [{"message": {"content":
+            '{"violates_policy": true, "confidence": 0.99, '
+            '"reasoning": "x", "violation_type": "pii"}'}}]}
+
+    monkeypatch.setattr(mod, "async_llm_call", fake)
+    g = CustomPolicyInputGuardrail()
+    policies = [{**POLICY, "policy_id": f"p{i}"} for i in range(3)]
+    g._temp_config = {"settings": {"policies": policies}, "action": "pass"}
+
+    result = await g.check("share Emirates ID 784-1990-1234567-1", {})
+    assert result.passed is False           # blocked
+    assert len(calls) == 3                  # every policy evaluated, in parallel
 
 
 # --------------------------------------------------------------------------
