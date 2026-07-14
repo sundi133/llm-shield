@@ -37,6 +37,12 @@ RUN mkdir -p logs && chmod 755 logs
 ENV VOTAL_ES_ENABLED=true
 ENV VOTAL_ES_INDEX=votal-shield-logs
 
+# Build/commit marker surfaced at GET /health so a running image is identifiable
+# from outside. Pass at build time: docker build --build-arg SHIELD_BUILD_SHA=$(git rev-parse --short HEAD).
+# On Railway this is optional: the app also falls back to RAILWAY_GIT_COMMIT_SHA.
+ARG SHIELD_BUILD_SHA=unknown
+ENV SHIELD_BUILD_SHA=$SHIELD_BUILD_SHA
+
 # Hosted backend mode: no local LLM server is started.
 # Required at runtime (Ollama, the baked default):
 #   LLM_BACKEND_URL   e.g. https://ollama.com  or  http://host:11434
