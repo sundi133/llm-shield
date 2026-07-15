@@ -541,12 +541,16 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                         metadata=r.get("details"),
                     )
 
-            # Fire webhook for block events (enterprise feature)
-            if WEBHOOKS_ENABLED and action == "block":
+            # Fire webhook/SIEM for block and warn events (enterprise feature).
+            # Blocks use "guardrail_blocked" (unchanged); warns use a distinct
+            # "guardrail_warning" type so existing webhook subscribers are not
+            # affected and SIEM endpoints can filter by status.
+            if WEBHOOKS_ENABLED and action in ("block", "warn"):
                 asyncio.create_task(dispatch_event(
                     tenant_id=tenant_id,
-                    event_type="guardrail_blocked",
+                    event_type="guardrail_blocked" if action == "block" else "guardrail_warning",
                     payload={
+                        "action": action,
                         "agent_key": body.agent_key,
                         "tool_name": body.tool_name,
                         "user_role": user_role,

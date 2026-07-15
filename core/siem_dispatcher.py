@@ -6,7 +6,12 @@ endpoint, every event that fires a webhook also fans out to the SIEM.
 Supported targets:
     - Splunk HTTP Event Collector (HEC)
     - Azure Sentinel (Log Analytics HTTP Data Collector API)
+    - Elastic / Elasticsearch (POST ECS doc with ApiKey auth)
+    - Wazuh indexer (POST ECS doc with Bearer auth)
     - Generic (POST JSON to any URL with Bearer token)
+
+Each endpoint can also filter by event status: an operator may forward only
+"block" decisions, only "warn" decisions, or all of them (empty filter).
 """
 
 import asyncio
@@ -24,6 +29,19 @@ logger = logging.getLogger("votal.siem")
 
 _TIMEOUT = 10.0
 _MAX_RETRIES = 2
+
+# Map guardrail event types to a coarse status used by the per-endpoint
+# status filter. Non-guardrail events (shadow_agent_detected, tool_disabled,
+# test_event, …) return None and always bypass the status filter.
+_EVENT_STATUS = {
+    "guardrail_blocked": "block",
+    "guardrail_warning": "warn",
+}
+
+
+def _event_status(event_type: str) -> str | None:
+    """Coarse status ('block'/'warn') for an event type, or None if not a guardrail decision."""
+    return _EVENT_STATUS.get(event_type)
 
 
 # ── Splunk HEC ────────────────────────────────────────────────────────────
@@ -109,6 +127,45 @@ async def dispatch_to_sentinel(
     return await _post(url, headers, body)
 
 
+# ── Elastic / Wazuh (ECS document) ────────────────────────────────────────
+
+def format_ecs_event(event: dict) -> dict:
+    """Convert Shield event to an Elastic Common Schema (ECS) document.
+
+    Suitable for indexing into Elasticsearch or the Wazuh indexer (OpenSearch).
+    """
+    return {
+        "@timestamp": datetime.datetime.utcfromtimestamp(
+            event.get("timestamp", time.time())
+        ).isoformat() + "Z",
+        "event": {
+            "kind": "alert",
+            "action": event.get("event_type", ""),
+            "module": "llm-shield",
+        },
+        "tenant_id": event.get("tenant_id", ""),
+        "shield": event.get("payload", {}),
+    }
+
+
+async def dispatch_to_elastic(event: dict, url: str, api_key: str) -> bool:
+    """Index an ECS doc into Elasticsearch (POST to the _doc/_bulk URL, ApiKey auth)."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"ApiKey {api_key}" if api_key else "",
+    }
+    return await _post(url, headers, json.dumps(format_ecs_event(event)).encode())
+
+
+async def dispatch_to_wazuh(event: dict, url: str, token: str) -> bool:
+    """Index an ECS doc into the Wazuh indexer (POST to the _doc URL, Bearer auth)."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}" if token else "",
+    }
+    return await _post(url, headers, json.dumps(format_ecs_event(event)).encode())
+
+
 # ── Generic SIEM ──────────────────────────────────────────────────────────
 
 async def dispatch_to_generic(event: dict, url: str, token: str) -> bool:
@@ -131,14 +188,25 @@ async def dispatch_to_siem(tenant_id: str, event: dict) -> None:
         return
 
     event_type = event.get("event_type", "")
+    status = _event_status(event_type)
     tasks = []
 
     for cfg in configs:
         if not cfg.get("enabled", True):
             continue
-        # Check event filter
+        # Check event-type filter
         events_filter = cfg.get("events", [])
         if events_filter and event_type not in events_filter:
+            continue
+
+        # Check event-status filter (block / warn). A missing "statuses" key
+        # means a legacy config from before this feature: preserve the old
+        # behavior (block only). An explicit empty list means "all statuses".
+        # Non-guardrail events (status is None) always bypass this filter.
+        statuses = cfg.get("statuses")
+        if statuses is None:
+            statuses = ["block"]
+        if statuses and status is not None and status not in statuses:
             continue
 
         siem_type = cfg.get("type", "generic")
@@ -151,6 +219,14 @@ async def dispatch_to_siem(tenant_id: str, event: dict) -> None:
                 tasks.append(dispatch_to_sentinel(
                     event, cfg["workspace_id"], cfg.get("shared_key", ""),
                     log_type=cfg.get("log_type", "LLMShield"),
+                ))
+            elif siem_type == "elastic":
+                tasks.append(dispatch_to_elastic(
+                    event, cfg["url"], cfg.get("token", ""),
+                ))
+            elif siem_type == "wazuh":
+                tasks.append(dispatch_to_wazuh(
+                    event, cfg["url"], cfg.get("token", ""),
                 ))
             else:
                 tasks.append(dispatch_to_generic(

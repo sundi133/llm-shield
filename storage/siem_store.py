@@ -5,13 +5,14 @@ Redis key: siem:{tenant_id} → JSON list of SIEM configs.
 Each config:
     {
         "siem_id": "unique-id",
-        "type": "splunk" | "sentinel" | "generic",
+        "type": "splunk" | "sentinel" | "elastic" | "wazuh" | "generic",
         "url": "https://splunk-hec.company.com:8088/services/collector",
-        "token": "HEC-token-or-bearer-token",
+        "token": "HEC-token / bearer / elastic-api-key",
         "workspace_id": "azure-workspace-id",  (sentinel only)
         "shared_key": "azure-shared-key",      (sentinel only)
         "log_type": "LLMShield",               (sentinel only)
         "events": ["guardrail_blocked", "shadow_agent_detected"],  (empty = all)
+        "statuses": ["block", "warn"],  (empty = all; absent = block only, legacy)
         "enabled": true,
         "created_at": 1717700000,
         "updated_at": 1717700000,
@@ -69,6 +70,7 @@ def create_siem_config(tenant_id: str, config: dict) -> dict:
         "shared_key": config.get("shared_key", ""),
         "log_type": config.get("log_type", "LLMShield"),
         "events": config.get("events", []),
+        "statuses": config.get("statuses", []),
         "enabled": config.get("enabled", True),
         "created_at": now,
         "updated_at": now,
