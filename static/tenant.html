@@ -4230,16 +4230,24 @@ if __name__ == "__main__":
         <div class="card-header">
           <div><div class="card-title">Add SIEM Endpoint</div></div>
         </div>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
-          <select id="siem-type" style="padding:0.45rem 0.6rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+          <select id="siem-type" onchange="onSiemTypeChange()" style="padding:0.45rem 0.6rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
             <option value="splunk">Splunk HEC</option>
             <option value="sentinel">Azure Sentinel</option>
+            <option value="elastic">Elastic / Elasticsearch</option>
+            <option value="wazuh">Wazuh</option>
             <option value="generic">Generic (HTTP POST)</option>
           </select>
           <input id="siem-url" type="text" placeholder="https://splunk-hec.company.com:8088/services/collector" style="flex:1;min-width:300px;padding:0.45rem 0.6rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
           <input id="siem-token" type="password" placeholder="HEC Token / Bearer Token" style="width:220px;padding:0.45rem 0.6rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
+          <select id="siem-statuses" title="Which guardrail events to forward to this endpoint" style="padding:0.45rem 0.6rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
+            <option value="">Forward: All events</option>
+            <option value="block">Forward: Blocked only</option>
+            <option value="warn">Forward: Warnings only</option>
+          </select>
           <button class="primary" onclick="createSIEM()">Add</button>
         </div>
+        <div id="siem-hint" style="font-size:12px;color:var(--text-dim);margin-bottom:0.5rem;"></div>
         <div id="siem-list" style="margin-top:1rem;"></div>
       </div>
       <div class="card" style="margin-top:1rem;">
@@ -10649,7 +10657,33 @@ function copyApiSnippet(id) {
 }
 
 // ── SIEM Integration ──────────────────────
+// Per-type placeholders + hint so operators know what URL/token each SIEM needs.
+const SIEM_TYPE_HINTS = {
+  splunk:   { url: 'https://splunk-hec.company.com:8088/services/collector', token: 'HEC Token', hint: 'Splunk HTTP Event Collector — POST with an HEC token.' },
+  sentinel: { url: 'Azure workspace ID (configure workspace + shared key)', token: 'Shared key', hint: 'Azure Sentinel (Log Analytics). Enter your workspace ID and shared key.' },
+  elastic:  { url: 'https://es.company.com:9200/shield-events/_doc', token: 'Elastic API key', hint: 'Elasticsearch — indexes an ECS doc to your _doc URL using an ApiKey.' },
+  wazuh:    { url: 'https://wazuh-indexer:9200/shield-events/_doc', token: 'Bearer token', hint: 'Wazuh indexer — indexes an ECS doc to your _doc URL using a Bearer token.' },
+  generic:  { url: 'https://your-siem.company.com/ingest', token: 'Bearer Token (optional)', hint: 'Generic HTTP POST — works with any SIEM that accepts a JSON webhook.' },
+};
+
+function onSiemTypeChange() {
+  const t = document.getElementById('siem-type').value;
+  const cfg = SIEM_TYPE_HINTS[t] || SIEM_TYPE_HINTS.generic;
+  document.getElementById('siem-url').placeholder = cfg.url;
+  document.getElementById('siem-token').placeholder = cfg.token;
+  document.getElementById('siem-hint').textContent = cfg.hint;
+}
+
+function _siemStatusLabel(statuses) {
+  if (!Array.isArray(statuses)) return 'Blocked only';   // legacy config (no filter stored)
+  if (statuses.length === 0) return 'All events';
+  if (statuses.length === 1 && statuses[0] === 'block') return 'Blocked only';
+  if (statuses.length === 1 && statuses[0] === 'warn') return 'Warnings only';
+  return statuses.join(' + ');
+}
+
 async function loadSIEMData() {
+  onSiemTypeChange();
   try {
     const data = await apiCall('/v1/tenant/me/siem');
     const list = document.getElementById('siem-list');
@@ -10662,6 +10696,7 @@ async function loadSIEMData() {
       <div style="display:flex;align-items:center;gap:1rem;padding:0.75rem;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:0.5rem;background:var(--bg-2);">
         <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(99,102,241,0.15);color:var(--accent);font-weight:600;text-transform:uppercase;">${s.type}</span>
         <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);flex:1;overflow:hidden;text-overflow:ellipsis;">${s.url || s.workspace_id || '—'}</span>
+        <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--bg-3);color:var(--text-dim);" title="Events forwarded to this endpoint">${_siemStatusLabel(s.statuses)}</span>
         <span style="font-size:11px;color:${s.enabled ? 'var(--green)' : 'var(--text-muted)'};">${s.enabled ? 'Active' : 'Disabled'}</span>
         <button class="small danger" onclick="deleteSIEM('${s.siem_id}')">Remove</button>
       </div>
@@ -10673,12 +10708,14 @@ async function loadSIEMData() {
 
 async function createSIEM() {
   try {
+    const statusSel = document.getElementById('siem-statuses').value;
     await apiCall('/v1/tenant/me/siem', {
       method: 'POST',
       body: JSON.stringify({
         type: document.getElementById('siem-type').value,
         url: document.getElementById('siem-url').value,
         token: document.getElementById('siem-token').value,
+        statuses: statusSel ? [statusSel] : [],
       }),
     });
     showToast('SIEM integration created', 'success');

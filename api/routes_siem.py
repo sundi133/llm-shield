@@ -28,14 +28,21 @@ def _require_tenant(request: Request) -> str:
     return tenant_id
 
 
+_VALID_STATUSES = {"block", "warn"}
+
+
 class SIEMCreateRequest(BaseModel):
-    type: str = Field("generic", pattern="^(splunk|sentinel|generic)$")
-    url: str = Field("", description="HEC URL or generic endpoint URL")
-    token: str = Field("", description="HEC token or Bearer token")
+    type: str = Field("generic", pattern="^(splunk|sentinel|elastic|wazuh|generic)$")
+    url: str = Field("", description="HEC / index / generic endpoint URL")
+    token: str = Field("", description="HEC token, Bearer token, or Elastic API key")
     workspace_id: str = Field("", description="Azure workspace ID (sentinel only)")
     shared_key: str = Field("", description="Azure shared key (sentinel only)")
     log_type: str = Field("LLMShield", description="Azure log type (sentinel only)")
-    events: list[str] = Field(default_factory=list, description="Event filter (empty = all)")
+    events: list[str] = Field(default_factory=list, description="Event-type filter (empty = all)")
+    statuses: list[str] = Field(
+        default_factory=list,
+        description="Event-status filter: subset of ['block','warn'] (empty = all)",
+    )
     enabled: bool = True
 
 
@@ -48,8 +55,19 @@ async def create_siem(body: SIEMCreateRequest, request: Request):
         raise HTTPException(status_code=400, detail="Splunk HEC URL required")
     if body.type == "sentinel" and not body.workspace_id:
         raise HTTPException(status_code=400, detail="Azure workspace_id required")
+    if body.type == "elastic" and (not body.url or not body.token):
+        raise HTTPException(status_code=400, detail="Elastic index URL and API key required")
+    if body.type == "wazuh" and (not body.url or not body.token):
+        raise HTTPException(status_code=400, detail="Wazuh indexer URL and token required")
     if body.type == "generic" and not body.url:
         raise HTTPException(status_code=400, detail="Endpoint URL required")
+
+    invalid = set(body.statuses) - _VALID_STATUSES
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status(es): {sorted(invalid)}. Allowed: {sorted(_VALID_STATUSES)}",
+        )
 
     config = create_siem_config(tenant_id, body.model_dump())
     return {"success": True, "siem": config}
