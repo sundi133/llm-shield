@@ -195,7 +195,7 @@
   }
 
   .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
-  #overview-stats { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  #overview-stats { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   #platform-features-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .stat { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.15rem; }
   .stat-label { font-size: var(--type-label); text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--text-muted); font-weight: 600; }
@@ -912,6 +912,8 @@
     .main { margin-left: 0; padding: 1.5rem; }
     .app { flex-direction: column; }
     #overview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #overview-posture-row { grid-template-columns: 1fr !important; }
+    #overview-drivers > div { grid-template-columns: 1fr !important; gap: 1rem !important; }
     #platform-features-grid { grid-template-columns: 1fr; }
     .guardrail-row { flex-wrap: wrap; }
     .guardrail-controls { width: 100%; justify-content: flex-end; margin-top: 0.5rem; }
@@ -2069,7 +2071,54 @@
           </select>
         </div>
       </div>
+      <!-- Executive summary band -->
       <div class="stats-grid" id="overview-stats"></div>
+      <div id="overview-scope-note" style="display:none;font-size:11px;color:var(--text-muted);margin:-0.75rem 0 1rem;line-height:1.5;"></div>
+
+      <!-- Posture row: threats + coverage -->
+      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:1rem;margin-bottom:1rem;" id="overview-posture-row">
+        <div class="card" style="margin-bottom:0;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Threats by Category</div>
+              <div class="card-subtitle">What Shield blocked or flagged this period</div>
+            </div>
+          </div>
+          <div id="overview-threats" style="padding:0 1rem 1rem;">
+            <div class="muted" style="font-size:12px;">Loading...</div>
+          </div>
+        </div>
+        <div class="card" style="margin-bottom:0;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Control Coverage</div>
+              <div class="card-subtitle">Active protections vs. available</div>
+            </div>
+          </div>
+          <div id="overview-coverage" style="padding:0 1rem 1rem;">
+            <div class="muted" style="font-size:12px;">Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top risk drivers -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Top Risk Drivers</div>
+            <div class="card-subtitle">Where blocked &amp; flagged activity concentrates</div>
+          </div>
+        </div>
+        <div id="overview-drivers" style="padding:0 1rem 1rem;">
+          <div class="muted" style="font-size:12px;">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Operator detail divider -->
+      <div style="display:flex;align-items:center;gap:0.75rem;margin:1.6rem 0 1rem;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);white-space:nowrap;">Operator Detail</div>
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+      </div>
 
       <!-- Analytics row -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;" id="overview-analytics-row">
@@ -5573,41 +5622,14 @@ async function opsResetBreaker(toolName) {
 // ── Overview ──────────────────────────────
 function renderOverview() {
   const t = TENANT_INFO;
-  document.getElementById('overview-stats').innerHTML = `
+  // Executive summary band is rendered by loadOverviewAnalytics() once telemetry
+  // resolves; show a lightweight skeleton in the meantime.
+  document.getElementById('overview-stats').innerHTML = Array.from({ length: 6 }, () => `
     <div class="stat">
-      <div class="stat-label">Tenant ID</div>
-      <div class="stat-value" style="font-size: 18px;">${t.tenant_id}</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Plan</div>
-      <div class="stat-value" style="font-size: 18px;"><span class="badge badge-${t.plan}">${t.plan.toUpperCase()}</span></div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Requests Today</div>
-      <div class="stat-value" id="ov-requests-today">--</div>
-      <div class="muted">Total API calls</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Blocked</div>
-      <div class="stat-value" style="color:#f85149;" id="ov-blocked-today">--</div>
-      <div class="muted">Guardrail blocks</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Tool Calls</div>
-      <div class="stat-value" id="ov-tool-calls">--</div>
-      <div class="muted" id="ov-tool-blocked">--</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Block Rate</div>
-      <div class="stat-value" id="ov-block-rate">--</div>
-      <div class="muted">Of total requests</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Active Agents</div>
-      <div class="stat-value">${(t.agents || []).length}</div>
-      <div class="muted">Registered</div>
-    </div>
-  `;
+      <div class="stat-label">&nbsp;</div>
+      <div class="stat-value" style="color:var(--text-muted);">--</div>
+      <div class="muted" style="min-height:16px;">Loading...</div>
+    </div>`).join('');
   const all = [...(t.input_guardrails || []).map(g => ({ name: g, stage: 'input' })),
                ...(t.output_guardrails || []).map(g => ({ name: g, stage: 'output' }))];
   document.getElementById('overview-policies').innerHTML = all.length ? `
@@ -5623,121 +5645,425 @@ function renderOverview() {
 async function loadOverviewAnalytics() {
   try {
     const days = parseInt((document.getElementById('overview-range') || {}).value) || 7;
-    const since = _sinceDate(days);
-    // Try with since param first, fall back to without if backend doesn't support it yet
-    let telemetry = await apiCall(`/v1/tenant/me/telemetry?limit=200&since=${encodeURIComponent(since)}`).catch(() => null);
+    const curSince = _sinceDate(days);
+    const priorSince = _sinceDate(days * 2);
+    const priorUntil = curSince;
+
+    // Current window — try with since param, fall back if backend lacks it.
+    let telemetry = await apiCall(`/v1/tenant/me/telemetry?limit=200&since=${encodeURIComponent(curSince)}`).catch(() => null);
     if (!telemetry) {
       telemetry = await apiCall('/v1/tenant/me/telemetry?limit=200').catch(() => null);
     }
-    const usage = await apiCall('/v1/tenant/me/usage').catch(() => null);
+    // Prior equal-length window — best effort, drives the delta badges.
+    const prior = await apiCall(`/v1/tenant/me/telemetry?limit=200&since=${encodeURIComponent(priorSince)}&until=${encodeURIComponent(priorUntil)}`).catch(() => null);
+    // Control coverage source (full policy config with enabled flags).
+    const policies = await apiCall('/v1/tenant/me/policies').catch(() => null);
 
-    // Summary stats from telemetry
-    const summary = telemetry?.summary || {};
-    const entries = telemetry?.entries || [];
-    const total = summary.messages || entries.length || 0;
-    const byStatus = summary.by_status || {};
-    const blocked = byStatus.block || 0;
-    const toolCalls = summary.tool_calls || 0;
-    const blockedTools = summary.blocked_tool_calls || 0;
-    const blockRate = total > 0 ? ((blocked / total) * 100).toFixed(1) : '0';
+    telemetry = telemetry || { entries: [], summary: {}, total: 0 };
+    const entries = telemetry.entries || [];
+    const cur = _ovKpis(telemetry);
+    const prv = prior ? _ovKpis(prior) : null;
 
-    // Update stat cards
-    const el = id => document.getElementById(id);
-    if (el('ov-requests-today')) el('ov-requests-today').textContent = total;
-    if (el('ov-blocked-today')) el('ov-blocked-today').textContent = blocked;
-    if (el('ov-tool-calls')) el('ov-tool-calls').textContent = toolCalls;
-    if (el('ov-tool-blocked')) el('ov-tool-blocked').textContent = blockedTools > 0 ? `${blockedTools} blocked` : 'None blocked';
-    if (el('ov-block-rate')) {
-      el('ov-block-rate').textContent = blockRate + '%';
-      el('ov-block-rate').style.color = parseFloat(blockRate) > 10 ? '#f85149' : '#10b981';
-    }
+    _ovRenderExec(cur, prv, days, policies);
+    _ovRenderScopeNote(telemetry);
+    _ovRenderThreats(entries);
+    _ovRenderCoverage(policies);
+    _ovRenderDrivers(entries);
 
-    // Top triggered guardrails
-    const guardrailCounts = {};
-    for (const e of entries) {
-      for (const g of (e.input_guardrails || [])) {
-        if (g.passed === false) guardrailCounts[g.guardrail || g.name] = (guardrailCounts[g.guardrail || g.name] || 0) + 1;
-      }
-      for (const g of (e.output_guardrails || [])) {
-        if (g.passed === false) guardrailCounts[g.guardrail || g.name] = (guardrailCounts[g.guardrail || g.name] || 0) + 1;
-      }
-    }
-    const topGuardrails = Object.entries(guardrailCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
-    const maxGCount = topGuardrails.length ? topGuardrails[0][1] : 1;
-    el('overview-top-guardrails').innerHTML = topGuardrails.length
-      ? topGuardrails.map(([name, count]) => `
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <span style="font-size:12px;font-weight:600;min-width:140px;color:var(--text-dim);">${name}</span>
-          <div style="flex:1;height:16px;background:var(--bg-3);border-radius:4px;overflow:hidden;">
-            <div style="height:100%;width:${Math.round(count/maxGCount*100)}%;background:#f85149;border-radius:4px;"></div>
-          </div>
-          <span style="font-size:11px;font-weight:700;min-width:24px;text-align:right;">${count}</span>
-        </div>`).join('')
-      : '<div class="muted" style="font-size:12px;">No guardrails triggered yet</div>';
-
-    // Tool activity
-    const toolStats = {};
-    for (const e of entries) {
-      for (const tc of (e.tool_calls || [])) {
-        const tn = tc.tool_name || tc.name || 'unknown';
-        if (!toolStats[tn]) toolStats[tn] = { total: 0, blocked: 0 };
-        toolStats[tn].total++;
-        if (!tc.rbac?.allowed || tc.data_rule_violation) toolStats[tn].blocked++;
-      }
-    }
-    const toolList = Object.entries(toolStats).sort((a, b) => b[1].total - a[1].total).slice(0, 6);
-    const maxTCount = toolList.length ? toolList[0][1].total : 1;
-    el('overview-tool-activity').innerHTML = toolList.length
-      ? toolList.map(([name, s]) => {
-        const pctBlocked = s.total > 0 ? Math.round(s.blocked / s.total * 100) : 0;
-        const pctAllowed = 100 - pctBlocked;
-        return `
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <span style="font-size:12px;font-weight:600;min-width:140px;color:var(--text-dim);">${name}</span>
-          <div style="flex:1;height:16px;background:var(--bg-3);border-radius:4px;overflow:hidden;display:flex;">
-            <div style="height:100%;width:${Math.round(s.total/maxTCount*pctAllowed/100*100)}%;background:#10b981;"></div>
-            <div style="height:100%;width:${Math.round(s.total/maxTCount*pctBlocked/100*100)}%;background:#f85149;"></div>
-          </div>
-          <span style="font-size:11px;min-width:50px;text-align:right;">${s.total} <span style="color:${s.blocked?'#f85149':'var(--text-muted)'}">${s.blocked?'('+s.blocked+' blocked)':''}</span></span>
-        </div>`;
-      }).join('')
-      : '<div class="muted" style="font-size:12px;">No tool calls recorded yet</div>';
-
-    // Recent activity
-    const recent = entries.slice(0, 5);
-    el('overview-recent-activity').innerHTML = recent.length
-      ? `<table style="width:100%;font-size:12px;border-collapse:collapse;">
-          <thead><tr style="color:var(--text-muted);text-align:left;">
-            <th style="padding:4px 8px;font-weight:600;">Time</th>
-            <th style="padding:4px 8px;font-weight:600;">Agent</th>
-            <th style="padding:4px 8px;font-weight:600;">Message</th>
-            <th style="padding:4px 8px;font-weight:600;">Status</th>
-            <th style="padding:4px 8px;font-weight:600;">Tools</th>
-            <th style="padding:4px 8px;font-weight:600;">Latency</th>
-          </tr></thead>
-          <tbody>${recent.map(e => {
-            const _tsd = e.timestamp ? new Date(e.timestamp) : null;
-            const ts = (_tsd && !isNaN(_tsd.getTime())) ? _tsd.toLocaleTimeString() : '--';
-            const status = e.status || (e.blocked ? 'block' : 'pass');
-            const statusColor = status === 'block' ? '#f85149' : status === 'warn' ? '#d29922' : '#10b981';
-            const msg = (e.message || e.input_text || '').substring(0, 50);
-            const tools = (e.tool_calls || []).map(t => t.tool_name || t.name).join(', ') || '--';
-            const latency = e.latency_ms ? Math.round(e.latency_ms) + 'ms' : '--';
-            return `<tr style="border-top:1px solid var(--border);">
-              <td style="padding:6px 8px;color:var(--text-muted);white-space:nowrap;">${ts}</td>
-              <td style="padding:6px 8px;font-weight:500;">${e.agent_key || '--'}</td>
-              <td style="padding:6px 8px;color:var(--text-dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${msg}${msg.length >= 50 ? '...' : ''}</td>
-              <td style="padding:6px 8px;"><span style="color:${statusColor};font-weight:700;text-transform:uppercase;font-size:11px;">${status}</span></td>
-              <td style="padding:6px 8px;color:var(--text-dim);">${tools}</td>
-              <td style="padding:6px 8px;color:var(--text-muted);">${latency}</td>
-            </tr>`;
-          }).join('')}</tbody>
-        </table>`
-      : '<div class="muted" style="font-size:12px;">No recent activity</div>';
-
+    // Operator detail (existing sections, unchanged logic).
+    _ovRenderTopGuardrails(entries);
+    _ovRenderToolActivity(entries);
+    _ovRenderRecent(entries);
   } catch (err) {
     console.error('Overview analytics error:', err);
   }
+}
+
+// ── Overview: pure aggregation helpers (unit-testable, DOM-free) ──────────
+function _ovEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function _ovPercentile(nums, p) {
+  const arr = (nums || []).filter(Number.isFinite).slice().sort((a, b) => a - b);
+  if (!arr.length) return null;
+  const idx = Math.max(0, Math.min(arr.length - 1, Math.ceil(p / 100 * arr.length) - 1));
+  return arr[idx];
+}
+
+// Guardrail name → executive threat category.
+const OV_THREAT_MAP = {
+  adversarial_detection: 'Prompt Injection / Jailbreak',
+  system_prompt_leak: 'Prompt Injection / Jailbreak',
+  payload_risk: 'Prompt Injection / Jailbreak',
+  pii_detection: 'Data / PII Exposure',
+  role_redaction: 'Data / PII Exposure',
+  toxicity: 'Toxic / Harmful',
+  bias_detection: 'Toxic / Harmful',
+  sentiment: 'Toxic / Harmful',
+  topic_restriction: 'Off-topic / Scope',
+  topic_enforcement: 'Off-topic / Scope',
+  competitor_mention: 'Off-topic / Scope',
+  keyword_blocklist: 'Policy Match',
+  regex_pattern: 'Policy Match',
+  language_detection: 'Policy Match',
+  length_limit: 'Policy Match',
+  hallucinated_links: 'Output Integrity',
+  factual_grounding: 'Output Integrity',
+  tone_enforcement: 'Output Integrity',
+};
+const OV_THREAT_COLORS = {
+  'Prompt Injection / Jailbreak': '#dc2626',
+  'Data / PII Exposure': '#b45309',
+  'Toxic / Harmful': '#be185d',
+  'Off-topic / Scope': '#7c3aed',
+  'Access Denied (RBAC)': '#4f46e5',
+  'Policy Match': '#0891b2',
+  'Output Integrity': '#059669',
+  'Other': '#868c98',
+};
+function _ovThreatCategory(name) { return OV_THREAT_MAP[name] || 'Other'; }
+function _ovThreatFromReason(reason) {
+  const r = (reason || '').toLowerCase();
+  if (/inject|jailbreak|prompt|leak|adversar/.test(r)) return 'Prompt Injection / Jailbreak';
+  if (/pii|ssn|email|card|secret|sensitive|data/.test(r)) return 'Data / PII Exposure';
+  if (/toxic|hate|harm|abuse|profan/.test(r)) return 'Toxic / Harmful';
+  if (/topic|scope|off.?topic|competitor/.test(r)) return 'Off-topic / Scope';
+  if (/rbac|role|permission|denied|unauthor/.test(r)) return 'Access Denied (RBAC)';
+  return 'Other';
+}
+
+// Compute exec KPIs from a telemetry response. summary-derived counts cover the
+// whole window (up to the server cap); entry-derived counts cover the returned
+// page only — _ovRenderScopeNote() surfaces that distinction to the user.
+function _ovKpis(tel) {
+  const summary = (tel && tel.summary) || {};
+  const entries = (tel && tel.entries) || [];
+  const byStatus = summary.by_status || {};
+  const messages = summary.messages || entries.length || 0;
+  const blocked = byStatus.block || 0;
+  const warned = byStatus.warn || 0;
+  const passed = byStatus.pass || 0;
+  const toolCalls = summary.tool_calls || 0;
+  const blockedTools = summary.blocked_tool_calls || 0;
+  const blockRate = messages > 0 ? (blocked / messages * 100) : 0;
+
+  let redactions = 0, dataViolations = 0;
+  const lat = [];
+  for (const e of entries) {
+    if (Number.isFinite(e.latency_ms)) lat.push(e.latency_ms);
+    for (const g of (e.input_guardrails || []).concat(e.output_guardrails || [])) {
+      if (g && g.action === 'redact') redactions++;
+    }
+    for (const tc of (e.tool_calls || [])) {
+      if (tc && tc.data_policy_redacted) redactions++;
+      if (tc && tc.data_rule_violation) dataViolations++;
+    }
+  }
+  return {
+    messages, blocked, warned, passed, toolCalls, blockedTools, blockRate,
+    redactions, dataViolations,
+    p95: _ovPercentile(lat, 95), latCount: lat.length,
+    entriesCount: entries.length, total: (tel && tel.total) || entries.length,
+  };
+}
+
+function _ovControlCoverage(policies) {
+  const res = { input: { active: 0, total: 0, disabled: [] },
+                output: { active: 0, total: 0, disabled: [] } };
+  const defaults = (typeof DEFAULT_POLICIES !== 'undefined') ? DEFAULT_POLICIES : {};
+  for (const stage of ['input', 'output']) {
+    const stageDefaults = defaults[stage + '_guardrails'] || {};
+    const configured = (policies && policies[stage + '_guardrails']) || {};
+    for (const name of Object.keys(stageDefaults)) {
+      res[stage].total++;
+      const cfg = configured[name];
+      if (cfg && cfg.enabled !== false) res[stage].active++;
+      else res[stage].disabled.push(name);
+    }
+    const custom = (policies && policies.custom_policies && policies.custom_policies[stage]) || [];
+    for (const c of custom) {
+      res[stage].total++;
+      if (c && c.enabled !== false) res[stage].active++;
+    }
+  }
+  return res;
+}
+function _ovCoveragePct(policies) {
+  if (!policies) return null;
+  const c = _ovControlCoverage(policies);
+  const tot = c.input.total + c.output.total;
+  if (!tot) return null;
+  return (c.input.active + c.output.active) / tot * 100;
+}
+
+function _ovThreatBuckets(entries) {
+  const counts = {};
+  const add = cat => { counts[cat] = (counts[cat] || 0) + 1; };
+  for (const e of (entries || [])) {
+    const st = e.status || (e.blocked ? 'block' : 'pass');
+    let matched = false;
+    for (const g of (e.input_guardrails || []).concat(e.output_guardrails || [])) {
+      if (g && g.passed === false) { add(_ovThreatCategory(g.guardrail || g.name)); matched = true; }
+    }
+    for (const tc of (e.tool_calls || [])) {
+      if (tc && tc.rbac && tc.rbac.allowed === false) { add('Access Denied (RBAC)'); matched = true; }
+      if (tc && tc.data_rule_violation) { add('Data / PII Exposure'); matched = true; }
+    }
+    if (!matched && (st === 'block' || st === 'warn')) add(_ovThreatFromReason(e.block_reason));
+  }
+  return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+}
+
+function _ovTopDrivers(entries) {
+  const byAgent = {}, byRole = {}, bySession = {};
+  for (const e of (entries || [])) {
+    const st = e.status || (e.blocked ? 'block' : 'pass');
+    const flagged = st === 'block' || st === 'warn' ||
+      (e.tool_calls || []).some(tc => tc && tc.rbac && tc.rbac.allowed === false);
+    if (!flagged) continue;
+    byAgent[e.agent_key || '—'] = (byAgent[e.agent_key || '—'] || 0) + 1;
+    byRole[e.user_role || 'unknown'] = (byRole[e.user_role || 'unknown'] || 0) + 1;
+    if (e.session_id) bySession[e.session_id] = (bySession[e.session_id] || 0) + 1;
+  }
+  const top = obj => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  return { agents: top(byAgent), roles: top(byRole), sessions: top(bySession) };
+}
+
+// ── Overview: delta badges ────────────────────────────────────────────────
+function _ovDeltaInner(cur, prev, higherIsBad, mode) {
+  const muted = txt => `<span class="muted" style="font-size:11px;font-weight:600;">${txt}</span>`;
+  if (prev === null || prev === undefined) return muted('—');
+  if (prev === 0) return (!cur) ? muted('0') : muted('new');
+  if (cur === null || cur === undefined) return muted('—');
+  const change = (cur - prev) / prev * 100;
+  const r = Math.abs(change) < 0.5 ? 0 : Math.round(change);
+  if (r === 0) return muted('±0%');
+  const up = r > 0;
+  const color = mode === 'neutral' ? 'var(--text-dim)'
+    : ((higherIsBad ? up : !up) ? 'var(--danger)' : 'var(--success)');
+  return `<span style="font-size:11px;font-weight:700;color:${color};">${up ? '▲' : '▼'} ${Math.abs(r)}%</span>`;
+}
+function _ovDelta(cur, prev, higherIsBad, label, mode) {
+  return `${_ovDeltaInner(cur, prev, higherIsBad, mode)}<span class="muted" style="font-size:11px;">${label}</span>`;
+}
+function _ovDeltaPts(curPct, prevPct, higherIsBad, label) {
+  let badge;
+  const muted = txt => `<span class="muted" style="font-size:11px;font-weight:600;">${txt}</span>`;
+  if (prevPct === null || prevPct === undefined) badge = muted('—');
+  else {
+    const d = curPct - prevPct;
+    if (Math.abs(d) < 0.05) badge = muted('±0');
+    else {
+      const up = d > 0;
+      const color = (higherIsBad ? up : !up) ? 'var(--danger)' : 'var(--success)';
+      badge = `<span style="font-size:11px;font-weight:700;color:${color};">${up ? '▲' : '▼'} ${Math.abs(d).toFixed(1)} pts</span>`;
+    }
+  }
+  return `${badge}<span class="muted" style="font-size:11px;">${label}</span>`;
+}
+
+// ── Overview: renderers ─────────────────────────────────────────────────────
+function _ovRenderExec(cur, prv, days, policies) {
+  const rangeLabel = `vs prior ${days}d`;
+  const cov = _ovCoveragePct(policies);
+  const covColor = cov == null ? 'var(--text-muted)'
+    : (cov >= 70 ? 'var(--success)' : (cov >= 40 ? 'var(--warn)' : 'var(--danger)'));
+  const tiles = [
+    { label: 'Threats Blocked', value: cur.blocked.toLocaleString(), color: cur.blocked ? 'var(--danger)' : 'var(--text)',
+      foot: _ovDelta(cur.blocked, prv ? prv.blocked : null, true, rangeLabel) },
+    { label: 'Block Rate', value: cur.blockRate.toFixed(1) + '%', color: cur.blockRate > 10 ? 'var(--danger)' : 'var(--success)',
+      foot: _ovDeltaPts(cur.blockRate, prv ? prv.blockRate : null, true, rangeLabel) },
+    { label: 'Redaction Events', value: cur.redactions.toLocaleString(), color: 'var(--text)',
+      foot: _ovDelta(cur.redactions, prv ? prv.redactions : null, false, rangeLabel, 'neutral') },
+    { label: 'Tool / RBAC Denials', value: cur.blockedTools.toLocaleString(), color: cur.blockedTools ? 'var(--danger)' : 'var(--text)',
+      foot: _ovDelta(cur.blockedTools, prv ? prv.blockedTools : null, true, rangeLabel) },
+    { label: 'Response Latency p95', value: cur.p95 != null ? Math.round(cur.p95) + 'ms' : '—', color: 'var(--text)',
+      foot: `${_ovDeltaInner(cur.p95, prv ? prv.p95 : null, true)}<span class="muted" style="font-size:11px;">${cur.latCount < 20 ? 'n<20 · incl. model' : 'incl. model'}</span>` },
+    { label: 'Protection Coverage', value: cov != null ? Math.round(cov) + '%' : '—', color: covColor,
+      foot: `<span class="muted" style="font-size:11px;">${_ovCoverageSplit(policies)}</span>` },
+  ];
+  document.getElementById('overview-stats').innerHTML = tiles.map(t => `
+    <div class="stat">
+      <div class="stat-label">${t.label}</div>
+      <div class="stat-value" style="font-size:24px;color:${t.color};">${t.value}</div>
+      <div style="margin-top:4px;display:flex;align-items:center;gap:6px;min-height:16px;flex-wrap:wrap;">${t.foot || ''}</div>
+    </div>`).join('');
+}
+function _ovCoverageSplit(policies) {
+  if (!policies) return 'not available';
+  const c = _ovControlCoverage(policies);
+  return `in ${c.input.active}/${c.input.total} · out ${c.output.active}/${c.output.total}`;
+}
+
+function _ovRenderScopeNote(tel) {
+  const note = document.getElementById('overview-scope-note');
+  if (!note) return;
+  const total = tel.total || 0;
+  const shown = (tel.entries || []).length;
+  const parts = [];
+  if (total > shown) parts.push(`Threat, driver, redaction &amp; latency detail reflects the ${shown} most recent events (of ${total} in range).`);
+  if (total >= 1000) parts.push(`Range is truncated to the most recent 1000 events — use SIEM export for full history.`);
+  if (parts.length) { note.style.display = 'block'; note.innerHTML = 'ⓘ ' + parts.join(' '); }
+  else { note.style.display = 'none'; }
+}
+
+function _ovRenderThreats(entries) {
+  const list = _ovThreatBuckets(entries);
+  const max = list.length ? list[0][1] : 1;
+  const el = document.getElementById('overview-threats');
+  el.innerHTML = list.length
+    ? list.map(([cat, n]) => {
+      const col = OV_THREAT_COLORS[cat] || '#868c98';
+      return `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="font-size:12px;font-weight:600;min-width:170px;color:var(--text-dim);">${cat}</span>
+          <div style="flex:1;height:16px;background:var(--bg);border:1px solid var(--border);border-radius:4px;overflow:hidden;">
+            <div style="height:100%;width:${Math.round(n / max * 100)}%;background:${col};border-radius:3px;"></div>
+          </div>
+          <span style="font-size:11px;font-weight:700;min-width:28px;text-align:right;">${n}</span>
+        </div>`;
+    }).join('')
+    : '<div class="muted" style="font-size:12px;">No threats detected in this window</div>';
+}
+
+function _ovRenderCoverage(policies) {
+  const el = document.getElementById('overview-coverage');
+  if (!policies) { el.innerHTML = '<div class="muted" style="font-size:12px;">Coverage unavailable</div>'; return; }
+  const c = _ovControlCoverage(policies);
+  const bar = stage => {
+    const s = c[stage];
+    const pct = s.total ? Math.round(s.active / s.total * 100) : 0;
+    const color = pct >= 70 ? 'var(--success)' : (pct >= 40 ? 'var(--warn)' : 'var(--danger)');
+    return `
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+          <span style="font-weight:600;text-transform:capitalize;">${stage} guardrails</span>
+          <span style="font-weight:700;">${s.active}/${s.total}</span>
+        </div>
+        <div style="height:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;overflow:hidden;">
+          <div style="height:100%;width:${pct}%;background:${color};"></div>
+        </div>
+      </div>`;
+  };
+  const warn = c.output.active === 0
+    ? `<div style="margin-top:8px;font-size:11.5px;color:var(--danger);font-weight:600;">⚠ Output plane unprotected — no output guardrails active.</div>`
+    : '';
+  const disabled = [...c.input.disabled.map(n => ({ n, s: 'in' })),
+                    ...c.output.disabled.map(n => ({ n, s: 'out' }))].slice(0, 6);
+  const disHtml = disabled.length
+    ? `<div style="margin-top:10px;"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Disabled controls</div><div class="chip-list">${disabled.map(d => `<span class="chip">${_ovEsc(d.n)} <span class="muted">· ${d.s}</span></span>`).join('')}</div></div>`
+    : '';
+  el.innerHTML = bar('input') + bar('output') + warn + disHtml;
+}
+
+function _ovRenderDrivers(entries) {
+  const d = _ovTopDrivers(entries);
+  const col = (title, rows) => `
+    <div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;">${title}</div>
+      ${rows.length
+        ? rows.map(([k, n]) => `
+          <div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px solid var(--border);font-size:12px;">
+            <span style="color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;">${_ovEsc(k)}</span>
+            <span style="font-weight:700;color:var(--danger);">${n}</span>
+          </div>`).join('')
+        : '<div class="muted" style="font-size:12px;">None</div>'}
+    </div>`;
+  document.getElementById('overview-drivers').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.25rem;">
+      ${col('By Agent', d.agents)}
+      ${col('By Role', d.roles)}
+      ${col('By Session', d.sessions)}
+    </div>`;
+}
+
+// Operator-detail renderers — logic preserved from the original inline code.
+function _ovRenderTopGuardrails(entries) {
+  const guardrailCounts = {};
+  for (const e of entries) {
+    for (const g of (e.input_guardrails || [])) {
+      if (g.passed === false) guardrailCounts[g.guardrail || g.name] = (guardrailCounts[g.guardrail || g.name] || 0) + 1;
+    }
+    for (const g of (e.output_guardrails || [])) {
+      if (g.passed === false) guardrailCounts[g.guardrail || g.name] = (guardrailCounts[g.guardrail || g.name] || 0) + 1;
+    }
+  }
+  const topGuardrails = Object.entries(guardrailCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const maxGCount = topGuardrails.length ? topGuardrails[0][1] : 1;
+  document.getElementById('overview-top-guardrails').innerHTML = topGuardrails.length
+    ? topGuardrails.map(([name, count]) => `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <span style="font-size:12px;font-weight:600;min-width:140px;color:var(--text-dim);">${_ovEsc(name)}</span>
+        <div style="flex:1;height:16px;background:var(--bg);border:1px solid var(--border);border-radius:4px;overflow:hidden;">
+          <div style="height:100%;width:${Math.round(count / maxGCount * 100)}%;background:var(--danger);border-radius:3px;"></div>
+        </div>
+        <span style="font-size:11px;font-weight:700;min-width:24px;text-align:right;">${count}</span>
+      </div>`).join('')
+    : '<div class="muted" style="font-size:12px;">No guardrails triggered yet</div>';
+}
+
+function _ovRenderToolActivity(entries) {
+  const toolStats = {};
+  for (const e of entries) {
+    for (const tc of (e.tool_calls || [])) {
+      const tn = tc.tool_name || tc.name || 'unknown';
+      if (!toolStats[tn]) toolStats[tn] = { total: 0, blocked: 0 };
+      toolStats[tn].total++;
+      if (!tc.rbac?.allowed || tc.data_rule_violation) toolStats[tn].blocked++;
+    }
+  }
+  const toolList = Object.entries(toolStats).sort((a, b) => b[1].total - a[1].total).slice(0, 6);
+  const maxTCount = toolList.length ? toolList[0][1].total : 1;
+  document.getElementById('overview-tool-activity').innerHTML = toolList.length
+    ? toolList.map(([name, s]) => {
+      const pctBlocked = s.total > 0 ? Math.round(s.blocked / s.total * 100) : 0;
+      const pctAllowed = 100 - pctBlocked;
+      return `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <span style="font-size:12px;font-weight:600;min-width:140px;color:var(--text-dim);">${_ovEsc(name)}</span>
+        <div style="flex:1;height:16px;background:var(--bg);border:1px solid var(--border);border-radius:4px;overflow:hidden;display:flex;">
+          <div style="height:100%;width:${Math.round(s.total / maxTCount * pctAllowed / 100 * 100)}%;background:var(--success);"></div>
+          <div style="height:100%;width:${Math.round(s.total / maxTCount * pctBlocked / 100 * 100)}%;background:var(--danger);"></div>
+        </div>
+        <span style="font-size:11px;min-width:50px;text-align:right;">${s.total} <span style="color:${s.blocked ? 'var(--danger)' : 'var(--text-muted)'}">${s.blocked ? '(' + s.blocked + ' blocked)' : ''}</span></span>
+      </div>`;
+    }).join('')
+    : '<div class="muted" style="font-size:12px;">No tool calls recorded yet</div>';
+}
+
+function _ovRenderRecent(entries) {
+  const recent = entries.slice(0, 5);
+  document.getElementById('overview-recent-activity').innerHTML = recent.length
+    ? `<table style="width:100%;font-size:12px;border-collapse:collapse;">
+        <thead><tr style="color:var(--text-muted);text-align:left;">
+          <th style="padding:4px 8px;font-weight:600;">Time</th>
+          <th style="padding:4px 8px;font-weight:600;">Agent</th>
+          <th style="padding:4px 8px;font-weight:600;">Message</th>
+          <th style="padding:4px 8px;font-weight:600;">Status</th>
+          <th style="padding:4px 8px;font-weight:600;">Tools</th>
+          <th style="padding:4px 8px;font-weight:600;">Latency</th>
+        </tr></thead>
+        <tbody>${recent.map(e => {
+          const _tsd = e.timestamp ? new Date(e.timestamp) : null;
+          const ts = (_tsd && !isNaN(_tsd.getTime())) ? _tsd.toLocaleTimeString() : '--';
+          const status = e.status || (e.blocked ? 'block' : 'pass');
+          const statusColor = status === 'block' ? 'var(--danger)' : status === 'warn' ? 'var(--warn)' : 'var(--success)';
+          const msg = (e.message || e.input_text || '').substring(0, 50);
+          const tools = (e.tool_calls || []).map(t => t.tool_name || t.name).join(', ') || '--';
+          const latency = e.latency_ms ? Math.round(e.latency_ms) + 'ms' : '--';
+          return `<tr style="border-top:1px solid var(--border);">
+            <td style="padding:6px 8px;color:var(--text-muted);white-space:nowrap;">${ts}</td>
+            <td style="padding:6px 8px;font-weight:500;">${_ovEsc(e.agent_key || '--')}</td>
+            <td style="padding:6px 8px;color:var(--text-dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_ovEsc(msg)}${msg.length >= 50 ? '...' : ''}</td>
+            <td style="padding:6px 8px;"><span style="color:${statusColor};font-weight:700;text-transform:uppercase;font-size:11px;">${status}</span></td>
+            <td style="padding:6px 8px;color:var(--text-dim);">${_ovEsc(tools)}</td>
+            <td style="padding:6px 8px;color:var(--text-muted);">${latency}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`
+    : '<div class="muted" style="font-size:12px;">No recent activity</div>';
 }
 
 // ── Policies CRUD ─────────────────────────
