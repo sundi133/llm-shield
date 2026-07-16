@@ -221,8 +221,10 @@ def test_nemotron_mode_routes_to_nemotron_backend(monkeypatch):
     assert url == _NEMOTRON_URL
     assert kwargs["json"]["model"] == "nemotron-content-safety-4b"
     assert kwargs["headers"] == {"Authorization": "Bearer sk-nim"}
-    # No vLLM-specific extras -- hosting platform isn't resolved yet.
-    assert "chat_template_kwargs" not in kwargs["json"]
+    # Nemotron request contract: chat_template_kwargs requests safety categories,
+    # and no Votal /no_think prompt hack leaks in.
+    assert kwargs["json"]["chat_template_kwargs"]["request_categories"] == "/categories"
+    assert "/no_think" not in kwargs["json"]["messages"][0]["content"]
     assert result["choices"][0]["message"]["content"] == "false,none,0.90"
 
 
@@ -242,12 +244,70 @@ async def test_async_nemotron_mode_routes_to_nemotron_backend(monkeypatch):
     assert result["_timing"]["guard_model_mode"] == "nemotron"
 
 
-def test_nemotron_payload_has_no_vllm_extras(monkeypatch):
+def test_nemotron_payload_matches_nim_contract(monkeypatch):
     _clear_guard_mode_env(monkeypatch)
     payload = llm_backend._build_nemotron_payload(_messages(), 20, 0, None)
-    assert "chat_template_kwargs" not in payload
+    # Documented NVIDIA contract: request categories via chat_template_kwargs,
+    # top_p set, and NO JSON response_format (model returns its own format).
+    assert payload["chat_template_kwargs"]["request_categories"] == "/categories"
+    assert payload["top_p"] == 0.95
+    assert "response_format" not in payload
     assert "/no_think" not in payload["messages"][0]["content"]
-    assert payload["max_tokens"] == 20
+
+
+def test_nemotron_payload_drops_response_format(monkeypatch):
+    _clear_guard_mode_env(monkeypatch)
+    schema = {"type": "object", "properties": {"x": {"type": "boolean"}}}
+    payload = llm_backend._build_nemotron_payload(_messages(), 20, 0, schema)
+    assert "response_format" not in payload
+
+
+# ---------------------------------------------------------------------------
+# Nemotron Content Safety native output parsing
+# ---------------------------------------------------------------------------
+
+_NEMO_UNSAFE = "User Safety: unsafe\nResponse Safety: safe\nSafety Categories: Criminal Planning/Confessions"
+_NEMO_SAFE = "User Safety: safe\nResponse Safety: safe"
+
+
+def test_parse_nemotron_verdict():
+    assert llm_backend._parse_nemotron_verdict(_NEMO_UNSAFE) is True
+    assert llm_backend._parse_nemotron_verdict(_NEMO_SAFE) is False
+    assert llm_backend._parse_nemotron_verdict("User Safety: safe\nResponse Safety: unsafe") is True
+    assert llm_backend._parse_nemotron_verdict("false,none,0.9") is None  # not nemotron format
+
+
+def test_looks_like_nemotron_and_categories():
+    assert llm_backend._looks_like_nemotron(_NEMO_UNSAFE) is True
+    assert llm_backend._looks_like_nemotron("true,jailbreak,0.9") is False
+    assert llm_backend._nemotron_categories(_NEMO_UNSAFE) == "Criminal Planning/Confessions"
+    assert llm_backend._nemotron_categories(_NEMO_SAFE) == ""
+
+
+def test_verdict_unsafe_is_nemotron_aware():
+    # Any guardrail: a Nemotron-format secondary is read via the safety parser.
+    assert llm_backend._verdict_unsafe("adversarial_detection", _NEMO_UNSAFE) is True
+    assert llm_backend._verdict_unsafe("tone_enforcement", _NEMO_SAFE) is False
+    # Non-nemotron content still uses the registered per-guardrail shape.
+    assert llm_backend._verdict_unsafe("adversarial_detection", "true,jailbreak,0.9") is True
+
+
+@pytest.mark.asyncio
+async def test_both_mode_merges_nemotron_native_output(monkeypatch):
+    """Realistic 'both': Votal returns CSV 'safe', Nemotron returns its native
+    'User Safety: unsafe' -> OR-merge blocks, surfacing Nemotron's response."""
+    _clear_guard_mode_env(monkeypatch)
+    _set_both(monkeypatch)
+    nemo_body = {"choices": [{"message": {"content": _NEMO_UNSAFE}}]}
+    client = _StubAsyncClient(
+        body_by_url={_VOTAL_URL: dict(_VOTAL_SAFE), _NEMOTRON_URL: nemo_body}
+    )
+    monkeypatch.setattr(llm_backend, "_get_shared_client", lambda: client)
+
+    result = await llm_backend.async_llm_call(_messages(), guardrail_name=_GUARD)
+
+    assert result["choices"][0]["message"]["content"] == _NEMO_UNSAFE
+    assert result["_secondary_model"]["merged"] is True
 
 
 # ---------------------------------------------------------------------------

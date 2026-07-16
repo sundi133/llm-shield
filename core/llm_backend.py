@@ -644,32 +644,61 @@ def _build_nemotron_payload(
     temperature: float,
     response_format: Optional[dict],
 ) -> dict:
-    """Minimal standard OpenAI chat-completions payload for the Nemotron backend.
+    """OpenAI chat-completions payload for the Nemotron Content Safety backend.
 
-    Deliberately skips the vLLM-specific extras _build_payload adds for Votal
-    (chat_template_kwargs, /no_think injection): the exact Nemotron hosting
-    (self-hosted vLLM vs an NVIDIA NIM endpoint) isn't resolved yet (see
-    docs/investigation/open-questions.md #1/#2), so this targets the lowest
-    common denominator of the OpenAI-compatible contract both platforms support.
+    Matches NVIDIA's documented contract for nvidia/Nemotron-3.5-Content-Safety
+    (self-hosted vLLM `--served-model-name nemotron_moderator` OR the NIM
+    endpoint at integrate.api.nvidia.com): request the safety-category output
+    via chat_template_kwargs. The model returns its own fixed safety format
+    ("User Safety: unsafe\\nResponse Safety: ...\\nSafety Categories: ..."), so
+    `response_format` (JSON schema) does NOT apply and is intentionally dropped
+    -- parse the reply with _parse_nemotron_verdict, not the per-guardrail CSV
+    parsers.
     """
     payload = {
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
+        "top_p": float(os.getenv("NEMOTRON_TOP_P", "0.95")),
+        # vLLM / NIM read chat_template_kwargs; "/categories" asks the model to
+        # emit the Safety Categories line alongside the safe/unsafe verdicts.
+        "chat_template_kwargs": {
+            "request_categories": os.getenv("NEMOTRON_REQUEST_CATEGORIES", "/categories"),
+        },
     }
     model_name = _nemotron_model_name()
     if model_name:
         payload["model"] = model_name
-    if response_format:
-        payload["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "response",
-                "strict": True,
-                "schema": response_format,
-            },
-        }
     return payload
+
+
+# Nemotron Content Safety returns lines like:
+#   User Safety: unsafe
+#   Response Safety: safe
+#   Safety Categories: Criminal Planning/Confessions
+_NEMOTRON_SAFETY_RE = re.compile(r"(?:user|response)\s+safety\s*:\s*(safe|unsafe)", re.IGNORECASE)
+_NEMOTRON_CATEGORIES_RE = re.compile(r"safety\s+categories\s*:\s*(.+)", re.IGNORECASE)
+
+
+def _looks_like_nemotron(content: str) -> bool:
+    """True if a completion is in Nemotron Content Safety's output format."""
+    return bool(_NEMOTRON_SAFETY_RE.search(content or ""))
+
+
+def _parse_nemotron_verdict(content: str) -> Optional[bool]:
+    """Nemotron safety verdict -> unsafe(True)/safe(False), or None if the
+    output isn't in Nemotron's format. Unsafe if EITHER the user-input or the
+    response safety line says 'unsafe' (conservative OR)."""
+    verdicts = _NEMOTRON_SAFETY_RE.findall(content or "")
+    if not verdicts:
+        return None
+    return any(v.lower() == "unsafe" for v in verdicts)
+
+
+def _nemotron_categories(content: str) -> str:
+    """The 'Safety Categories: ...' payload from a Nemotron reply, or ''."""
+    m = _NEMOTRON_CATEGORIES_RE.search(content or "")
+    return m.group(1).strip() if m else ""
 
 
 # Per-guardrail verdict readers for 'both'-mode merging. Merging two models'
@@ -734,9 +763,15 @@ def _json_bool_field(content: str, field: str) -> Optional[bool]:
 def _verdict_unsafe(guardrail_name: Optional[str], content: str) -> Optional[bool]:
     """Whether this completion means 'flag/block' for the given guardrail.
 
-    None when the guardrail isn't registered or the content doesn't match its
-    registered shape -- callers must treat None as 'do not merge'.
+    None when the shape can't be read -- callers must treat None as 'do not
+    merge'.
     """
+    # Nemotron Content Safety emits its own safety format regardless of the
+    # calling guardrail's prompt, so detect and parse it directly. This is
+    # what makes 'both' mode merge a Nemotron secondary correctly for ANY
+    # guardrail (the merge is a safety OR: Nemotron 'unsafe' -> flag).
+    if _looks_like_nemotron(content):
+        return _parse_nemotron_verdict(content)
     spec = _GUARD_VERDICT_REGISTRY.get(guardrail_name or "")
     if spec is None:
         return None
