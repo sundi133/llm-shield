@@ -1,4 +1,13 @@
+---
+title: Preventing Secret Leakage to LLMs
+layout: default
+nav_order: 28
+permalink: /prevent-secret-leakage/
+description: Keep API keys and env-var secrets out of the LLM path with the Shield secret vault. Reference a placeholder; the real value is materialized only at the bound egress, never in a prompt, tool argument, or log.
+---
+
 # Preventing env-var / secret leakage to LLMs
+{: .no_toc }
 
 Agents leak secrets. A key that sits in `os.environ`, gets interpolated into a
 prompt, or is echoed back by a tool can be read (and exfiltrated) by the model,
