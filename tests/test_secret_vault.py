@@ -195,3 +195,21 @@ class TestVaultStore:
         assert vs.resolve_secret_value("t1", "k") == "t1-value"
         assert vs.resolve_secret_value("t2", "k") == "t2-value"
         assert len(vs.list_vault_entries("t1")) == 1
+
+    def test_dek_cache_avoids_repeat_unwrap(self, monkeypatch):
+        from core.secret_vault import keyprovider
+        vs = self._store()
+        vs.create_vault_entry("t1", "k", "V", bindings=["h"])
+        keyprovider._dek_cache.clear()
+        prov = keyprovider.get_key_provider()
+        calls = {"n": 0}
+        orig = prov.unwrap_dek
+
+        def counting(w):
+            calls["n"] += 1
+            return orig(w)
+
+        monkeypatch.setattr(prov, "unwrap_dek", counting)
+        assert vs.resolve_secret_value("t1", "k") == "V"
+        assert vs.resolve_secret_value("t1", "k") == "V"   # second read
+        assert calls["n"] == 1                             # served from DEK cache

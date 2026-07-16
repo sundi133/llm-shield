@@ -135,7 +135,28 @@ def get_key_provider() -> KeyProvider:
     return _provider
 
 
+# Unwrapped-DEK cache, keyed by the wrapped-DEK bytes. Skips a re-unwrap on
+# repeat reads of the same secret — negligible for the software KEK, but it turns
+# a per-read network round trip into a cache hit for the vault-transit backend,
+# and keeps retokenize() (which decrypts every entry) cheap. A wrapped DEK is
+# unique per secret version, so rotation naturally misses the cache.
+_dek_cache: dict[bytes, bytes] = {}
+_DEK_CACHE_MAX = 512
+
+
+def unwrap_dek_cached(wrapped: bytes) -> bytes:
+    """Unwrap a DEK via the process KeyProvider, memoized by wrapped bytes."""
+    dek = _dek_cache.get(wrapped)
+    if dek is None:
+        dek = get_key_provider().unwrap_dek(wrapped)
+        if len(_dek_cache) >= _DEK_CACHE_MAX:
+            _dek_cache.clear()  # simple bounded reset; correctness over hit-rate
+        _dek_cache[wrapped] = dek
+    return dek
+
+
 def _reset_provider_for_tests() -> None:
-    """Clear the cached provider so tests can swap env/KEK between cases."""
+    """Clear the cached provider + DEK cache so tests can swap env/KEK between cases."""
     global _provider
     _provider = None
+    _dek_cache.clear()

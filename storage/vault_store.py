@@ -25,7 +25,7 @@ import logging
 import secrets
 import time
 
-from core.secret_vault.crypto import decrypt_value, encrypt_value
+from core.secret_vault.crypto import decrypt_entry_cached, encrypt_value
 from core.secret_vault.keyprovider import get_key_provider
 
 logger = logging.getLogger("votal.vault_store")
@@ -150,7 +150,7 @@ def resolve_secret_value(tenant_id: str, ref: str) -> str | None:
     entry = next((e for e in get_vault_entries(tenant_id) if e.get("ref") == ref), None)
     if entry is None:
         return None
-    return decrypt_value(entry, get_key_provider())
+    return decrypt_entry_cached(entry)
 
 
 def resolve_binding(tenant_id: str, ref_or_token: str) -> tuple[str, list[str], list[str]] | None:
@@ -163,7 +163,7 @@ def resolve_binding(tenant_id: str, ref_or_token: str) -> tuple[str, list[str], 
     for e in get_vault_entries(tenant_id):
         if e.get("ref") == ref_or_token or e.get("token") == ref_or_token:
             return (
-                decrypt_value(e, get_key_provider()),
+                decrypt_entry_cached(e),
                 list(e.get("bindings", [])),
                 list(e.get("tool_ids", [])),
             )
@@ -177,10 +177,9 @@ def reveal_all(tenant_id: str) -> list[tuple[str, str]]:
     highly sensitive and never log it.
     """
     out: list[tuple[str, str]] = []
-    provider = get_key_provider()
     for e in get_vault_entries(tenant_id):
         try:
-            out.append((decrypt_value(e, provider), e.get("ref", "")))
+            out.append((decrypt_entry_cached(e), e.get("ref", "")))
         except Exception as ex:  # one bad entry must not break the batch
             logger.debug(f"reveal_all skip {e.get('ref')}: {ex}")
     return out

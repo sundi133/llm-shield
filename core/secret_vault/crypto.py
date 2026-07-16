@@ -50,3 +50,17 @@ def decrypt_value(entry: dict, provider: KeyProvider) -> str:
     ciphertext = _b64d(entry["ciphertext"])
     nonce = _b64d(entry["nonce"])
     return AESGCM(dek).decrypt(nonce, ciphertext, _AAD).decode("utf-8")
+
+
+def decrypt_entry_cached(entry: dict) -> str:
+    """Decrypt using the process KeyProvider with a memoized DEK unwrap.
+
+    For server-side egress reads that always use the global provider. Keeps
+    ``decrypt_value`` pure (tests pass their own provider) while making repeated
+    reads and retokenize() cheap.
+    """
+    from core.secret_vault.keyprovider import unwrap_dek_cached
+    dek = unwrap_dek_cached(_b64d(entry["wrapped_dek"]))
+    ciphertext = _b64d(entry["ciphertext"])
+    nonce = _b64d(entry["nonce"])
+    return AESGCM(dek).decrypt(nonce, ciphertext, _AAD).decode("utf-8")

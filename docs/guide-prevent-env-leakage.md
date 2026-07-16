@@ -147,6 +147,38 @@ Now `stripe.createCharge` calls to `api.stripe.com` get the real key injected
 server-side; the agent never sees a key or even a token, and no *other* tool can
 use the secret even if it targets the same host.
 
+## How it works under the hood
+
+- **Register:** `POST /v1/tenant/me/vault` encrypts the value with a per-secret data
+  key (AES-GCM), wraps that key with your on-prem KEK, and stores only ciphertext in
+  `vault:{tenant}`. The plaintext is never persisted and no endpoint returns it.
+- **Reference:** you put `shield://name` (or the `svlt_` token) in an env var or the
+  tool's auth config. Your app reads the placeholder.
+- **Egress (OpenAPI tools):** after the guard allows, Shield materializes bound
+  references into the outbound request, sends it, then re-tokenizes the response.
+- **Egress (MCP tools):** the proxy materializes the tool arguments before
+  forwarding, and re-tokenizes the result before it returns to the model.
+- **The gate:** a secret is revealed only when the outbound host matches its
+  `bindings` and (if tool-scoped) the tool is in its `tool_ids`. Decryption happens
+  in memory at the egress step; an unwrapped-key cache keeps repeated reads cheap.
+
+## How this compares to what teams do today
+
+Most stacks layer several of these. Each is useful, and each leaves the same gap:
+
+| Practice | What it gives | The gap it leaves |
+| --- | --- | --- |
+| `.env` + `.gitignore` | keys out of git | a plaintext env var in the agent process, reachable from prompts and tools |
+| Secret managers (Vault, AWS/GCP Secrets Manager, Doppler, k8s Secrets) | strong storage + rotation | they inject the secret as a runtime env var, so the agent-runtime leak surface is unchanged |
+| Commit scanners (gitleaks, trufflehog, GitGuardian) | catch keys in commits | catch commits, not runtime prompt or output leaks |
+| Least privilege + rotation | smaller blast radius | does not stop in-session exfiltration |
+| Output DLP / regex redaction | best-effort masking | reactive; false negatives leak |
+
+The shared gap: at runtime the secret is a plaintext value in the same context the
+model operates over. The vault removes that value from the model path entirely, so
+those practices become defense-in-depth around it rather than the only line. A
+secret manager can even supply the vault's KEK.
+
 ## Guarantees and limits
 
 - The real value never appears in a prompt, tool argument you author, model output,
