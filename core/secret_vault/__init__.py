@@ -18,6 +18,11 @@ from core.secret_vault.keyprovider import (
     get_key_provider,
     vault_enabled,
 )
+from core.secret_vault.materialize import (
+    materialize_obj,
+    materialize_request,
+    retokenize,
+)
 
 __all__ = [
     "KeyProvider",
@@ -27,4 +32,7 @@ __all__ = [
     "vault_enabled",
     "encrypt_value",
     "decrypt_value",
+    "materialize_obj",
+    "materialize_request",
+    "retokenize",
 ]

@@ -13,7 +13,6 @@ ciphertext + wrapped DEK; the attacker also needs the KEK, which lives in app
 secret config, not in Redis.
 """
 
-import hashlib
 import os
 from abc import ABC, abstractmethod
 
@@ -69,12 +68,19 @@ class SoftwareKeyProvider(KeyProvider):
         return self._aead.decrypt(nonce, ct, b"shield-vault-dek")
 
 
+# Fixed application salt for passphrase stretching. A fixed salt is acceptable
+# here because the KEK must be reproducible across restarts; operators who want a
+# per-deployment salt should just supply a 32-byte random key (which skips
+# derivation entirely — the recommended production path).
+_KEK_SALT = b"shield-vault-kek-v1"
+
+
 def _derive_kek(raw: bytes) -> bytes:
     """Derive a 32-byte KEK from the configured material.
 
-    Accepts a raw 32-byte key, a base64 32-byte key, or any passphrase (hashed to
-    32 bytes). A passphrase is the weakest option; document that operators should
-    supply a 32-byte random key via a mounted secret in production.
+    Accepts a raw 32-byte key or a base64-encoded 32-byte key directly (recommended
+    production path). Any other value is treated as a passphrase and stretched with
+    scrypt (memory-hard KDF) rather than a bare hash.
     """
     if len(raw) == 32:
         return raw
@@ -85,7 +91,8 @@ def _derive_kek(raw: bytes) -> bytes:
             return decoded
     except Exception:
         pass
-    return hashlib.sha256(raw).digest()
+    from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+    return Scrypt(salt=_KEK_SALT, length=32, n=2 ** 14, r=8, p=1).derive(raw)
 
 
 def _load_kek_material() -> bytes:

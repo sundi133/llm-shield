@@ -63,6 +63,7 @@ from api.routes_data_policies import router as data_policies_router
 from api.routes_agentic_control_plane import router as agentic_control_plane_router
 from api.routes_guardrail_metrics import router as guardrail_metrics_router
 from api.routes_siem import router as siem_router
+from api.routes_vault import router as vault_router
 from api.routes_evidence import router as evidence_router
 from api.routes_board_report import router as board_report_router
 
@@ -1076,6 +1077,7 @@ def create_admin_app() -> FastAPI:
     app.include_router(agentic_control_plane_router)  # /v1/tenant/me/agentic/*
     app.include_router(guardrail_metrics_router)       # /v1/tenant/me/guardrails/metrics
     app.include_router(siem_router)                    # /v1/tenant/me/siem
+    app.include_router(vault_router)                   # /v1/tenant/me/vault
     app.include_router(evidence_router)                # /v1/tenant/me/compliance/*
     app.include_router(board_report_router)             # /v1/tenant/me/board-report
 

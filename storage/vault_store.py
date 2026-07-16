@@ -151,3 +151,31 @@ def resolve_secret_value(tenant_id: str, ref: str) -> str | None:
     if entry is None:
         return None
     return decrypt_value(entry, get_key_provider())
+
+
+def resolve_binding(tenant_id: str, ref_or_token: str) -> tuple[str, list[str]] | None:
+    """Resolve a `ref` or opaque `token` to its (plaintext value, bindings).
+
+    Server-side only, for egress materialization. Returns None for an unknown
+    reference. Raises (fail-closed) if the DEK cannot be unwrapped.
+    """
+    for e in get_vault_entries(tenant_id):
+        if e.get("ref") == ref_or_token or e.get("token") == ref_or_token:
+            return decrypt_value(e, get_key_provider()), list(e.get("bindings", []))
+    return None
+
+
+def reveal_all(tenant_id: str) -> list[tuple[str, str]]:
+    """Return [(plaintext_value, ref)] for every secret — for ingress re-tokenization.
+
+    Server-side only. Decrypts all entries; callers should treat the result as
+    highly sensitive and never log it.
+    """
+    out: list[tuple[str, str]] = []
+    provider = get_key_provider()
+    for e in get_vault_entries(tenant_id):
+        try:
+            out.append((decrypt_value(e, provider), e.get("ref", "")))
+        except Exception as ex:  # one bad entry must not break the batch
+            logger.debug(f"reveal_all skip {e.get('ref')}: {ex}")
+    return out
