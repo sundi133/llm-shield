@@ -107,7 +107,14 @@ class MCPProxy:
         if not decision["allowed"]:
             return _error(f"Blocked by Shield: {decision['reason']}", decision)
 
+        # Materialize any vault secret references in the arguments, bound to this
+        # tool (destination = tool name). No-op unless the vault is enabled.
+        arguments = _materialize_mcp_args(tenant_id, name, arguments)
+
         raw = await self._upstream.call_tool(name, arguments)
+
+        # Re-tokenize any secret the upstream echoed back before it reaches the model.
+        raw = _retokenize_mcp(tenant_id, raw)
 
         san = await self._enforcer.sanitize_tool_result(
             name, raw, agent_key=agent_key, tenant_id=tenant_id, user_role=user_role
@@ -196,6 +203,27 @@ class MCPProxy:
                 await self._on_decision(event)
             except Exception:
                 pass
+
+
+def _materialize_mcp_args(tenant_id: Optional[str], name: str, arguments: dict) -> dict:
+    """Substitute vault secret references in MCP tool arguments, bound to this tool.
+
+    Destination and tool scope are both the tool ``name``. Safe on any error: the
+    inert placeholder is forwarded rather than a real value (no leak)."""
+    try:
+        from core.secret_vault import materialize_obj
+        return materialize_obj(tenant_id, arguments, name, tool_id=name)
+    except Exception:  # e.g. key backend unavailable — forward inert, never leak
+        return arguments
+
+
+def _retokenize_mcp(tenant_id: Optional[str], raw: Any) -> Any:
+    """Scrub any echoed secret value from an MCP result before the model sees it."""
+    try:
+        from core.secret_vault import retokenize
+        return retokenize(tenant_id, raw)
+    except Exception:
+        return raw
 
 
 def _error(message: str, decision: dict) -> dict:

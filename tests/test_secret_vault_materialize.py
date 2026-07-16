@@ -140,3 +140,89 @@ class TestRetokenize:
 
     def test_noop_when_no_secrets(self):
         assert retokenize("t", {"x": "nothing here"}) == {"x": "nothing here"}
+
+
+# ── tier-1 tool scoping ─────────────────────────────────────────────────────
+
+class TestToolScoping:
+    def _register_scoped(self):
+        vs.create_vault_entry(
+            "t", "stripe_key", "sk_live_REAL", bindings=["api.stripe.com"],
+            tool_ids=["stripe.createCharge"],
+        )
+
+    def test_materializes_for_allowed_tool(self):
+        self._register_scoped()
+        out = materialize_obj("t", "shield://stripe_key", "https://api.stripe.com/v1",
+                              tool_id="stripe.createCharge")
+        assert out == "sk_live_REAL"
+
+    def test_not_materialized_for_other_tool_even_if_host_matches(self):
+        # Host is bound, but a different tool must not be able to use the secret.
+        self._register_scoped()
+        out = materialize_obj("t", "shield://stripe_key", "https://api.stripe.com/v1",
+                              tool_id="stripe.refund")
+        assert out == "shield://stripe_key"
+
+    def test_unscoped_secret_ignores_tool_id(self):
+        vs.create_vault_entry("t", "k", "V", bindings=["api.stripe.com"])  # no tool_ids
+        out = materialize_obj("t", "shield://k", "https://api.stripe.com", tool_id="anything")
+        assert out == "V"
+
+
+# ── MCP tool egress ─────────────────────────────────────────────────────────
+
+class _AllowEnforcer:
+    """Always-allow enforcer so the real MCPProxy forward path can be exercised."""
+    async def enforce_tool_call(self, name, arguments, **k):
+        return {"allowed": True, "risk": "low", "action": "pass",
+                "reason": "", "would_block": [], "mode": "enforce"}
+
+    async def sanitize_tool_result(self, name, raw, **k):
+        return {"blocked": False, "sanitized_output": raw}
+
+    def filter_tools_for_role(self, tools, **k):
+        return tools
+
+
+class _FakeUpstream:
+    def __init__(self):
+        self.calls = []
+
+    async def call_tool(self, name, arguments):
+        self.calls.append((name, arguments))
+        return {"ok": True}
+
+
+class TestMcpEgress:
+    def test_materialize_helper_binds_to_tool_name(self):
+        from core.mcp.proxy_server import _materialize_mcp_args, _retokenize_mcp
+        vs.create_vault_entry("t", "gh_token", "ghp_REAL", bindings=["github.create_issue"])
+        bound = _materialize_mcp_args("t", "github.create_issue", {"token": "shield://gh_token"})
+        assert bound["token"] == "ghp_REAL"
+        inert = _materialize_mcp_args("t", "other.tool", {"token": "shield://gh_token"})
+        assert inert["token"] == "shield://gh_token"
+        assert _retokenize_mcp("t", {"echo": "ghp_REAL"})["echo"] == "shield://gh_token"
+
+    def test_call_tool_materializes_before_forward(self):
+        import asyncio
+        from core.mcp.proxy_server import MCPProxy
+        vs.create_vault_entry("t", "gh_token", "ghp_REAL", bindings=["github.create_issue"])
+        up = _FakeUpstream()
+        proxy = MCPProxy(up, enforcer=_AllowEnforcer())
+        res = asyncio.run(proxy.call_tool(
+            "github.create_issue", {"token": "shield://gh_token"},
+            agent_key="a", user_role=None, tenant_id="t"))
+        assert res["isError"] is False
+        assert up.calls[0][1]["token"] == "ghp_REAL"      # real secret reached upstream
+
+    def test_call_tool_wrong_tool_forwards_inert(self):
+        import asyncio
+        from core.mcp.proxy_server import MCPProxy
+        vs.create_vault_entry("t", "gh_token", "ghp_REAL", bindings=["github.create_issue"])
+        up = _FakeUpstream()
+        proxy = MCPProxy(up, enforcer=_AllowEnforcer())
+        asyncio.run(proxy.call_tool(
+            "unrelated.tool", {"token": "shield://gh_token"},
+            agent_key="a", user_role=None, tenant_id="t"))
+        assert up.calls[0][1]["token"] == "shield://gh_token"   # never revealed

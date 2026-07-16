@@ -121,11 +121,31 @@ python -m pytest tests/test_secret_vault.py tests/test_secret_vault_materialize.
 
 ## Tiers at a glance
 
-- **Tier 2 (this guide):** you reference `shield://name` in env vars or tool args;
-  Shield materializes at egress. Works for secrets your app passes into tool calls.
-- **Tier 1 (Shield-injected):** bind a secret to a `tool_id` and Shield attaches it
-  server-side; the agent references nothing at all. Strongest option where Shield
-  proxies the upstream.
+- **Tier 2:** you reference `shield://name` in env vars or tool args; Shield
+  materializes at egress for the bound host. Works for secrets your app passes into
+  tool calls.
+- **Tier 1 (Shield-injected, strongest):** register the secret with `tool_ids` and
+  put the reference in the tool's own auth config, so the agent references nothing
+  at all. Only the named tool(s) can use it, and only for the bound host.
+
+### Tier-1 setup
+
+```bash
+curl -sX POST https://<shield-admin>/v1/tenant/me/vault \
+  -H "X-API-Key: $SHIELD_TENANT_KEY" -H "Content-Type: application/json" \
+  -d '{"name":"stripe_key","value":"sk_live_REAL",
+       "bindings":["api.stripe.com"],
+       "tool_ids":["stripe.createCharge"], "mode":"inject"}'
+```
+
+Configure the tool's auth to use the reference (not the real key), e.g. the stored
+OpenAPI tool `auth`:
+```json
+{ "type": "bearer", "token": "shield://stripe_key" }
+```
+Now `stripe.createCharge` calls to `api.stripe.com` get the real key injected
+server-side; the agent never sees a key or even a token, and no *other* tool can
+use the secret even if it targets the same host.
 
 ## Guarantees and limits
 
@@ -133,7 +153,10 @@ python -m pytest tests/test_secret_vault.py tests/test_secret_vault_materialize.
   or Shield's own audit log (audit stores the placeholder).
 - Substitution is bound to the destination, so a confused-deputy exfil attempt
   ships an inert placeholder.
-- If the key backend cannot decrypt (misconfigured KEK, backend down), the tool
-  call fails closed rather than sending a blank credential.
-- Materialization is wired into the OpenAPI/generated-tool egress today. MCP tool
-  egress uses the same `materialize_request` helper and is wired next.
+- If the key backend cannot decrypt (misconfigured KEK, backend down), the OpenAPI
+  tool call fails closed; the MCP path forwards the inert placeholder (still no
+  leak) so the upstream simply rejects the call.
+- Materialization is wired into **both** the OpenAPI/generated-tool egress and the
+  **MCP tool egress** (arguments materialized before forward, results
+  re-tokenized). For MCP, bind a secret to the tool name (e.g.
+  `github.create_issue`).

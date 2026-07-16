@@ -54,7 +54,15 @@ def _binding_matches(destination: str, bindings: list[str]) -> bool:
     return False
 
 
-def _materialize_str(tenant_id: str, s: str, destination: str) -> str:
+def _tool_allowed(tool_id: str | None, tool_ids: list[str]) -> bool:
+    """A secret with a non-empty tool_ids list may only be used by those tools
+    (tier-1 scoping). An empty list means no tool restriction."""
+    if not tool_ids:
+        return True
+    return tool_id is not None and tool_id in tool_ids
+
+
+def _materialize_str(tenant_id: str, s: str, destination: str, tool_id: str | None) -> str:
     """Substitute any bound placeholder in a single string."""
     from storage.vault_store import resolve_binding
 
@@ -63,44 +71,49 @@ def _materialize_str(tenant_id: str, s: str, destination: str) -> str:
         resolved = resolve_binding(tenant_id, ref)
         if resolved is None:
             return m.group(0)  # unknown reference — leave inert
-        value, bindings = resolved
-        if _binding_matches(destination, bindings):
+        value, bindings, tool_ids = resolved
+        if _binding_matches(destination, bindings) and _tool_allowed(tool_id, tool_ids):
             return value
-        return m.group(0)  # destination not allowed — do NOT reveal
+        return m.group(0)  # destination/tool not allowed — do NOT reveal
 
     return _REF_RE.sub(repl, s)
 
 
-def _walk(tenant_id: str, obj, destination: str):
+def _walk(tenant_id: str, obj, destination: str, tool_id: str | None):
     if isinstance(obj, str):
-        return _materialize_str(tenant_id, obj, destination)
+        return _materialize_str(tenant_id, obj, destination, tool_id)
     if isinstance(obj, dict):
-        return {k: _walk(tenant_id, v, destination) for k, v in obj.items()}
+        return {k: _walk(tenant_id, v, destination, tool_id) for k, v in obj.items()}
     if isinstance(obj, list):
-        return [_walk(tenant_id, v, destination) for v in obj]
+        return [_walk(tenant_id, v, destination, tool_id) for v in obj]
     return obj
 
 
-def materialize_obj(tenant_id: str, obj, destination: str):
-    """Return a copy of ``obj`` with bound placeholders replaced by real values."""
+def materialize_obj(tenant_id: str, obj, destination: str, tool_id: str | None = None):
+    """Return a copy of ``obj`` with bound placeholders replaced by real values.
+
+    A secret is revealed only when the destination matches its bindings AND (if it
+    is tool-scoped) ``tool_id`` is in its tool_ids.
+    """
     if not vault_enabled() or not tenant_id or obj is None:
         return obj
-    return _walk(tenant_id, obj, destination)
+    return _walk(tenant_id, obj, destination, tool_id)
 
 
-def materialize_request(tenant_id: str, req) -> None:
+def materialize_request(tenant_id: str, req, tool_id: str | None = None) -> None:
     """Materialize bound secrets into an outbound request, in place.
 
     ``req`` is an UpstreamRequest (core.openapi.upstream_call). The destination is
     the request URL, so a call assembled for one host cannot pull a secret bound to
-    another. No-op when the vault is off or the tenant has no secrets.
+    another. ``tool_id`` enables tier-1 scoping. No-op when the vault is off or the
+    tenant has no secrets.
     """
     if not vault_enabled() or not tenant_id:
         return
     dest = req.url
-    req.headers = materialize_obj(tenant_id, req.headers, dest)
-    req.params = materialize_obj(tenant_id, req.params, dest)
-    req.json_body = materialize_obj(tenant_id, req.json_body, dest)
+    req.headers = materialize_obj(tenant_id, req.headers, dest, tool_id)
+    req.params = materialize_obj(tenant_id, req.params, dest, tool_id)
+    req.json_body = materialize_obj(tenant_id, req.json_body, dest, tool_id)
 
 
 def retokenize(tenant_id: str, obj):

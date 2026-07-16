@@ -153,15 +153,20 @@ def resolve_secret_value(tenant_id: str, ref: str) -> str | None:
     return decrypt_value(entry, get_key_provider())
 
 
-def resolve_binding(tenant_id: str, ref_or_token: str) -> tuple[str, list[str]] | None:
-    """Resolve a `ref` or opaque `token` to its (plaintext value, bindings).
+def resolve_binding(tenant_id: str, ref_or_token: str) -> tuple[str, list[str], list[str]] | None:
+    """Resolve a `ref` or opaque `token` to (plaintext value, bindings, tool_ids).
 
-    Server-side only, for egress materialization. Returns None for an unknown
+    Server-side only, for egress materialization. `tool_ids` (when non-empty)
+    scopes the secret to specific tools (tier-1). Returns None for an unknown
     reference. Raises (fail-closed) if the DEK cannot be unwrapped.
     """
     for e in get_vault_entries(tenant_id):
         if e.get("ref") == ref_or_token or e.get("token") == ref_or_token:
-            return decrypt_value(e, get_key_provider()), list(e.get("bindings", []))
+            return (
+                decrypt_value(e, get_key_provider()),
+                list(e.get("bindings", [])),
+                list(e.get("tool_ids", [])),
+            )
     return None
 
 

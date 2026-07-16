@@ -194,7 +194,7 @@ async def call_generated_tool(body: CallRequest, request: Request):
     # the outbound request, but only for secrets bound to this request's host.
     # No-op unless the vault is enabled and the tenant has secrets.
     from core.secret_vault import materialize_request, retokenize
-    materialize_request(tenant_id, req)
+    materialize_request(tenant_id, req, tool_id=body.tool)
     try:
         upstream = await execute(req)
     except Exception as e:
