@@ -4222,25 +4222,82 @@ if __name__ == "__main__":
 
     <!-- ── SIEM Integration ────────────────────── -->
     <div id="tab-siem" class="tab-pane hidden">
+      <style>
+        .siem-form { display:flex; flex-direction:column; gap:1.1rem; }
+        .siem-row { display:flex; gap:1.25rem; flex-wrap:wrap; align-items:flex-end; }
+        .siem-col { flex:1; min-width:220px; }
+        .siem-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:1rem; }
+        .siem-seg { display:inline-flex; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm); padding:3px; gap:3px; }
+        .siem-seg button { border:none; background:transparent; padding:0.4rem 1rem; border-radius:4px; font-size:12.5px; font-weight:500; color:var(--text-dim); }
+        .siem-seg button:hover { background:var(--bg-hover); border:none; }
+        .siem-seg button.active { background:var(--accent); color:#fff; }
+        .siem-seg button.active:hover { background:var(--accent-hover); }
+        .siem-hint { font-size:12px; color:var(--text-dim); background:var(--bg); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:var(--radius-sm); padding:0.55rem 0.8rem; }
+        .siem-actions { display:flex; justify-content:flex-end; }
+        .siem-item { display:flex; align-items:center; gap:0.85rem; padding:0.8rem 0.95rem; border:1px solid var(--border); border-radius:var(--radius-sm); margin-bottom:0.6rem; background:var(--bg-2); }
+        .siem-badge { font-size:10.5px; padding:2px 9px; border-radius:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; white-space:nowrap; }
+        .siem-badge-type { background:var(--accent-dim); color:var(--accent); }
+        .siem-badge-filter { background:var(--bg); border:1px solid var(--border); color:var(--text-dim); text-transform:none; letter-spacing:0; font-weight:500; }
+        .siem-url { font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--text-dim); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .siem-state { font-size:11px; font-weight:600; }
+        /* Custom provider dropdown */
+        .siem-select { position:relative; }
+        .siem-select-trigger { width:100%; display:flex; align-items:center; gap:0.6rem; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm); padding:0.45rem 0.6rem; cursor:pointer; font-size:13px; color:var(--text); transition:border-color .12s, box-shadow .12s; }
+        .siem-select-trigger:hover { border-color:var(--border-strong); background:var(--bg); }
+        .siem-select-trigger[aria-expanded="true"] { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
+        .siem-select-label { flex:1; text-align:left; font-weight:500; }
+        .siem-chevron { width:16px; height:16px; color:var(--text-muted); transition:transform .15s; flex-shrink:0; }
+        .siem-select-trigger[aria-expanded="true"] .siem-chevron { transform:rotate(180deg); }
+        .siem-select-menu { position:absolute; top:calc(100% + 6px); left:0; right:0; background:var(--bg-2); border:1px solid var(--border); border-radius:8px; box-shadow:0 10px 30px rgba(16,24,40,0.14); padding:4px; z-index:60; display:none; }
+        .siem-select-menu.open { display:block; }
+        .siem-opt { display:flex; align-items:center; gap:0.65rem; padding:0.5rem 0.55rem; border-radius:6px; cursor:pointer; }
+        .siem-opt:hover { background:var(--bg-hover); }
+        .siem-opt.selected { background:var(--accent-dim); }
+        .siem-opt-mark { width:26px; height:26px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:11.5px; font-weight:700; color:#fff; flex-shrink:0; letter-spacing:-0.02em; }
+        .siem-opt-text { flex:1; display:flex; flex-direction:column; line-height:1.25; }
+        .siem-opt-name { font-size:13px; font-weight:500; color:var(--text); }
+        .siem-opt-sub { font-size:11px; color:var(--text-muted); }
+        .siem-opt-check { width:16px; height:16px; color:var(--accent); flex-shrink:0; visibility:hidden; }
+        .siem-opt.selected .siem-opt-check { visibility:visible; }
+      </style>
       <div class="page-header">
         <div class="page-title">SIEM Integration</div>
-        <div class="page-desc">Send guardrail events to Splunk, Azure Sentinel, or any SIEM endpoint.</div>
+        <div class="page-desc">Stream guardrail events to Splunk, Azure Sentinel, Elastic, Wazuh, or any SIEM endpoint.</div>
       </div>
       <div class="card">
         <div class="card-header">
           <div><div class="card-title">Add SIEM Endpoint</div></div>
         </div>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
-          <select id="siem-type" style="padding:0.45rem 0.6rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-            <option value="splunk">Splunk HEC</option>
-            <option value="sentinel">Azure Sentinel</option>
-            <option value="generic">Generic (HTTP POST)</option>
-          </select>
-          <input id="siem-url" type="text" placeholder="https://splunk-hec.company.com:8088/services/collector" style="flex:1;min-width:300px;padding:0.45rem 0.6rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-          <input id="siem-token" type="password" placeholder="HEC Token / Bearer Token" style="width:220px;padding:0.45rem 0.6rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-          <button class="primary" onclick="createSIEM()">Add</button>
+        <div class="siem-form">
+          <div class="siem-row">
+            <div class="siem-col">
+              <label>Provider</label>
+              <input type="hidden" id="siem-type" value="splunk">
+              <div class="siem-select" id="siem-select">
+                <button type="button" class="siem-select-trigger" id="siem-trigger" onclick="toggleSiemMenu(event)" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="siem-opt-mark" id="siem-trigger-mark"></span>
+                  <span class="siem-select-label" id="siem-trigger-label">Splunk HEC</span>
+                  <svg class="siem-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <div class="siem-select-menu" id="siem-menu" role="listbox"></div>
+              </div>
+            </div>
+            <div>
+              <label>Forward events</label>
+              <div class="siem-seg" id="siem-forward">
+                <button type="button" class="active" data-value="" onclick="selectForward(this)">All</button>
+                <button type="button" data-value="block" onclick="selectForward(this)">Blocked</button>
+                <button type="button" data-value="warn" onclick="selectForward(this)">Warnings</button>
+              </div>
+            </div>
+          </div>
+          <div id="siem-fields" class="siem-grid"></div>
+          <div id="siem-hint" class="siem-hint"></div>
+          <div class="siem-actions">
+            <button class="primary" onclick="createSIEM()">Add endpoint</button>
+          </div>
         </div>
-        <div id="siem-list" style="margin-top:1rem;"></div>
+        <div id="siem-list" style="margin-top:1.25rem;"></div>
       </div>
       <div class="card" style="margin-top:1rem;">
         <button class="small" onclick="testSIEM()">Send Test Event</button>
@@ -10649,7 +10706,137 @@ function copyApiSnippet(id) {
 }
 
 // ── SIEM Integration ──────────────────────
+// Per-provider field schema. Each provider declares the credential fields it
+// needs; the form and the create payload are built from this so the backend
+// receives exactly the right keys (url/token, or workspace_id/shared_key/log_type).
+const SIEM_PROVIDERS = {
+  splunk: {
+    hint: 'Splunk HTTP Event Collector. Sends events to your HEC endpoint with an HEC token.',
+    fields: [
+      { key: 'url', label: 'HEC URL', type: 'text', ph: 'https://splunk-hec.company.com:8088/services/collector' },
+      { key: 'token', label: 'HEC Token', type: 'password', ph: 'HEC token' },
+    ],
+  },
+  sentinel: {
+    hint: 'Azure Sentinel (Log Analytics HTTP Data Collector). Uses your workspace ID and shared key.',
+    fields: [
+      { key: 'workspace_id', label: 'Workspace ID', type: 'text', ph: '00000000-0000-0000-0000-000000000000' },
+      { key: 'shared_key', label: 'Shared Key', type: 'password', ph: 'Primary or secondary key' },
+      { key: 'log_type', label: 'Log Type', type: 'text', ph: 'LLMShield', default: 'LLMShield' },
+    ],
+  },
+  elastic: {
+    hint: 'Elasticsearch. Indexes an ECS document to your _doc endpoint using an API key.',
+    fields: [
+      { key: 'url', label: 'Index URL', type: 'text', ph: 'https://es.company.com:9200/shield-events/_doc' },
+      { key: 'token', label: 'API Key', type: 'password', ph: 'Elastic ApiKey' },
+    ],
+  },
+  wazuh: {
+    hint: 'Wazuh indexer. Indexes an ECS document to your _doc endpoint using a Bearer token.',
+    fields: [
+      { key: 'url', label: 'Indexer URL', type: 'text', ph: 'https://wazuh-indexer:9200/shield-events/_doc' },
+      { key: 'token', label: 'Bearer Token', type: 'password', ph: 'Bearer token' },
+    ],
+  },
+  generic: {
+    hint: 'Generic HTTP POST. Works with any SIEM that accepts a JSON webhook.',
+    fields: [
+      { key: 'url', label: 'Endpoint URL', type: 'text', ph: 'https://your-siem.company.com/ingest' },
+      { key: 'token', label: 'Bearer Token', type: 'password', ph: 'Optional' },
+    ],
+  },
+};
+
+// Display metadata for the custom provider dropdown (monogram + subtitle).
+const SIEM_ORDER = ['splunk', 'sentinel', 'elastic', 'wazuh', 'generic'];
+const SIEM_META = {
+  splunk:   { label: 'Splunk HEC',             mark: 'S',  color: '#65a637', sub: 'HTTP Event Collector' },
+  sentinel: { label: 'Azure Sentinel',         mark: 'A',  color: '#0078d4', sub: 'Log Analytics collector' },
+  elastic:  { label: 'Elastic / Elasticsearch', mark: 'E', color: '#00bfb3', sub: 'ECS document via _doc' },
+  wazuh:    { label: 'Wazuh',                   mark: 'W',  color: '#2f6fed', sub: 'Indexer via _doc' },
+  generic:  { label: 'Generic (HTTP POST)',    mark: '{}', color: '#6b7280', sub: 'Any JSON webhook' },
+};
+
+function buildSiemMenu() {
+  const cur = document.getElementById('siem-type').value;
+  document.getElementById('siem-menu').innerHTML = SIEM_ORDER.map(v => {
+    const m = SIEM_META[v];
+    return `
+      <div class="siem-opt ${v === cur ? 'selected' : ''}" role="option" data-value="${v}" onclick="selectSiemProvider('${v}')">
+        <span class="siem-opt-mark" style="background:${m.color}">${m.mark}</span>
+        <span class="siem-opt-text"><span class="siem-opt-name">${m.label}</span><span class="siem-opt-sub">${m.sub}</span></span>
+        <svg class="siem-opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+      </div>`;
+  }).join('');
+  updateSiemTrigger();
+}
+
+function updateSiemTrigger() {
+  const m = SIEM_META[document.getElementById('siem-type').value] || SIEM_META.generic;
+  const mk = document.getElementById('siem-trigger-mark');
+  mk.textContent = m.mark;
+  mk.style.background = m.color;
+  document.getElementById('siem-trigger-label').textContent = m.label;
+}
+
+function toggleSiemMenu(e) {
+  e.stopPropagation();
+  const open = document.getElementById('siem-menu').classList.toggle('open');
+  document.getElementById('siem-trigger').setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function closeSiemMenu() {
+  const menu = document.getElementById('siem-menu');
+  if (menu && menu.classList.contains('open')) {
+    menu.classList.remove('open');
+    document.getElementById('siem-trigger').setAttribute('aria-expanded', 'false');
+  }
+}
+
+function selectSiemProvider(v) {
+  document.getElementById('siem-type').value = v;
+  buildSiemMenu();
+  closeSiemMenu();
+  renderSiemFields();
+}
+
+// Close the provider menu when clicking anywhere outside it.
+document.addEventListener('click', (e) => {
+  const s = document.getElementById('siem-select');
+  if (s && !s.contains(e.target)) closeSiemMenu();
+});
+
+let _siemForward = '';  // '' = all, 'block', or 'warn'
+
+function selectForward(btn) {
+  _siemForward = btn.dataset.value;
+  btn.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+}
+
+function renderSiemFields() {
+  const t = document.getElementById('siem-type').value;
+  const p = SIEM_PROVIDERS[t] || SIEM_PROVIDERS.generic;
+  document.getElementById('siem-fields').innerHTML = p.fields.map(f => `
+    <div>
+      <label>${f.label}</label>
+      <input data-key="${f.key}" type="${f.type}" placeholder="${f.ph}" value="${f.default || ''}" autocomplete="off" spellcheck="false">
+    </div>
+  `).join('');
+  document.getElementById('siem-hint').textContent = p.hint;
+}
+
+function _siemStatusLabel(statuses) {
+  if (!Array.isArray(statuses)) return 'Blocked only';   // legacy config (no filter stored)
+  if (statuses.length === 0) return 'All events';
+  if (statuses.length === 1 && statuses[0] === 'block') return 'Blocked only';
+  if (statuses.length === 1 && statuses[0] === 'warn') return 'Warnings only';
+  return statuses.join(' + ');
+}
+
 async function loadSIEMData() {
+  buildSiemMenu();
+  renderSiemFields();
   try {
     const data = await apiCall('/v1/tenant/me/siem');
     const list = document.getElementById('siem-list');
@@ -10659,10 +10846,11 @@ async function loadSIEMData() {
       return;
     }
     list.innerHTML = integrations.map(s => `
-      <div style="display:flex;align-items:center;gap:1rem;padding:0.75rem;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:0.5rem;background:var(--bg-2);">
-        <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(99,102,241,0.15);color:var(--accent);font-weight:600;text-transform:uppercase;">${s.type}</span>
-        <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);flex:1;overflow:hidden;text-overflow:ellipsis;">${s.url || s.workspace_id || '—'}</span>
-        <span style="font-size:11px;color:${s.enabled ? 'var(--green)' : 'var(--text-muted)'};">${s.enabled ? 'Active' : 'Disabled'}</span>
+      <div class="siem-item">
+        <span class="siem-badge siem-badge-type">${s.type}</span>
+        <span class="siem-url" title="${s.url || s.workspace_id || ''}">${s.url || s.workspace_id || '—'}</span>
+        <span class="siem-badge siem-badge-filter" title="Events forwarded to this endpoint">${_siemStatusLabel(s.statuses)}</span>
+        <span class="siem-state" style="color:${s.enabled ? 'var(--green)' : 'var(--text-muted)'};">${s.enabled ? 'Active' : 'Disabled'}</span>
         <button class="small danger" onclick="deleteSIEM('${s.siem_id}')">Remove</button>
       </div>
     `).join('');
@@ -10673,17 +10861,12 @@ async function loadSIEMData() {
 
 async function createSIEM() {
   try {
-    await apiCall('/v1/tenant/me/siem', {
-      method: 'POST',
-      body: JSON.stringify({
-        type: document.getElementById('siem-type').value,
-        url: document.getElementById('siem-url').value,
-        token: document.getElementById('siem-token').value,
-      }),
-    });
-    showToast('SIEM integration created', 'success');
-    document.getElementById('siem-url').value = '';
-    document.getElementById('siem-token').value = '';
+    const t = document.getElementById('siem-type').value;
+    const payload = { type: t, statuses: _siemForward ? [_siemForward] : [] };
+    document.querySelectorAll('#siem-fields input').forEach(inp => { payload[inp.dataset.key] = inp.value.trim(); });
+    await apiCall('/v1/tenant/me/siem', { method: 'POST', body: JSON.stringify(payload) });
+    showToast('SIEM endpoint added', 'success');
+    renderSiemFields();  // clear inputs
     loadSIEMData();
   } catch (e) {
     showToast('Failed: ' + e.message, 'error');

@@ -257,6 +257,74 @@ Every matching event fires a signed POST to your endpoint.
 
 ---
 
+## Observability & Monitoring
+
+### Can I monitor a whole flow of models centrally, instead of per-model?
+
+Yes — that's the default shape. Shield sits **in** the request path, not beside each
+model, so monitoring converges instead of fragmenting into one dashboard per model.
+
+- **One plane, any backend.** Every call routes through the same enforcement pipeline —
+  whether it enters via the OpenAI-compatible gateway (`/v1/shield/chat/completions`),
+  the guardrail endpoints (`/guardrails/input`, `/guardrails/output`), or the
+  [MCP gateway]({{ "/mcp-gateway/" | relative_url }}) fronting your tools. A single
+  Shield instance can front whatever you point it at (Qwen, OpenRouter, vLLM, any
+  OpenAI-compatible API), so adding or swapping a model doesn't add a monitoring surface.
+- **Flow-level correlation.** Every telemetry event carries a `trace.id` (supplied by
+  the caller via `x-trace-id`, or auto-generated) plus tenant, session, agent key, and
+  device. A single agent run that spans several model and tool calls is stitched into
+  one trace. Events ship to your existing stack — Elasticsearch, Splunk HEC, or OTLP
+  (Datadog / Grafana / Jaeger).
+- **One audit + metrics view.** Central query/stats endpoints (`/v1/shield/audit`,
+  `/v1/shield/stats`) and a DLP-style dashboard (`/v1/tenant/me/guardrails/metrics`) give
+  severity split, daily trend, top issues, top users/devices, and recent blocked events —
+  across every model in the flow, all tenant-scoped.
+- **Tamper-evident when required.** An optional hash-chained + Ed25519-signed audit ledger
+  lets an external auditor verify the log offline with no Shield access. Opt-in via
+  `SHIELD_AUDIT_TAMPER_EVIDENT=1` (off by default). See
+  [Tamper-Evident Audit]({{ "/tamper-evident-audit/" | relative_url }}).
+
+Deeper reading: [Security Evaluation Response]({{ "/security-evaluation/" | relative_url }}).
+
+---
+
+## Multi-Agent & Concurrency
+
+### How do you handle real-time accuracy and race conditions with multiple agents?
+
+Two separate concerns — keeping checks fast/accurate under load, and staying correct when
+many agents act concurrently. Shield addresses each explicitly.
+
+**Real-time accuracy**
+
+- **Off-the-hot-path is a hard rule.** Governance, analytics, and read endpoints are
+  architecturally forbidden from adding latency to the guard path (`/guardrails/*`,
+  `cap/mint`, `tools/call`). Inspection runs against a **250 ms budget**; a guardrail that
+  exceeds it logs instead of blocking, so your app never stalls behind Shield.
+- **Policies evaluate concurrently, not sequentially.** Multiple custom policies (each its
+  own LLM call) run under `asyncio.gather`, so wall-clock is the slowest single policy, not
+  the sum. Accuracy is preserved: all policies always run, aggregation is worst-action-wins,
+  and violation ordering stays deterministic.
+- **Inter-agent (A2A) authorization runs in a deterministic fast tier** — no GPU/LLM in the
+  loop — to keep multi-agent hops real-time.
+
+**Race conditions**
+
+- **Capability tokens are single-use with atomic replay protection.** Each minted capability
+  carries a nonce burned via an atomic Redis `SET NX`; first use wins, and any concurrent
+  replay is detected and rejected. Two agents racing the same token can't both succeed.
+- **Audit appends are atomic and ordered.** The ledger uses a Redis compare-and-set that only
+  appends if the chain head still matches — no interleaving or reordering under concurrent
+  writers.
+- **Per-agent identity isolation.** Each agent process gets a token bound to a unique instance
+  ID (plus build hash, model version, session, parent agent). Revoking one instance burns
+  exactly its capabilities without touching the others.
+
+See [Agent Governance]({{ "/agent-governance/" | relative_url }}) and
+[Edge Fast Path]({{ "/edge-fast-path/" | relative_url }}).
+
+---
+
 ## Framework Integration
 
 ### Does it work with LangChain / CrewAI / OpenAI SDK?

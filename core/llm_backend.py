@@ -632,17 +632,26 @@ def _strictify_schema(schema: dict) -> dict:
 
 
 def _print_llm_request(endpoint_url: str, payload: dict):
-    """Print the exact LLM endpoint and request payload for debugging."""
+    """Print the exact LLM endpoint and request payload for debugging.
+
+    Logged at INFO (not DEBUG) because LLM_DEBUG is an explicit opt-in: the app's
+    default level is INFO, so a debug line never reaches log aggregators (Railway,
+    etc.) and the flag looked like a no-op. WARNING: the payload includes the full
+    prompt/messages (may contain PII) — turn LLM_DEBUG off in production once done.
+    """
     if not LLM_DEBUG:
         return
-    logger.debug("LLM REQUEST | URL: %s | PAYLOAD: %s", endpoint_url, json.dumps(payload, ensure_ascii=False))
+    logger.info("LLM REQUEST | URL: %s | PAYLOAD: %s", endpoint_url, json.dumps(payload, ensure_ascii=False))
 
 
 def _print_llm_response(endpoint_url: str, status_code: int, body: str):
-    """Print upstream LLM response details when debugging failures."""
+    """Print upstream LLM response details when debugging failures.
+
+    INFO-level for the same reason as _print_llm_request (LLM_DEBUG opt-in).
+    """
     if not LLM_DEBUG:
         return
-    logger.debug("LLM RESPONSE | URL: %s | STATUS: %d | BODY: %s", endpoint_url, status_code, body)
+    logger.info("LLM RESPONSE | URL: %s | STATUS: %d | BODY: %s", endpoint_url, status_code, body)
 
 
 def _chat_completions_url(server_url: str) -> str:
