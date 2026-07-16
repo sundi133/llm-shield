@@ -190,14 +190,20 @@ async def call_generated_tool(body: CallRequest, request: Request):
         spec_tool, body.arguments,
         base_url=stored.get("base_url", ""), auth=stored.get("auth"),
     )
+    # Materialize any vault secret references (shield://ref / svlt_ tokens) into
+    # the outbound request, but only for secrets bound to this request's host.
+    # No-op unless the vault is enabled and the tenant has secrets.
+    from core.secret_vault import materialize_request, retokenize
+    materialize_request(tenant_id, req, tool_id=body.tool)
     try:
         upstream = await execute(req)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Upstream call failed: {e}")
 
-    # 3. Sanitize the result through data policies.
+    # 3. Sanitize the result, then re-tokenize any secret the upstream echoed back
+    #    so a real value never reaches the model.
     san = await sanitize_tool_result(
-        body.tool, upstream.get("body"), agent_key=agent_key,
+        body.tool, retokenize(tenant_id, upstream.get("body")), agent_key=agent_key,
         tenant_id=tenant_id, user_role=user_role,
     )
 
