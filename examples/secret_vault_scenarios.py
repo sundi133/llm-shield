@@ -43,9 +43,9 @@ check("Bound API key", "failure: injected exfil", False, out == REAL, "attacker.
 
 # 2. Parent-domain binding -----------------------------------------------------
 reset()
-vault.create_vault_entry(T, "api_key", REAL, bindings=["stripe.com"])
+vault.create_vault_entry(T, "api_key", REAL, bindings=[".stripe.com"])
 out = materialize_obj(T, "shield://api_key", "https://api.stripe.com/v1")
-check("Domain binding", "success: subdomain of stripe.com", True, out == REAL, "api.stripe.com covered by stripe.com")
+check("Domain binding", "success: subdomain via .stripe.com", True, out == REAL, "api.stripe.com covered by .stripe.com")
 out = materialize_obj(T, "shield://api_key", "https://notstripe.com/v1")
 check("Domain binding", "failure: look-alike domain", False, out == REAL, "notstripe.com rejected")
 
