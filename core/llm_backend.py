@@ -415,6 +415,20 @@ def get_server_url(guardrail_name: Optional[str] = None) -> str:
     return _default_server_url
 
 
+def _nothink_suffix_enabled() -> bool:
+    """Whether to inject the Qwen thinking-suppression suffix on the vLLM path.
+
+    Default on: the stock model (votal-ai/vai35, Qwen-family) needs
+    "/no_think /set nothink" in the system message. For non-Qwen models the
+    tokens are just literal prompt text that can skew classification — set
+    VLLM_NOTHINK_SUFFIX=false when serving e.g.
+    nvidia/Nemotron-3.5-Content-Safety.
+    """
+    return os.getenv("VLLM_NOTHINK_SUFFIX", "true").strip().lower() not in (
+        "false", "0", "no",
+    )
+
+
 def _ensure_no_think(messages: list) -> list:
     """Append thinking suppression to the system message.
 
@@ -528,7 +542,8 @@ def _build_payload(
     if _is_openrouter_mode():
         return _build_openrouter_payload(messages, max_tokens, temperature, response_format)
 
-    messages = _ensure_no_think(messages)
+    if _nothink_suffix_enabled():
+        messages = _ensure_no_think(messages)
     payload = {
         "messages": messages,
         "max_tokens": max_tokens,
