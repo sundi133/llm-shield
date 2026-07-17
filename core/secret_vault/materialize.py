@@ -59,19 +59,30 @@ def is_self_host(binding: str) -> bool:
 def _binding_matches(destination: str, bindings: list[str]) -> bool:
     """True if the real outbound destination is covered by any binding.
 
-    A binding matches on exact host or as a parent-domain suffix (so
-    ``api.stripe.com`` is covered by a ``stripe.com`` binding), or when it appears
-    verbatim in the destination (covers tool-id bindings passed as the destination).
+    Matching is **exact host by default**: ``api.stripe.com`` matches only
+    ``api.stripe.com``, not its parent or siblings. To also cover subdomains,
+    prefix the binding with a dot: ``.stripe.com`` matches ``stripe.com`` and any
+    ``*.stripe.com``. A binding may also match a non-URL destination verbatim
+    (covers MCP tool-name bindings passed as the destination).
+
+    Exact-by-default is the least-privilege posture: binding a high-value key to
+    one host does not implicitly extend it to every subdomain.
     """
+    dest = destination.lower()
     host = _host_of(destination)
-    for b in bindings:
-        b = b.lower().strip().strip(".")
+    for raw in bindings:
+        b = raw.lower().strip()
         if not b:
             continue
-        bhost = _host_of(b) if ("://" in b or "/" in b) else b
-        if host == bhost or host.endswith("." + bhost):
+        if b == dest:  # exact tool-id / opaque destination match
             return True
-        if b == destination.lower():  # exact tool-id / opaque destination match
+        wildcard = b.startswith(".")
+        bhost = _host_of(b) if ("://" in b or "/" in b) else b.lstrip(".")
+        if not bhost:
+            continue
+        if host == bhost:
+            return True
+        if wildcard and host.endswith("." + bhost):
             return True
     return False
 
