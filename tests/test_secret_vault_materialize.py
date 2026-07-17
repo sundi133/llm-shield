@@ -41,14 +41,25 @@ class TestBindingMatch:
     def test_exact_host(self):
         assert _binding_matches("https://api.stripe.com/v1/charges", ["api.stripe.com"])
 
-    def test_parent_domain_suffix(self):
-        assert _binding_matches("https://api.stripe.com/x", ["stripe.com"])
+    def test_exact_host_does_not_cover_subdomain(self):
+        # least privilege: binding a host does NOT implicitly cover its subdomains
+        assert not _binding_matches("https://eu.api.stripe.com/x", ["api.stripe.com"])
+
+    def test_exact_host_does_not_cover_parent(self):
+        assert not _binding_matches("https://api.stripe.com/x", ["stripe.com"])
+
+    def test_leading_dot_covers_subdomain_and_apex(self):
+        assert _binding_matches("https://api.stripe.com/x", [".stripe.com"])
+        assert _binding_matches("https://stripe.com/x", [".stripe.com"])
+
+    def test_leading_dot_rejects_lookalike(self):
+        assert not _binding_matches("https://api.stripe.com.evil.io/x", [".stripe.com"])
 
     def test_non_matching_host(self):
         assert not _binding_matches("https://attacker.com/x", ["api.stripe.com"])
 
     def test_sibling_domain_not_matched(self):
-        assert not _binding_matches("https://notstripe.com/x", ["stripe.com"])
+        assert not _binding_matches("https://notstripe.com/x", [".stripe.com"])
 
     def test_bare_host_destination(self):
         assert _binding_matches("api.stripe.com", ["api.stripe.com"])

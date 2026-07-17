@@ -65,6 +65,12 @@ would never fire. Registration refuses it: set `SHIELD_SELF_HOSTS` to your plane
 hostnames (for example `shield.votal.ai,api.guardrails.votal.ai`) and a binding to
 any of them is rejected at `POST /v1/tenant/me/vault`.
 
+**Binding scope.** Host matching is **exact by default** (least privilege):
+`api.bank-co.com` covers only `api.bank-co.com`, not `eu.api.bank-co.com` or the
+parent `bank-co.com`. To cover a domain and all its subdomains, prefix the binding
+with a dot: `.bank-co.com` matches `bank-co.com` and any `*.bank-co.com`. Look-alike
+hosts like `api.bank-co.com.evil.io` never match.
+
 ## 3. Reference it instead of reading the real value
 
 In your agent or tool config, use the placeholder anywhere you would have used the
