@@ -34,6 +34,28 @@ def _host_of(destination: str) -> str:
     return host.lower().strip(".")
 
 
+def _self_hosts() -> list[str]:
+    """Shield's own plane hostnames (data plane + admin panel), from
+    SHIELD_SELF_HOSTS (comma-separated). A secret may never be bound to one."""
+    import os
+    raw = os.getenv("SHIELD_SELF_HOSTS", "")
+    return [h.strip() for h in raw.split(",") if h.strip()]
+
+
+def is_self_host(binding: str) -> bool:
+    """True if a binding points at a Shield plane, which is never a legitimate
+    egress target (materialization happens on the leg *out* of Shield to the real
+    upstream, so binding to Shield itself is a misconfiguration or exfil bait)."""
+    host = _host_of(binding)
+    if not host:
+        return False
+    for sh in _self_hosts():
+        sh = (_host_of(sh) if ("://" in sh or "/" in sh) else sh.lower().strip("."))
+        if sh and (host == sh or host.endswith("." + sh)):
+            return True
+    return False
+
+
 def _binding_matches(destination: str, bindings: list[str]) -> bool:
     """True if the real outbound destination is covered by any binding.
 

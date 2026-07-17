@@ -58,6 +58,13 @@ The response carries metadata only. `GET /v1/tenant/me/vault` lists your secrets
 neither endpoint ever returns the value. `bindings` is mandatory: an unbound secret
 is refused, because a secret usable at any destination is an exfiltration primitive.
 
+Bind to the **real upstream** the credential is for (`api.bank-co.com`), not to a
+Shield plane. Materialization happens on the leg *out* of Shield to the upstream,
+never on the leg *into* the data plane or admin panel, so binding to a Shield host
+would never fire. Registration refuses it: set `SHIELD_SELF_HOSTS` to your plane
+hostnames (for example `shield.votal.ai,api.guardrails.votal.ai`) and a binding to
+any of them is rejected at `POST /v1/tenant/me/vault`.
+
 ## 3. Reference it instead of reading the real value
 
 In your agent or tool config, use the placeholder anywhere you would have used the
