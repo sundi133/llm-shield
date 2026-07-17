@@ -34,3 +34,4 @@ jobs:
         run: |
           PYTHONPATH=. python examples/secret_vault_scenarios.py
           PYTHONPATH=. python examples/secret_vault_env_ab.py
+          PYTHONPATH=. python examples/secret_vault_langchain_weather.py
