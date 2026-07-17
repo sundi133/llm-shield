@@ -1,4 +1,9 @@
-FROM vllm/vllm-openai:latest
+# Pinnable at build time: some models bound the supported vLLM version
+# (e.g. nvidia/Nemotron-3.5-Content-Safety documents vllm>=0.11.0,<=0.20.2),
+# so build with --build-arg VLLM_BASE_IMAGE=vllm/vllm-openai:<tag> for
+# repeatable deploys. Default stays "latest" for backwards compatibility.
+ARG VLLM_BASE_IMAGE=vllm/vllm-openai:latest
+FROM ${VLLM_BASE_IMAGE}
 
 # Install additional tools and dependencies for the application
 RUN apt-get update && apt-get install -y \

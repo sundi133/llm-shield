@@ -42,20 +42,52 @@ else
   MAX_BATCHED_TOKENS="${MAX_BATCHED_TOKENS:-8196}"
   GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.85}"
 
-  python3 -m vllm.entrypoints.openai.api_server \
-    --model "$MODEL_NAME" \
-    --host "$VLLM_HOST" \
-    --port "$VLLM_PORT" \
-    --dtype bfloat16 \
-    --quantization fp8 \
-    --kv-cache-dtype fp8 \
-    --max-model-len "$MAX_MODEL_LEN" \
-    --max-num-batched-tokens "$MAX_BATCHED_TOKENS" \
-    --max-num-seqs "$MAX_NUM_SEQS" \
-    --gpu-memory-utilization "$GPU_MEM_UTIL" \
-    --enable-prefix-caching \
-    --language-model-only \
-    --performance-mode throughput &
+  # Model-dependent flags. Defaults reproduce the historical votal-ai/vai35
+  # (Qwen-family) launch exactly. Set a value to "none" to omit the flag —
+  # needed when serving other models (e.g.
+  # MODEL_NAME=nvidia/Nemotron-3.5-Content-Safety) or GPUs without fp8.
+  VLLM_DTYPE="${VLLM_DTYPE:-bfloat16}"
+  VLLM_QUANTIZATION="${VLLM_QUANTIZATION:-fp8}"
+  VLLM_KV_CACHE_DTYPE="${VLLM_KV_CACHE_DTYPE:-fp8}"
+  VLLM_LANGUAGE_MODEL_ONLY="${VLLM_LANGUAGE_MODEL_ONLY:-true}"
+  VLLM_PERFORMANCE_MODE="${VLLM_PERFORMANCE_MODE:-throughput}"
+
+  VLLM_ARGS=(
+    --model "$MODEL_NAME"
+    --host "$VLLM_HOST"
+    --port "$VLLM_PORT"
+    --dtype "$VLLM_DTYPE"
+    --max-model-len "$MAX_MODEL_LEN"
+    --max-num-batched-tokens "$MAX_BATCHED_TOKENS"
+    --max-num-seqs "$MAX_NUM_SEQS"
+    --gpu-memory-utilization "$GPU_MEM_UTIL"
+    --enable-prefix-caching
+  )
+  if [ -n "$VLLM_QUANTIZATION" ] && [ "$VLLM_QUANTIZATION" != "none" ]; then
+    VLLM_ARGS+=(--quantization "$VLLM_QUANTIZATION")
+  fi
+  if [ -n "$VLLM_KV_CACHE_DTYPE" ] && [ "$VLLM_KV_CACHE_DTYPE" != "none" ]; then
+    VLLM_ARGS+=(--kv-cache-dtype "$VLLM_KV_CACHE_DTYPE")
+  fi
+  if [ "$VLLM_LANGUAGE_MODEL_ONLY" = "true" ]; then
+    VLLM_ARGS+=(--language-model-only)
+  fi
+  if [ -n "$VLLM_PERFORMANCE_MODE" ] && [ "$VLLM_PERFORMANCE_MODE" != "none" ]; then
+    VLLM_ARGS+=(--performance-mode "$VLLM_PERFORMANCE_MODE")
+  fi
+  # Optional stable alias for /v1/models (unset = vLLM serves the repo ID,
+  # exactly as before).
+  if [ -n "$SERVED_MODEL_NAME" ]; then
+    VLLM_ARGS+=(--served-model-name "$SERVED_MODEL_NAME")
+  fi
+
+  # Test hook: print the resolved args and exit without launching anything.
+  if [ "$VLLM_DRY_RUN" = "true" ]; then
+    echo "DRY_RUN_ARGS: ${VLLM_ARGS[*]}"
+    exit 0
+  fi
+
+  python3 -m vllm.entrypoints.openai.api_server "${VLLM_ARGS[@]}" &
 
   VLLM_PID=$!
 
