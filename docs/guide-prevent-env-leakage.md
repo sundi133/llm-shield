@@ -20,6 +20,122 @@ This guide covers the developer flow and how to test it yourself.
 
 > Requires `SECRET_VAULT_ENABLED=true`. Feature is off by default.
 
+## The risk, and how the vault removes it
+
+The danger is not any single call. It is that the secret lives inside the process
+the model can act over, so every tool and every trace is a way out. The vault
+moves the secret out of the process: the env holds only a reference, and the real
+key is materialized only on the bound egress.
+
+<style>
+.vd { max-width:100%; overflow-x:auto; margin:1rem 0 .3rem; }
+.vd svg { min-width:600px; height:auto; display:block; }
+.vd .h { font-size:15px; font-weight:600; fill:#1f2430; }
+.vd .t { font-size:13px; fill:#1f2430; }
+.vd .s { font-size:11.5px; fill:#5b616e; }
+.vd-cap { font-size:13px; color:#5b616e; margin:0 0 1.6rem; }
+</style>
+
+<div class="vd">
+<svg width="100%" viewBox="0 0 680 350" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Without Shield the Stripe key is in the process and can leak">
+<defs>
+<marker id="d1ad" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d1493f"/></marker>
+<marker id="d1aa" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#4f46e5"/></marker>
+</defs>
+<text class="h" x="20" y="26">Without Shield: the key is in the process</text>
+<text class="s" x="20" y="45">the secret lives in the agent process, so every tool and trace is a way out</text>
+<rect x="20" y="96" width="150" height="56" rx="8" fill="#ffffff" stroke="#b6bcc8"/>
+<text class="t" x="95" y="120" text-anchor="middle">untrusted input</text>
+<text class="s" x="95" y="138" text-anchor="middle">ticket, web, email</text>
+<line x1="170" y1="124" x2="212" y2="124" stroke="#d1493f" marker-end="url(#d1ad)"/>
+<text class="s" x="191" y="116" text-anchor="middle" fill="#d1493f">injection</text>
+<rect x="214" y="72" width="252" height="216" rx="10" fill="#f4f5f8" stroke="#b6bcc8"/>
+<text class="s" x="226" y="90" fill="#6b7280">agent process</text>
+<rect x="228" y="98" width="224" height="42" rx="7" fill="#ffffff" stroke="#d1493f" stroke-width="1.5"/>
+<text class="t" x="340" y="116" text-anchor="middle">os.environ</text>
+<text class="s" x="340" y="132" text-anchor="middle" fill="#d1493f">STRIPE_KEY = sk_live_…</text>
+<rect x="228" y="150" width="224" height="30" rx="7" fill="#ffffff" stroke="#b6bcc8"/>
+<text class="s" x="340" y="169" text-anchor="middle">the LLM picks which tool to call</text>
+<rect x="228" y="190" width="108" height="42" rx="7" fill="#ffffff" stroke="#b6bcc8"/>
+<text class="t" x="282" y="208" text-anchor="middle">create_charge</text>
+<text class="s" x="282" y="223" text-anchor="middle">payment</text>
+<rect x="344" y="190" width="108" height="42" rx="7" fill="#ffffff" stroke="#b6bcc8"/>
+<text class="t" x="398" y="208" text-anchor="middle">http / shell</text>
+<text class="s" x="398" y="223" text-anchor="middle">general</text>
+<text class="s" x="340" y="256" text-anchor="middle" fill="#6b7280">every tool can read the whole process</text>
+<rect x="506" y="90" width="154" height="44" rx="8" fill="#ffffff" stroke="#d1493f" stroke-width="1.5"/>
+<text class="t" x="583" y="110" text-anchor="middle">attacker.io</text>
+<text class="s" x="583" y="126" text-anchor="middle" fill="#d1493f">gets sk_live_…</text>
+<rect x="506" y="150" width="154" height="44" rx="8" fill="#ffffff" stroke="#d1493f" stroke-width="1.5"/>
+<text class="t" x="583" y="170" text-anchor="middle">trace store</text>
+<text class="s" x="583" y="186" text-anchor="middle" fill="#d1493f">LangSmith, logs</text>
+<rect x="506" y="212" width="154" height="44" rx="8" fill="#ffffff" stroke="#4f46e5"/>
+<text class="t" x="583" y="232" text-anchor="middle">api.stripe.com</text>
+<text class="s" x="583" y="248" text-anchor="middle" fill="#4f46e5">legit charge</text>
+<line x1="466" y1="150" x2="504" y2="115" stroke="#d1493f" marker-end="url(#d1ad)"/>
+<text class="s" x="486" y="146" text-anchor="middle" fill="#d1493f">1</text>
+<line x1="466" y1="172" x2="504" y2="172" stroke="#d1493f" marker-end="url(#d1ad)"/>
+<text class="s" x="486" y="166" text-anchor="middle" fill="#d1493f">2</text>
+<line x1="466" y1="210" x2="504" y2="232" stroke="#4f46e5" marker-end="url(#d1aa)"/>
+<text class="s" x="20" y="312">1  prompt injection steers the general tool to exfiltrate the key.</text>
+<text class="s" x="20" y="332">2  tracing captures the tool headers, so the key lands in a third-party store (no attacker needed).</text>
+</svg>
+</div>
+<p class="vd-cap">The setup everyone builds: the key sits in <code>os.environ</code>, so a general tool (via injection) or your tracing can read it. The two red arrows are leaks.</p>
+
+<div class="vd">
+<svg width="100%" viewBox="0 0 680 384" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="With Shield the env holds only a placeholder and the leaks go inert">
+<defs>
+<marker id="d2ad" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d1493f"/></marker>
+<marker id="d2ag" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1f9d63"/></marker>
+<marker id="d2aa" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#4f46e5"/></marker>
+</defs>
+<text class="h" x="20" y="26">With Shield: the key is out of the process</text>
+<text class="s" x="20" y="45">the env holds only a reference; the real key appears only on the bound egress</text>
+<rect x="20" y="96" width="150" height="56" rx="8" fill="#ffffff" stroke="#b6bcc8"/>
+<text class="t" x="95" y="120" text-anchor="middle">untrusted input</text>
+<text class="s" x="95" y="138" text-anchor="middle">ticket, web, email</text>
+<line x1="170" y1="124" x2="212" y2="124" stroke="#d1493f" marker-end="url(#d2ad)"/>
+<text class="s" x="191" y="116" text-anchor="middle" fill="#d1493f">injection</text>
+<rect x="214" y="72" width="252" height="180" rx="10" fill="#f4f5f8" stroke="#b6bcc8"/>
+<text class="s" x="226" y="90" fill="#6b7280">agent process</text>
+<rect x="228" y="98" width="224" height="42" rx="7" fill="#ffffff" stroke="#1f9d63" stroke-width="1.5"/>
+<text class="t" x="340" y="116" text-anchor="middle">os.environ</text>
+<text class="s" x="340" y="132" text-anchor="middle" fill="#1f9d63">STRIPE_KEY = shield://stripe_key</text>
+<rect x="228" y="150" width="224" height="28" rx="7" fill="#ffffff" stroke="#b6bcc8"/>
+<text class="s" x="340" y="168" text-anchor="middle">the LLM picks which tool to call</text>
+<rect x="228" y="186" width="108" height="40" rx="7" fill="#ffffff" stroke="#b6bcc8"/>
+<text class="t" x="282" y="204" text-anchor="middle">create_charge</text>
+<text class="s" x="282" y="218" text-anchor="middle">payment</text>
+<rect x="344" y="186" width="108" height="40" rx="7" fill="#ffffff" stroke="#b6bcc8"/>
+<text class="t" x="398" y="204" text-anchor="middle">http / shell</text>
+<text class="s" x="398" y="218" text-anchor="middle">general</text>
+<text class="s" x="340" y="244" text-anchor="middle" fill="#6b7280">tools now read only a placeholder</text>
+<rect x="506" y="90" width="154" height="44" rx="8" fill="#ffffff" stroke="#1f9d63" stroke-width="1.5"/>
+<text class="t" x="583" y="110" text-anchor="middle">attacker.io</text>
+<text class="s" x="583" y="126" text-anchor="middle" fill="#1f9d63">gets shield://… inert</text>
+<rect x="506" y="150" width="154" height="44" rx="8" fill="#ffffff" stroke="#1f9d63" stroke-width="1.5"/>
+<text class="t" x="583" y="170" text-anchor="middle">trace store</text>
+<text class="s" x="583" y="186" text-anchor="middle" fill="#1f9d63">logs shield://… inert</text>
+<line x1="466" y1="150" x2="504" y2="114" stroke="#1f9d63" marker-end="url(#d2ag)"/>
+<text class="s" x="487" y="146" text-anchor="middle" fill="#1f9d63">&#10003;</text>
+<line x1="466" y1="172" x2="504" y2="172" stroke="#1f9d63" marker-end="url(#d2ag)"/>
+<text class="s" x="487" y="166" text-anchor="middle" fill="#1f9d63">&#10003;</text>
+<line x1="294" y1="252" x2="294" y2="298" stroke="#4f46e5" marker-end="url(#d2aa)"/>
+<text class="s" x="302" y="278" fill="#6b7280">via Shield</text>
+<rect x="214" y="300" width="164" height="48" rx="8" fill="#ffffff" stroke="#4f46e5"/>
+<text class="t" x="296" y="320" text-anchor="middle">Shield egress</text>
+<text class="s" x="296" y="336" text-anchor="middle">materialize at bound host</text>
+<line x1="378" y1="324" x2="428" y2="324" stroke="#4f46e5" marker-end="url(#d2aa)"/>
+<text class="s" x="403" y="316" text-anchor="middle" fill="#4f46e5">real key</text>
+<rect x="430" y="300" width="164" height="48" rx="8" fill="#ffffff" stroke="#4f46e5"/>
+<text class="t" x="512" y="320" text-anchor="middle">api.stripe.com</text>
+<text class="s" x="512" y="336" text-anchor="middle" fill="#4f46e5">real sk_live_… (only here)</text>
+<text class="s" x="20" y="372">injection still fires and tracing still logs, but both capture only the inert placeholder.</text>
+</svg>
+</div>
+<p class="vd-cap">Same attack surface, same injection, same tracing. The crown-jewel chip is out of the process, so every red arrow turns green and the real key exists only on the one egress to Stripe.</p>
+
 ## 1. One-time setup (operator)
 
 Key management is on-prem, no cloud KMS. Provide a key-encryption key (KEK):
