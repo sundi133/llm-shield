@@ -103,6 +103,15 @@ def create_vault_entry(
         # Binding is the anti-exfil control; an unbound secret is unusable, so we
         # refuse to store one rather than create a footgun.
         raise ValueError("at least one binding (allowed destination) is required")
+    from core.secret_vault.materialize import is_self_host
+    for b in bindings:
+        # A secret is materialized on the leg out of Shield to the real upstream,
+        # never on the leg into a Shield plane. Binding to a Shield host is a
+        # misconfiguration (or exfil bait), so refuse it.
+        if is_self_host(b):
+            raise ValueError(
+                f"cannot bind a secret to a Shield plane ('{b}'); "
+                "bind it to the real upstream host instead")
     if mode not in ("inject", "token"):
         raise ValueError("mode must be 'inject' or 'token'")
 

@@ -196,6 +196,19 @@ class TestVaultStore:
         assert vs.resolve_secret_value("t2", "k") == "t2-value"
         assert len(vs.list_vault_entries("t1")) == 1
 
+    def test_rejects_binding_to_shield_plane(self, monkeypatch):
+        monkeypatch.setenv("SHIELD_SELF_HOSTS", "shield.votal.ai,api.guardrails.votal.ai")
+        vs = self._store()
+        for host in ("api.guardrails.votal.ai",           # data plane
+                     "shield.votal.ai",                    # admin panel
+                     "https://eu.api.guardrails.votal.ai", # subdomain of a plane
+                     "shield.votal.ai/v1/tenant"):         # path form
+            with pytest.raises(ValueError, match="Shield plane"):
+                vs.create_vault_entry("t", "k", "V", bindings=[host])
+        # a real upstream is accepted
+        pub = vs.create_vault_entry("t", "k", "V", bindings=["api.bank-co.com"])
+        assert pub["bindings"] == ["api.bank-co.com"]
+
     def test_dek_cache_avoids_repeat_unwrap(self, monkeypatch):
         from core.secret_vault import keyprovider
         vs = self._store()
