@@ -19,6 +19,7 @@ groups:
       - { title: Agentic Guardrails, url: /agentic-guardrails-guide/ }
       - { title: Role-Based Access (RBAC), url: /rbac/ }
       - { title: Tool Data Policies, url: /tool-data-policies/ }
+      - { title: Secret Vault, url: /prevent-secret-leakage/ }
       - { title: Policy Lifecycle, url: /policy-lifecycle/ }
       - { title: Compliance Mapping, url: /compliance-mapping/ }
 
