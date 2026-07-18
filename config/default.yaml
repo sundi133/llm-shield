@@ -199,6 +199,17 @@ guardrails:
       replacement_message: "I can only provide information about our products and services."
       detect_indirect: false
 
+  insecure_output:
+    enabled: false  # Opt-in - rendering context is app-specific
+    action: block
+    settings:
+      detect_categories:
+        - html_injection
+        - markdown_injection
+        - sql_injection
+      sanitize: false
+      ignore_fenced_code: true
+
   # --- Agentic guardrails ---
   rbac_guard:
     enabled: true

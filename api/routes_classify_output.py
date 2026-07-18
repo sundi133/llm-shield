@@ -256,6 +256,9 @@ _NAME_MAP = {
     "competitor-mention": "competitor_mention",
     "competitor_mention": "competitor_mention",
     "competitor-mention-filter": "competitor_mention",
+    "insecure-output": "insecure_output",
+    "insecure_output": "insecure_output",
+    "insecure-output-handling": "insecure_output",
     "role-redaction": "role_redaction",
     "role_redaction": "role_redaction",
 }
@@ -341,6 +344,21 @@ def _translate_settings(guardrail_name: str, raw: dict) -> dict:
             settings["detect_indirect"] = raw["detect_indirect"]
         if "detectIndirect" in raw:
             settings["detect_indirect"] = raw["detectIndirect"]
+
+    elif guardrail_name == "insecure_output":
+        # Detection categories from UI chips
+        if "detect_categories" in raw:
+            settings["detect_categories"] = raw["detect_categories"]
+        if "detectCategories" in raw:
+            settings["detect_categories"] = raw["detectCategories"]
+        # Sanitize toggle (escape HTML / neutralize dangerous URI schemes)
+        if "sanitize" in raw:
+            settings["sanitize"] = raw["sanitize"]
+        # Skip fenced code blocks toggle
+        if "ignore_fenced_code" in raw:
+            settings["ignore_fenced_code"] = raw["ignore_fenced_code"]
+        if "ignoreFencedCode" in raw:
+            settings["ignore_fenced_code"] = raw["ignoreFencedCode"]
 
     elif guardrail_name == "role_redaction":
         if "redaction_marker" in raw:

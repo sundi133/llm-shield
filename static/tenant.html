@@ -4827,7 +4827,7 @@ const INPUT_GUARDRAILS = [
 ];
 const OUTPUT_GUARDRAILS = [
   'hallucinated_links', 'tone_enforcement', 'bias_detection',
-  'pii_leakage', 'competitor_mention'
+  'pii_leakage', 'competitor_mention', 'insecure_output'
 ];
 const GUARDRAIL_META = {
   adversarial_detection:     { label: 'Adversarial Prompt Detection',      desc: 'Detect jailbreaks, prompt injections, and adversarial patterns in real-time',       icon: '🛡', color: '#6366f1' },
@@ -4843,6 +4843,7 @@ const GUARDRAIL_META = {
   bias_detection:            { label: 'Bias Detection',                    desc: 'Detect and mitigate gender, racial, age, and political bias',                       icon: '⚖', color: '#eab308' },
   pii_leakage:               { label: 'PII Leakage Detection',            desc: 'Detect and redact sensitive data like SSNs, credit cards, and API keys in outputs',  icon: '🔐', color: '#3b82f6' },
   competitor_mention:        { label: 'Competitor Mention Filter',         desc: 'Prevent AI from recommending or mentioning competitor brands and products',          icon: '🚫', color: '#ef4444' },
+  insecure_output:           { label: 'Insecure Output Handling',          desc: 'Detect and sanitize XSS, dangerous markdown links, and SQL injection in outputs',    icon: '🧯', color: '#f97316' },
   length_limit:              { label: 'Length Limit',                      desc: 'Limit input message length',                                                        icon: '📏', color: '#6b7280' },
   pii_detection:             { label: 'PII Detection',                    desc: 'Detect personally identifiable information in inputs',                               icon: '🔐', color: '#3b82f6' },
   sentiment:                 { label: 'Sentiment Analysis',                desc: 'Analyze sentiment of input messages',                                                icon: '😊', color: '#10b981' },
@@ -4977,6 +4978,14 @@ const GUARDRAIL_SETTINGS_EXAMPLES = {
       competitors: ["CompetitorA", "CompetitorB", "CompetitorC"],
       also_block_urls: true,
       replacement: "our platform"
+    }
+  },
+  insecure_output: {
+    _desc: "Detect XSS/HTML injection, dangerous markdown links, and SQL injection in LLM outputs before your app renders them",
+    example: {
+      detect_categories: ["html_injection", "markdown_injection", "sql_injection"],
+      sanitize: false,
+      ignore_fenced_code: true
     }
   },
   safety_check: {
@@ -5814,6 +5823,7 @@ const DEFAULT_POLICIES = {
     bias_detection:     { enabled: true, action: 'block', settings: { threshold: 0.60 } },
     pii_leakage:        { enabled: true, action: 'block', settings: {} },
     competitor_mention:  { enabled: true, action: 'block', settings: {} },
+    insecure_output:    { enabled: true, action: 'block', settings: {} },
   },
 };
 
