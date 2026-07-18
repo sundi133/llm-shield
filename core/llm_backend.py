@@ -114,6 +114,41 @@ def parse_csv_response(raw: str, fields: list[str]) -> dict:
                 result[name] = val
     return result
 
+
+def as_float(value, default: float = 0.0) -> float:
+    """Coerce an LLM-parsed field to a float. Never raises.
+
+    ``parse_csv_response`` leaves a value as a *string* when it is not numeric, so
+    a model answering ``high`` or ``~0.95`` instead of ``0.95`` would otherwise
+    blow up the first numeric use of it — either the threshold comparison
+    (``'>=' not supported between instances of 'str' and 'float'``) or the
+    ``{confidence:.2f}`` formatting. Both were observed in production.
+
+    Tolerates the shapes models actually emit (``"0.95"``, ``" 0.95 "``, ``"95%"``,
+    ``"~0.9"``, ``">0.8"``). Anything still unparseable returns ``default`` — 0.0
+    for a confidence, i.e. below every threshold, which matches this module's
+    existing fail-open posture on a bad LLM response rather than blocking on
+    garbage.
+    """
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        s = value.strip().strip('"').strip("'").lstrip("~<>=").strip()
+        if s.endswith("%"):
+            s = s[:-1].strip()
+            try:
+                return float(s) / 100.0
+            except ValueError:
+                return default
+        try:
+            return float(s)
+        except ValueError:
+            return default
+    return default
+
+
 import httpx
 
 import config.schema as _config_module

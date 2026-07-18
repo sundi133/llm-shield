@@ -163,7 +163,7 @@ class GoalDriftDetectionGuardrail(BaseGuardrail):
         history_text = "; ".join(history[-5:]) if history else "(no prior actions)"
 
         try:
-            from core.llm_backend import async_llm_call, parse_csv_response
+            from core.llm_backend import as_float, async_llm_call, parse_csv_response
 
             prompt = _SYSTEM_PROMPT.format(
                 goal=goal_text,
@@ -192,7 +192,7 @@ class GoalDriftDetectionGuardrail(BaseGuardrail):
         elapsed = (time.perf_counter() - start) * 1000
 
         is_drifting = result.get("is_drifting", False)
-        confidence = result.get("confidence", 0.0)
+        confidence = as_float(result.get("confidence"))
         category = result.get("category", "on_task")
 
         # Update rolling drift score

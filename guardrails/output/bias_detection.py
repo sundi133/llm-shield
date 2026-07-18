@@ -4,7 +4,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call, parse_csv_response
+from core.llm_backend import as_float, async_llm_call, parse_csv_response
 from core.text_utils import estimate_tokens, chunk_text, adaptive_chunk_budget
 
 _SYSTEM_PROMPT_TEMPLATE = (
@@ -59,7 +59,7 @@ class BiasDetectionGuardrail(BaseGuardrail):
             )
 
         biased = result.get("biased", False)
-        bias_score = result.get("bias_score", 0.0)
+        bias_score = as_float(result.get("bias_score"))
         bias_type = result.get("bias_type", "none")
         severity = result.get("severity", "none")
         elapsed = (time.perf_counter() - start) * 1000

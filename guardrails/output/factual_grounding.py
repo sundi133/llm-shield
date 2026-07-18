@@ -4,7 +4,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call, parse_csv_response
+from core.llm_backend import as_float, async_llm_call, parse_csv_response
 from core.text_utils import estimate_tokens, chunk_text, adaptive_chunk_budget
 
 _SYSTEM_PROMPT = (
@@ -71,7 +71,7 @@ class FactualGroundingGuardrail(BaseGuardrail):
             )
 
         grounded = result.get("grounded", True)
-        confidence = result.get("confidence", 1.0)
+        confidence = as_float(result.get("confidence"), 1.0)
         unsupported_claim = result.get("unsupported_claim", "")
         elapsed = (time.perf_counter() - start) * 1000
 

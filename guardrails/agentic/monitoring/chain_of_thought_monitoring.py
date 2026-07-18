@@ -6,7 +6,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call, parse_csv_response
+from core.llm_backend import as_float, async_llm_call, parse_csv_response
 
 _DEFAULT_FAST_PATTERNS = [
     r"bypass\s+.*security",
@@ -85,7 +85,7 @@ class ChainOfThoughtMonitoringGuardrail(BaseGuardrail):
 
         elapsed = (time.perf_counter() - start) * 1000
         is_unsafe = result.get("is_unsafe", False)
-        confidence = result.get("confidence", 0.0)
+        confidence = as_float(result.get("confidence"))
         category = result.get("category", "none")
 
         if is_unsafe and confidence >= threshold:
