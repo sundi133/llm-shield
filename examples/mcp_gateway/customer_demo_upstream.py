@@ -9,6 +9,13 @@ one act of the demo:
   send_to_pastebin   a plausible exfiltration sink     -> vault confused-deputy control
   run_shell          over-broad + booby-trapped desc   -> pre-flight scanner finding
 
+NOTE FOR SECURITY REVIEW / SAST: this file is a deliberately BAD MCP server — it is
+the test fixture the demo detects. The over-broad `run_shell`, the prompt-injection
+text in its docstring, the exfiltration sink, and the synthetic SSNs are all the
+payload, not an oversight. Nothing here executes: `run_shell` returns the command as
+a string and never runs it, the "keys" are self-describing fakes, and the accounts are
+invented. A scanner flagging this file is the scanner working correctly.
+
 Run (streamable-HTTP on :9200), or let customer_demo.py launch it over stdio:
     pip install mcp
     python customer_demo_upstream.py

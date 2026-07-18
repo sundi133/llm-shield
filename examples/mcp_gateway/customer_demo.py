@@ -39,14 +39,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-# Enable the vault in software-key mode BEFORE importing core (Part 2). This is a
-# throwaway demo KEK; production uses a real software KEK or HashiCorp Vault Transit.
+# Enable the vault in software-key mode BEFORE importing core (Part 2). The KEK is
+# generated fresh per run and never persisted — the demo registers and deletes its
+# secret inside this one process, so nothing needs to survive it, and no key material
+# lives in the repo. Production uses a managed software KEK or HashiCorp Vault Transit.
 os.environ.setdefault("SECRET_VAULT_ENABLED", "true")
 os.environ.setdefault("SECRET_VAULT_KEY_PROVIDER", "software")
-os.environ.setdefault(
-    "SECRET_VAULT_KEK",
-    base64.b64encode(b"customer-demo-kek-customer-demo-").decode(),  # 32 bytes
-)
+os.environ.setdefault("SECRET_VAULT_KEK", base64.b64encode(os.urandom(32)).decode())
 
 SHIELD = os.environ.get("SHIELD_URL", "").rstrip("/")
 TENANT_KEY = os.environ.get("TENANT_KEY", "")
@@ -117,7 +116,9 @@ def part2_secret_vault():
     from core.secret_vault.materialize import materialize_obj, retokenize
 
     tenant = "customer-demo-tenant"
-    REAL_KEY = "sk-partner-LIVE-9f3ab204"
+    # Stands in for a real partner credential. Deliberately self-describing: it is
+    # never sent anywhere, and nothing here should look copy-pasteable as a secret.
+    REAL_KEY = "sk-DEMO-not-a-real-key-0000"
 
     # Register the secret, BOUND to exactly one tool. The developer/agent only ever
     # holds the placeholder `shield://partner_key` — never the real value.
