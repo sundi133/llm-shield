@@ -1,3 +1,9 @@
 # Sample upstream MCP server for the gateway demo. The demo client itself uses
 # only the Python stdlib (urllib), so nothing is needed for demo.py.
-mcp>=1.2.0     # FastMCP, for upstream_server.py
+mcp>=1.2.0     # FastMCP, for upstream_server.py / customer_demo_upstream.py
+
+# customer_demo.py extras:
+#   PART 1 (scan)  -> the `shield-mcp` CLI (separate package): `pipx install shield-mcp`
+#                     or `npx @votal/mcp-scan`. Skipped cleanly if absent.
+#   PART 2 (vault) -> imports Shield's real vault core, so run from the repo with the
+#                     repo requirements installed (needs `cryptography`).

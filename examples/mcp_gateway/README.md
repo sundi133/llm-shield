@@ -82,6 +82,43 @@ configured, on an unmodified server.
 > (ngrok / deploy) and point `UPSTREAM_URL` at the public address. For a no-tunnel
 > setup, deploy the upstream to Railway: see [RAILWAY.md](RAILWAY.md).
 
+## Customer demo — scan · vault · output DLP (one script)
+
+`customer_demo.py` + `customer_demo_upstream.py` tell the three-part Shield-for-MCP
+story in a single run. Two parts need **no Shield deployment**, so it runs on any
+laptop:
+
+| Part | Shows | Needs a deployed Shield? |
+|---|---|---|
+| **1. Pre-flight scan** | `shield-mcp scan` flags poisoned tool descriptions + an over-broad `run_shell` tool **before** an agent connects | no (offline heuristics) |
+| **2. Secret vault** | the agent holds only `shield://partner_key`; the real key is materialized **only** on the bound tool's hop, stays inert for an exfil sink, and is scrubbed from any echoed output | no (runs Shield's real vault core in-process with a demo key) |
+| **3. Output DLP** | `account_details` returns SSN/email from an unmodified upstream; Shield **withholds or redacts** it on the way out, per role | yes (the decision is model-backed, on the data plane) |
+
+```bash
+cd examples/mcp_gateway
+pip install -r requirements.txt          # + `pipx install shield-mcp` for Part 1
+
+# Parts 1 + 2 (no Shield needed):
+python customer_demo.py
+
+# Add Part 3 against your Shield (Part 3 self-skips if these are unset):
+export SHIELD_URL=https://api.guardrails.votal.ai
+export TENANT_KEY=sk-...
+# The gateway dials the upstream from ITS side, so a remote Shield cannot reach
+# your laptop. Expose it first:  ngrok http 9200
+export UPSTREAM_URL=https://<id>.ngrok-free.app/mcp
+python customer_demo.py
+```
+
+If you point a remote `SHIELD_URL` at a `localhost` upstream, Part 3 says so and
+prints the fix rather than failing later with an opaque transport error. With a
+local Shield (`SHIELD_URL=http://localhost:8080`), `http://localhost:9200/mcp`
+works as-is.
+
+The upstream (`customer_demo_upstream.py`) never imports Shield — it's the "server
+you don't control." The vault materialize/retokenize shown in Part 2 is the exact
+code the gateway runs inside every `tools/call`.
+
 ## What to notice
 
 - `upstream_server.py` has **zero** Shield code — a real customer's server would be
