@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="345" viewBox="0 0 680 345" role="img" aria-labelledby="ttl dsc">
+<title id="ttl">Votal Shield MCP gateway data flow</title>
+<desc id="dsc">An agent such as Claude connects to the Votal Shield gateway, which enforces policy and then forwards the call to the customer's unchanged MCP server. Inside the gateway every tools/call passes four stages: RBAC role-to-tool check, input screening, the tool running on the customer's server, and output DLP that redacts or withholds. A direct path from the agent to the MCP server is marked as one that must be blocked.</desc>
+<style>
+  .t{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;font-weight:500;fill:#1f2933}
+  .s{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:12px;font-weight:400;fill:#5c6873}
+  .nb{fill:#e8effc;stroke:#4a7fd4;stroke-width:.75}
+  .ng{fill:#f1f1ef;stroke:#a3a29c;stroke-width:.75}
+  .arr{stroke:#8a949e;stroke-width:1.5;fill:none}
+  .box{fill:none;stroke:#c9c8c2;stroke-width:.75;stroke-dasharray:4 4}
+  .blk{stroke:#dc4c3f;stroke-width:1.5;fill:none}
+  @media (prefers-color-scheme:dark){
+    .t{fill:#e6e6e3}.s{fill:#a8a8a2}
+    .nb{fill:#1c2c45;stroke:#5b8ad6}.ng{fill:#2a2a27;stroke:#6e6d68}
+    .arr{stroke:#8a8a84}.box{stroke:#4a4a45}
+  }
+</style>
+<defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<rect class="ng" x="40" y="45" width="170" height="58" rx="4"/>
+<text class="t" x="125" y="70" text-anchor="middle">Claude / agent</text>
+<text class="s" x="125" y="88" text-anchor="middle">code, desktop, custom</text>
+
+<rect class="nb" x="255" y="45" width="170" height="58" rx="4"/>
+<text class="t" x="340" y="70" text-anchor="middle">Votal gateway</text>
+<text class="s" x="340" y="88" text-anchor="middle">policy enforced here</text>
+
+<rect class="ng" x="470" y="45" width="170" height="58" rx="4"/>
+<text class="t" x="555" y="70" text-anchor="middle">Your MCP server</text>
+<text class="s" x="555" y="88" text-anchor="middle">unchanged code</text>
+
+<line class="arr" x1="212" y1="74" x2="251" y2="74" marker-end="url(#a)"/>
+<line class="arr" x1="427" y1="74" x2="466" y2="74" marker-end="url(#a)"/>
+
+<path class="blk" d="M125 108 L125 140 L322 140" stroke-dasharray="5 4"/>
+<path class="blk" d="M358 140 L555 140 L555 108" stroke-dasharray="5 4" marker-end="url(#a)"/>
+<line class="blk" x1="333" y1="133" x2="347" y2="147" stroke-linecap="round"/>
+<line class="blk" x1="347" y1="133" x2="333" y2="147" stroke-linecap="round"/>
+<text class="s" x="340" y="163" text-anchor="middle">direct access must be blocked</text>
+
+<rect class="box" x="40" y="180" width="600" height="122" rx="8"/>
+<text class="s" x="56" y="200">inside the gateway — every tools/call</text>
+
+<rect class="nb" x="55" y="214" width="130" height="68" rx="4"/>
+<text class="t" x="120" y="244" text-anchor="middle">RBAC</text>
+<text class="s" x="120" y="263" text-anchor="middle">role → tool check</text>
+
+<rect class="nb" x="202" y="214" width="130" height="68" rx="4"/>
+<text class="t" x="267" y="244" text-anchor="middle">Input screen</text>
+<text class="s" x="267" y="263" text-anchor="middle">args checked</text>
+
+<rect class="ng" x="349" y="214" width="130" height="68" rx="4"/>
+<text class="t" x="414" y="244" text-anchor="middle">Your tool runs</text>
+<text class="s" x="414" y="263" text-anchor="middle">on your server</text>
+
+<rect class="nb" x="496" y="214" width="130" height="68" rx="4"/>
+<text class="t" x="561" y="244" text-anchor="middle">Output DLP</text>
+<text class="s" x="561" y="263" text-anchor="middle">redact / withhold</text>
+
+<line class="arr" x1="187" y1="248" x2="200" y2="248" marker-end="url(#a)"/>
+<line class="arr" x1="334" y1="248" x2="347" y2="248" marker-end="url(#a)"/>
+<line class="arr" x1="481" y1="248" x2="494" y2="248" marker-end="url(#a)"/>
+
+<text class="s" x="340" y="325" text-anchor="middle">blue = enforced by Votal · grey = your code · red = must be blocked</text>
+</svg>

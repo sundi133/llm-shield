@@ -20,12 +20,7 @@ Use this when you **don't control** the server. If you do, the embedded pattern
 
 Two separate connections — this is the thing to get right:
 
-```
- your agent ───▶  Shield gateway  ───▶  your MCP server ("upstream")
-                  api.guardrails…        e.g. mcp.internal:9000
-   leg 1: public, direct         leg 2: the gateway must be able to reach it
-   (agents point here)                  (and ONLY the gateway should)
-```
+![Agents connect to the Shield gateway, which enforces RBAC, input screening and output DLP around every tools/call before forwarding to your unmodified MCP server](/assets/images/mcp-gateway-data-flow.svg)
 
 - **Leg 1** (agent → gateway): the gateway is your public endpoint; agents point at
   `https://<shield>/gateway/<route>/mcp`.
