@@ -129,37 +129,47 @@ with `claude mcp list` / `claude mcp get shield-gateway` / `claude mcp remove
 shield-gateway`. (The `sse` transport is deprecated — use `http`.)
 
 **Claude Desktop** — edit `claude_desktop_config.json` (macOS:
-`~/Library/Application Support/Claude/`). Native HTTP:
-```json
-{
-  "mcpServers": {
-    "shield-gateway": {
-      "type": "http",
-      "url": "https://<shield>/gateway/<route>/mcp",
-      "headers": {
-        "X-API-Key": "<tenant-key>",
-        "X-Agent-Key": "<agent-id>",
-        "X-User-Role": "admin"
-      }
-    }
-  }
-}
-```
-If your Desktop lacks native HTTP, bridge it with `mcp-remote`:
+`~/Library/Application Support/Claude/`).
+
+Use the `mcp-remote` bridge. Current Desktop builds accept only **stdio** entries
+(`command` / `args`) in this file and silently skip `"type": "http"` ones, so the
+bridge is the reliable form. It runs a local stdio process that proxies to the
+gateway URL:
+
 ```json
 {
   "mcpServers": {
     "shield-gateway": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "https://<shield>/gateway/<route>/mcp",
-               "--header", "X-API-Key: <tenant-key>",
-               "--header", "X-Agent-Key: <agent-id>",
-               "--header", "X-User-Role: admin"]
+               "--header", "X-API-Key:${SHIELD_KEY}",
+               "--header", "X-Agent-Key:<agent-id>",
+               "--header", "X-User-Role:admin"],
+      "env": { "SHIELD_KEY": "<tenant-key>" }
     }
   }
 }
 ```
-Restart Desktop; the server appears under the connectors (🔌) menu.
+
+Requires Node (for `npx`). First launch is slower while `mcp-remote` downloads.
+`mcp-remote` probes for OAuth first, finds none, then falls back to these headers;
+that is expected. Keep the key in `env` and reference it as `${SHIELD_KEY}` rather
+than inlining it, which also avoids a Windows quoting bug with spaces in header
+values (note `X-API-Key:${SHIELD_KEY}` has no space after the colon).
+
+Quit Desktop **before** editing. It rewrites this file on exit, so edits made while
+it is running are overwritten. Quote the path, since it contains a space:
+`vi "$HOME/Library/Application Support/Claude/claude_desktop_config.json"`.
+Unquoted, the shell splits it into two paths and your edit lands in a stray file.
+
+Then start Desktop; the server appears under the connectors (🔌) menu.
+
+If you see *"some MCP servers could not be loaded"*, check
+`~/Library/Logs/Claude/main.log` for `Skipped invalid MCP server config entries`,
+which means the entry format was rejected (usually a `"type": "http"` entry). Each
+server also gets its own `~/Library/Logs/Claude/mcp-server-<name>.log`; a healthy
+one shows `Server started and connected successfully` followed by a `tools/list`
+result.
 
 **Claude.ai (web)** custom connectors expect **OAuth**, not static headers — use
 Claude Code or Desktop for API-key/header auth.
@@ -247,6 +257,8 @@ The gateway returns JSON-RPC errors; here's what each means.
 | `-32603 error handling …: <Exc>` | Upstream/transport error: upstream unreachable, or doesn't implement that method. Check the `url` is reachable from the gateway. |
 | `tools/list` empty / upstream connect fails | Upstream not reachable from the gateway (`localhost` from a remote gateway) or an ngrok interstitial — add `"ngrok-skip-browser-warning":"1"` to the route `headers`. |
 | Logs warn `isolation_ack=false` | The upstream isn't locked to the gateway — enforcement is bypassable until you fix leg 2 and set `isolation_ack: true`. |
+| Claude Desktop: "some MCP servers could not be loaded" | The entry format was rejected, not a gateway problem. `main.log` shows `Skipped invalid MCP server config entries`. Use the `mcp-remote` (stdio) form above, not `"type": "http"`. |
+| Desktop config edits keep disappearing | Desktop rewrites `claude_desktop_config.json` on exit. Quit it first, then edit, then start it. |
 
 ## Reference
 
