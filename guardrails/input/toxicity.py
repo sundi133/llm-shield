@@ -6,7 +6,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call, parse_csv_response
+from core.llm_backend import as_float, async_llm_call, parse_csv_response
 from core.text_utils import estimate_tokens, chunk_text, adaptive_chunk_budget, build_history_messages, trim_history_to_budget
 
 _SYSTEM_PROMPT = (
@@ -85,7 +85,7 @@ class ToxicityGuardrail(BaseGuardrail):
             )
 
         is_toxic = result.get("is_toxic", False)
-        score = result.get("toxicity_score", 0.0)
+        score = as_float(result.get("toxicity_score"))
         category = result.get("category", "none")
         severity = result.get("severity", "none")
         elapsed = (time.perf_counter() - start) * 1000

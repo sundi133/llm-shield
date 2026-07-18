@@ -2,6 +2,7 @@ import contextvars
 from abc import ABC, abstractmethod
 from typing import Optional
 
+from core.llm_backend import as_float
 from core.models import GuardrailResult
 import config.schema as _config_module
 
@@ -19,11 +20,13 @@ def safe_float(value, default: float = 0.0) -> float:
     ``float(result.get("confidence", 0.5))`` throws when the key is present but the
     value is an empty string (``float("")``) — the LLM returned ``"confidence": ""``.
     This returns ``default`` on any non-numeric value instead of raising.
+
+    Kept as the guardrail-facing name; the single implementation lives in
+    ``core.llm_backend.as_float`` so every guardrail coerces identically. That also
+    recovers the near-miss shapes models emit (``"~0.9"``, ``"95%"``) instead of
+    silently discarding them for ``default``.
     """
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+    return as_float(value, default)
 
 
 class BaseGuardrail(ABC):

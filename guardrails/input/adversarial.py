@@ -23,7 +23,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import async_llm_call, parse_csv_response
+from core.llm_backend import as_float, async_llm_call, parse_csv_response
 from core.text_utils import estimate_tokens, chunk_text, adaptive_chunk_budget, build_history_messages, trim_history_to_budget
 
 # ---------------------------------------------------------------------------
@@ -385,18 +385,15 @@ class AdversarialGuardrail(BaseGuardrail):
                 # No chunk was adversarial
                 return None
 
-        if (
-            result
-            and result.get("is_adversarial")
-            and result.get("confidence", 0) >= 0.5
-        ):
+        decoded_confidence = as_float(result.get("confidence") if result else None)
+        if result and result.get("is_adversarial") and decoded_confidence >= 0.5:
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,
                 guardrail_name=self.name,
                 message=(
                     f"Unsafe [{result.get('attack_type', 'encoding_attack')}] "
-                    f"(confidence: {result.get('confidence', 0):.2f})"
+                    f"(confidence: {decoded_confidence:.2f})"
                 ),
                 details={**result, "preprocessing": "content_was_decoded"},
                 latency_ms=0,
@@ -438,7 +435,9 @@ class AdversarialGuardrail(BaseGuardrail):
             )
 
         is_adversarial = result.get("is_adversarial", False)
-        confidence = result.get("confidence", 0.0)
+        # Coerce defensively: a model that answers a non-numeric confidence would
+        # otherwise raise on the comparison below and on the {:.2f} formatting.
+        confidence = as_float(result.get("confidence"))
         attack_type = result.get("attack_type", "none")
         elapsed = (time.perf_counter() - start) * 1000
 
