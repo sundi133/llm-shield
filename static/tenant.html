@@ -6343,11 +6343,24 @@ async function loadTelemetry() {
 
 // ── Agents ────────────────────────────────
 function filterAgents() {
-  const q = (document.getElementById('agents-search').value || '').toLowerCase();
-  document.querySelectorAll('#agents-content .card').forEach(card => {
-    const text = card.textContent.toLowerCase();
-    card.style.display = text.includes(q) ? '' : 'none';
+  const q = (document.getElementById('agents-search').value || '').trim().toLowerCase();
+  // Cards render as .agent-card (see createAgentCard) — an earlier ".card"
+  // selector matched nothing here, so the box silently did nothing.
+  const cards = document.querySelectorAll('#agents-content .agent-card');
+  let shown = 0;
+  cards.forEach(card => {
+    const match = !q || card.textContent.toLowerCase().includes(q);
+    card.style.display = match ? '' : 'none';
+    if (match) shown++;
   });
+  const empty = document.getElementById('agents-no-match');
+  if (empty) empty.style.display = (q && shown === 0) ? '' : 'none';
+  const count = document.getElementById('agents-count');
+  if (count) {
+    count.textContent = q
+      ? `${shown} of ${cards.length} agent(s) matching "${q}"`
+      : `${cards.length} agent(s) registered`;
+  }
 }
 
 function filterTools() {
@@ -6472,12 +6485,16 @@ function displayAgents(agents, unreg) {
         <button class="primary" onclick="showAddAgentModal()">+ Create Agent</button>
       </div>`;
   } else {
-    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:0.75rem;">${Object.keys(agents).length} agent(s) registered</div>`;
+    html += `<div id="agents-count" style="font-size:12px;color:var(--text-muted);margin-bottom:0.75rem;">${Object.keys(agents).length} agent(s) registered</div>`;
     Object.entries(agents).forEach(([agentId, agent]) => {
       html += createAgentCard(agentId, agent);
     });
+    html += `<div id="agents-no-match" style="display:none;text-align:center;padding:2rem;color:var(--text-dim);font-size:13px;">No agents match your search.</div>`;
   }
   document.getElementById('agents-content').innerHTML = html;
+  // Re-apply an active query so the list stays filtered across refreshes.
+  const search = document.getElementById('agents-search');
+  if (search && search.value) filterAgents();
 }
 
 // ── Shared shadow panel builder ──────────────────────────────────
