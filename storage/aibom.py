@@ -45,7 +45,27 @@ _MCP_SECRET_KEYS = ("headers", "env", "shield_tenant_key", "secret", "token", "a
 _ACTIVITY_WINDOW = 50  # agent_auth_stats.RECENT_BUFFER_MAX (bounded buffer)
 
 DECLARED_SECTIONS = ("models", "prompts", "knowledge_sources", "memory", "supply_chain")
+# "metadata" is declared as flat fields (environment, owner, ...) rather than
+# id-keyed components; it overlays the observed metadata section on read.
+DECLARABLE_SECTIONS = DECLARED_SECTIONS + ("metadata",)
 OBSERVED_LIST_SECTIONS = ("agents", "mcp_servers", "tools", "guardrails", "runtime_policies")
+
+# Declared metadata may not shadow generator-owned fields.
+PROTECTED_METADATA_FIELDS = ("tenant_id", "generated_at", "generated_by")
+
+
+def _declared_key(tenant_id: str) -> str:
+    return f"aibom:declared:{tenant_id}"
+
+
+def load_declared(tenant_id: str) -> dict:
+    """The tenant's declared-components document (empty dict if none)."""
+    return kv_get(_declared_key(tenant_id)) or {}
+
+
+def save_declared(tenant_id: str, doc: dict) -> None:
+    from storage.tenant_store import kv_set
+    kv_set(_declared_key(tenant_id), doc)
 
 
 def generate_aibom(tenant_id: str, view: str = "full") -> dict:
@@ -79,10 +99,19 @@ def generate_aibom(tenant_id: str, view: str = "full") -> dict:
         doc["observability"] = {}
         notes.append("observed sections excluded (view=declared)")
 
-    for s in DECLARED_SECTIONS:
-        doc[s] = []
+    declared_doc: dict = {}
     if include_declared:
-        notes.append("no declared components (declare API not yet used)")
+        declared_doc = _section(notes, "declared_components", lambda: load_declared(tenant_id), {})
+    for s in DECLARED_SECTIONS:
+        comps = declared_doc.get(s) or {}
+        doc[s] = [{**(c or {}), "component_id": cid} for cid, c in sorted(comps.items())]
+    if include_declared:
+        declared_meta = declared_doc.get("metadata") or {}
+        for k, v in declared_meta.items():
+            if k not in PROTECTED_METADATA_FIELDS:
+                doc["metadata"][k] = v
+        if not declared_meta and not any(doc[s] for s in DECLARED_SECTIONS):
+            notes.append("no declared components")
     else:
         notes.append("declared sections excluded (view=observed)")
 
