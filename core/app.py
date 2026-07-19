@@ -61,6 +61,7 @@ from api.routes_oauth import router as oauth_router
 from api.routes_oauth_registration import router as oauth_registration_router
 from api.routes_oidc_admin import router as oidc_admin_router
 from api.routes_a2a import router as a2a_router
+from api.routes_flight_recorder import router as flight_recorder_router
 from storage.audit_log import audit_logger
 
 # Conditional SaaS imports - only load if saas module exists
@@ -149,6 +150,7 @@ def create_app() -> FastAPI:
     app.include_router(oauth_registration_router)
     app.include_router(oidc_admin_router)
     app.include_router(a2a_router)
+    app.include_router(flight_recorder_router)  # /v1/tenant/me/flight-recorder/* (read-only, off guard path)
 
     # Include SaaS routes only if available
     if SAAS_AVAILABLE:
