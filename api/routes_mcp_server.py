@@ -208,6 +208,24 @@ def _resolve_identity(request: Request) -> tuple[str, str, str]:
     return tenant_id, (agent_key or "mcp-agent"), user_role
 
 
+def _resolve_session_id(request: Request) -> str:
+    """Resolve the caller's session from its *verified* identity, or "".
+
+    Deliberately reads only ``request.state.identity`` (populated by
+    AgentIdentityMiddleware from a signature-verified X-Agent-Token, or by the
+    mTLS path). It must NOT fall back to a request header: session_id namespaces
+    the confirmation tokens (``confirm:{session_id}:{token}``) and the
+    per-session rate-limit buckets, so a caller able to choose its own value
+    could reset its limits at will and mint confirmations into another session's
+    namespace.
+
+    Returns "" when the caller presented no agent token — callers treat that as
+    "session-scoped guards unavailable", never as a wildcard.
+    """
+    identity = getattr(getattr(request, "state", None), "identity", None)
+    return (getattr(identity, "session_id", "") or "").strip()
+
+
 def _get_tenant_info(request: Request) -> tuple[str, str]:
     """Back-compat shim: (tenant_id, agent_key). Prefer _resolve_identity."""
     tenant_id, agent_key, _ = _resolve_identity(request)

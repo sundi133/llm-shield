@@ -16,7 +16,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from api.routes_mcp_server import _resolve_identity
+from api.routes_mcp_server import _resolve_identity, _resolve_session_id
 from core.mcp.gateway import GatewayError
 from core.mcp.gateway import router as gateway_router
 
@@ -73,6 +73,7 @@ async def _dispatch(route: str, body: dict, request: Request):
             out = await gateway_router.call_tool(
                 tenant_id, route, name, params.get("arguments") or {},
                 agent_key=agent_key, user_role=user_role,
+                session_id=_resolve_session_id(request),
             )
             # MCPProxy already returns an MCP-shaped result (content + isError).
             return _ok(rpc_id, {"content": out.get("content", []), "isError": out.get("isError", False)})
