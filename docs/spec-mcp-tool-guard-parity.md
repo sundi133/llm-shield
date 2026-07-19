@@ -144,9 +144,29 @@ breaking any future binding to the approval grant.
 
 | Value | Behavior |
 |---|---|
-| `off` | Current 4-guard chain. Exact behavior of today's default. |
-| `monitor` | **New default.** All 7 guards run. Results recorded in `results[]` and `would_block[]`. The 3 added guards can never change `allowed`, regardless of tenant `policy_mode`. |
-| `enforce` | All 7 guards run and block, subject to tenant `policy_mode` as usual. |
+| `off` | **Remains the default.** Current 4-guard chain, byte-identical to today. |
+| `monitor` | Opt-in. All 7 guards run. Results recorded in `results[]` and `would_block[]`. The 3 added guards can never change `allowed`, regardless of tenant `policy_mode`. |
+| `enforce` | Opt-in. All 7 guards run and block, subject to tenant `policy_mode` as usual. |
+
+**Revised 2026-07-19 (was: default to `monitor`).** `monitor` is not
+side-effect-free, so defaulting to it is not safe for running production:
+
+- `sensitive_action_confirmation.py:59` writes the token to Redis *before*
+  returning `pending_confirmation`, so every sensitive call in monitor mints a
+  token nobody redeems (bounded by the 300 s TTL, but a real hot-path write).
+- `tool_call_rate_limiting` calls `agentic_state.increment()`, so counters begin
+  accumulating.
+- `_record_metrics` emits guardrail names operators' dashboards have not seen,
+  which can trip alerting rules that assume a fixed set.
+
+None of those change an allow/deny outcome, but "your latency moved and new
+alerts fired, though nothing was blocked" is still a customer incident. The only
+default that cannot break anyone is the current one.
+
+Accepted cost: the gap stays open unless an operator acts. Mitigate with a
+startup log line when the MCP path is active and parity is `off`, which changes
+no runtime behavior. If `monitor` is later made the default, it must first
+suppress the token mint.
 
 Backward-compat rules:
 - `"1"`, `"true"`, `"yes"` continue to parse as `enforce` so any operator who
@@ -158,16 +178,25 @@ Backward-compat rules:
 - `pending_confirmation` is already handled in the `allowed` expression at line 167,
   so no change is needed there for `enforce`.
 
-**Why `monitor` as the default rather than `enforce`:** nothing that passes today
-starts failing, satisfying the non-breaking invariant, while operators get
-`would_block` telemetry to size their blast radius before opting in. This mirrors
-`core/policy_templates.py:22-49`, which ships `recommended_mode="monitor"`.
+**Migration note** (ships with Task 3, `docs/`): set `monitor`, read `would_block`
+counts per tool from the metrics `_record_metrics` already records, add
+legitimate high-volume tools to allowlists or rate-limit exemptions, then set
+`enforce`. Both steps are operator-initiated; no default changes.
 
-**Migration note** (ships in the same PR, `docs/`): monitor for one release, read
-`would_block` counts per tool from the existing metrics recorded by
-`_record_metrics`, add legitimate high-volume tools to allowlists or rate-limit
-exemptions, then set `enforce`. A follow-up release proposes flipping the default
-to `enforce`; that flip is out of scope here and needs its own migration note.
+**Two caveats that must appear in any release note.** `enforce` may be inert for
+some deployments for reasons unrelated to this flag:
+
+1. The lite/small-team gateway never calls `load_config()`
+   (`core/mcp/gateway_lite.py::main`), so `apply_rbac` at `core/mcp/lite.py:114`
+   creates a bare `ShieldConfig` and every settings-driven guard resolves to
+   `{}` — `require_confirmation` is empty there regardless of the flag.
+   Reproduced; tracked separately.
+2. `ToolCallValidationGuardrail` fails **open** when its LLM is unreachable
+   (observed: "LLM payload risk evaluation error … All connection attempts
+   failed", call proceeded).
+
+So the honest claim is "Task 3 enables HITL on the main data plane, where config
+is loaded", not "Task 3 enables HITL".
 
 **Malicious caller.** Cannot self-approve: the token is minted server-side into
 Redis under an authenticated `session_id` and burned on use
@@ -257,12 +286,17 @@ CI `pytest` gate passes.
 
 ## 9. Task breakdown (one PR each, in order)
 
-| # | Task | Why separate |
-|---|---|---|
-| 1 | Plumb `session_id` (from agent-token claim) and `workflow` into the MCP guard context; add `session_unavailable` surfacing; fix `http_enforcer.py:103` hardcoded `""` | Pure plumbing. Behaviorally inert while parity is `off`, so it lands with near-zero risk and makes every later task testable. |
-| 2 | `_meta` confirmation-token transport: parse on request, shape the JSON-RPC error on `pending_confirmation` | Protocol surface. Reviewable on its own; still inert while parity is `off`. |
-| 3 | Three-state flag, `monitor` default, monitor-filtering in the `allowed` computation, migration note | The only behavior-changing PR. Small and isolated because 1 and 2 landed first. |
-| 4 | Latency benchmark + the fires-not-just-present regression test | Proves the hot-path claim in §2 and closes the test gap that hid the inert guard. |
+| # | Task | Status | Why separate |
+|---|---|---|---|
+| 1 | Plumb `session_id` from the verified agent-token claim into the MCP guard context; add `session_unavailable` surfacing; fix `http_enforcer.py:103` hardcoded `""` | **Done** (`2950bd4`) | Pure plumbing. Behaviorally inert while parity is `off`, so it lands with near-zero risk and makes every later task testable. |
+| 2 | `_meta` transport for `confirmation_token` + `workflow`; shape the JSON-RPC error on `pending_confirmation` | **Done** (`5fab0d6`) | Protocol surface. Reviewable on its own; still inert while parity is `off`. |
+| 2a | Freeze the parity-off path as a compatibility contract | **Done** (`e0dbf79`) | Added in response to the production-safety requirement. Converts "verified once" into "CI fails if anyone breaks it". Mutation-checked. |
+| 3 | Three-state flag (`off` default), monitor-filtering in the `allowed` computation, startup warning, migration note | Not started | The only behavior-changing PR. Small and isolated because 1 and 2 landed first. |
+| 4 | Latency benchmark | Not started | Proves the hot-path claim in §2 with numbers rather than reasoning. |
 
-Task 1 is the highest-value single PR: without it, `SHIELD_MCP_TOOL_PARITY=1`
-gives operators a false belief that HITL is active on the MCP path.
+`workflow` moved from Task 1 to Task 2: it shares the `_meta` transport with the
+confirmation token, so plumbing it in Task 1 would have added an always-`None`
+parameter with no source.
+
+Task 1 was the highest-value single PR: without it, `SHIELD_MCP_TOOL_PARITY=1`
+gave operators a false belief that HITL was active on the MCP path.
