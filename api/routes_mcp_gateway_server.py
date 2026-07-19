@@ -10,6 +10,7 @@ The heavy lifting (enforcement, upstream transport) lives in core/mcp/*; this fi
 is just the JSON-RPC bridge, unit-tested with a fake router.
 """
 
+import hashlib
 import os
 from typing import Any, Optional
 
@@ -61,20 +62,52 @@ def _meta(params: dict) -> dict:
     return meta if isinstance(meta, dict) else {}
 
 
+# _meta values reach a Redis key lookup (confirmation_token) and a list
+# comparison (workflow). Bound them so an unbounded caller-supplied string
+# cannot grow keys on a Redis-backed state store.
+_META_MAX_LEN = 256
+
+
 def _meta_str(params: dict, key: str) -> Optional[str]:
     value = _meta(params).get(key)
-    return value.strip() or None if isinstance(value, str) else None
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > _META_MAX_LEN:
+        return None
+    return value
 
 
 def _confirmation_details(decision: dict) -> dict:
-    """Pull the minted token out of the guard result that requested confirmation."""
+    """Describe a pending confirmation WITHOUT handing back the token.
+
+    The caller here is the agent — the very party the confirmation gates. An
+    earlier draft echoed the minted ``confirmation_token`` in this payload, which
+    let the agent replay it and approve itself: a mandatory extra round trip
+    rather than human-in-the-loop. The REST path models this correctly at
+    ``api/routes_tool.py:475``: ``create_approval_request`` returns an opaque
+    ``request_id`` and the credential goes to an approver out of band.
+
+    So we return only a correlation handle. The token stays server-side in
+    ``confirm:{session_id}:{token}`` until an approver channel delivers it;
+    wiring that channel is the follow-up (see the spec's non-goals). Until then
+    a sensitive tool over MCP fails closed, which is the correct direction for a
+    security control that is not yet complete.
+    """
+    out: dict = {"action": "pending_confirmation"}
     for r in decision.get("results") or []:
         if r.get("action") == "pending_confirmation":
             d = r.get("details") or {}
-            return {_META_CONFIRMATION: d.get("confirmation_token"),
-                    "expires_in": d.get("expires_in"),
-                    "action": "pending_confirmation"}
-    return {"action": "pending_confirmation"}
+            if d.get("expires_in") is not None:
+                out["expires_in"] = d["expires_in"]
+            # Correlation only: derived from the token, not the token itself,
+            # and not accepted back as a credential.
+            token = d.get("confirmation_token")
+            if token:
+                out["request_id"] = hashlib.sha256(
+                    f"req:{token}".encode()).hexdigest()[:16]
+            break
+    return out
 
 
 async def _dispatch(route: str, body: dict, request: Request):

@@ -25,6 +25,7 @@ No SDK required on client side — just add to MCP config:
 
 import json
 import os
+import re
 import uuid
 import asyncio
 
@@ -208,22 +209,41 @@ def _resolve_identity(request: Request) -> tuple[str, str, str]:
     return tenant_id, (agent_key or "mcp-agent"), user_role
 
 
+# A session_id namespaces Redis keys built as f"confirm:{session_id}:{token}"
+# and f"...:sess:{session_id}:...". A ':' in the value makes those ambiguous
+# (session "a" + token "b:X" addresses the same key as session "a:b" + token
+# "X"), so constrain the charset rather than trusting the minter.
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+# Every mTLS caller is stamped with this same literal by AgentIdentityMiddleware.
+# It is an identity method, not a session: honouring it would put every mTLS
+# agent in every tenant into ONE confirmation namespace and ONE per-session
+# rate-limit bucket.
+_NON_SESSION_VALUES = {"mtls"}
+
+
 def _resolve_session_id(request: Request) -> str:
     """Resolve the caller's session from its *verified* identity, or "".
 
     Deliberately reads only ``request.state.identity`` (populated by
     AgentIdentityMiddleware from a signature-verified X-Agent-Token, or by the
-    mTLS path). It must NOT fall back to a request header: session_id namespaces
-    the confirmation tokens (``confirm:{session_id}:{token}``) and the
-    per-session rate-limit buckets, so a caller able to choose its own value
-    could reset its limits at will and mint confirmations into another session's
-    namespace.
+    mTLS path). It must NOT fall back to a request header.
 
-    Returns "" when the caller presented no agent token — callers treat that as
+    "Verified" here means *signed*, not *authorized*: ``POST /auth/agent-token``
+    accepts ``session_id`` verbatim from the request body, so a tenant-key
+    holder can choose the value. The charset check below is what keeps a chosen
+    value from being a key-injection primitive; it does not make the value
+    trustworthy. Treat per-session rate limits as a cooperative control, not a
+    boundary against a malicious tenant-key holder.
+
+    Returns "" when no usable session is present — callers treat that as
     "session-scoped guards unavailable", never as a wildcard.
     """
     identity = getattr(getattr(request, "state", None), "identity", None)
-    return (getattr(identity, "session_id", "") or "").strip()
+    session_id = (getattr(identity, "session_id", "") or "").strip()
+    if session_id in _NON_SESSION_VALUES or not _SESSION_ID_RE.match(session_id):
+        return ""
+    return session_id
 
 
 def _get_tenant_info(request: Request) -> tuple[str, str]:

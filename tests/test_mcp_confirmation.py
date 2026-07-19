@@ -86,7 +86,10 @@ def test_absent_meta_yields_neutral_context(recorder):
 # ── the pending_confirmation response shape ──────────────────────────────
 
 
-def test_confirmation_details_extracts_token():
+def test_confirmation_details_returns_a_handle_not_the_token():
+    """Revised in review: an earlier draft returned the minted token here, which
+    let the agent replay it and approve itself. Only an opaque correlation
+    handle goes back. See tests/test_mcp_confirmation_security.py."""
     decision = {"results": [
         {"guardrail": "rbac_guard", "action": "pass", "passed": True},
         {"guardrail": "sensitive_action_confirmation",
@@ -94,7 +97,8 @@ def test_confirmation_details_extracts_token():
          "details": {"confirmation_token": "tok-abc", "expires_in": 300}},
     ]}
     d = srv._confirmation_details(decision)
-    assert d[srv._META_CONFIRMATION] == "tok-abc"
+    assert srv._META_CONFIRMATION not in d
+    assert d["request_id"] and d["request_id"] != "tok-abc"
     assert d["expires_in"] == 300
     assert d["action"] == "pending_confirmation"
 
@@ -105,7 +109,7 @@ def test_confirmation_details_survives_missing_detail():
                              "passed": False}]}
     d = srv._confirmation_details(decision)
     assert d["action"] == "pending_confirmation"
-    assert d[srv._META_CONFIRMATION] is None
+    assert "request_id" not in d
 
 
 def test_confirmation_details_on_empty_decision():

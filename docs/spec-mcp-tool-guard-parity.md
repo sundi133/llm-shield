@@ -198,12 +198,41 @@ some deployments for reasons unrelated to this flag:
 So the honest claim is "Task 3 enables HITL on the main data plane, where config
 is loaded", not "Task 3 enables HITL".
 
-**Malicious caller.** Cannot self-approve: the token is minted server-side into
-Redis under an authenticated `session_id` and burned on use
-(`sensitive_action_confirmation.py:48`). Cannot suppress a guard: `_meta` supplies
-only `workflow` and `confirmation_token`, both fail-closed if absent or wrong.
-Cannot widen a rate-limit window by forging a session, because `session_id` comes
-from the signed token.
+**Malicious caller.** *Corrected in review — the original claim here was wrong.*
+
+The first draft of §4 returned the minted `confirmation_token` in the JSON-RPC
+error payload. The caller on this path is the agent, i.e. the party the
+confirmation exists to gate, so it could replay the token and approve itself:
+the control reduced to a mandatory extra round trip. Fixed — the response now
+carries only an opaque `request_id` derived from the token, and the token stays
+server-side. Verified by replaying every field the agent receives (all blocked)
+while the server-side token still works. Pinned by
+`tests/test_mcp_confirmation_security.py`.
+
+Consequence: until an approver channel delivers the token out of band, a
+sensitive tool over MCP **fails closed** under `enforce`. That is the correct
+direction for an incomplete control, and it is why `enforce` stays opt-in.
+
+Three further corrections to the original threat model:
+
+- **"Verified" means signed, not authorized.** `POST /auth/agent-token` accepts
+  `session_id` verbatim from the request body, so a tenant-key holder can choose
+  it. `_resolve_session_id` now enforces `^[A-Za-z0-9_-]{1,128}$` so the value
+  cannot be a key-injection primitive (a `:` would make
+  `confirm:{sid}:{token}` ambiguous), but per-session rate limits are a
+  cooperative control, not a boundary against a malicious tenant-key holder.
+- **mTLS callers all share `session_id = "mtls"`** (a middleware literal). Now
+  treated as no-session; otherwise every mTLS agent in every tenant would share
+  one confirmation namespace and one rate-limit bucket.
+- **`workflow` from `_meta` widens rather than narrows.**
+  `tool_use_control.py:44-53` *satisfies* `allowed_workflows` from the caller's
+  asserted value, so it is not an authorization boundary against a malicious
+  agent (REST has the same property via `body.workflow`). Sourcing it from token
+  claims is follow-up work.
+
+Still open, deliberately not fixed here because it changes a key format the REST
+path shares: `confirm:` keys are not tenant-prefixed, so two tenants choosing
+the same session string collide.
 
 **Known weakness, documented not fixed here:** this guard-chain confirmation is
 weaker than the Ed25519 approval grants in `core/approvals.py`, which bind
