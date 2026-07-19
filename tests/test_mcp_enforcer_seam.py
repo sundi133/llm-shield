@@ -35,7 +35,7 @@ class FakeUpstream:
 
 
 class _AllowEnforcer:
-    async def enforce_tool_call(self, name, arguments, *, agent_key, user_role, tenant_id, tenant_config):
+    async def enforce_tool_call(self, name, arguments, *, agent_key, user_role, tenant_id, tenant_config, **kw):
         return {"allowed": True, "action": "pass", "reason": ""}
 
     async def sanitize_tool_result(self, name, raw, *, agent_key, tenant_id, user_role):
@@ -46,7 +46,7 @@ class _AllowEnforcer:
 
 
 class _BlockEnforcer(_AllowEnforcer):
-    async def enforce_tool_call(self, name, arguments, *, agent_key, user_role, tenant_id, tenant_config):
+    async def enforce_tool_call(self, name, arguments, *, agent_key, user_role, tenant_id, tenant_config, **kw):
         return {"allowed": False, "action": "block", "reason": "nope"}
 
 

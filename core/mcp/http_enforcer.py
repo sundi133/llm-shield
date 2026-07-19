@@ -93,14 +93,26 @@ class HTTPEnforcer:
         user_role: Optional[str],
         tenant_id: Optional[str],
         tenant_config: Optional[dict] = None,
+        session_id: Optional[str] = None,
+        workflow: Optional[str] = None,
+        confirmation_token: Optional[str] = None,
     ) -> dict:
-        """Map POST /v1/shield/tool/check to the MCPProxy decision shape."""
+        """Map POST /v1/shield/tool/check to the MCPProxy decision shape.
+
+        ``session_id`` comes from a verified agent-token claim upstream; it was
+        previously hardcoded to "", which silently disabled the session-scoped
+        guards (confirmation, per-session rate limits) on the thin-edge path.
+        ``workflow`` / ``confirmation_token`` come from the request's _meta and
+        map onto the fields ToolCheckRequest already exposes.
+        """
         try:
             r = await self._client.post(
                 f"{self.base_url}/v1/shield/tool/check",
                 json={"agent_key": agent_key, "tool_name": name,
                       "tool_params": arguments or {}, "user_role": user_role or "",
-                      "session_id": ""},
+                      "session_id": session_id or "",
+                      "workflow": workflow or None,
+                      "confirmation_token": confirmation_token or None},
                 headers=self._headers(tenant_id=tenant_id, agent_key=agent_key, user_role=user_role),
             )
             r.raise_for_status()

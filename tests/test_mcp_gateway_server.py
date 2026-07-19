@@ -42,7 +42,7 @@ class _FakeRouter:
     async def list_tools(self, tenant, route, *, agent_key, user_role):
         return [{"name": "t1"}, {"name": "t2"}]
 
-    async def call_tool(self, tenant, route, name, arguments, *, agent_key, user_role):
+    async def call_tool(self, tenant, route, name, arguments, *, agent_key, user_role, **kw):
         if self._call_error:
             raise self._call_error
         self.calls.append((tenant, route, name, arguments, agent_key))

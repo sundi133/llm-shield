@@ -1,6 +1,6 @@
 """Human-in-the-loop confirmation for sensitive tool calls."""
 
-import hashlib
+import secrets
 import time
 from typing import Optional
 
@@ -50,10 +50,12 @@ class SensitiveActionConfirmationGuardrail(BaseGuardrail):
                                    message=f"Action confirmed for '{tool_name}'",
                                    details={"confirmed": True})
 
-        # Generate new confirmation token
-        token = hashlib.sha256(
-            f"{session_id}:{tool_name}:{time.time()}".encode()
-        ).hexdigest()[:16]
+        # Generate new confirmation token. Must be unguessable: the previous
+        # sha256(session_id:tool_name:time.time()) had only a float timestamp as
+        # entropy, and session_id/tool_name are known to any peer, so a peer
+        # could search the 300s TTL window offline and forge a confirmation.
+        # Same length (16 hex chars), so the stored key shape is unchanged.
+        token = secrets.token_hex(8)
 
         key = f"confirm:{session_id}:{token}"
         agentic_state.set(key, {

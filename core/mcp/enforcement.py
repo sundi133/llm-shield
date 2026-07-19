@@ -97,8 +97,23 @@ async def enforce_tool_call(
     user_role: Optional[str],
     tenant_id: Optional[str],
     tenant_config: Optional[dict] = None,
+    session_id: Optional[str] = None,
+    workflow: Optional[str] = None,
+    confirmation_token: Optional[str] = None,
 ) -> dict:
     """Decide whether an MCP tools/call may proceed.
+
+    ``session_id`` must come from a *verified* agent-token claim, never from a
+    caller-supplied header: it namespaces the confirmation tokens and the
+    per-session rate-limit buckets, so a caller who could choose it could reset
+    its own limits and mint confirmations into another session's namespace.
+    Optional (defaults None) so existing callers keep working.
+
+    ``workflow`` and ``confirmation_token`` arrive from the MCP request's
+    ``params._meta`` (see the JSON-RPC bridge). Unlike session_id these are
+    caller-supplied by design and are safe to be: the confirmation token is
+    only useful if it matches a server-minted entry under an authenticated
+    session, and workflow can only ever *narrow* what tool_use_control permits.
 
     Returns:
         {
@@ -144,13 +159,31 @@ async def enforce_tool_call(
         "user_role": user_role,
         "tool_params": arguments,
         "tenant_id": tenant_id,
+        "session_id": session_id or "",
+        "workflow": workflow or "",
+        "confirmation_token": confirmation_token or None,
         "X-Tenant-ID": tenant_id,
         "X-User-Role": user_role,
     }
 
     guards = _tool_guard_chain()
-    token = _request_configs.set(configs) if configs else None
     results: list[dict] = []
+
+    # Session-scoped guards (confirmation, per-session rate limits) silently
+    # self-skip without a session_id. When parity is on, an operator believes
+    # those guards are active, so make the degradation visible instead of
+    # letting the chain report a clean pass. Advisory only: passed=True, so it
+    # can never change `allowed` (see the fail-open note in the parity spec).
+    if _mcp_parity_enabled() and not session_id:
+        results.append({
+            "guardrail": "session_unavailable", "passed": True, "action": "pass",
+            "message": ("No verified session_id on the MCP path: confirmation "
+                        "and per-session rate limits are inactive for this call"),
+            "details": {"advisory": True, "degraded_guards": [
+                "sensitive_action_confirmation", "tool_call_rate_limiting"]},
+        })
+
+    token = _request_configs.set(configs) if configs else None
     try:
         for guard in guards:
             if not getattr(guard, "enabled", True):

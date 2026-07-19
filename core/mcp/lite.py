@@ -170,11 +170,14 @@ class FileConfigRouter(MCPGatewayRouter):
         self._sink = on_decision
         super().__init__(proxy_factory=proxy_factory or self._factory)
 
-    async def call_tool(self, tenant_id, route, name, arguments, *, agent_key, user_role):
+    async def call_tool(self, tenant_id, route, name, arguments, *, agent_key, user_role,
+                        session_id=None, workflow=None, confirmation_token=None):
         # Thread the lite tenant_config so RBAC is the sole allowlist (see above).
         return await self._call(tenant_id, route, lambda p: p.call_tool(
             name, arguments, agent_key=agent_key, user_role=user_role,
-            tenant_id=tenant_id, tenant_config=_LITE_TENANT_CONFIG))
+            tenant_id=tenant_id, tenant_config=_LITE_TENANT_CONFIG,
+            session_id=session_id, workflow=workflow,
+            confirmation_token=confirmation_token))
 
     def _load_cfg(self, tenant_id: str, route: str) -> dict:
         cfg = self._lite.routes.get(route)

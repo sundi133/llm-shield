@@ -184,12 +184,15 @@ class MCPGatewayRouter:
 
     async def call_tool(
         self, tenant_id: str, route: str, name: str, arguments: dict,
-        *, agent_key: str, user_role: Optional[str],
+        *, agent_key: str, user_role: Optional[str], session_id: Optional[str] = None,
+        workflow: Optional[str] = None, confirmation_token: Optional[str] = None,
     ):
         return await self._call(
             tenant_id,
             route,
-            lambda p: p.call_tool(name, arguments, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
+            lambda p: p.call_tool(name, arguments, agent_key=agent_key, user_role=user_role,
+                                  tenant_id=tenant_id, session_id=session_id,
+                                  workflow=workflow, confirmation_token=confirmation_token),
             agent_key=agent_key,
             user_role=user_role,
         )

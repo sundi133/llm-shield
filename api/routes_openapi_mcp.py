@@ -34,6 +34,7 @@ from core.openapi.codegen.typescript_typed_gen import (
 from core.openapi.codegen.llm_enhance import enhance_tool_descriptions
 from core.openapi.codegen.deploy_kit import deploy_files
 from core.mcp.enforcement import enforce_tool_call, sanitize_tool_result
+from api.routes_mcp_server import _resolve_session_id
 
 router = APIRouter(prefix="/v1/openapi", tags=["openapi-mcp"])
 
@@ -174,6 +175,7 @@ async def call_generated_tool(body: CallRequest, request: Request):
     decision = await enforce_tool_call(
         body.tool, body.arguments, agent_key=agent_key,
         user_role=user_role, tenant_id=tenant_id, tenant_config=tenant_config,
+        session_id=_resolve_session_id(request),
     )
     if not decision["allowed"]:
         return {
