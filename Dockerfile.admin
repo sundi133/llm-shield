@@ -79,6 +79,7 @@ COPY api/routes_siem.py api/
 COPY api/routes_vault.py api/
 COPY api/routes_evidence.py api/
 COPY api/routes_board_report.py api/
+COPY api/routes_aibom.py api/
 COPY api/routes_tool.py api/
 COPY api/routes_config.py api/
 COPY storage/__init__.py storage/
@@ -104,6 +105,9 @@ COPY core/siem_dispatcher.py core/
 COPY storage/vault_store.py storage/
 COPY core/secret_vault/ core/secret_vault/
 COPY storage/evidence_pack.py storage/
+# AIBOM (AI Bill of Materials) — generator + the gateway store it reads
+COPY storage/aibom.py storage/
+COPY storage/mcp_gateway_store.py storage/
 COPY core/telemetry.py core/
 COPY guardrails/__init__.py guardrails/
 COPY guardrails/base.py guardrails/
