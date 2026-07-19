@@ -63,7 +63,10 @@ MAX_SNAPSHOTS = 20
 MAX_SNAPSHOT_BYTES = 512 * 1024
 
 # Doc-level keys and per-entry fields excluded from snapshots/drift.
-_VOLATILE_DOC_KEYS = ("generation_notes", "observability", "view")
+# threats/compliance/risk are derived from the other sections, so keeping
+# them would double-report every underlying change as drift.
+_VOLATILE_DOC_KEYS = ("generation_notes", "observability", "view",
+                      "threats", "compliance", "risk")
 _VOLATILE_ENTRY_FIELDS = ("last_seen", "first_seen", "recent_tools_used",
                           "created_at", "updated_at")
 _VOLATILE_METADATA_FIELDS = ("generated_at",)
@@ -291,11 +294,17 @@ def generate_aibom(tenant_id: str, view: str = "full") -> dict:
     else:
         notes.append("declared sections excluded (view=observed)")
 
-    # Threat/compliance/risk mapping ships in a later task (spec §15-§17).
-    doc["threats"] = []
-    doc["compliance"] = []
-    doc["risk"] = {}
-    notes.append("threat/compliance/risk mapping not yet available")
+    # §15-§17: static threat/compliance mapping + transparent risk heuristic,
+    # computed over whichever sections the view includes.
+    def _mappings():
+        from storage import aibom_mappings as m
+        return m.build_threats(doc), m.build_compliance(doc), m.build_risk(doc)
+
+    threats, compliance, risk = _section(
+        notes, "threat_compliance_risk", _mappings, ([], [], {}))
+    doc["threats"] = threats
+    doc["compliance"] = compliance
+    doc["risk"] = risk
 
     doc["generation_notes"] = notes
     return doc

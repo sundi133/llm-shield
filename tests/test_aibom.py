@@ -133,6 +133,11 @@ def test_full_bom_maps_all_sections(client):
     assert bom["observability"]["guardrail_metrics"]["total_blocked"] == 2
     assert bom["observability"]["webhooks"]["events"] == ["guardrail_blocked"]
 
+    # derived mappings computed over the assembled sections
+    assert any(t["category"] == "shadow_agents" for t in bom["threats"])
+    assert any(e["component"] == "prompt_injection" for e in bom["compliance"])
+    assert bom["risk"]["overall"] in ("low", "medium", "high", "critical")
+
     # declared sections exist (empty until the declare API ships) with a note
     for s in ("models", "prompts", "knowledge_sources", "memory", "supply_chain"):
         assert bom[s] == []
