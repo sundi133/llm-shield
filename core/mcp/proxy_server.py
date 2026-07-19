@@ -42,7 +42,8 @@ class Enforcer(Protocol):
     async def enforce_tool_call(
         self, name: str, arguments: dict, *, agent_key: str, user_role: Optional[str],
         tenant_id: Optional[str], tenant_config: Optional[dict],
-        session_id: Optional[str] = None,
+        session_id: Optional[str] = None, workflow: Optional[str] = None,
+        confirmation_token: Optional[str] = None,
     ) -> dict: ...
     async def sanitize_tool_result(
         self, name: str, raw: Any, *, agent_key: str, tenant_id: Optional[str],
@@ -95,17 +96,21 @@ class MCPProxy:
         tenant_id: Optional[str],
         tenant_config: Optional[dict] = None,
         session_id: Optional[str] = None,
+        workflow: Optional[str] = None,
+        confirmation_token: Optional[str] = None,
     ) -> dict:
         """Returns an MCP-style result dict:
         {content: [...], isError: bool, shield: <decision>}.
 
         ``session_id`` is forwarded to the enforcer to scope confirmation tokens
         and per-session rate limits; it must originate from a verified claim.
+        ``workflow`` / ``confirmation_token`` come from the request's _meta.
         """
         decision = await self._enforcer.enforce_tool_call(
             name, arguments, agent_key=agent_key, user_role=user_role,
             tenant_id=tenant_id, tenant_config=tenant_config,
-            session_id=session_id,
+            session_id=session_id, workflow=workflow,
+            confirmation_token=confirmation_token,
         )
         await self._record({"phase": "call", "tool": name, "agent_key": agent_key,
                             "tenant_id": tenant_id, **decision})

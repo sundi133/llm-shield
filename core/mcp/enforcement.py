@@ -98,6 +98,8 @@ async def enforce_tool_call(
     tenant_id: Optional[str],
     tenant_config: Optional[dict] = None,
     session_id: Optional[str] = None,
+    workflow: Optional[str] = None,
+    confirmation_token: Optional[str] = None,
 ) -> dict:
     """Decide whether an MCP tools/call may proceed.
 
@@ -106,6 +108,12 @@ async def enforce_tool_call(
     per-session rate-limit buckets, so a caller who could choose it could reset
     its own limits and mint confirmations into another session's namespace.
     Optional (defaults None) so existing callers keep working.
+
+    ``workflow`` and ``confirmation_token`` arrive from the MCP request's
+    ``params._meta`` (see the JSON-RPC bridge). Unlike session_id these are
+    caller-supplied by design and are safe to be: the confirmation token is
+    only useful if it matches a server-minted entry under an authenticated
+    session, and workflow can only ever *narrow* what tool_use_control permits.
 
     Returns:
         {
@@ -152,6 +160,8 @@ async def enforce_tool_call(
         "tool_params": arguments,
         "tenant_id": tenant_id,
         "session_id": session_id or "",
+        "workflow": workflow or "",
+        "confirmation_token": confirmation_token or None,
         "X-Tenant-ID": tenant_id,
         "X-User-Role": user_role,
     }

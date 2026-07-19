@@ -36,8 +36,45 @@ def _ok(rpc_id: Any, result: dict) -> JSONResponse:
     return JSONResponse({"jsonrpc": "2.0", "id": rpc_id, "result": result})
 
 
-def _err(rpc_id: Any, code: int, message: str) -> JSONResponse:
-    return JSONResponse({"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": message}})
+def _err(rpc_id: Any, code: int, message: str, data: Optional[dict] = None) -> JSONResponse:
+    err: dict = {"code": code, "message": message}
+    if data:
+        err["data"] = data
+    return JSONResponse({"jsonrpc": "2.0", "id": rpc_id, "error": err})
+
+
+# JSON-RPC params._meta is the spec's reserved slot for protocol-level data. The
+# confirmation token must NOT ride in `arguments`: those are forwarded verbatim
+# to the upstream tool, so a token there would show up as a real parameter and
+# would perturb any params-hash binding.
+_META_CONFIRMATION = "shield/confirmation_token"
+_META_WORKFLOW = "shield/workflow"
+
+# Distinct from -32001 (unauthenticated) so a client can tell "supply a token"
+# apart from "you are not allowed".
+_RPC_CONFIRMATION_REQUIRED = -32002
+
+
+def _meta(params: dict) -> dict:
+    """params._meta, defensively: MCP clients may omit it or send a non-object."""
+    meta = params.get("_meta")
+    return meta if isinstance(meta, dict) else {}
+
+
+def _meta_str(params: dict, key: str) -> Optional[str]:
+    value = _meta(params).get(key)
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def _confirmation_details(decision: dict) -> dict:
+    """Pull the minted token out of the guard result that requested confirmation."""
+    for r in decision.get("results") or []:
+        if r.get("action") == "pending_confirmation":
+            d = r.get("details") or {}
+            return {_META_CONFIRMATION: d.get("confirmation_token"),
+                    "expires_in": d.get("expires_in"),
+                    "action": "pending_confirmation"}
+    return {"action": "pending_confirmation"}
 
 
 async def _dispatch(route: str, body: dict, request: Request):
@@ -74,7 +111,17 @@ async def _dispatch(route: str, body: dict, request: Request):
                 tenant_id, route, name, params.get("arguments") or {},
                 agent_key=agent_key, user_role=user_role,
                 session_id=_resolve_session_id(request),
+                workflow=_meta_str(params, _META_WORKFLOW),
+                confirmation_token=_meta_str(params, _META_CONFIRMATION),
             )
+            # A call awaiting human confirmation is a distinct outcome from a
+            # denial: surface it as an error carrying the token the client must
+            # replay in _meta, rather than as an opaque isError result.
+            decision = out.get("shield") or {}
+            if decision.get("action") == "pending_confirmation":
+                return _err(rpc_id, _RPC_CONFIRMATION_REQUIRED,
+                            decision.get("reason") or "human confirmation required",
+                            _confirmation_details(decision))
             # MCPProxy already returns an MCP-shaped result (content + isError).
             return _ok(rpc_id, {"content": out.get("content", []), "isError": out.get("isError", False)})
 

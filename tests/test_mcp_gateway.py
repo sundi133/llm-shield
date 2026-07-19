@@ -60,7 +60,7 @@ class _FakeProxy:
     async def list_tools(self, *, agent_key, user_role, tenant_id):
         return [{"name": "t1"}]
 
-    async def call_tool(self, name, arguments, *, agent_key, user_role, tenant_id, session_id=None):
+    async def call_tool(self, name, arguments, *, agent_key, user_role, tenant_id, **kw):
         self.calls.append((name, arguments, tenant_id))
         return {"content": [{"type": "text", "text": "ok"}], "isError": False}
 
@@ -187,7 +187,7 @@ def test_router_does_not_retry_real_errors():
     made = []
 
     class _P:
-        async def call_tool(self, name, arguments, *, agent_key, user_role, tenant_id, session_id=None):
+        async def call_tool(self, name, arguments, *, agent_key, user_role, tenant_id, **kw):
             raise ValueError("a real bug, not a broken session")
 
     async def factory(cfg, tenant_id):
