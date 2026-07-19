@@ -54,6 +54,182 @@ OBSERVED_LIST_SECTIONS = ("agents", "mcp_servers", "tools", "guardrails", "runti
 PROTECTED_METADATA_FIELDS = ("tenant_id", "generated_at", "generated_by")
 
 
+# ── Snapshots & drift (spec §18) ──────────────────────────────────────────
+#
+# A snapshot is the approved design-time baseline: the full BOM minus
+# volatile fields, so drift means configuration drift, not traffic.
+
+MAX_SNAPSHOTS = 20
+MAX_SNAPSHOT_BYTES = 512 * 1024
+
+# Doc-level keys and per-entry fields excluded from snapshots/drift.
+_VOLATILE_DOC_KEYS = ("generation_notes", "observability", "view")
+_VOLATILE_ENTRY_FIELDS = ("last_seen", "first_seen", "recent_tools_used",
+                          "created_at", "updated_at")
+_VOLATILE_METADATA_FIELDS = ("generated_at",)
+
+# section name -> field that identifies an entry within it (guardrails use a
+# composite key since the same name can exist in both stages).
+_DRIFT_SECTIONS = {
+    "agents": "agent_id",
+    "tools": "name",
+    "mcp_servers": "name",
+    "guardrails": ("stage", "name"),
+    "runtime_policies": "tool_name",
+    "models": "component_id",
+    "prompts": "component_id",
+    "knowledge_sources": "component_id",
+    "memory": "component_id",
+    "supply_chain": "component_id",
+}
+
+
+def _snapshot_key(tenant_id: str, snapshot_id: str) -> str:
+    return f"aibom:snapshot:{tenant_id}:{snapshot_id}"
+
+
+def _snapshot_index_key(tenant_id: str) -> str:
+    return f"aibom:snapshots:{tenant_id}"
+
+
+def strip_volatile(doc: dict) -> dict:
+    """A copy of the BOM without traffic-derived fields (snapshot/drift form)."""
+    out = {k: v for k, v in doc.items() if k not in _VOLATILE_DOC_KEYS}
+    out["metadata"] = {k: v for k, v in (doc.get("metadata") or {}).items()
+                       if k not in _VOLATILE_METADATA_FIELDS}
+    for section in _DRIFT_SECTIONS:
+        entries = doc.get(section)
+        if isinstance(entries, list):
+            out[section] = [
+                {k: v for k, v in (e or {}).items() if k not in _VOLATILE_ENTRY_FIELDS}
+                for e in entries
+            ]
+    return out
+
+
+def create_snapshot(tenant_id: str, approved_by: str = "", note: str = "") -> dict:
+    """Snapshot the current full BOM as the approved baseline.
+
+    Returns the index entry. Raises ValueError if the snapshot exceeds
+    MAX_SNAPSHOT_BYTES. The index keeps the MAX_SNAPSHOTS most recent
+    entries; older snapshot docs are deleted with their index rows.
+    """
+    import json as _json
+    import secrets as _secrets
+    from storage.tenant_store import kv_set
+
+    doc = strip_volatile(generate_aibom(tenant_id, view="full"))
+    now = int(datetime.now(timezone.utc).timestamp())
+    snapshot_id = f"bom-{now}-{_secrets.token_hex(3)}"
+    snapshot = {
+        "snapshot_id": snapshot_id,
+        "created_at": now,
+        "approved_by": approved_by or "tenant",
+        "note": note or "",
+        "bom": doc,
+    }
+    size = len(_json.dumps(snapshot))
+    if size > MAX_SNAPSHOT_BYTES:
+        raise ValueError(f"snapshot would be {size} bytes (max {MAX_SNAPSHOT_BYTES})")
+
+    kv_set(_snapshot_key(tenant_id, snapshot_id), snapshot)
+
+    index = kv_get(_snapshot_index_key(tenant_id)) or {"snapshots": []}
+    entry = {"snapshot_id": snapshot_id, "created_at": now,
+             "approved_by": snapshot["approved_by"], "note": snapshot["note"]}
+    index.setdefault("snapshots", []).append(entry)
+    evicted = []
+    while len(index["snapshots"]) > MAX_SNAPSHOTS:
+        evicted.append(index["snapshots"].pop(0))
+    kv_set(_snapshot_index_key(tenant_id), index)
+    for old in evicted:
+        try:
+            kv_set(_snapshot_key(tenant_id, old["snapshot_id"]), None)
+        except Exception:
+            logger.debug(f"aibom: failed to clear evicted snapshot {old['snapshot_id']}")
+    if evicted:
+        entry = dict(entry)
+        entry["evicted"] = [o["snapshot_id"] for o in evicted]
+    return entry
+
+
+def list_snapshots(tenant_id: str) -> list[dict]:
+    index = kv_get(_snapshot_index_key(tenant_id)) or {}
+    return index.get("snapshots", [])
+
+
+def get_snapshot(tenant_id: str, snapshot_id: str):
+    return kv_get(_snapshot_key(tenant_id, snapshot_id)) or None
+
+
+def _entry_key(section: str, entry: dict):
+    key_field = _DRIFT_SECTIONS[section]
+    if isinstance(key_field, tuple):
+        return ":".join(str((entry or {}).get(f)) for f in key_field)
+    return (entry or {}).get(key_field)
+
+
+def _diff_entries(section: str, before: list, after: list) -> dict:
+    b = {_entry_key(section, e): e for e in (before or []) if _entry_key(section, e) is not None}
+    a = {_entry_key(section, e): e for e in (after or []) if _entry_key(section, e) is not None}
+    added = sorted(k for k in a if k not in b)
+    removed = sorted(k for k in b if k not in a)
+    changed = []
+    for k in sorted(k for k in a if k in b):
+        fields = set(b[k]) | set(a[k])
+        for f in sorted(fields):
+            if b[k].get(f) != a[k].get(f):
+                changed.append({"key": k, "field": f,
+                                "before": b[k].get(f), "after": a[k].get(f)})
+    return {"added": added, "removed": removed, "changed": changed}
+
+
+def compute_drift(tenant_id: str, snapshot_id: str = None):
+    """Diff the current BOM against an approved snapshot.
+
+    Returns the drift report, or None when no snapshot exists (or the
+    requested snapshot_id is unknown).
+    """
+    if snapshot_id is None:
+        snaps = list_snapshots(tenant_id)
+        if not snaps:
+            return None
+        snapshot_id = snaps[-1]["snapshot_id"]
+    snapshot = get_snapshot(tenant_id, snapshot_id)
+    if not snapshot:
+        return None
+
+    baseline = snapshot.get("bom") or {}
+    current = strip_volatile(generate_aibom(tenant_id, view="full"))
+
+    drift: dict = {}
+    count = 0
+    for section in _DRIFT_SECTIONS:
+        d = _diff_entries(section, baseline.get(section), current.get(section))
+        drift[section] = d
+        count += len(d["added"]) + len(d["removed"]) + len(d["changed"])
+    identity_diff = _diff_entries("guardrails", [], [])  # shape only
+    identity_diff["changed"] = [
+        {"key": "identity", "field": f,
+         "before": (baseline.get("identity") or {}).get(f),
+         "after": (current.get("identity") or {}).get(f)}
+        for f in sorted(set(baseline.get("identity") or {}) | set(current.get("identity") or {}))
+        if (baseline.get("identity") or {}).get(f) != (current.get("identity") or {}).get(f)
+    ]
+    drift["identity"] = identity_diff
+    count += len(identity_diff["changed"])
+
+    return {
+        "tenant_id": tenant_id,
+        "snapshot_id": snapshot_id,
+        "snapshot_created_at": snapshot.get("created_at"),
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "drift": drift,
+        "drift_count": count,
+        "clean": count == 0,
+    }
+
+
 def _declared_key(tenant_id: str) -> str:
     return f"aibom:declared:{tenant_id}"
 

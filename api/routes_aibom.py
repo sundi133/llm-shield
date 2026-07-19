@@ -4,6 +4,9 @@
     GET    /v1/tenant/me/aibom/components
     PUT    /v1/tenant/me/aibom/components/{section}
     DELETE /v1/tenant/me/aibom/components/{section}/{component_id}
+    POST   /v1/tenant/me/aibom/snapshots
+    GET    /v1/tenant/me/aibom/snapshots[/{snapshot_id}]
+    GET    /v1/tenant/me/aibom/drift[?snapshot_id=]
 
 Generation is a read-only aggregation on the admin plane over data already
 written by the registry/auth/guard paths; nothing here touches the guard
@@ -12,6 +15,7 @@ path. Declares hold references only — values that look like credentials
 in a BOM.
 """
 
+import asyncio
 import json
 import re
 import time
@@ -23,7 +27,11 @@ from storage.admin_audit import log_admin_action
 from storage.aibom import (
     DECLARABLE_SECTIONS,
     VIEWS,
+    compute_drift,
+    create_snapshot,
     generate_aibom,
+    get_snapshot,
+    list_snapshots,
     load_declared,
     save_declared,
 )
@@ -179,3 +187,75 @@ async def delete_component(section: str, component_id: str, request: Request):
         metadata={"section": section, "component_id": component_id},
     )
     return {"deleted": True, "section": section, "component_id": component_id}
+
+
+@router.post("/snapshots")
+async def post_snapshot(request: Request):
+    """Approve the current full BOM as the design-time baseline for drift."""
+    tenant_id = get_tenant_from_api_key(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    approved_by = ((body or {}).get("approved_by") or "tenant").strip()[:128]
+    note = ((body or {}).get("note") or "").strip()[:500]
+    try:
+        entry = create_snapshot(tenant_id, approved_by=approved_by, note=note)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    log_admin_action(
+        action="aibom_snapshot_created",
+        actor=f"tenant:{tenant_id}",
+        tenant_id=tenant_id,
+        source_ip=request.client.host if request.client else "",
+        metadata={"snapshot_id": entry["snapshot_id"]},
+    )
+    return entry
+
+
+@router.get("/snapshots")
+async def get_snapshots(request: Request):
+    tenant_id = get_tenant_from_api_key(request)
+    return {"tenant_id": tenant_id, "snapshots": list_snapshots(tenant_id)}
+
+
+@router.get("/snapshots/{snapshot_id}")
+async def get_one_snapshot(snapshot_id: str, request: Request):
+    tenant_id = get_tenant_from_api_key(request)
+    snapshot = get_snapshot(tenant_id, snapshot_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail=f"snapshot '{snapshot_id}' not found")
+    return snapshot
+
+
+@router.get("/drift")
+async def get_drift(request: Request, snapshot_id: str = None):
+    """Diff the current BOM against the approved snapshot (spec §18).
+
+    Fires an aibom_drift_detected webhook (summary only, never the full
+    BOM) for subscribed tenants when drift is present; webhook failures
+    never fail this request.
+    """
+    tenant_id = get_tenant_from_api_key(request)
+    report = compute_drift(tenant_id, snapshot_id=snapshot_id)
+    if report is None:
+        raise HTTPException(
+            status_code=404,
+            detail="no approved snapshot — POST /v1/tenant/me/aibom/snapshots first"
+            if snapshot_id is None else f"snapshot '{snapshot_id}' not found")
+
+    if not report["clean"]:
+        try:
+            from core.webhook_dispatcher import dispatch_event
+            summary = {
+                "snapshot_id": report["snapshot_id"],
+                "drift_count": report["drift_count"],
+                "sections": sorted(
+                    s for s, d in report["drift"].items()
+                    if d["added"] or d["removed"] or d["changed"]),
+            }
+            asyncio.create_task(dispatch_event(tenant_id, "aibom_drift_detected", summary))
+        except Exception:
+            pass
+    return report
