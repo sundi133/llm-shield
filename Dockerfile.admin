@@ -80,6 +80,7 @@ COPY api/routes_vault.py api/
 COPY api/routes_evidence.py api/
 COPY api/routes_board_report.py api/
 COPY api/routes_aibom.py api/
+COPY api/routes_mcp_admin.py api/
 COPY api/routes_tool.py api/
 COPY api/routes_config.py api/
 COPY storage/__init__.py storage/

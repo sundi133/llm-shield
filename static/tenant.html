@@ -2038,6 +2038,11 @@
         AI BOM
         <span id="nav-badge-aibom" class="nav-badge"></span>
       </div>
+      <div class="nav-item" data-tab="mcp-gateway">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-8-4h.01M11 16h.01"/></svg>
+        MCP Gateway
+        <span id="nav-badge-mcp" class="nav-badge"></span>
+      </div>
     </div>
 
     <div class="nav-section">
@@ -4428,6 +4433,42 @@ if __name__ == "__main__":
           <div class="card-header"><div><div class="card-title">Generation Notes</div></div></div>
           <div id="aibom-notes" style="padding:0.5rem;max-height:260px;overflow-y:auto;"></div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── MCP Gateway console ─────────────────────── -->
+    <div id="tab-mcp-gateway" class="tab-pane hidden">
+      <div class="page-header">
+        <div>
+          <div class="page-title">MCP Gateway</div>
+          <div class="page-desc">Registered upstream MCP servers routed through Shield, and the tool kill switch. Disabling a tool takes effect immediately on every agent for this tenant.</div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+          <button class="small" onclick="loadMcpGateway()">Refresh</button>
+        </div>
+      </div>
+
+      <div id="mcp-cards" class="stat-grid" style="grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1rem;"></div>
+
+      <div class="card" style="margin-bottom:1rem;">
+        <div class="card-header"><div><div class="card-title">Registered Servers</div><div class="card-desc" style="font-size:11px;color:var(--text-dim);">Upstream credentials are masked. Configure servers via the gateway API on the data plane.</div></div></div>
+        <div id="mcp-servers" style="padding:0.5rem;max-height:360px;overflow-y:auto;"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:1rem;">
+        <div class="card-header"><div><div class="card-title">Kill Switch</div><div class="card-desc" style="font-size:11px;color:var(--text-dim);">Disabled tools are blocked at the guard path immediately, even in monitor mode.</div></div></div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;padding:0.5rem 0.5rem 0;">
+          <input id="mcp-tool-name" placeholder="tool name (e.g. transfer_funds)" style="flex:1;min-width:200px;" />
+          <input id="mcp-tool-reason" placeholder="reason (audited)" style="flex:1;min-width:160px;" />
+          <button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpDisableTool()">Disable Tool</button>
+        </div>
+        <div id="mcp-disabled" style="padding:0.5rem;max-height:280px;overflow-y:auto;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Threats Addressed</div></div></div>
+        <div id="mcp-threats" style="padding:0.5rem;"></div>
+        <div id="mcp-scan-note" style="padding:0 0.5rem 0.5rem;font-size:11px;color:var(--text-dim);"></div>
       </div>
     </div>
 
@@ -11336,6 +11377,94 @@ function _aibomEmpty(msg) {
   return `<div style="color:var(--text-dim);font-size:13px;padding:0.5rem;">${msg}</div>`;
 }
 
+// ── MCP Gateway console ───────────────────────
+async function loadMcpGateway() {
+  ['mcp-servers', 'mcp-disabled', 'mcp-threats'].forEach(id => {
+    const n = document.getElementById(id); if (n) n.innerHTML = _metricsSpinner('');
+  });
+  document.getElementById('mcp-cards').innerHTML =
+    `<div style="grid-column:1/-1;">${_metricsSpinner('Loading MCP inventory…')}</div>`;
+  let inv;
+  try {
+    inv = await apiCall('/v1/tenant/me/mcp/inventory');
+  } catch (e) {
+    document.getElementById('mcp-cards').innerHTML =
+      `<div style="grid-column:1/-1;color:var(--red);font-size:13px;">Failed to load MCP inventory: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  renderMcpGateway(inv);
+}
+
+function renderMcpGateway(inv) {
+  const disabledCount = inv.disabled_count || 0;
+  document.getElementById('mcp-cards').innerHTML = `
+    <div class="stat-card"><div class="stat-value">${inv.server_count || 0}</div><div class="stat-label">Registered Servers</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${disabledCount ? 'var(--red)' : 'var(--text)'};">${disabledCount}</div><div class="stat-label">Disabled Tools</div></div>
+    <div class="stat-card"><div class="stat-value">${(inv.threats_addressed || []).length}</div><div class="stat-label">Threats Addressed</div></div>
+  `;
+
+  const servers = inv.servers || [];
+  document.getElementById('mcp-servers').innerHTML = servers.length
+    ? servers.map(s => {
+        const route = escapeHtml(s.route || s.name || '(unnamed)');
+        const transport = escapeHtml(s.transport || '?');
+        const dest = escapeHtml(s.url || s.command || '');
+        const backend = escapeHtml(s.enforcement_backend || 'inprocess');
+        return _aibomRow(
+          `<span style="font-weight:600;min-width:120px;">${route}</span>` +
+          `<span style="color:var(--text-dim);">${transport}</span>` +
+          `<span style="flex:1;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;">${dest}</span>` +
+          `<span class="badge">${backend}</span>`);
+      }).join('')
+    : _aibomEmpty('No MCP servers registered for this tenant.');
+
+  const disabled = inv.disabled_tools || [];
+  document.getElementById('mcp-disabled').innerHTML = disabled.length
+    ? disabled.map(d => {
+        const name = escapeHtml(d.tool_name || '');
+        const reason = escapeHtml(d.reason || '');
+        const actor = escapeHtml(d.actor || '');
+        return _aibomRow(
+          `<span style="font-weight:600;min-width:160px;color:var(--red);">${name}</span>` +
+          `<span style="flex:1;color:var(--text-dim);">${reason}${actor ? ' · ' + actor : ''}</span>` +
+          `<button class="small" onclick="mcpEnableTool('${encodeURIComponent(d.tool_name || '')}')">Enable</button>`);
+      }).join('')
+    : _aibomEmpty('No tools disabled. Use the kill switch above to disable one.');
+
+  const threats = inv.threats_addressed || [];
+  document.getElementById('mcp-threats').innerHTML = threats.length
+    ? threats.map(t => `<span class="badge" style="margin:2px;">${escapeHtml(t)}</span>`).join('')
+    : _aibomEmpty('No threat mapping available.');
+  document.getElementById('mcp-scan-note').textContent = inv.scan_note || '';
+}
+
+async function mcpDisableTool() {
+  const name = (document.getElementById('mcp-tool-name').value || '').trim();
+  const reason = (document.getElementById('mcp-tool-reason').value || '').trim();
+  if (!name) { showToast('Enter a tool name', 'error'); return; }
+  try {
+    await apiCall(`/v1/tenant/me/mcp/tools/${encodeURIComponent(name)}/disable`,
+      { method: 'POST', body: JSON.stringify({ reason }) });
+    showToast(`Disabled ${name}`, 'success');
+    document.getElementById('mcp-tool-name').value = '';
+    document.getElementById('mcp-tool-reason').value = '';
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+async function mcpEnableTool(encName) {
+  const name = decodeURIComponent(encName);
+  try {
+    await apiCall(`/v1/tenant/me/mcp/tools/${encodeURIComponent(name)}/enable`, { method: 'POST' });
+    showToast(`Enabled ${name}`, 'success');
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
 function _aibomRow(cells) {
   return `<div style="display:flex;align-items:center;gap:0.75rem;padding:0.45rem 0.25rem;border-bottom:1px solid var(--border);font-size:12px;">${cells}</div>`;
 }
@@ -11669,6 +11798,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'guardrail-metrics') { loadGuardrailDashboard(); loadGuardrailMetrics(); }
     if (tab === 'board-report') loadBoardReport();
     if (tab === 'aibom') loadAibom();
+    if (tab === 'mcp-gateway') loadMcpGateway();
     if (tab === 'agents') loadAgentData();
     if (tab === 'governance') loadGovernance();
     if (tab === 'tool-policies') switchTPSubtab('data-policies');
