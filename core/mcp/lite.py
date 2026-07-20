@@ -94,8 +94,27 @@ def parse_gateway_config(raw) -> LiteConfig:
 def apply_rbac(rbac: dict) -> None:
     """Populate the global config.rbac from the file so the in-process enforcer
     resolves roles without Redis/registry, then reload the RBAC enforcer's view.
+
+    Loads the base guardrail config first when nothing is loaded yet. The lite
+    gateway's entrypoint never calls load_config(), so this used to fabricate a
+    bare ShieldConfig() with an empty ``guardrails`` dict — which silently made
+    every settings-driven guard (sensitive_action_confirmation, rate limiting,
+    tool_use_control) inert: require_confirmation resolved to [], so no tool
+    ever required confirmation even with SHIELD_MCP_TOOL_PARITY on. We now load
+    the shipped defaults so those guards actually have their settings.
     """
     import config.schema as cs
+
+    if cs.config is None:
+        # Load shipped guardrail defaults (config/default.yaml) before applying
+        # the file's RBAC. Only when nothing is loaded — an already-loaded config
+        # (e.g. the data-plane-embedded case) keeps its guardrail settings.
+        cs.load_config()
+        if not (cs.config and getattr(cs.config, "guardrails", None)):
+            logger.warning(
+                "lite gateway: no guardrail config loaded (config/default.yaml "
+                "not found); settings-driven guards (confirmation, rate limiting) "
+                "will be inert. Ship default.yaml or set CONFIG_PATH.")
 
     roles = {}
     for name, r in (rbac.get("roles") or {}).items():
