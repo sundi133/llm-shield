@@ -80,6 +80,27 @@ A call to `read_file` passes; a call to `delete_file` is blocked and logged.
 - **Description scanning.** With `scan_descriptions: true`, poisoned tool
   descriptions are annotated on `tools/list`.
 
+## Stronger enforcement (opt-in)
+
+The base chain above (allowlist, validation, logging) runs by default. Three more
+guards — per-tool/global **rate limiting**, **tool-use conditions** (time windows,
+required workflow, role), and **human-in-the-loop confirmation** for sensitive
+tools — turn on with one env var:
+
+```bash
+-e SHIELD_MCP_TOOL_PARITY=1   # off by default; 1/true/yes/on enables
+```
+
+Rate limiting and tool-use conditions key on the agent from `X-Agent-Key`, so they
+work on this header-based gateway.
+
+**One honest limitation.** HITL confirmation is scoped to a per-session agent
+identity, which the header-only path does not carry. So on this edition it
+reports `session_unavailable` on a sensitive call rather than gating it — visibly,
+not silently. To get real HITL confirmation, give agents a verified Shield agent
+token (which carries a session) via the `http` enforcement backend below, or use
+the platform gateway.
+
 ## Enforcement modes
 
 The default image is slim and runs on CPU: the allowlist and logging need no
@@ -114,7 +135,8 @@ agent can reach directly is not actually governed.
 | `rbac.agents` | `X-Agent-Key` to role |
 
 Set `SHIELD_GATEWAY_FAIL_OPEN=1` to allow a call when enforcement itself errors
-(default is fail-closed).
+(default is fail-closed). Set `SHIELD_MCP_TOOL_PARITY=1` to add rate limiting,
+tool-use conditions, and HITL confirmation (see Stronger enforcement).
 
 Source: [`core/mcp/gateway_lite.py`](https://github.com/sundi133/llm-shield/blob/main/core/mcp/gateway_lite.py).
 Spec: `docs/spec-mcp-gateway-lite.md`.
