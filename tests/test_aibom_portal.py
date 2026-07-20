@@ -20,8 +20,20 @@ def test_nav_pane_and_dispatch_are_wired():
 
 def test_loaders_are_defined_once():
     for fn in ("loadAibom", "renderAibom", "loadAibomSnapshots",
-               "loadAibomDrift", "aibomApproveSnapshot", "downloadAibom"):
+               "loadAibomDrift", "aibomApproveSnapshot", "downloadAibom",
+               "aibomManifestStarter", "copyAibomStarter"):
         assert len(re.findall(rf"function {fn}\(", HTML)) == 1, fn
+
+
+def test_missing_section_guidance_is_wired():
+    # every declarable section has a starter example, and the guidance block
+    # references the manifest + ingest endpoints it tells the user to call
+    for section in ("models", "prompts", "knowledge_sources", "memory", "supply_chain"):
+        assert re.search(rf"_AIBOM_SECTION_EXAMPLES = \{{[\s\S]*?{section}:", HTML), section
+    assert "How to declare the missing pieces" in HTML
+    assert 'id="aibom-manifest-starter"' in HTML
+    assert "/v1/tenant/me/aibom/components \\" in HTML   # curl in guidance
+    assert "/v1/tenant/me/aibom/ingest" in HTML          # scanner alternative
 
 
 def test_api_paths_match_shipped_routes():

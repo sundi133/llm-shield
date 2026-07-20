@@ -11340,6 +11340,39 @@ function _aibomRow(cells) {
   return `<div style="display:flex;align-items:center;gap:0.75rem;padding:0.45rem 0.25rem;border-bottom:1px solid var(--border);font-size:12px;">${cells}</div>`;
 }
 
+const _AIBOM_SECTION_EXAMPLES = {
+  models: { "gpt-5": { provider: "openai", version: "latest", context_window: 200000,
+                       supports_tools: true, risk_rating: "high" } },
+  prompts: { "support-system-v3": { version: 3, owner: "support-team",
+                                    injection_protection: true, secrets_used: ["OPENAI_API_KEY"] } },
+  knowledge_sources: { "docs-index": { type: "vector_db", provider: "qdrant",
+                                       classification: "internal", embedding_model: "text-embedding-3-large" } },
+  memory: { "session-memory": { storage: "redis", ttl_seconds: 3600,
+                                pii_detection: true, deletion_policy: "ttl" } },
+  supply_chain: { "langchain": { version: "0.3.1", license: "MIT" } },
+};
+
+function aibomManifestStarter(bom) {
+  // Starter containing ONLY the sections still missing, so pasting it never
+  // clobbers what is already declared (sections merge by id server-side).
+  const components = {};
+  for (const [section, example] of Object.entries(_AIBOM_SECTION_EXAMPLES)) {
+    if (!(bom[section] || []).length) components[section] = example;
+  }
+  if (!(bom.metadata || {}).environment) {
+    components.metadata = { environment: "production", owner: "your-team" };
+  }
+  return JSON.stringify({ components }, null, 2);
+}
+
+function copyAibomStarter() {
+  const pre = document.getElementById('aibom-manifest-starter');
+  if (!pre) return;
+  navigator.clipboard.writeText(pre.textContent)
+    .then(() => showToast('Manifest starter copied — save as aibom.json, edit, then PUT it', 'success'))
+    .catch(() => showToast('Copy failed — select the text manually', 'error'));
+}
+
 function renderAibom(bom) {
   const agents = bom.agents || [], tools = bom.tools || [], mcp = bom.mcp_servers || [];
   const guardrails = bom.guardrails || [];
@@ -11387,20 +11420,53 @@ function renderAibom(bom) {
         <span style="color:${g.enabled ? 'var(--green)' : 'var(--text-dim)'};">${g.enabled ? 'on' : 'off'}</span>`)).join('')
     : _aibomEmpty('No guardrails configured');
 
+  // Declared sections: show what IS declared, and spell out what is MISSING
+  // (with what belongs there), so the BOM's gaps are actionable, not silent.
   const declaredSections = [
-    ['models', 'Models'], ['prompts', 'Prompts'], ['knowledge_sources', 'Knowledge Sources'],
-    ['memory', 'Memory'], ['supply_chain', 'Supply Chain']];
-  document.getElementById('aibom-declared').innerHTML = declaredCount
-    ? declaredSections.map(([key, label]) => {
-        const items = bom[key] || [];
-        if (!items.length) return '';
-        return `<div style="margin-bottom:0.5rem;"><div style="font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin:0.5rem 0 0.25rem;">${label} (${items.length})</div>` +
-          items.map(c => _aibomRow(`
-            <span style="font-weight:600;flex:1;">${escapeHtml(c.name || c.component_id || '')}</span>
-            <span style="color:var(--text-dim);">${escapeHtml(String(c.version || c.provider || c.type || ''))}</span>
-            ${c.source === 'cyclonedx-ingest' ? '<span style="color:var(--text-dim);font-size:10px;">ingested</span>' : ''}`)).join('') + '</div>';
-      }).join('')
-    : _aibomEmpty('Nothing declared yet. Push an aibom.json manifest: <code>PUT /v1/tenant/me/aibom/components</code>');
+    ['models', 'Models', 'The LLMs your app calls: provider, version, context window, capabilities'],
+    ['prompts', 'Prompts', 'System/user prompt templates: version, owner, injection protection'],
+    ['knowledge_sources', 'Knowledge Sources', 'Vector DBs, RAG pipelines, document stores: classification, embedding model'],
+    ['memory', 'Memory', 'Conversation/session/long-term memory: backend, TTL, PII handling'],
+    ['supply_chain', 'Supply Chain', 'AI SDKs and packages: version, license (or auto-fill via CycloneDX ingest)']];
+  const missing = declaredSections.filter(([key]) => !(bom[key] || []).length);
+  const envMissing = !(bom.metadata || {}).environment;
+  document.getElementById('aibom-declared').innerHTML =
+    `<div style="font-size:12px;margin:0.25rem 0 0.5rem;color:${missing.length ? 'var(--warn)' : 'var(--green)'};font-weight:600;">
+       ${missing.length ? `⚠ ${declaredSections.length - missing.length} of ${declaredSections.length} declared sections filled — the BOM is incomplete until your app declares the rest` : '✓ All declared sections filled'}</div>` +
+    declaredSections.map(([key, label, desc]) => {
+      const items = bom[key] || [];
+      if (!items.length) {
+        return _aibomRow(`
+          <span style="font-weight:600;min-width:130px;">${label}</span>
+          <span style="background:var(--warn);color:#000;font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;">missing</span>
+          <span style="color:var(--text-dim);flex:1;">${desc}</span>`);
+      }
+      return `<div style="margin-bottom:0.5rem;"><div style="font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin:0.5rem 0 0.25rem;">${label} (${items.length})</div>` +
+        items.map(c => _aibomRow(`
+          <span style="font-weight:600;flex:1;">${escapeHtml(c.name || c.component_id || '')}</span>
+          <span style="color:var(--text-dim);">${escapeHtml(String(c.version || c.provider || c.type || ''))}</span>
+          ${c.source === 'cyclonedx-ingest' ? '<span style="color:var(--text-dim);font-size:10px;">ingested</span>' : ''}`)).join('') + '</div>';
+    }).join('') +
+    (envMissing ? _aibomRow(`
+        <span style="font-weight:600;min-width:130px;">Metadata</span>
+        <span style="background:var(--warn);color:#000;font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;">missing</span>
+        <span style="color:var(--text-dim);flex:1;">environment (dev/stage/production), owner, git commit</span>`) : '') +
+    ((missing.length || envMissing) ? `
+      <details style="margin-top:0.75rem;">
+        <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--accent);">How to declare the missing pieces</summary>
+        <div style="font-size:12px;color:var(--text-dim);margin:0.5rem 0 0.25rem;">
+          1. Save this starter as <code>aibom.json</code> in your app repo, edit it to match your stack, and push it from CI on every deploy:</div>
+        <pre id="aibom-manifest-starter" style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:11px;overflow-x:auto;margin:0 0 0.5rem;">${escapeHtml(aibomManifestStarter(bom))}</pre>
+        <button class="small" onclick="copyAibomStarter()">Copy manifest starter</button>
+        <div style="font-size:12px;color:var(--text-dim);margin:0.75rem 0 0.25rem;">
+          2. Push it (one call, sections merge by id):</div>
+        <pre style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:11px;overflow-x:auto;margin:0 0 0.5rem;">curl -X PUT ${BASE_URL}/v1/tenant/me/aibom/components \\
+  -H "X-API-Key: $SHIELD_TENANT_KEY" -H "Content-Type: application/json" \\
+  -d @aibom.json</pre>
+        <div style="font-size:12px;color:var(--text-dim);margin:0.75rem 0 0.25rem;">
+          3. Or, on Kubernetes, point a CycloneDX scanner (e.g. k8s-aibom's webhook sink) at
+          <code>POST ${BASE_URL}/v1/tenant/me/aibom/ingest</code> and models, vector stores, and packages fill in automatically.</div>
+      </details>` : '');
 
   document.getElementById('aibom-notes').innerHTML = (bom.generation_notes || []).length
     ? bom.generation_notes.map(n => `<div style="font-size:12px;color:var(--text-dim);padding:0.25rem 0;">• ${escapeHtml(n)}</div>`).join('')
