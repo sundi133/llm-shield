@@ -50,6 +50,7 @@ VALID_EVENTS = [
     "policy_changed",
     "budget_exceeded",
     "shadow_agent_detected",
+    "aibom_drift_detected",
 ]
 
 
