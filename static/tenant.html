@@ -2033,6 +2033,11 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
         Board Report
       </div>
+      <div class="nav-item" data-tab="aibom">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+        AI BOM
+        <span id="nav-badge-aibom" class="nav-badge"></span>
+      </div>
     </div>
 
     <div class="nav-section">
@@ -4365,6 +4370,64 @@ if __name__ == "__main__":
       <div class="card" style="margin-top:1rem;">
         <div class="card-header"><div><div class="card-title">Guardrail Coverage</div></div></div>
         <div id="board-coverage" style="padding:0.5rem;"></div>
+      </div>
+    </div>
+
+    <!-- ── AI Bill of Materials ────────────────────── -->
+    <div id="tab-aibom" class="tab-pane hidden">
+      <div class="page-header">
+        <div>
+          <div class="page-title">AI Bill of Materials</div>
+          <div class="page-desc">Machine-readable inventory of your AI application: observed by Shield (agents, tools, MCP, guardrails) plus your declared components. Approve a baseline, watch for drift.</div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+          <button class="small" onclick="loadAibom()">Refresh</button>
+          <button class="small" onclick="downloadAibom('aibom')">Download JSON</button>
+          <button class="small" onclick="downloadAibom('cyclonedx')">Download CycloneDX</button>
+          <button class="primary" onclick="aibomApproveSnapshot()">Approve Snapshot</button>
+        </div>
+      </div>
+
+      <div id="aibom-cards" class="stat-grid" style="grid-template-columns:repeat(6,1fr);gap:1rem;margin-bottom:1rem;"></div>
+
+      <div class="card" style="margin-bottom:1rem;">
+        <div class="card-header"><div><div class="card-title">Drift vs Approved Baseline</div></div></div>
+        <div id="aibom-drift" style="padding:0.5rem;"></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Agents</div></div></div>
+          <div id="aibom-agents" style="padding:0.5rem;max-height:320px;overflow-y:auto;"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Tools</div></div></div>
+          <div id="aibom-tools" style="padding:0.5rem;max-height:320px;overflow-y:auto;"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">MCP Servers</div></div></div>
+          <div id="aibom-mcp" style="padding:0.5rem;max-height:320px;overflow-y:auto;"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Guardrails</div></div></div>
+          <div id="aibom-guardrails" style="padding:0.5rem;max-height:320px;overflow-y:auto;"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:1rem;">
+        <div class="card-header"><div><div class="card-title">Declared Components</div><div class="card-desc" style="font-size:11px;color:var(--text-dim);">Models, prompts, knowledge sources, memory, supply chain — pushed via the declare API or an aibom.json manifest from CI.</div></div></div>
+        <div id="aibom-declared" style="padding:0.5rem;"></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Approved Snapshots</div></div></div>
+          <div id="aibom-snapshots" style="padding:0.5rem;max-height:260px;overflow-y:auto;"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Generation Notes</div></div></div>
+          <div id="aibom-notes" style="padding:0.5rem;max-height:260px;overflow-y:auto;"></div>
+        </div>
       </div>
     </div>
 
@@ -11245,6 +11308,183 @@ async function loadGuardrailMetrics() {
 }
 
 // ── Board Report ─────────────────────────
+// ── AI Bill of Materials ────────────────────────────────────────────────
+
+const _AIBOM_RISK_COLOR = {
+  critical: 'var(--red)', high: 'var(--red)', medium: 'var(--warn)',
+  low: 'var(--green)', informational: 'var(--text-dim)',
+};
+
+async function loadAibom() {
+  ['aibom-agents', 'aibom-tools', 'aibom-mcp', 'aibom-guardrails',
+   'aibom-declared', 'aibom-snapshots', 'aibom-notes', 'aibom-drift']
+    .forEach(id => { const n = document.getElementById(id); if (n) n.innerHTML = _metricsSpinner(''); });
+  document.getElementById('aibom-cards').innerHTML =
+    `<div style="grid-column:1/-1;">${_metricsSpinner('Generating AIBOM…')}</div>`;
+  try {
+    const bom = await apiCall('/v1/tenant/me/aibom');
+    renderAibom(bom);
+  } catch (e) {
+    document.getElementById('aibom-cards').innerHTML =
+      `<div style="grid-column:1/-1;color:var(--red);font-size:13px;">Failed to generate AIBOM: ${escapeHtml(e.message)}</div>`;
+  }
+  loadAibomSnapshots();
+  loadAibomDrift();
+}
+
+function _aibomEmpty(msg) {
+  return `<div style="color:var(--text-dim);font-size:13px;padding:0.5rem;">${msg}</div>`;
+}
+
+function _aibomRow(cells) {
+  return `<div style="display:flex;align-items:center;gap:0.75rem;padding:0.45rem 0.25rem;border-bottom:1px solid var(--border);font-size:12px;">${cells}</div>`;
+}
+
+function renderAibom(bom) {
+  const agents = bom.agents || [], tools = bom.tools || [], mcp = bom.mcp_servers || [];
+  const guardrails = bom.guardrails || [];
+  const shadow = agents.filter(a => a.source === 'shadow').length;
+  const declaredCount = ['models', 'prompts', 'knowledge_sources', 'memory', 'supply_chain']
+    .reduce((n, s) => n + (bom[s] || []).length, 0);
+  const risk = (bom.risk || {}).overall || 'low';
+
+  document.getElementById('aibom-cards').innerHTML = `
+    <div class="stat-card"><div class="stat-value">${agents.length}</div><div class="stat-label">Agents</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${shadow ? 'var(--warn)' : 'var(--green)'};">${shadow}</div><div class="stat-label">Shadow Agents</div></div>
+    <div class="stat-card"><div class="stat-value">${tools.length}</div><div class="stat-label">Tools</div></div>
+    <div class="stat-card"><div class="stat-value">${mcp.length}</div><div class="stat-label">MCP Servers</div></div>
+    <div class="stat-card"><div class="stat-value">${guardrails.filter(g => g.enabled).length}</div><div class="stat-label">Guardrails On</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${_AIBOM_RISK_COLOR[risk] || 'var(--text)'};text-transform:capitalize;">${escapeHtml(risk)}</div><div class="stat-label">Overall Risk</div></div>
+  `;
+
+  document.getElementById('aibom-agents').innerHTML = agents.length
+    ? agents.map(a => _aibomRow(`
+        <span style="font-weight:600;flex:1;">${escapeHtml(a.name || a.agent_id || '')}</span>
+        ${a.source === 'shadow'
+          ? '<span style="color:var(--warn);font-weight:600;">shadow</span>'
+          : '<span style="color:var(--green);">registered</span>'}
+        <span style="color:var(--text-dim);">${(a.allowed_tools || []).length} tools</span>`)).join('')
+    : _aibomEmpty('No agents observed yet');
+
+  document.getElementById('aibom-tools').innerHTML = tools.length
+    ? tools.map(t => _aibomRow(`
+        <span style="font-weight:600;flex:1;">${escapeHtml(t.name || '')}</span>
+        ${t.disabled ? '<span style="color:var(--red);">killswitched</span>' : ''}
+        <span style="color:${t.has_policy ? 'var(--green)' : 'var(--warn)'};">${t.has_policy ? 'policy' : 'no policy'}</span>`)).join('')
+    : _aibomEmpty('No tools registered yet');
+
+  document.getElementById('aibom-mcp').innerHTML = mcp.length
+    ? mcp.map(s => _aibomRow(`
+        <span style="font-weight:600;flex:1;">${escapeHtml(s.name || '')}</span>
+        <span style="color:var(--text-dim);max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(s.endpoint || s.transport || '')}</span>
+        ${s.has_credentials ? '<span style="color:var(--text-dim);">creds</span>' : ''}`)).join('')
+    : _aibomEmpty('No MCP gateway routes configured');
+
+  document.getElementById('aibom-guardrails').innerHTML = guardrails.length
+    ? guardrails.map(g => _aibomRow(`
+        <span style="font-weight:600;flex:1;">${escapeHtml(g.name || '')}</span>
+        <span style="color:var(--text-dim);">${escapeHtml(g.stage || '')}</span>
+        <span style="color:${g.enabled ? 'var(--green)' : 'var(--text-dim)'};">${g.enabled ? 'on' : 'off'}</span>`)).join('')
+    : _aibomEmpty('No guardrails configured');
+
+  const declaredSections = [
+    ['models', 'Models'], ['prompts', 'Prompts'], ['knowledge_sources', 'Knowledge Sources'],
+    ['memory', 'Memory'], ['supply_chain', 'Supply Chain']];
+  document.getElementById('aibom-declared').innerHTML = declaredCount
+    ? declaredSections.map(([key, label]) => {
+        const items = bom[key] || [];
+        if (!items.length) return '';
+        return `<div style="margin-bottom:0.5rem;"><div style="font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin:0.5rem 0 0.25rem;">${label} (${items.length})</div>` +
+          items.map(c => _aibomRow(`
+            <span style="font-weight:600;flex:1;">${escapeHtml(c.name || c.component_id || '')}</span>
+            <span style="color:var(--text-dim);">${escapeHtml(String(c.version || c.provider || c.type || ''))}</span>
+            ${c.source === 'cyclonedx-ingest' ? '<span style="color:var(--text-dim);font-size:10px;">ingested</span>' : ''}`)).join('') + '</div>';
+      }).join('')
+    : _aibomEmpty('Nothing declared yet. Push an aibom.json manifest: <code>PUT /v1/tenant/me/aibom/components</code>');
+
+  document.getElementById('aibom-notes').innerHTML = (bom.generation_notes || []).length
+    ? bom.generation_notes.map(n => `<div style="font-size:12px;color:var(--text-dim);padding:0.25rem 0;">• ${escapeHtml(n)}</div>`).join('')
+    : _aibomEmpty('No notes');
+}
+
+async function loadAibomSnapshots() {
+  try {
+    const d = await apiCall('/v1/tenant/me/aibom/snapshots');
+    const snaps = (d.snapshots || []).slice().reverse();
+    document.getElementById('aibom-snapshots').innerHTML = snaps.length
+      ? snaps.map(s => _aibomRow(`
+          <span style="font-weight:600;">${escapeHtml(s.snapshot_id || '')}</span>
+          <span style="color:var(--text-dim);flex:1;">${escapeHtml(s.note || '')}</span>
+          <span style="color:var(--text-dim);">${s.created_at ? new Date(s.created_at * 1000).toLocaleString() : ''}</span>
+          <span style="color:var(--text-dim);">${escapeHtml(s.approved_by || '')}</span>`)).join('')
+      : _aibomEmpty('No approved baseline yet — click "Approve Snapshot" after reviewing the inventory.');
+  } catch (e) {
+    document.getElementById('aibom-snapshots').innerHTML = _aibomEmpty(escapeHtml(e.message));
+  }
+}
+
+async function loadAibomDrift() {
+  const el = document.getElementById('aibom-drift');
+  const badge = document.getElementById('nav-badge-aibom');
+  try {
+    const d = await apiCall('/v1/tenant/me/aibom/drift');
+    if (d.clean) {
+      el.innerHTML = `<div style="color:var(--green);font-size:13px;font-weight:600;">✓ No drift — runtime matches snapshot ${escapeHtml(d.snapshot_id || '')}</div>`;
+      if (badge) badge.classList.remove('visible');
+      return;
+    }
+    if (badge) { badge.textContent = d.drift_count; badge.classList.add('visible'); }
+    const sections = Object.entries(d.drift || {})
+      .filter(([, v]) => (v.added || []).length || (v.removed || []).length || (v.changed || []).length);
+    el.innerHTML = `
+      <div style="color:var(--warn);font-size:13px;font-weight:600;margin-bottom:0.5rem;">
+        ⚠ ${d.drift_count} change${d.drift_count === 1 ? '' : 's'} since snapshot ${escapeHtml(d.snapshot_id || '')}</div>` +
+      sections.map(([name, v]) => {
+        const bits = [];
+        (v.added || []).forEach(k => bits.push(`<span style="color:var(--green);">+ ${escapeHtml(String(k))}</span>`));
+        (v.removed || []).forEach(k => bits.push(`<span style="color:var(--red);">− ${escapeHtml(String(k))}</span>`));
+        (v.changed || []).forEach(c => bits.push(
+          `<span style="color:var(--warn);">~ ${escapeHtml(String(c.key))}.${escapeHtml(String(c.field))}: ${escapeHtml(JSON.stringify(c.before))} → ${escapeHtml(JSON.stringify(c.after))}</span>`));
+        return `<div style="font-size:12px;padding:0.3rem 0;border-bottom:1px solid var(--border);">
+          <span style="font-weight:700;text-transform:capitalize;">${escapeHtml(name.replace(/_/g, ' '))}</span>
+          <div style="display:flex;flex-direction:column;gap:2px;margin-top:2px;">${bits.join('')}</div></div>`;
+      }).join('');
+  } catch (e) {
+    if (badge) badge.classList.remove('visible');
+    el.innerHTML = _aibomEmpty(/no approved snapshot/i.test(e.message)
+      ? 'No baseline approved yet. Review the inventory below, then click "Approve Snapshot" — future changes will be reported here.'
+      : escapeHtml(e.message));
+  }
+}
+
+async function aibomApproveSnapshot() {
+  const note = prompt('Optional note for this baseline (e.g. "Q3 review"):') || '';
+  try {
+    const entry = await apiCall('/v1/tenant/me/aibom/snapshots', {
+      method: 'POST', body: JSON.stringify({ approved_by: 'portal', note }),
+    });
+    showToast(`Snapshot ${entry.snapshot_id} approved`, 'success');
+    loadAibomSnapshots();
+    loadAibomDrift();
+  } catch (e) {
+    showToast(`Snapshot failed: ${e.message}`, 'error');
+  }
+}
+
+async function downloadAibom(format) {
+  try {
+    const doc = await apiCall(`/v1/tenant/me/aibom?format=${format}`);
+    const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = format === 'cyclonedx' ? 'aibom.cdx.json' : 'aibom.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    showToast(`Download failed: ${e.message}`, 'error');
+  }
+}
+
 async function loadBoardReport() {
   document.getElementById('board-report-cards').innerHTML =
     `<div style="grid-column:1/-1;">${_metricsSpinner('Loading board report…')}</div>`;
@@ -11362,6 +11602,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'siem') loadSIEMData();
     if (tab === 'guardrail-metrics') { loadGuardrailDashboard(); loadGuardrailMetrics(); }
     if (tab === 'board-report') loadBoardReport();
+    if (tab === 'aibom') loadAibom();
     if (tab === 'agents') loadAgentData();
     if (tab === 'governance') loadGovernance();
     if (tab === 'tool-policies') switchTPSubtab('data-policies');

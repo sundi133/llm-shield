@@ -356,6 +356,15 @@ layer — interop merges both into one tenant document. Same invariants apply
    path) and counted in the response; post-merge section caps reject with 422
    (no silent truncation). Body cap 1 MB.
 
+8. **PR 8 — Portal tab.** "AI BOM" tab in `static/tenant.html` (Enterprise
+   Controls nav group): overview stat cards (agents/tools/MCP/guardrails,
+   overall risk, drift status), inventory tables, declared sections,
+   generation notes, snapshot list + approve button, drift report with
+   per-section changes, JSON/CycloneDX download. Pure frontend against the
+   already-shipped endpoints — no new Python modules, deps, or Dockerfile
+   changes (`static/` is already COPY'd wholesale). Regression guard test
+   asserts the nav item ↔ pane ↔ loader ↔ endpoint couplings.
+
 ## Open questions (answer before implementation)
 
 1. **Webhook in v1?** Recommended **yes** (PR 3) — the dispatcher and
