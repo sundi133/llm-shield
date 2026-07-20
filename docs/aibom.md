@@ -80,6 +80,49 @@ it. Declare secret **names** only (for example `"secrets_used":
 ["OPENAI_API_KEY"]`): values that look like credentials are rejected, so
 secret material can never enter a BOM.
 
+### Declare everything at once from CI
+
+Keep an `aibom.json` manifest in your repo and push it on deploy with a
+single call. Sections merge by id; sections not mentioned are untouched;
+an invalid entry anywhere rejects the whole request before anything is
+written.
+
+```bash
+curl -s -X PUT https://<shield-admin>/v1/tenant/me/aibom/components \
+  -H "X-API-Key: $SHIELD_TENANT_KEY" -H "Content-Type: application/json" \
+  -d @aibom.json
+```
+
+```json
+{"components": {
+  "models": {"gpt-5": {"provider": "openai", "context_window": 200000}},
+  "prompts": {"support-system-v3": {"version": 3, "owner": "support-team"}},
+  "metadata": {"environment": "production"}
+}}
+```
+
+## CycloneDX export and external BOM ingest
+
+Shield's inventory interoperates with standard supply-chain tooling in
+both directions.
+
+**Export.** `GET /v1/tenant/me/aibom?format=cyclonedx` returns the same
+inventory as a CycloneDX 1.6 ML-BOM: models become
+`machine-learning-model` components, knowledge sources and memory become
+`data`, dependencies become `library`, agents/tools/guardrails become
+`application` components with `shield:*` properties, and MCP servers
+appear under `services`. Feed it to GUAC, Dependency-Track, or any
+CycloneDX consumer.
+
+**Ingest.** `POST /v1/tenant/me/aibom/ingest` accepts a CycloneDX JSON
+document and merges its components into your declared sections, tagged
+`source: cyclonedx-ingest`. Point a cluster-side generator such as
+k8s-aibom's webhook sink at this endpoint and your Kubernetes runtime
+inventory (models, vector stores, frameworks) lands in the same tenant
+BOM that already carries Shield's governance view: agents, tools,
+guardrails, policies, and drift. Components with credential-looking
+values are skipped and counted in the response, never stored.
+
 ## Approve a baseline and watch for drift
 
 ```bash

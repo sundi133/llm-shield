@@ -78,13 +78,128 @@ def _validate_section(section: str) -> None:
             detail=f"unknown section '{section}' — must be one of: {', '.join(DECLARABLE_SECTIONS)}")
 
 
+def _validate_components(section: str, components: dict) -> None:
+    """Shared request validation for declare payloads (raises 422)."""
+    if not isinstance(components, dict) or not components:
+        raise HTTPException(status_code=422, detail='body must be {"components": {id: {...} | null}}')
+    for cid, comp in components.items():
+        if not _ID_RE.match(cid):
+            raise HTTPException(
+                status_code=422,
+                detail=f"invalid component id '{cid[:64]}' (allowed: [A-Za-z0-9._-], max 128 chars)")
+        if comp is not None and section != "metadata" and not isinstance(comp, dict):
+            raise HTTPException(status_code=422, detail=f"component '{cid}' must be an object or null")
+        hit = _find_credential_shaped(comp, cid)
+        if hit:
+            raise HTTPException(
+                status_code=422,
+                detail=f"value at '{hit}' looks like a credential — declare secret *names*, never values")
+
+
+def _merge_components(section: str, stored: dict, components: dict) -> tuple[dict, int]:
+    """Merge-by-id (null deletes) and enforce post-merge caps. Returns
+    (merged, deleted_count); raises 422 on cap violations."""
+    deleted = 0
+    for cid, comp in components.items():
+        if comp is None:
+            deleted += 1 if stored.pop(cid, None) is not None else 0
+        else:
+            stored[cid] = comp
+    if len(stored) > MAX_COMPONENTS_PER_SECTION:
+        raise HTTPException(
+            status_code=422,
+            detail=f"section '{section}' would hold {len(stored)} entries (max {MAX_COMPONENTS_PER_SECTION})")
+    size = len(json.dumps(stored))
+    if size > MAX_SECTION_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"section '{section}' would be {size} bytes serialized (max {MAX_SECTION_BYTES})")
+    return stored, deleted
+
+
+_FORMATS = ("aibom", "cyclonedx")
+MAX_INGEST_BYTES = 1024 * 1024
+
+
 @router.get("")
-async def get_aibom(request: Request, view: str = "full"):
-    """Generate the tenant's current AIBOM document."""
+async def get_aibom(request: Request, view: str = "full", format: str = "aibom"):
+    """Generate the tenant's current AIBOM document.
+
+    format=cyclonedx returns the same inventory as a CycloneDX 1.6 ML-BOM
+    for standard supply-chain tooling.
+    """
     tenant_id = get_tenant_from_api_key(request)
     if view not in VIEWS:
         raise HTTPException(status_code=422, detail=f"view must be one of: {', '.join(VIEWS)}")
-    return generate_aibom(tenant_id, view=view)
+    if format not in _FORMATS:
+        raise HTTPException(status_code=422, detail=f"format must be one of: {', '.join(_FORMATS)}")
+    doc = generate_aibom(tenant_id, view=view)
+    if format == "cyclonedx":
+        from storage.aibom_interop import to_cyclonedx
+        return to_cyclonedx(doc)
+    return doc
+
+
+@router.post("/ingest")
+async def ingest_bom(request: Request):
+    """Ingest an external CycloneDX BOM (e.g. a k8s-aibom webhook sink)
+    into the declared sections.
+
+    Components map by type (machine-learning-model -> models, data ->
+    knowledge_sources, everything else -> supply_chain), tagged with
+    source: cyclonedx-ingest. This is the bulk/automated path, so
+    credential-shaped values skip that component (counted in the response)
+    instead of rejecting the whole document; post-merge section caps still
+    reject with 422 — no silent truncation.
+    """
+    tenant_id = get_tenant_from_api_key(request)
+    raw = await request.body()
+    if len(raw) > MAX_INGEST_BYTES:
+        raise HTTPException(
+            status_code=422, detail=f"document is {len(raw)} bytes (max {MAX_INGEST_BYTES})")
+    try:
+        doc = json.loads(raw)
+    except Exception:
+        raise HTTPException(status_code=422, detail="body must be JSON")
+
+    from storage.aibom_interop import from_cyclonedx
+    try:
+        mapped, notes = from_cyclonedx(doc)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    skipped_credential = 0
+    for section, components in mapped.items():
+        safe = {}
+        for cid, comp in components.items():
+            if _find_credential_shaped(comp, cid):
+                skipped_credential += 1
+                continue
+            safe[cid] = comp
+        mapped[section] = safe
+    if skipped_credential:
+        notes.append(f"{skipped_credential} components skipped (credential-shaped values)")
+
+    declared = load_declared(tenant_id)
+    counts = {}
+    for section, components in mapped.items():
+        if not components:
+            continue
+        stored, _ = _merge_components(section, declared.get(section) or {}, components)
+        declared[section] = stored
+        counts[section] = len(components)
+    if counts:
+        declared["updated_at"] = int(time.time())
+        save_declared(tenant_id, declared)
+
+    log_admin_action(
+        action="aibom_ingest_bom",
+        actor=f"tenant:{tenant_id}",
+        tenant_id=tenant_id,
+        source_ip=request.client.host if request.client else "",
+        metadata={"ingested": counts, "notes": notes},
+    )
+    return {"tenant_id": tenant_id, "ingested": counts, "notes": notes}
 
 
 @router.get("/components")
@@ -97,6 +212,48 @@ async def get_components(request: Request):
         "declared": {s: declared.get(s) or {} for s in DECLARABLE_SECTIONS},
         "updated_at": declared.get("updated_at"),
     }
+
+
+@router.put("/components")
+async def put_manifest(request: Request):
+    """Upsert the whole declared doc in one call (the CI `aibom.json` flow).
+
+    Body: {"components": {section: {id: {...} | null}}} — each section merges
+    by id exactly like the per-section route; sections not mentioned are left
+    untouched. All-or-nothing: any invalid section/id/value rejects the whole
+    request before anything is written.
+    """
+    tenant_id = get_tenant_from_api_key(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=422, detail="body must be JSON")
+    manifest = (body or {}).get("components")
+    if not isinstance(manifest, dict) or not manifest:
+        raise HTTPException(
+            status_code=422, detail='body must be {"components": {section: {id: {...} | null}}}')
+
+    for section, components in manifest.items():
+        _validate_section(section)
+        _validate_components(section, components)
+
+    declared = load_declared(tenant_id)
+    counts = {}
+    for section, components in manifest.items():
+        stored, _ = _merge_components(section, declared.get(section) or {}, components)
+        declared[section] = stored
+        counts[section] = len(stored)
+    declared["updated_at"] = int(time.time())
+    save_declared(tenant_id, declared)
+
+    log_admin_action(
+        action="aibom_declare_manifest",
+        actor=f"tenant:{tenant_id}",
+        tenant_id=tenant_id,
+        source_ip=request.client.host if request.client else "",
+        metadata={"sections": sorted(manifest.keys()), "counts": counts},
+    )
+    return {"tenant_id": tenant_id, "sections": counts, "updated_at": declared["updated_at"]}
 
 
 @router.put("/components/{section}")
@@ -114,41 +271,10 @@ async def put_components(section: str, request: Request):
     except Exception:
         raise HTTPException(status_code=422, detail="body must be JSON")
     components = (body or {}).get("components")
-    if not isinstance(components, dict) or not components:
-        raise HTTPException(status_code=422, detail='body must be {"components": {id: {...} | null}}')
-
-    for cid, comp in components.items():
-        if not _ID_RE.match(cid):
-            raise HTTPException(
-                status_code=422,
-                detail=f"invalid component id '{cid[:64]}' (allowed: [A-Za-z0-9._-], max 128 chars)")
-        if comp is not None and section != "metadata" and not isinstance(comp, dict):
-            raise HTTPException(status_code=422, detail=f"component '{cid}' must be an object or null")
-        hit = _find_credential_shaped(comp, cid)
-        if hit:
-            raise HTTPException(
-                status_code=422,
-                detail=f"value at '{hit}' looks like a credential — declare secret *names*, never values")
+    _validate_components(section, components)
 
     declared = load_declared(tenant_id)
-    stored = declared.get(section) or {}
-    deleted = 0
-    for cid, comp in components.items():
-        if comp is None:
-            deleted += 1 if stored.pop(cid, None) is not None else 0
-        else:
-            stored[cid] = comp
-
-    if len(stored) > MAX_COMPONENTS_PER_SECTION:
-        raise HTTPException(
-            status_code=422,
-            detail=f"section '{section}' would hold {len(stored)} entries (max {MAX_COMPONENTS_PER_SECTION})")
-    size = len(json.dumps(stored))
-    if size > MAX_SECTION_BYTES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"section '{section}' would be {size} bytes serialized (max {MAX_SECTION_BYTES})")
-
+    stored, deleted = _merge_components(section, declared.get(section) or {}, components)
     declared[section] = stored
     declared["updated_at"] = int(time.time())
     save_declared(tenant_id, declared)

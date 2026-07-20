@@ -108,6 +108,7 @@ COPY storage/evidence_pack.py storage/
 # AIBOM (AI Bill of Materials) — generator + the gateway store it reads
 COPY storage/aibom.py storage/
 COPY storage/aibom_mappings.py storage/
+COPY storage/aibom_interop.py storage/
 COPY storage/mcp_gateway_store.py storage/
 COPY core/telemetry.py core/
 COPY guardrails/__init__.py guardrails/

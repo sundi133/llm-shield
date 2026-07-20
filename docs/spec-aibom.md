@@ -332,6 +332,30 @@ in-memory fallback store / monkeypatched `kv_get`-style fakes as
    mapping-table sanity tests. Docs page `docs/aibom.md` (customer-facing —
    follow the no-em-dash convention there).
 
+## Addendum: interop tasks (approved after k8s-aibom review)
+
+Motivated by GoogleCloudPlatform/k8s-aibom (cluster-side runtime ML-BOMs in
+CycloneDX 1.6): Shield's BOM covers the governance layer, theirs the infra
+layer — interop merges both into one tenant document. Same invariants apply
+(admin plane, off hot path, stdlib only, additive).
+
+5. **PR 5 — Manifest upload.** `PUT /v1/tenant/me/aibom/components` (no
+   section) accepts the whole declared doc `{section: {id: comp|null}}` in one
+   call — the CI-friendly `aibom.json` manifest workflow. Same per-section
+   validation/caps as the per-section route; all-or-nothing (any invalid
+   section rejects the request).
+6. **PR 6 — CycloneDX 1.6 ML-BOM export.** `GET /aibom?format=cyclonedx` maps
+   the document: models → `machine-learning-model`, knowledge_sources/memory/
+   prompts → `data`, supply_chain → `library`, agents/tools/guardrails →
+   `application` with `shield:*` properties, MCP servers → `services`.
+   New pure module `storage/aibom_interop.py` (+ Dockerfile.admin COPY).
+7. **PR 7 — BOM ingest.** `POST /aibom/ingest` accepts a CycloneDX JSON doc
+   (e.g. k8s-aibom's webhook sink pointed at Shield) and merges its components
+   into the declared sections by type, id-sanitized, provenance-tagged
+   (`source: cyclonedx-ingest`). Credential-shaped values are *skipped* (bulk
+   path) and counted in the response; post-merge section caps reject with 422
+   (no silent truncation). Body cap 1 MB.
+
 ## Open questions (answer before implementation)
 
 1. **Webhook in v1?** Recommended **yes** (PR 3) — the dispatcher and
