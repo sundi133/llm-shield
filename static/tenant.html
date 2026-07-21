@@ -4443,8 +4443,10 @@ if __name__ == "__main__":
           <div class="page-title">MCP Gateway</div>
           <div class="page-desc">Registered upstream MCP servers routed through Shield, and the tool kill switch. Disabling a tool takes effect immediately on every agent for this tenant.</div>
         </div>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:0.75rem;">
           <button class="small" onclick="loadMcpGateway()">Refresh</button>
+          <a href="https://docs.shield.votal.ai/mcp-gateway/" target="_blank" rel="noopener"
+             style="font-size:12px;color:var(--text-dim);text-decoration:none;">Docs&nbsp;&#8599;</a>
         </div>
       </div>
 
@@ -4493,6 +4495,11 @@ X-User-Role: reader</pre></div>
 
           <div style="margin-top:0.9rem;padding:0.6rem 0.75rem;background:var(--bg-subtle,rgba(127,127,127,0.08));border-radius:6px;font-size:12px;color:var(--text-dim);">
             <b style="color:var(--text);">Verify it enforces, not just responds.</b> Call a tool the role is <i>not</i> granted (e.g. <code>delete_record</code>). A correctly-wired gateway returns <code>isError:true</code> with a "Blocked by Shield" message. If it succeeds, enforcement is not engaging — check <code>isolation_ack</code> and that the agent is registered.
+          </div>
+          <div style="margin-top:0.75rem;font-size:12px;color:var(--text-dim);">
+            Full reference, all transports and options:
+            <a href="https://docs.shield.votal.ai/mcp-gateway/" target="_blank" rel="noopener"
+               style="color:var(--accent-hover,#6366f1);text-decoration:none;">docs.shield.votal.ai/mcp-gateway&nbsp;&#8599;</a>
           </div>
         </div>
       </details>
