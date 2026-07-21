@@ -4448,6 +4448,55 @@ if __name__ == "__main__":
         </div>
       </div>
 
+      <!-- Inline setup guide: how a dev puts their own MCP server behind Shield.
+           Registration is a data-plane API call (this portal is the admin plane),
+           so the steps are shown here rather than as a form. -->
+      <details class="card" style="margin-bottom:1rem;" open>
+        <summary style="cursor:pointer;padding:0.85rem 1rem;font-weight:600;font-size:14px;">
+          How to put your MCP server behind Shield &nbsp;<span style="font-weight:400;color:var(--text-dim);font-size:12px;">3 steps</span>
+        </summary>
+        <div style="padding:0 1rem 1rem;font-size:13px;line-height:1.5;">
+          <p style="color:var(--text-dim);margin:0 0 0.75rem;">
+            Set <code>$SHIELD</code> to your Shield <b>data-plane</b> URL and <code>$KEY</code> to your tenant API key. These are gateway API calls; this portal is the admin plane, so run them from your terminal or CI.
+          </p>
+
+          <div style="font-weight:600;margin:0.75rem 0 0.25rem;">1. Register your MCP server as a route</div>
+          <div style="color:var(--text-dim);margin-bottom:0.35rem;">Pick a short route name (used in the agent's gateway URL). <code>isolation_ack:true</code> asserts your server only accepts traffic from the gateway — set it <code>false</code> if it is still publicly reachable, and Shield will warn.</div>
+          <div class="sdk-code-block"><div class="code-header"><span>PUT upstream</span><button class="small" onclick="navigator.clipboard.writeText(document.getElementById('mcp-cb-1').textContent);showToast('Copied','success')" style="font-size:10px;padding:0.2rem 0.5rem;">Copy</button></div><pre id="mcp-cb-1" class="mono">curl -X PUT "$SHIELD/v1/tenant/me/mcp-gateway/upstreams/my-server" \
+  -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{
+    "transport": "http",
+    "url": "https://your-mcp-server/mcp",
+    "enforcement_backend": "inprocess",
+    "isolation_ack": true
+  }'</pre></div>
+
+          <div style="font-weight:600;margin:0.9rem 0 0.25rem;">2. Grant a role access to its tools</div>
+          <div style="color:var(--text-dim);margin-bottom:0.35rem;">RBAC is deny-by-default: a tool a role is not granted is blocked. Tool names must match what your server returns from <code>tools/list</code>.</div>
+          <div class="sdk-code-block"><div class="code-header"><span>POST agent + role policy</span><button class="small" onclick="navigator.clipboard.writeText(document.getElementById('mcp-cb-2').textContent);showToast('Copied','success')" style="font-size:10px;padding:0.2rem 0.5rem;">Copy</button></div><pre id="mcp-cb-2" class="mono">curl -X POST "$SHIELD/v1/agents/registry" \
+  -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{
+    "agent_id": "my-agent",
+    "tools": ["search", "get_record"],
+    "role_permissions": { "reader": ["search", "get_record"] }
+  }'</pre></div>
+
+          <div style="font-weight:600;margin:0.9rem 0 0.25rem;">3. Point your agent at the gateway</div>
+          <div style="color:var(--text-dim);margin-bottom:0.35rem;">Your agent speaks MCP to the gateway URL below, sending its identity as headers. Shield enforces on every <code>tools/call</code>, then forwards to your server.</div>
+          <div class="sdk-code-block"><div class="code-header"><span>Agent connects here</span><button class="small" onclick="navigator.clipboard.writeText(document.getElementById('mcp-cb-3').textContent);showToast('Copied','success')" style="font-size:10px;padding:0.2rem 0.5rem;">Copy</button></div><pre id="mcp-cb-3" class="mono"># MCP endpoint for the "my-server" route:
+$SHIELD/gateway/my-server/mcp
+
+# Identity headers on every request:
+X-API-Key: $KEY
+X-Agent-Key: my-agent
+X-User-Role: reader</pre></div>
+
+          <div style="margin-top:0.9rem;padding:0.6rem 0.75rem;background:var(--bg-subtle,rgba(127,127,127,0.08));border-radius:6px;font-size:12px;color:var(--text-dim);">
+            <b style="color:var(--text);">Verify it enforces, not just responds.</b> Call a tool the role is <i>not</i> granted (e.g. <code>delete_record</code>). A correctly-wired gateway returns <code>isError:true</code> with a "Blocked by Shield" message. If it succeeds, enforcement is not engaging — check <code>isolation_ack</code> and that the agent is registered.
+          </div>
+        </div>
+      </details>
+
       <div id="mcp-cards" class="stat-grid" style="grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1rem;"></div>
 
       <div class="card" style="margin-bottom:1rem;">
