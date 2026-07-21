@@ -4451,7 +4451,39 @@ if __name__ == "__main__":
       <div id="mcp-cards" class="stat-grid" style="grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1rem;"></div>
 
       <div class="card" style="margin-bottom:1rem;">
-        <div class="card-header"><div><div class="card-title">Registered Servers</div><div class="card-desc" style="font-size:11px;color:var(--text-dim);">Upstream credentials are masked. Configure servers via the gateway API on the data plane.</div></div></div>
+        <div class="card-header"><div><div class="card-title">Register a Server</div><div class="card-desc" style="font-size:11px;color:var(--text-dim);">Add an upstream MCP server. HTTP/SSE need a URL; stdio needs a command. Then grant a role its tools under Agent Registry.</div></div></div>
+        <div style="padding:0.5rem;display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;align-items:end;">
+          <label style="font-size:12px;">Route name
+            <input id="mcp-reg-route" placeholder="e.g. files" style="width:100%;margin-top:0.2rem;" />
+          </label>
+          <label style="font-size:12px;">Transport
+            <select id="mcp-reg-transport" onchange="mcpToggleTransportFields()" style="width:100%;margin-top:0.2rem;">
+              <option value="http">http</option>
+              <option value="sse">sse</option>
+              <option value="stdio">stdio</option>
+            </select>
+          </label>
+          <label id="mcp-reg-url-wrap" style="font-size:12px;grid-column:1/-1;">Upstream URL
+            <input id="mcp-reg-url" placeholder="https://your-mcp-server/mcp" style="width:100%;margin-top:0.2rem;" />
+          </label>
+          <label id="mcp-reg-cmd-wrap" style="font-size:12px;grid-column:1/-1;display:none;">Command
+            <input id="mcp-reg-cmd" placeholder="/usr/bin/your-mcp-server" style="width:100%;margin-top:0.2rem;" />
+          </label>
+          <label style="font-size:12px;display:flex;align-items:center;gap:0.4rem;grid-column:1/-1;margin-top:0.2rem;">
+            <input id="mcp-reg-isolation" type="checkbox" />
+            Upstream accepts connections only from the gateway (isolation_ack)
+          </label>
+          <div style="grid-column:1/-1;font-size:11px;color:var(--warn);" id="mcp-reg-isolation-note">
+            Leave unchecked only if the upstream is still publicly reachable — Shield warns, because an agent could then bypass it.
+          </div>
+          <div style="grid-column:1/-1;">
+            <button class="primary" onclick="mcpRegisterServer()">Register Server</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:1rem;">
+        <div class="card-header"><div><div class="card-title">Registered Servers</div><div class="card-desc" style="font-size:11px;color:var(--text-dim);">Upstream credentials are masked.</div></div></div>
         <div id="mcp-servers" style="padding:0.5rem;max-height:360px;overflow-y:auto;"></div>
       </div>
 
@@ -11410,13 +11442,15 @@ function renderMcpGateway(inv) {
         const transport = escapeHtml(s.transport || '?');
         const dest = escapeHtml(s.url || s.command || '');
         const backend = escapeHtml(s.enforcement_backend || 'inprocess');
+        const rawRoute = s.route || s.name || '';
         return _aibomRow(
           `<span style="font-weight:600;min-width:120px;">${route}</span>` +
           `<span style="color:var(--text-dim);">${transport}</span>` +
           `<span style="flex:1;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;">${dest}</span>` +
-          `<span class="badge">${backend}</span>`);
+          `<span class="badge">${backend}</span>` +
+          `<button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpDeleteServer('${encodeURIComponent(rawRoute)}')">Remove</button>`);
       }).join('')
-    : _aibomEmpty('No MCP servers registered for this tenant.');
+    : _aibomEmpty('No MCP servers registered yet. Use the form above to add one.');
 
   const disabled = inv.disabled_tools || [];
   document.getElementById('mcp-disabled').innerHTML = disabled.length
@@ -11459,6 +11493,48 @@ async function mcpEnableTool(encName) {
   try {
     await apiCall(`/v1/tenant/me/mcp/tools/${encodeURIComponent(name)}/enable`, { method: 'POST' });
     showToast(`Enabled ${name}`, 'success');
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+function mcpToggleTransportFields() {
+  const t = document.getElementById('mcp-reg-transport').value;
+  document.getElementById('mcp-reg-url-wrap').style.display = (t === 'stdio') ? 'none' : '';
+  document.getElementById('mcp-reg-cmd-wrap').style.display = (t === 'stdio') ? '' : 'none';
+}
+
+async function mcpRegisterServer() {
+  const route = (document.getElementById('mcp-reg-route').value || '').trim();
+  const transport = document.getElementById('mcp-reg-transport').value;
+  const url = (document.getElementById('mcp-reg-url').value || '').trim();
+  const command = (document.getElementById('mcp-reg-cmd').value || '').trim();
+  const isolation_ack = document.getElementById('mcp-reg-isolation').checked;
+  if (!route) { showToast('Enter a route name', 'error'); return; }
+  const body = { route, transport, isolation_ack };
+  if (transport === 'stdio') body.command = command; else body.url = url;
+  try {
+    const r = await apiCall('/v1/tenant/me/mcp/servers',
+      { method: 'POST', body: JSON.stringify(body) });
+    showToast(`${r.status === 'updated' ? 'Updated' : 'Registered'} ${route}`, 'success');
+    if (r.warning) showToast(r.warning, 'error');   // surface the isolation warning
+    document.getElementById('mcp-reg-route').value = '';
+    document.getElementById('mcp-reg-url').value = '';
+    document.getElementById('mcp-reg-cmd').value = '';
+    document.getElementById('mcp-reg-isolation').checked = false;
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+async function mcpDeleteServer(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  if (!confirm(`Remove MCP server "${route}"? Agents using this route will stop working.`)) return;
+  try {
+    await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}`, { method: 'DELETE' });
+    showToast(`Removed ${route}`, 'success');
     loadMcpGateway();
   } catch (e) {
     showToast('Failed: ' + e.message, 'error');

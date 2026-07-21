@@ -25,9 +25,18 @@ truthful "scanned live at call time" note.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+import re
+import time
+from typing import Optional
 
-from storage.mcp_gateway_store import list_upstreams
+from pydantic import BaseModel, Field, model_validator
+
+from storage.mcp_gateway_store import (
+    delete_upstream,
+    get_upstream,
+    list_upstreams,
+    set_upstream,
+)
 from storage.tool_killswitch import (
     disable_tool,
     enable_tool,
@@ -169,3 +178,104 @@ async def enable(tool_name: str, request: Request):
         pass
 
     return {"status": "enabled", "tenant_id": tenant_id, "tool_name": tool_name}
+
+
+# ── server registration (portal write path) ──────────────────────────────
+#
+# The data-plane gateway API (api/routes_mcp_gateway.py) owns the same store;
+# this admin-plane pair lets the portal register/remove a server without the
+# dev dropping to curl. The data plane reads get_upstream() per request
+# (core/mcp/gateway.py:_load_cfg), so a write here is picked up on the next
+# call with no cross-plane invalidation — a new route has no pooled connection,
+# and a delete makes _load_cfg 404 immediately. (Only a long-lived stdio
+# connection object is pooled; config/enforcement is always re-read.)
+
+# Route names become a URL path segment and a Redis key component — constrain
+# them rather than trusting the caller.
+_ROUTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+class RegisterServerRequest(BaseModel):
+    """Mirrors api/routes_mcp_gateway.py::UpstreamConfigRequest. Kept in sync
+    deliberately; the portal must not accept a shape the data plane rejects."""
+    route: str = Field(..., description="short route id, used in the gateway URL")
+    transport: str = Field(..., description="stdio | sse | http")
+    command: Optional[str] = None
+    args: Optional[list[str]] = None
+    env: Optional[dict[str, str]] = None
+    url: Optional[str] = None
+    headers: Optional[dict[str, str]] = None
+    enforcement_backend: str = Field("inprocess", description="inprocess | http")
+    shield_url: Optional[str] = None
+    shield_tenant_key: Optional[str] = None
+    scan_descriptions: bool = False
+    isolation_ack: bool = False
+
+    @model_validator(mode="after")
+    def _check(self):
+        if not _ROUTE_RE.match(self.route or ""):
+            raise ValueError("route must be 1-64 chars: letters, digits, - or _")
+        if self.transport not in ("stdio", "sse", "http"):
+            raise ValueError("transport must be one of: stdio, sse, http")
+        if self.transport == "stdio" and not self.command:
+            raise ValueError("stdio transport requires 'command'")
+        if self.transport in ("sse", "http") and not self.url:
+            raise ValueError(f"{self.transport} transport requires 'url'")
+        if self.enforcement_backend not in ("inprocess", "http"):
+            raise ValueError("enforcement_backend must be inprocess or http")
+        return self
+
+
+@router.post("/servers")
+async def register_server(body: RegisterServerRequest, request: Request):
+    """Register or replace an upstream MCP server for THIS tenant."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    route = body.route
+
+    existing = get_upstream(tenant_id, route)
+    cfg = body.model_dump(exclude_none=True)
+    cfg.pop("route", None)
+    cfg["route"] = route
+    cfg["tenant_id"] = tenant_id
+    cfg["created_at"] = (existing or {}).get("created_at") or int(time.time())
+    cfg["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, cfg)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_gateway_register_upstream", actor=actor,
+                         tenant_id=tenant_id,
+                         after={"route": route, "transport": body.transport,
+                                "enforcement_backend": body.enforcement_backend,
+                                "isolation_ack": body.isolation_ack, "via": "portal"})
+    except Exception:
+        pass
+
+    resp = {"status": "updated" if existing else "created",
+            "route": route, "server": _redact(cfg)}
+    if not body.isolation_ack:
+        resp["warning"] = ("isolation_ack is false — Shield only enforces if this "
+                           "upstream accepts connections ONLY from the gateway "
+                           "(firewall / mTLS / localhost). Otherwise an agent can "
+                           "reach it directly and bypass Shield.")
+    return resp
+
+
+@router.delete("/servers/{route}")
+async def delete_server(route: str, request: Request):
+    """Remove an upstream this tenant registered."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+
+    if not delete_upstream(tenant_id, route):
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_gateway_delete_upstream", actor=actor,
+                         tenant_id=tenant_id, after={"route": route, "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "deleted", "tenant_id": tenant_id, "route": route}
