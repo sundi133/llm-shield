@@ -1,0 +1,73 @@
+# LiteLLM proxy config that routes MCP tool calls through Votal Shield's MCP gateway.
+#
+# Companion to litellm_guardrails.example.yaml, which guards the CHAT path
+# (prompts/completions). This one guards the TOOL path: every tools/call an
+# agent makes through LiteLLM is enforced by Shield before it reaches your MCP
+# server.
+#
+# How it works: LiteLLM's MCP client points at Shield's gateway URL instead of
+# your MCP server. Shield runs RBAC + allowlist + data-access + payload
+# validation, then forwards to the real upstream. No Shield code or custom
+# LiteLLM guardrail is needed, because Shield already speaks the MCP protocol
+# (initialize / tools/list / tools/call).
+#
+# Start:  litellm --config config/litellm_mcp_gateway.example.yaml --port 4000
+
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+# ── MCP servers, fronted by Shield ───────────────────────────────────────
+#
+# `url` is Shield's gateway, NOT your MCP server. The route segment ("files")
+# is the route you registered in Shield (portal: MCP Gateway tab, or
+# PUT /v1/tenant/me/mcp-gateway/upstreams/files). Shield holds the real
+# upstream URL, so it is never exposed to LiteLLM or the agent.
+mcp_servers:
+  files:
+    url: "https://<your-shield-data-plane>/gateway/files/mcp"
+    transport: "http"
+    description: "File tools, enforced by Shield"
+
+    # Tenant identity. Required on the multi-tenant data plane so Shield can
+    # resolve which tenant's policy applies. (The self-hosted lite gateway pins
+    # a single team and does not need this.)
+    static_headers:
+      x-api-key: os.environ/SHIELD_TENANT_KEY
+
+    # Agent identity. Forward the CALLER's identity so Shield can apply
+    # per-agent / per-role RBAC. Without these, every call through LiteLLM
+    # arrives as one identity and per-agent RBAC collapses to per-proxy.
+    #
+    # The calling client must actually set x-agent-key / x-user-role. If you
+    # cannot control the client, move them into static_headers above and accept
+    # that all LiteLLM traffic shares one agent identity.
+    extra_headers:
+      - "x-agent-key"
+      - "x-user-role"
+
+# ── Chat-path guardrails (unchanged, from litellm_guardrails.example.yaml) ──
+# Keep these so prompts/completions are guarded too. The MCP gateway above
+# guards tool calls; these guard the model conversation. Different traffic,
+# both needed.
+guardrails:
+  - guardrail_name: votal-input-guard
+    litellm_params:
+      guardrail: votal_guardrail.VotalGuardrail
+      mode: pre_call
+      default_on: true
+  - guardrail_name: votal-output-guard
+    litellm_params:
+      guardrail: votal_guardrail.VotalGuardrail
+      mode: post_call
+      default_on: true
+
+votal_guardrail:
+  api_base: "https://<your-shield-data-plane>"
+  api_token: ""
+  last_k_messages: 3
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
