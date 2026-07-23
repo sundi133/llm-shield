@@ -24,6 +24,10 @@ except ImportError:
 from api.routes_health import router as health_router
 from api.routes_classify import router as classify_router
 from api.routes_gateway import router as gateway_router
+from api.routes_openai_compat import (
+    router as openai_compat_router,
+    OPENAI_COMPAT_ENABLED,
+)
 from api.routes_config import router as config_router
 from api.routes_audit import router as audit_router
 from api.routes_guardrail_metrics import router as guardrail_metrics_router
@@ -149,6 +153,11 @@ def create_app() -> FastAPI:
     app.include_router(oauth_registration_router)
     app.include_router(oidc_admin_router)
     app.include_router(a2a_router)
+
+    # OpenAI-compatible drop-in proxy (POST /v1/chat/completions). Additive;
+    # off by default only when SHIELD_OPENAI_COMPAT_ENABLED is set to 0/false.
+    if OPENAI_COMPAT_ENABLED:
+        app.include_router(openai_compat_router)
 
     # Include SaaS routes only if available
     if SAAS_AVAILABLE:
