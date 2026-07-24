@@ -1,0 +1,113 @@
+# Envoy mTLS front door for the Shield Identity Bundle.
+#
+# - Pulls its own serving cert AND the SPIRE trust bundle from the SPIRE Agent
+#   over the SDS API (the agent's Workload API socket) — auto-rotated.
+# - Requires a client SVID and verifies it against the SPIRE bundle. THIS is the
+#   real cryptographic verification (chain + signature), which is why Shield's
+#   own name-only X.509 check is never the gate in this topology.
+# - Forwards the verified client cert as X-Forwarded-Client-Cert (XFCC) to Shield.
+#
+# Edit the `shield_upstream` cluster address to match your Shield data-plane
+# service (default shield:8000).
+
+node:
+  id: "shield-identity-envoy"
+  cluster: "shield-identity"
+
+static_resources:
+  listeners:
+    - name: mtls_ingress
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8443 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_http
+                # Strip any client-supplied XFCC and set our own from the verified
+                # peer cert. Shield must trust XFCC ONLY from this proxy.
+                forward_client_cert_details: SANITIZE_SET
+                set_current_client_cert_details:
+                  uri: true
+                  cert: true
+                route_config:
+                  name: to_shield
+                  # Prove to Shield this traffic came through Envoy (mTLS-verified),
+                  # independent of source IP (which X-Forwarded-For can spoof).
+                  # OVERWRITE_IF_EXISTS_OR_ADD strips any client-supplied copy.
+                  # Set the value to the same high-entropy secret as Shield's
+                  # SHIELD_TRUSTED_PROXY_SECRET.
+                  request_headers_to_add:
+                    - header:
+                        key: "X-Shield-Proxy-Token"
+                        value: "REPLACE_WITH_SHIELD_TRUSTED_PROXY_SECRET"
+                      append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                  virtual_hosts:
+                    - name: shield
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: shield_upstream }
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              require_client_certificate: true
+              common_tls_context:
+                tls_certificate_sds_secret_configs:
+                  - name: "default"          # this Envoy's SVID, from SPIRE
+                    sds_config:
+                      resource_api_version: V3
+                      api_config_source:
+                        api_type: GRPC
+                        transport_api_version: V3
+                        grpc_services:
+                          - envoy_grpc: { cluster_name: spire_agent }
+                combined_validation_context:
+                  default_validation_context:
+                    # Only accept SVIDs from your trust domain (edit to match).
+                    match_typed_subject_alt_names:
+                      - san_type: URI
+                        matcher: { prefix: "spiffe://" }
+                  validation_context_sds_secret_config:
+                    name: "ROOTCA"           # SPIRE trust bundle, from SPIRE
+                    sds_config:
+                      resource_api_version: V3
+                      api_config_source:
+                        api_type: GRPC
+                        transport_api_version: V3
+                        grpc_services:
+                          - envoy_grpc: { cluster_name: spire_agent }
+
+  clusters:
+    - name: spire_agent
+      connect_timeout: 1s
+      type: STATIC
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: spire_agent
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    pipe: { path: "/tmp/spire-agent/public/api.sock" }
+
+    - name: shield_upstream
+      connect_timeout: 2s
+      type: STRICT_DNS
+      load_assignment:
+        cluster_name: shield_upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: shield, port_value: 8000 }

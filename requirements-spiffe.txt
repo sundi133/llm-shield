@@ -1,0 +1,5 @@
+# Optional agent-side extras for the Shield Identity Bundle.
+# Only needed by agent workloads that fetch their SVID from the SPIRE Workload
+# API socket. NOT a core Shield runtime dependency — do not add to requirements.txt.
+#   pip install -r requirements-spiffe.txt
+spiffe>=0.2.0

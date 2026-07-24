@@ -1,0 +1,81 @@
+name: Identity Bundle
+
+# Validates the Shield Identity Bundle (SPIRE + Envoy) config and the identity
+# provider layer. The config-validation job runs on every PR touching the bundle;
+# the full boot+smoke is gated behind manual dispatch (it pulls SPIRE/Envoy images
+# and needs a Shield image + PKI material, so it is not a fast merge gate).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/identity/**"
+      - "core/workload_identity/**"
+      - "core/oauth/spiffe*.py"
+      - "core/proxy_trust.py"
+      - ".github/workflows/identity-bundle.yml"
+  workflow_dispatch: {}
+
+jobs:
+  validate:
+    name: config + unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt pyyaml
+
+      - name: Identity provider unit tests
+        run: |
+          python -m pytest -q \
+            tests/test_workload_identity.py \
+            tests/test_oidc_sa_integration.py \
+            tests/test_spiffe_x509.py \
+            tests/test_spiffe_proxy_trust.py \
+            tests/test_mtls_proxy_trust.py
+
+      - name: Validate compose files
+        run: |
+          docker compose -f deploy/identity/docker-compose.identity.yml config >/dev/null
+          SPIRE_TRUST_DOMAIN=ci.local SPIRE_DB_CONN='postgres://x' SPIRE_DB_PASSWORD=x \
+          SHIELD_TRUSTED_PROXY_SECRET=x SHIELD_UPSTREAM_HOST=shield \
+            docker compose -f deploy/identity/prod/docker-compose.prod.yml config >/dev/null
+
+      - name: Validate Envoy config
+        run: |
+          docker run --rm -v "$PWD/deploy/identity/envoy.yaml:/e.yaml:ro" \
+            envoyproxy/envoy:v1.29-latest --mode validate -c /e.yaml
+
+      - name: Validate SPIRE configs
+        run: |
+          docker run --rm -e SPIRE_TRUST_DOMAIN=ci.local \
+            -v "$PWD/deploy/identity/spire/server.conf:/s.conf:ro" \
+            ghcr.io/spiffe/spire-server:1.9.0 validate -expandEnv -config /s.conf
+          docker run --rm -e SPIRE_TRUST_DOMAIN=ci.local -e SPIRE_DB_CONN='postgres://x' \
+            -v "$PWD/deploy/identity/prod/server.conf:/s.conf:ro" \
+            ghcr.io/spiffe/spire-server:1.9.0 validate -expandEnv -config /s.conf
+
+  smoke:
+    name: boot + smoke (manual)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      # NOTE: requires a built Shield image + generated PKI/SVID material. This is
+      # the end-to-end gate to run before a release, not on every PR. Wire the
+      # Shield image build here, generate an SVID via `spire-server entry create`,
+      # bring up the identity profile, then:
+      #   ENVOY=https://localhost:8443 SVID_CERT=... SVID_KEY=... BUNDLE=... \
+      #     ./scripts/smoke_identity_bundle.sh
+      - name: Placeholder
+        run: echo "Wire the Shield image + SVID generation, then run scripts/smoke_identity_bundle.sh"

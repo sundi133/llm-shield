@@ -19,11 +19,22 @@ from starlette.responses import Response
 
 logger = logging.getLogger("votal.spiffe_mw")
 
+# Shared trusted-proxy boundary (re-exported so existing imports keep working).
+from core.proxy_trust import trusted_proxy_only as _trusted_proxy_only
+from core.proxy_trust import peer_is_trusted as _peer_is_trusted
+
 
 class SPIFFEMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         # Only run if SPIFFE is enabled
         if not os.environ.get("SHIELD_SPIFFE_ENABLED", "").lower() in ("true", "1", "yes"):
+            return await call_next(request)
+
+        # Trust boundary: in trusted-proxy-only mode, ignore client-supplied
+        # X-Forwarded-Client-Cert unless the request came from the configured
+        # proxy (Envoy). Otherwise a client that reaches Shield directly could
+        # spoof the header and impersonate a workload.
+        if _trusted_proxy_only() and not _peer_is_trusted(request):
             return await call_next(request)
 
         # Check for X.509 SVID in client cert header

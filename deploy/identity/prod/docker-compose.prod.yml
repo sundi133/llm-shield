@@ -1,0 +1,87 @@
+# Shield Identity Bundle — PRODUCTION compose overlay.
+#
+# Adds a Postgres datastore and wires SPIRE to the prod configs. For real HA,
+# run this as the base and scale spire-server to >= 3 (behind the same Postgres):
+#   docker compose -f docker-compose.prod.yml --profile identity up -d --scale spire-server=3
+# On Kubernetes prefer the Helm chart (deploy/helm) with the SPIRE Controller
+# Manager for auto-registration.
+#
+# Env required: SPIRE_TRUST_DOMAIN, SPIRE_DB_CONN, SHIELD_TRUSTED_PROXY_SECRET,
+# SHIELD_UPSTREAM_HOST. Mount your PKI material into ./conf (see prod/*.conf).
+
+services:
+  spire-db:
+    image: postgres:16
+    profiles: ["identity"]
+    environment:
+      POSTGRES_DB: spire
+      POSTGRES_USER: spire
+      POSTGRES_PASSWORD: ${SPIRE_DB_PASSWORD:?set SPIRE_DB_PASSWORD}
+    volumes:
+      - spire-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spire"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  spire-server:
+    image: ghcr.io/spiffe/spire-server:1.9.0
+    profiles: ["identity"]
+    depends_on:
+      spire-db:
+        condition: service_healthy
+    command: ["-config", "/run/spire/config/server.conf", "-expandEnv"]
+    environment:
+      SPIRE_TRUST_DOMAIN: ${SPIRE_TRUST_DOMAIN:?set SPIRE_TRUST_DOMAIN}
+      SPIRE_DB_CONN: ${SPIRE_DB_CONN:?set SPIRE_DB_CONN}
+    volumes:
+      - ./server.conf:/run/spire/config/server.conf:ro
+      - ./conf:/run/spire/conf:ro                 # your PKI material
+      - spire-server-data:/run/spire/data
+      - spire-server-sock:/tmp/spire-server/private
+    healthcheck:
+      test: ["CMD", "/opt/spire/bin/spire-server", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  spire-agent:
+    image: ghcr.io/spiffe/spire-agent:1.9.0
+    profiles: ["identity"]
+    depends_on:
+      spire-server:
+        condition: service_healthy
+    pid: "host"
+    command: ["-config", "/run/spire/config/agent.conf", "-expandEnv"]
+    environment:
+      SPIRE_TRUST_DOMAIN: ${SPIRE_TRUST_DOMAIN:?set SPIRE_TRUST_DOMAIN}
+    volumes:
+      - ./agent.conf:/run/spire/config/agent.conf:ro
+      - ./conf:/run/spire/conf:ro
+      - spire-agent-sock:/tmp/spire-agent/public
+      - spire-server-sock:/tmp/spire-server/private:ro
+    healthcheck:
+      test: ["CMD", "/opt/spire/bin/spire-agent", "healthcheck", "-socketPath", "/tmp/spire-agent/public/api.sock"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  envoy:
+    image: envoyproxy/envoy:v1.29-latest
+    profiles: ["identity"]
+    depends_on:
+      spire-agent:
+        condition: service_healthy
+    command: ["-c", "/etc/envoy/envoy.yaml", "--service-cluster", "shield-identity"]
+    ports:
+      - "8443:8443"
+    volumes:
+      - ../envoy.yaml:/etc/envoy/envoy.yaml:ro    # remember to set X-Shield-Proxy-Token
+      - spire-agent-sock:/tmp/spire-agent/public:ro
+
+volumes:
+  spire-db-data:
+  spire-server-data:
+  spire-server-sock:
+  spire-agent-sock:
