@@ -1,8 +1,6 @@
 ---
-title: Workload Identity Bundle
+title: Workload Identity (SPIRE)
 layout: default
-nav_order: 30
-has_children: true
 permalink: /workload-identity-bundle/
 description: On-prem workload identity for Shield (embedded SPIRE + Envoy) delivered as opt-in containers, with a pluggable provider layer that consumes any identity.
 ---

@@ -38,6 +38,7 @@ groups:
       - { title: Installation, url: /installation-guide/ }
       - { title: Deployment (MCP Servers), url: /deployment-guide/ }
       - { title: On-Premises, url: /on-premises-deployment-guide/ }
+      - { title: Workload Identity (SPIRE), url: /workload-identity-bundle/ }
       - { title: Multi-Tenant Architecture, url: /multi-tenant-architecture/ }
       - { title: Architecture, url: /architecture-diagram/ }
       - { title: Agent Governance, url: /agent-governance/ }
