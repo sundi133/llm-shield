@@ -218,13 +218,13 @@
   button.small { padding: 0.3rem 0.7rem; font-size: 12px; }
 
   label { display: block; font-size: var(--type-meta); font-weight: 500; color: var(--text-dim); margin-bottom: 0.35rem; }
-  input[type=text], input[type=password], textarea {
+  input[type=text], input[type=password], textarea, select {
     width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
     color: var(--text); padding: 0.55rem 0.75rem; font-family: inherit; font-size: var(--type-body);
     transition: border-color 0.1s, box-shadow 0.1s;
   }
   textarea { font-family: 'JetBrains Mono', monospace; font-size: 12px; resize: vertical; min-height: 220px; line-height: 1.6; }
-  input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
   .field { margin-bottom: 1rem; }
 
   .usage-bar { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; margin-top: 0.5rem; }
@@ -1888,7 +1888,343 @@
   button:disabled, button[disabled] { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
 
   /* Inputs: hover affordance */
-  input[type=text]:hover, input[type=password]:hover, textarea:hover { border-color: var(--border-strong); }
+  input[type=text]:hover, input[type=password]:hover, textarea:hover, select:hover { border-color: var(--border-strong); }
+
+  #aibom-cards.stat-grid,
+  #mcp-cards.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.85rem;
+    margin-bottom: 1rem;
+  }
+  #aibom-cards .stat-card,
+  #mcp-cards .stat-card {
+    position: relative;
+    min-height: 96px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.94), rgba(249,250,252,0.94)),
+      radial-gradient(circle at top right, rgba(79,70,229,0.12), transparent 42%);
+    padding: 1rem 1.05rem;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  }
+  #aibom-cards .stat-card::after,
+  #mcp-cards .stat-card::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent), rgba(5,150,105,0.75), transparent);
+  }
+  #aibom-cards .stat-card .stat-value,
+  #mcp-cards .stat-card .stat-value {
+    margin: 0;
+    font-size: clamp(22px, 2.2vw, 30px);
+    line-height: 1;
+    font-weight: 750;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  #aibom-cards .stat-card .stat-label,
+  #mcp-cards .stat-card .stat-label {
+    margin-top: 0.65rem;
+    color: var(--text-muted);
+  }
+
+  .section-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: 0.75rem;
+  }
+  .section-panel {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-2);
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+    overflow: hidden;
+  }
+  .section-panel + .section-panel { margin-top: 1rem; }
+  .section-panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1.05rem 1.2rem;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(79,70,229,0.035), rgba(255,255,255,0));
+  }
+  .section-panel-body { padding: 1rem 1.2rem; }
+  .section-panel-title {
+    font-size: var(--type-title);
+    font-weight: 700;
+    color: var(--text);
+  }
+  .section-panel-desc {
+    margin-top: 0.2rem;
+    color: var(--text-dim);
+    font-size: var(--type-meta);
+    line-height: 1.5;
+  }
+  .inventory-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .inventory-scroll {
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .inventory-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 42px;
+    padding: 0.65rem 0.2rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .inventory-row:last-child { border-bottom: none; }
+  .inventory-row code,
+  .inventory-row .mono {
+    font-size: 11.5px;
+  }
+  .soft-empty {
+    color: var(--text-dim);
+    font-size: 13px;
+    padding: 1rem;
+    text-align: center;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+  }
+
+  #aibom-cards {
+    grid-template-columns: repeat(6, minmax(132px, 1fr)) !important;
+  }
+  #mcp-cards {
+    grid-template-columns: repeat(3, minmax(180px, 1fr)) !important;
+  }
+  #tab-aibom .section-panel,
+  #tab-mcp-gateway .section-panel,
+  #tab-governance .section-panel {
+    margin-bottom: 1rem;
+  }
+  #tab-aibom .card,
+  #tab-mcp-gateway .card,
+  #tab-governance .card {
+    border-radius: 12px;
+  }
+
+  .mcp-guide {
+    padding: 0;
+  }
+  .mcp-guide summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 1rem 1.2rem;
+    font-weight: 700;
+    font-size: 14px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(79,70,229,0.045), rgba(255,255,255,0));
+  }
+  .mcp-guide summary::-webkit-details-marker { display: none; }
+  .mcp-guide-body {
+    padding: 1rem 1.2rem 1.15rem;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .mcp-step-title {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-weight: 700;
+    margin: 0.95rem 0 0.3rem;
+  }
+  .mcp-step-title::before {
+    content: attr(data-step);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent-dim);
+    color: var(--accent-hover);
+    font-size: 11px;
+    font-weight: 800;
+  }
+  .mcp-form-grid {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr);
+    gap: 0.85rem;
+    align-items: end;
+    justify-items: stretch;
+  }
+  .mcp-field {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .mcp-field span {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .mcp-field input,
+  .mcp-field select {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+    padding: 0.62rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: #fbfcfe;
+    color: var(--text);
+    font-family: inherit;
+    font-size: var(--type-body);
+  }
+  .mcp-field-wide { grid-column: 1 / -1; }
+  .mcp-check-row {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.75rem 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+  .mcp-check-row input { width: auto; margin-top: 0.15rem; }
+  .mcp-warning-note {
+    grid-column: 1 / -1;
+    padding: 0.65rem 0.8rem;
+    border-radius: 9px;
+    border: 1px solid rgba(180,83,9,0.22);
+    background: rgba(180,83,9,0.07);
+    color: var(--warn);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .mcp-kill-grid {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.9fr) minmax(260px, 1.2fr) auto;
+    gap: 0.7rem;
+    align-items: end;
+  }
+  .chip-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .chip-cloud .badge {
+    margin: 0;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-dim);
+  }
+
+  .gov-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(160px, 1fr));
+    gap: 0.85rem;
+    margin-bottom: 1rem;
+  }
+  .gov-summary > div {
+    min-height: 86px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #fff;
+    padding: 1rem 1.05rem;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  }
+  .gov-summary b {
+    display: block;
+    margin-top: 0.45rem;
+    font-size: clamp(22px, 2.2vw, 30px);
+    line-height: 1;
+    font-weight: 750;
+    letter-spacing: 0;
+    text-transform: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .gov-table-wrap {
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-2);
+  }
+  .gov-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .gov-table th {
+    padding: 0.75rem 0.85rem;
+    text-align: left;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .gov-table td {
+    padding: 0.75rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .gov-table tbody tr:last-child td { border-bottom: none; }
+  .gov-table tbody tr:hover td { background: rgba(79,70,229,0.035); }
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    padding: 0.16rem 0.55rem;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .status-chip.ok { color: #047857; background: rgba(5,150,105,0.12); }
+  .status-chip.warn { color: var(--warn); background: rgba(180,83,9,0.1); }
+
+  @media (max-width: 1100px) {
+    #aibom-cards { grid-template-columns: repeat(3, minmax(150px, 1fr)) !important; }
+    .inventory-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 760px) {
+    #aibom-cards,
+    #mcp-cards,
+    .gov-summary {
+      grid-template-columns: 1fr !important;
+    }
+    .mcp-form-grid,
+    .mcp-kill-grid {
+      grid-template-columns: 1fr;
+    }
+  }
 
   /* Toggle knob shadow */
   .slider:before { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
@@ -2196,32 +2532,32 @@
 
     <!-- Governance -->
     <div id="tab-governance" class="tab-pane hidden">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+      <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;">
         <div>
-          <h2 style="margin:0;">Agent Governance</h2>
+          <div class="page-title">Agent Governance</div>
           <div class="page-desc">Access intelligence grounded in real runtime activity: agent inventory (including shadow agents), used‑vs‑granted least‑privilege, and access‑review campaigns.</div>
         </div>
-        <div style="display:flex;gap:0.5rem;">
+        <div class="section-toolbar" style="margin-top:0;">
           <button class="small" onclick="loadGovernance()">Refresh</button>
           <button class="small" onclick="startReviewCampaign()">Start access review</button>
         </div>
       </div>
 
-      <div style="display:flex;gap:1.5rem;margin-bottom:1rem;font-size:12px;color:var(--text-muted);">
+      <div class="gov-summary">
         <div>Agents: <b id="gov-count" style="color:var(--text);">–</b></div>
         <div>Registered: <b id="gov-registered" style="color:var(--text);">–</b></div>
         <div>Shadow: <b id="gov-shadow" style="color:#b45309;">–</b></div>
       </div>
 
-      <div style="overflow:auto;border:1px solid var(--border);border-radius:8px;">
-        <table style="width:100%;border-collapse:collapse;font-size:12px;">
-          <thead><tr style="text-align:left;background:var(--bg-subtle,#f6f8fb);">
-            <th style="padding:0.5rem 0.75rem;">Agent</th>
-            <th style="padding:0.5rem 0.75rem;">Status</th>
-            <th style="padding:0.5rem 0.75rem;">Granted tools</th>
-            <th style="padding:0.5rem 0.75rem;">Recently used</th>
-            <th style="padding:0.5rem 0.75rem;">Last seen</th>
-            <th style="padding:0.5rem 0.75rem;"></th>
+      <div class="gov-table-wrap">
+        <table class="gov-table">
+          <thead><tr>
+            <th>Agent</th>
+            <th>Status</th>
+            <th>Granted tools</th>
+            <th>Recently used</th>
+            <th>Last seen</th>
+            <th></th>
           </tr></thead>
           <tbody id="gov-agents-body"><tr><td colspan="6" style="padding:1rem;color:var(--text-muted);">Loading…</td></tr></tbody>
         </table>
@@ -2229,8 +2565,10 @@
 
       <div id="gov-usage" style="margin-top:1rem;"></div>
 
-      <h3 style="margin:1.5rem 0 0.5rem;">Access reviews</h3>
-      <div id="gov-reviews"></div>
+      <div class="section-panel" style="margin-top:1rem;">
+        <div class="section-panel-head"><div><div class="section-panel-title">Access Reviews</div><div class="section-panel-desc">Campaigns for confirming tool grants and applying least-privilege revokes.</div></div></div>
+        <div class="section-panel-body" id="gov-reviews"></div>
+      </div>
       <div id="gov-review-detail" style="margin-top:1rem;"></div>
     </div>
 
@@ -4385,7 +4723,7 @@ if __name__ == "__main__":
           <div class="page-title">AI Bill of Materials</div>
           <div class="page-desc">Machine-readable inventory of your AI application: observed by Shield (agents, tools, MCP, guardrails) plus your declared components. Approve a baseline, watch for drift.</div>
         </div>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+        <div class="section-toolbar">
           <button class="small" onclick="loadAibom()">Refresh</button>
           <button class="small" onclick="downloadAibom('aibom')">Download JSON</button>
           <button class="small" onclick="downloadAibom('cyclonedx')">Download CycloneDX</button>
@@ -4393,45 +4731,45 @@ if __name__ == "__main__":
         </div>
       </div>
 
-      <div id="aibom-cards" class="stat-grid" style="grid-template-columns:repeat(6,1fr);gap:1rem;margin-bottom:1rem;"></div>
+      <div id="aibom-cards" class="stat-grid"></div>
 
-      <div class="card" style="margin-bottom:1rem;">
-        <div class="card-header"><div><div class="card-title">Drift vs Approved Baseline</div></div></div>
-        <div id="aibom-drift" style="padding:0.5rem;"></div>
+      <div class="section-panel">
+        <div class="section-panel-head"><div><div class="section-panel-title">Drift vs Approved Baseline</div><div class="section-panel-desc">Approved snapshots become the comparison point for runtime inventory changes.</div></div></div>
+        <div class="section-panel-body"><div id="aibom-drift"></div></div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
-        <div class="card">
-          <div class="card-header"><div><div class="card-title">Agents</div></div></div>
-          <div id="aibom-agents" style="padding:0.5rem;max-height:320px;overflow-y:auto;"></div>
+      <div class="inventory-grid">
+        <div class="section-panel">
+          <div class="section-panel-head"><div><div class="section-panel-title">Agents</div></div></div>
+          <div class="section-panel-body inventory-scroll" id="aibom-agents"></div>
         </div>
-        <div class="card">
-          <div class="card-header"><div><div class="card-title">Tools</div></div></div>
-          <div id="aibom-tools" style="padding:0.5rem;max-height:320px;overflow-y:auto;"></div>
+        <div class="section-panel">
+          <div class="section-panel-head"><div><div class="section-panel-title">Tools</div></div></div>
+          <div class="section-panel-body inventory-scroll" id="aibom-tools"></div>
         </div>
-        <div class="card">
-          <div class="card-header"><div><div class="card-title">MCP Servers</div></div></div>
-          <div id="aibom-mcp" style="padding:0.5rem;max-height:320px;overflow-y:auto;"></div>
+        <div class="section-panel">
+          <div class="section-panel-head"><div><div class="section-panel-title">MCP Servers</div></div></div>
+          <div class="section-panel-body inventory-scroll" id="aibom-mcp"></div>
         </div>
-        <div class="card">
-          <div class="card-header"><div><div class="card-title">Guardrails</div></div></div>
-          <div id="aibom-guardrails" style="padding:0.5rem;max-height:320px;overflow-y:auto;"></div>
+        <div class="section-panel">
+          <div class="section-panel-head"><div><div class="section-panel-title">Guardrails</div></div></div>
+          <div class="section-panel-body inventory-scroll" id="aibom-guardrails"></div>
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:1rem;">
-        <div class="card-header"><div><div class="card-title">Declared Components</div><div class="card-desc" style="font-size:11px;color:var(--text-dim);">Models, prompts, knowledge sources, memory, supply chain — pushed via the declare API or an aibom.json manifest from CI.</div></div></div>
-        <div id="aibom-declared" style="padding:0.5rem;"></div>
+      <div class="section-panel">
+        <div class="section-panel-head"><div><div class="section-panel-title">Declared Components</div><div class="section-panel-desc">Models, prompts, knowledge sources, memory, supply chain — pushed via the declare API or an aibom.json manifest from CI.</div></div></div>
+        <div class="section-panel-body" id="aibom-declared"></div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-        <div class="card">
-          <div class="card-header"><div><div class="card-title">Approved Snapshots</div></div></div>
-          <div id="aibom-snapshots" style="padding:0.5rem;max-height:260px;overflow-y:auto;"></div>
+      <div class="inventory-grid">
+        <div class="section-panel">
+          <div class="section-panel-head"><div><div class="section-panel-title">Approved Snapshots</div></div></div>
+          <div class="section-panel-body inventory-scroll" id="aibom-snapshots" style="max-height:260px;"></div>
         </div>
-        <div class="card">
-          <div class="card-header"><div><div class="card-title">Generation Notes</div></div></div>
-          <div id="aibom-notes" style="padding:0.5rem;max-height:260px;overflow-y:auto;"></div>
+        <div class="section-panel">
+          <div class="section-panel-head"><div><div class="section-panel-title">Generation Notes</div></div></div>
+          <div class="section-panel-body inventory-scroll" id="aibom-notes" style="max-height:260px;"></div>
         </div>
       </div>
     </div>
@@ -4443,7 +4781,7 @@ if __name__ == "__main__":
           <div class="page-title">MCP Gateway</div>
           <div class="page-desc">Registered upstream MCP servers routed through Shield, and the tool kill switch. Disabling a tool takes effect immediately on every agent for this tenant.</div>
         </div>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:0.75rem;">
+        <div class="section-toolbar">
           <button class="small" onclick="loadMcpGateway()">Refresh</button>
           <a href="https://docs.shield.votal.ai/mcp-gateway/" target="_blank" rel="noopener"
              style="font-size:12px;color:var(--text-dim);text-decoration:none;">Docs&nbsp;&#8599;</a>
@@ -4453,16 +4791,16 @@ if __name__ == "__main__":
       <!-- Inline setup guide: how a dev puts their own MCP server behind Shield.
            Registration is a data-plane API call (this portal is the admin plane),
            so the steps are shown here rather than as a form. -->
-      <details class="card" style="margin-bottom:1rem;" open>
-        <summary style="cursor:pointer;padding:0.85rem 1rem;font-weight:600;font-size:14px;">
+      <details class="section-panel mcp-guide" open>
+        <summary>
           How to put your MCP server behind Shield &nbsp;<span style="font-weight:400;color:var(--text-dim);font-size:12px;">3 steps</span>
         </summary>
-        <div style="padding:0 1rem 1rem;font-size:13px;line-height:1.5;">
+        <div class="mcp-guide-body">
           <p style="color:var(--text-dim);margin:0 0 0.75rem;">
             Set <code>$SHIELD</code> to your Shield <b>data-plane</b> URL and <code>$KEY</code> to your tenant API key. These are gateway API calls; this portal is the admin plane, so run them from your terminal or CI.
           </p>
 
-          <div style="font-weight:600;margin:0.75rem 0 0.25rem;">1. Register your MCP server as a route</div>
+          <div class="mcp-step-title" data-step="1">Register your MCP server as a route</div>
           <div style="color:var(--text-dim);margin-bottom:0.35rem;">Pick a short route name (used in the agent's gateway URL). <code>isolation_ack:true</code> asserts your server only accepts traffic from the gateway — set it <code>false</code> if it is still publicly reachable, and Shield will warn.</div>
           <div class="sdk-code-block"><div class="code-header"><span>PUT upstream</span><button class="small" onclick="navigator.clipboard.writeText(document.getElementById('mcp-cb-1').textContent);showToast('Copied','success')" style="font-size:10px;padding:0.2rem 0.5rem;">Copy</button></div><pre id="mcp-cb-1" class="mono">curl -X PUT "$SHIELD/v1/tenant/me/mcp-gateway/upstreams/my-server" \
   -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
@@ -4473,7 +4811,7 @@ if __name__ == "__main__":
     "isolation_ack": true
   }'</pre></div>
 
-          <div style="font-weight:600;margin:0.9rem 0 0.25rem;">2. Grant a role access to its tools</div>
+          <div class="mcp-step-title" data-step="2">Grant a role access to its tools</div>
           <div style="color:var(--text-dim);margin-bottom:0.35rem;">RBAC is deny-by-default: a tool a role is not granted is blocked. Tool names must match what your server returns from <code>tools/list</code>.</div>
           <div class="sdk-code-block"><div class="code-header"><span>POST agent + role policy</span><button class="small" onclick="navigator.clipboard.writeText(document.getElementById('mcp-cb-2').textContent);showToast('Copied','success')" style="font-size:10px;padding:0.2rem 0.5rem;">Copy</button></div><pre id="mcp-cb-2" class="mono">curl -X POST "$SHIELD/v1/agents/registry" \
   -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
@@ -4483,7 +4821,7 @@ if __name__ == "__main__":
     "role_permissions": { "reader": ["search", "get_record"] }
   }'</pre></div>
 
-          <div style="font-weight:600;margin:0.9rem 0 0.25rem;">3. Point your agent at the gateway</div>
+          <div class="mcp-step-title" data-step="3">Point your agent at the gateway</div>
           <div style="color:var(--text-dim);margin-bottom:0.35rem;">Your agent speaks MCP to the gateway URL below, sending its identity as headers. Shield enforces on every <code>tools/call</code>, then forwards to your server.</div>
           <div class="sdk-code-block"><div class="code-header"><span>Agent connects here</span><button class="small" onclick="navigator.clipboard.writeText(document.getElementById('mcp-cb-3').textContent);showToast('Copied','success')" style="font-size:10px;padding:0.2rem 0.5rem;">Copy</button></div><pre id="mcp-cb-3" class="mono"># MCP endpoint for the "my-server" route:
 $SHIELD/gateway/my-server/mcp
@@ -4504,32 +4842,32 @@ X-User-Role: reader</pre></div>
         </div>
       </details>
 
-      <div id="mcp-cards" class="stat-grid" style="grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1rem;"></div>
+      <div id="mcp-cards" class="stat-grid"></div>
 
-      <div class="card" style="margin-bottom:1rem;">
-        <div class="card-header"><div><div class="card-title">Register a Server</div><div class="card-desc" style="font-size:11px;color:var(--text-dim);">Add an upstream MCP server. HTTP/SSE need a URL; stdio needs a command. Then grant a role its tools under Agent Registry.</div></div></div>
-        <div style="padding:0.5rem;display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;align-items:end;">
-          <label style="font-size:12px;">Route name
-            <input id="mcp-reg-route" placeholder="e.g. files" style="width:100%;margin-top:0.2rem;" />
+      <div class="section-panel">
+        <div class="section-panel-head"><div><div class="section-panel-title">Register a Server</div><div class="section-panel-desc">Add an upstream MCP server. HTTP/SSE need a URL; stdio needs a command. Then grant a role its tools under Agent Registry.</div></div></div>
+        <div class="section-panel-body mcp-form-grid">
+          <label class="mcp-field"><span>Route name</span>
+            <input id="mcp-reg-route" placeholder="e.g. files" />
           </label>
-          <label style="font-size:12px;">Transport
-            <select id="mcp-reg-transport" onchange="mcpToggleTransportFields()" style="width:100%;margin-top:0.2rem;">
+          <label class="mcp-field"><span>Transport</span>
+            <select id="mcp-reg-transport" onchange="mcpToggleTransportFields()">
               <option value="http">http</option>
               <option value="sse">sse</option>
               <option value="stdio">stdio</option>
             </select>
           </label>
-          <label id="mcp-reg-url-wrap" style="font-size:12px;grid-column:1/-1;">Upstream URL
-            <input id="mcp-reg-url" placeholder="https://your-mcp-server/mcp" style="width:100%;margin-top:0.2rem;" />
+          <label id="mcp-reg-url-wrap" class="mcp-field mcp-field-wide"><span>Upstream URL</span>
+            <input id="mcp-reg-url" placeholder="https://your-mcp-server/mcp" />
           </label>
-          <label id="mcp-reg-cmd-wrap" style="font-size:12px;grid-column:1/-1;display:none;">Command
-            <input id="mcp-reg-cmd" placeholder="/usr/bin/your-mcp-server" style="width:100%;margin-top:0.2rem;" />
+          <label id="mcp-reg-cmd-wrap" class="mcp-field mcp-field-wide" style="display:none;"><span>Command</span>
+            <input id="mcp-reg-cmd" placeholder="/usr/bin/your-mcp-server" />
           </label>
-          <label style="font-size:12px;display:flex;align-items:center;gap:0.4rem;grid-column:1/-1;margin-top:0.2rem;">
+          <label class="mcp-check-row">
             <input id="mcp-reg-isolation" type="checkbox" />
-            Upstream accepts connections only from the gateway (isolation_ack)
+            <span>Upstream accepts connections only from the gateway (isolation_ack)</span>
           </label>
-          <div style="grid-column:1/-1;font-size:11px;color:var(--warn);" id="mcp-reg-isolation-note">
+          <div class="mcp-warning-note" id="mcp-reg-isolation-note">
             Leave unchecked only if the upstream is still publicly reachable — Shield warns, because an agent could then bypass it.
           </div>
           <div style="grid-column:1/-1;">
@@ -4538,25 +4876,29 @@ X-User-Role: reader</pre></div>
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:1rem;">
-        <div class="card-header"><div><div class="card-title">Registered Servers</div><div class="card-desc" style="font-size:11px;color:var(--text-dim);">Upstream credentials are masked.</div></div></div>
-        <div id="mcp-servers" style="padding:0.5rem;max-height:360px;overflow-y:auto;"></div>
+      <div class="section-panel">
+        <div class="section-panel-head"><div><div class="section-panel-title">Registered Servers</div><div class="section-panel-desc">Upstream credentials are masked.</div></div></div>
+        <div id="mcp-servers" class="section-panel-body inventory-scroll" style="max-height:360px;"></div>
       </div>
 
-      <div class="card" style="margin-bottom:1rem;">
-        <div class="card-header"><div><div class="card-title">Kill Switch</div><div class="card-desc" style="font-size:11px;color:var(--text-dim);">Disabled tools are blocked at the guard path immediately, even in monitor mode.</div></div></div>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;padding:0.5rem 0.5rem 0;">
-          <input id="mcp-tool-name" placeholder="tool name (e.g. transfer_funds)" style="flex:1;min-width:200px;" />
-          <input id="mcp-tool-reason" placeholder="reason (audited)" style="flex:1;min-width:160px;" />
+      <div class="section-panel">
+        <div class="section-panel-head"><div><div class="section-panel-title">Kill Switch</div><div class="section-panel-desc">Disabled tools are blocked at the guard path immediately, even in monitor mode.</div></div></div>
+        <div class="section-panel-body">
+          <div class="mcp-kill-grid">
+          <input id="mcp-tool-name" placeholder="tool name (e.g. transfer_funds)" />
+          <input id="mcp-tool-reason" placeholder="reason (audited)" />
           <button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpDisableTool()">Disable Tool</button>
+          </div>
         </div>
-        <div id="mcp-disabled" style="padding:0.5rem;max-height:280px;overflow-y:auto;"></div>
+        <div id="mcp-disabled" class="section-panel-body inventory-scroll" style="max-height:280px;border-top:1px solid var(--border);"></div>
       </div>
 
-      <div class="card">
-        <div class="card-header"><div><div class="card-title">Threats Addressed</div></div></div>
-        <div id="mcp-threats" style="padding:0.5rem;"></div>
-        <div id="mcp-scan-note" style="padding:0 0.5rem 0.5rem;font-size:11px;color:var(--text-dim);"></div>
+      <div class="section-panel">
+        <div class="section-panel-head"><div><div class="section-panel-title">Threats Addressed</div></div></div>
+        <div class="section-panel-body">
+          <div id="mcp-threats" class="chip-cloud"></div>
+          <div id="mcp-scan-note" style="margin-top:0.65rem;font-size:11px;color:var(--text-dim);"></div>
+        </div>
       </div>
     </div>
 
@@ -11130,8 +11472,8 @@ async function loadGovernance() {
     document.getElementById('gov-shadow').textContent = data.shadow_count;
     body.innerHTML = (data.agents || []).map(a => {
       const badge = a.registered
-        ? '<span style="color:#15803d;font-weight:600;">'+_govEsc(a.status)+'</span>'
-        : '<span style="color:#b45309;font-weight:600;">shadow</span>';
+        ? '<span class="status-chip ok">'+_govEsc(a.status)+'</span>'
+        : '<span class="status-chip warn">shadow</span>';
       return `<tr style="border-top:1px solid var(--border);">
         <td style="padding:0.5rem 0.75rem;font-weight:600;">${_govEsc(a.agent_id)}</td>
         <td style="padding:0.5rem 0.75rem;">${badge}</td>
@@ -11462,7 +11804,7 @@ async function loadAibom() {
 }
 
 function _aibomEmpty(msg) {
-  return `<div style="color:var(--text-dim);font-size:13px;padding:0.5rem;">${msg}</div>`;
+  return `<div class="soft-empty">${msg}</div>`;
 }
 
 // ── MCP Gateway console ───────────────────────
@@ -11598,7 +11940,7 @@ async function mcpDeleteServer(encRoute) {
 }
 
 function _aibomRow(cells) {
-  return `<div style="display:flex;align-items:center;gap:0.75rem;padding:0.45rem 0.25rem;border-bottom:1px solid var(--border);font-size:12px;">${cells}</div>`;
+  return `<div class="inventory-row">${cells}</div>`;
 }
 
 const _AIBOM_SECTION_EXAMPLES = {
