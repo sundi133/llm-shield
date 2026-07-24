@@ -83,8 +83,13 @@ SPIRE, no Envoy, no shared secret.
 
 1. **Only Envoy may reach the Shield data plane** — network-policy Shield so
    agents cannot connect to it directly.
-2. **Shield trusts XFCC only from Envoy** — Envoy is configured `SANITIZE_SET`, so
-   client-supplied XFCC is stripped; keep it that way.
+2. **Shield trusts XFCC only from Envoy** — two layers:
+   - Envoy is configured `SANITIZE_SET`, so client-supplied XFCC is stripped.
+   - Shield enforces it too: set `SHIELD_TRUSTED_PROXY_ONLY=true` and
+     `SHIELD_TRUSTED_PROXY_IPS=<envoy-ip-or-cidr>` so the SPIFFE identity from
+     `X-Forwarded-Client-Cert` is honored **only** when the request came from
+     Envoy. A client reaching Shield directly cannot spoof it. (Default off →
+     unchanged behavior when unset.)
 
 `scripts/smoke_identity_bundle.sh` asserts both, plus that a forged/self-signed
 SVID is rejected at Envoy.

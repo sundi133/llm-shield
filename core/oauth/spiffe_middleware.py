@@ -20,10 +20,50 @@ from starlette.responses import Response
 logger = logging.getLogger("votal.spiffe_mw")
 
 
+def _trusted_proxy_only() -> bool:
+    """Trust X-Forwarded-Client-Cert only from a configured proxy source."""
+    return os.environ.get("SHIELD_TRUSTED_PROXY_ONLY", "").lower() in ("true", "1", "yes")
+
+
+def _peer_is_trusted(request: Request) -> bool:
+    """True if the immediate TCP peer is a configured trusted proxy.
+
+    SHIELD_TRUSTED_PROXY_IPS is a comma list of IPs / CIDRs (e.g. the Envoy
+    front door). Empty list in trusted-proxy-only mode trusts nobody (fail closed).
+    """
+    import ipaddress
+
+    entries = [e.strip() for e in os.environ.get("SHIELD_TRUSTED_PROXY_IPS", "").split(",") if e.strip()]
+    if not entries:
+        return False
+    peer = request.client.host if request.client else ""
+    try:
+        addr = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    for entry in entries:
+        try:
+            if "/" in entry:
+                if addr in ipaddress.ip_network(entry, strict=False):
+                    return True
+            elif addr == ipaddress.ip_address(entry):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 class SPIFFEMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         # Only run if SPIFFE is enabled
         if not os.environ.get("SHIELD_SPIFFE_ENABLED", "").lower() in ("true", "1", "yes"):
+            return await call_next(request)
+
+        # Trust boundary: in trusted-proxy-only mode, ignore client-supplied
+        # X-Forwarded-Client-Cert unless the request came from the configured
+        # proxy (Envoy). Otherwise a client that reaches Shield directly could
+        # spoof the header and impersonate a workload.
+        if _trusted_proxy_only() and not _peer_is_trusted(request):
             return await call_next(request)
 
         # Check for X.509 SVID in client cert header
