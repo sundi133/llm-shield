@@ -1,0 +1,44 @@
+# Shield Identity — Kubernetes front door values.
+
+# Your SPIFFE trust domain (must match the SPIRE install). No default in prod.
+trustDomain: example.org
+
+# The Shield data plane this proxy fronts (in-cluster service).
+shield:
+  upstreamHost: shield
+  upstreamPort: 8000
+
+envoy:
+  image: envoyproxy/envoy:v1.29-latest
+  replicas: 2
+  listenPort: 8443
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: "1", memory: 256Mi }
+
+# SPIFFE CSI driver mount — how the Envoy pod gets the Workload API socket.
+# Install the driver with the SPIRE hardened chart (csi.spiffe.io).
+spiffeCSI:
+  driver: csi.spiffe.io
+  socketPath: /spiffe-workload-api/spire-agent.sock
+
+# The shared secret Envoy injects as X-Shield-Proxy-Token (must equal Shield's
+# SHIELD_TRUSTED_PROXY_SECRET). Provide a value to have the chart create a Secret,
+# OR reference an existing Secret so the value never lands in a values file.
+proxySecret:
+  existingSecret: ""          # name of an existing Secret (key: token)
+  value: ""                   # if set (and existingSecret empty), chart creates the Secret
+
+# Auto-registration: create a ClusterSPIFFEID so pods matching the selector get an
+# SVID automatically (requires the SPIRE Controller Manager + CRDs from the SPIRE
+# chart). Disable to register entries manually.
+autoRegister:
+  enabled: true
+  podSelector:
+    matchLabels:
+      spiffe.io/identity: "shield-agent"
+  # SPIFFE ID template for matched pods.
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+
+service:
+  type: ClusterIP

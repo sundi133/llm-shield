@@ -1,0 +1,16 @@
+apiVersion: v2
+name: shield-identity
+description: >-
+  Kubernetes front door for the Shield Identity Bundle — an Envoy mTLS proxy that
+  verifies workload SVIDs (via the SPIFFE CSI driver / SPIRE Agent Workload API),
+  injects a sanitized X-Forwarded-Client-Cert + shared-secret token, and proxies
+  to the Shield data plane. Optionally creates a ClusterSPIFFEID for pod-annotation
+  auto-registration.
+type: application
+version: 0.1.0
+appVersion: "1.0"
+keywords: [spiffe, spire, mtls, envoy, workload-identity, shield]
+home: https://docs.shield.votal.ai/workload-identity-bundle/
+# NOTE: SPIRE itself (server, agent DaemonSet, CSI driver, CRDs) is installed
+# separately via the official hardened chart — this chart deliberately does NOT
+# vendor it. See README.md.

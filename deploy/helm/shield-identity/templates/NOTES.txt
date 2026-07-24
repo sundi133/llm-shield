@@ -1,0 +1,25 @@
+Shield Identity front door installed: {{ include "shield-identity.fullname" . }}
+
+Envoy mTLS ingress:  {{ include "shield-identity.fullname" . }}:{{ .Values.envoy.listenPort }}  (trust domain: {{ .Values.trustDomain }})
+
+Next steps:
+  1. Point your agents' mTLS client at the service above (they fetch their SVID
+     from the SPIFFE CSI socket and present it).
+  2. Configure the Shield data plane to trust this proxy:
+       SHIELD_SPIFFE_ENABLED=true
+       SHIELD_SPIFFE_TRUST_DOMAIN={{ .Values.trustDomain }}
+       SHIELD_TRUSTED_PROXY_ONLY=true
+       SHIELD_TRUSTED_PROXY_SECRET=<same value as this chart's proxySecret>
+       SHIELD_WORKLOAD_IDENTITY_PROVIDERS=spiffe,admin_key
+{{- if .Values.autoRegister.enabled }}
+  3. Auto-registration is ON: label agent pods with
+       {{- range $k, $v := .Values.autoRegister.podSelector.matchLabels }}
+       {{ $k }}: {{ $v }}
+       {{- end }}
+     and the SPIRE Controller Manager issues them an SVID.
+{{- else }}
+  3. Auto-registration is OFF: create ClusterSPIFFEID/registration entries yourself.
+{{- end }}
+
+Prerequisite: SPIRE (server, agent, CSI driver, CRDs) must already be installed
+via the official hardened chart. See the chart README.

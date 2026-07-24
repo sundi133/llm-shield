@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "shield-identity.fullname" . }}
+  labels:
+    {{- include "shield-identity.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "shield-identity.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: mtls
+      port: {{ .Values.envoy.listenPort }}
+      targetPort: mtls
+      protocol: TCP
