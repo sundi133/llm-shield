@@ -11,6 +11,7 @@ on:
     paths:
       - "deploy/identity/**"
       - "deploy/helm/shield-identity/**"
+      - "examples/identity/**"
       - "core/workload_identity/**"
       - "core/oauth/spiffe*.py"
       - "core/proxy_trust.py"
@@ -76,6 +77,15 @@ jobs:
             --set trustDomain=ci.local --set proxySecret.value=ci-secret >/dev/null
           helm template t deploy/helm/shield-identity \
             --set proxySecret.existingSecret=ext --set autoRegister.enabled=false >/dev/null
+
+      - name: Build Go example
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - run: |
+          cd examples/identity/go-agent
+          go build ./...
+          go vet ./...
 
   smoke:
     name: boot + smoke (manual)

@@ -196,9 +196,10 @@ Envoy. Both are language-agnostic — the SVID comes from the SPIRE Agent's
 
 - **Python**: [`examples/langchain/spiffe_guarded_e2e.py`](https://github.com/sundi133/llm-shield/blob/main/examples/langchain/spiffe_guarded_e2e.py)
   (uses the `spiffe` library). Install with `pip install -r requirements-spiffe.txt`.
-- **Go / Java / Node**: use the official SPIFFE libraries against the same socket —
-  `go-spiffe` (Go), `java-spiffe` (Java), `@spiffe/svid` (Node). A worked **Go**
-  example is on the roadmap; the contract below is all you need in the meantime.
+- **Go**: [`examples/identity/go-agent`](https://github.com/sundi133/llm-shield/tree/main/examples/identity/go-agent)
+  — a compiling `go-spiffe` example (fetch SVID → mTLS → mint agent token).
+- **Java / Node**: use the official SPIFFE libraries against the same socket —
+  `java-spiffe` (Java), `@spiffe/svid` (Node). The contract below is all you need.
 
 **Fetch the SVID (Go, via go-spiffe):**
 ```go
