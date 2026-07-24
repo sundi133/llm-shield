@@ -37,6 +37,11 @@ logo: "/assets/images/votalai-logo.svg"
 # Code copy button
 enable_copy_code_button: true
 
+# Mermaid diagrams — renders ```mermaid fences on the site (additive; pages
+# without mermaid are unaffected). Used by the Workload Identity Bundle topology.
+mermaid:
+  version: "10.9.0"
+
 # Heading anchors
 heading_anchors: true
 

@@ -1,3 +1,11 @@
+---
+title: "Spec: Shield Identity Bundle"
+layout: default
+parent: Workload Identity Bundle
+nav_order: 2
+permalink: /spec-shield-identity-bundle/
+---
+
 # Spec: Shield Identity Bundle (embedded SPIRE + agent governance)
 
 Status: **DRAFT — awaiting approval.** No code written.

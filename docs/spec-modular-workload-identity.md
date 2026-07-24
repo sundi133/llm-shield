@@ -1,3 +1,11 @@
+---
+title: "Spec: Modular Workload Identity"
+layout: default
+parent: Workload Identity Bundle
+nav_order: 1
+permalink: /spec-modular-workload-identity/
+---
+
 # Spec: Modular workload-identity providers
 
 Status: **DRAFT — awaiting approval.** No code written.

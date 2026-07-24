@@ -1,3 +1,11 @@
+---
+title: "Spec: Production Hardening"
+layout: default
+parent: Workload Identity Bundle
+nav_order: 3
+permalink: /spec-workload-identity-prod-hardening/
+---
+
 # Spec: Workload identity — production hardening
 
 Status: **DRAFT.** Built one PR at a time; each item is independently shippable.
