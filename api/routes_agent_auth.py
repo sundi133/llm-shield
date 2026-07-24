@@ -127,29 +127,32 @@ class RevokeRequest(BaseModel):
 
 
 def _require_admin(request: Request) -> None:
-    """Token-exchange endpoint requires admin key or SPIFFE workload identity.
+    """Gate token issuance via the modular workload-identity providers.
 
-    Accepts:
-    1. X-Admin-Key header (original admin auth)
-    2. SPIFFE workload identity (set by SPIFFEMiddleware, on-prem friendly)
-
-    In production, SPIFFE replaces admin-key for automated workloads.
+    Accepts any enabled provider (SHIELD_WORKLOAD_IDENTITY_PROVIDERS, default
+    ``admin_key,spiffe,mtls``). This preserves the legacy behavior — an
+    X-Admin-Key OR a SPIFFE identity is accepted — and lets a deployment without
+    SPIFFE enable the identity it does have. The verified identity is attached to
+    ``request.state.workload_identity`` for audit. See
+    docs/spec-modular-workload-identity.md.
     """
-    # Accept SPIFFE workload identity as admin-equivalent
-    spiffe_identity = getattr(request.state, "spiffe_identity", None)
-    if spiffe_identity:
+    from core.workload_identity import resolve_workload_identity, enabled_providers
+
+    identity = resolve_workload_identity(request)
+    if identity is not None:
+        request.state.workload_identity = identity
         return
 
-    admin_key = os.environ.get("SHIELD_ADMIN_KEY", "")
-    if not admin_key:
+    # Preserve the operator misconfiguration signal: when admin_key is enabled
+    # but SHIELD_ADMIN_KEY is unset, issuance is disabled (500), matching the
+    # legacy behavior. Otherwise a caller simply failed to present an identity.
+    names = [p.name for p in enabled_providers()]
+    if "admin_key" in names and not os.environ.get("SHIELD_ADMIN_KEY", ""):
         raise HTTPException(
             status_code=500,
             detail="SHIELD_ADMIN_KEY not configured — token issuance disabled",
         )
-    provided = request.headers.get("X-Admin-Key", "").strip()
-    import hmac
-    if not provided or not hmac.compare_digest(provided, admin_key):
-        raise HTTPException(status_code=403, detail="admin key required")
+    raise HTTPException(status_code=403, detail="admin key required")
 
 
 def _require_registered_agent(tenant_id: str, agent_id: str) -> None:
