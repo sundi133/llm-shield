@@ -33,6 +33,16 @@ static_resources:
                   cert: true
                 route_config:
                   name: to_shield
+                  # Prove to Shield this traffic came through Envoy (mTLS-verified),
+                  # independent of source IP (which X-Forwarded-For can spoof).
+                  # OVERWRITE_IF_EXISTS_OR_ADD strips any client-supplied copy.
+                  # Set the value to the same high-entropy secret as Shield's
+                  # SHIELD_TRUSTED_PROXY_SECRET.
+                  request_headers_to_add:
+                    - header:
+                        key: "X-Shield-Proxy-Token"
+                        value: "REPLACE_WITH_SHIELD_TRUSTED_PROXY_SECRET"
+                      append_action: OVERWRITE_IF_EXISTS_OR_ADD
                   virtual_hosts:
                     - name: shield
                       domains: ["*"]

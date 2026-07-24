@@ -85,11 +85,18 @@ SPIRE, no Envoy, no shared secret.
    agents cannot connect to it directly.
 2. **Shield trusts XFCC only from Envoy** — two layers:
    - Envoy is configured `SANITIZE_SET`, so client-supplied XFCC is stripped.
-   - Shield enforces it too: set `SHIELD_TRUSTED_PROXY_ONLY=true` and
-     `SHIELD_TRUSTED_PROXY_IPS=<envoy-ip-or-cidr>` so the SPIFFE identity from
-     `X-Forwarded-Client-Cert` is honored **only** when the request came from
-     Envoy. A client reaching Shield directly cannot spoof it. (Default off →
-     unchanged behavior when unset.)
+   - Shield enforces it too: set `SHIELD_TRUSTED_PROXY_ONLY=true` and a
+     high-entropy `SHIELD_TRUSTED_PROXY_SECRET`. Envoy injects that secret as
+     `X-Shield-Proxy-Token` (see `envoy.yaml` `request_headers_to_add`,
+     `OVERWRITE_IF_EXISTS_OR_ADD` so a client-supplied copy is stripped). Shield
+     honors the XFCC identity **only** when the secret matches.
+   - **Use the secret, not just IPs.** Source-IP matching
+     (`SHIELD_TRUSTED_PROXY_IPS`) is only reliable if the server does not trust
+     `X-Forwarded-For` from untrusted peers — under uvicorn's `proxy_headers`
+     with a permissive `FORWARDED_ALLOW_IPS`, `request.client.host` is derived
+     from a client-controlled header and is spoofable. The secret is
+     IP-independent and is the authoritative gate; keep `SHIELD_TRUSTED_PROXY_IPS`
+     only as an additional constraint. (Default off → unchanged when unset.)
 
 `scripts/smoke_identity_bundle.sh` asserts both, plus that a forged/self-signed
 SVID is rejected at Envoy.
