@@ -10,6 +10,7 @@ on:
     branches: [main]
     paths:
       - "deploy/identity/**"
+      - "deploy/helm/shield-identity/**"
       - "core/workload_identity/**"
       - "core/oauth/spiffe*.py"
       - "core/proxy_trust.py"
@@ -64,6 +65,17 @@ jobs:
           docker run --rm -e SPIRE_TRUST_DOMAIN=ci.local -e SPIRE_DB_CONN='postgres://x' \
             -v "$PWD/deploy/identity/prod/server.conf:/s.conf:ro" \
             ghcr.io/spiffe/spire-server:1.9.0 validate -expandEnv -config /s.conf
+
+      - name: Lint + template Helm chart
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.15.4"
+      - run: |
+          helm lint deploy/helm/shield-identity
+          helm template t deploy/helm/shield-identity \
+            --set trustDomain=ci.local --set proxySecret.value=ci-secret >/dev/null
+          helm template t deploy/helm/shield-identity \
+            --set proxySecret.existingSecret=ext --set autoRegister.enabled=false >/dev/null
 
   smoke:
     name: boot + smoke (manual)

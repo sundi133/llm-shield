@@ -1,0 +1,17 @@
+{{- if .Values.autoRegister.enabled }}
+# Auto-registration: the SPIRE Controller Manager issues an SVID to every pod
+# matching this selector. Requires the SPIRE Controller Manager + CRDs (installed
+# by the SPIRE hardened chart). Disable with autoRegister.enabled=false to manage
+# registration entries manually.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: {{ include "shield-identity.fullname" . }}
+  labels:
+    {{- include "shield-identity.labels" . | nindent 4 }}
+spec:
+  spiffeIDTemplate: {{ .Values.autoRegister.spiffeIDTemplate | quote }}
+  podSelector:
+    matchLabels:
+      {{- toYaml .Values.autoRegister.podSelector.matchLabels | nindent 6 }}
+{{- end }}

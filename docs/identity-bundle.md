@@ -83,10 +83,11 @@ docker compose exec spire-server /opt/spire/bin/spire-server entry create \
   -spiffeID  spiffe://$SPIRE_TRUST_DOMAIN/agent/support-bot \
   -selector  unix:uid:1000
 ```
-> **Kubernetes note:** a Helm chart with the SPIRE Controller Manager
-> (pod-annotation auto-registration) is **not yet available** — it's on the
-> roadmap. For now on K8s, create entries manually as above (or script them with
-> the `k8s` workload attestor). See [Client integration](#client-integration).
+> **Kubernetes:** a Helm chart (`deploy/helm/shield-identity/`) provides the Envoy
+> front door + a `ClusterSPIFFEID` for pod-annotation auto-registration (via the
+> SPIRE Controller Manager). It's `helm lint`/`template`-validated in CI but
+> **not yet cluster-validated** — see the [chart README](https://github.com/sundi133/llm-shield/blob/main/deploy/helm/shield-identity/README.md).
+> SPIRE itself is installed separately via the official hardened chart.
 
 **4. Configure Shield to accept the identity** (env on the Shield service):
 ```bash
@@ -182,10 +183,10 @@ Also required in production (not just SPIRE):
   source-IP matching alone (see Hard requirements above).
 - **Federation**: to trust another cluster's SPIRE, configure SPIRE federation
   instead of running a second issuer.
-- **On Kubernetes**: a Helm chart (SPIRE + Controller Manager for pod-annotation
-  auto-registration) is **not yet available** — tracked on the roadmap. Until then,
-  run the compose bundle or wire SPIRE into your own manifests with the `k8s`
-  node/workload attestors.
+- **On Kubernetes**: use the `deploy/helm/shield-identity/` chart (Envoy front door
+  + `ClusterSPIFFEID` auto-registration). Install the official SPIRE hardened chart
+  first, then this one. It is `helm lint`/`template`-validated in CI but **not yet
+  cluster-validated** — run it on a `kind` cluster + the smoke script before prod.
 
 ## Client integration
 

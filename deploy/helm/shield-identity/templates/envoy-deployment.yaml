@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "shield-identity.fullname" . }}-envoy
+  labels:
+    {{- include "shield-identity.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.envoy.replicas }}
+  selector:
+    matchLabels:
+      {{- include "shield-identity.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "shield-identity.selectorLabels" . | nindent 8 }}
+    spec:
+      initContainers:
+        # Render the proxy token from the Secret into the config so it never
+        # lives in the ConfigMap.
+        - name: render-config
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - sed "s|__SHIELD_PROXY_TOKEN__|$SHIELD_PROXY_TOKEN|g" /tmpl/envoy.yaml.tmpl > /rendered/envoy.yaml
+          env:
+            - name: SHIELD_PROXY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "shield-identity.proxySecretName" . }}
+                  key: token
+          volumeMounts:
+            - { name: tmpl, mountPath: /tmpl, readOnly: true }
+            - { name: rendered, mountPath: /rendered }
+      containers:
+        - name: envoy
+          image: {{ .Values.envoy.image | quote }}
+          args: ["-c", "/etc/envoy/envoy.yaml", "--service-cluster", "shield-identity"]
+          ports:
+            - { name: mtls, containerPort: {{ .Values.envoy.listenPort }} }
+          resources:
+            {{- toYaml .Values.envoy.resources | nindent 12 }}
+          volumeMounts:
+            - { name: rendered, mountPath: /etc/envoy, readOnly: true }
+            - { name: spiffe-workload-api, mountPath: /spiffe-workload-api, readOnly: true }
+      volumes:
+        - name: tmpl
+          configMap:
+            name: {{ include "shield-identity.fullname" . }}-envoy
+        - name: rendered
+          emptyDir: {}
+        # The SPIFFE CSI driver projects the SPIRE Agent Workload API socket here.
+        - name: spiffe-workload-api
+          csi:
+            driver: {{ .Values.spiffeCSI.driver | quote }}
+            readOnly: true
