@@ -107,3 +107,77 @@ def test_admin_key_end_to_end(monkeypatch):
     monkeypatch.delenv("SHIELD_WORKLOAD_IDENTITY_PROVIDERS", raising=False)
     assert resolve_workload_identity(_req({"X-Admin-Key": "k"})).provider == "admin_key"
     assert resolve_workload_identity(_req({"X-Admin-Key": "x"})) is None
+
+
+# ── oidc_sa provider ─────────────────────────────────────────────────────────
+
+def _rsa_jwt(claims, kid="k1"):
+    """Sign a JWT with a throwaway RSA key; return (token, public_key)."""
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    token = pyjwt.encode(claims, key, algorithm="RS256", headers={"kid": kid})
+    return token, key.public_key()
+
+
+def _bearer(token):
+    return _req({"Authorization": f"Bearer {token}"})
+
+
+def test_oidc_sa_valid(monkeypatch):
+    import datetime
+    from core.workload_identity.providers import OIDCServiceAccountProvider
+    monkeypatch.setenv("SHIELD_WORKLOAD_OIDC_ISSUERS", "https://kube.local")
+    monkeypatch.setenv("SHIELD_WORKLOAD_OIDC_AUDIENCE", "shield")
+    exp = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)
+    token, pub = _rsa_jwt({"iss": "https://kube.local", "sub": "system:serviceaccount:ns:bot",
+                           "aud": "shield", "exp": exp})
+    with patch("core.workload_identity.providers._resolve_signing_key", return_value=pub):
+        ident = OIDCServiceAccountProvider().verify(_bearer(token))
+    assert ident and ident.provider == "oidc_sa"
+    assert ident.subject == "system:serviceaccount:ns:bot" and ident.trust_level == "high"
+
+
+def test_oidc_sa_untrusted_issuer(monkeypatch):
+    import datetime
+    from core.workload_identity.providers import OIDCServiceAccountProvider
+    monkeypatch.setenv("SHIELD_WORKLOAD_OIDC_ISSUERS", "https://trusted")
+    monkeypatch.setenv("SHIELD_WORKLOAD_OIDC_AUDIENCE", "shield")
+    exp = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)
+    token, pub = _rsa_jwt({"iss": "https://evil", "sub": "x", "aud": "shield", "exp": exp})
+    with patch("core.workload_identity.providers._resolve_signing_key", return_value=pub):
+        assert OIDCServiceAccountProvider().verify(_bearer(token)) is None
+
+
+def test_oidc_sa_wrong_audience(monkeypatch):
+    import datetime
+    from core.workload_identity.providers import OIDCServiceAccountProvider
+    monkeypatch.setenv("SHIELD_WORKLOAD_OIDC_ISSUERS", "https://kube.local")
+    monkeypatch.setenv("SHIELD_WORKLOAD_OIDC_AUDIENCE", "shield")
+    exp = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)
+    token, pub = _rsa_jwt({"iss": "https://kube.local", "sub": "x", "aud": "other", "exp": exp})
+    with patch("core.workload_identity.providers._resolve_signing_key", return_value=pub):
+        assert OIDCServiceAccountProvider().verify(_bearer(token)) is None
+
+
+def test_oidc_sa_expired(monkeypatch):
+    import datetime
+    from core.workload_identity.providers import OIDCServiceAccountProvider
+    monkeypatch.setenv("SHIELD_WORKLOAD_OIDC_ISSUERS", "https://kube.local")
+    monkeypatch.setenv("SHIELD_WORKLOAD_OIDC_AUDIENCE", "shield")
+    exp = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)
+    token, pub = _rsa_jwt({"iss": "https://kube.local", "sub": "x", "aud": "shield", "exp": exp})
+    with patch("core.workload_identity.providers._resolve_signing_key", return_value=pub):
+        assert OIDCServiceAccountProvider().verify(_bearer(token)) is None
+
+
+def test_oidc_sa_no_bearer(monkeypatch):
+    from core.workload_identity.providers import OIDCServiceAccountProvider
+    monkeypatch.setenv("SHIELD_WORKLOAD_OIDC_ISSUERS", "https://kube.local")
+    assert OIDCServiceAccountProvider().verify(_req()) is None
+
+
+def test_oidc_sa_disabled_without_issuers(monkeypatch):
+    from core.workload_identity.providers import OIDCServiceAccountProvider
+    monkeypatch.delenv("SHIELD_WORKLOAD_OIDC_ISSUERS", raising=False)
+    assert OIDCServiceAccountProvider().verify(_bearer("x.y.z")) is None

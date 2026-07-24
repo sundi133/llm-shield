@@ -18,6 +18,7 @@ from core.workload_identity.base import WorkloadIdentity
 from core.workload_identity.providers import (
     AdminKeyProvider,
     MTLSProvider,
+    OIDCServiceAccountProvider,
     SpiffeProvider,
 )
 
@@ -28,6 +29,7 @@ _REGISTRY = {
     "admin_key": AdminKeyProvider,
     "spiffe": SpiffeProvider,
     "mtls": MTLSProvider,
+    "oidc_sa": OIDCServiceAccountProvider,
 }
 
 # Legacy-preserving default: admin key OR SPIFFE (mTLS added, inert unless present).

@@ -1,0 +1,76 @@
+# Shield Identity Bundle — opt-in workload identity for on-prem.
+#
+# Separate containers, enabled via the `identity` compose profile, layered on top
+# of your existing Shield deployment:
+#
+#   spire-server  the issuer / CA for your trust domain (embedded SPIRE)
+#   spire-agent   node/workload attestation + the Workload API socket
+#   envoy         mTLS front door: verifies the workload SVID against SPIRE's
+#                 trust bundle (REAL crypto) and injects X-Forwarded-Client-Cert,
+#                 then proxies to the Shield guardrail server
+#
+# Shield itself is unchanged — it just consumes the Envoy-verified identity via
+# the `spiffe`/`mtls` workload-identity provider.
+#
+# Enable:   docker compose --profile identity up -d
+# Disable:  omit --profile identity  (nothing here runs; core Shield is untouched)
+#
+# See docs/identity-bundle.md for the step-by-step, and the decisions:
+#   - Envoy terminates mTLS (SPIRE SDS) — no forgeable in-Shield cert check
+#   - trust domain is customer-supplied via SPIRE_TRUST_DOMAIN
+
+services:
+  spire-server:
+    image: ghcr.io/spiffe/spire-server:1.9.0
+    profiles: ["identity"]
+    hostname: spire-server
+    command: ["-config", "/run/spire/config/server.conf"]
+    volumes:
+      - ./spire/server.conf:/run/spire/config/server.conf:ro
+      - spire-server-data:/run/spire/data
+      - spire-server-sock:/tmp/spire-server/private
+    healthcheck:
+      test: ["CMD", "/opt/spire/bin/spire-server", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  spire-agent:
+    image: ghcr.io/spiffe/spire-agent:1.9.0
+    profiles: ["identity"]
+    depends_on:
+      spire-server:
+        condition: service_healthy
+    pid: "host"                       # unix workload attestation needs host pids
+    command: ["-config", "/run/spire/config/agent.conf"]
+    volumes:
+      - ./spire/agent.conf:/run/spire/config/agent.conf:ro
+      - spire-agent-sock:/tmp/spire-agent/public   # Workload API socket (Envoy + workloads read here)
+      - spire-server-sock:/tmp/spire-server/private:ro
+    healthcheck:
+      test: ["CMD", "/opt/spire/bin/spire-agent", "healthcheck", "-socketPath", "/tmp/spire-agent/public/api.sock"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  envoy:
+    image: envoyproxy/envoy:v1.29-latest
+    profiles: ["identity"]
+    depends_on:
+      spire-agent:
+        condition: service_healthy
+    command: ["-c", "/etc/envoy/envoy.yaml", "--service-cluster", "shield-identity"]
+    ports:
+      - "8443:8443"                   # mTLS ingress the agents connect to
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - spire-agent-sock:/tmp/spire-agent/public:ro   # Envoy pulls its serving cert + trust bundle from SPIRE via SDS
+    environment:
+      # Envoy proxies verified traffic here. Point at your Shield data-plane service.
+      SHIELD_UPSTREAM_HOST: ${SHIELD_UPSTREAM_HOST:-shield}
+      SHIELD_UPSTREAM_PORT: ${SHIELD_UPSTREAM_PORT:-8000}
+
+volumes:
+  spire-server-data:
+  spire-server-sock:
+  spire-agent-sock:
