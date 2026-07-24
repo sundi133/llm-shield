@@ -201,20 +201,37 @@ def validate_x509_svid(
             f"trust domain mismatch: {domain} != {trust_domain.trust_domain}"
         )
 
-    # Verify certificate chain against trust bundle
-    # Note: Full chain verification requires the trust bundle CA certs.
-    # For production, use a proper PKI verification library or SPIRE.
-    # Here we do basic issuer check.
+    # Verify the leaf is CRYPTOGRAPHICALLY signed by a CA in the trust bundle,
+    # and is currently within its validity window. A name-only issuer match is
+    # forgeable — a self-signed cert can copy the issuer DN — so we verify the
+    # signature against the CA's public key, not just the name (fixes the
+    # forgeable-SVID finding). verify_directly_issued_by checks issuer/subject +
+    # signature; it does NOT check expiry, so we check that explicitly.
+    import datetime as _dt
+
     try:
         ca_certs = x509.load_pem_x509_certificates(trust_bundle_pem)
-        cert_issuer = cert.issuer
-        trusted = any(ca.subject == cert_issuer for ca in ca_certs)
-        if not trusted:
-            raise SPIFFEValidationError("certificate issuer not in trust bundle")
-    except SPIFFEValidationError:
-        raise
     except Exception as e:
-        raise SPIFFEValidationError(f"certificate chain verification failed: {e}") from e
+        raise SPIFFEValidationError(f"invalid trust bundle: {e}") from e
+    if not ca_certs:
+        raise SPIFFEValidationError("empty trust bundle")
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    not_before = getattr(cert, "not_valid_before_utc", None) or cert.not_valid_before.replace(tzinfo=_dt.timezone.utc)
+    not_after = getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after.replace(tzinfo=_dt.timezone.utc)
+    if now < not_before or now > not_after:
+        raise SPIFFEValidationError("SVID is expired or not yet valid")
+
+    signed_by_trusted_ca = False
+    for ca in ca_certs:
+        try:
+            cert.verify_directly_issued_by(ca)  # issuer/subject match + real signature check
+            signed_by_trusted_ca = True
+            break
+        except Exception:
+            continue
+    if not signed_by_trusted_ca:
+        raise SPIFFEValidationError("SVID is not signed by a CA in the trust bundle")
 
     # Check allowlist
     if trust_domain.allowed_workloads:
