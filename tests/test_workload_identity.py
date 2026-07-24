@@ -61,7 +61,8 @@ def test_mtls_reads_middleware_state():
 def test_default_provider_order(monkeypatch):
     monkeypatch.delenv("SHIELD_WORKLOAD_IDENTITY_PROVIDERS", raising=False)
     names = [p.name for p in enabled_providers()]
-    assert names == ["admin_key", "spiffe", "mtls"]
+    # mtls is NOT in the default (header-spoofable without the proxy guard).
+    assert names == ["admin_key", "spiffe"]
 
 
 def test_config_selects_and_orders(monkeypatch):
@@ -181,3 +182,16 @@ def test_oidc_sa_disabled_without_issuers(monkeypatch):
     from core.workload_identity.providers import OIDCServiceAccountProvider
     monkeypatch.delenv("SHIELD_WORKLOAD_OIDC_ISSUERS", raising=False)
     assert OIDCServiceAccountProvider().verify(_bearer("x.y.z")) is None
+
+
+def test_oidc_sa_requires_audience(monkeypatch):
+    """Audience is mandatory: without it, any signed token from the issuer would
+    pass, so the provider refuses rather than silently accept."""
+    import datetime
+    from core.workload_identity.providers import OIDCServiceAccountProvider
+    monkeypatch.setenv("SHIELD_WORKLOAD_OIDC_ISSUERS", "https://kube.local")
+    monkeypatch.delenv("SHIELD_WORKLOAD_OIDC_AUDIENCE", raising=False)
+    exp = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)
+    token, pub = _rsa_jwt({"iss": "https://kube.local", "sub": "x", "aud": "anything", "exp": exp})
+    with patch("core.workload_identity.providers._resolve_signing_key", return_value=pub):
+        assert OIDCServiceAccountProvider().verify(_bearer(token)) is None

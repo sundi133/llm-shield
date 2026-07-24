@@ -151,6 +151,15 @@ class OIDCServiceAccountProvider:
         if not issuers:
             return None
         audience = os.environ.get("SHIELD_WORKLOAD_OIDC_AUDIENCE", "").strip() or None
+        # Audience is mandatory: for a k8s ServiceAccount token it is the only
+        # scoping (issuer alone = "any pod in the cluster"), and there is no sub
+        # allowlist. Refuse rather than silently accept any token from the issuer.
+        if audience is None:
+            logger.warning(
+                "oidc_sa enabled without SHIELD_WORKLOAD_OIDC_AUDIENCE — refusing. "
+                "Any validly-signed token from the issuer would otherwise be accepted."
+            )
+            return None
 
         # Read the issuer from the unverified token, then only trust it if allow-listed.
         try:

@@ -32,8 +32,12 @@ _REGISTRY = {
     "oidc_sa": OIDCServiceAccountProvider,
 }
 
-# Legacy-preserving default: admin key OR SPIFFE (mTLS added, inert unless present).
-_DEFAULT = "admin_key,spiffe,mtls"
+# Legacy-preserving default: admin key OR SPIFFE — exactly what the old gate
+# accepted. mTLS is NOT in the default: it derives identity from a header-carried
+# cert with no proof-of-possession, so enabling it must be a deliberate opt-in
+# (and paired with the trusted-proxy boundary). Add "mtls" / "oidc_sa" explicitly
+# via SHIELD_WORKLOAD_IDENTITY_PROVIDERS.
+_DEFAULT = "admin_key,spiffe"
 
 
 def enabled_providers() -> list:
