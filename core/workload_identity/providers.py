@@ -86,19 +86,34 @@ def _jwk_client(jwks_uri: str):
     return PyJWKClient(jwks_uri)
 
 
+# issuer -> (jwks_uri, expiry_epoch). Discovery is cached so token issuance does
+# not re-fetch the well-known doc every call — the blocking network hit happens
+# at most once per issuer per TTL (issuance is low-QPS; PyJWKClient caches keys).
+_DISCOVERY_CACHE: dict = {}
+_DISCOVERY_TTL = 3600
+
+
 def _discover_jwks_uri(issuer: str) -> str:
     """Resolve an issuer's jwks_uri via OIDC discovery, or an env override.
 
     SHIELD_WORKLOAD_OIDC_JWKS lets you pin a jwks_uri directly (e.g. a k8s
     cluster that doesn't serve public discovery). Otherwise fetch
-    <issuer>/.well-known/openid-configuration.
+    <issuer>/.well-known/openid-configuration (cached for _DISCOVERY_TTL).
     """
     override = os.environ.get("SHIELD_WORKLOAD_OIDC_JWKS", "").strip()
     if override:
         return override
+    import time
+
+    now = time.time()
+    cached = _DISCOVERY_CACHE.get(issuer)
+    if cached and cached[1] > now:
+        return cached[0]
     url = issuer.rstrip("/") + "/.well-known/openid-configuration"
     with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310 (trusted issuer list)
-        return json.load(resp)["jwks_uri"]
+        jwks_uri = json.load(resp)["jwks_uri"]
+    _DISCOVERY_CACHE[issuer] = (jwks_uri, now + _DISCOVERY_TTL)
+    return jwks_uri
 
 
 def _resolve_signing_key(issuer: str, token: str):
