@@ -83,8 +83,10 @@ docker compose exec spire-server /opt/spire/bin/spire-server entry create \
   -spiffeID  spiffe://$SPIRE_TRUST_DOMAIN/agent/support-bot \
   -selector  unix:uid:1000
 ```
-On Kubernetes this is automated by the **SPIRE Controller Manager** (Helm path,
-PR 3) — you annotate the pod, entries are created for you.
+> **Kubernetes note:** a Helm chart with the SPIRE Controller Manager
+> (pod-annotation auto-registration) is **not yet available** — it's on the
+> roadmap. For now on K8s, create entries manually as above (or script them with
+> the `k8s` workload attestor). See [Client integration](#client-integration).
 
 **4. Configure Shield to accept the identity** (env on the Shield service):
 ```bash
@@ -136,8 +138,16 @@ SPIRE, no Envoy, no shared secret.
      IP-independent and is the authoritative gate; keep `SHIELD_TRUSTED_PROXY_IPS`
      only as an additional constraint. (Default off → unchanged when unset.)
 
-`scripts/smoke_identity_bundle.sh` asserts both, plus that a forged/self-signed
-SVID is rejected at Envoy.
+`scripts/smoke_identity_bundle.sh` asserts the whole boundary — five checks:
+
+1. **Bundle up** — Envoy responds over mTLS.
+2. **Valid SVID mints a token** — the happy path end to end.
+3. **No client cert is refused** — the mTLS gate engages.
+4. **Forged / self-signed SVID rejected** at Envoy (real chain verification).
+5. **Client-supplied XFCC is stripped** — a spoofed header does not grant identity.
+
+A non-zero exit means one of these failed; run it after every deploy and as the
+pre-release gate.
 
 ## Production profile
 
@@ -172,8 +182,136 @@ Also required in production (not just SPIRE):
   source-IP matching alone (see Hard requirements above).
 - **Federation**: to trust another cluster's SPIRE, configure SPIRE federation
   instead of running a second issuer.
-- **On Kubernetes**: prefer the Helm chart (SPIRE Controller Manager auto-creates
-  registration entries from pod annotations).
+- **On Kubernetes**: a Helm chart (SPIRE + Controller Manager for pod-annotation
+  auto-registration) is **not yet available** — tracked on the roadmap. Until then,
+  run the compose bundle or wire SPIRE into your own manifests with the `k8s`
+  node/workload attestors.
+
+## Client integration
+
+The agent workload needs to (1) get its SVID and (2) present it over mTLS to
+Envoy. Both are language-agnostic — the SVID comes from the SPIRE Agent's
+**Workload API** unix socket, and the mTLS is standard TLS with a client cert.
+
+- **Python**: [`examples/langchain/spiffe_guarded_e2e.py`](https://github.com/sundi133/llm-shield/blob/main/examples/langchain/spiffe_guarded_e2e.py)
+  (uses the `spiffe` library). Install with `pip install -r requirements-spiffe.txt`.
+- **Go / Java / Node**: use the official SPIFFE libraries against the same socket —
+  `go-spiffe` (Go), `java-spiffe` (Java), `@spiffe/svid` (Node). A worked **Go**
+  example is on the roadmap; the contract below is all you need in the meantime.
+
+**Fetch the SVID (Go, via go-spiffe):**
+```go
+// streams the SVID + trust bundle from the Workload API and auto-rotates
+src, _ := workloadapi.NewX509Source(ctx,
+  workloadapi.WithClientOptions(workloadapi.WithAddr("unix:///tmp/spire-agent/public/api.sock")))
+tlsConfig := tlsconfig.MTLSClientConfig(src, src, tlsconfig.AuthorizeAny())
+client := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}
+// client now presents the SVID on every request to https://envoy:8443
+```
+
+**SVID caching & rotation:** don't cache the cert yourself. The Workload API
+**streams** the SVID and pushes a new one before the old expires (default TTL
+1h) — go-spiffe/py-spiffe's `X509Source` handles rotation transparently. If you
+must use files (e.g. a non-Go sidecar), run **spiffe-helper**, which rewrites the
+cert/key/bundle on rotation; point your client at those paths and reload on change.
+
+**What Envoy sends Shield** — after verifying the SVID, Envoy sets
+`X-Forwarded-Client-Cert` (XFCC). It looks like:
+```
+X-Forwarded-Client-Cert: By=spiffe://bank-co.internal/shield;
+  Hash=<sha256>;URI=spiffe://bank-co.internal/agent/support-bot
+```
+Shield's `spiffe` provider reads the `URI=spiffe://…` SAN as the workload identity.
+Your client never sets this header — Envoy does, and strips any client-supplied copy.
+
+## Production operations
+
+### Failure modes & recovery (fail-closed)
+
+| Event | Behavior | Recovery |
+|---|---|---|
+| **spire-server down** | Agents keep working until their SVID TTL (≤1h) expires; no new SVIDs issue. Once expired, Envoy rejects the handshake → Shield token issuance **fails closed** (403). | Run **3+ HA replicas** so a single server loss is invisible. Restart/replace the server before TTLs lapse. |
+| **Postgres down** | SPIRE can't issue or rotate → same expiry-driven fail-closed. | HA Postgres + restore from backup (below). |
+| **CA / trust-bundle rotation** | SPIRE rotates automatically; Envoy gets the new bundle live over SDS. | Refresh Shield's `SHIELD_SPIFFE_TRUST_BUNDLE` (spiffe-helper) — see runbook below. |
+| **Clock skew** | SVIDs are time-bound; skew causes spurious rejects. | Require NTP on all nodes. |
+| **Proxy-secret rotation** | Mismatch between Envoy and Shield → all identity rejected. | Roll with an overlap: set the new secret on Shield first (accept old+new briefly if you templated it), update Envoy, then drop the old. |
+
+**Backup / DR (Postgres):** the SPIRE datastore is the source of truth for
+registration entries and keys. Back it up like any critical DB
+(`pg_dump` on a schedule, WAL archiving / PITR for RPO≈0). Losing it means
+re-registering every workload and re-bootstrapping trust.
+
+**CA-rotation runbook:** SPIRE rotates its CA within `ca_ttl` (24h default).
+Envoy consumes the new bundle over SDS with no action. For any consumer reading a
+**file** bundle (`SHIELD_SPIFFE_TRUST_BUNDLE`), run `spiffe-helper` so the file is
+rewritten on rotation, or re-export with
+`spire-server bundle show > bundle.pem` on a timer shorter than `ca_ttl`.
+
+**SPIRE upgrade path:** upgrade the **server first**, then agents (agents are
+backward-compatible with a newer server, not vice-versa). Pin image tags
+(`ghcr.io/spiffe/spire-server:1.9.0`); test the target version in staging with the
+smoke script before rolling prod.
+
+### Observability — what to watch
+
+There is **no Prometheus `/metrics` endpoint yet** (roadmap). Use what exists:
+
+| Signal | Where |
+|---|---|
+| Shield liveness + build | `GET /health` |
+| Guardrail effectiveness | `GET /v1/tenant/me/guardrails/metrics` (JSON) |
+| Token issuance / blocks | Shield structured logs (`agent_chat_telemetry`, audit log) |
+| Envoy mTLS + routing | Envoy access logs + admin `/stats` (TLS handshake failures, 4xx to upstream) |
+| SPIRE health | `spire-server healthcheck`, `spire-agent healthcheck` |
+| SVID issuance / rotation | SPIRE server/agent logs; `spire-server entry show` |
+
+**Alert on:** rising Envoy TLS handshake failures (bad/expired SVIDs), Shield 403s
+on `/auth/agent-token` (identity rejected), and SPIRE server unavailability.
+
+### Sourcing secrets
+
+Don't leave `SHIELD_TRUSTED_PROXY_SECRET` or the Postgres password as literals in
+compose files or shell history:
+
+- **Docker/compose:** use `secrets:` (files under `/run/secrets`) and read them in
+  an entrypoint, or inject from your orchestrator's env at runtime.
+- **Kubernetes:** a `Secret` mounted as env/file; or **Vault Agent** / **External
+  Secrets Operator** / sealed-secrets to sync from a manager.
+- **Vault:** `vault kv get` in an init step, or the Vault Agent sidecar templating
+  the value into a file the container reads. For the SPIRE signing root, prefer the
+  `vault` **UpstreamAuthority** plugin so the key never lands on disk.
+
+### Federation (multi-cluster)
+
+To trust workloads from another cluster's SPIRE instead of running a second
+issuer, federate the trust domains. On each SPIRE server:
+```hcl
+server {
+    # ... existing config ...
+    federation {
+        bundle_endpoint { address = "0.0.0.0" port = 8443 }
+        federates_with "other.trust.domain" {
+            bundle_endpoint_url     = "https://spire.other-cluster:8443"
+            bundle_endpoint_profile "https_spiffe" {
+                endpoint_spiffe_id = "spiffe://other.trust.domain/spire/server"
+            }
+        }
+    }
+}
+```
+Then reference the federated domain in registration entries (`-federatesWith`) and
+add it to Shield's `SHIELD_SPIFFE_ALLOWED_WORKLOADS`. Bundles refresh automatically
+over the federation endpoint.
+
+### Troubleshooting
+
+| Symptom | Likely cause | Check |
+|---|---|---|
+| `/auth/agent-token` → 403 | Identity not accepted | Is `SHIELD_TRUSTED_PROXY_SECRET` set on Shield **and** in Envoy's `X-Shield-Proxy-Token`? Is `SHIELD_SPIFFE_ENABLED=true`? |
+| Envoy TLS handshake fails | Bad/expired SVID or wrong trust domain | `spire-agent api fetch x509`; confirm SVID SAN domain == `SHIELD_SPIFFE_TRUST_DOMAIN` |
+| Agent can't fetch SVID | Not registered / socket missing | `spire-server entry show`; confirm the Workload API socket is mounted into the agent container |
+| Works direct, blocked via Envoy | Upstream misconfig | `shield_upstream` in `envoy.yaml` points at your Shield service:port |
+| Identity spoofable | IP-only trust | Set the **secret**, not just `SHIELD_TRUSTED_PROXY_IPS` (see Hard requirements) |
 
 ## CI
 
