@@ -1,8 +1,6 @@
 ---
 title: "Spec: Production Hardening"
 layout: default
-parent: Workload Identity Bundle
-nav_order: 3
 permalink: /spec-workload-identity-prod-hardening/
 ---
 

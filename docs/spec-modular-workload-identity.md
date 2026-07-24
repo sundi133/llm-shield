@@ -1,8 +1,6 @@
 ---
 title: "Spec: Modular Workload Identity"
 layout: default
-parent: Workload Identity Bundle
-nav_order: 1
 permalink: /spec-modular-workload-identity/
 ---
 
