@@ -32,6 +32,76 @@ def record_event(event: dict):
 
 
 # ---------------------------------------------------------------------------
+# Span emission — one span per guarded request, grouped into a run trace.
+# Opt-in: no-op unless SHIELD_OTLP_TRACES_ENDPOINT is set (PR 3) or
+# SHIELD_SPAN_TRACING is truthy. Deployments without it see identical behavior.
+# ---------------------------------------------------------------------------
+
+import hashlib
+import uuid as _uuid
+
+
+def span_tracing_enabled() -> bool:
+    if os.environ.get("SHIELD_OTLP_TRACES_ENDPOINT", "").strip():
+        return True
+    return os.environ.get("SHIELD_SPAN_TRACING", "").lower() in ("1", "true", "yes")
+
+
+def _trace_id_from_run(run_id: str) -> str:
+    """Stable 16-byte (32-hex) OTLP trace id derived from the run_id."""
+    return hashlib.sha256(run_id.encode()).hexdigest()[:32]
+
+
+def _root_span_id(run_id: str) -> str:
+    """Synthetic 8-byte (16-hex) run-root span id — the parent all run spans share."""
+    return hashlib.sha256(("root:" + run_id).encode()).hexdigest()[:16]
+
+
+def parse_traceparent(tp: str):
+    """W3C traceparent `version-traceid(32)-spanid(16)-flags` -> (trace_id, span_id)."""
+    try:
+        p = tp.strip().split("-")
+        if len(p) >= 4 and len(p[1]) == 32 and len(p[2]) == 16:
+            int(p[1], 16), int(p[2], 16)  # validate hex
+            return p[1], p[2]
+    except Exception:
+        pass
+    return None
+
+
+def emit_span(*, run_id: str, name: str, start_ns: int, end_ns: int,
+              kind: str = "SERVER", status: str = "OK",
+              attributes: Optional[dict] = None, traceparent: Optional[str] = None):
+    """Emit one span for a guarded request. No-op unless span tracing is enabled.
+
+    All spans of one run share a trace id derived from run_id and hang under a
+    synthetic run-root, so a backend renders the run as a tree. If the caller
+    propagates a W3C `traceparent`, that context is honored for real nesting.
+    """
+    if not run_id or not span_tracing_enabled():
+        return
+    trace_id = _trace_id_from_run(run_id)
+    parent_span_id = _root_span_id(run_id)
+    if traceparent:
+        parsed = parse_traceparent(traceparent)
+        if parsed:
+            trace_id, parent_span_id = parsed
+    record_event({
+        "type": "span",
+        "trace.id": trace_id,
+        "span.id": _uuid.uuid4().hex[:16],
+        "parent.span.id": parent_span_id,
+        "run.id": run_id,
+        "name": name,
+        "kind": kind,
+        "start_unix_nano": start_ns,
+        "end_unix_nano": end_ns,
+        "status": status,
+        "attributes": attributes or {},
+    })
+
+
+# ---------------------------------------------------------------------------
 # Request/response event builders
 # ---------------------------------------------------------------------------
 

@@ -14,6 +14,7 @@ from core.telemetry import (
     build_response_event,
     build_guardrail_event,
     build_tool_execution_event,
+    emit_span,
 )
 
 
@@ -136,6 +137,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
 
         trace_id = request.headers.get("x-trace-id", uuid.uuid4().hex[:16])
         start = time.perf_counter()
+        start_ns = time.time_ns()
 
         # Extract client info
         source_ip = request.client.host if request.client else ""
@@ -214,6 +216,17 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
             _rid = getattr(request.state, "run_id", "") if hasattr(request, "state") else ""
             if _rid:
                 response.headers["X-Shield-Run-Id"] = _rid
+                _sc = getattr(response, "status_code", 200)
+                emit_span(
+                    run_id=_rid, name=request.url.path,
+                    start_ns=start_ns, end_ns=time.time_ns(),
+                    status="ERROR" if _sc >= 400 else "OK",
+                    attributes={"http.route": request.url.path, "http.status_code": _sc,
+                                "agent.key": agent_key, "tenant.id": tenant_id,
+                                "session.id": session_id, "latency_ms": round(latency_ms, 2),
+                                "streaming": True},
+                    traceparent=request.headers.get("traceparent"),
+                )
             return response
 
         # Efficiently read and parse response body
@@ -242,6 +255,16 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         _rid = getattr(request.state, "run_id", "") if hasattr(request, "state") else ""
         if _rid:
             response.headers["X-Shield-Run-Id"] = _rid
+            emit_span(
+                run_id=_rid, name=request.url.path,
+                start_ns=start_ns, end_ns=time.time_ns(),
+                status="ERROR" if response.status_code >= 400 else "OK",
+                attributes={"http.route": request.url.path,
+                            "http.status_code": response.status_code,
+                            "agent.key": agent_key, "tenant.id": tenant_id,
+                            "session.id": session_id, "latency_ms": round(latency_ms, 2)},
+                traceparent=request.headers.get("traceparent"),
+            )
 
         # Return response with updated body
         return Response(
