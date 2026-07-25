@@ -114,6 +114,56 @@ Two ways to supply the agent identity, and the choice matters:
 
 Prefer `extra_headers` unless you cannot control the calling client.
 
+## Agent run tracing across the LiteLLM hop
+
+The same `extra_headers` mechanism carries the run correlator. Shield ties all of
+one agent run's guard records together with an `X-Shield-Run-Id` (see
+[Agent Run Tracing](agent-run-tracing/)); to keep that correlation when LiteLLM is
+in the path, forward the header:
+
+```yaml
+mcp_servers:
+  files:
+    url: https://<shield-host>/gateway/files/mcp
+    extra_headers: ["x-agent-key", "x-user-role", "x-shield-run-id"]
+```
+
+The client sets `X-Shield-Run-Id` once on its request; LiteLLM forwards it on the
+MCP calls (and, via the chat guardrail, on `/guardrails/*`), so every Shield record
+for that run shares the same `run_id` — even across LiteLLM. Reconstruct the run
+by filtering `metadata.run_id` in the audit log.
+
+### One trace tree for LiteLLM + Shield
+
+To see the run as a **single trace** — LiteLLM's LLM call with Shield's guard
+decisions nested underneath — use W3C trace propagation:
+
+1. Enable LiteLLM's OpenTelemetry callback so it emits LLM spans **and** propagates
+   `traceparent` downstream:
+   ```yaml
+   litellm_settings:
+     callbacks: ["otel"]
+   ```
+2. Point Shield at the **same** collector and turn on span emission:
+   ```bash
+   SHIELD_OTLP_TRACES_ENDPOINT=http://otel-collector:4318
+   ```
+   Shield honors the incoming `traceparent`, so its guard spans nest under
+   LiteLLM's span instead of starting a new trace.
+
+Result — one trace per run in your backend (Jaeger / Tempo / Datadog):
+
+```
+run
+ └─ LiteLLM: chat.completion          (model, tokens, latency)
+     ├─ Shield: /guardrails/input     (blocked? which guardrail)
+     ├─ Shield: /gateway/files/mcp    (tool RBAC decision)
+     └─ Shield: /guardrails/output    (sanitized?)
+```
+
+If the customer already runs LiteLLM with an OTEL collector or Langfuse, this reuses
+that sink — no new backend to stand up.
+
 ## Limitation: no session-scoped guards on this path
 
 Identity arrives as **headers**, not as a signed Shield agent token, so there is
