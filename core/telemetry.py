@@ -501,6 +501,86 @@ class OTLPExporter(BaseExporter):
             await self._client.aclose()
 
 
+_SPAN_KIND = {"INTERNAL": 1, "SERVER": 2, "CLIENT": 3, "PRODUCER": 4, "CONSUMER": 5}
+
+
+class OTLPTracesExporter(BaseExporter):
+    """Push span events as OTLP/HTTP **traces** to /v1/traces (Jaeger/Tempo/Datadog).
+
+    Only handles events with type=="span" (from emit_span); other events are left
+    to the log exporters. Renders one agent run as a trace tree grouped by run_id.
+    """
+
+    def __init__(self, endpoint: str, headers: Optional[dict] = None, verify_ssl: bool = True):
+        self.endpoint = endpoint.rstrip("/")
+        self.extra_headers = headers or {}
+        self.verify_ssl = verify_ssl
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            import httpx
+            self._client = httpx.AsyncClient(
+                timeout=10, verify=self.verify_ssl,
+                headers={"Content-Type": "application/json", **self.extra_headers},
+            )
+        return self._client
+
+    @staticmethod
+    def _attrs(d: dict) -> list:
+        out = []
+        for k, v in (d or {}).items():
+            if isinstance(v, bool):
+                val = {"boolValue": v}
+            elif isinstance(v, int):
+                val = {"intValue": str(v)}
+            elif isinstance(v, float):
+                val = {"doubleValue": v}
+            else:
+                val = {"stringValue": str(v)}
+            out.append({"key": str(k), "value": val})
+        return out
+
+    @classmethod
+    def build_payload(cls, spans: list[dict]) -> dict:
+        otlp = []
+        for s in spans:
+            otlp.append({
+                "traceId": s.get("trace.id", ""),
+                "spanId": s.get("span.id", ""),
+                "parentSpanId": s.get("parent.span.id", ""),
+                "name": s.get("name", ""),
+                "kind": _SPAN_KIND.get(s.get("kind", "INTERNAL"), 1),
+                "startTimeUnixNano": str(s.get("start_unix_nano", 0)),
+                "endTimeUnixNano": str(s.get("end_unix_nano", 0)),
+                "status": {"code": 2 if s.get("status") == "ERROR" else 1},
+                "attributes": cls._attrs({**(s.get("attributes") or {}),
+                                          "run.id": s.get("run.id", "")}),
+            })
+        return {"resourceSpans": [{
+            "resource": {"attributes": [
+                {"key": "service.name", "value": {"stringValue": "votal-shield"}}]},
+            "scopeSpans": [{"spans": otlp}],
+        }]}
+
+    async def export(self, events: list[dict]):
+        spans = [e for e in events if e.get("type") == "span"]
+        if not spans:
+            return
+        client = self._get_client()
+        try:
+            resp = await client.post(f"{self.endpoint}/v1/traces",
+                                     content=json.dumps(self.build_payload(spans)))
+            if resp.status_code >= 400:
+                logger.error(f"OTLP traces export failed ({resp.status_code}): {resp.text[:200]}")
+        except Exception as e:
+            logger.error(f"OTLP traces export failed: {e}")
+
+    async def shutdown(self):
+        if self._client:
+            await self._client.aclose()
+
+
 class FileExporter(BaseExporter):
     """Write events to a local JSON file with rotation."""
 
@@ -632,6 +712,18 @@ def init_telemetry(config: Optional[dict] = None):
             verify_ssl=otlp_cfg.get("verify_ssl", True),
         ))
         logger.info(f"OTLP exporter: {otlp_endpoint}")
+
+    # OTLP traces exporter — renders agent runs as trace trees. Enabling it also
+    # turns on span emission (see span_tracing_enabled) and flushing.
+    traces_endpoint = os.environ.get("SHIELD_OTLP_TRACES_ENDPOINT", "").strip()
+    if traces_endpoint:
+        _exporters.append(OTLPTracesExporter(
+            endpoint=traces_endpoint,
+            headers=otlp_cfg.get("headers", {}),
+            verify_ssl=otlp_cfg.get("verify_ssl", True),
+        ))
+        _enabled = True
+        logger.info(f"OTLP traces exporter: {traces_endpoint}")
 
     logger.info(f"Telemetry enabled: {len(_exporters)} exporter(s), flush every {_flush_interval}s")
 
