@@ -68,6 +68,42 @@ SHIELD_OTLP_TRACES_ENDPOINT=http://otel-collector:4318   # also enables span emi
 Only spans are sent to `/v1/traces`; guardrail log events continue to your existing
 log exporters (Elasticsearch / Splunk / file).
 
+## Viewing traces — Shield does not ship a UI
+
+Shield emits standard OTLP; you view runs in **your** trace backend. Three paths:
+
+**1. Reuse an existing observability platform (most enterprises).**
+Point Shield at your OTLP ingest — no new tool to run:
+
+| Backend | `SHIELD_OTLP_TRACES_ENDPOINT` |
+|---|---|
+| Datadog (Agent OTLP) | `http://datadog-agent:4318` |
+| Grafana Cloud / Tempo | your Tempo OTLP endpoint |
+| Splunk Observability | your OTLP ingest URL |
+| Elastic APM | your APM OTLP endpoint |
+| Honeycomb / New Relic | their OTLP endpoint (+ API key header) |
+
+**2. Self-host, free / open-source (on-prem or air-gapped).** The quickest is
+**Jaeger all-in-one** — one container, UI included:
+
+```bash
+docker run -d -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one
+
+# point Shield at it, then open the UI
+SHIELD_OTLP_TRACES_ENDPOINT=http://localhost:4318
+# → http://localhost:16686  (search by service "votal-shield", filter by run.id)
+```
+
+For production self-hosting, **Grafana Tempo + Grafana** (or an OpenTelemetry
+Collector fanning out to Tempo/Jaeger) is the common choice.
+
+**3. Nothing extra.** If you don't need the waterfall view, skip spans entirely and
+correlate runs by `run_id` in Shield's portal / audit records (Redis) — no backend
+required.
+
+To find one run in any backend: filter by the `run.id` attribute (or the trace id,
+which is derived from `run_id`).
+
 ## Is this OpenTelemetry?
 
 **It is OTLP-compatible — it speaks the OpenTelemetry *protocol* — but it does not
