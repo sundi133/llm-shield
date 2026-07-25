@@ -141,7 +141,90 @@ def phase_on():
     print(f"  {DIM}Every call carried run_id={RUN} → the whole hijack is one trace.{Z}")
 
 
+def _setup_agent():
+    requests.post(BASE + "/v1/agents/register", headers=H, timeout=30, json={
+        "agent_id": "support-bot", "name": "Support Bot",
+        "tools": ["get_ticket", "issue_refund", "read_aws_credentials"],
+        "role_permissions": {"support_agent": ["get_ticket"]}})
+    pol = requests.post(BASE + "/v1/tenant/me/custom-policies/", headers=H, timeout=30, json={
+        "name": "Block credential exfiltration",
+        "description": "Block output containing cloud credentials / keys.",
+        "prompt": ("Block the response if it contains secret credential material: AWS access "
+                   "key IDs (AKIA...), secret access keys, private keys, or API tokens."),
+        "action": "block", "stage": "output", "confidence_threshold": 0.7, "priority": 10})
+    return (pol.json().get("policy") or {}).get("policy_id")
+
+
+def interactive():
+    """Audience-driven: type prompts, watch the guarded agent block or answer."""
+    print(f"\n{B}Guarded agent — try to break it.{Z}")
+    print(f"{DIM}Shield: {BASE}   run: {RUN}{Z}")
+    print(f"{DIM}Type a message to the agent. Commands:{Z}")
+    print(f"{DIM}  /tool <name> [role]   attempt a tool call (RBAC)   e.g. /tool read_aws_credentials support_agent{Z}")
+    print(f"{DIM}  /screen <text>        show the raw input-guard verdict{Z}")
+    print(f"{DIM}  /help   /quit{Z}\n")
+    pol_id = _setup_agent()
+    try:
+        while True:
+            try:
+                line = input(f"{B}you ▸ {Z}").strip()
+            except EOFError:
+                break
+            if not line:
+                continue
+            if line in ("/quit", "/exit", "/q"):
+                break
+            if line == "/help":
+                print(f"{DIM}  message → guarded chat · /tool <name> [role] · /screen <text> · /quit{Z}")
+                continue
+
+            if line.startswith("/tool"):
+                parts = line.split()
+                tool = parts[1] if len(parts) > 1 else "read_aws_credentials"
+                role = parts[2] if len(parts) > 2 else "support_agent"
+                d = post("/v1/shield/tool/check",
+                         {"agent_key": "support-bot", "tool_name": tool, "user_role": role,
+                          "tool_params": {}}, extra={"X-Agent-Key": "support-bot"})
+                if d.get("allowed"):
+                    print(f"  {G}✓ allowed{Z} — {role} may call {tool}()")
+                else:
+                    print(f"  {RED}🛡 BLOCKED{Z} — {(d.get('guardrail_results') or [{}])[0].get('message', d.get('action'))}")
+                continue
+
+            if line.startswith("/screen"):
+                text = line[len("/screen"):].strip()
+                d = post("/guardrails/input", {"message": text})
+                trig = [g["guardrail"] for g in d.get("guardrail_results", []) if not g.get("passed")]
+                if d.get("safe") is False:
+                    print(f"  {RED}🛡 BLOCKED{Z} — input guardrail: {', '.join(trig) or d.get('action')}")
+                else:
+                    print(f"  {G}✓ allowed{Z} — passes input guardrails")
+                continue
+
+            # default: chat with the guarded agent (input + output guards inline)
+            try:
+                d = post("/v1/chat/completions",
+                         {"model": "shield-guarded",
+                          "messages": [{"role": "user", "content": line}]})
+                choice = (d.get("choices") or [{}])[0]
+                content = (choice.get("message") or {}).get("content", "")
+                if choice.get("finish_reason") == "content_filter" or d.get("x_shield", {}).get("blocked"):
+                    print(f"  {RED}🛡 BLOCKED{Z} — {content or 'guardrail refusal'}")
+                else:
+                    print(f"  {G}agent ▸{Z} {content}")
+            except Exception as e:
+                print(f"  {DIM}(chat proxy unavailable: {e}; try /screen <text>){Z}")
+    finally:
+        if pol_id:
+            requests.delete(f"{BASE}/v1/tenant/me/custom-policies/{pol_id}", headers=H, timeout=30)
+        print(f"\n{DIM}All prompts carried run_id={RUN} → one trace.{Z}")
+
+
 def main():
+    if any(a in ("-i", "--interactive") for a in sys.argv[1:]) or \
+       os.environ.get("DEMO_MODE", "").lower() == "interactive":
+        interactive()
+        return
     print(f"\n{B}Hijacking an AI agent — with and without Shield.{Z}")
     print(f"{DIM}target: support-bot (role support_agent) · tools incl. read_aws_credentials · "
           f"secret shield://stripe_key{Z}")
@@ -149,6 +232,7 @@ def main():
     phase_off()
     phase_on()
     print(f"\n{G}{B}Same five attacks. Without Shield: 5 succeeded. With Shield: 0.{Z}\n")
+    print(f"{DIM}Tip: run with --interactive to let the audience try their own attacks.{Z}\n")
 
 
 if __name__ == "__main__":
