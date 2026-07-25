@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
+from core.run_context import resolve_run_id
 from guardrails.base import _request_configs
 from guardrails.registry import get_by_stage, get_guardrail
 from storage.policy_store import check_tool_authorization, get_tool_policies
@@ -557,6 +558,7 @@ async def classify_output(request: Request, body: dict):
         "latency_ms": response.get("inference_time_ms", 0),
         "metadata": {
             "kind": "agent_chat_telemetry",
+            "run_id": resolve_run_id(request, context),
             "tenant_id": tenant_id or "",
             "user_role": user_role or "",
             "stage": "output",

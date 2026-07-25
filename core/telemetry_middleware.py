@@ -211,6 +211,9 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
             )
             response.headers["x-trace-id"] = trace_id
             response.headers["x-latency-ms"] = str(round(latency_ms, 2))
+            _rid = getattr(request.state, "run_id", "") if hasattr(request, "state") else ""
+            if _rid:
+                response.headers["X-Shield-Run-Id"] = _rid
             return response
 
         # Efficiently read and parse response body
@@ -236,6 +239,9 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         # Add trace headers to response efficiently
         response.headers["x-trace-id"] = trace_id
         response.headers["x-latency-ms"] = str(round(latency_ms, 2))
+        _rid = getattr(request.state, "run_id", "") if hasattr(request, "state") else ""
+        if _rid:
+            response.headers["X-Shield-Run-Id"] = _rid
 
         # Return response with updated body
         return Response(

@@ -9,6 +9,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
+from core.run_context import resolve_run_id
 from core.policy_mode import resolve_mode, apply_to_response as apply_policy_mode
 from guardrails.base import _request_configs
 from guardrails.registry import get_by_stage, get_guardrail
@@ -280,6 +281,7 @@ async def classify(request: Request, body: dict):
         "latency_ms": result.get("inference_time_ms", 0),
         "metadata": {
             "kind": "agent_chat_telemetry",
+            "run_id": resolve_run_id(request, body),
             "tenant_id": tenant_id,
             "user_role": role_name,
             "stage": "input",
@@ -479,6 +481,7 @@ async def screen_file(
             "latency_ms": 0,
             "metadata": {
                 "kind": "agent_chat_telemetry",
+                "run_id": resolve_run_id(request, {"session_id": session_id}),
                 "tenant_id": resolve_request_tenant_id(request),
                 "stage": "input",
                 "device_id": request.headers.get("x-device-id", "") or device_id,
@@ -539,6 +542,7 @@ async def screen_file(
         "latency_ms": result.get("inference_time_ms", 0),
         "metadata": {
             "kind": "agent_chat_telemetry",
+            "run_id": resolve_run_id(request, {"session_id": session_id}),
             "tenant_id": tenant_id,
             "user_role": "",
             "stage": "input",
