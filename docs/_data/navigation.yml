@@ -41,5 +41,6 @@ groups:
       - { title: Workload Identity (SPIRE), url: /workload-identity-bundle/ }
       - { title: Multi-Tenant Architecture, url: /multi-tenant-architecture/ }
       - { title: Architecture, url: /architecture-diagram/ }
+      - { title: Agent Run Tracing, url: /agent-run-tracing/ }
       - { title: Agent Governance, url: /agent-governance/ }
       - { title: Enterprise Features, url: /enterprise-features/ }
