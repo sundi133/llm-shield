@@ -23,7 +23,10 @@ RUN = os.environ.get("RUN_ID", f"run-web-{uuid.uuid4().hex[:8]}")
 H = {"X-API-Key": KEY, "Content-Type": "application/json", "X-Shield-Run-Id": RUN}
 
 app = FastAPI(title="Shield Interactive Demo")
-_pol_id = None
+
+# NOTE: this demo does NOT create any guardrails. All blocks come from the
+# policies configured on the tenant (resolved server-side from TENANT_KEY).
+# Configure input/output custom policies + agent RBAC in your Shield portal.
 
 
 async def _shield(method, path, json=None, extra=None):
@@ -35,39 +38,37 @@ async def _shield(method, path, json=None, extra=None):
             return r.status_code, {}
 
 
-@app.on_event("startup")
-async def _setup():
-    global _pol_id
-    await _shield("POST", "/v1/agents/register", json={
-        "agent_id": "support-bot", "name": "Support Bot",
-        "tools": ["get_ticket", "issue_refund", "read_aws_credentials"],
-        "role_permissions": {"support_agent": ["get_ticket"]}})
-    _, pol = await _shield("POST", "/v1/tenant/me/custom-policies/", json={
-        "name": "Block credential exfiltration",
-        "description": "Block output containing cloud credentials / keys.",
-        "prompt": ("Block the response if it contains secret credential material: AWS access "
-                   "key IDs (AKIA...), secret access keys, private keys, or API tokens."),
-        "action": "block", "stage": "output", "confidence_threshold": 0.7, "priority": 10})
-    _pol_id = (pol.get("policy") or {}).get("policy_id")
-
-
-@app.on_event("shutdown")
-async def _teardown():
-    if _pol_id:
-        await _shield("DELETE", f"/v1/tenant/me/custom-policies/{_pol_id}")
+def _triggered(d):
+    return ", ".join(g["guardrail"] for g in d.get("guardrail_results", []) if not g.get("passed")) or d.get("action", "")
 
 
 @app.post("/api/chat")
 async def api_chat(req: Request):
+    """Enforce with the TENANT's configured policies, then answer.
+
+    We deliberately screen via /guardrails/input and /guardrails/output — those
+    apply the tenant's custom policies (resolved from TENANT_KEY). The guarded
+    chat proxy is used only to generate the reply text.
+    """
     msg = (await req.json()).get("message", "")
+
+    # 1. tenant INPUT policies on the user's message
+    _, di = await _shield("POST", "/guardrails/input", json={"message": msg})
+    if di.get("safe") is False:
+        return JSONResponse({"kind": "blocked", "text": f"input policy — {_triggered(di)}"})
+
+    # 2. generate a reply
     _, d = await _shield("POST", "/v1/chat/completions",
                          json={"model": "shield-guarded",
                                "messages": [{"role": "user", "content": msg}]})
     choice = (d.get("choices") or [{}])[0]
-    content = (choice.get("message") or {}).get("content", "")
-    blocked = choice.get("finish_reason") == "content_filter" or d.get("x_shield", {}).get("blocked")
-    return JSONResponse({"kind": "blocked" if blocked else "reply",
-                         "text": content or "(guardrail refusal)"})
+    reply = (choice.get("message") or {}).get("content", "")
+
+    # 3. tenant OUTPUT policies on the reply
+    _, do = await _shield("POST", "/guardrails/output", json={"output": reply})
+    if do.get("safe") is False:
+        return JSONResponse({"kind": "blocked", "text": f"output policy — {_triggered(do)}"})
+    return JSONResponse({"kind": "reply", "text": do.get("sanitized_output") or reply or "(no content)"})
 
 
 @app.post("/api/tool")

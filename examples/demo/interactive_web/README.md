@@ -28,8 +28,12 @@ Every prompt carries one `run_id`, so the session is one trace.
 
 - Verified live: jailbreak blocked (prompt-injection), forbidden tool blocked (RBAC),
   allowed tool passes, normal question answered.
-- The chat replies use Shield's guarded `/v1/chat/completions`, so the Shield LLM
-  backend must be reachable — test once before the talk. `/tool` and `/screen` are
-  pure guard checks (no model) and always work if the backend is flaky.
-- On startup it registers a least-privilege `support-bot` agent + a credential
-  policy, and removes the policy on shutdown.
+- **All blocks come from your tenant's configured policies.** Chat enforcement
+  screens the message through `/guardrails/input` and the reply through
+  `/guardrails/output` (both apply the tenant's custom policies, resolved from
+  `TENANT_KEY`); the guarded chat proxy is used only to generate the reply text.
+  This demo does NOT create any policies — configure them in your portal.
+- Requires the Shield LLM backend reachable for replies — test once before the
+  talk. `/tool` and `/screen` are pure guard checks (no model) and always work.
+- RBAC (`/tool`) uses the tenant's agent registry — register your agents +
+  role permissions in the portal.
