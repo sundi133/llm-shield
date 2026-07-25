@@ -24,6 +24,7 @@ from core.feature_flags import (
 from storage.tool_killswitch import is_tool_disabled
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
+from core.run_context import resolve_run_id
 from core.telemetry import record_event, build_guardrail_event, build_response_event
 from core.policy_mode import resolve_mode, apply as apply_policy_mode
 from storage.audit_log import audit_logger
@@ -140,6 +141,7 @@ def _emit_tool_check_telemetry(
     allowed: bool,
     results: list[dict],
     latency_ms: float,
+    run_id: str = "",
 ):
     """Emit per-guardrail and summary SIEM events for a /tool/check call."""
     blocked_guardrails = []
@@ -196,6 +198,7 @@ def _emit_tool_check_telemetry(
         "latency_ms": round(latency_ms, 2),
         "metadata": {
             "kind": "agent_chat_telemetry",
+            "run_id": run_id,
             "tenant_id": tenant_id or "",
             "user_role": user_role or "",
             "stage": "complete",
@@ -215,6 +218,7 @@ def _emit_tool_check_telemetry(
 async def check_tool(body: ToolCheckRequest, request: Request):
     start = time.perf_counter()
     trace_id = request.headers.get("x-trace-id", uuid.uuid4().hex[:16])
+    run_id = resolve_run_id(request, {"run_id": getattr(body, "run_id", None), "session_id": body.session_id})
     source_ip = request.client.host if request.client else ""
 
     tenant_id = (
@@ -301,6 +305,7 @@ async def check_tool(body: ToolCheckRequest, request: Request):
             tenant_id=tenant_id or "",
             user_role=user_role or "",
             session_id=body.session_id or "",
+            run_id=run_id,
             source_ip=source_ip,
             action="block",
             allowed=False,
@@ -587,6 +592,7 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 tenant_id=tenant_id or "",
                 user_role=user_role or "",
                 session_id=body.session_id or "",
+                run_id=run_id,
                 source_ip=source_ip,
                 action=_final_result["action"],
                 allowed=_final_result["allowed"],
@@ -637,6 +643,7 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
         "latency_ms": round(latency_ms, 2),
         "metadata": {
             "kind": "agent_chat_telemetry",
+            "run_id": resolve_run_id(request, context),
             "tenant_id": tenant_id or "",
             "user_role": user_role or "",
             "stage": "output_sanitization",

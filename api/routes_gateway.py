@@ -13,6 +13,7 @@ import config.schema as _config_module
 from core.llm_backend import async_llm_call, _build_payload, get_server_url
 from core.models import ChatRequest, ShieldResponse
 from core.pipeline import run_input_pipeline, run_output_pipeline
+from core.run_context import resolve_run_id
 from core.feature_flags import KILLSWITCH_ENABLED
 from guardrails.registry import get_by_stage
 from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
@@ -215,6 +216,7 @@ async def _stream_chat_completion(
     last_user_msg: str,
     start_time: datetime,
     tenant_id: str = "",
+    run_id: str = "",
 ):
     """Proxy a chat completion stream while preserving OpenAI-style SSE."""
     client = httpx.AsyncClient(timeout=300)
@@ -299,7 +301,7 @@ async def _stream_chat_completion(
                                         "guardrails_triggered": [blocked_result.guardrail_name],
                                         "latency_ms": round(latency_ms, 2),
                                         "metadata": {
-                                            "kind": "agent_chat_telemetry",
+                                            "kind": "agent_chat_telemetry", "run_id": run_id,
                                             "tenant_id": tenant_id,
                                             "stage": "stream_partial_output",
                                             "user_role": role_name,
@@ -347,7 +349,7 @@ async def _stream_chat_completion(
                     "guardrails_triggered": triggered,
                     "latency_ms": round(latency_ms, 2),
                     "metadata": {
-                        "kind": "agent_chat_telemetry",
+                        "kind": "agent_chat_telemetry", "run_id": run_id,
                         "tenant_id": tenant_id,
                         "stage": "stream_complete",
                         "user_role": role_name,
@@ -400,6 +402,7 @@ async def shield_chat_completions(request: Request):
     start_time = datetime.now()
 
     body = await request.json()
+    run_id = resolve_run_id(request, body)
     messages = body.get("messages", [])
 
     # Support prompt-style requests (e.g., from playground)
@@ -463,7 +466,7 @@ async def shield_chat_completions(request: Request):
                 "guardrails_triggered": triggered,
                 "latency_ms": round(latency_ms, 2),
                 "metadata": {
-                    "kind": "agent_chat_telemetry",
+                    "kind": "agent_chat_telemetry", "run_id": run_id,
                     "tenant_id": tenant_id,
                     "stage": "input",
                     "user_role": role_name,
@@ -509,6 +512,7 @@ async def shield_chat_completions(request: Request):
             last_user_msg=last_user_msg,
             start_time=start_time,
             tenant_id=tenant_id,
+            run_id=run_id,
         )
 
     # Proxy to LLM
@@ -580,7 +584,7 @@ async def shield_chat_completions(request: Request):
                 "guardrails_triggered": triggered,
                 "latency_ms": round(latency_ms, 2),
                 "metadata": {
-                    "kind": "agent_chat_telemetry",
+                    "kind": "agent_chat_telemetry", "run_id": run_id,
                     "tenant_id": tenant_id,
                     "stage": "output",
                     "user_role": role_name,
@@ -636,7 +640,7 @@ async def shield_chat_completions(request: Request):
             "guardrails_triggered": triggered,
             "latency_ms": round(latency_ms, 2),
             "metadata": {
-                "kind": "agent_chat_telemetry",
+                "kind": "agent_chat_telemetry", "run_id": run_id,
                 "tenant_id": tenant_id,
                 "stage": "complete",
                 "user_role": role_name,
