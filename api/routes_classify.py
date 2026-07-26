@@ -9,7 +9,9 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
+from core.run_context import resolve_run_id
 from core.policy_mode import resolve_mode, apply_to_response as apply_policy_mode
+from core.tenant_pipeline import REPLACE, run_tenant_pipeline
 from guardrails.base import _request_configs
 from guardrails.registry import get_by_stage, get_guardrail
 from storage.audit_log import audit_logger
@@ -280,6 +282,7 @@ async def classify(request: Request, body: dict):
         "latency_ms": result.get("inference_time_ms", 0),
         "metadata": {
             "kind": "agent_chat_telemetry",
+            "run_id": resolve_run_id(request, body),
             "tenant_id": tenant_id,
             "user_role": role_name,
             "stage": "input",
@@ -479,6 +482,7 @@ async def screen_file(
             "latency_ms": 0,
             "metadata": {
                 "kind": "agent_chat_telemetry",
+                "run_id": resolve_run_id(request, {"session_id": session_id}),
                 "tenant_id": resolve_request_tenant_id(request),
                 "stage": "input",
                 "device_id": request.headers.get("x-device-id", "") or device_id,
@@ -539,6 +543,7 @@ async def screen_file(
         "latency_ms": result.get("inference_time_ms", 0),
         "metadata": {
             "kind": "agent_chat_telemetry",
+            "run_id": resolve_run_id(request, {"session_id": session_id}),
             "tenant_id": tenant_id,
             "user_role": "",
             "stage": "input",
@@ -615,41 +620,15 @@ async def _classify_tenant(
     per-request config through a contextvar — zero object allocations.
     Tenant config is already in canonical format so _NAME_MAP and
     _translate_settings are skipped entirely.
+
+    The wiring lives in core.tenant_pipeline so this endpoint, the legacy
+    gateway, and the OpenAI-compat proxy all resolve tenant policies the same
+    way. REPLACE mode preserves this endpoint's behavior exactly: the tenant's
+    configured list *is* the pipeline.
     """
-    configs: dict[str, dict] = {}
-    singletons = []
-
-    # Process configured tenant guardrails
-    for name, gcfg in tenant_guardrails.items():
-        if not gcfg.get("enabled", True):
-            continue
-        configs[name] = {
-            "enabled": True,
-            "action": gcfg.get("action", "block"),
-            "settings": gcfg.get("settings", {}),
-        }
-        g = get_guardrail(name)
-        if g:
-            singletons.append(g)
-
-    # Auto-enable role-based input policy guardrail when role context is available
-    if ((context.get("user_role") or context.get("role")) and context.get("tenant_id") and
-        "role_based_input_policy" not in configs):
-        configs["role_based_input_policy"] = {
-            "enabled": True,
-            "action": "block",  # Block unauthorized input by default
-            "settings": {},
-        }
-        g = get_guardrail("role_based_input_policy")
-        if g:
-            singletons.append(g)
-
-    token = _request_configs.set(configs)
-    try:
-        pipeline_result = await run_pipeline(singletons, message, context)
-    finally:
-        _request_configs.reset(token)
-
+    pipeline_result = await run_tenant_pipeline(
+        "input", message, context, tenant_guardrails, mode=REPLACE
+    )
     return _build_response(pipeline_result, start)
 
 

@@ -12,7 +12,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import config.schema as _config_module
 from core.llm_backend import async_llm_call, _build_payload, get_server_url
 from core.models import ChatRequest, ShieldResponse
-from core.pipeline import run_input_pipeline, run_output_pipeline
+from core.pipeline import run_pipeline
+from core.policy_mode import MONITOR, resolve_mode
+from core.run_context import resolve_run_id
+from core.tenant_pipeline import (
+    apply_mode_to_pipeline_result,
+    resolve_proxy_guardrails,
+    run_proxy_input_pipeline,
+    run_proxy_output_pipeline,
+)
 from core.feature_flags import KILLSWITCH_ENABLED
 from guardrails.registry import get_by_stage
 from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
@@ -185,10 +193,16 @@ async def _run_stream_output_guardrails(
     content: str,
     context: dict,
     tiers: set[str],
+    guardrails: list | None = None,
 ):
-    """Run only blocking output guardrails for the requested tiers on partial output."""
+    """Run only blocking output guardrails for the requested tiers on partial output.
+
+    ``guardrails`` defaults to the stage's registered set; the streaming proxy
+    passes the tenant-resolved set so a tenant's configured output policy is
+    enforced mid-stream too, not just in the post-stream pass.
+    """
     blocking_results = []
-    for guardrail in get_by_stage("output"):
+    for guardrail in (get_by_stage("output") if guardrails is None else guardrails):
         if not guardrail.enabled:
             continue
         if guardrail.configured_action != "block":
@@ -215,6 +229,8 @@ async def _stream_chat_completion(
     last_user_msg: str,
     start_time: datetime,
     tenant_id: str = "",
+    run_id: str = "",
+    tenant_config: dict | None = None,
 ):
     """Proxy a chat completion stream while preserving OpenAI-style SSE."""
     client = httpx.AsyncClient(timeout=300)
@@ -231,6 +247,16 @@ async def _stream_chat_completion(
             error_json = {"error": error_text.decode(errors="replace") or "Upstream stream failed"}
         return JSONResponse(status_code=upstream_resp.status_code, content=error_json)
 
+    # Resolve the tenant's output guardrails once, outside the generator, then
+    # install the config *inside* it: the generator body runs after this handler
+    # returns, and the incremental checks read enabled/configured_action off the
+    # contextvar. Setting it out here would not survive into the SSE task.
+    stream_output_context = {**context, "stage": "output", "streaming": True}
+    _stream_configs, _stream_guardrails = resolve_proxy_guardrails(
+        "output", stream_output_context, tenant_config
+    )
+    policy_mode = resolve_mode(tenant_config)
+
     async def event_generator():
         accumulated_text = ""
         usage = None
@@ -242,6 +268,7 @@ async def _stream_chat_completion(
             "created": int(datetime.now().timestamp()),
             "model": body.get("model", "unknown"),
         }
+        cfg_token = _request_configs.set(_stream_configs)
         try:
             async for line in upstream_resp.aiter_lines():
                 if line == "":
@@ -274,6 +301,7 @@ async def _stream_chat_completion(
                                     content=accumulated_text,
                                     context={**context, "stage": "output", "streaming": True, "stream_check_tier": "fast"},
                                     tiers={"fast"},
+                                    guardrails=_stream_guardrails,
                                 )
                                 last_fast_check_chars = current_len
 
@@ -285,8 +313,42 @@ async def _stream_chat_completion(
                                     content=accumulated_text,
                                     context={**context, "stage": "output", "streaming": True, "stream_check_tier": "slow"},
                                     tiers={"slow", "medium"},
+                                    guardrails=_stream_guardrails,
                                 )
                                 last_slow_check_chars = current_len
+
+                            # Monitor mode is a dry-run: record what would have been
+                            # blocked, then let the stream continue uncut.
+                            if blocked_result is not None and policy_mode == MONITOR:
+                                await audit_logger.log(
+                                    {
+                                        "agent_key": agent_key,
+                                        "endpoint": "/v1/shield/chat/completions",
+                                        "input_text": last_user_msg,
+                                        "action_taken": "monitor",
+                                        "guardrails_triggered": [blocked_result.guardrail_name],
+                                        "latency_ms": round((datetime.now() - start_time).total_seconds() * 1000, 2),
+                                        "metadata": {
+                                            "kind": "agent_chat_telemetry", "run_id": run_id,
+                                            "tenant_id": tenant_id,
+                                            "stage": "stream_partial_output",
+                                            "user_role": role_name,
+                                            "blocked": False,
+                                            "mode": MONITOR,
+                                            "would_block": [blocked_result.guardrail_name],
+                                            "block_reason": blocked_result.message,
+                                            "session_id": "",
+                                            "tool_calls": [],
+                                            "tool_call_count": 0,
+                                            "input_guardrails": [],
+                                            "output_guardrails": [{"guardrail": blocked_result.guardrail_name, "passed": False, "action": "block", "message": blocked_result.message, "enforced": False}],
+                                            "usage": {},
+                                            "streaming": True,
+                                            "partial_output_chars": current_len,
+                                        },
+                                    }
+                                )
+                                blocked_result = None
 
                             if blocked_result is not None:
                                 latency_ms = (datetime.now() - start_time).total_seconds() * 1000
@@ -299,7 +361,7 @@ async def _stream_chat_completion(
                                         "guardrails_triggered": [blocked_result.guardrail_name],
                                         "latency_ms": round(latency_ms, 2),
                                         "metadata": {
-                                            "kind": "agent_chat_telemetry",
+                                            "kind": "agent_chat_telemetry", "run_id": run_id,
                                             "tenant_id": tenant_id,
                                             "stage": "stream_partial_output",
                                             "user_role": role_name,
@@ -328,8 +390,12 @@ async def _stream_chat_completion(
 
                 yield (line + "\n").encode("utf-8")
 
-            output_context = {**context, "stage": "output", "streaming": True}
-            output_result = await run_output_pipeline(accumulated_text, output_context)
+            # _stream_configs is already installed on the contextvar, so the
+            # tenant's output policies apply to this post-stream pass too.
+            output_result = await run_pipeline(
+                _stream_guardrails, accumulated_text, stream_output_context
+            )
+            output_result = apply_mode_to_pipeline_result(output_result, policy_mode)
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
             triggered = [
@@ -347,7 +413,7 @@ async def _stream_chat_completion(
                     "guardrails_triggered": triggered,
                     "latency_ms": round(latency_ms, 2),
                     "metadata": {
-                        "kind": "agent_chat_telemetry",
+                        "kind": "agent_chat_telemetry", "run_id": run_id,
                         "tenant_id": tenant_id,
                         "stage": "stream_complete",
                         "user_role": role_name,
@@ -366,6 +432,7 @@ async def _stream_chat_completion(
 
             yield b"data: [DONE]\n\n"
         finally:
+            _request_configs.reset(cfg_token)
             await stream_ctx.__aexit__(None, None, None)
             await client.aclose()
 
@@ -400,6 +467,7 @@ async def shield_chat_completions(request: Request):
     start_time = datetime.now()
 
     body = await request.json()
+    run_id = resolve_run_id(request, body)
     messages = body.get("messages", [])
 
     # Support prompt-style requests (e.g., from playground)
@@ -447,8 +515,17 @@ async def shield_chat_completions(request: Request):
             last_user_msg = msg.get("content", "")
             break
 
+    # Resolved once here (not just for tool RBAC further down) so the tenant's
+    # configured input/output policies apply to this proxy exactly as they do on
+    # /guardrails/input — the gap this endpoint used to have.
+    tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
+    policy_mode = resolve_mode(tenant_config)
+
     # Run input pipeline
-    input_result = await run_input_pipeline(last_user_msg, context)
+    input_result = await run_proxy_input_pipeline(
+        last_user_msg, context, tenant_config
+    )
+    input_result = apply_mode_to_pipeline_result(input_result, policy_mode)
 
     if not input_result.allowed:
         latency_ms = (datetime.now() - start_time).total_seconds() * 1000
@@ -463,7 +540,7 @@ async def shield_chat_completions(request: Request):
                 "guardrails_triggered": triggered,
                 "latency_ms": round(latency_ms, 2),
                 "metadata": {
-                    "kind": "agent_chat_telemetry",
+                    "kind": "agent_chat_telemetry", "run_id": run_id,
                     "tenant_id": tenant_id,
                     "stage": "input",
                     "user_role": role_name,
@@ -509,6 +586,8 @@ async def shield_chat_completions(request: Request):
             last_user_msg=last_user_msg,
             start_time=start_time,
             tenant_id=tenant_id,
+            run_id=run_id,
+            tenant_config=tenant_config,
         )
 
     # Proxy to LLM
@@ -539,7 +618,7 @@ async def shield_chat_completions(request: Request):
     usage = llm_data.get("usage")
 
     # --- Tool RBAC validation (if LLM returned tool_calls) ---
-    tenant_config = getattr(request.state, "tenant_config", None) if hasattr(request, "state") else None
+    # tenant_config resolved above, before the input pipeline.
     tool_results: list[dict] = []
     for tc in tool_calls:
         tool_name = tc["name"]
@@ -565,7 +644,10 @@ async def shield_chat_completions(request: Request):
 
     # Run output pipeline on text content
     output_context = {**context, "stage": "output"}
-    output_result = await run_output_pipeline(llm_response_text, output_context)
+    output_result = await run_proxy_output_pipeline(
+        llm_response_text, output_context, tenant_config
+    )
+    output_result = apply_mode_to_pipeline_result(output_result, policy_mode)
 
     latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
@@ -580,7 +662,7 @@ async def shield_chat_completions(request: Request):
                 "guardrails_triggered": triggered,
                 "latency_ms": round(latency_ms, 2),
                 "metadata": {
-                    "kind": "agent_chat_telemetry",
+                    "kind": "agent_chat_telemetry", "run_id": run_id,
                     "tenant_id": tenant_id,
                     "stage": "output",
                     "user_role": role_name,
@@ -636,7 +718,7 @@ async def shield_chat_completions(request: Request):
             "guardrails_triggered": triggered,
             "latency_ms": round(latency_ms, 2),
             "metadata": {
-                "kind": "agent_chat_telemetry",
+                "kind": "agent_chat_telemetry", "run_id": run_id,
                 "tenant_id": tenant_id,
                 "stage": "complete",
                 "user_role": role_name,
