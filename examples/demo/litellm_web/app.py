@@ -25,7 +25,16 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 LURL = os.environ.get("LITELLM_URL", "https://litellm-guardrails-votal-ai-production.up.railway.app").rstrip("/")
 LKEY = os.environ.get("LITELLM_KEY", "")
-MODEL = os.environ.get("MODEL", "gpt-4.1-mini")
+# Model aliases the picker offers — must match the model_name entries on the
+# LiteLLM proxy. This list is also the allowlist: /api/chat refuses anything
+# outside it, so a public demo URL cannot be used to call arbitrary models.
+MODELS = [m.strip() for m in os.environ.get(
+    "MODELS",
+    "gpt-4.1-mini,gpt-5.4-mini,claude-3-5-sonnet,qwen3.5-27b,moonshotai/kimi-k2.5"
+).split(",") if m.strip()]
+MODEL = os.environ.get("MODEL", MODELS[0] if MODELS else "gpt-4.1-mini")
+if MODEL not in MODELS:
+    MODELS.insert(0, MODEL)
 TENANT = os.environ.get("TENANT_KEY", "bank-co-key")
 AGENT = os.environ.get("AGENT_KEY", "support-bot")
 ROLE = os.environ.get("USER_ROLE", "support_agent")
@@ -64,7 +73,7 @@ def _is_block(text):
     return "blocked by votal guardrails" in low or "triggered guardrails:" in low
 
 
-async def _chat(msg, role):
+async def _chat(msg, role, model):
     """One turn through LiteLLM. The plugin enforces input, output, and the
     tenant's custom policies, and forwards agent identity to Shield.
 
@@ -74,7 +83,7 @@ async def _chat(msg, role):
     headers = {"Authorization": f"Bearer {LKEY}", "Content-Type": "application/json",
                "x-agent-key": AGENT, "x-user-role": role,
                "x-session-id": SESSION, "x-shield-run-id": RUN}
-    body = {"model": MODEL, "messages": [{"role": "user", "content": msg}],
+    body = {"model": model, "messages": [{"role": "user", "content": msg}],
             "guardrails": GUARDS,
             "metadata": {"tenant_api_key": TENANT, "agent_key": AGENT, "user_role": role,
                          "session_id": SESSION, "run_id": RUN}}
@@ -97,19 +106,25 @@ async def _chat(msg, role):
 @app.post("/api/chat")
 async def api_chat(req: Request):
     b = await req.json()
-    kind, text = await _chat(b.get("message", ""), b.get("role") or ROLE)
-    return JSONResponse({"kind": kind, "text": text})
+    # Allowlist, not passthrough: an unknown model falls back to the default
+    # rather than being forwarded to the proxy.
+    model = b.get("model") if b.get("model") in MODELS else MODEL
+    kind, text = await _chat(b.get("message", ""), b.get("role") or ROLE, model)
+    return JSONResponse({"kind": kind, "text": text, "model": model})
 
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "litellm": LURL, "model": MODEL, "guards": GUARDS}
+    return {"ok": True, "litellm": LURL, "model": MODEL, "models": MODELS, "guards": GUARDS}
 
 
 @app.get("/")
 def index():
+    opts = "".join(f'<option value="{m}"{" selected" if m == MODEL else ""}>{m}</option>'
+                   for m in MODELS)
     return HTMLResponse(PAGE.replace("__RUN__", RUN).replace("__LURL__", LURL)
-                            .replace("__ROLE__", ROLE).replace("__MODEL__", MODEL))
+                            .replace("__ROLE__", ROLE).replace("__MODEL_OPTIONS__", opts)
+                            .replace("__MODEL__", MODEL))
 
 
 PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -175,6 +190,11 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13.
 .pill.live{color:var(--ok);border-color:var(--ok-line);background:var(--ok-bg);}
 button.pill{cursor:pointer;font-family:inherit;transition:.12s;}
 button.pill:hover{border-color:var(--line-2);color:var(--ink);background:var(--surface-2);}
+.pill.sel{padding-right:4px;gap:4px;}
+.pill.sel:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring);}
+.pill.sel select{font-family:inherit;font-size:11.5px;font-weight:520;color:var(--ink);background:none;
+  border:none;outline:none;cursor:pointer;padding:0 2px;max-width:190px;}
+.pill.sel select option{background:var(--surface);color:var(--ink);}
 .dot{width:5px;height:5px;border-radius:50%;background:currentColor;}
 .dot.pulse{animation:pulse 2s ease-in-out infinite;}
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
@@ -270,7 +290,9 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
     <span class="sep"></span>
     <span class="pill live"><span class="dot pulse"></span> Guardrails active</span>
     <div class="right">
-      <span class="pill opt">model <b>__MODEL__</b></span>
+      <label class="pill sel">model
+        <select id="model">__MODEL_OPTIONS__</select>
+      </label>
       <span class="pill opt">role <b>__ROLE__</b></span>
       <span class="pill opt">run <b>__RUN__</b></span>
       <button class="pill" id="theme" title="Toggle light or dark">Dark</button>
@@ -287,7 +309,7 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
         <div class="stage"><div class="k">Client</div><div class="v">Agentic app</div></div>
         <div class="stage"><div class="k">Proxy</div><div class="v">LiteLLM</div></div>
         <div class="stage guard"><div class="k">Enforcement</div><div class="v">Votal guardrails</div></div>
-        <div class="stage"><div class="k">Model</div><div class="v">__MODEL__</div></div>
+        <div class="stage"><div class="k">Model</div><div class="v" id="pipeModel">__MODEL__</div></div>
       </div>
 
       <div class="cards">
@@ -328,6 +350,10 @@ function setTheme(t){document.documentElement.dataset.theme=t;tbtn.textContent=t
   try{localStorage.setItem('votal-theme',t);}catch(e){}}
 setTheme((()=>{try{return localStorage.getItem('votal-theme')||'light';}catch(e){return 'light';}})());
 tbtn.onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+
+/* model picker — keeps the pipeline strip honest about who is answering */
+const msel=document.getElementById('model');
+msel.onchange=()=>{document.getElementById('pipeModel').textContent=msel.value;};
 
 function turn(cls,html){const d=document.createElement('div');d.className='turn '+cls;d.innerHTML=html;
   thread.appendChild(d);scroll();return d;}
@@ -370,14 +396,15 @@ async function chat(text){
   },500);
   try{
     const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:text})});
+      body:JSON.stringify({message:text,model:msel.value})});
     const j=await r.json(), secs=((Date.now()-t0)/1000).toFixed(1);
     if(j.kind==='blocked') pend.innerHTML=verdictHTML(j.text,secs);
     else if(j.kind==='error') pend.innerHTML='<div class="av">!</div><div class="verdict err">'
       +'<div class="hd">Request failed<span class="lat">'+secs+'s</span></div>'
       +'<div class="reason">'+esc(j.text)+'</div></div>';
     else pend.innerHTML='<div class="av">AI</div><div class="bubble">'
-      +'<div class="who">Agent<span class="lat">'+secs+'s · passed input + output guards</span></div>'+esc(j.text)+'</div>';
+      +'<div class="who">Agent · '+esc(j.model||'')
+      +'<span class="lat">'+secs+'s · passed input + output guards</span></div>'+esc(j.text)+'</div>';
   }catch(e){
     pend.innerHTML='<div class="av">!</div><div class="verdict err"><div class="hd">Network error</div>'
       +'<div class="reason">'+esc(String(e))+'</div></div>';
