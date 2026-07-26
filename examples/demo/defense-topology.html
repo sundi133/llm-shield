@@ -1,0 +1,101 @@
+<title>VotalAI · LLM Shield — Defense Topology</title>
+<style>
+  :root{
+    --bg:#080a0d; --panel:#0e131a; --panel2:#121a23; --line:#1c2733;
+    --ink:#c8d4e0; --dim:#6b7a8a; --faint:#43505e;
+    --steel:#4bb3d4; --steel-wash:#0c2029;
+    --red:#ff2e46; --red-wash:#2a0a10;
+    --green:#2ee6a0; --green-wash:#07231b; --green-line:#12604a;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,"Segoe UI",Roboto,ui-sans-serif,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--mono);}
+  body{min-height:100vh;padding:34px 26px 40px;
+    background-image:linear-gradient(rgba(75,179,212,.03) 1px,transparent 1px),
+      radial-gradient(1100px 560px at 50% -12%, rgba(75,179,212,.07), transparent 60%);
+    background-size:100% 3px,100% 100%;}
+  .wrap{max-width:1160px;margin:0 auto;}
+  .eyebrow{font-size:.72rem;letter-spacing:.32em;color:var(--steel);text-transform:uppercase;display:flex;gap:9px;align-items:center;}
+  .eyebrow .dot{width:8px;height:8px;border-radius:50%;background:var(--steel);box-shadow:0 0 10px var(--steel);}
+  h1{font-family:var(--sans);font-weight:800;text-transform:uppercase;letter-spacing:-.01em;
+     font-size:clamp(1.7rem,4.4vw,3rem);margin:8px 0 4px;color:#eef4fa;text-wrap:balance;}
+  .sub{color:var(--dim);font-size:.9rem;margin:0 0 22px;max-width:70ch;}
+
+  .flow{display:grid;grid-template-columns:1fr 1.5fr 1fr;gap:0;align-items:stretch;border:1px solid var(--line);}
+  @media (max-width:840px){.flow{grid-template-columns:1fr;}}
+  .zone{padding:18px 16px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:12px;}
+  .zone:last-child{border-right:none;}
+  @media (max-width:840px){.zone{border-right:none;border-bottom:1px solid var(--line);}}
+  .zh{font-size:.64rem;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);}
+  .zone.untrusted{background:linear-gradient(180deg,var(--red-wash),transparent 70%);}
+  .zone.shield{background:var(--steel-wash);border-left:2px solid var(--steel);border-right:2px solid var(--steel);}
+  .zone.shield .zh{color:var(--steel);}
+  .zone.protected{background:linear-gradient(180deg,var(--green-wash),transparent 70%);}
+
+  .node{border:1px solid var(--line);background:var(--panel);padding:10px 12px;}
+  .node b{display:block;font-size:.9rem;color:#eef4fa;font-family:var(--sans);font-weight:600;}
+  .node span{font-size:.74rem;color:var(--dim);}
+  .untrusted .node{border-color:#3a1219;}
+  .protected .node{border-color:#123a2c;}
+
+  /* the 5 checks */
+  .check{border:1px solid var(--green-line);background:#0b1a16;padding:9px 12px;display:grid;grid-template-columns:26px 1fr;gap:10px;align-items:center;}
+  .check .n{font-variant-numeric:tabular-nums;color:var(--green);font-size:.85rem;text-align:center;}
+  .check .t{font-size:.82rem;color:var(--ink);}
+  .check .t b{color:#eef4fa;font-family:var(--sans);}
+  .check .t span{display:block;color:var(--dim);font-size:.7rem;margin-top:1px;}
+
+  .rail{display:flex;align-items:center;justify-content:center;color:var(--steel);font-size:1.4rem;padding:4px 0;}
+  @media (max-width:840px){.rail{transform:rotate(90deg);}}
+
+  .note{margin-top:20px;border:1px solid var(--line);background:var(--panel);padding:14px 18px;color:var(--dim);font-size:.84rem;}
+  .note b{color:var(--steel);}
+  .legend{margin-top:14px;display:flex;gap:18px;flex-wrap:wrap;font-size:.72rem;color:var(--faint);letter-spacing:.04em;}
+  .legend .k{display:inline-flex;align-items:center;gap:7px;}
+  .legend .sw{width:11px;height:11px;border-radius:2px;}
+  .foot{margin-top:16px;color:var(--faint);font-size:.72rem;}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow"><span class="dot"></span> VotalAI · LLM Shield — Defense Topology</div>
+  <h1>How every attack was stopped</h1>
+  <p class="sub">One ingress. Every prompt, tool call, and secret is forced through Shield — and each of the five exploits hits a check on the way. The agent is untrusted; the resources it wants are only reachable through the chokepoint.</p>
+
+  <div class="flow">
+    <div class="zone untrusted">
+      <div class="zh">Untrusted zone</div>
+      <div class="node"><b>Hijacked agent</b><span>support-bot · role support_agent</span></div>
+      <div class="node"><b>Attacker input</b><span>direct + indirect (poisoned data)</span></div>
+      <div class="node"><b>Placeholder only</b><span>shield://stripe_key — never the real key</span></div>
+    </div>
+
+    <div class="zone shield">
+      <div class="zh">Shield · the chokepoint</div>
+      <div class="check"><div class="n">01</div><div class="t"><b>Input guardrail</b><span>/guardrails/input — prompt injection</span></div></div>
+      <div class="check"><div class="n">05</div><div class="t"><b>Input guardrail (ingested)</b><span>injection hidden in tool data</span></div></div>
+      <div class="check"><div class="n">02</div><div class="t"><b>Tool RBAC</b><span>/tool/check — forbidden tool for role</span></div></div>
+      <div class="check"><div class="n">03</div><div class="t"><b>Output data policy</b><span>/guardrails/output — credential leak</span></div></div>
+      <div class="check"><div class="n">04</div><div class="t"><b>Secret Vault egress</b><span>destination-binding on the wire</span></div></div>
+    </div>
+
+    <div class="zone protected">
+      <div class="zh">Protected — reachable only via Shield</div>
+      <div class="node"><b>The model</b><span>screened prompts & replies</span></div>
+      <div class="node"><b>Tools</b><span>RBAC-gated, private network</span></div>
+      <div class="node"><b>Secrets</b><span>materialized only at the bound host</span></div>
+      <div class="node"><b>Egress</b><span>allowlisted destinations</span></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span class="k"><span class="sw" style="background:var(--red)"></span> untrusted / attack</span>
+    <span class="k"><span class="sw" style="background:var(--steel)"></span> Shield enforcement</span>
+    <span class="k"><span class="sw" style="background:var(--green)"></span> protected resource</span>
+  </div>
+
+  <div class="note">
+    The one rule that makes it hold: <b>the resources must be reachable only through Shield</b> — private network for tools, the model behind the proxy, secrets in the vault. A client that reaches a resource directly bypasses the checkpoint. Numbers map to the attack board.
+  </div>
+  <p class="foot">VotalAI · LLM Shield. Every check shown ran live in the demo — /guardrails/input, /v1/shield/tool/check, /guardrails/output, and Secret Vault egress binding.</p>
+</div>
