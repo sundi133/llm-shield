@@ -47,7 +47,8 @@ elsewhere. Nothing here needs a GPU.
    | `TENANT_KEY` | `bank-co-key` |
    | `DEMO_PASSCODE` | any passphrase — see the warning below |
    | `LITELLM_URL` | optional, defaults to the Railway LiteLLM URL |
-   | `MODEL` | optional, defaults to `gpt-4.1-mini` |
+   | `MODEL` | optional, the model selected on load |
+   | `MODELS` | optional, comma-separated list the picker offers |
 
    Do not set `PORT`; Railway injects it.
 4. Settings → **Networking** → **Generate Domain**.
@@ -80,6 +81,29 @@ relay on your model budget**, and at a security conference it will be found and
 used. Set the passcode before you generate a domain. It is a demo gate, not real
 authentication: there is no rate limiting, so delete the Railway service when the
 talk is over rather than leaving it running.
+
+## Choosing the model
+
+The header has a model picker. `MODELS` sets what it offers; the entries must
+match `model_name` aliases configured on the LiteLLM proxy. The default list is:
+
+```
+gpt-4.1-mini,gpt-5.4-mini,claude-3-5-sonnet,qwen3.5-27b,moonshotai/kimi-k2.5
+```
+
+That list is also an **allowlist**. `/api/chat` refuses any model outside it and
+falls back to the default, so a public demo URL cannot be used to bill arbitrary
+models against your keys. To pin the demo to one model and hide the choice, set
+`MODELS` to that single value.
+
+Switching models is worth doing on stage: the guardrails are enforced at the
+proxy, so the same policy blocks the same prompt whether the model behind it is
+OpenAI, Anthropic, or an open-weights model on OpenRouter.
+
+Tested against the proxy on 2026-07-26 — `gpt-4.1-mini`, `gpt-5.4-mini`,
+`qwen3.5-27b`, and `moonshotai/kimi-k2.5` all answer. **`claude-3-5-sonnet`
+returns `401 Missing Anthropic API Key`**: `ANTHROPIC_API_KEY` is not set on the
+LiteLLM service. Set it there, or drop that alias from `MODELS`, before demoing.
 
 ## Verified live
 
