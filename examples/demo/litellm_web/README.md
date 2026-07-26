@@ -9,8 +9,8 @@ browser → this app → LiteLLM → votal_guardrail plugin → Shield → model
                                 input · output · custom policies
 ```
 
-Self-contained: `app.py`, `Dockerfile`, `requirements.txt` in this folder are the
-whole deployable unit. It shares no code with the other demos, so changing it
+Self-contained: `app.py`, `Dockerfile`, and `requirements.txt` in this folder are
+the whole deployable unit. It shares no code with the other demos, so changing it
 cannot break them.
 
 ## Run locally
@@ -27,11 +27,18 @@ Open http://localhost:8800.
 
 ## Deploy to Railway
 
-Build context is **this directory**, not the repo root.
+This service is **just the demo UI**. It runs no model and no Shield: it serves
+a page and forwards to LiteLLM, which calls the Shield that is already running
+elsewhere. Nothing here needs a GPU.
 
 1. Railway → **New** → **Deploy from GitHub repo** → pick `llm-shield`.
-2. Service → **Settings** → **Root Directory** = `examples/demo/litellm_web`.
-   Builder is detected as Dockerfile from `railway.json`.
+2. Service → **Settings** → **Build** → **Root Directory** =
+   `examples/demo/litellm_web`, and leave **Dockerfile Path** as `Dockerfile`.
+
+   Root Directory is not optional. It makes this folder the build context, which
+   is what the COPY lines expect, and it takes the build out of reach of the
+   repo-root `.dockerignore` — that file excludes `examples/`, so a root-context
+   build cannot copy `app.py` at all.
 3. Service → **Variables**, add:
 
    | Variable | Value |
@@ -46,6 +53,22 @@ Build context is **this directory**, not the repo root.
 4. Settings → **Networking** → **Generate Domain**.
 5. Open `https://<your-domain>/?pass=<DEMO_PASSCODE>`. The passcode is stored in
    a cookie, so the URL bar is clean for the rest of the talk.
+
+`railway.json` in this folder sets the Dockerfile builder and the `/healthz`
+healthcheck. Railway only reads it when Root Directory points here.
+
+Sanity check the build logs: the first line should be
+`FROM docker.io/library/python:3.11-slim`. If you see a vLLM base image, the
+service is building the repo-root `Dockerfile` — that is the **GPU** guardrail
+plane, and it cannot run on Railway (no CUDA device, so vLLM exits at boot).
+The repo-root `Dockerfile.cloud` is the CPU cloud data plane; that one does run
+on Railway, but it is a different service from this demo.
+
+To build the same image locally, run it from **this** directory:
+
+```bash
+docker build -t shield-demo-ui .
+```
 
 `GET /healthz` is deliberately unauthenticated (Railway's healthcheck is), and
 returns only the LiteLLM URL, model, and guard names — no secrets.

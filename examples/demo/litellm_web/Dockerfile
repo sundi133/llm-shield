@@ -1,5 +1,15 @@
-# Standalone image for the LiteLLM demo UI. It copies only this directory, so it
-# builds with this folder as the build context and depends on nothing else here.
+# Image for the LiteLLM demo UI.
+#
+# BUILD CONTEXT IS THIS FOLDER, not the repo root. That is deliberate: the
+# repo-root .dockerignore excludes examples/, so a root-context build cannot
+# copy these files at all (and `COPY requirements.txt` would silently match the
+# repo-root requirements.txt — the whole Shield runtime — instead of ours).
+#
+# Build locally from this directory:
+#     docker build -t shield-demo-ui .
+#
+# On Railway: set Root Directory to examples/demo/litellm_web and leave
+# Dockerfile Path as Dockerfile (railway.json in this folder sets the rest).
 FROM python:3.11-slim
 
 WORKDIR /app
