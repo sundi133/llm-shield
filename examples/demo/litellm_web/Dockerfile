@@ -1,22 +1,21 @@
 # Image for the LiteLLM demo UI.
 #
-# BUILD CONTEXT IS THE REPO ROOT, not this folder — so the COPY paths below are
-# spelled out in full. Build it from the repo root:
+# BUILD CONTEXT IS THIS FOLDER, not the repo root. That is deliberate: the
+# repo-root .dockerignore excludes examples/, so a root-context build cannot
+# copy these files at all (and `COPY requirements.txt` would silently match the
+# repo-root requirements.txt — the whole Shield runtime — instead of ours).
 #
-#     docker build -f examples/demo/litellm_web/Dockerfile -t shield-demo-ui .
+# Build locally from this directory:
+#     docker build -t shield-demo-ui .
 #
-# On Railway: leave Root Directory EMPTY and set Dockerfile Path to
-# examples/demo/litellm_web/Dockerfile. Do not set Root Directory to this
-# folder — that changes the context and these paths stop resolving.
-#
-# The full paths also stop `COPY requirements.txt .` from silently picking up
-# the repo-root requirements.txt (the whole Shield runtime) instead of ours.
+# On Railway: set Root Directory to examples/demo/litellm_web and leave
+# Dockerfile Path as Dockerfile (railway.json in this folder sets the rest).
 FROM python:3.11-slim
 
 WORKDIR /app
-COPY examples/demo/litellm_web/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY examples/demo/litellm_web/app.py .
+COPY app.py .
 
 # Railway injects PORT at runtime; app.py reads it and binds 0.0.0.0.
 ENV PORT=8800
