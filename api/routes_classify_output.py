@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
 from core.run_context import resolve_run_id
+from core.tenant_pipeline import REPLACE, run_tenant_pipeline
 from guardrails.base import _request_configs
 from guardrails.registry import get_by_stage, get_guardrail
 from storage.policy_store import check_tool_authorization, get_tool_policies
@@ -622,41 +623,14 @@ async def _classify_tenant(
 
     Reuses singleton guardrail instances from the registry and passes
     per-request config through a contextvar — zero object allocations.
+
+    Shares core.tenant_pipeline with /guardrails/input and both chat proxies so
+    tenant policies resolve identically everywhere. REPLACE mode preserves this
+    endpoint's behavior exactly.
     """
-    configs: dict[str, dict] = {}
-    singletons = []
-
-    # Process configured tenant guardrails
-    for name, gcfg in tenant_guardrails.items():
-        if not gcfg.get("enabled", True):
-            continue
-        configs[name] = {
-            "enabled": True,
-            "action": gcfg.get("action", "warn"),
-            "settings": gcfg.get("settings", {}),
-        }
-        g = get_guardrail(name)
-        if g:
-            singletons.append(g)
-
-    # Auto-enable role-based policy guardrail when role context is available
-    if ((context.get("user_role") or context.get("role")) and context.get("tenant_id") and
-        "role_based_policy" not in configs):
-        configs["role_based_policy"] = {
-            "enabled": True,
-            "action": "warn",  # Default to warn for safety
-            "settings": {},
-        }
-        g = get_guardrail("role_based_policy")
-        if g:
-            singletons.append(g)
-
-    token = _request_configs.set(configs)
-    try:
-        pipeline_result = await run_pipeline(singletons, output, context)
-    finally:
-        _request_configs.reset(token)
-
+    pipeline_result = await run_tenant_pipeline(
+        "output", output, context, tenant_guardrails, mode=REPLACE
+    )
     return _build_response(pipeline_result, start)
 
 

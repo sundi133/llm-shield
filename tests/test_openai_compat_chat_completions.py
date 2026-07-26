@@ -57,7 +57,7 @@ async def _block_input(*args, **kwargs):
     )
 
 
-async def _allow_output(content, context):
+async def _allow_output(content, context, tenant_config=None):
     return PipelineResult(
         allowed=True,
         results=[GuardrailResult(passed=True, action="pass", guardrail_name="toxicity")],
@@ -65,7 +65,7 @@ async def _allow_output(content, context):
     )
 
 
-async def _block_output(content, context):
+async def _block_output(content, context, tenant_config=None):
     return PipelineResult(
         allowed=False,
         results=[
@@ -78,7 +78,7 @@ async def _block_output(content, context):
     )
 
 
-async def _sanitize_output(content, context):
+async def _sanitize_output(content, context, tenant_config=None):
     return PipelineResult(
         allowed=True,
         results=[
@@ -117,8 +117,8 @@ def test_happy_non_stream_returns_openai_shape():
         with (
             patch("api.routes_openai_compat._get_upstream_url", return_value=None),
             patch("api.routes_openai_compat.async_llm_call", side_effect=_fake_llm("hi from shield")),
-            patch("api.routes_openai_compat.run_input_pipeline", side_effect=_allow_input),
-            patch("api.routes_openai_compat.run_output_pipeline", side_effect=_allow_output),
+            patch("api.routes_openai_compat.run_proxy_input_pipeline", side_effect=_allow_input),
+            patch("api.routes_openai_compat.run_proxy_output_pipeline", side_effect=_allow_output),
             patch("api.routes_openai_compat.audit_logger.log", side_effect=_noop_audit),
         ):
             r = client.post("/v1/chat/completions", json={
@@ -147,8 +147,8 @@ def test_input_block_is_refusal_and_skips_upstream():
         with (
             patch("api.routes_openai_compat._get_upstream_url", return_value=None),
             patch("api.routes_openai_compat.async_llm_call", llm),
-            patch("api.routes_openai_compat.run_input_pipeline", side_effect=_block_input),
-            patch("api.routes_openai_compat.run_output_pipeline", side_effect=_allow_output),
+            patch("api.routes_openai_compat.run_proxy_input_pipeline", side_effect=_block_input),
+            patch("api.routes_openai_compat.run_proxy_output_pipeline", side_effect=_allow_output),
             patch("api.routes_openai_compat.audit_logger.log", side_effect=_noop_audit),
         ):
             r = client.post("/v1/chat/completions", json={
@@ -173,8 +173,8 @@ def test_output_sanitization_replaces_content():
         with (
             patch("api.routes_openai_compat._get_upstream_url", return_value=None),
             patch("api.routes_openai_compat.async_llm_call", side_effect=_fake_llm("raw sensitive text")),
-            patch("api.routes_openai_compat.run_input_pipeline", side_effect=_allow_input),
-            patch("api.routes_openai_compat.run_output_pipeline", side_effect=_sanitize_output),
+            patch("api.routes_openai_compat.run_proxy_input_pipeline", side_effect=_allow_input),
+            patch("api.routes_openai_compat.run_proxy_output_pipeline", side_effect=_sanitize_output),
             patch("api.routes_openai_compat.audit_logger.log", side_effect=_noop_audit),
         ):
             r = client.post("/v1/chat/completions", json={
@@ -194,8 +194,8 @@ def test_output_block_is_refusal():
         with (
             patch("api.routes_openai_compat._get_upstream_url", return_value=None),
             patch("api.routes_openai_compat.async_llm_call", side_effect=_fake_llm("here is an ssn")),
-            patch("api.routes_openai_compat.run_input_pipeline", side_effect=_allow_input),
-            patch("api.routes_openai_compat.run_output_pipeline", side_effect=_block_output),
+            patch("api.routes_openai_compat.run_proxy_input_pipeline", side_effect=_allow_input),
+            patch("api.routes_openai_compat.run_proxy_output_pipeline", side_effect=_block_output),
             patch("api.routes_openai_compat.audit_logger.log", side_effect=_noop_audit),
         ):
             r = client.post("/v1/chat/completions", json={
@@ -229,8 +229,8 @@ def test_tool_calls_allowed_and_blocked_split():
         with (
             patch("api.routes_openai_compat._get_upstream_url", return_value=None),
             patch("api.routes_openai_compat.async_llm_call", side_effect=_fake_llm("", tool_calls=tool_calls)),
-            patch("api.routes_openai_compat.run_input_pipeline", side_effect=_allow_input),
-            patch("api.routes_openai_compat.run_output_pipeline", side_effect=_allow_output),
+            patch("api.routes_openai_compat.run_proxy_input_pipeline", side_effect=_allow_input),
+            patch("api.routes_openai_compat.run_proxy_output_pipeline", side_effect=_allow_output),
             patch("api.routes_openai_compat._check_tool_call_rbac", side_effect=_rbac),
             patch("api.routes_openai_compat.audit_logger.log", side_effect=_noop_audit),
         ):
@@ -279,8 +279,8 @@ def test_bearer_auth_resolves_tenant():
             patch("core.middleware._get_registered_agents", return_value={}),
             patch("api.routes_openai_compat._get_upstream_url", return_value=None),
             patch("api.routes_openai_compat.async_llm_call", side_effect=_fake_llm("ok")),
-            patch("api.routes_openai_compat.run_input_pipeline", side_effect=_allow_input),
-            patch("api.routes_openai_compat.run_output_pipeline", side_effect=_allow_output),
+            patch("api.routes_openai_compat.run_proxy_input_pipeline", side_effect=_allow_input),
+            patch("api.routes_openai_compat.run_proxy_output_pipeline", side_effect=_allow_output),
             patch("api.routes_openai_compat.audit_logger.log", side_effect=_capture_audit),
         ):
             r = client.post(
@@ -356,10 +356,10 @@ def test_streaming_happy_emits_openai_sse():
     client, original = _client()
     try:
         with (
-            patch("api.routes_openai_compat.run_input_pipeline", side_effect=_allow_input),
+            patch("api.routes_openai_compat.run_proxy_input_pipeline", side_effect=_allow_input),
             patch("api.routes_openai_compat.audit_logger.log", side_effect=_noop_audit),
             patch("api.routes_gateway._get_upstream_url", return_value="https://upstream.test"),
-            patch("api.routes_gateway.run_output_pipeline", side_effect=_allow_output),
+            patch("api.routes_gateway.run_proxy_output_pipeline", side_effect=_allow_output),
             patch("api.routes_gateway.audit_logger.log", side_effect=_noop_audit),
             patch("api.routes_gateway.httpx.AsyncClient", _FakeAsyncClient),
         ):
@@ -381,13 +381,13 @@ def test_streaming_blocks_mid_stream():
     client, original = _client()
     try:
         with (
-            patch("api.routes_openai_compat.run_input_pipeline", side_effect=_allow_input),
+            patch("api.routes_openai_compat.run_proxy_input_pipeline", side_effect=_allow_input),
             patch("api.routes_openai_compat.audit_logger.log", side_effect=_noop_audit),
             patch("api.routes_gateway._get_upstream_url", return_value="https://upstream.test"),
-            patch("api.routes_gateway.run_output_pipeline", side_effect=_allow_output),
+            patch("api.routes_gateway.run_proxy_output_pipeline", side_effect=_allow_output),
             patch("api.routes_gateway.audit_logger.log", side_effect=_noop_audit),
             patch("api.routes_gateway.httpx.AsyncClient", _FakeAsyncClient),
-            patch("api.routes_gateway.get_by_stage", return_value=[_StreamBlockingGuardrail()]),
+            patch("core.tenant_pipeline.get_by_stage", return_value=[_StreamBlockingGuardrail()]),
             patch("api.routes_gateway._STREAM_FAST_CHECK_EVERY_CHARS", 1),
         ):
             with client.stream("POST", "/v1/chat/completions", json={
@@ -410,8 +410,8 @@ def test_legacy_endpoint_shape_unchanged():
         with (
             patch("api.routes_gateway._get_upstream_url", return_value=None),
             patch("api.routes_gateway.async_llm_call", side_effect=_fake_llm("legacy text")),
-            patch("api.routes_gateway.run_input_pipeline", side_effect=_allow_input),
-            patch("api.routes_gateway.run_output_pipeline", side_effect=_allow_output),
+            patch("api.routes_gateway.run_proxy_input_pipeline", side_effect=_allow_input),
+            patch("api.routes_gateway.run_proxy_output_pipeline", side_effect=_allow_output),
             patch("api.routes_gateway.audit_logger.log", side_effect=_noop_audit),
         ):
             r = client.post("/v1/shield/chat/completions", json={
