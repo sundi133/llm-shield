@@ -9,8 +9,8 @@ browser → this app → LiteLLM → votal_guardrail plugin → Shield → model
                                 input · output · custom policies
 ```
 
-Self-contained: `app.py`, `Dockerfile`, `requirements.txt` in this folder are the
-whole deployable unit. It shares no code with the other demos, so changing it
+Self-contained: `app.py`, `Dockerfile`, and `requirements.txt` in this folder are
+the whole deployable unit. It shares no code with the other demos, so changing it
 cannot break them.
 
 ## Run locally
@@ -27,12 +27,18 @@ Open http://localhost:8800.
 
 ## Deploy to Railway
 
-Build context is **this directory**, not the repo root.
+The build context is the **repo root**, so the Dockerfile spells out full COPY
+paths and must be built from the root.
 
 1. Railway → **New** → **Deploy from GitHub repo** → pick `llm-shield`.
-2. Service → **Settings** → **Root Directory** = `examples/demo/litellm_web`.
-   Builder is detected as Dockerfile from `railway.json`.
-3. Service → **Variables**, add:
+2. Service → **Settings** → **Build**:
+   - leave **Root Directory** empty
+   - **Dockerfile Path** = `examples/demo/litellm_web/Dockerfile`
+
+   Do not set Root Directory to this folder. That changes the build context and
+   the COPY paths stop resolving.
+3. Service → **Settings** → **Deploy** → **Healthcheck Path** = `/healthz`.
+4. Service → **Variables**, add:
 
    | Variable | Value |
    | --- | --- |
@@ -43,9 +49,15 @@ Build context is **this directory**, not the repo root.
    | `MODEL` | optional, defaults to `gpt-4.1-mini` |
 
    Do not set `PORT`; Railway injects it.
-4. Settings → **Networking** → **Generate Domain**.
-5. Open `https://<your-domain>/?pass=<DEMO_PASSCODE>`. The passcode is stored in
+5. Settings → **Networking** → **Generate Domain**.
+6. Open `https://<your-domain>/?pass=<DEMO_PASSCODE>`. The passcode is stored in
    a cookie, so the URL bar is clean for the rest of the talk.
+
+To build the same image locally, run it from the repo root:
+
+```bash
+docker build -f examples/demo/litellm_web/Dockerfile -t shield-demo-ui .
+```
 
 `GET /healthz` is deliberately unauthenticated (Railway's healthcheck is), and
 returns only the LiteLLM URL, model, and guard names — no secrets.
