@@ -4,7 +4,7 @@ Votal AI Guardrails Integration for LiteLLM — Single-Pane Architecture
 Handles:
   - Input guardrails (pre_call) via Shield /guardrails/input
   - Output guardrails (post_call) via Shield /guardrails/output
-  - Tool call RBAC (post_call) via Shield /v1/shield/tool/check  ← NEW
+  - Tool call RBAC (post_call) via Shield /guardrails/output with tool context
   - Streaming output guardrails (periodic + final check)
 
 Single-pane flow (developer calls LiteLLM only):
@@ -12,8 +12,12 @@ Single-pane flow (developer calls LiteLLM only):
          pre_call:  Shield /guardrails/input (text)
          LLM call → returns text + tool_calls
          post_call: Shield /guardrails/output (text)
-                    Shield /v1/shield/tool/check (per tool_call)
-         Response to app with tool_calls[].rbac.allowed per tool
+                    Shield /guardrails/output per tool_call (tool context)
+         Denied tool call → request blocked; allowed → response passes through
+
+A denied tool call blocks the whole response. Set VOTAL_ENFORCE_TOOL_RBAC=false
+to restore the older advisory behaviour, where the verdict was recorded in
+response._hidden_params["tool_rbac"] and nothing was blocked.
 """
 
 import json
@@ -60,6 +64,16 @@ class VotalGuardrail(CustomGuardrail):
         self.api_base = api_base.rstrip("/")
         self.last_k_messages = last_k
         self.block_on_failure = True
+        # Tool RBAC is an authorization control, so a denial blocks the response.
+        # Escape hatch: VOTAL_ENFORCE_TOOL_RBAC=false restores the previous
+        # advisory behaviour (verdict recorded in _hidden_params, nothing blocked)
+        # for anyone who was relying on denied tool calls still being returned.
+        try:
+            import os as _os
+            self.enforce_tool_rbac = _os.environ.get(
+                "VOTAL_ENFORCE_TOOL_RBAC", "true").strip().lower() not in ("false", "0", "no")
+        except Exception:
+            self.enforce_tool_rbac = True
         self.check_every_n_chunks = 20  # streaming check cadence
 
         # Client with optional auth for RunPod/cloud deployments
@@ -250,6 +264,21 @@ class VotalGuardrail(CustomGuardrail):
                     blocked_tools = [t["tool_name"] for t in tool_results if not t["rbac"]["allowed"]]
                     blocked_reasons = [t["rbac"].get("message", "") for t in tool_results if not t["rbac"]["allowed"]]
                     print(f"[VOTAL] Blocked tools: {blocked_tools} — {blocked_reasons}")
+                    if self.enforce_tool_rbac:
+                        # Returning the response here would hand the caller a tool
+                        # call Shield just denied, leaving enforcement to a client
+                        # that may never inspect _hidden_params. Block it, the way
+                        # the output guardrail above already does.
+                        reasons = "; ".join(r for r in blocked_reasons if r) or "denied by policy"
+                        self.raise_passthrough_exception(
+                            violation_message=(
+                                f"The requested tool call was blocked by Votal guardrails. "
+                                f"Blocked tools: {', '.join(blocked_tools)}. "
+                                f"Reason: {reasons}"
+                            ),
+                            request_data=data,
+                            detection_info=response._hidden_params["tool_rbac"],
+                        )
 
             return response
 
