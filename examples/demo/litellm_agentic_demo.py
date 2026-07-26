@@ -78,6 +78,9 @@ def chat(message):
     }
     try:
         r = requests.post(f"{LURL}/v1/chat/completions", headers=HEADERS, timeout=90, json=body)
+        if r.status_code >= 500:
+            # A cold Shield 500s on the first call after idle; one retry clears it.
+            r = requests.post(f"{LURL}/v1/chat/completions", headers=HEADERS, timeout=90, json=body)
     except requests.exceptions.RequestException as e:
         return None, f"network error: {e}"
     if r.status_code == 200:
@@ -112,6 +115,13 @@ ATTACKS = [
 ]
 
 
+def warmup():
+    """Prime the stack — a cold Shield 500s and takes ~25s on the first call."""
+    print(f"{DIM}warming up (a cold Shield takes ~25s on the first call) …{Z}", end="", flush=True)
+    blocked, _ = chat("hello")
+    print(f"\r{DIM}warm-up: {'ready' if blocked is False else 'CHECK THE STACK BEFORE YOU GO ON'}{Z}          ")
+
+
 def banner():
     print(f"{DIM}LiteLLM {LURL}")
     print(f"model={MODEL}  guards={','.join(GUARDS)}")
@@ -121,6 +131,8 @@ def banner():
 def scripted():
     print(f"\n{B}Agentic app → LiteLLM → Votal guardrails{Z}")
     banner()
+    warmup()
+    print()
     for label, a in ATTACKS:
         print(f"  {DIM}[{label}]{Z}")
         print(f"  {Y}you ▸{Z} {a}")
@@ -132,6 +144,7 @@ def interactive():
     global ROLE
     print(f"\n{B}Chat through LiteLLM — guardrails enforced by the Votal plugin.{Z}")
     banner()
+    warmup()
     print(f"{DIM}Type a message; /role <name> switches role; /quit.{Z}\n")
     while True:
         try:
