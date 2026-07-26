@@ -30,7 +30,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from core.llm_backend import async_llm_call
-from core.pipeline import run_input_pipeline, run_output_pipeline
+from core.policy_mode import resolve_mode
+from core.tenant_pipeline import (
+    apply_mode_to_pipeline_result,
+    run_proxy_input_pipeline,
+    run_proxy_output_pipeline,
+)
 from core.feature_flags import KILLSWITCH_ENABLED
 from storage.audit_log import audit_logger
 from storage.tool_killswitch import is_tool_disabled
@@ -175,9 +180,21 @@ async def openai_chat_completions(request: Request):
             last_user_msg = m.get("content", "")
             break
 
+    # Resolved before the input pipeline (not just for tool RBAC below) so the
+    # tenant's configured policies apply here exactly as on /guardrails/input.
+    tenant_config = (
+        getattr(request.state, "tenant_config", None)
+        if hasattr(request, "state")
+        else None
+    )
+    policy_mode = resolve_mode(tenant_config)
+
     # --- Input pipeline (fail-closed) ---
     try:
-        input_result = await run_input_pipeline(last_user_msg, context)
+        input_result = await run_proxy_input_pipeline(
+            last_user_msg, context, tenant_config
+        )
+        input_result = apply_mode_to_pipeline_result(input_result, policy_mode)
     except Exception as exc:  # pragma: no cover - defensive
         return _refusal(
             model=model,
@@ -243,6 +260,7 @@ async def openai_chat_completions(request: Request):
             last_user_msg=last_user_msg,
             start_time=start_time,
             tenant_id=tenant_id,
+            tenant_config=tenant_config,
         )
 
     # --- Proxy to the LLM ---
@@ -265,11 +283,7 @@ async def openai_chat_completions(request: Request):
     usage = llm_data.get("usage")
 
     # --- Tool-call RBAC (only if the model asked for tools) ---
-    tenant_config = (
-        getattr(request.state, "tenant_config", None)
-        if hasattr(request, "state")
-        else None
-    )
+    # tenant_config resolved above, before the input pipeline.
     allowed_tool_calls: list[dict] = []
     blocked_tool_calls: list[dict] = []
     for tc in tool_calls:
@@ -308,7 +322,10 @@ async def openai_chat_completions(request: Request):
     # --- Output pipeline (fail-closed) ---
     output_context = {**context, "stage": "output"}
     try:
-        output_result = await run_output_pipeline(llm_response_text, output_context)
+        output_result = await run_proxy_output_pipeline(
+            llm_response_text, output_context, tenant_config
+        )
+        output_result = apply_mode_to_pipeline_result(output_result, policy_mode)
     except Exception as exc:  # pragma: no cover - defensive
         return _refusal(
             model=model,

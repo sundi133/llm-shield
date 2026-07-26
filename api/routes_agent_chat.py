@@ -20,7 +20,12 @@ from fastapi.responses import JSONResponse
 
 import config.schema as _config_module
 from core.llm_backend import get_server_url, _get_shared_client, _ensure_no_think
-from core.pipeline import run_input_pipeline, run_output_pipeline
+from core.policy_mode import resolve_mode
+from core.tenant_pipeline import (
+    apply_mode_to_pipeline_result,
+    run_proxy_input_pipeline,
+    run_proxy_output_pipeline,
+)
 from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
 from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuardrail
 from guardrails.agentic.rbac_guard import RBACGuard
@@ -394,7 +399,9 @@ async def agent_chat(request: Request):
             break
 
     # --- Input guardrails ---
-    input_result = await run_input_pipeline(last_user_msg, context)
+    policy_mode = resolve_mode(tenant_config)
+    input_result = await run_proxy_input_pipeline(last_user_msg, context, tenant_config)
+    input_result = apply_mode_to_pipeline_result(input_result, policy_mode)
     if not input_result.allowed:
         block_reasons = [
             r.message for r in input_result.results if not r.passed and r.action == "block"
@@ -460,7 +467,10 @@ async def agent_chat(request: Request):
     # --- Output guardrails (on text content only) ---
     output_guardrails = None
     if content:
-        output_result = await run_output_pipeline(content, {**context, "stage": "output"})
+        output_result = await run_proxy_output_pipeline(
+            content, {**context, "stage": "output"}, tenant_config
+        )
+        output_result = apply_mode_to_pipeline_result(output_result, policy_mode)
         output_guardrails = output_result.model_dump()
         if not output_result.allowed:
             block_reasons = [

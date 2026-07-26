@@ -91,7 +91,7 @@ async def _allow_input(*args, **kwargs):
     return PipelineResult(allowed=True, results=[], total_latency_ms=0.0)
 
 
-async def _allow_output(content: str, context: dict):
+async def _allow_output(content: str, context: dict, tenant_config=None):
     return PipelineResult(
         allowed=True,
         results=[
@@ -119,8 +119,8 @@ def test_gateway_streams_openai_sse():
     try:
         with (
             patch("api.routes_gateway._get_upstream_url", return_value="https://upstream.test"),
-            patch("api.routes_gateway.run_input_pipeline", side_effect=_allow_input),
-            patch("api.routes_gateway.run_output_pipeline", side_effect=_allow_output),
+            patch("api.routes_gateway.run_proxy_input_pipeline", side_effect=_allow_input),
+            patch("api.routes_gateway.run_proxy_output_pipeline", side_effect=_allow_output),
             patch("api.routes_gateway.audit_logger.log", side_effect=_noop_audit),
             patch("api.routes_gateway.httpx.AsyncClient", _FakeAsyncClient),
         ):
@@ -160,11 +160,11 @@ def test_gateway_stream_blocks_before_violating_chunk_is_emitted():
     try:
         with (
             patch("api.routes_gateway._get_upstream_url", return_value="https://upstream.test"),
-            patch("api.routes_gateway.run_input_pipeline", side_effect=_allow_input),
-            patch("api.routes_gateway.run_output_pipeline", side_effect=_allow_output),
+            patch("api.routes_gateway.run_proxy_input_pipeline", side_effect=_allow_input),
+            patch("api.routes_gateway.run_proxy_output_pipeline", side_effect=_allow_output),
             patch("api.routes_gateway.audit_logger.log", side_effect=_noop_audit),
             patch("api.routes_gateway.httpx.AsyncClient", _FakeAsyncClient),
-            patch("api.routes_gateway.get_by_stage", return_value=[_StreamBlockingGuardrail()]),
+            patch("core.tenant_pipeline.get_by_stage", return_value=[_StreamBlockingGuardrail()]),
             patch("api.routes_gateway._STREAM_FAST_CHECK_EVERY_CHARS", 1),
         ):
             client = TestClient(app)
