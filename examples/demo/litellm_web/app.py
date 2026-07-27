@@ -31,7 +31,10 @@ LKEY = os.environ.get("LITELLM_KEY", "")
 # outside it, so a public demo URL cannot be used to call arbitrary models.
 MODELS = [m.strip() for m in os.environ.get(
     "MODELS",
-    "gpt-4.1-mini,gpt-5.4-mini,claude-3-5-sonnet,qwen3.5-27b,moonshotai/kimi-k2.5"
+    "gpt-4.1-mini,gpt-5.4-mini,"
+    "claude-3-5-sonnet,claude-opus-4-8,claude-haiku-4-5,"
+    "qwen3.5-27b,qwen-2.5-coder-32b,moonshotai/kimi-k2.5,"
+    "llama-3.3-70b,deepseek-v3,mistral-large,mixtral-8x22b"
 ).split(",") if m.strip()]
 MODEL = os.environ.get("MODEL", MODELS[0] if MODELS else "gpt-4.1-mini")
 if MODEL not in MODELS:
@@ -130,8 +133,15 @@ async def api_chat(req: Request):
     return JSONResponse({"kind": kind, "text": text, "model": model})
 
 
+async def _registry(client):
+    """The agent's config as the admin console shows it: tools + role_permissions."""
+    r = await client.get(f"{SHIELD}/v1/agents/registry",
+                         headers={"x-api-key": TENANT})
+    return (r.json().get("agents") or {}).get(AGENT) or {}
+
+
 async def _tool_check(client, tool, role):
-    """Ask Shield whether this role may call this tool, for this agent."""
+    """What Shield actually decides at call time — every guard, not just RBAC."""
     try:
         r = await client.post(
             f"{SHIELD}/v1/shield/tool/check",
@@ -140,23 +150,46 @@ async def _tool_check(client, tool, role):
             json={"agent_key": AGENT, "tool_name": tool, "user_role": role, "tool_params": {}},
         )
         d = r.json()
-    except Exception as e:
-        return {"tool": tool, "allowed": None, "reason": f"check failed: {e}"}
+    except Exception:
+        return None, ""
     failing = [g for g in d.get("guardrail_results", []) if not g.get("passed", True)]
-    return {"tool": tool, "allowed": bool(d.get("allowed")),
-            "guard": failing[0].get("guardrail", "") if failing else "",
-            "reason": failing[0].get("message", "") if failing else "allowed for this role"}
+    return bool(d.get("allowed")), (failing[0].get("guardrail", "") if failing else "")
 
 
 @app.post("/api/tools")
 async def api_tools(req: Request):
-    """The agent's tool belt, authorized for one role. Every cell is a real
-    Shield decision against the tenant's registry and policies."""
+    """The agent's tool belt for one role.
+
+    The chip state comes from the agent registry — agent.tools intersected with
+    role_permissions[role] — which is exactly what the admin console renders, so
+    the demo and the console never disagree.
+
+    We also run the live tool check and flag any tool where enforcement differs
+    from config. That divergence is real (a data policy can veto a permission
+    the registry grants) and hiding it would make the demo lie about what the
+    agent can actually do.
+    """
     b = await req.json()
     role = b.get("role") if b.get("role") in ROLES else ROLE
     async with httpx.AsyncClient(timeout=60) as c:
-        results = await asyncio.gather(*[_tool_check(c, t, role) for t in TOOLS])
-    return JSONResponse({"role": role, "agent": AGENT, "tools": list(results)})
+        reg = await _registry(c)
+        tools = reg.get("tools") or TOOLS
+        perms = set((reg.get("role_permissions") or {}).get(role) or [])
+        live = await asyncio.gather(*[_tool_check(c, t, role) for t in tools])
+
+    out = []
+    for tool, (enforced, guard) in zip(tools, live):
+        granted = tool in perms
+        out.append({
+            "tool": tool,
+            "allowed": granted,                       # registry = the console's view
+            "enforced": enforced,                     # what Shield decides at call time
+            "diverged": enforced is not None and enforced != granted,
+            "guard": guard,
+            "reason": ("granted to %s by the agent registry" % role) if granted
+                      else ("not in role_permissions for %s" % role),
+        })
+    return JSONResponse({"role": role, "agent": AGENT, "tools": out})
 
 
 @app.get("/healthz")
@@ -198,6 +231,7 @@ PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
   --me-bg:#F5F6FB; --me-line:#E2E4F3; --me-av-bg:#EEF0FB; --me-av-ink:#5E6AD2; --me-av-line:#DDE0F5;
   --nav-bg:rgba(255,255,255,.86);
   --shadow:0 1px 2px rgba(13,14,16,.04);
+  --menu-shadow:0 10px 30px rgba(13,14,16,.13),0 1px 3px rgba(13,14,16,.08);
   --glow:rgba(94,106,210,.07);
   --r:8px; --r-sm:6px;
   --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,ui-sans-serif,sans-serif;
@@ -217,6 +251,7 @@ PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
   --me-bg:#14161F; --me-line:#242739; --me-av-bg:#1A1D2E; --me-av-ink:#7C88E8; --me-av-line:#2A2E45;
   --nav-bg:rgba(8,9,10,.80);
   --shadow:none;
+  --menu-shadow:0 12px 36px rgba(0,0,0,.60),0 0 0 1px rgba(255,255,255,.04);
   --glow:rgba(124,136,232,.10);
 }
 *{box-sizing:border-box;}
@@ -240,11 +275,30 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13.
 .pill.live{color:var(--ok);border-color:var(--ok-line);background:var(--ok-bg);}
 button.pill{cursor:pointer;font-family:inherit;transition:.12s;}
 button.pill:hover{border-color:var(--line-2);color:var(--ink);background:var(--surface-2);}
-.pill.sel{padding-right:4px;gap:4px;}
-.pill.sel:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring);}
-.pill.sel select{font-family:inherit;font-size:11.5px;font-weight:520;color:var(--ink);background:none;
-  border:none;outline:none;cursor:pointer;padding:0 2px;max-width:190px;}
-.pill.sel select option{background:var(--surface);color:var(--ink);}
+.dd{position:relative;}
+.dd>select{position:absolute;width:0;height:0;opacity:0;pointer-events:none;}
+.dd-btn{display:inline-flex;align-items:center;gap:6px;font-family:inherit;font-size:11.5px;color:var(--muted);
+  border:1px solid var(--line);background:var(--surface);border-radius:5px;padding:2.5px 7px;cursor:pointer;
+  transition:.12s;white-space:nowrap;}
+.dd-btn b{color:var(--ink);font-weight:520;}
+.dd-btn:hover{border-color:var(--line-2);background:var(--surface-2);}
+.dd.open .dd-btn{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring);}
+.dd-caret{width:8px;height:8px;opacity:.45;transition:transform .15s;flex:none;}
+.dd.open .dd-caret{transform:rotate(180deg);}
+.dd-menu{position:absolute;top:calc(100% + 6px);right:0;min-width:216px;max-height:340px;overflow-y:auto;
+  background:var(--surface);border:1px solid var(--line-2);border-radius:9px;padding:4px;z-index:50;
+  box-shadow:var(--menu-shadow);opacity:0;transform:translateY(-4px) scale(.985);pointer-events:none;
+  transition:opacity .13s,transform .13s;}
+.dd.open .dd-menu{opacity:1;transform:none;pointer-events:auto;}
+.dd-group{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);
+  padding:8px 8px 3px;font-weight:540;}
+.dd-group:first-child{padding-top:4px;}
+.dd-item{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;cursor:pointer;
+  color:var(--ink);}
+.dd-item:hover,.dd-item.cursor{background:var(--surface-2);}
+.dd-item .tick{width:11px;flex:none;color:var(--accent);font-weight:700;font-size:11px;opacity:0;}
+.dd-item.sel .tick{opacity:1;}
+.dd-item .nm{font-family:var(--mono);font-size:11.5px;letter-spacing:0;}
 .dot{width:5px;height:5px;border-radius:50%;background:currentColor;}
 .dot.pulse{animation:pulse 2s ease-in-out infinite;}
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
@@ -283,6 +337,10 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
 .tool.allow{color:var(--ok);border-color:var(--ok-line);background:var(--ok-bg);}
 .tool.deny{color:var(--chip-ink);border-color:var(--chip-line);background:var(--chip-bg);}
 .tool.pendingchk{opacity:.5;}
+.tool.diverged{border-style:dashed;}
+.tool .warn{font-family:var(--sans);font-weight:700;font-size:10px;color:var(--warn);
+  margin-left:1px;}
+.dvg{color:var(--warn);}
 
 /* suggestion cards */
 .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:24px;}
@@ -356,12 +414,8 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
     <span class="sep"></span>
     <span class="pill live"><span class="dot pulse"></span> Guardrails active</span>
     <div class="right">
-      <label class="pill sel">model
-        <select id="model">__MODEL_OPTIONS__</select>
-      </label>
-      <label class="pill sel">role
-        <select id="role">__ROLE_OPTIONS__</select>
-      </label>
+      <div class="dd" id="ddModel"><select id="model">__MODEL_OPTIONS__</select></div>
+      <div class="dd" id="ddRole"><select id="role">__ROLE_OPTIONS__</select></div>
       <span class="pill opt">run <b>__RUN__</b></span>
       <button class="pill" id="theme" title="Toggle light or dark">Dark</button>
     </div>
@@ -383,7 +437,7 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
       <div class="belt">
         <div class="belt-hd">
           <span>Tool belt — <b id="agentName">__AGENT__</b></span>
-          <span class="belt-note">authorized live for <b id="roleName">__ROLE__</b></span>
+          <span class="belt-note" id="beltNote">authorized live for <b id="roleName">__ROLE__</b></span>
         </div>
         <div class="tools" id="tools"></div>
       </div>
@@ -427,22 +481,88 @@ function setTheme(t){document.documentElement.dataset.theme=t;tbtn.textContent=t
 setTheme((()=>{try{return localStorage.getItem('votal-theme')||'light';}catch(e){return 'light';}})());
 tbtn.onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
 
+/* Custom dropdowns. The native <select> stays in the DOM as the source of
+   truth — every handler below still reads sel.value and listens for change —
+   so this is presentation only and cannot desync from the real value. */
+const FAMILY=[[/^gpt-/,'OpenAI'],[/^claude-/,'Anthropic'],
+              [/^(qwen|moonshot)/,'Qwen / Moonshot'],[/./,'Open weights']];
+function familyOf(v){for(const [re,name] of FAMILY) if(re.test(v)) return name; return '';}
+
+function enhance(sel,label,grouped){
+  const dd=sel.parentNode, opts=[...sel.options];
+  const btn=document.createElement('button'); btn.type='button'; btn.className='dd-btn';
+  btn.setAttribute('aria-haspopup','listbox');
+  const menu=document.createElement('div'); menu.className='dd-menu'; menu.setAttribute('role','listbox');
+  dd.append(btn,menu);
+
+  const caret='<svg class="dd-caret" viewBox="0 0 10 6" fill="none" aria-hidden="true">'
+    +'<path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  const paint=()=>{btn.innerHTML=label+' <b>'+esc(sel.value)+'</b>'+caret;
+    [...menu.querySelectorAll('.dd-item')].forEach(i=>i.classList.toggle('sel',i.dataset.v===sel.value));};
+
+  let last='';
+  opts.forEach(o=>{
+    if(grouped){const f=familyOf(o.value);
+      if(f!==last){last=f;const g=document.createElement('div');g.className='dd-group';g.textContent=f;menu.append(g);}}
+    const it=document.createElement('div');
+    it.className='dd-item'; it.dataset.v=o.value; it.setAttribute('role','option');
+    it.innerHTML='<span class="tick">\u2713</span><span class="nm">'+esc(o.value)+'</span>';
+    it.onclick=()=>{ if(sel.value!==o.value){sel.value=o.value; sel.dispatchEvent(new Event('change'));}
+                     paint(); close(); };
+    menu.append(it);
+  });
+
+  const close=()=>{dd.classList.remove('open'); cursor=-1; mark();};
+  const open=()=>{document.querySelectorAll('.dd.open').forEach(d=>d.classList.remove('open'));
+                  dd.classList.add('open');
+                  const items=[...menu.querySelectorAll('.dd-item')];
+                  cursor=items.findIndex(i=>i.dataset.v===sel.value); mark();
+                  const cur=menu.querySelector('.dd-item.sel'); if(cur) cur.scrollIntoView({block:'nearest'});};
+  let cursor=-1;
+  const mark=()=>{[...menu.querySelectorAll('.dd-item')].forEach((i,n)=>i.classList.toggle('cursor',n===cursor));};
+
+  btn.onclick=e=>{e.stopPropagation(); dd.classList.contains('open')?close():open();};
+  dd.addEventListener('keydown',e=>{
+    const items=[...menu.querySelectorAll('.dd-item')];
+    if(e.key==='Escape'){close(); btn.focus();}
+    else if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault(); if(!dd.classList.contains('open')) return open();
+      cursor=Math.max(0,Math.min(items.length-1,cursor+(e.key==='ArrowDown'?1:-1)));
+      mark(); items[cursor].scrollIntoView({block:'nearest'});}
+    else if(e.key==='Enter'&&dd.classList.contains('open')){e.preventDefault(); items[cursor]?.click();}
+  });
+  document.addEventListener('click',close);
+  menu.addEventListener('click',e=>e.stopPropagation());
+  paint();
+  return paint;
+}
+const paintModel=enhance(document.getElementById('model'),'model',true);
+const paintRole=enhance(document.getElementById('role'),'role',false);
+
 /* role picker + tool belt — every cell is a real Shield decision */
 const rsel=document.getElementById('role'), toolsEl=document.getElementById('tools');
 async function refreshTools(){
   const role=rsel.value;
-  document.getElementById('roleName').textContent=role;
   toolsEl.innerHTML='<span class="tool pendingchk">checking authorization…</span>';
   try{
     const r=await fetch('/api/tools',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({role})});
     const j=await r.json();
     toolsEl.innerHTML=j.tools.map(t=>{
-      const cls=t.allowed===true?'allow':(t.allowed===false?'deny':'');
-      const mk=t.allowed===true?'\u2713':(t.allowed===false?'\u2715':'?');
-      return '<span class="tool '+cls+'" title="'+esc(t.reason).replace(/"/g,'&quot;')+'">'
-        +'<span class="mk">'+mk+'</span>'+esc(t.tool)+'</span>';
+      const cls=(t.allowed?'allow':'deny')+(t.diverged?' diverged':'');
+      const mk=t.allowed?'\u2713':'\u2715';
+      // Registry grants it but a later guard vetoes at call time — show it,
+      // don't paper over it.
+      const tip=t.reason+(t.diverged?('  \u2014 but blocked at call time by '+(t.guard||'a guardrail')):'');
+      return '<span class="tool '+cls+'" title="'+esc(tip).replace(/"/g,'&quot;')+'">'
+        +'<span class="mk">'+mk+'</span>'+esc(t.tool)
+        +(t.diverged?'<span class="warn">!</span>':'')+'</span>';
     }).join('');
+    const dv=j.tools.filter(t=>t.diverged).length;
+    document.getElementById('beltNote').innerHTML= dv
+      ? 'registry grants these to <b>'+esc(j.role)+'</b> \u00b7 <span class="dvg">'+dv
+        +' vetoed at call time</span>'
+      : 'authorized live for <b>'+esc(j.role)+'</b>';
   }catch(e){ toolsEl.innerHTML='<span class="tool">tool check unavailable</span>'; }
 }
 rsel.onchange=refreshTools;
