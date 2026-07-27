@@ -31,7 +31,10 @@ LKEY = os.environ.get("LITELLM_KEY", "")
 # outside it, so a public demo URL cannot be used to call arbitrary models.
 MODELS = [m.strip() for m in os.environ.get(
     "MODELS",
-    "gpt-4.1-mini,gpt-5.4-mini,claude-3-5-sonnet,qwen3.5-27b,moonshotai/kimi-k2.5"
+    "gpt-4.1-mini,gpt-5.4-mini,"
+    "claude-3-5-sonnet,claude-opus-4-8,claude-haiku-4-5,"
+    "qwen3.5-27b,qwen-2.5-coder-32b,moonshotai/kimi-k2.5,"
+    "llama-3.3-70b,deepseek-v3,mistral-large,mixtral-8x22b"
 ).split(",") if m.strip()]
 MODEL = os.environ.get("MODEL", MODELS[0] if MODELS else "gpt-4.1-mini")
 if MODEL not in MODELS:
