@@ -16,25 +16,44 @@ from storage.admin_audit import log_admin_action
 router = APIRouter(prefix="/v1/shield/agent/identity", tags=["agent-identity"])
 
 
-def _require_admin(request: Request) -> None:
-    """Gate cert register/revoke behind an admin identity.
+def _authorized_tenant(request: Request) -> Optional[str]:
+    """Authorize cert register/revoke and return the caller's tenant scope.
 
     Registering a fingerprint grants the holder trust_level "high" as the named
-    agent, and ``tenant_id`` comes from the request body — so without this gate
-    any caller could mint or destroy an identity in any tenant. Revoke is the
-    same control in the other direction: a denial of service on every agent.
+    agent, and ``tenant_id`` comes from the request body — so an unauthenticated
+    caller could previously mint an identity in any tenant, or revoke every
+    agent in one.
 
-    Uses the same modular workload-identity providers as token issuance
-    (SHIELD_WORKLOAD_IDENTITY_PROVIDERS), so a deployment authenticating with
-    SPIFFE or mTLS rather than a shared admin key keeps working. A tenant API
-    key is deliberately NOT sufficient: these routes cross tenant boundaries.
+    Two callers are legitimate:
+
+    * An **admin identity** (resolved through the modular workload-identity
+      providers, so SPIFFE and mTLS deployments work too) — may act on any
+      tenant. Returns None, meaning "no tenant restriction".
+    * A **tenant API key** — tenants register their own agents. Returns that
+      tenant id, and the caller is confined to it.
+
+    Confinement, not exclusion, is the control here: the risk was never that a
+    tenant registers its own agents, it was that the request body could name
+    somebody else's tenant.
     """
     from core.workload_identity import resolve_workload_identity, enabled_providers
 
     identity = resolve_workload_identity(request)
     if identity is not None:
         request.state.workload_identity = identity
-        return
+        return None  # admin — unrestricted
+
+    api_key = (
+        request.headers.get("X-API-Key")
+        or request.headers.get("x-api-key")
+        or ""
+    ).strip()
+    if api_key:
+        from storage.tenant_store import resolve_tenant_by_api_key
+
+        tenant = resolve_tenant_by_api_key(api_key)
+        if tenant:
+            return tenant
 
     names = [p.name for p in enabled_providers()]
     if "admin_key" in names and not os.environ.get("SHIELD_ADMIN_KEY", ""):
@@ -42,7 +61,16 @@ def _require_admin(request: Request) -> None:
             status_code=500,
             detail="SHIELD_ADMIN_KEY not configured — cert registration disabled",
         )
-    raise HTTPException(status_code=403, detail="admin key required")
+    raise HTTPException(status_code=403, detail="admin key or tenant API key required")
+
+
+def _confine_to_tenant(scope: Optional[str], body_tenant_id: str) -> None:
+    """A tenant-scoped caller may only act on its own tenant."""
+    if scope is not None and body_tenant_id != scope:
+        raise HTTPException(
+            status_code=403,
+            detail="tenant mismatch: this API key is not authorized for that tenant",
+        )
 
 
 def _actor_from_request(request: Request) -> str:
@@ -72,13 +100,19 @@ class CertRevokeRequest(BaseModel):
     tenant_id: str = Field(..., description="Tenant identifier")
 
 
-@router.post("/register", dependencies=[Depends(_require_admin)])
-async def register_agent_cert(body: CertRegisterRequest, request: Request):
+@router.post("/register")
+async def register_agent_cert(
+    body: CertRegisterRequest,
+    request: Request,
+    scope: Optional[str] = Depends(_authorized_tenant),
+):
     """Register a certificate fingerprint for an agent.
 
     After registration, requests with X-Client-Cert-Fingerprint matching
     this fingerprint will be identified as this agent with 'high' trust level.
     """
+    _confine_to_tenant(scope, body.tenant_id)
+
     trust_record = register_cert(
         tenant_id=body.tenant_id,
         agent_key=body.agent_key,
@@ -104,12 +138,18 @@ async def register_agent_cert(body: CertRegisterRequest, request: Request):
     }
 
 
-@router.post("/revoke", dependencies=[Depends(_require_admin)])
-async def revoke_agent_cert(body: CertRevokeRequest, request: Request):
+@router.post("/revoke")
+async def revoke_agent_cert(
+    body: CertRevokeRequest,
+    request: Request,
+    scope: Optional[str] = Depends(_authorized_tenant),
+):
     """Revoke a certificate for an agent.
 
     The agent will fall back to string_key identity with 'medium' trust.
     """
+    _confine_to_tenant(scope, body.tenant_id)
+
     revoked = revoke_cert(tenant_id=body.tenant_id, agent_key=body.agent_key)
 
     if not revoked:
