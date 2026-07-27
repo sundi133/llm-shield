@@ -46,6 +46,109 @@ def _mcp_parity_enabled() -> bool:
     return os.getenv(_MCP_PARITY_ENV, "0").strip().lower() in _TRUTHY
 
 
+_MCP_CONTROL_PLANE_ENV = "SHIELD_MCP_CONTROL_PLANE"
+
+
+def _control_plane_mode() -> str:
+    """off | monitor | enforce — default off.
+
+    The REST tool path runs a control plane the MCP path never had: circuit
+    breaker, parameter policies, workflow constraints and approval rules. A
+    tool that blocks on /v1/shield/tool/check therefore executes through the
+    gateway today.
+
+    Closing that changes authorization outcomes for traffic that currently
+    flows, so it ships off. "monitor" evaluates and records what WOULD have
+    been denied without denying it, which is how an operator sizes the blast
+    radius before switching to "enforce".
+    """
+    v = os.getenv(_MCP_CONTROL_PLANE_ENV, "off").strip().lower()
+    return v if v in ("off", "monitor", "enforce") else "off"
+
+
+async def _control_plane_results(tool_name, arguments, *, agent_key, tenant_id,
+                                 session_id, workflow) -> list[dict]:
+    """Run the REST path's control-plane checks. Returns result dicts.
+
+    Failures are reported, never raised: a control plane that errors must not
+    take the gateway down, and an operator running "monitor" is explicitly not
+    ready for these to affect traffic.
+    """
+    if not tenant_id:
+        return []
+    out: list[dict] = []
+    try:
+        from storage.agentic_control_plane import (
+            get_control_plane_config, is_circuit_breaker_open,
+            evaluate_parameter_policy, evaluate_workflow_constraints,
+            find_matching_approval_rule,
+        )
+    except Exception:
+        return []
+
+    def _r(name, passed, message, details=None):
+        return {"guardrail": name, "passed": passed,
+                "action": "pass" if passed else "block",
+                "message": message, "details": details or {}, "latency_ms": 0.0}
+
+    try:
+        open_, state = is_circuit_breaker_open(tenant_id, tool_name)
+        if open_:
+            out.append(_r("circuit_breaker", False,
+                          f"Tool '{tool_name}' is temporarily blocked by an open circuit breaker",
+                          state or {}))
+            return out
+    except Exception:
+        pass
+
+    try:
+        cp = get_control_plane_config(tenant_id)
+    except Exception:
+        cp = None
+    if not cp:
+        return out
+
+    try:
+        policy = (cp.get("parameter_policies", {}) or {}).get(tool_name)
+        if policy:
+            ok, msg, details = await evaluate_parameter_policy(tool_name, arguments or {}, policy)
+            out.append(_r("parameter_policy", ok, msg, details))
+            if not ok:
+                return out
+    except Exception:
+        pass
+
+    try:
+        if session_id:
+            ok, msg, details = evaluate_workflow_constraints(
+                tenant_id, session_id=session_id, workflow=workflow or "default",
+                tool_name=tool_name, workflow_step=None,
+                estimated_cost_usd=0.0, estimated_tokens=0,
+            )
+            out.append(_r("workflow_constraints", ok, msg, details))
+            if not ok:
+                return out
+    except Exception:
+        pass
+
+    try:
+        rule = find_matching_approval_rule(cp, tool_name=tool_name,
+                                           workflow=workflow or "default",
+                                           agent_key=agent_key)
+        if rule:
+            # MCP has no channel to present a signed approval grant, so a tool
+            # that requires human approval cannot be approved here. Denying is
+            # the only safe reading: today it executes unapproved.
+            out.append(_r("approval_required", False,
+                          f"Tool '{tool_name}' requires human approval, which the MCP "
+                          f"path cannot supply — use the REST tool endpoint",
+                          {"rule": rule}))
+    except Exception:
+        pass
+
+    return out
+
+
 def _tool_guard_chain() -> list:
     """The ordered guard chain enforce_tool_call runs on a tools/call.
 
@@ -196,6 +299,22 @@ async def enforce_tool_call(
         if token is not None:
             _request_configs.reset(token)
 
+    # Control plane: the checks the REST path runs and this path never did.
+    cp_mode = _control_plane_mode()
+    if cp_mode != "off":
+        cp_results = await _control_plane_results(
+            tool_name, arguments, agent_key=agent_key, tenant_id=tenant_id,
+            session_id=session_id, workflow=workflow,
+        )
+        if cp_mode == "enforce":
+            results.extend(cp_results)
+        else:
+            # monitor: record what WOULD have been denied, deny nothing.
+            for rr in cp_results:
+                if not rr["passed"]:
+                    results.append({**rr, "passed": True, "action": "log",
+                                    "message": "[monitor] would block: " + rr["message"]})
+
     allowed = all(
         rr["passed"] or rr["action"] not in ("block", "pending_confirmation")
         for rr in results
@@ -208,6 +327,32 @@ async def enforce_tool_call(
 
     decision = policy_mode.apply(results, allowed=allowed, action=action, mode=mode)
     _record_metrics(tenant_id, results)
+    # MCP decisions were absent from the decision audit entirely, so a gateway
+    # denial left no forensic record. Never let logging fail the call.
+    try:
+        from storage.decision_audit import log_decision
+        _failed = [rr for rr in results if not rr["passed"]]
+        log_decision(
+            tenant_id=tenant_id or "",
+            action=str(decision.get("action", action)),
+            guardrail=(_failed[0]["guardrail"] if _failed else "none"),
+            agent_key=agent_key or "",
+            tool_name=tool_name,
+            user_role=user_role or "",
+            session_id=session_id or "",
+            reason=(_failed[0].get("message", "") if _failed else ""),
+            metadata={
+                "path": "mcp_gateway",
+                "allowed": bool(decision.get("allowed", allowed)),
+                "control_plane_mode": cp_mode,
+                # The audit could not previously distinguish a header-asserted
+                # role from a verified one. Record the source so it can.
+                "role_source": "header",
+                "guardrails": [rr["guardrail"] for rr in results if not rr["passed"]],
+            },
+        )
+    except Exception:
+        pass
     return _shape(decision, results, risk)
 
 
