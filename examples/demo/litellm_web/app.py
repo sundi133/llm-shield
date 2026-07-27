@@ -16,6 +16,7 @@ in LiteLLM's votal_guardrail plugin — this app creates no policies of its own.
     export DEMO_PASSCODE=...       # REQUIRED if publicly reachable
     python app.py                  # → http://localhost:8800
 """
+import asyncio
 import os
 import uuid
 
@@ -36,8 +37,24 @@ MODEL = os.environ.get("MODEL", MODELS[0] if MODELS else "gpt-4.1-mini")
 if MODEL not in MODELS:
     MODELS.insert(0, MODEL)
 TENANT = os.environ.get("TENANT_KEY", "bank-co-key")
-AGENT = os.environ.get("AGENT_KEY", "support-bot")
-ROLE = os.environ.get("USER_ROLE", "support_agent")
+# Shield itself, for the tool-authorization panel. Chat still goes through
+# LiteLLM; a tool check is the call an agent runtime makes before it executes a
+# tool, so the panel talks to Shield directly the way a real agent would.
+SHIELD = os.environ.get("SHIELD_URL", "https://api.guardrails.votal.ai").rstrip("/")
+AGENT = os.environ.get("AGENT_KEY", "customer-service-agent")
+# Roles and tools to show. Defaults match the agent registered on the tenant;
+# override when demoing a different agent.
+ROLES = [r.strip() for r in os.environ.get(
+    "ROLES",
+    "customer_support,payments_officer,fraud_analyst,compliance_officer,branch_manager"
+).split(",") if r.strip()]
+TOOLS = [t.strip() for t in os.environ.get(
+    "TOOLS",
+    "customer_profile_get,transaction_history,statement_generate,wire_transfer_execute,email_send"
+).split(",") if t.strip()]
+ROLE = os.environ.get("USER_ROLE", ROLES[0] if ROLES else "customer_support")
+if ROLE not in ROLES:
+    ROLES.insert(0, ROLE)
 RUN = os.environ.get("RUN_ID", f"run-web-{uuid.uuid4().hex[:8]}")
 SESSION = os.environ.get("SESSION_ID", f"sess-{uuid.uuid4().hex[:6]}")
 # Guards are configured default_on:false on the proxy, so we name them per call.
@@ -113,16 +130,49 @@ async def api_chat(req: Request):
     return JSONResponse({"kind": kind, "text": text, "model": model})
 
 
+async def _tool_check(client, tool, role):
+    """Ask Shield whether this role may call this tool, for this agent."""
+    try:
+        r = await client.post(
+            f"{SHIELD}/v1/shield/tool/check",
+            headers={"Content-Type": "application/json", "x-api-key": TENANT,
+                     "x-agent-key": AGENT, "x-shield-run-id": RUN},
+            json={"agent_key": AGENT, "tool_name": tool, "user_role": role, "tool_params": {}},
+        )
+        d = r.json()
+    except Exception as e:
+        return {"tool": tool, "allowed": None, "reason": f"check failed: {e}"}
+    failing = [g for g in d.get("guardrail_results", []) if not g.get("passed", True)]
+    return {"tool": tool, "allowed": bool(d.get("allowed")),
+            "guard": failing[0].get("guardrail", "") if failing else "",
+            "reason": failing[0].get("message", "") if failing else "allowed for this role"}
+
+
+@app.post("/api/tools")
+async def api_tools(req: Request):
+    """The agent's tool belt, authorized for one role. Every cell is a real
+    Shield decision against the tenant's registry and policies."""
+    b = await req.json()
+    role = b.get("role") if b.get("role") in ROLES else ROLE
+    async with httpx.AsyncClient(timeout=60) as c:
+        results = await asyncio.gather(*[_tool_check(c, t, role) for t in TOOLS])
+    return JSONResponse({"role": role, "agent": AGENT, "tools": list(results)})
+
+
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "litellm": LURL, "model": MODEL, "models": MODELS, "guards": GUARDS}
+    return {"ok": True, "litellm": LURL, "shield": SHIELD, "model": MODEL, "models": MODELS,
+            "agent": AGENT, "roles": ROLES, "tools": TOOLS, "guards": GUARDS}
 
 
 @app.get("/")
 def index():
     opts = "".join(f'<option value="{m}"{" selected" if m == MODEL else ""}>{m}</option>'
                    for m in MODELS)
+    ropts = "".join(f'<option value="{r}"{" selected" if r == ROLE else ""}>{r}</option>'
+                    for r in ROLES)
     return HTMLResponse(PAGE.replace("__RUN__", RUN).replace("__LURL__", LURL)
+                            .replace("__ROLE_OPTIONS__", ropts).replace("__AGENT__", AGENT)
                             .replace("__ROLE__", ROLE).replace("__MODEL_OPTIONS__", opts)
                             .replace("__MODEL__", MODEL))
 
@@ -218,6 +268,22 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
 .stage.guard{background:var(--accent-soft);}
 .stage.guard .v{color:var(--accent);}
 
+/* tool belt */
+.belt{border:1px solid var(--line);border-radius:var(--r);background:var(--raised);
+  box-shadow:var(--shadow);padding:10px 12px;margin-bottom:16px;}
+.belt-hd{display:flex;align-items:baseline;gap:10px;font-size:11.5px;color:var(--muted);margin-bottom:8px;
+  flex-wrap:wrap;}
+.belt-hd b{color:var(--ink);font-weight:540;}
+.belt-note{margin-left:auto;color:var(--faint);}
+.tools{display:flex;flex-wrap:wrap;gap:6px;}
+.tool{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;
+  border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:5px;
+  padding:4px 8px;cursor:default;transition:.12s;}
+.tool .mk{font-family:var(--sans);font-weight:700;font-size:10px;}
+.tool.allow{color:var(--ok);border-color:var(--ok-line);background:var(--ok-bg);}
+.tool.deny{color:var(--chip-ink);border-color:var(--chip-line);background:var(--chip-bg);}
+.tool.pendingchk{opacity:.5;}
+
 /* suggestion cards */
 .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:24px;}
 @media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr);}.pipe{flex-wrap:wrap;}}
@@ -293,7 +359,9 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
       <label class="pill sel">model
         <select id="model">__MODEL_OPTIONS__</select>
       </label>
-      <span class="pill opt">role <b>__ROLE__</b></span>
+      <label class="pill sel">role
+        <select id="role">__ROLE_OPTIONS__</select>
+      </label>
       <span class="pill opt">run <b>__RUN__</b></span>
       <button class="pill" id="theme" title="Toggle light or dark">Dark</button>
     </div>
@@ -310,6 +378,14 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
         <div class="stage"><div class="k">Proxy</div><div class="v">LiteLLM</div></div>
         <div class="stage guard"><div class="k">Enforcement</div><div class="v">Votal guardrails</div></div>
         <div class="stage"><div class="k">Model</div><div class="v" id="pipeModel">__MODEL__</div></div>
+      </div>
+
+      <div class="belt">
+        <div class="belt-hd">
+          <span>Tool belt — <b id="agentName">__AGENT__</b></span>
+          <span class="belt-note">authorized live for <b id="roleName">__ROLE__</b></span>
+        </div>
+        <div class="tools" id="tools"></div>
       </div>
 
       <div class="cards">
@@ -350,6 +426,27 @@ function setTheme(t){document.documentElement.dataset.theme=t;tbtn.textContent=t
   try{localStorage.setItem('votal-theme',t);}catch(e){}}
 setTheme((()=>{try{return localStorage.getItem('votal-theme')||'light';}catch(e){return 'light';}})());
 tbtn.onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+
+/* role picker + tool belt — every cell is a real Shield decision */
+const rsel=document.getElementById('role'), toolsEl=document.getElementById('tools');
+async function refreshTools(){
+  const role=rsel.value;
+  document.getElementById('roleName').textContent=role;
+  toolsEl.innerHTML='<span class="tool pendingchk">checking authorization…</span>';
+  try{
+    const r=await fetch('/api/tools',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({role})});
+    const j=await r.json();
+    toolsEl.innerHTML=j.tools.map(t=>{
+      const cls=t.allowed===true?'allow':(t.allowed===false?'deny':'');
+      const mk=t.allowed===true?'\u2713':(t.allowed===false?'\u2715':'?');
+      return '<span class="tool '+cls+'" title="'+esc(t.reason).replace(/"/g,'&quot;')+'">'
+        +'<span class="mk">'+mk+'</span>'+esc(t.tool)+'</span>';
+    }).join('');
+  }catch(e){ toolsEl.innerHTML='<span class="tool">tool check unavailable</span>'; }
+}
+rsel.onchange=refreshTools;
+refreshTools();
 
 /* model picker — keeps the pipeline strip honest about who is answering */
 const msel=document.getElementById('model');
@@ -396,7 +493,7 @@ async function chat(text){
   },500);
   try{
     const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:text,model:msel.value})});
+      body:JSON.stringify({message:text,model:msel.value,role:rsel.value})});
     const j=await r.json(), secs=((Date.now()-t0)/1000).toFixed(1);
     if(j.kind==='blocked') pend.innerHTML=verdictHTML(j.text,secs);
     else if(j.kind==='error') pend.innerHTML='<div class="av">!</div><div class="verdict err">'
