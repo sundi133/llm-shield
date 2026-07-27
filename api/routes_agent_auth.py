@@ -220,12 +220,34 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
 async def mint_capability(
     body: CapMintRequest,
     identity: IdentityTuple = Depends(get_identity_from_request),
+    # Last, with a default: FastAPI injects by annotation, and callers that
+    # invoke this coroutine directly as mint_capability(body, identity) —
+    # several tests do — keep working.
+    request: Request = None,
 ):
     """Run AuthZ policy. If allowed, freeze the decision as a cap token.
 
     Requires a valid X-Agent-Token (verified by AgentIdentityMiddleware).
     Runs the AuthZ checks here in-process and returns the cap on success.
     """
+    # The agent token's tenant_id is caller-supplied at issuance. When the same
+    # request also presents a tenant API key, the two must agree — otherwise a
+    # token minted for tenant A could mint capabilities while authenticating as
+    # tenant B. Only enforced when a key is present AND resolves, so the common
+    # path (agent token alone) is unchanged.
+    api_key = (
+        (request.headers.get("X-API-Key") or request.headers.get("x-api-key") or "")
+        if request is not None else ""
+    ).strip()
+    if api_key:
+        from storage.tenant_store import resolve_tenant_by_api_key
+
+        key_tenant = resolve_tenant_by_api_key(api_key)
+        if key_tenant and identity.tenant_id and key_tenant != identity.tenant_id:
+            raise HTTPException(
+                status_code=403,
+                detail="tenant mismatch: agent token tenant does not match the API key tenant",
+            )
     # M5: per-instance rate limit on cap minting. Keyed by instance + tenant
     # so a noisy pod can't burn the tenant-wide budget.
     allowed, err = rate_limit_cap_mint(identity.agent_instance_id, identity.tenant_id)

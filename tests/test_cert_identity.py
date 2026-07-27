@@ -193,13 +193,21 @@ class TestCertIdentityGuardrail:
             assert result.passed is True
 
 
+ADMIN = {"X-Admin-Key": "test-admin"}
+
+
 class TestCertIdentityRouteIntegration:
     """Test cert identity routes and middleware integration."""
 
     @pytest.fixture
-    def app(self):
+    def app(self, monkeypatch):
         from unittest.mock import patch as p
         import config.schema as cs
+
+        # /identity/register and /revoke are admin-gated: they bind a cert to
+        # an agent in a caller-named tenant. See tests/test_agent_identity_authz.py.
+        monkeypatch.setenv("SHIELD_ADMIN_KEY", "test-admin")
+        monkeypatch.setenv("SHIELD_WORKLOAD_IDENTITY_PROVIDERS", "admin_key")
         from config.schema import ShieldConfig, GuardrailConfig, RBACConfig, PipelineConfig, AuthConfig
 
         test_config = ShieldConfig(
@@ -230,7 +238,7 @@ class TestCertIdentityRouteIntegration:
             "agent_key": "agent1",
             "fingerprint": "abc123def456",
             "tenant_id": "t1",
-        })
+        }, headers=ADMIN)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "registered"
@@ -258,7 +266,7 @@ class TestCertIdentityRouteIntegration:
         resp = client.post("/v1/shield/agent/identity/revoke", json={
             "agent_key": "agent1",
             "tenant_id": "t1",
-        })
+        }, headers=ADMIN)
         assert resp.status_code == 200
         assert resp.json()["status"] == "revoked"
         assert resp.json()["new_trust_level"] == "medium"
@@ -268,7 +276,7 @@ class TestCertIdentityRouteIntegration:
         resp = client.post("/v1/shield/agent/identity/revoke", json={
             "agent_key": "nonexistent",
             "tenant_id": "t1",
-        })
+        }, headers=ADMIN)
         assert resp.status_code == 404
 
     @patch("guardrails.agentic.identity.cert_registry._get_redis", return_value=None)

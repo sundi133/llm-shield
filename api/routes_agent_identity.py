@@ -1,6 +1,8 @@
 """Agent identity management routes — register/revoke certs, query trust."""
 
-from fastapi import APIRouter, HTTPException, Request
+import os
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -12,6 +14,35 @@ from guardrails.agentic.identity.cert_registry import (
 from storage.admin_audit import log_admin_action
 
 router = APIRouter(prefix="/v1/shield/agent/identity", tags=["agent-identity"])
+
+
+def _require_admin(request: Request) -> None:
+    """Gate cert register/revoke behind an admin identity.
+
+    Registering a fingerprint grants the holder trust_level "high" as the named
+    agent, and ``tenant_id`` comes from the request body — so without this gate
+    any caller could mint or destroy an identity in any tenant. Revoke is the
+    same control in the other direction: a denial of service on every agent.
+
+    Uses the same modular workload-identity providers as token issuance
+    (SHIELD_WORKLOAD_IDENTITY_PROVIDERS), so a deployment authenticating with
+    SPIFFE or mTLS rather than a shared admin key keeps working. A tenant API
+    key is deliberately NOT sufficient: these routes cross tenant boundaries.
+    """
+    from core.workload_identity import resolve_workload_identity, enabled_providers
+
+    identity = resolve_workload_identity(request)
+    if identity is not None:
+        request.state.workload_identity = identity
+        return
+
+    names = [p.name for p in enabled_providers()]
+    if "admin_key" in names and not os.environ.get("SHIELD_ADMIN_KEY", ""):
+        raise HTTPException(
+            status_code=500,
+            detail="SHIELD_ADMIN_KEY not configured — cert registration disabled",
+        )
+    raise HTTPException(status_code=403, detail="admin key required")
 
 
 def _actor_from_request(request: Request) -> str:
@@ -41,7 +72,7 @@ class CertRevokeRequest(BaseModel):
     tenant_id: str = Field(..., description="Tenant identifier")
 
 
-@router.post("/register")
+@router.post("/register", dependencies=[Depends(_require_admin)])
 async def register_agent_cert(body: CertRegisterRequest, request: Request):
     """Register a certificate fingerprint for an agent.
 
@@ -73,7 +104,7 @@ async def register_agent_cert(body: CertRegisterRequest, request: Request):
     }
 
 
-@router.post("/revoke")
+@router.post("/revoke", dependencies=[Depends(_require_admin)])
 async def revoke_agent_cert(body: CertRevokeRequest, request: Request):
     """Revoke a certificate for an agent.
 
