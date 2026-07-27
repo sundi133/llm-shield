@@ -1,0 +1,73 @@
+{
+  "realm": "bank",
+  "enabled": true,
+  "displayName": "Bank Co (Shield demo)",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "accessTokenLifespan": 300,
+  "roles": {
+    "realm": [
+      { "name": "customer_support",   "description": "Front-line support. Read profiles, generate statements, send mail." },
+      { "name": "payments_officer",   "description": "May execute wire transfers." },
+      { "name": "fraud_analyst",      "description": "Investigates transactions. No money movement." },
+      { "name": "compliance_officer", "description": "Reads transaction history only." },
+      { "name": "branch_manager",     "description": "Full tool access." }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "demo-cli",
+      "name": "Shield demo CLI",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "shield-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "votal-shield",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice", "enabled": true, "emailVerified": true,
+      "firstName": "Alice", "lastName": "Haddad", "email": "alice@bank.example",
+      "credentials": [{ "type": "password", "value": "demo-only-change-me", "temporary": false }],
+      "realmRoles": ["customer_support"]
+    },
+    {
+      "username": "omar", "enabled": true, "emailVerified": true,
+      "firstName": "Omar", "lastName": "Nasser", "email": "omar@bank.example",
+      "credentials": [{ "type": "password", "value": "demo-only-change-me", "temporary": false }],
+      "realmRoles": ["payments_officer"]
+    },
+    {
+      "username": "rashid", "enabled": true, "emailVerified": true,
+      "firstName": "Rashid", "lastName": "Aziz", "email": "rashid@bank.example",
+      "credentials": [{ "type": "password", "value": "demo-only-change-me", "temporary": false }],
+      "realmRoles": ["fraud_analyst"]
+    },
+    {
+      "username": "fatima", "enabled": true, "emailVerified": true,
+      "firstName": "Fatima", "lastName": "Khoury", "email": "fatima@bank.example",
+      "credentials": [{ "type": "password", "value": "demo-only-change-me", "temporary": false }],
+      "realmRoles": ["compliance_officer"]
+    },
+    {
+      "username": "layla", "enabled": true, "emailVerified": true,
+      "firstName": "Layla", "lastName": "Mansour", "email": "layla@bank.example",
+      "credentials": [{ "type": "password", "value": "demo-only-change-me", "temporary": false }],
+      "realmRoles": ["branch_manager"]
+    }
+  ]
+}
