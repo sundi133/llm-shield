@@ -133,8 +133,15 @@ async def api_chat(req: Request):
     return JSONResponse({"kind": kind, "text": text, "model": model})
 
 
+async def _registry(client):
+    """The agent's config as the admin console shows it: tools + role_permissions."""
+    r = await client.get(f"{SHIELD}/v1/agents/registry",
+                         headers={"x-api-key": TENANT})
+    return (r.json().get("agents") or {}).get(AGENT) or {}
+
+
 async def _tool_check(client, tool, role):
-    """Ask Shield whether this role may call this tool, for this agent."""
+    """What Shield actually decides at call time — every guard, not just RBAC."""
     try:
         r = await client.post(
             f"{SHIELD}/v1/shield/tool/check",
@@ -143,23 +150,46 @@ async def _tool_check(client, tool, role):
             json={"agent_key": AGENT, "tool_name": tool, "user_role": role, "tool_params": {}},
         )
         d = r.json()
-    except Exception as e:
-        return {"tool": tool, "allowed": None, "reason": f"check failed: {e}"}
+    except Exception:
+        return None, ""
     failing = [g for g in d.get("guardrail_results", []) if not g.get("passed", True)]
-    return {"tool": tool, "allowed": bool(d.get("allowed")),
-            "guard": failing[0].get("guardrail", "") if failing else "",
-            "reason": failing[0].get("message", "") if failing else "allowed for this role"}
+    return bool(d.get("allowed")), (failing[0].get("guardrail", "") if failing else "")
 
 
 @app.post("/api/tools")
 async def api_tools(req: Request):
-    """The agent's tool belt, authorized for one role. Every cell is a real
-    Shield decision against the tenant's registry and policies."""
+    """The agent's tool belt for one role.
+
+    The chip state comes from the agent registry — agent.tools intersected with
+    role_permissions[role] — which is exactly what the admin console renders, so
+    the demo and the console never disagree.
+
+    We also run the live tool check and flag any tool where enforcement differs
+    from config. That divergence is real (a data policy can veto a permission
+    the registry grants) and hiding it would make the demo lie about what the
+    agent can actually do.
+    """
     b = await req.json()
     role = b.get("role") if b.get("role") in ROLES else ROLE
     async with httpx.AsyncClient(timeout=60) as c:
-        results = await asyncio.gather(*[_tool_check(c, t, role) for t in TOOLS])
-    return JSONResponse({"role": role, "agent": AGENT, "tools": list(results)})
+        reg = await _registry(c)
+        tools = reg.get("tools") or TOOLS
+        perms = set((reg.get("role_permissions") or {}).get(role) or [])
+        live = await asyncio.gather(*[_tool_check(c, t, role) for t in tools])
+
+    out = []
+    for tool, (enforced, guard) in zip(tools, live):
+        granted = tool in perms
+        out.append({
+            "tool": tool,
+            "allowed": granted,                       # registry = the console's view
+            "enforced": enforced,                     # what Shield decides at call time
+            "diverged": enforced is not None and enforced != granted,
+            "guard": guard,
+            "reason": ("granted to %s by the agent registry" % role) if granted
+                      else ("not in role_permissions for %s" % role),
+        })
+    return JSONResponse({"role": role, "agent": AGENT, "tools": out})
 
 
 @app.get("/healthz")
@@ -307,6 +337,10 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
 .tool.allow{color:var(--ok);border-color:var(--ok-line);background:var(--ok-bg);}
 .tool.deny{color:var(--chip-ink);border-color:var(--chip-line);background:var(--chip-bg);}
 .tool.pendingchk{opacity:.5;}
+.tool.diverged{border-style:dashed;}
+.tool .warn{font-family:var(--sans);font-weight:700;font-size:10px;color:var(--warn);
+  margin-left:1px;}
+.dvg{color:var(--warn);}
 
 /* suggestion cards */
 .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:24px;}
@@ -403,7 +437,7 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
       <div class="belt">
         <div class="belt-hd">
           <span>Tool belt — <b id="agentName">__AGENT__</b></span>
-          <span class="belt-note">authorized live for <b id="roleName">__ROLE__</b></span>
+          <span class="belt-note" id="beltNote">authorized live for <b id="roleName">__ROLE__</b></span>
         </div>
         <div class="tools" id="tools"></div>
       </div>
@@ -509,18 +543,26 @@ const paintRole=enhance(document.getElementById('role'),'role',false);
 const rsel=document.getElementById('role'), toolsEl=document.getElementById('tools');
 async function refreshTools(){
   const role=rsel.value;
-  document.getElementById('roleName').textContent=role;
   toolsEl.innerHTML='<span class="tool pendingchk">checking authorization…</span>';
   try{
     const r=await fetch('/api/tools',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({role})});
     const j=await r.json();
     toolsEl.innerHTML=j.tools.map(t=>{
-      const cls=t.allowed===true?'allow':(t.allowed===false?'deny':'');
-      const mk=t.allowed===true?'\u2713':(t.allowed===false?'\u2715':'?');
-      return '<span class="tool '+cls+'" title="'+esc(t.reason).replace(/"/g,'&quot;')+'">'
-        +'<span class="mk">'+mk+'</span>'+esc(t.tool)+'</span>';
+      const cls=(t.allowed?'allow':'deny')+(t.diverged?' diverged':'');
+      const mk=t.allowed?'\u2713':'\u2715';
+      // Registry grants it but a later guard vetoes at call time — show it,
+      // don't paper over it.
+      const tip=t.reason+(t.diverged?('  \u2014 but blocked at call time by '+(t.guard||'a guardrail')):'');
+      return '<span class="tool '+cls+'" title="'+esc(tip).replace(/"/g,'&quot;')+'">'
+        +'<span class="mk">'+mk+'</span>'+esc(t.tool)
+        +(t.diverged?'<span class="warn">!</span>':'')+'</span>';
     }).join('');
+    const dv=j.tools.filter(t=>t.diverged).length;
+    document.getElementById('beltNote').innerHTML= dv
+      ? 'registry grants these to <b>'+esc(j.role)+'</b> \u00b7 <span class="dvg">'+dv
+        +' vetoed at call time</span>'
+      : 'authorized live for <b>'+esc(j.role)+'</b>';
   }catch(e){ toolsEl.innerHTML='<span class="tool">tool check unavailable</span>'; }
 }
 rsel.onchange=refreshTools;
