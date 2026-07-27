@@ -189,7 +189,18 @@ async def api_tools(req: Request):
             "reason": ("granted to %s by the agent registry" % role) if granted
                       else ("not in role_permissions for %s" % role),
         })
-    return JSONResponse({"role": role, "agent": AGENT, "tools": out})
+    # How the role was established. Today the caller asserts it in a header and
+    # nothing verifies it, so that is exactly what we report. When verified role
+    # binding lands this becomes source="oidc"/"agent_token" with real claims,
+    # and the claims shown here are the ones the SERVER verified — never a token
+    # parsed in the browser, which would be the very trust mistake being demoed.
+    identity = {
+        "verified": False,
+        "source": "header",
+        "role": role,
+        "detail": "asserted by the caller in X-User-Role; nothing verifies it",
+    }
+    return JSONResponse({"role": role, "agent": AGENT, "identity": identity, "tools": out})
 
 
 @app.get("/healthz")
@@ -322,6 +333,24 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
 .stage.guard{background:var(--accent-soft);}
 .stage.guard .v{color:var(--accent);}
 
+/* identity card */
+.ident{border:1px solid var(--line);border-radius:var(--r);background:var(--raised);
+  box-shadow:var(--shadow);padding:10px 12px;margin-bottom:10px;}
+.ident-hd{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);margin-bottom:7px;}
+.ident-hd .lbl{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);font-weight:540;}
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:540;
+  border-radius:999px;padding:2px 8px;margin-left:auto;}
+.badge .d{width:5px;height:5px;border-radius:50%;background:currentColor;}
+.badge.unverified{color:var(--warn);background:var(--warn-bg);border:1px solid var(--warn-line);}
+.badge.verified{color:var(--ok);background:var(--ok-bg);border:1px solid var(--ok-line);}
+.claims{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-family:var(--mono);font-size:12px;}
+.claims dt{color:var(--faint);font-size:10.5px;padding-top:1px;}
+.claims dd{color:var(--ink);margin:0;}
+.ident-foot{margin-top:8px;padding-top:7px;border-top:1px solid var(--line);
+  font-size:11.5px;color:var(--muted);display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;}
+.ident-foot b{color:var(--ink);font-weight:540;font-family:var(--mono);font-size:11.5px;}
+.struck{text-decoration:line-through;opacity:.65;}
+
 /* tool belt */
 .belt{border:1px solid var(--line);border-radius:var(--r);background:var(--raised);
   box-shadow:var(--shadow);padding:10px 12px;margin-bottom:16px;}
@@ -434,6 +463,8 @@ h1{font-size:23px;line-height:1.25;font-weight:590;letter-spacing:-.022em;margin
         <div class="stage"><div class="k">Model</div><div class="v" id="pipeModel">__MODEL__</div></div>
       </div>
 
+      <div class="ident" id="ident"></div>
+
       <div class="belt">
         <div class="belt-hd">
           <span>Tool belt — <b id="agentName">__AGENT__</b></span>
@@ -541,6 +572,22 @@ const paintRole=enhance(document.getElementById('role'),'role',false);
 
 /* role picker + tool belt — every cell is a real Shield decision */
 const rsel=document.getElementById('role'), toolsEl=document.getElementById('tools');
+function renderIdentity(id){
+  if(!id) return;
+  const el=document.getElementById('ident');
+  const ok=id.verified;
+  const rows=ok
+    ? [['iss',id.iss||''],['sub',id.sub||''],['roles',(id.roles||[]).join(', ')]]
+    : [['role',id.role||'']];
+  el.innerHTML='<div class="ident-hd"><span class="lbl">Identity</span>'
+    +'<span class="badge '+(ok?'verified':'unverified')+'"><span class="d"></span>'
+    +(ok?'verified':'unverified')+'</span></div>'
+    +'<dl class="claims">'+rows.map(r=>'<dt>'+esc(r[0])+'</dt><dd>'+esc(r[1])+'</dd>').join('')+'</dl>'
+    +'<div class="ident-foot">decided by <b>'+esc(id.source||'?')+'</b>'
+    +(id.rejected_header?'<span>header <b class="struck">'+esc(id.rejected_header)+'</b> ignored</span>'
+                        :'<span>'+esc(id.detail||'')+'</span>')+'</div>';
+}
+
 async function refreshTools(){
   const role=rsel.value;
   toolsEl.innerHTML='<span class="tool pendingchk">checking authorization…</span>';
@@ -558,6 +605,7 @@ async function refreshTools(){
         +'<span class="mk">'+mk+'</span>'+esc(t.tool)
         +(t.diverged?'<span class="warn">!</span>':'')+'</span>';
     }).join('');
+    renderIdentity(j.identity);
     const dv=j.tools.filter(t=>t.diverged).length;
     document.getElementById('beltNote').innerHTML= dv
       ? 'registry grants these to <b>'+esc(j.role)+'</b> \u00b7 <span class="dvg">'+dv
