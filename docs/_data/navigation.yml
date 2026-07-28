@@ -17,6 +17,9 @@ groups:
     items:
       - { title: Guardrails Catalog, url: /guardrails/ }
       - { title: Agentic Guardrails, url: /agentic-guardrails-guide/ }
+      # Identity comes before authorization: NHI is who is asking, RBAC is what
+      # they may do. Reading them in that order is why it sits above RBAC.
+      - { title: Non-Human Identity (NHI), url: /non-human-identity/ }
       - { title: Role-Based Access (RBAC), url: /rbac/ }
       - { title: Tool Data Policies, url: /tool-data-policies/ }
       - { title: Secret Vault, url: /prevent-secret-leakage/ }

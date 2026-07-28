@@ -61,7 +61,14 @@ def test_front_matter_is_valid_yaml(path):
 
 @pytest.mark.parametrize("path", PAGES, ids=lambda p: p.name)
 def test_nav_order_is_an_integer(path):
-    """A quoted or float nav_order sorts against integers unpredictably."""
+    """Only reached if _data/navigation.yml goes missing, but keep it sane.
+
+    The sidebar does NOT use nav_order: the override at
+    _includes/components/site_nav.html renders _data/navigation.yml instead, and
+    falls back to the theme's auto nav only when that file is absent. A quoted
+    or float nav_order would sort unpredictably against the integers on every
+    other page in that fallback.
+    """
     data = yaml.safe_load(_front_matter(path))
     if "nav_order" in data:
         assert isinstance(data["nav_order"], int), (
@@ -71,12 +78,52 @@ def test_nav_order_is_an_integer(path):
         )
 
 
-def test_the_page_that_shipped_invisible_is_covered():
-    """Regression pin for the specific break."""
+def _nav_items() -> list:
+    nav = yaml.safe_load((DOCS / "_data" / "navigation.yml").read_text(encoding="utf-8"))
+    return [(g.get("title", "?"), i["title"], i["url"])
+            for g in nav["groups"] for i in g["items"]]
+
+
+def _published_urls() -> set:
+    """Every URL the built site actually serves."""
+    urls = {"/"}
+    for p in DOCS.rglob("*.md"):
+        src = p.read_text(encoding="utf-8")
+        if not src.startswith("---\n"):
+            continue
+        fm = yaml.safe_load(_front_matter(p)) or {}
+        if fm.get("permalink"):
+            urls.add(fm["permalink"])
+    # Files with no front matter are copied verbatim and served at their path.
+    for p in DOCS.rglob("*.html"):
+        if not p.read_text(encoding="utf-8").startswith("---\n"):
+            urls.add("/" + p.relative_to(DOCS).as_posix())
+    return urls
+
+
+@pytest.mark.parametrize("group,title,url", _nav_items(),
+                         ids=lambda v: v if isinstance(v, str) else str(v))
+def test_every_sidebar_link_resolves(group, title, url):
+    """A sidebar entry pointing at nothing is a 404 the build will not catch."""
+    assert url in _published_urls(), (
+        f"sidebar entry {title!r} (group {group!r}) points at {url}, which no "
+        "page publishes. Check the permalink in the page's front matter."
+    )
+
+
+def test_the_nhi_page_is_in_the_sidebar():
+    """Regression pin, and the check that actually matters.
+
+    Two separate things had to be true for this page to appear, and each failed
+    on its own: the front matter had to parse (a bare colon broke it, so the
+    page 404'd), and the page had to be listed in _data/navigation.yml (it was
+    not, so nothing linked it even once it built). nav_order is irrelevant to
+    both.
+    """
     page = DOCS / "non-human-identity.md"
     assert page.exists(), "non-human-identity.md moved — update this pin"
-    data = yaml.safe_load(_front_matter(page))
-    assert data.get("permalink") == "/non-human-identity/"
-    assert isinstance(data.get("nav_order"), int), (
-        "without a valid integer nav_order the NHI page has no navbar entry"
+    assert yaml.safe_load(_front_matter(page)).get("permalink") == "/non-human-identity/"
+    assert "/non-human-identity/" in [u for _, _, u in _nav_items()], (
+        "the NHI page builds but is not in _data/navigation.yml, so it has no "
+        "sidebar entry — which is exactly how it shipped invisible"
     )
