@@ -1,0 +1,259 @@
+<meta charset="utf-8">
+<title>LLM Shield: non-human identity topology</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#FFFFFF; --raised:#FAFAFA; --surface:#FFFFFF; --surface-2:#F4F5F8;
+  --line:#E9E9EC; --line-2:#DFE0E4;
+  --ink:#0D0E10; --muted:#6B6F76; --faint:#8A8F98;
+  --accent:#5E6AD2; --accent-soft:rgba(94,106,210,.06); --accent-line:#C9CEF0;
+  --ok:#227C4C; --ok-bg:#EDF9F2; --ok-line:#C3E9D4;
+  --warn:#8A5A00; --warn-bg:#FFFBEE; --warn-line:#F2E0AE;
+  --stop:#B3261E; --stop-bg:#FDF4F3; --stop-line:#F3D2CE;
+  --r:8px; --r-sm:6px;
+  --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --shadow:0 1px 2px rgba(13,14,16,.04);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13.5px;
+  line-height:1.52;letter-spacing:-.006em;-webkit-font-smoothing:antialiased;padding:34px 22px 60px;}
+.wrap{max-width:1200px;margin:0 auto;}
+.eyebrow{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--accent);font-weight:560;}
+.eyebrow .d{width:6px;height:6px;border-radius:50%;background:var(--accent);}
+h1{font-size:26px;font-weight:590;letter-spacing:-.024em;margin:8px 0 6px;}
+.lede{color:var(--muted);max-width:78ch;}
+.stamp{font-family:var(--mono);font-size:11px;color:var(--faint);margin:6px 0 24px;letter-spacing:0;}
+h2{font-size:15px;font-weight:570;letter-spacing:-.014em;margin:34px 0 4px;}
+h2 span{color:var(--faint);font-weight:400;font-size:12.5px;margin-left:8px;}
+.sub{color:var(--muted);max-width:78ch;margin-bottom:12px;}
+code{font-family:var(--mono);font-size:.92em;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:4px;padding:.5px 4px;}
+
+/* layer stack */
+.stack{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r);
+  overflow:hidden;box-shadow:var(--shadow);background:var(--surface);}
+.layer{display:grid;grid-template-columns:120px 1fr 250px 130px;gap:14px;align-items:start;
+  padding:13px 15px;border-bottom:1px solid var(--line);}
+.layer:last-child{border-bottom:none;}
+.layer.hi{background:var(--accent-soft);}
+.lnum{font-family:var(--mono);font-size:10.5px;color:var(--accent);font-weight:560;letter-spacing:.06em;}
+.lnum b{display:block;font-family:var(--sans);font-size:12.5px;color:var(--ink);
+  font-weight:570;letter-spacing:-.01em;margin-top:3px;}
+.q{font-size:13px;}
+.q em{font-style:normal;color:var(--muted);display:block;margin-top:3px;font-size:12.3px;}
+.mech{font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.7;}
+.mech b{color:var(--ink);font-weight:500;}
+@media(max-width:960px){.layer{grid-template-columns:1fr;gap:7px;}}
+
+/* pills */
+.pill{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.03em;
+  padding:2px 7px;border-radius:20px;border:1px solid;white-space:nowrap;}
+.on{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-line);}
+.off{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-line);}
+
+/* request path */
+.path{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line);
+  border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow);background:var(--surface);}
+@media(max-width:1000px){.path{grid-template-columns:1fr;}}
+.stage{border-right:1px solid var(--line);padding:14px 13px;display:flex;flex-direction:column;gap:8px;}
+.stage:last-child{border-right:none;}
+@media(max-width:1000px){.stage{border-right:none;border-bottom:1px solid var(--line);}}
+.stage.guard{background:var(--accent-soft);}
+.sh{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:560;}
+.stage.guard .sh{color:var(--accent);}
+.st{font-weight:560;font-size:13px;letter-spacing:-.012em;}
+.sd{color:var(--muted);font-size:12.3px;}
+.sm{font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:auto;padding-top:6px;
+  border-top:1px dashed var(--line-2);line-height:1.65;}
+
+/* table */
+table{width:100%;border-collapse:collapse;border:1px solid var(--line);border-radius:var(--r);
+  overflow:hidden;box-shadow:var(--shadow);background:var(--surface);font-size:12.6px;}
+th{text-align:left;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);
+  font-weight:560;padding:9px 13px;border-bottom:1px solid var(--line);background:var(--raised);}
+td{padding:9px 13px;border-bottom:1px solid var(--line);vertical-align:top;}
+tr:last-child td{border-bottom:none;}
+td.m,th.m{font-family:var(--mono);font-size:11.3px;}
+td.note{color:var(--muted);}
+
+/* callout */
+.call{border:1px solid var(--warn-line);background:var(--warn-bg);border-radius:var(--r);
+  padding:13px 15px;margin-top:14px;}
+.call .ct{font-weight:570;font-size:12.5px;color:var(--warn);margin-bottom:5px;}
+.call p{font-size:12.6px;color:#6A4A08;max-width:88ch;}
+.call p+p{margin-top:7px;}
+.foot{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);
+  color:var(--faint);font-size:11.5px;font-family:var(--mono);}
+</style>
+
+<div class="wrap">
+<div class="eyebrow"><span class="d"></span>LLM Shield</div>
+<h1>Non-human identity, layer by layer</h1>
+<p class="lede">An agent has no password, no MFA, and nobody at the keyboard when it acts.
+Every control that assumes a human is present fails silently. This is what replaces
+them: five layers, each answering one question, each independently switchable.</p>
+<p class="stamp">core/workload_identity · core/agent_tokens · core/identity_resolution · core/delegation · core/capabilities</p>
+
+<h2>The five questions <span>each layer answers exactly one</span></h2>
+<p class="sub">Read bottom-up. A layer is only meaningful if the one below it holds:
+a capability scoped to an agent means nothing if the agent principal was self-asserted.</p>
+
+<div class="stack">
+  <div class="layer hi">
+    <div class="lnum">L4<b>Capability</b></div>
+    <div class="q">May it do <em>this specific thing, to this specific resource, right now?</em>
+      <em>Not a role. A single signed grant, burned on use.</em></div>
+    <div class="mech"><b>mint_cap()</b> Ed25519<br>tool + resource + nonce<br>replay-burned in Redis</div>
+    <div><span class="pill on">on</span></div>
+  </div>
+  <div class="layer">
+    <div class="lnum">L3<b>Delegation</b></div>
+    <div class="q">Whose authority is it borrowing?
+      <em>The agent's own grant intersected with the user's. Neither can exceed its own.</em></div>
+    <div class="mech"><b>X-On-Behalf-Of</b><br>RFC 8693 <b>act</b> claim<br>core/delegation.py</div>
+    <div><span class="pill off">off by default</span></div>
+  </div>
+  <div class="layer">
+    <div class="lnum">L2<b>Binding</b></div>
+    <div class="q">Is the presenter the party this was issued to?
+      <em>A stolen bearer token is a valid bearer token. Proof-of-possession is what makes theft insufficient.</em></div>
+    <div class="mech"><b>DPoP</b> RFC 9449<br><b>cnf.jkt</b> RFC 7638<br>or mTLS RFC 8705</div>
+    <div><span class="pill off">off by default</span></div>
+  </div>
+  <div class="layer">
+    <div class="lnum">L1<b>Agent principal</b></div>
+    <div class="q">Which agent, which build, which model, which session?
+      <em>The identity authorization is written against. Short-lived by design.</em></div>
+    <div class="mech"><b>agent token</b> EdDSA JWT<br>IdentityTuple, 8 fields<br>&le; 15 min, revocable</div>
+    <div><span class="pill on">on</span></div>
+  </div>
+  <div class="layer">
+    <div class="lnum">L0<b>Workload attestation</b></div>
+    <div class="q">What process is asking, and did the platform vouch for it?
+      <em>The root of trust. Everything above is claims until something here is verified.</em></div>
+    <div class="mech"><b>spiffe</b> · <b>mtls</b><br><b>oidc_sa</b> (Keycloak, K8s SA)<br><b>admin_key</b> (bootstrap)</div>
+    <div><span class="pill off">2 of 4 enabled</span></div>
+  </div>
+</div>
+
+<h2>Where each layer sits on the request path <span>one guarded hop</span></h2>
+
+<div class="path">
+  <div class="stage">
+    <div class="sh">Platform</div>
+    <div class="st">Attestor</div>
+    <div class="sd">SPIRE, the mesh CA, or your IdP. Issues the workload credential
+      the agent process did not choose for itself.</div>
+    <div class="sm">SPIFFE SVID<br>Keycloak / K8s SA JWT<br>client cert</div>
+  </div>
+  <div class="stage">
+    <div class="sh">Runtime</div>
+    <div class="st">Agent process</div>
+    <div class="sd">Presents its workload credential once, gets a short-lived
+      agent token, then mints a capability per action.</div>
+    <div class="sm">1&times; per process<br>1&times; per tool call</div>
+  </div>
+  <div class="stage guard">
+    <div class="sh">Data plane</div>
+    <div class="st">resolve_identity()</div>
+    <div class="sd">The single seam. Verifies the workload identity, resolves the
+      agent and role, records where each came from.</div>
+    <div class="sm">agent_source<br>role_source<br>binding · acting_for</div>
+  </div>
+  <div class="stage guard">
+    <div class="sh">Data plane</div>
+    <div class="st">Authorization</div>
+    <div class="sd">Intersection: the agent's grant AND the role's grant. A capability
+      narrows it further to one resource.</div>
+    <div class="sm">tool_allowlist.py<br>agent AND role</div>
+  </div>
+  <div class="stage">
+    <div class="sh">Downstream</div>
+    <div class="st">Tool / MCP server</div>
+    <div class="sd">Receives a capability, not a role. Verifies the signature itself
+      and burns the nonce, so it never has to trust the caller.</div>
+    <div class="sm">Ed25519 public key<br>nonce single-use</div>
+  </div>
+</div>
+
+<h2>Lifetimes <span>the real control, nothing here is long-lived</span></h2>
+<p class="sub">Human credentials last a workday because a human is slow. Agent credentials
+should last one action, because the agent is not. Short lifetime is what replaces the
+revocation you cannot deliver in time.</p>
+
+<table>
+  <tr><th>Credential</th><th class="m">Default</th><th class="m">Hard cap</th><th>Scope</th><th>Revocation</th></tr>
+  <tr>
+    <td>Workload credential</td><td class="m">issuer-set</td><td class="m">issuer-set</td>
+    <td>the process</td><td class="note">the attestor's own rotation</td>
+  </tr>
+  <tr>
+    <td>Agent token</td><td class="m">10 min</td><td class="m">15 min</td>
+    <td>agent + instance + session</td><td class="note">by instance, by jti, by user</td>
+  </tr>
+  <tr>
+    <td>Capability</td><td class="m">30 s</td><td class="m">60 s</td>
+    <td>one tool, one resource</td><td class="note">nonce burned on first use</td>
+  </tr>
+</table>
+
+<h2>What is on, and what you must turn on <span>read this before claiming coverage</span></h2>
+
+<table>
+  <tr><th>Control</th><th class="m">Env</th><th class="m">Default</th><th>What the default means</th></tr>
+  <tr>
+    <td>Workload providers</td><td class="m">SHIELD_WORKLOAD_IDENTITY_PROVIDERS</td>
+    <td class="m">admin_key,spiffe</td>
+    <td class="note"><code>oidc_sa</code> and <code>mtls</code> are <b>not</b> enabled. An OIDC token
+      is ignored entirely until you add it.</td>
+  </tr>
+  <tr>
+    <td>Role binding</td><td class="m">SHIELD_ROLE_BINDING</td><td class="m">off</td>
+    <td class="note">The role comes from the <code>X-User-Role</code> header, chosen by
+      the caller RBAC is constraining. <code>prefer</code> lets a signed claim win.</td>
+  </tr>
+  <tr>
+    <td>Token binding</td><td class="m">SHIELD_TOKEN_BINDING</td><td class="m">off</td>
+    <td class="note">Tokens are bearer. Whoever holds one is the agent.</td>
+  </tr>
+  <tr>
+    <td>Delegation</td><td class="m">SHIELD_DELEGATION</td><td class="m">off</td>
+    <td class="note">No user is bound to the action; the agent acts on its own authority.</td>
+  </tr>
+</table>
+
+<div class="call">
+  <div class="ct">The failure mode is silence, not error</div>
+  <p>Every one of these defaults fails <em>open and quiet</em>. Send a perfectly valid
+  Keycloak token to a Shield whose provider list is the default and nothing rejects it.
+  the token is simply never read, and the header is used instead. The request succeeds.
+  The audit record says the role was <code>header</code>-sourced, and that is the only
+  place the difference is visible.</p>
+  <p>So the deployment check is not "does a valid token work". It is
+  <b>does an invalid one fail</b>. Present a forged role alongside a signed token and
+  confirm the signed claim wins.</p>
+</div>
+
+<h2>Rollout order <span>each step is safe alone; none of them is optional</span></h2>
+
+<table>
+  <tr><th class="m">#</th><th>Step</th><th>Why this order</th></tr>
+  <tr><td class="m">1</td><td>Enable the workload provider you actually use
+    (<code>oidc_sa</code> for Keycloak or K8s, <code>spiffe</code> for a mesh)</td>
+    <td class="note">Nothing above L0 can be verified until something at L0 is. This alone
+      changes no decision, so it is safe to ship first.</td></tr>
+  <tr><td class="m">2</td><td>Set <code>SHIELD_ROLE_BINDING=prefer</code></td>
+    <td class="note">Signed claims start winning over headers. <code>prefer</code> falls back
+      to the header when no claim exists, so unmigrated callers keep working.</td></tr>
+  <tr><td class="m">3</td><td>Watch <code>role_source</code> in the audit log</td>
+    <td class="note">Every caller still reading <code>header</code> is one that has not
+      migrated. This is the list you need before step 4.</td></tr>
+  <tr><td class="m">4</td><td><code>strict</code> / <code>required</code></td>
+    <td class="note">Unverified claims are now refused. Safe only once step 3 is empty.</td></tr>
+</table>
+
+<p class="foot">Verify a live deployment with examples/langchain/verify_deployment.py,
+it reports role provenance and exits non-zero when a layer is not actually enforcing.</p>
+</div>
