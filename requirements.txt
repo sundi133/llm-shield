@@ -22,4 +22,4 @@ pypdf
 python-docx
 openpyxl
 # MCP gateway: connect_upstream() uses the MCP client SDK (stdio/SSE/streamable-http)
-mcp>=1.2.0
+mcp>=1.2.0,<2   # 2.0 moved mcp.server.fastmcp and streamablehttp_client — migrate deliberately
