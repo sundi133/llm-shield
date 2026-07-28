@@ -22,6 +22,7 @@ from core.feature_flags import (
     CERT_IDENTITY_ENABLED,
 )
 from storage.tool_killswitch import is_tool_disabled
+from core.identity_resolution import resolve_identity
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
 from core.run_context import resolve_run_id
@@ -242,11 +243,15 @@ async def check_tool(body: ToolCheckRequest, request: Request):
             except Exception:
                 pass
 
-    user_role = (
-        body.user_role
-        or request.headers.get("X-User-Role")
-        or request.headers.get("x-user-role")
+    # Resolve identity through one seam so its provenance is recorded. This
+    # returns exactly what the header/body reads returned — the value is
+    # unchanged — but it also reports WHERE each field came from, which is what
+    # the audit needs before verified role claims can be rolled out.
+    # See core/identity_resolution.py and docs/spec-agent-role-binding.md.
+    _resolved = resolve_identity(
+        request, body_agent_key=body.agent_key, body_user_role=body.user_role,
     )
+    user_role = _resolved.user_role or None
 
     # Anti-spoof: the body agent_key may not impersonate a different authenticated
     # agent (X-Agent-Key header). Mirrors the MCP path, which derives identity
@@ -543,7 +548,11 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                         session_id=body.session_id,
                         reason=r.get("message", ""),
                         source_ip=source_ip,
-                        metadata=r.get("details"),
+                        # Provenance alongside the guard's own details: without
+                        # it a denial cannot be told apart from an escalation
+                        # after the fact, because the role is caller-asserted.
+                        metadata={**(r.get("details") or {}),
+                                  **_resolved.audit_fields()},
                     )
 
             # Fire webhook/SIEM for block and warn events (enterprise feature).
