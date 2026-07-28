@@ -22,6 +22,8 @@ from core.feature_flags import (
     CERT_IDENTITY_ENABLED,
 )
 from storage.tool_killswitch import is_tool_disabled
+from core.identity_resolution import (BIND_REQUIRED, resolve_identity,
+                                       token_binding_mode)
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
 from core.run_context import resolve_run_id
@@ -242,11 +244,34 @@ async def check_tool(body: ToolCheckRequest, request: Request):
             except Exception:
                 pass
 
-    user_role = (
-        body.user_role
-        or request.headers.get("X-User-Role")
-        or request.headers.get("x-user-role")
+    # Resolve identity through one seam so its provenance is recorded. This
+    # returns exactly what the header/body reads returned — the value is
+    # unchanged — but it also reports WHERE each field came from, which is what
+    # the audit needs before verified role claims can be rolled out.
+    # See core/identity_resolution.py and docs/spec-agent-role-binding.md.
+    _resolved = resolve_identity(
+        request, body_agent_key=body.agent_key, body_user_role=body.user_role,
     )
+    user_role = _resolved.user_role or None
+
+    # Proof-of-possession. A bound credential presented without a valid DPoP
+    # proof is the stolen-token case: refuse it. Only reachable when
+    # SHIELD_TOKEN_BINDING=required, so this is inert by default.
+    if _resolved.binding_failed and token_binding_mode() == BIND_REQUIRED:
+        results = [{
+            "guardrail": "token_binding", "passed": False, "action": "block",
+            "message": f"Proof-of-possession failed: {_resolved.binding_error}",
+            "details": {"token_binding": _resolved.binding}, "latency_ms": 0.0,
+        }]
+        if tenant_id:
+            log_decision(
+                tenant_id=tenant_id, action="block", guardrail="token_binding",
+                agent_key=body.agent_key, tool_name=body.tool_name,
+                user_role=user_role, session_id=body.session_id,
+                reason=_resolved.binding_error, source_ip=source_ip,
+                metadata=_resolved.audit_fields(),
+            )
+        return {"allowed": False, "action": "block", "guardrail_results": results}
 
     # Anti-spoof: the body agent_key may not impersonate a different authenticated
     # agent (X-Agent-Key header). Mirrors the MCP path, which derives identity
@@ -543,7 +568,11 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                         session_id=body.session_id,
                         reason=r.get("message", ""),
                         source_ip=source_ip,
-                        metadata=r.get("details"),
+                        # Provenance alongside the guard's own details: without
+                        # it a denial cannot be told apart from an escalation
+                        # after the fact, because the role is caller-asserted.
+                        metadata={**(r.get("details") or {}),
+                                  **_resolved.audit_fields()},
                     )
 
             # Fire webhook/SIEM for block and warn events (enterprise feature).
@@ -615,7 +644,8 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
         if hasattr(request, "state")
         else None
     ) or request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
-    user_role = request.headers.get("X-User-Role") or request.headers.get("x-user-role", "user")
+    # Same seam as /tool/check. Defaults to "user" when absent, as before.
+    user_role = resolve_identity(request, body_agent_key=body.agent_key).user_role or "user"
 
     context = {
         "tool_name": body.tool_name,

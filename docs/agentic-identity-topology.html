@@ -1,0 +1,193 @@
+<meta charset="utf-8">
+<title>Agentic identity — Shield topology</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#FFFFFF; --raised:#FAFAFA; --surface:#FFFFFF; --surface-2:#F4F5F8;
+  --line:#E9E9EC; --line-2:#DFE0E4;
+  --ink:#0D0E10; --muted:#6B6F76; --faint:#8A8F98;
+  --accent:#5E6AD2; --accent-soft:rgba(94,106,210,.06); --accent-line:#C9CEF0;
+  --ok:#227C4C; --ok-bg:#EDF9F2; --ok-line:#C3E9D4;
+  --warn:#8A5A00; --warn-bg:#FFFBEE; --warn-line:#F2E0AE;
+  --gap:#B3261E; --gap-bg:#FDF4F3; --gap-line:#F3D2CE;
+  --r:8px; --r-sm:6px;
+  --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --shadow:0 1px 2px rgba(13,14,16,.04);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13.5px;
+  line-height:1.5;letter-spacing:-.006em;-webkit-font-smoothing:antialiased;
+  padding:34px 22px 56px;}
+.wrap{max-width:1180px;margin:0 auto;}
+.eyebrow{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--accent);font-weight:560;}
+.eyebrow .d{width:6px;height:6px;border-radius:50%;background:var(--accent);}
+h1{font-size:26px;font-weight:590;letter-spacing:-.024em;margin:8px 0 6px;}
+.lede{color:var(--muted);max-width:74ch;margin-bottom:6px;}
+.stamp{font-family:var(--mono);font-size:11px;color:var(--faint);margin-bottom:22px;letter-spacing:0;}
+
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin:0 0 20px;font-size:11.5px;color:var(--muted);}
+.legend span{display:inline-flex;align-items:center;gap:6px;}
+.sw{width:9px;height:9px;border-radius:3px;border:1px solid;}
+.sw.ok{background:var(--ok-bg);border-color:var(--ok-line);}
+.sw.warn{background:var(--warn-bg);border-color:var(--warn-line);}
+.sw.gap{background:var(--gap-bg);border-color:var(--gap-line);}
+
+.flow{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:0;border:1px solid var(--line);
+  border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow);background:var(--surface);}
+@media(max-width:900px){.flow{grid-template-columns:1fr;}}
+.zone{padding:16px 15px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:8px;}
+.zone:last-child{border-right:none;}
+@media(max-width:900px){.zone{border-right:none;border-bottom:1px solid var(--line);}}
+.zone.mid{background:var(--accent-soft);border-left:2px solid var(--accent);border-right:2px solid var(--accent);}
+.zh{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:560;}
+.zone.mid .zh{color:var(--accent);}
+.zs{font-size:11.5px;color:var(--muted);margin:-4px 0 4px;}
+
+.node{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);
+  padding:9px 11px;box-shadow:var(--shadow);}
+.node > b{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:560;letter-spacing:-.008em;}
+.node > b .tag{margin-left:auto;flex:none;}
+.node span b{font-weight:560;color:inherit;}
+.node span{display:block;font-size:11.5px;color:var(--muted);margin-top:2px;}
+.node code{font-family:var(--mono);font-size:11px;letter-spacing:0;color:var(--muted);}
+.node.ok{background:var(--ok-bg);border-color:var(--ok-line);}
+.node.warn{background:var(--warn-bg);border-color:var(--warn-line);}
+.node.gap{background:var(--gap-bg);border-color:var(--gap-line);}
+.node.gap > b{color:var(--gap);}
+.node.warn > b{color:var(--warn);}
+
+.step{display:grid;grid-template-columns:20px 1fr;gap:9px;align-items:start;}
+.step .n{font-family:var(--mono);font-size:11px;color:var(--faint);padding-top:9px;letter-spacing:0;}
+
+.tag{display:inline-block;font-family:var(--mono);font-size:9.5px;letter-spacing:.03em;
+  padding:1px 6px;border-radius:4px;vertical-align:middle;border:1px solid;white-space:nowrap;}
+.tag.ok{color:var(--ok);background:#fff;border-color:var(--ok-line);}
+.tag.warn{color:var(--warn);background:#fff;border-color:var(--warn-line);}
+.tag.gap{color:var(--gap);background:#fff;border-color:var(--gap-line);}
+
+h2{font-size:15px;font-weight:570;letter-spacing:-.014em;margin:30px 0 10px;}
+table{width:100%;border-collapse:collapse;font-size:12.5px;border:1px solid var(--line);
+  border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow);}
+th{text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);
+  font-weight:560;padding:9px 12px;background:var(--raised);border-bottom:1px solid var(--line);}
+td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;}
+tr:last-child td{border-bottom:none;}
+td code{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:0;}
+.note{margin-top:22px;border:1px solid var(--accent-line);background:var(--accent-soft);
+  border-radius:var(--r);padding:13px 15px;color:var(--muted);font-size:12.5px;}
+.note b{color:var(--ink);font-weight:560;}
+.foot{margin-top:18px;color:var(--faint);font-size:11.5px;}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow"><span class="d"></span> VotalAI · LLM Shield</div>
+  <h1>Agentic identity — what holds, and where it breaks</h1>
+  <p class="lede">Three properties decide whether an agent's identity means anything:
+    <b>who is this agent</b>, <b>on whose behalf is it acting</b>, and
+    <b>is the presenter the party the credential was issued to</b>. Shield answers the
+    first well, the second partially, the third not at all.</p>
+  <p class="stamp">Status verified against the codebase, 2026-07-27.</p>
+
+  <div class="legend">
+    <span><i class="sw ok"></i> built and enforced</span>
+    <span><i class="sw warn"></i> present but not wired, or off by default</span>
+    <span><i class="sw gap"></i> missing</span>
+  </div>
+
+  <div class="flow">
+    <!-- issuers -->
+    <div class="zone">
+      <div class="zh">Identity plane · who vouches</div>
+      <div class="zs">Issues the credential the agent carries.</div>
+      <div class="node ok"><b>Keycloak / OIDC<span class="tag ok">built</span></b>
+        <span>Service-account tokens verified by <code>oidc_sa</code>: signature, allow-listed issuer, <b>mandatory audience</b>.</span></div>
+      <div class="node ok"><b>Shield agent tokens<span class="tag ok">built</span></b>
+        <span>Ed25519, <code>alg</code> pinned, revocation by jti / instance / user, kid retirement.</span></div>
+      <div class="node warn"><b>SPIFFE SVID<span class="tag warn">off by default</span></b>
+        <span>Real X.509 chain verification. Needs <code>SHIELD_SPIFFE_ENABLED</code>.</span></div>
+      <div class="node gap"><b>mTLS fingerprint<span class="tag gap">forgeable</span></b>
+        <span>A fingerprint header is accepted <b>with no certificate present</b>. Gated by a trusted-proxy boundary that is off by default.</span></div>
+    </div>
+
+    <!-- shield -->
+    <div class="zone mid">
+      <div class="zh">Shield · the chokepoint</div>
+      <div class="zs">Every prompt, tool call and secret passes through here.</div>
+
+      <div class="step"><div class="n">01</div>
+        <div class="node ok"><b>Verify identity → IdentityTuple<span class="tag ok">built</span></b>
+          <span>Middleware attaches the verified principal to the request.</span></div></div>
+
+      <div class="step"><div class="n">02</div>
+        <div class="node gap"><b>Resolve role<span class="tag gap">the keystone</span></b>
+          <span>Read from <code>X-User-Role</code> — a header the caller types. No identity method carries a role claim, so RBAC constrains a value its own subject supplies.</span></div></div>
+
+      <div class="step"><div class="n">03</div>
+        <div class="node ok"><b>Authorize the tool<span class="tag ok">built</span></b>
+          <span>Agent registry · role permissions · data policies on the arguments.</span></div></div>
+
+      <div class="step"><div class="n">04</div>
+        <div class="node ok"><b>Control plane<span class="tag ok">built</span></b>
+          <span>Killswitch · circuit breaker · parameter policy · workflow limits · signed approval grants.</span></div></div>
+
+      <div class="step"><div class="n">05</div>
+        <div class="node warn"><b>Capability at execution<span class="tag warn">optional</span></b>
+          <span>Nonce-burned, resource-bound, ≤60s. Enforced by the client integration; the central tool route has no capability field.</span></div></div>
+
+      <div class="step"><div class="n">06</div>
+        <div class="node warn"><b>Audit<span class="tag warn">partial</span></b>
+          <span>Tamper-evident hash chain exists but is off by default. Provenance of the role is now recorded.</span></div></div>
+    </div>
+
+    <!-- protected -->
+    <div class="zone">
+      <div class="zh">Protected · reachable only via Shield</div>
+      <div class="zs">The checkpoint holds only while these have no other route in.</div>
+      <div class="node ok"><b>The model</b><span>Prompts and replies screened both ways.</span></div>
+      <div class="node ok"><b>Tools</b><span>RBAC-gated; MCP gateway now runs the same guard set.</span></div>
+      <div class="node ok"><b>Secrets</b><span>Vault placeholders; materialised only at a bound destination.</span></div>
+      <div class="node ok"><b>Egress</b><span>Allow-listed destinations.</span></div>
+      <div class="node gap"><b>Bearer tokens<span class="tag gap">no binding</span></b>
+        <span>No <code>cnf</code>, no DPoP, no <code>x5t#S256</code>. Steal the token, be the agent.</span></div>
+    </div>
+  </div>
+
+  <h2>The three properties</h2>
+  <table>
+    <tr><th style="width:15%">Property</th><th style="width:26%">Question</th><th style="width:14%">Status</th><th>What is missing</th></tr>
+    <tr><td><b>Agent principal</b></td><td>Who is this agent?</td>
+        <td><span class="tag ok">built</span></td>
+        <td>Claims are caller-supplied at mint and sealed by the signature — integrity-protected, not independently attested. <code>oidc_sa</code> has no subject allowlist.</td></tr>
+    <tr><td><b>Delegation</b></td><td>On whose behalf, and who authorized it?</td>
+        <td><span class="tag gap">not enforced</span></td>
+        <td><code>parent_agent_id</code> is carried and read by nothing. No attenuation, no chain provenance. Token exchange converts an external token; it does not model an actor.</td></tr>
+    <tr><td><b>Binding</b></td><td>Is the presenter the party this was issued to?</td>
+        <td><span class="tag gap">absent</span></td>
+        <td>Pure bearer. Keycloak can issue DPoP-bound tokens today, but Shield ignores <code>cnf</code> — binding is a two-party property and the verifier half is missing.</td></tr>
+  </table>
+
+  <h2>What closes each gap</h2>
+  <table>
+    <tr><th style="width:26%">Work</th><th style="width:16%">Unlocks</th><th style="width:14%">Size</th><th>Notes</th></tr>
+    <tr><td>Verified identity reaches the decision</td><td>Property 1 becomes load-bearing</td><td>2–3 weeks</td>
+        <td><b>Do this first.</b> Until it lands, binding a token nobody checks and delegating an identity nobody reads change no outcome.</td></tr>
+    <tr><td>Role binding <code>spec-agent-role-binding.md</code></td><td>RBAC stops trusting its own subject</td><td>2–4 weeks</td>
+        <td>Off → prefer → strict. The MCP gateway must be in scope or it is the bypass.</td></tr>
+    <tr><td>Token binding <code>spec-token-binding.md</code></td><td>Property 3</td><td>2–3 weeks</td>
+        <td>Verify-only if Keycloak issues: thumbprint, proof verifier, replay claim. Roughly half the build.</td></tr>
+    <tr><td>Delegation attenuation</td><td>Property 2</td><td>4–6 weeks</td>
+        <td>Parent-token presentation, subset check, chain provenance.</td></tr>
+  </table>
+
+  <div class="note">
+    <b>The one rule the whole picture depends on:</b> the model, the tools, the secrets and the
+    egress must be reachable <b>only</b> through Shield. A client that reaches a resource directly
+    bypasses every box in the middle column — and no amount of identity work changes that.
+  </div>
+
+  <p class="foot">Each status above was checked against the code rather than the documentation.
+    Amber means the capability exists but is not on the decision path or is off by default —
+    which, for a security control, is closer to red than to green.</p>
+</div>

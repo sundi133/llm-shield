@@ -1,0 +1,182 @@
+<meta charset="utf-8">
+<title>LLM Shield — SecOps topology</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#FFFFFF; --raised:#FAFAFA; --surface:#FFFFFF; --surface-2:#F4F5F8;
+  --line:#E9E9EC; --line-2:#DFE0E4;
+  --ink:#0D0E10; --muted:#6B6F76; --faint:#8A8F98;
+  --accent:#5E6AD2; --accent-soft:rgba(94,106,210,.06); --accent-line:#C9CEF0;
+  --ok:#227C4C; --ok-bg:#EDF9F2; --ok-line:#C3E9D4;
+  --warn:#8A5A00; --warn-bg:#FFFBEE; --warn-line:#F2E0AE;
+  --stop:#B3261E; --stop-bg:#FDF4F3; --stop-line:#F3D2CE;
+  --r:8px; --r-sm:6px;
+  --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --shadow:0 1px 2px rgba(13,14,16,.04);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13.5px;
+  line-height:1.52;letter-spacing:-.006em;-webkit-font-smoothing:antialiased;padding:34px 22px 60px;}
+.wrap{max-width:1200px;margin:0 auto;}
+.eyebrow{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--accent);font-weight:560;}
+.eyebrow .d{width:6px;height:6px;border-radius:50%;background:var(--accent);}
+h1{font-size:26px;font-weight:590;letter-spacing:-.024em;margin:8px 0 6px;}
+.lede{color:var(--muted);max-width:78ch;}
+.stamp{font-family:var(--mono);font-size:11px;color:var(--faint);margin:6px 0 24px;letter-spacing:0;}
+h2{font-size:15px;font-weight:570;letter-spacing:-.014em;margin:32px 0 10px;}
+h2 span{color:var(--faint);font-weight:400;font-size:12.5px;margin-left:8px;}
+
+/* the request path */
+.path{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line);
+  border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow);background:var(--surface);}
+@media(max-width:1000px){.path{grid-template-columns:1fr;}}
+.stage{border-right:1px solid var(--line);padding:14px 13px;display:flex;flex-direction:column;gap:9px;}
+.stage:last-child{border-right:none;}
+@media(max-width:1000px){.stage{border-right:none;border-bottom:1px solid var(--line);}}
+.stage.guard{background:var(--accent-soft);}
+.sh{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:560;}
+.stage.guard .sh{color:var(--accent);}
+.sn{font-size:12.5px;font-weight:560;}
+.ss{font-size:11.5px;color:var(--muted);}
+.gate{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);
+  padding:8px 10px;box-shadow:var(--shadow);}
+.gate b{display:block;font-size:12px;font-weight:550;}
+.gate span{display:block;font-size:11px;color:var(--muted);margin-top:2px;}
+.gate code{font-family:var(--mono);font-size:10.5px;letter-spacing:0;}
+.gate.stop{background:var(--stop-bg);border-color:var(--stop-line);}
+.gate.stop b{color:var(--stop);}
+
+table{width:100%;border-collapse:collapse;font-size:12.5px;border:1px solid var(--line);
+  border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow);}
+th{text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);
+  font-weight:560;padding:9px 12px;background:var(--raised);border-bottom:1px solid var(--line);}
+td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;}
+tr:last-child td{border-bottom:none;}
+td code,th code{font-family:var(--mono);font-size:11px;letter-spacing:0;}
+.sev{display:inline-block;font-family:var(--mono);font-size:9.5px;padding:1px 6px;border-radius:4px;
+  border:1px solid;white-space:nowrap;}
+.sev.p1{color:var(--stop);background:var(--stop-bg);border-color:var(--stop-line);}
+.sev.p2{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-line);}
+.sev.p3{color:var(--muted);background:var(--surface-2);border-color:var(--line-2);}
+.note{margin-top:24px;border:1px solid var(--accent-line);background:var(--accent-soft);
+  border-radius:var(--r);padding:13px 15px;color:var(--muted);font-size:12.5px;}
+.note b{color:var(--ink);font-weight:560;}
+.foot{margin-top:16px;color:var(--faint);font-size:11.5px;}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow"><span class="d"></span> VotalAI · LLM Shield — Security Operations</div>
+  <h1>Where an agent gets stopped, and what to do when it does</h1>
+  <p class="lede">One request from an AI agent, and every gate it passes through. Read left to
+    right: the agent is untrusted, the model and tools sit behind the gates, and nothing reaches
+    them except through Shield. Each gate names the audit signal it produces, so an alert can be
+    traced back to the control that fired it.</p>
+  <p class="stamp">Verified against the deployed data plane, 2026-07-28.</p>
+
+  <h2>The request path <span>five gates, in order</span></h2>
+  <div class="path">
+    <div class="stage">
+      <div class="sh">1 · Who is calling</div>
+      <div class="sn">Identity</div>
+      <div class="ss">Establishes the agent and the role before anything else runs.</div>
+      <div class="gate"><b>Agent credential</b><span>Signed agent token, SPIFFE SVID, or an OIDC service account.</span></div>
+      <div class="gate stop"><b>Role today is asserted</b><span>Read from <code>X-User-Role</code> unless role binding is on. The audit records <code>role_source</code> so you can see which.</span></div>
+    </div>
+
+    <div class="stage guard">
+      <div class="sh">2 · What was said</div>
+      <div class="sn">Input guardrails</div>
+      <div class="ss">Runs before the model sees the prompt.</div>
+      <div class="gate"><b>Prompt injection, exfiltration, toxicity</b><span>Model-based detection with a confidence score.</span></div>
+      <div class="gate"><b>Tenant custom policies</b><span>Your own rules in plain language, evaluated per request.</span></div>
+      <div class="gate stop"><b>Blocked ⇒</b><span><code>guardrail=adversarial_detection</code> or <code>custom_policy_input</code></span></div>
+    </div>
+
+    <div class="stage guard">
+      <div class="sh">3 · What it wants to do</div>
+      <div class="sn">Tool authorization</div>
+      <div class="ss">Every tool call, before execution.</div>
+      <div class="gate"><b>Agent AND role must allow</b><span>Registry intersection — neither alone is enough.</span></div>
+      <div class="gate"><b>Arguments, not just names</b><span>Data policies inspect recipients, amounts, scope.</span></div>
+      <div class="gate"><b>Control plane</b><span>Killswitch · circuit breaker · workflow limits · human approval.</span></div>
+      <div class="gate stop"><b>Blocked ⇒</b><span><code>guardrail=rbac_guard</code> · <code>tool_allowlist</code> · <code>tool_call_validation</code></span></div>
+    </div>
+
+    <div class="stage guard">
+      <div class="sh">4 · What came back</div>
+      <div class="sn">Output guardrails</div>
+      <div class="ss">Runs on the reply and on tool output.</div>
+      <div class="gate"><b>PII, credentials, card data</b><span>Blocked or redacted before it reaches the user.</span></div>
+      <div class="gate"><b>Secret vault</b><span>Placeholders in the model path; the real value appears only at a bound destination.</span></div>
+      <div class="gate stop"><b>Blocked ⇒</b><span><code>guardrail=custom_policy_output</code></span></div>
+    </div>
+
+    <div class="stage">
+      <div class="sh">5 · What was recorded</div>
+      <div class="sn">Audit</div>
+      <div class="ss">The record you investigate from.</div>
+      <div class="gate"><b>Decision log</b><span>Agent, role, tool, verdict, and the guardrail that fired.</span></div>
+      <div class="gate"><b>Provenance</b><span><code>role_source</code> · <code>agent_source</code> · <code>token_binding</code> · <code>acting_for</code></span></div>
+      <div class="gate"><b>Tamper-evident chain</b><span>Hash chain with signed checkpoints. Off by default.</span></div>
+    </div>
+  </div>
+
+  <h2>What to alert on <span>and what each one means</span></h2>
+  <table>
+    <tr><th style="width:12%">Priority</th><th style="width:26%">Signal</th><th style="width:30%">What it means</th><th>First action</th></tr>
+    <tr><td><span class="sev p1">P1</span></td>
+        <td><code>role_source=header</code> on a privileged role</td>
+        <td>A caller named its own role. With binding off this is normal and unverifiable — which is the point.</td>
+        <td>Confirm binding mode. If <code>prefer</code>, this caller is sending no verified token.</td></tr>
+    <tr><td><span class="sev p1">P1</span></td>
+        <td><code>token_binding=failed</code></td>
+        <td>A bound credential arrived without a valid proof. This is the stolen-token signature.</td>
+        <td>Revoke the token by <code>jti</code>, then find where it leaked — logs, traces, a tool response.</td></tr>
+    <tr><td><span class="sev p1">P1</span></td>
+        <td>Same <code>agent_key</code>, sudden new tool</td>
+        <td>An agent doing something it has never done. Often prompt injection rather than compromise.</td>
+        <td>Killswitch the tool for that tenant; read the prompts in that <code>session_id</code>.</td></tr>
+    <tr><td><span class="sev p2">P2</span></td>
+        <td><code>guardrail=custom_policy_input</code> spike</td>
+        <td>Repeated attempts against one of your own policies. Probing, or a broken integration.</td>
+        <td>Group by <code>agent_key</code>. One agent means a bug; many means an attack.</td></tr>
+    <tr><td><span class="sev p2">P2</span></td>
+        <td><code>[monitor] would block</code> on the MCP gateway</td>
+        <td>The control plane would have denied this, but is in observe mode.</td>
+        <td>Count them for a week, then set <code>SHIELD_MCP_CONTROL_PLANE=enforce</code>.</td></tr>
+    <tr><td><span class="sev p2">P2</span></td>
+        <td>Registry allows, enforcement denies</td>
+        <td>A data policy is vetoing a permission the console grants. The console is not the whole picture.</td>
+        <td>Reconcile the tool policy with the agent registry; the stricter layer wins.</td></tr>
+    <tr><td><span class="sev p3">P3</span></td>
+        <td><code>delegation_verified=false</code> with a header present</td>
+        <td>An on-behalf-of token was presented and rejected.</td>
+        <td>Check issuer allowlist and audience — usually a misconfigured client, not an attack.</td></tr>
+  </table>
+
+  <h2>Failure modes <span>what happens when a part is down</span></h2>
+  <table>
+    <tr><th style="width:26%">If this fails</th><th style="width:24%">Behaviour</th><th>Why</th></tr>
+    <tr><td>Shield unreachable from the app</td><td><b>Traffic is refused</b></td>
+        <td>The LangChain middleware is fail-closed by default. A timeout is not an approval.</td></tr>
+    <tr><td>Redis down</td><td>Replay and rate limits degrade; config falls back to defaults</td>
+        <td>"Cannot read config" must not mean "deny everything" — but replay protection is genuinely unavailable.</td></tr>
+    <tr><td>Model backend slow</td><td>Guarded calls take ~25s; the client may time out</td>
+        <td>Custom policies are model-evaluated. Budget for it in client timeouts.</td></tr>
+    <tr><td>An agent bypasses Shield</td><td><b>Every gate above is skipped</b></td>
+        <td>This is the assumption the whole design rests on. See below.</td></tr>
+  </table>
+
+  <div class="note">
+    <b>The one control that makes the rest true:</b> the model, the tools, the secrets and the
+    egress must be reachable <b>only</b> through Shield — private networking, no direct
+    credentials in the agent, no alternate route. Every gate on this page is bypassed by a
+    client that can reach a resource directly. If you verify one thing quarterly, verify that.
+  </div>
+
+  <p class="foot">Run <code>examples/langchain/verify_deployment.py</code> after each deploy: it
+    exercises gates 2 through 4 against the live data plane and reports the identity posture,
+    with a non-zero exit code so it can gate a release.</p>
+</div>

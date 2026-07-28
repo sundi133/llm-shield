@@ -291,7 +291,10 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             request.state.agent_key = agent_key
 
             # Resolve role if agent key is present
-            user_role = request.headers.get("X-User-Role")
+            # Shadow-agent attribution rather than authorization, but it goes
+            # through the same seam so the source is consistent everywhere.
+            from core.identity_resolution import resolve_identity
+            user_role = resolve_identity(request).user_role or None
             if agent_key:
                 role = enforcer.resolve_role(agent_key)
                 request.state.role = role
