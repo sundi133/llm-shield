@@ -22,9 +22,19 @@ const DEFAULTS = {
 // Resolve the configured screening timeout, clamped to a sane range. Local
 // storage returns a string (from the options input); managed policy returns
 // an integer — both coerce here. Falls back to the default on junk values.
+// The previous default. Anyone who never changed the setting has this SAVED,
+// and a saved value beats a new default — which is why raising the default
+// alone fixed nobody who had already opened the options page.
+const STALE_DEFAULT_MS = 20000;
+
 function resolveTimeoutMs(cfg) {
   const n = parseInt(cfg.timeoutMs, 10);
-  return Number.isFinite(n) && n >= 1000 ? Math.min(n, 120000) : 45000;
+  if (!Number.isFinite(n) || n < 1000) return DEFAULTS.timeoutMs;
+  // A screen against the cloud data plane measures 14-20s. Treat the old
+  // default as unset rather than as a deliberate choice: it is not a
+  // preference, it is a value that predates knowing the real latency.
+  if (n === STALE_DEFAULT_MS) return DEFAULTS.timeoutMs;
+  return Math.min(n, 120000);
 }
 
 // Managed (policy-pushed) config wins over local config where set. Lets a
@@ -203,7 +213,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg && msg.type === "shield-test") {
-    screen("Shield connection test from browser extension").then(sendResponse);
+    // Report the settings actually in effect. The last round of this bug was
+    // invisible because the popup showed a verdict but never the timeout or
+    // mode it used.
+    getConfig().then((cfg) =>
+      screen("Shield connection test from browser extension").then((r) =>
+        sendResponse({
+          ...r,
+          effective: {
+            timeoutMs: resolveTimeoutMs(cfg),
+            mode: cfg.mode,
+            failOpen: cfg.failOpen === true || cfg.mode === "warn",
+            shieldUrl: cfg.shieldUrl,
+          },
+        })
+      )
+    );
     return true;
   }
 });
