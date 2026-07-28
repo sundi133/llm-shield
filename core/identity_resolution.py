@@ -259,6 +259,10 @@ class ResolvedIdentity:
     #: Token-binding outcome: off | unbound | verified | failed.
     binding: str = BINDING_OFF
     binding_error: str = ""
+    #: Delegation — the user this agent is acting for, when proven.
+    acting_for: str = ""
+    delegation_verified: bool = False
+    delegation_error: str = ""
 
     @property
     def agent_verified(self) -> bool:
@@ -268,6 +272,16 @@ class ResolvedIdentity:
     def role_verified(self) -> bool:
         """True only when the role came from a verified credential's claim."""
         return self.role_source in VERIFIED_SOURCES
+
+    @property
+    def delegated(self) -> bool:
+        """A verified user is being acted for.
+
+        Authorization then intersects the agent's grant with this user's role —
+        the tool allowlist already enforces agent AND role, so taking the role
+        from a verified token is what makes that intersection meaningful.
+        """
+        return self.delegation_verified and bool(self.acting_for)
 
     @property
     def binding_failed(self) -> bool:
@@ -298,6 +312,9 @@ class ResolvedIdentity:
             "role_verified": self.role_verified,
             "role_binding_mode": self.mode,
             "token_binding": self.binding,
+            "acting_for": self.acting_for,
+            "delegation_verified": self.delegation_verified,
+            **({"delegation_error": self.delegation_error} if self.delegation_error else {}),
             **({"binding_error": self.binding_error} if self.binding_error else {}),
         }
 
@@ -355,6 +372,14 @@ def resolve_identity(
 
     # A verified role claim, when the credential carries one and the tenant has
     # opted in. Off by default, so this branch is inert until configured.
+    # Delegation: which user is this agent acting for. Off by default and
+    # short-circuits before reading any header.
+    try:
+        from core.delegation import resolve_delegation
+        deleg = resolve_delegation(request)
+    except Exception:
+        deleg = None
+
     cfg = role_binding_config(tenant_id)
     mode = cfg["mode"]
 
@@ -365,6 +390,24 @@ def resolve_identity(
     binding, binding_error = verify_token_binding(
         request, getattr(wi, "claims", None) if wi is not None else None)
     claimed = tuple(getattr(ident, "roles", ()) or ()) if ident is not None else ()
+
+    # A verified delegated user is used regardless of the role-binding mode.
+    # Delegation has its own switch (SHIELD_DELEGATION); requiring a second,
+    # unrelated flag to make it take effect would be a footgun — an operator who
+    # turns delegation on means the user's authority to apply.
+    if deleg is not None and deleg.verified and deleg.user_roles:
+        user_role = str(deleg.user_roles[0])
+        role_source = SOURCE_OIDC
+        return ResolvedIdentity(
+            agent_key=agent_key, agent_source=agent_source,
+            user_role=user_role, role_source=role_source,
+            identity_method=identity_method, trust_level=trust_level,
+            claimed_roles=tuple(deleg.user_roles), mode=mode,
+            binding=binding, binding_error=binding_error,
+            acting_for=deleg.user_sub, delegation_verified=True,
+            delegation_error="",
+        )
+
     if not claimed and mode in (MODE_PREFER, MODE_STRICT):
         # No role on the agent token — try a verified external credential.
         wl = _workload_roles(request, cfg)
@@ -393,4 +436,7 @@ def resolve_identity(
         mode=mode,
         binding=binding,
         binding_error=binding_error,
+        acting_for=(deleg.user_sub if deleg is not None else ""),
+        delegation_verified=bool(deleg is not None and deleg.verified),
+        delegation_error=(deleg.error if deleg is not None else ""),
     )
