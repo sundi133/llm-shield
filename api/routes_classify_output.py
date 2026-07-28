@@ -5,6 +5,7 @@ import re as _re
 from datetime import datetime
 from typing import Optional
 
+from core.identity_resolution import resolve_identity
 from fastapi import APIRouter, HTTPException, Request
 
 from core.models import GuardrailResult, PipelineResult
@@ -436,7 +437,11 @@ async def classify_output(request: Request, body: dict):
 
     # Extract tenant, user role, and agent context from headers and body
     tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
-    user_role = request.headers.get("X-User-Role") or context.get("user_role", "user")
+    # Header first here, then context, defaulting to "user" — the opposite
+    # precedence from the tool route, preserved deliberately. Passing no body
+    # role keeps the header as the first source; the context is the fallback.
+    _resolved = resolve_identity(request)
+    user_role = _resolved.user_role or context.get("user_role", "user")
     agent_id = request.headers.get("X-Agent-ID") or context.get("agent_id")
     tool_name = context.get("tool_name")
     tool_input = context.get("tool_input")

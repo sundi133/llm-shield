@@ -15,6 +15,7 @@ from typing import Optional
 import httpx
 from core.feature_flags import KILLSWITCH_ENABLED
 from storage.tool_killswitch import is_tool_disabled
+from core.identity_resolution import resolve_identity
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -354,7 +355,11 @@ async def agent_chat(request: Request):
 
     messages = body.get("messages", [])
     agent_key = body.get("agent_key", "")
-    user_role = body.get("user_role") or request.headers.get("X-User-Role")
+    # One seam for identity provenance — see core/identity_resolution.py.
+    # Same precedence as before (body, then header); the value does not move.
+    _resolved = resolve_identity(request, body_agent_key=agent_key,
+                                 body_user_role=body.get("user_role"))
+    user_role = _resolved.user_role or None
     llm_api_key = body.get("llm_master_key") or body.get("llm_api_key")
     llm_base_url = body.get("llm_base_url")
     llm_model = body.get("llm_model")

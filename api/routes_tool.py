@@ -624,7 +624,8 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
         if hasattr(request, "state")
         else None
     ) or request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
-    user_role = request.headers.get("X-User-Role") or request.headers.get("x-user-role", "user")
+    # Same seam as /tool/check. Defaults to "user" when absent, as before.
+    user_role = resolve_identity(request, body_agent_key=body.agent_key).user_role or "user"
 
     context = {
         "tool_name": body.tool_name,
