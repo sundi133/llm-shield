@@ -82,6 +82,83 @@ def role_binding_mode(tenant_id: Optional[str] = None) -> str:
     return mode
 
 
+def role_binding_config(tenant_id: Optional[str] = None) -> dict:
+    """Mode plus the claim path and role rename map for this tenant.
+
+    ``role_claim`` supports a dotted path, because IdPs nest it: Keycloak puts
+    realm roles at ``realm_access.roles``.
+    """
+    cfg = {"mode": role_binding_mode(tenant_id),
+           "role_claim": "realm_access.roles", "role_map": {}}
+    if cfg["mode"] == MODE_OFF or not tenant_id:
+        return cfg
+    try:
+        from storage.tenant_store import _get_redis
+        r = _get_redis()
+        if r:
+            import json
+            raw = r.get(f"shield:role_binding:{tenant_id}")
+            if raw:
+                stored = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if stored.get("role_claim"):
+                    cfg["role_claim"] = str(stored["role_claim"])
+                if isinstance(stored.get("role_map"), dict):
+                    cfg["role_map"] = stored["role_map"]
+    except Exception:
+        pass
+    return cfg
+
+
+def _dotted(claims: dict, path: str):
+    """Read a possibly-nested claim. Returns None rather than raising."""
+    cur: Any = claims
+    for part in (path or "").split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def extract_roles(claims: dict, role_claim: str, role_map: Optional[dict] = None) -> tuple:
+    """Roles from a set of VERIFIED claims, in a stable order.
+
+    Accepts a list or a single string, since IdPs differ. Order is preserved as
+    issued — never set iteration, or the same token would authorize differently
+    between calls.
+    """
+    val = _dotted(claims or {}, role_claim)
+    if val is None:
+        return ()
+    raw = [val] if isinstance(val, str) else list(val) if isinstance(val, (list, tuple)) else []
+    mapping = role_map or {}
+    out, seen = [], set()
+    for r in raw:
+        name = str(mapping.get(str(r), r)).strip()
+        if name and name not in seen:
+            seen.add(name)
+            out.append(name)
+    return tuple(out)
+
+
+def _workload_roles(request: Any, cfg: dict) -> tuple:
+    """Roles from a verified workload identity (OIDC service account, SPIFFE).
+
+    Resolved lazily and only when binding is on, so a deployment with binding
+    off pays nothing — no provider chain, no JWKS lookup, on the guard path.
+    """
+    wi = getattr(getattr(request, "state", None), "workload_identity", None)
+    if wi is None:
+        try:
+            from core.workload_identity import resolve_workload_identity
+            wi = resolve_workload_identity(request)
+        except Exception:
+            return ()
+    if wi is None:
+        return ()
+    return extract_roles(getattr(wi, "claims", {}) or {},
+                         cfg.get("role_claim", ""), cfg.get("role_map"))
+
+
 def clear_role_binding_cache_for_tests() -> None:
     _CACHE.clear()
 
@@ -185,8 +262,16 @@ def resolve_identity(
 
     # A verified role claim, when the credential carries one and the tenant has
     # opted in. Off by default, so this branch is inert until configured.
+    cfg = role_binding_config(tenant_id)
+    mode = cfg["mode"]
     claimed = tuple(getattr(ident, "roles", ()) or ()) if ident is not None else ()
-    mode = role_binding_mode(tenant_id)
+    if not claimed and mode in (MODE_PREFER, MODE_STRICT):
+        # No role on the agent token — try a verified external credential.
+        wl = _workload_roles(request, cfg)
+        if wl:
+            claimed = wl
+            if agent_source == SOURCE_NONE:
+                agent_source = SOURCE_OIDC
     if claimed and mode in (MODE_PREFER, MODE_STRICT):
         # The claim wins and the header is ignored. Deterministic ordering: the
         # first role as issued, never set iteration.

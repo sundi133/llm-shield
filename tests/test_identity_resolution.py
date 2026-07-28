@@ -228,3 +228,78 @@ class TestAuditReflectsBinding:
         assert f["role_verified"] is True
         assert f["role_binding_mode"] == "prefer"
         assert f["role_source"] == SOURCE_AGENT_TOKEN
+
+
+# ── roles from a verified OIDC credential (Keycloak shape) ──────────────────
+
+from core.identity_resolution import extract_roles  # noqa: E402
+
+
+class _WI:
+    def __init__(self, claims):
+        self.claims = claims
+
+
+def _req_wl(claims, headers=None):
+    st = SimpleNamespace(identity=None, workload_identity=_WI(claims))
+    return SimpleNamespace(headers=headers or {}, state=st)
+
+
+KEYCLOAK = {"iss": "https://kc/realms/bank", "aud": "votal-shield", "sub": "omar",
+            "realm_access": {"roles": ["payments_officer", "default-roles-bank"]}}
+
+
+class TestExtractRoles:
+    def test_keycloak_nested_claim(self):
+        assert extract_roles(KEYCLOAK, "realm_access.roles")[0] == "payments_officer"
+
+    def test_flat_claim(self):
+        assert extract_roles({"roles": ["a", "b"]}, "roles") == ("a", "b")
+
+    def test_single_string_claim(self):
+        """Some IdPs issue a scalar rather than a list."""
+        assert extract_roles({"role": "analyst"}, "role") == ("analyst",)
+
+    def test_missing_claim_is_empty_not_an_error(self):
+        assert extract_roles(KEYCLOAK, "resource_access.shield.roles") == ()
+
+    def test_role_map_renames(self):
+        out = extract_roles(KEYCLOAK, "realm_access.roles",
+                            {"payments_officer": "payments"})
+        assert out[0] == "payments"
+
+    def test_order_is_preserved_and_deduped(self):
+        out = extract_roles({"roles": ["b", "a", "b"]}, "roles")
+        assert out == ("b", "a")
+
+    @pytest.mark.parametrize("claims", [{}, {"realm_access": None},
+                                        {"realm_access": {"roles": None}},
+                                        {"realm_access": "not-a-dict"}])
+    def test_malformed_claims_do_not_raise(self, claims):
+        assert extract_roles(claims, "realm_access.roles") == ()
+
+
+class TestOIDCRolesOnTheGuardPath:
+    def test_ignored_when_binding_is_off(self):
+        """Default posture: a verified OIDC role changes nothing."""
+        r = resolve_identity(_req_wl(KEYCLOAK, {"X-User-Role": "customer_support"}))
+        assert (r.user_role, r.role_verified) == ("customer_support", False)
+
+    def test_used_in_prefer_mode(self, monkeypatch):
+        monkeypatch.setenv("SHIELD_ROLE_BINDING", "prefer")
+        r = resolve_identity(_req_wl(KEYCLOAK, {"X-User-Role": "spoofed"}))
+        assert r.user_role == "payments_officer"
+        assert (r.role_source, r.role_verified) == (SOURCE_OIDC, True)
+
+    def test_agent_token_claim_wins_over_oidc(self, monkeypatch):
+        """Both present: the agent token is the more specific credential."""
+        monkeypatch.setenv("SHIELD_ROLE_BINDING", "prefer")
+        st = SimpleNamespace(identity=_tuple_with_roles(["from_token"]),
+                             workload_identity=_WI(KEYCLOAK))
+        r = resolve_identity(SimpleNamespace(headers={}, state=st))
+        assert r.user_role == "from_token"
+
+    def test_no_workload_identity_falls_back_to_header(self, monkeypatch):
+        monkeypatch.setenv("SHIELD_ROLE_BINDING", "prefer")
+        r = resolve_identity(_req({"X-User-Role": "support"}))
+        assert (r.user_role, r.role_verified) == ("support", False)
