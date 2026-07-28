@@ -50,6 +50,15 @@ COPY core/agent_identity_middleware.py core/
 COPY core/agent_auth_safety.py core/
 COPY core/jwt_utils.py core/
 COPY core/mtls_middleware.py core/
+# Identity resolution seam. core/middleware.py imports identity_resolution, and
+# routes_agent_identity imports workload_identity — both TRANSITIVELY, which is
+# how they were missed: the admin allowlist guard only checked what admin_app.py
+# imports directly. Omitting these 500s every request through the middleware.
+COPY core/identity_resolution.py core/
+COPY core/delegation.py core/
+COPY core/dpop.py core/
+COPY core/workload_identity/ core/workload_identity/
+COPY core/proxy_trust.py core/
 # OAuth / OIDC / SPIFFE modules
 COPY core/oauth/ core/oauth/
 # A2A protocol

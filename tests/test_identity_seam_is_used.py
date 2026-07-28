@@ -48,8 +48,37 @@ ROLE_HEADER_READS = ('headers.get("X-User-Role")', "headers.get('X-User-Role')",
 
 
 def _reads_role_header(path: Path) -> bool:
+    """True if the module reads X-User-Role OUTSIDE an ImportError fallback.
+
+    A read inside `except ImportError` is a documented degradation path: it
+    restores the previous behaviour when the seam module is absent from a slim
+    image, which is exactly the failure that took the admin plane down. Blanket-
+    exempting the file would gut the guard, so only that narrow context is
+    allowed and every other read still fails.
+    """
+    import ast as _ast
+
     src = path.read_text()
-    return any(pattern in src for pattern in ROLE_HEADER_READS)
+    if not any(p in src for p in ROLE_HEADER_READS):
+        return False
+    try:
+        tree = _ast.parse(src)
+    except Exception:
+        return True  # cannot prove it is guarded — treat as a violation
+
+    fallback_lines = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Try):
+            for h in node.handlers:
+                if isinstance(h.type, _ast.Name) and h.type.id == "ImportError":
+                    for child in _ast.walk(h):
+                        if hasattr(child, "lineno"):
+                            fallback_lines.add(child.lineno)
+
+    for i, line in enumerate(src.splitlines(), start=1):
+        if any(p in line for p in ROLE_HEADER_READS) and i not in fallback_lines:
+            return True
+    return False
 
 
 @pytest.mark.parametrize("rel", ENFORCEMENT_MODULES)

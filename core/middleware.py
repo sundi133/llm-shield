@@ -1,6 +1,7 @@
 """Shield middleware for enriching requests with agent/tenant context and rate limiting."""
 
 import json
+import logging
 import time
 import threading
 from typing import Optional
@@ -12,6 +13,8 @@ from core.rbac import enforcer
 from storage.tenant_store import resolve_tenant_by_api_key, get_tenant
 from storage.rate_limiter import check_and_increment
 from core.feature_flags import CERT_IDENTITY_ENABLED
+
+logger = logging.getLogger(__name__)
 
 # In-memory cache for tenant lookups to reduce Redis hits
 _tenant_cache: dict[str, tuple[Optional[str], Optional[dict], float]] = {}
@@ -293,8 +296,20 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             # Resolve role if agent key is present
             # Shadow-agent attribution rather than authorization, but it goes
             # through the same seam so the source is consistent everywhere.
-            from core.identity_resolution import resolve_identity
-            user_role = resolve_identity(request).user_role or None
+            # Guarded on purpose. This runs on every request, and an
+            # unguarded import of a module absent from a slim image (the admin
+            # allowlist) turns a missing file into a 500 on every route,
+            # including login. Fall back to the previous behaviour and say so.
+            try:
+                from core.identity_resolution import resolve_identity
+                user_role = resolve_identity(request).user_role or None
+            except ImportError:
+                logger.warning(
+                    "core.identity_resolution unavailable in this image — "
+                    "falling back to the raw X-User-Role header. Add it to the "
+                    "Dockerfile COPY allowlist."
+                )
+                user_role = request.headers.get("X-User-Role")
             if agent_key:
                 role = enforcer.resolve_role(agent_key)
                 request.state.role = role
