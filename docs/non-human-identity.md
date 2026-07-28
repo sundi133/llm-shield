@@ -3,7 +3,7 @@ title: Non-Human Identity (NHI)
 layout: default
 nav_order: 14
 permalink: /non-human-identity/
-description: How Shield identifies and authorizes agents: workload attestation, agent principals, proof-of-possession, delegation, and per-action capabilities. Five layers, each independently switchable.
+description: "How Shield identifies and authorizes agents: workload attestation, agent principals, proof-of-possession, delegation, and per-action capabilities. Five layers, each independently switchable."
 ---
 
 # Non-human identity
