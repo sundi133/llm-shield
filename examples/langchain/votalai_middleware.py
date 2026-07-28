@@ -30,8 +30,12 @@ Config (constructor args or env):
 
 from __future__ import annotations
 
+import logging
 import os
+
 import requests
+
+logger = logging.getLogger(__name__)
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ToolCallRequest
@@ -52,6 +56,8 @@ class VotalAIGuardrail(AgentMiddleware):
         check_output: bool = True,
         check_tools: bool = True,
         block_message: str = "I can't help with that request.",
+        timeout: float = 45.0,
+        fail_open: bool = False,
     ) -> None:
         super().__init__()
         self.shield = (shield_url or os.getenv("LLM_SHIELD_URL") or os.getenv("SHIELD_URL") or "").rstrip("/")
@@ -63,6 +69,14 @@ class VotalAIGuardrail(AgentMiddleware):
         self.agent_key, self.user_role = agent_key, user_role
         self.check_input, self.check_output, self.check_tools = check_input, check_output, check_tools
         self.block_message = block_message
+        # Guardrail calls run LLM-evaluated custom policies. Measured 12-15s
+        # against the cloud data plane, so the old 15s timeout sat below p50 and
+        # a slow call silently shipped the content it was meant to screen.
+        self.timeout = timeout
+        # A timeout is not an approval. Default fail-CLOSED: if Shield cannot be
+        # reached, refuse rather than let unscreened content through. Set
+        # fail_open=True only if availability genuinely outranks the control.
+        self.fail_open = fail_open
         self._s = requests.Session()
         self._s.headers.update({"X-API-Key": self.api_key, "Content-Type": "application/json"})
         if token:
@@ -78,9 +92,16 @@ class VotalAIGuardrail(AgentMiddleware):
             return None
         try:
             r = self._s.post(f"{self.shield}/guardrails/input",
-                             json={"message": str(last.content)}, timeout=15).json()
-        except Exception:
-            return None  # fail-open on transport errors; Shield logs the gap
+                             json={"message": str(last.content)},
+                             timeout=self.timeout).json()
+        except Exception as e:
+            logger.warning("shield input guardrail unavailable (%s): %s",
+                           type(e).__name__, e)
+            if self.fail_open:
+                return None
+            return {"jump_to": "end",
+                    "messages": [AIMessage(content=f"{self.block_message} "
+                                                   f"[guardrails unavailable]")]}
         if r.get("safe") is False:
             why = ", ".join(g.get("guardrail") for g in r.get("guardrail_results", []) if not g.get("passed"))
             # short-circuit the agent with a refusal as the final answer
@@ -98,9 +119,15 @@ class VotalAIGuardrail(AgentMiddleware):
             return None
         try:
             r = self._s.post(f"{self.shield}/guardrails/output",
-                             json={"output": str(last.content)}, timeout=15).json()
-        except Exception:
-            return None
+                             json={"output": str(last.content)},
+                             timeout=self.timeout).json()
+        except Exception as e:
+            logger.warning("shield output guardrail unavailable (%s): %s — %s",
+                           type(e).__name__, e,
+                           "passing unscreened" if self.fail_open else "blocking")
+            if self.fail_open:
+                return None
+            return {"messages": [AIMessage(content=self.block_message, id=last.id)]}
         if r.get("safe") is False:
             return {"messages": [AIMessage(content=self.block_message, id=last.id)]}
         sanitized = r.get("sanitized_output")
@@ -120,10 +147,11 @@ class VotalAIGuardrail(AgentMiddleware):
                              json={"agent_key": self.agent_key, "tool_name": name,
                                    "tool_params": request.tool_call.get("args", {}),
                                    "user_role": self.user_role},
-                             timeout=15).json()
+                             timeout=self.timeout).json()
             allowed = r.get("allowed", True) and r.get("action") != "block"
-        except Exception:
-            allowed = True  # fail-open on transport errors
+        except Exception as e:
+            logger.warning("shield tool check unavailable (%s): %s", type(e).__name__, e)
+            r, allowed = {}, self.fail_open
         if not allowed:
             reason = r.get("message") or "not permitted by policy"
             return ToolMessage(content=f"BLOCKED by Votal Shield: {reason}",
