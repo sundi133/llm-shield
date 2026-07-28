@@ -1,5 +1,76 @@
 # LangChain + LLM Shield
 
+## Start here
+
+There are several patterns in this folder. **If you just want guardrails on a
+LangChain agent, use the middleware** — it hooks LangChain's own extension
+points, so you add a class rather than rewrite your agent loop.
+
+```python
+from votalai_middleware import VotalAIGuardrail
+
+agent = create_agent(
+    model=...,
+    tools=[...],
+    middleware=[VotalAIGuardrail(agent_key="support-bot", user_role="payments_officer")],
+)
+```
+
+That one class covers three things:
+
+| LangChain hook | what Shield does |
+| --- | --- |
+| `before_model` | input guardrails — injection blocked before it reaches the LLM |
+| `after_model` | output guardrails — reply sanitized or blocked |
+| `wrap_tool_call` | tool RBAC — a tool this role may not use never executes |
+
+Two variables, and nothing else is required:
+
+```bash
+export LLM_SHIELD_URL="https://api.guardrails.votal.ai"
+export TENANT_API_KEY="<your tenant key>"
+```
+
+`SHIELD_URL` also works for the first; `API_KEY` and `SHIELD_TENANT_KEY` also
+work for the second, since other examples here use those names.
+
+**Verify against your Shield before writing any code** — this needs no model
+and no API key beyond the two above:
+
+```bash
+python middleware_demo.py
+```
+
+Expect `PASS=5 FAIL=0`: benign input passes, prompt injection is blocked, output
+is screened, a forbidden tool never executes, an allowed tool runs. If this
+fails, the problem is configuration, not your agent.
+
+Run it with the **default** `AGENT_ID`. Pointing it at an agent you have
+registered will fail the "allowed tool runs" case — correctly, because the
+demo's tool is not in that agent's `role_permissions`. That is RBAC working,
+not the middleware breaking.
+
+### Which example do I want?
+
+| you want | file |
+| --- | --- |
+| Guardrails on a LangChain agent (**start here**) | `votalai_middleware.py` + `middleware_demo.py` |
+| Prove RBAC differs by role | `middleware_demo_rbac.py` |
+| Full agent with input/output guardrails | `shield_langchain_agent.py` |
+| Per-tool capabilities (mint + verify at the tool boundary) | `langchain_guarded_tools.py` |
+| OIDC / workload identity | `langchain_oidc_decorator.py`, `spiffe_guarded_e2e.py` |
+
+Two things worth knowing before you pick:
+
+- The **capability** examples need `SHIELD_AGENT_TOKEN_PRIVATE_KEY` set
+  consistently on the Shield deployment. Without it Shield signs agent tokens
+  with an ephemeral per-process key and then rejects them — `401 invalid
+  signature` at `/v1/shield/cap/mint`, with every tool denied.
+- A guarded call against the cloud data plane takes roughly 25 seconds, and the
+  first call after idle can fail on a cold start. Fine for a demo; size it into
+  your UX before production.
+
+
 Protect LangChain agents using the **two-plane production architecture**:
 
 - **LLM + guardrails plane → LiteLLM proxy.** Input/output guardrails run

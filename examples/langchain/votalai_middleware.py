@@ -55,7 +55,8 @@ class VotalAIGuardrail(AgentMiddleware):
     ) -> None:
         super().__init__()
         self.shield = (shield_url or os.getenv("LLM_SHIELD_URL") or os.getenv("SHIELD_URL") or "").rstrip("/")
-        self.api_key = api_key or os.getenv("TENANT_API_KEY") or os.getenv("API_KEY") or ""
+        self.api_key = (api_key or os.getenv("TENANT_API_KEY") or os.getenv("API_KEY")
+                        or os.getenv("SHIELD_TENANT_KEY") or "")
         token = runpod_token if runpod_token is not None else os.getenv("RUNPOD_TOKEN", "")
         if not self.shield or not self.api_key:
             raise ValueError("VotalAIGuardrail needs shield_url and api_key (or LLM_SHIELD_URL / TENANT_API_KEY env)")
