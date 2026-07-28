@@ -37,33 +37,39 @@ _MCP_PARITY_ENV = "SHIELD_MCP_TOOL_PARITY"
 
 
 def _mcp_parity_enabled() -> bool:
-    """Opt-in: run the FULL REST tool-call guard chain on the MCP path too.
+    """Run the full REST tool-call guard chain on the MCP path. Default ON.
 
-    Default off => the MCP path keeps its historical 4-guard behavior
-    (non-breaking). When on, the extra guards the REST path runs
-    (routes_tool._CHECK_GUARDS) are added so MCP and REST enforce identically.
+    Previously opt-in and off, which meant the gateway enforced 4 guards while
+    the REST path enforced 7 — a tool blocked over REST executed through the
+    gateway. Defaulting on makes one ingress not weaker than the other.
+
+    Escape hatch: SHIELD_MCP_TOOL_PARITY=0 restores the historical 4-guard
+    behaviour. See docs/mcp-enforcement-parity.md for the migration note.
     """
-    return os.getenv(_MCP_PARITY_ENV, "0").strip().lower() in _TRUTHY
+    return os.getenv(_MCP_PARITY_ENV, "1").strip().lower() in _TRUTHY
 
 
 _MCP_CONTROL_PLANE_ENV = "SHIELD_MCP_CONTROL_PLANE"
 
 
 def _control_plane_mode() -> str:
-    """off | monitor | enforce — default off.
+    """off | monitor | enforce — default enforce.
 
     The REST tool path runs a control plane the MCP path never had: circuit
     breaker, parameter policies, workflow constraints and approval rules. A
     tool that blocks on /v1/shield/tool/check therefore executes through the
     gateway today.
 
-    Closing that changes authorization outcomes for traffic that currently
-    flows, so it ships off. "monitor" evaluates and records what WOULD have
-    been denied without denying it, which is how an operator sizes the blast
-    radius before switching to "enforce".
+    This changes authorization outcomes for traffic that flowed before, which
+    is the point: those calls were escaping the control plane. "monitor"
+    evaluates and records what WOULD be denied without denying, for operators
+    who want to size the impact first; "off" restores the previous behaviour.
+
+    An unrecognised value resolves to "enforce" rather than "off" — a typo in
+    an env var must not silently disable an authorization control.
     """
-    v = os.getenv(_MCP_CONTROL_PLANE_ENV, "off").strip().lower()
-    return v if v in ("off", "monitor", "enforce") else "off"
+    v = os.getenv(_MCP_CONTROL_PLANE_ENV, "enforce").strip().lower()
+    return v if v in ("off", "monitor", "enforce") else "enforce"
 
 
 async def _control_plane_results(tool_name, arguments, *, agent_key, tenant_id,
@@ -231,6 +237,17 @@ async def enforce_tool_call(
     """
     arguments = arguments or {}
     risk = score_tool(tool_name, arguments=arguments)["risk"]
+    # The gateway does not thread tenant_config, so without this the tenant's
+    # own tool_allowlist rules are ignored AND policy_mode defaults — meaning a
+    # tenant running in "monitor" would take hard blocks here. Enforcing the
+    # wrong policy is worse than enforcing none, so load it when absent.
+    if tenant_config is None and tenant_id:
+        try:
+            from storage.tenant_store import get_tenant
+            tenant_config = get_tenant(tenant_id)
+        except Exception:
+            tenant_config = None
+
     mode = policy_mode.resolve_mode(tenant_config)
 
     # Kill switch: an operator-disabled tool is an administrative block —

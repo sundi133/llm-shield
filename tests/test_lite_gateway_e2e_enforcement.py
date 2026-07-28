@@ -55,6 +55,9 @@ def gateway(monkeypatch):
     cs.config = None
 
     monkeypatch.setenv("SHIELD_MCP_TOOL_PARITY", "1")
+    # This file exercises the guard chain, not the control plane, which now
+    # defaults to enforce and would add its own results to the decision.
+    monkeypatch.setenv("SHIELD_MCP_CONTROL_PLANE", "off")
 
     # In-memory Redis for the confirmation store + rate-limit counters.
     store = {}

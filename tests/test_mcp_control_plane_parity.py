@@ -4,8 +4,9 @@
 breaker, parameter policies, workflow constraints and approval rules. A tool
 that blocks over REST therefore executes through the gateway.
 
-Closing that changes outcomes for traffic that flows today, so it ships
-`off` and moves off → monitor → enforce. These tests pin all three.
+Both now default ON: SHIELD_MCP_TOOL_PARITY=1 and SHIELD_MCP_CONTROL_PLANE=
+enforce. One ingress must not be weaker than the other. These tests pin the
+defaults, the escape hatches, and that the two guard chains stay identical.
 """
 import pytest
 
@@ -19,8 +20,14 @@ def _clean(monkeypatch):
 
 
 class TestMode:
-    def test_defaults_to_off(self):
-        """Default must be today's behaviour — this is the non-breaking pin."""
+    def test_defaults_to_enforce(self):
+        """One ingress must not be weaker than the other. The gateway now runs
+        the control plane by default; SHIELD_MCP_CONTROL_PLANE=off is the
+        escape hatch."""
+        assert enforcement._control_plane_mode() == "enforce"
+
+    def test_off_is_the_escape_hatch(self, monkeypatch):
+        monkeypatch.setenv("SHIELD_MCP_CONTROL_PLANE", "off")
         assert enforcement._control_plane_mode() == "off"
 
     @pytest.mark.parametrize("value,expected", [
@@ -32,11 +39,11 @@ class TestMode:
         assert enforcement._control_plane_mode() == expected
 
     @pytest.mark.parametrize("value", ["1", "true", "on", "yes", "enforce-please", ""])
-    def test_unrecognised_values_fall_back_to_off(self, monkeypatch, value):
-        """A typo must not silently half-enable an authorization control, and
-        must never be read as 'enforce'."""
+    def test_unrecognised_values_fall_back_to_enforce(self, monkeypatch, value):
+        """A typo in an env var must never silently disable an authorization
+        control. Unrecognised resolves to the safe end, not the permissive one."""
         monkeypatch.setenv("SHIELD_MCP_CONTROL_PLANE", value)
-        assert enforcement._control_plane_mode() == "off"
+        assert enforcement._control_plane_mode() == "enforce"
 
 
 class TestControlPlaneResults:
@@ -89,12 +96,24 @@ class TestControlPlaneResults:
         assert isinstance(out, list)
 
 
-class TestGuardChainUnchanged:
-    def test_base_chain_is_still_four_guards(self):
-        """The control-plane flag must not disturb the existing guard chain."""
+class TestGuardChain:
+    def test_parity_is_on_by_default(self):
+        """The gateway now runs the same guard set as the REST tool path."""
         names = [type(g).__name__ for g in enforcement._tool_guard_chain()]
-        assert len(names) == 4, names
+        assert len(names) == 7, names
+        assert "SensitiveActionConfirmationGuardrail" in names
+
+    def test_matches_the_rest_guard_set(self):
+        """Pin the two chains together so they cannot drift apart again."""
+        from api.routes_tool import _CHECK_GUARDS
+        rest = {cls.__name__ for _, cls in _CHECK_GUARDS}
+        mcp = {type(g).__name__ for g in enforcement._tool_guard_chain()}
+        assert rest == mcp, f"REST-only: {rest - mcp}  MCP-only: {mcp - rest}"
+
+    def test_zero_is_the_escape_hatch(self, monkeypatch):
+        monkeypatch.setenv("SHIELD_MCP_TOOL_PARITY", "0")
+        assert len(enforcement._tool_guard_chain()) == 4
 
     def test_control_plane_flag_does_not_change_guard_chain(self, monkeypatch):
-        monkeypatch.setenv("SHIELD_MCP_CONTROL_PLANE", "enforce")
-        assert len(enforcement._tool_guard_chain()) == 4
+        monkeypatch.setenv("SHIELD_MCP_CONTROL_PLANE", "off")
+        assert len(enforcement._tool_guard_chain()) == 7
