@@ -39,33 +39,35 @@ Gateway denials left no forensic record at all.
 | variable | old default | new default |
 | --- | --- | --- |
 | `SHIELD_MCP_TOOL_PARITY` | `0` | **`1`** |
-| `SHIELD_MCP_CONTROL_PLANE` | (did not exist) | **`enforce`** |
+| `SHIELD_MCP_CONTROL_PLANE` | (did not exist) | **`monitor`** |
 
-The gateway now runs the same guard set as the REST path, plus the control
-plane, and its decisions are written to the decision audit with the failing
-guardrail and the role source.
+The gateway now runs the same guard set as the REST path, and its decisions are
+written to the decision audit with the failing guardrail and the role source.
+
+The control plane defaults to **`monitor`**, not `enforce`: it evaluates every
+check and records what it *would* deny, denying nothing. The gap becomes
+visible on upgrade instead of a silent bypass becoming a sudden outage.
 
 `enforce_tool_call` also loads tenant config when the caller did not supply it.
 Without that, turning enforcement on would apply the *wrong* policy — defaults
 instead of the tenant's — which is worse than applying none.
 
-## This will deny calls that previously succeeded
+## What changes on upgrade
 
-That is the point: those calls were escaping the control plane. But it is a
-behaviour change on upgrade, with no monitor phase unless you ask for one.
+**The guard chain does enforce.** `SHIELD_MCP_TOOL_PARITY=1` means the gateway
+runs 7 guards where it ran 4, and those denials are real. Calls that succeeded
+before can be denied. Set `SHIELD_MCP_TOOL_PARITY=0` if you need the old chain
+while you assess.
 
-**Size the impact before committing.** Set:
+**The control plane does not deny yet.** On `monitor` it writes audit entries
+reading `[monitor] would block: ...` and lets the call through.
 
-```
-SHIELD_MCP_CONTROL_PLANE=monitor
-```
+So the rollout is:
 
-The control plane then evaluates every check and records what it *would* have
-denied — audit entries read `[monitor] would block: ...` — while denying
-nothing. Run that for a release, read the entries, then remove the variable to
-return to `enforce`.
-
-A high count is not a regression. It is the gap this closes, measured.
+1. Deploy. Read the `[monitor] would block` entries for a release.
+2. A high count is not a regression — it is the gap, measured. Each entry is a
+   call that was escaping the control plane entirely.
+3. Set `SHIELD_MCP_CONTROL_PLANE=enforce` when the count is understood.
 
 ## Rolling back
 

@@ -53,23 +53,24 @@ _MCP_CONTROL_PLANE_ENV = "SHIELD_MCP_CONTROL_PLANE"
 
 
 def _control_plane_mode() -> str:
-    """off | monitor | enforce — default enforce.
+    """off | monitor | enforce — default monitor.
 
     The REST tool path runs a control plane the MCP path never had: circuit
     breaker, parameter policies, workflow constraints and approval rules. A
     tool that blocks on /v1/shield/tool/check therefore executes through the
     gateway today.
 
-    This changes authorization outcomes for traffic that flowed before, which
-    is the point: those calls were escaping the control plane. "monitor"
-    evaluates and records what WOULD be denied without denying, for operators
-    who want to size the impact first; "off" restores the previous behaviour.
+    Defaults to "monitor": every check runs and records what it WOULD deny —
+    audit entries read "[monitor] would block: ..." — while denying nothing.
+    That makes the gap visible on upgrade without turning a silent bypass into
+    a sudden outage. Operators read those entries, then set "enforce".
 
-    An unrecognised value resolves to "enforce" rather than "off" — a typo in
-    an env var must not silently disable an authorization control.
+    An unrecognised value resolves to "monitor", not "off". A typo must not
+    silently stop the checks running, and must not silently start denying
+    either — monitor is the honest middle: it observes and reports.
     """
-    v = os.getenv(_MCP_CONTROL_PLANE_ENV, "enforce").strip().lower()
-    return v if v in ("off", "monitor", "enforce") else "enforce"
+    v = os.getenv(_MCP_CONTROL_PLANE_ENV, "monitor").strip().lower()
+    return v if v in ("off", "monitor", "enforce") else "monitor"
 
 
 async def _control_plane_results(tool_name, arguments, *, agent_key, tenant_id,

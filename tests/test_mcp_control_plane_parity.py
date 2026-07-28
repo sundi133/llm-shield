@@ -4,9 +4,11 @@
 breaker, parameter policies, workflow constraints and approval rules. A tool
 that blocks over REST therefore executes through the gateway.
 
-Both now default ON: SHIELD_MCP_TOOL_PARITY=1 and SHIELD_MCP_CONTROL_PLANE=
-enforce. One ingress must not be weaker than the other. These tests pin the
-defaults, the escape hatches, and that the two guard chains stay identical.
+SHIELD_MCP_TOOL_PARITY defaults to 1, so the guard chains match. The control
+plane defaults to "monitor": it runs and records what it would deny without
+denying, so the gap is visible on upgrade rather than becoming an outage.
+These tests pin the defaults, the escape hatches, and that the two guard chains
+stay identical.
 """
 import pytest
 
@@ -20,11 +22,11 @@ def _clean(monkeypatch):
 
 
 class TestMode:
-    def test_defaults_to_enforce(self):
-        """One ingress must not be weaker than the other. The gateway now runs
-        the control plane by default; SHIELD_MCP_CONTROL_PLANE=off is the
-        escape hatch."""
-        assert enforcement._control_plane_mode() == "enforce"
+    def test_defaults_to_monitor(self):
+        """The checks run by default and record what they would deny, without
+        denying. That surfaces the gap on upgrade instead of converting a
+        silent bypass into a sudden outage; operators then set "enforce"."""
+        assert enforcement._control_plane_mode() == "monitor"
 
     def test_off_is_the_escape_hatch(self, monkeypatch):
         monkeypatch.setenv("SHIELD_MCP_CONTROL_PLANE", "off")
@@ -39,11 +41,11 @@ class TestMode:
         assert enforcement._control_plane_mode() == expected
 
     @pytest.mark.parametrize("value", ["1", "true", "on", "yes", "enforce-please", ""])
-    def test_unrecognised_values_fall_back_to_enforce(self, monkeypatch, value):
-        """A typo in an env var must never silently disable an authorization
-        control. Unrecognised resolves to the safe end, not the permissive one."""
+    def test_unrecognised_values_fall_back_to_monitor(self, monkeypatch, value):
+        """A typo must not silently stop the checks running, and must not
+        silently start denying either. Monitor observes and reports."""
         monkeypatch.setenv("SHIELD_MCP_CONTROL_PLANE", value)
-        assert enforcement._control_plane_mode() == "enforce"
+        assert enforcement._control_plane_mode() == "monitor"
 
 
 class TestControlPlaneResults:
