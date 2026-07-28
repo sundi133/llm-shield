@@ -22,11 +22,12 @@ from langchain.agents.middleware.types import ToolCallRequest
 from votalai_middleware import VotalAIGuardrail
 
 SHIELD = (os.getenv("LLM_SHIELD_URL") or os.getenv("SHIELD_URL") or "").rstrip("/")
-KEY = os.getenv("TENANT_API_KEY") or os.getenv("API_KEY") or ""
+KEY = (os.getenv("TENANT_API_KEY") or os.getenv("API_KEY")
+       or os.getenv("SHIELD_TENANT_KEY") or "")
 TOK = os.getenv("RUNPOD_TOKEN", "")
 AGENT = os.getenv("AGENT_ID", "langchain-mw-demo")
 if not SHIELD or not KEY:
-    sys.exit("set LLM_SHIELD_URL and TENANT_API_KEY")
+    sys.exit("set LLM_SHIELD_URL (or SHIELD_URL) and TENANT_API_KEY (or API_KEY / SHIELD_TENANT_KEY)")
 
 _p = _f = 0
 def ok(n): globals().__setitem__("_p", _p + 1); print(f"  PASS {n}")

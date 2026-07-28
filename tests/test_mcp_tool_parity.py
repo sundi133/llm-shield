@@ -16,7 +16,8 @@ _BASE = {RBACGuard, DataAccessGuard, ToolAllowlistGuardrail, ToolCallValidationG
 
 
 def test_default_chain_is_unchanged_when_parity_off(monkeypatch):
-    monkeypatch.delenv(enf._MCP_PARITY_ENV, raising=False)
+    monkeypatch.setenv(enf._MCP_PARITY_ENV, "0")
+    monkeypatch.setenv(enf._MCP_CONTROL_PLANE_ENV, "off")
     assert {type(g) for g in enf._tool_guard_chain()} == _BASE
 
 

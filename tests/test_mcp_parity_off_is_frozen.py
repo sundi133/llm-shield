@@ -1,13 +1,19 @@
-"""Production safety net: with SHIELD_MCP_TOOL_PARITY unset, the MCP tool path
+"""Production safety net: with SHIELD_MCP_TOOL_PARITY=0, the MCP tool path
 must behave exactly as it did before the parity work.
+
+NOTE: parity and the control plane now default ON — one ingress must not be
+weaker than another, so the gateway runs the same guard set as the REST tool
+path. "Off" is no longer the default; it is the documented escape hatch, and
+these tests pin that it still works unchanged. They set the env explicitly
+rather than relying on an unset variable.
 
 This is the test the original gap needed. tests/test_mcp_tool_parity.py pinned
 the guard *set* but not the behaviour, which is how a guard that was present but
 inert stayed green. These assertions freeze the default path so a future edit
 cannot quietly change what a customer running the shipped default experiences.
 
-If a change here fails, do not "fix" the test: the default is a compatibility
-contract. Add the new behaviour behind the flag instead.
+If a change here fails, do not "fix" the test: the OFF path is a compatibility
+contract for anyone who has opted out. Add new behaviour behind the flag.
 """
 import asyncio
 import json
@@ -25,7 +31,8 @@ BASE_CHAIN = ["RBACGuard", "DataAccessGuard",
 
 @pytest.fixture(autouse=True)
 def _parity_off(monkeypatch):
-    monkeypatch.delenv(enf._MCP_PARITY_ENV, raising=False)
+    monkeypatch.setenv(enf._MCP_PARITY_ENV, "0")
+    monkeypatch.setenv(enf._MCP_CONTROL_PLANE_ENV, "off")
 
 
 class _Pass:

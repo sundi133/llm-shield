@@ -130,7 +130,8 @@ def test_session_unavailable_is_advisory_never_blocks(recorder, monkeypatch):
 def test_no_advisory_noise_when_parity_off(recorder, monkeypatch):
     """Parity off means the session-scoped guards aren't in the chain, so a
     missing session is not a degradation worth reporting."""
-    monkeypatch.delenv(enf._MCP_PARITY_ENV, raising=False)
+    monkeypatch.setenv(enf._MCP_PARITY_ENV, "0")
+    monkeypatch.setenv(enf._MCP_CONTROL_PLANE_ENV, "off")
     d = _call()
     assert "session_unavailable" not in [r["guardrail"] for r in d["results"]]
 
