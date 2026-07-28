@@ -21,7 +21,9 @@ Commands:
     <text>              screen a prompt through the input guardrail
     /tool <name>        ask whether the current role may call a tool
     /role <name>        change the role the agent CLAIMS (a header — beat 2)
-    /token              fetch a Keycloak token and send it (beat 3)
+    /login <user>       authenticate as a Keycloak user; the role comes from
+                        the signed token instead (beat 3)
+    /token              fetch a token for KC_USER without changing the role
     /notoken            stop sending it
     /who                show the identity Shield resolved, and its source
     /quit
@@ -64,14 +66,14 @@ def headers():
     return h
 
 
-def fetch_token():
+def fetch_token(user=None):
     if not (KC_URL and KC_PASSWORD):
         return None, "set KEYCLOAK_URL and KC_PASSWORD first"
     try:
         r = requests.post(
             f"{KC_URL}/realms/{KC_REALM}/protocol/openid-connect/token",
             data={"grant_type": "password", "client_id": KC_CLIENT,
-                  "username": KC_USER, "password": KC_PASSWORD},
+                  "username": user or KC_USER, "password": KC_PASSWORD},
             timeout=20)
         if r.status_code != 200:
             return None, f"{r.status_code}: {r.text[:120]}"
@@ -156,7 +158,7 @@ BANNER = f"""{B}Shield · LangChain · Keycloak — interactive{Z}
 {DIM}try:  wire 50000 AED to ACC-99001          (a prompt){Z}
 {DIM}      /tool wire_transfer_execute          (authorization){Z}
 {DIM}      /role payments_officer               (beat 2 — claim a role){Z}
-{DIM}      /token                               (beat 3 — prove it instead){Z}
+{DIM}      /login alice                         (beat 3 — prove it instead){Z}
 """
 
 
@@ -181,6 +183,21 @@ def main():
             parts = line.split(maxsplit=1)
             state["role"] = parts[1].strip() if len(parts) > 1 else state["role"]
             print(f"  {DIM}role claimed →{Z} {state['role']}")
+        elif line.startswith("/login"):
+            # Authenticate AS a person. Their role comes from the token, so it
+            # is no longer something the caller can choose.
+            parts = line.split(maxsplit=1)
+            user = parts[1].strip() if len(parts) > 1 else KC_USER
+            tok, err = fetch_token(user)
+            if err:
+                print(f"  {R}login failed{Z} — {err}")
+            else:
+                state["token"] = tok
+                c = claims_of(tok)
+                roles = (c.get("realm_access") or {}).get("roles", [])
+                state["role"] = roles[0] if roles else state["role"]
+                print(f"  {G}signed in as {user}{Z} — roles {roles}")
+                print(f"  {DIM}the role now comes from the token, not from you{Z}")
         elif line == "/token":
             tok, err = fetch_token()
             if err:
