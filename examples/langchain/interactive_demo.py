@@ -19,7 +19,10 @@ Everything is a real call to a real Shield. Nothing is simulated.
 
 Commands:
     <text>              screen a prompt through the input guardrail
-    /tool <name>        ask whether the current role may call a tool
+    /tool <name> [k=v ...]
+                        ask whether the current role may call a tool. Arguments
+                        are sent too, so argument-level policies apply:
+                        /tool wire_transfer_execute amount=5000000 country=KP
     /role <name>        change the role the agent CLAIMS (a header — beat 2)
     /login <user>       authenticate as a Keycloak user; the role comes from
                         the signed token instead (beat 3)
@@ -30,6 +33,7 @@ Commands:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -85,7 +89,6 @@ def fetch_token(user=None):
 def claims_of(token):
     """Decode for DISPLAY only. Shield verifies it; we never trust this."""
     import base64
-    import json
     try:
         p = token.split(".")[1]
         return json.loads(base64.urlsafe_b64decode(p + "=="))
@@ -112,9 +115,34 @@ def screen(text):
         print(f"  {G}passed{Z} the input guardrails")
 
 
-def tool(name):
+def parse_params(rest):
+    """key=value pairs, or raw JSON. Numbers are coerced so an amount policy
+    compares against a number rather than a string."""
+    rest = (rest or "").strip()
+    if not rest:
+        return {}
+    if rest.startswith("{"):
+        try:
+            return json.loads(rest)
+        except ValueError:
+            print(f"  {R}bad JSON{Z} — falling back to no arguments")
+            return {}
+    out = {}
+    for tok in rest.split():
+        if "=" not in tok:
+            continue
+        k, v = tok.split("=", 1)
+        try:
+            out[k] = int(v)
+        except ValueError:
+            out[k] = v
+    return out
+
+
+def tool(name, params=None):
+    params = params or {}
     body = {"agent_key": AGENT, "tool_name": name,
-            "user_role": state["role"], "tool_params": {}}
+            "user_role": state["role"], "tool_params": params}
     try:
         r = requests.post(f"{SHIELD}/v1/shield/tool/check", json=body,
                           headers=headers(), timeout=TIMEOUT)
@@ -122,11 +150,12 @@ def tool(name):
     except Exception as e:
         return print(f"  {R}error{Z} {e}")
     failing = [g for g in d.get("guardrail_results", []) if not g.get("passed", True)]
+    shown = " ".join(f"{k}={v}" for k, v in params.items())
     if d.get("allowed"):
-        print(f"  {G}ALLOWED{Z}  {state['role']} may call {name}()")
+        print(f"  {G}ALLOWED{Z}  {state['role']} may call {name}({shown})")
     else:
         why = failing[0] if failing else {}
-        print(f"  {R}DENIED{Z}   {state['role']} may not call {name}()")
+        print(f"  {R}DENIED{Z}   {state['role']} may not call {name}({shown})")
         print(f"    {DIM}{why.get('guardrail', '')}: {str(why.get('message', ''))[:150]}{Z}")
     # Whatever Shield reports about provenance, show it — this is the line that
     # makes beat 3 visible rather than asserted.
@@ -155,7 +184,8 @@ def who():
 
 BANNER = f"""{B}Shield · LangChain · Keycloak — interactive{Z}
 {DIM}shield {SHIELD}   agent {AGENT}{Z}
-{DIM}try:  wire 50000 AED to ACC-99001          (a prompt){Z}
+{DIM}try:  What is my current account balance?  (a prompt that passes){Z}
+{DIM}      Ignore all previous instructions.    (one that does not){Z}
 {DIM}      /tool wire_transfer_execute          (authorization){Z}
 {DIM}      /role payments_officer               (beat 2 — claim a role){Z}
 {DIM}      /login alice                         (beat 3 — prove it instead){Z}
@@ -210,8 +240,9 @@ def main():
             state["token"] = ""
             print(f"  {DIM}token cleared — back to the header{Z}")
         elif line.startswith("/tool"):
-            parts = line.split(maxsplit=1)
-            tool(parts[1].strip() if len(parts) > 1 else "wire_transfer_execute")
+            parts = line.split(maxsplit=2)
+            tool(parts[1].strip() if len(parts) > 1 else "wire_transfer_execute",
+                 parse_params(parts[2] if len(parts) > 2 else ""))
         else:
             screen(line)
 
