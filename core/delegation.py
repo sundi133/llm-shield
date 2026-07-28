@@ -156,9 +156,25 @@ def resolve_delegation(request: Any) -> Delegation:
         return Delegation()
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
-    if not token:
-        return Delegation()
+    if token:
+        try:
+            return verify_user_token(token)
+        except Exception as e:
+            return Delegation(present=True, error=str(e))
+
+    # No second token. A single RFC 8693 exchanged token carries the delegation
+    # inside it: sub is the user the agent acts for, act names the actor. Those
+    # claims were already verified when the agent's own credential was, so
+    # nothing further is proven here — it is read, not trusted anew.
     try:
-        return verify_user_token(token)
-    except Exception as e:
-        return Delegation(present=True, error=str(e))
+        wi = getattr(getattr(request, "state", None), "workload_identity", None)
+        claims = getattr(wi, "claims", None) if wi is not None else None
+        if claims and actor_from_act_claim(claims):
+            return Delegation(
+                present=True, verified=True,
+                user_sub=str(claims.get("sub", "")),
+                user_roles=_roles_from(claims),
+            )
+    except Exception:
+        pass
+    return Delegation()

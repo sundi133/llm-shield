@@ -168,3 +168,27 @@ class TestActClaim:
         """Population varies across IdP versions, so this is opportunistic and
         must never be required."""
         assert actor_from_act_claim(claims) == ""
+
+
+class TestSingleExchangedToken:
+    """RFC 8693 shape: one token carrying sub (the user) and act (the agent)."""
+
+    def test_act_claim_is_read_without_a_second_token(self, rsa):
+        claims = {"sub": "omar", "act": {"sub": "agent-payments-bot"},
+                  "realm_access": {"roles": ["payments_officer"]}}
+        req = SimpleNamespace(
+            headers={}, method="POST", url="https://api.example.com/x",
+            state=SimpleNamespace(identity=None,
+                                  workload_identity=SimpleNamespace(claims=claims)))
+        d = resolve_delegation(req)
+        assert d.verified is True and d.user_sub == "omar"
+        assert d.user_roles == ("payments_officer",)
+
+    def test_no_act_claim_is_not_delegation(self, rsa):
+        """A plain service-account token is the agent acting as itself."""
+        claims = {"sub": "svc-account", "realm_access": {"roles": ["payments_officer"]}}
+        req = SimpleNamespace(
+            headers={}, method="POST", url="https://api.example.com/x",
+            state=SimpleNamespace(identity=None,
+                                  workload_identity=SimpleNamespace(claims=claims)))
+        assert resolve_delegation(req).verified is False
