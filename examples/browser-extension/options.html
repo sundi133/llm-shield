@@ -35,8 +35,15 @@
   </select>
 
   <label>Screening timeout (ms)</label>
-  <input id="timeoutMs" type="number" placeholder="20000" min="1000" max="60000" />
-  <div class="hint">How long to wait for Shield before failing open and sending unscreened. Default 20000 (20s). File screens add 2s per MB on top. Clamped to 1000-60000.</div>
+  <input id="timeoutMs" type="number" placeholder="45000" min="1000" max="120000" />
+  <div class="hint">How long to wait for Shield before giving up. Default 45000 (45s) — a screen against the cloud data plane measures 14-20s, so a shorter deadline aborts ordinary requests. File screens add 2s per MB on top. Clamped to 1000-120000.</div>
+
+  <label>If Shield cannot be reached</label>
+  <select id="failOpen">
+    <option value="false">block the prompt (fail closed)</option>
+    <option value="true">send it unscreened (fail open)</option>
+  </select>
+  <div class="hint">Applies to enforce mode. A timeout is not an approval: enforce that passes unscreened prompts when Shield is slow is not enforcement. Warn mode always fails open, because it never blocks anything.</div>
 
   <div><button id="save">Save</button><span id="status"></span></div>
 

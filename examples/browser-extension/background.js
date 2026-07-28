@@ -9,7 +9,14 @@ const DEFAULTS = {
   tenantKey: "",
   proxyToken: "",
   mode: "warn",
-  timeoutMs: 20000, // fail-open deadline for a text screen (see resolveTimeoutMs)
+  // Measured against the cloud data plane: an input screen with LLM-evaluated
+  // custom policies takes 14-20s, and an output screen 17-20s. A 20s deadline
+  // sat AT the p99, so ordinary requests aborted. 45s leaves real headroom.
+  timeoutMs: 45000,
+  // On a timeout or transport error: false = block (fail closed). "enforce"
+  // that silently passes unscreened prompts when Shield is slow is not
+  // enforcement. Warn mode still fails open — it never blocks anything.
+  failOpen: false,
 };
 
 // Resolve the configured screening timeout, clamped to a sane range. Local
@@ -17,7 +24,7 @@ const DEFAULTS = {
 // an integer — both coerce here. Falls back to the default on junk values.
 function resolveTimeoutMs(cfg) {
   const n = parseInt(cfg.timeoutMs, 10);
-  return Number.isFinite(n) && n >= 1000 ? Math.min(n, 60000) : 20000;
+  return Number.isFinite(n) && n >= 1000 ? Math.min(n, 120000) : 45000;
 }
 
 // Managed (policy-pushed) config wins over local config where set. Lets a
@@ -101,7 +108,22 @@ async function screen(text, origin) {
     if (cfg.mode === "warn") return { block: false, warn: flagged, reason, mode: "warn", identity };
     return { block: flagged, warn: false, reason, mode: "enforce", identity };
   } catch (e) {
-    return { block: false, warn: false, reason: "", error: String(e), mode: cfg.mode, identity };
+    // A timeout is not an approval. In enforce mode the prompt is held unless
+    // the operator has explicitly opted into failing open.
+    const timedOut = e && (e.name === "AbortError" || String(e).includes("aborted"));
+    const secs = Math.round(resolveTimeoutMs(cfg) / 1000);
+    const error = timedOut
+      ? `Shield did not respond within ${secs}s`
+      : `Could not reach Shield: ${e && e.message ? e.message : String(e)}`;
+    const failOpen = cfg.failOpen === true || cfg.mode === "warn";
+    return {
+      block: !failOpen,
+      warn: failOpen && cfg.mode === "warn",
+      reason: failOpen ? "" : "guardrails unavailable",
+      error,
+      mode: cfg.mode,
+      identity,
+    };
   }
 }
 
