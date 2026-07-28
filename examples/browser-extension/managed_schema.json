@@ -7,6 +7,7 @@
     "deviceId":   { "type": "string", "description": "Device / asset identifier injected by MDM policy, e.g. ${machine_name} or an asset tag." },
     "userId":     { "type": "string", "description": "User identifier injected by MDM policy (employee id, AD account, or email — the org's choice). Drives the Telemetry agent column." },
     "mode":       { "type": "string", "enum": ["off", "warn", "enforce"], "description": "Screening mode (policy-pushed; overrides local)." },
-    "timeoutMs":  { "type": "integer", "description": "Fail-open timeout for a text screen in milliseconds (default 20000; file screens add 2000/MB). Clamped to 1000-60000." }
+    "timeoutMs":  { "type": "integer", "description": "Screening deadline for a text screen in milliseconds (default 45000; a cloud screen measures 14-20s, so a shorter deadline aborts ordinary requests; file screens add 2000/MB). Clamped to 1000-120000." },
+    "failOpen":   { "type": "boolean", "description": "If Shield cannot be reached in enforce mode: false (default) blocks the prompt, true sends it unscreened. A timeout is not an approval." }
   }
 }

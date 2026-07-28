@@ -22,7 +22,10 @@ document.getElementById("test").addEventListener("click", () => {
     const idLine =
       "\nas: " + (id.userId || "(no policy userId)") + "\ndevice: " + (id.deviceId || "(none)");
     if (r.error) {
-      result.textContent = "✗ " + r.error + "\n(fail-open: prompts would send unscreened)" + idLine;
+      // r.block tells us what actually happened, rather than assuming.
+      result.textContent = "✗ " + r.error +
+        (r.block ? "\n(prompt would be BLOCKED — fail closed)"
+                 : "\n(prompt would send UNSCREENED — fail open)") + idLine;
       result.className = "bad";
     } else {
       result.textContent =
