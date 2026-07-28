@@ -30,6 +30,10 @@ class IdentityTuple:
     parent_agent_id: Optional[str] = None
     trust_level: str = "medium"
     identity_method: str = "agent_token"
+    #: Roles carried by the VERIFIED credential. Empty when the identity method
+    #: does not assert one, which is every method until a claim is minted or an
+    #: OIDC token supplies it. Never populated from a header.
+    roles: tuple = ()
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -47,6 +51,7 @@ class IdentityTuple:
             "session_id": self.session_id,
             "trust_level": self.trust_level,
             "identity_method": self.identity_method,
+            "roles": list(self.roles),
         }
 
 

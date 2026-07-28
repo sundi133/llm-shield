@@ -160,6 +160,7 @@ def mint_agent_token(
     model_version: str,
     session_id: str,
     parent_agent_id: Optional[str] = None,
+    roles: Optional[list] = None,
     ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
     signer: Optional[AgentTokenSigner] = None,
 ) -> str:
@@ -184,6 +185,9 @@ def mint_agent_token(
         "build_hash": build_hash,
         "model_version": model_version,
         "session_id": session_id,
+        # Verified role claim. Absent unless the issuer supplies one, so an
+        # existing caller's tokens are byte-compatible with before.
+        **({"roles": [str(r) for r in roles]} if roles else {}),
         "iat": now,
         "exp": now + ttl_seconds,
         "jti": uuid.uuid4().hex,
@@ -307,6 +311,9 @@ def verify_agent_token(token: str) -> IdentityTuple:
         session_id=claims["session_id"],
         trust_level="high",  # signed token implies high-trust identity
         identity_method="agent_token",
+        # Roles are part of the signed payload, so they are verified in the same
+        # sense as agent_id: sealed by the signature. Absent on older tokens.
+        roles=tuple(str(r) for r in (claims.get("roles") or [])),
     )
 
 
