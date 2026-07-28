@@ -22,7 +22,8 @@ from core.feature_flags import (
     CERT_IDENTITY_ENABLED,
 )
 from storage.tool_killswitch import is_tool_disabled
-from core.identity_resolution import resolve_identity
+from core.identity_resolution import (BIND_REQUIRED, resolve_identity,
+                                       token_binding_mode)
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
 from core.run_context import resolve_run_id
@@ -252,6 +253,25 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         request, body_agent_key=body.agent_key, body_user_role=body.user_role,
     )
     user_role = _resolved.user_role or None
+
+    # Proof-of-possession. A bound credential presented without a valid DPoP
+    # proof is the stolen-token case: refuse it. Only reachable when
+    # SHIELD_TOKEN_BINDING=required, so this is inert by default.
+    if _resolved.binding_failed and token_binding_mode() == BIND_REQUIRED:
+        results = [{
+            "guardrail": "token_binding", "passed": False, "action": "block",
+            "message": f"Proof-of-possession failed: {_resolved.binding_error}",
+            "details": {"token_binding": _resolved.binding}, "latency_ms": 0.0,
+        }]
+        if tenant_id:
+            log_decision(
+                tenant_id=tenant_id, action="block", guardrail="token_binding",
+                agent_key=body.agent_key, tool_name=body.tool_name,
+                user_role=user_role, session_id=body.session_id,
+                reason=_resolved.binding_error, source_ip=source_ip,
+                metadata=_resolved.audit_fields(),
+            )
+        return {"allowed": False, "action": "block", "guardrail_results": results}
 
     # Anti-spoof: the body agent_key may not impersonate a different authenticated
     # agent (X-Agent-Key header). Mirrors the MCP path, which derives identity

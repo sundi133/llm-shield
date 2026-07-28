@@ -303,3 +303,120 @@ class TestOIDCRolesOnTheGuardPath:
         monkeypatch.setenv("SHIELD_ROLE_BINDING", "prefer")
         r = resolve_identity(_req({"X-User-Role": "support"}))
         assert (r.user_role, r.role_verified) == ("support", False)
+
+
+# ── token binding (proof-of-possession) ─────────────────────────────────────
+
+import base64 as _b64, time as _time  # noqa: E402
+
+from core.identity_resolution import (  # noqa: E402
+    BINDING_FAILED, BINDING_OFF, BINDING_UNBOUND, BINDING_VERIFIED,
+    BIND_OFF, BIND_OPTIONAL, BIND_REQUIRED, token_binding_mode,
+    verify_token_binding,
+)
+
+_jwt = pytest.importorskip("jwt")
+from core.dpop import clear_jti_store_for_tests, jwk_thumbprint  # noqa: E402
+
+
+@pytest.fixture
+def kp():
+    from cryptography.hazmat.primitives.asymmetric import ec
+    priv = ec.generate_private_key(ec.SECP256R1())
+    n = priv.public_key().public_numbers()
+    b = lambda i: _b64.urlsafe_b64encode(i.to_bytes(32, "big")).decode().rstrip("=")
+    return priv, {"kty": "EC", "crv": "P-256", "x": b(n.x), "y": b(n.y)}
+
+
+@pytest.fixture(autouse=True)
+def _clean_jti():
+    clear_jti_store_for_tests()
+    yield
+    clear_jti_store_for_tests()
+
+
+_URL = "https://api.example.com/v1/shield/tool/check"
+
+
+def _bound_req(kp, *, proof=True, jti=None, url=_URL, method="POST"):
+    priv, pub = kp
+    claims = {"cnf": {"jkt": jwk_thumbprint(pub)}}
+    headers = {}
+    if proof:
+        headers["DPoP"] = _jwt.encode(
+            {"htm": "POST", "htu": _URL, "iat": int(_time.time()),
+             "jti": jti or f"j{_time.time_ns()}"},
+            priv, algorithm="ES256", headers={"typ": "dpop+jwt", "jwk": pub})
+    st = SimpleNamespace(identity=None, workload_identity=_WI(claims))
+    return SimpleNamespace(headers=headers, state=st, method=method, url=url)
+
+
+class TestBindingMode:
+    def test_defaults_to_off(self, monkeypatch):
+        monkeypatch.delenv("SHIELD_TOKEN_BINDING", raising=False)
+        assert token_binding_mode() == BIND_OFF
+
+    @pytest.mark.parametrize("v", ["1", "true", "yes", "requiredd", ""])
+    def test_unrecognised_is_off(self, monkeypatch, v):
+        monkeypatch.setenv("SHIELD_TOKEN_BINDING", v)
+        assert token_binding_mode() == BIND_OFF
+
+
+class TestBindingChecks:
+    def test_off_reads_no_header_and_reports_off(self, monkeypatch, kp):
+        monkeypatch.delenv("SHIELD_TOKEN_BINDING", raising=False)
+        status, _ = verify_token_binding(_bound_req(kp), {"cnf": {"jkt": "x"}})
+        assert status == BINDING_OFF
+
+    def test_valid_proof_verifies(self, monkeypatch, kp):
+        monkeypatch.setenv("SHIELD_TOKEN_BINDING", "required")
+        req = _bound_req(kp)
+        status, err = verify_token_binding(req, req.state.workload_identity.claims)
+        assert (status, err) == (BINDING_VERIFIED, "")
+
+    def test_bound_token_without_a_proof_fails(self, monkeypatch, kp):
+        """The stolen-token case: attacker has the token, not the key."""
+        monkeypatch.setenv("SHIELD_TOKEN_BINDING", "required")
+        req = _bound_req(kp, proof=False)
+        status, err = verify_token_binding(req, req.state.workload_identity.claims)
+        assert status == BINDING_FAILED and "without a DPoP proof" in err
+
+    def test_unbound_token_is_not_a_failure(self, monkeypatch, kp):
+        """A token with no cnf is unbound, not broken — that is how migration
+        works while some clients still send plain tokens."""
+        monkeypatch.setenv("SHIELD_TOKEN_BINDING", "required")
+        status, _ = verify_token_binding(_bound_req(kp), {"sub": "x"})
+        assert status == BINDING_UNBOUND
+
+    def test_replayed_proof_is_refused(self, monkeypatch, kp):
+        monkeypatch.setenv("SHIELD_TOKEN_BINDING", "required")
+        req = _bound_req(kp, jti="fixed-jti")
+        claims = req.state.workload_identity.claims
+        assert verify_token_binding(req, claims)[0] == BINDING_VERIFIED
+        status, err = verify_token_binding(req, claims)
+        assert status == BINDING_FAILED and "replayed" in err
+
+    def test_proof_for_a_different_uri_is_refused(self, monkeypatch, kp):
+        monkeypatch.setenv("SHIELD_TOKEN_BINDING", "required")
+        req = _bound_req(kp, url="https://api.example.com/v1/shield/cap/mint")
+        status, err = verify_token_binding(req, req.state.workload_identity.claims)
+        assert status == BINDING_FAILED and "htu" in err
+
+    def test_check_never_raises(self, monkeypatch):
+        monkeypatch.setenv("SHIELD_TOKEN_BINDING", "required")
+        broken = SimpleNamespace(headers={"DPoP": "not-a-jwt"},
+                                 state=SimpleNamespace(), method="POST", url=_URL)
+        assert verify_token_binding(broken, {"cnf": {"jkt": "x"}})[0] == BINDING_FAILED
+
+
+class TestBindingSurfacesOnResolvedIdentity:
+    def test_failure_is_flagged_and_audited(self, monkeypatch, kp):
+        monkeypatch.setenv("SHIELD_TOKEN_BINDING", "required")
+        r = resolve_identity(_bound_req(kp, proof=False))
+        assert r.binding_failed is True
+        assert r.audit_fields()["token_binding"] == BINDING_FAILED
+
+    def test_off_by_default_does_not_flag(self, monkeypatch, kp):
+        monkeypatch.delenv("SHIELD_TOKEN_BINDING", raising=False)
+        r = resolve_identity(_bound_req(kp, proof=False))
+        assert r.binding_failed is False

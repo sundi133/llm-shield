@@ -35,6 +35,85 @@ SOURCE_NONE = "none"                 # absent
 #: Sources where the value was proven cryptographically rather than claimed.
 VERIFIED_SOURCES = frozenset({SOURCE_AGENT_TOKEN, SOURCE_MTLS, SOURCE_OIDC})
 
+#: Token binding (proof-of-possession). Separate from role binding: one asks
+#: "what role", the other "is the presenter the party this was issued to".
+BIND_OFF, BIND_OPTIONAL, BIND_REQUIRED = "off", "optional", "required"
+_BIND_MODES = (BIND_OFF, BIND_OPTIONAL, BIND_REQUIRED)
+_BIND_ENV = "SHIELD_TOKEN_BINDING"
+
+#: Outcome of the binding check, recorded on every decision.
+BINDING_OFF = "off"            # not enabled
+BINDING_UNBOUND = "unbound"    # credential carries no cnf
+BINDING_VERIFIED = "verified"  # proof presented and valid
+BINDING_FAILED = "failed"      # bound token, proof missing or invalid
+
+
+def token_binding_mode() -> str:
+    """off | optional | required — default off.
+
+    ``optional`` verifies a proof when the token is bound and records the
+    result, denying nothing. ``required`` refuses a bound token without a valid
+    proof. Off costs nothing: no header is read and no crypto runs.
+    """
+    v = os.environ.get(_BIND_ENV, BIND_OFF).strip().lower()
+    return v if v in _BIND_MODES else BIND_OFF
+
+
+def _request_uri(request: Any) -> str:
+    """The htu comparison target.
+
+    Behind a load balancer the scheme and host the client used are in
+    X-Forwarded-*, and the raw URL says http://internal-host. Trust those
+    headers ONLY when the proxy boundary says the hop is trusted — otherwise a
+    caller picks its own htu and the check means nothing.
+    """
+    try:
+        url = str(request.url)
+    except Exception:
+        return ""
+    try:
+        from core.proxy_trust import peer_is_trusted, trusted_proxy_only
+        if trusted_proxy_only() and peer_is_trusted(request):
+            from urllib.parse import urlsplit, urlunsplit
+            proto = _header(request, "X-Forwarded-Proto")
+            host = _header(request, "X-Forwarded-Host")
+            if proto or host:
+                p = urlsplit(url)
+                url = urlunsplit((proto or p.scheme, host or p.netloc, p.path, "", ""))
+    except Exception:
+        pass
+    return url
+
+
+def verify_token_binding(request: Any, claims: Optional[dict]) -> tuple:
+    """(status, reason) for the credential on this request.
+
+    Never raises: a binding check that 500s on the guard path is worse than one
+    that reports failure and lets the caller decide.
+    """
+    mode = token_binding_mode()
+    if mode == BIND_OFF:
+        return BINDING_OFF, ""
+    try:
+        from core import dpop
+        jkt = dpop.cnf_jkt(claims or {})
+        if not jkt:
+            return BINDING_UNBOUND, ""
+        proof = _header(request, "DPoP")
+        if not proof:
+            return BINDING_FAILED, "bound token presented without a DPoP proof"
+        p = dpop.verify_proof(
+            proof, expected_jkt=jkt,
+            http_method=getattr(request, "method", "") or "",
+            http_uri=_request_uri(request),
+        )
+        if not dpop.claim_jti(p.jti, 60):
+            return BINDING_FAILED, "DPoP proof replayed"
+        return BINDING_VERIFIED, ""
+    except Exception as e:
+        return BINDING_FAILED, str(e)
+
+
 MODE_OFF, MODE_PREFER, MODE_STRICT = "off", "prefer", "strict"
 _MODES = (MODE_OFF, MODE_PREFER, MODE_STRICT)
 _ENV = "SHIELD_ROLE_BINDING"
@@ -175,8 +254,11 @@ class ResolvedIdentity:
     trust_level: str = ""
     #: Roles the verified credential asserted, whether or not they were used.
     claimed_roles: tuple = ()
-    #: The binding mode this decision resolved under.
+    #: The role-binding mode this decision resolved under.
     mode: str = "off"
+    #: Token-binding outcome: off | unbound | verified | failed.
+    binding: str = BINDING_OFF
+    binding_error: str = ""
 
     @property
     def agent_verified(self) -> bool:
@@ -186,6 +268,15 @@ class ResolvedIdentity:
     def role_verified(self) -> bool:
         """True only when the role came from a verified credential's claim."""
         return self.role_source in VERIFIED_SOURCES
+
+    @property
+    def binding_failed(self) -> bool:
+        """A bound credential whose proof was missing, invalid or replayed.
+
+        In ``required`` mode the caller must refuse the request. This is the
+        stolen-token case.
+        """
+        return self.binding == BINDING_FAILED
 
     @property
     def header_overridden(self) -> bool:
@@ -206,6 +297,8 @@ class ResolvedIdentity:
             "agent_verified": self.agent_verified,
             "role_verified": self.role_verified,
             "role_binding_mode": self.mode,
+            "token_binding": self.binding,
+            **({"binding_error": self.binding_error} if self.binding_error else {}),
         }
 
 
@@ -264,6 +357,13 @@ def resolve_identity(
     # opted in. Off by default, so this branch is inert until configured.
     cfg = role_binding_config(tenant_id)
     mode = cfg["mode"]
+
+    # Proof-of-possession. Independent of role binding: a token can be bound
+    # without carrying a role, and vice versa. Off by default and short-circuits
+    # before reading any header.
+    wi = getattr(getattr(request, "state", None), "workload_identity", None)
+    binding, binding_error = verify_token_binding(
+        request, getattr(wi, "claims", None) if wi is not None else None)
     claimed = tuple(getattr(ident, "roles", ()) or ()) if ident is not None else ()
     if not claimed and mode in (MODE_PREFER, MODE_STRICT):
         # No role on the agent token — try a verified external credential.
@@ -291,4 +391,6 @@ def resolve_identity(
         trust_level=trust_level,
         claimed_roles=claimed,
         mode=mode,
+        binding=binding,
+        binding_error=binding_error,
     )
