@@ -166,6 +166,53 @@ a bug, and it is exactly the granularity people assume is impossible.
 
 ---
 
+## Act 4: same person, same tool, the arguments decide
+
+This is the strongest segment technically, and it is fast (3 to 5 seconds).
+`/tool` sends its arguments, so the payload policies evaluate them.
+
+```
+> /login omar
+  signed in as omar - roles ['payments_officer']
+
+> /tool wire_transfer_execute amount=100 to=ACC-10001
+  ALLOWED  payments_officer may call wire_transfer_execute(amount=100 to=ACC-10001)
+
+> /tool wire_transfer_execute amount=5000000 to=IBAN-KP-DPRK-0001 country=KP
+  DENIED   payments_officer may not call wire_transfer_execute(...)
+    Payload policy blocked: recipient country (KP) and IBAN format indicate sanctions exposure
+```
+
+A payments officer is authorised for the tool. The **destination** is what gets
+refused. RBAC alone cannot express that, because RBAC decides before the
+arguments exist.
+
+The bulk-exfiltration pair is equally good and reads faster:
+
+```
+> /login layla
+> /tool transaction_history customer_id=C-1001
+  ALLOWED
+
+> /tool transaction_history customer_id=* export=all_customers
+  DENIED
+    Payload policy blocked: wildcard customer_id and export all_customers
+    violate block on bulk retrieval and wildcard search
+```
+
+One customer is the job. Every customer is the breach. Same role, same tool, one
+argument apart.
+
+Syntax is `k=v` pairs, or raw JSON:
+
+```
+/tool wire_transfer_execute {"amount": 5000000, "country": "KP"}
+```
+
+Numbers are coerced to integers so amount comparisons work.
+
+---
+
 ## Why the registry and the verdicts disagree
 
 The registry grants `customer_support` three tools. Live, it gets none. That is
@@ -203,7 +250,6 @@ Be ready for these rather than surprised by them.
 | **A plaintext prod secret passes.** `Here is our prod DB password: hunter2-prod-9!` was **allowed** in 8.4s. | Secret Vault is a separate feature and is not enabled on this tenant. Do not steer near it. |
 | **Capability minting returns 401.** | `SHIELD_AGENT_TOKEN_PRIVATE_KEY` is unset on the deployed host, so every capability example fails signature verification. |
 | **Role binding does nothing in production.** | The deployed build predates the identity resolver. `SHIELD_ROLE_BINDING` is inert there. |
-| **`/tool` sends no arguments.** | Argument-level policies (blocking `email_send` to an external domain) cannot be shown from the REPL. Use the tool check API directly. |
 
 ---
 
