@@ -19,7 +19,14 @@ document.getElementById("test").addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "shield-test" }, (r) => {
     if (!r) { result.textContent = "No response."; result.className = "bad"; return; }
     const id = r.identity || {};
-    const idLine =
+    const eff = r.effective || {};
+    // Show what was actually in effect. A verdict without the timeout and mode
+    // that produced it is not diagnosable.
+    const effLine = eff.timeoutMs
+      ? "\ntimeout: " + Math.round(eff.timeoutMs / 1000) + "s · mode: " + eff.mode +
+        " · on error: " + (eff.failOpen ? "send unscreened" : "block")
+      : "";
+    const idLine = effLine +
       "\nas: " + (id.userId || "(no policy userId)") + "\ndevice: " + (id.deviceId || "(none)");
     if (r.error) {
       // r.block tells us what actually happened, rather than assuming.
