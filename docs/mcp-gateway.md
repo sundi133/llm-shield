@@ -195,6 +195,90 @@ it — enforcement becomes non-bypassable, by the kernel, not by trusting the ag
 
 Full walkthrough (policy + verified tests): **[Agent Sandbox (OpenShell)](openshell-sandbox.md)**.
 
+## Govern a fleet: policy profiles
+
+Once you front more than one server, per-route `curl` stops scaling. A **policy
+profile** is a named bundle you author once and bind to many servers, so an
+untrusted third-party MCP server is screened harder than an internal one.
+
+```bash
+curl -s -X PUT "$SHIELD/v1/tenant/me/mcp/profiles/saas-untrusted" -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{"description":"third-party SaaS MCP","tools":{"allow":["list_jobs","generate_image"],"deny":["delete_account"]},"dlp":{"sanitize_as":"public"},"result_scanning":{"enabled":true,"action":"block"},"scan_policy":{"descriptions":true,"on_flagged":"hide"}}'
+```
+
+Bind it (a sub-resource, so editing policy never means re-sending upstream
+credentials):
+
+```bash
+curl -s -X PUT "$SHIELD/v1/tenant/me/mcp/servers/$ROUTE/binding" -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{"profile_id":"saas-untrusted"}'
+```
+
+### These are floors, not grants
+
+Identity on the gateway comes from the `X-User-Role` header unless
+verified-identity middleware supplies it, so a caller holding your tenant key can
+claim any role. Every control below is therefore enforced **regardless of the
+claimed role** — that is what makes them worth having today. Role-scoped *grants*
+("role R may call tool T") wait on verified identity.
+
+| Field | Effect | Enforced at |
+|---|---|---|
+| `tools.allow` / `tools.deny` | Which tools this server may expose at all. `deny` wins; `allow: null` inherits, `allow: []` denies everything | `tools/list` + `tools/call`, before any upstream connection |
+| `input_guardrails` | Tunes the guard chain for this server (`enabled`/`action`/`settings` per guardrail) | `tools/call` — **`inprocess` backend only** |
+| `output_guardrails` | Same, for the output sanitizer | tool results + `resources/read` |
+| `dlp.sanitize_as` | Role the sanitizer redacts for, replacing whatever the caller claimed | tool results + `resources/read` |
+| `result_scanning` | Indirect-injection scan of results, per server instead of the process-wide env flags | after the upstream replies |
+| `scan_policy` | Tool-description poisoning scan; `on_flagged: "hide"` removes flagged tools | `tools/list` — **discovery only** (see below) |
+
+Two limits worth knowing before you rely on them:
+
+- **`scan_policy` gates discovery, not invocation.** Hiding a flagged tool stops
+  an agent being led into calling it by a poisoned description; it does not stop
+  a client that already knows the name. Use `tools.deny` for that.
+- **`input_guardrails` need the `inprocess` backend.** Under
+  `enforcement_backend: http` the guard chain runs on the central Shield with its
+  own config. Binding warns you about this at bind time.
+
+`GET /v1/tenant/me/mcp/profiles` returns an `enforcement_note` naming exactly
+which fields are live — check it rather than assuming.
+
+### Turning a server off without losing it
+
+Deleting a route throws away its URL and credentials. To cut access during an
+incident and restore it later:
+
+```bash
+curl -s -X POST "$SHIELD/v1/tenant/me/mcp/servers/$ROUTE/disable" -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{"reason":"incident 4471"}'
+```
+
+One flag, checked at the gateway's single choke point, so every method and every
+client (Cursor, Claude, Codex, Hermes, …) is cut at once — without opening a
+connection to the vendor. `POST .../enable` restores it. The kill switch also
+takes an optional `route` now, so you can disable one tool on one server instead
+of everywhere.
+
+### Credentials in the vault, not in Redis
+
+A route header may hold a vault reference instead of a literal token:
+
+```json
+{"headers": {"Authorization": "Bearer shield://higgsfield-token"}}
+```
+
+The secret is revealed only if its vault bindings cover the upstream host. If it
+cannot be resolved — unknown ref, wrong host, vault disabled — the connection
+**fails closed** rather than sending the placeholder upstream and earning a
+confusing 401 from the vendor.
+
+### Drift
+
+Effective policy is computed when you write it and stored on the route, so the
+guard path adds no Redis round-trip. The cost is that a partly-failed fan-out can
+leave a route on a superseded revision. Re-saving the profile pushes it again;
+`GET /v1/tenant/me/mcp/inventory` reports `drift` per server and
+`drifted_server_count`, and the portal shows both.
+
+Escape hatch: `SHIELD_MCP_FLEET_POLICY=0` reverts every control on this page.
+
 ## Supported MCP methods
 
 | Method | Gateway behavior |
