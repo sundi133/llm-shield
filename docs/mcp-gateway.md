@@ -269,6 +269,41 @@ cannot be resolved — unknown ref, wrong host, vault disabled — the connectio
 **fails closed** rather than sending the placeholder upstream and earning a
 confusing 401 from the vendor.
 
+### Scan a server before agents use it
+
+Registering a server audits the tool, resource, and prompt metadata it
+advertises — the text a model reads and can be poisoned through. The scan runs at
+registration and on demand:
+
+```bash
+curl -s -X POST "$SHIELD/v1/tenant/me/mcp/servers/$ROUTE/scan" -H "X-API-Key: $KEY"   # rescan now
+curl -s "$SHIELD/v1/tenant/me/mcp/servers/$ROUTE/scan" -H "X-API-Key: $KEY"           # last report
+```
+
+The verdict is one of `pass`, `fail` (a critical finding), or a reason the scan
+could **not** run — `unavailable` (scanner not in this image), `unreachable`
+(server down, timed out, or rejected the credential), `unresolved` (a vault
+reference would not materialize). A scan that could not run is never treated as a
+pass; the inventory counts it under `unscanned`, separately from `fail`.
+
+Set `scan_policy.on_register: "block_on_critical"` in the profile to have a
+critical finding leave the server **registered but inactive** — it returns
+`-32004` like any disabled route until someone reviews it and releases it:
+
+```bash
+curl -s -X POST "$SHIELD/v1/tenant/me/mcp/servers/$ROUTE/activate" -H "X-API-Key: $KEY"
+```
+
+`activate` is an explicit, audited override of a security finding, recorded
+against the actor — distinct from the routine `enable`. Rescanning is manual
+(the call above); there is no scheduled rescan yet, so a server clean at
+onboarding that later ships a poisoned description is only re-checked when you
+run it.
+
+This is separate from `scan_policy.descriptions` / `on_flagged` above, which
+scans **live on every `tools/list`**; the onboarding scan is a point-in-time
+audit stored with its timestamp.
+
 ### Drift
 
 Effective policy is computed when you write it and stored on the route, so the
@@ -355,7 +390,22 @@ The gateway returns JSON-RPC errors; here's what each means.
 | `GET /v1/tenant/me/mcp-gateway/upstreams` | list routes |
 | `POST /gateway/{route}/mcp` | the MCP endpoint agents call |
 
+Fleet controls (admin plane, same tenant-key auth):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET/POST/PUT/DELETE /v1/tenant/me/mcp/profiles[/{id}]` | manage policy profiles |
+| `PUT/DELETE /v1/tenant/me/mcp/servers/{route}/binding` | bind a server to a profile |
+| `POST /v1/tenant/me/mcp/servers/{route}/disable` · `/enable` | park / restore a whole server |
+| `POST /v1/tenant/me/mcp/servers/{route}/scan` · `GET` | run / read the onboarding scan |
+| `POST /v1/tenant/me/mcp/servers/{route}/activate` | audited override of a blocking scan |
+| `POST /v1/tenant/me/mcp/tools/{tool}/disable` · `/enable` | kill switch (optional `route` scopes it) |
+| `GET /v1/tenant/me/mcp/inventory` | fleet state: `active`, `drift`, scan verdict per server |
+
 **Env flags** (gateway process): `SHIELD_GATEWAY_RESOURCES` (default on — resources/prompts),
 `SHIELD_GATEWAY_FAIL_OPEN=1` (allow calls when enforcement is unreachable; default
-fail-closed), `SHIELD_URL` / `RUNPOD_TOKEN` (for the `http` backend). The gateway
-needs the `mcp` client SDK (already in `requirements.txt`).
+fail-closed), `SHIELD_MCP_FLEET_POLICY=0` (revert all per-server policy to the
+pre-fleet path), `SHIELD_URL` / `RUNPOD_TOKEN` (for the `http` backend). The gateway
+needs the `mcp` client SDK (already in `requirements.txt`); the onboarding scan
+additionally needs the `shield-mcp` package (admin image only — absent, the scan
+verdict is `unavailable` and nothing breaks).
