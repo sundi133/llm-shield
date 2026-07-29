@@ -2124,9 +2124,15 @@
   }
   .mcp-kill-grid {
     display: grid;
-    grid-template-columns: minmax(220px, 0.9fr) minmax(260px, 1.2fr) auto;
+    /* tool name · server scope · reason · action */
+    grid-template-columns: minmax(200px, 0.9fr) minmax(170px, 0.7fr) minmax(200px, 1fr) auto;
     gap: 0.7rem;
     align-items: end;
+  }
+  /* Narrow desktop: the four fields no longer fit on one row without crushing
+     them, so wrap to two before the mobile single-column rule takes over. */
+  @media (max-width: 1180px) {
+    .mcp-kill-grid { grid-template-columns: 1fr 1fr; }
   }
   .chip-cloud {
     display: flex;
@@ -4882,10 +4888,11 @@ X-User-Role: reader</pre></div>
       </div>
 
       <div class="section-panel">
-        <div class="section-panel-head"><div><div class="section-panel-title">Kill Switch</div><div class="section-panel-desc">Disabled tools are blocked at the guard path immediately, even in monitor mode.</div></div></div>
+        <div class="section-panel-head"><div><div class="section-panel-title">Kill Switch</div><div class="section-panel-desc">Disabled tools are blocked at the guard path immediately, even in monitor mode. Leave the server blank to disable a tool on every MCP server; name one to isolate just that server.</div></div></div>
         <div class="section-panel-body">
           <div class="mcp-kill-grid">
           <input id="mcp-tool-name" placeholder="tool name (e.g. transfer_funds)" />
+          <input id="mcp-tool-route" placeholder="server / route (blank = all servers)" />
           <input id="mcp-tool-reason" placeholder="reason (audited)" />
           <button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpDisableTool()">Disable Tool</button>
           </div>
@@ -11827,10 +11834,13 @@ async function loadMcpGateway() {
 
 function renderMcpGateway(inv) {
   const disabledCount = inv.disabled_count || 0;
+  const inactiveCount = inv.inactive_server_count || 0;
+  const driftCount = inv.drifted_server_count || 0;
   document.getElementById('mcp-cards').innerHTML = `
     <div class="stat-card"><div class="stat-value">${inv.server_count || 0}</div><div class="stat-label">Registered Servers</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${inactiveCount ? 'var(--red)' : 'var(--text)'};">${inactiveCount}</div><div class="stat-label">Disabled Servers</div></div>
     <div class="stat-card"><div class="stat-value" style="color:${disabledCount ? 'var(--red)' : 'var(--text)'};">${disabledCount}</div><div class="stat-label">Disabled Tools</div></div>
-    <div class="stat-card"><div class="stat-value">${(inv.threats_addressed || []).length}</div><div class="stat-label">Threats Addressed</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${driftCount ? 'var(--red)' : 'var(--text)'};">${driftCount}</div><div class="stat-label">Policy Drift</div></div>
   `;
 
   const servers = inv.servers || [];
@@ -11841,12 +11851,30 @@ function renderMcpGateway(inv) {
         const dest = escapeHtml(s.url || s.command || '');
         const backend = escapeHtml(s.enforcement_backend || 'inprocess');
         const rawRoute = s.route || s.name || '';
+        const enc = encodeURIComponent(rawRoute);
+        // active is normalized server-side, so a route registered before the
+        // flag existed still reports true rather than rendering as disabled.
+        const active = s.active !== false;
+        // A disabled server keeps its config; say "Disabled", not "Removed".
+        const stateBadge = active
+          ? ''
+          : `<span class="badge" style="color:var(--red);border-color:var(--red);">disabled</span>`;
+        const profileBadge = s.profile_id
+          ? `<span class="badge" title="Policy profile bound to this server">${escapeHtml(s.profile_id)}</span>`
+          : '';
+        // Drift means this route is serving a superseded policy revision — the
+        // one state where the console disagrees with the profile page.
+        const driftBadge = s.drift
+          ? `<span class="badge" style="color:var(--red);border-color:var(--red);" title="This server is serving a superseded policy revision. Re-save the profile to push the current one.">drift</span>`
+          : '';
         return _aibomRow(
-          `<span style="font-weight:600;min-width:120px;">${route}</span>` +
+          `<span style="font-weight:600;min-width:120px;${active ? '' : 'opacity:.55;'}">${route}</span>` +
           `<span style="color:var(--text-dim);">${transport}</span>` +
           `<span style="flex:1;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;">${dest}</span>` +
           `<span class="badge">${backend}</span>` +
-          `<button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpDeleteServer('${encodeURIComponent(rawRoute)}')">Remove</button>`);
+          profileBadge + stateBadge + driftBadge +
+          `<button class="small" onclick="mcpToggleServer('${enc}', ${active ? 'false' : 'true'})">${active ? 'Disable' : 'Enable'}</button>` +
+          `<button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpDeleteServer('${enc}')">Remove</button>`);
       }).join('')
     : _aibomEmpty('No MCP servers registered yet. Use the form above to add one.');
 
@@ -11856,10 +11884,17 @@ function renderMcpGateway(inv) {
         const name = escapeHtml(d.tool_name || '');
         const reason = escapeHtml(d.reason || '');
         const actor = escapeHtml(d.actor || '');
+        // Scope is the difference between "off on one server" and "off
+        // everywhere", so it has to be visible before someone re-enables.
+        const scope = d.route
+          ? `<span class="badge" title="Disabled on this server only">${escapeHtml(d.route)}</span>`
+          : `<span class="badge" title="Disabled on every MCP server">fleet-wide</span>`;
+        const encRoute = d.route ? encodeURIComponent(d.route) : '';
         return _aibomRow(
           `<span style="font-weight:600;min-width:160px;color:var(--red);">${name}</span>` +
+          scope +
           `<span style="flex:1;color:var(--text-dim);">${reason}${actor ? ' · ' + actor : ''}</span>` +
-          `<button class="small" onclick="mcpEnableTool('${encodeURIComponent(d.tool_name || '')}')">Enable</button>`);
+          `<button class="small" onclick="mcpEnableTool('${encodeURIComponent(d.tool_name || '')}', '${encRoute}')">Enable</button>`);
       }).join('')
     : _aibomEmpty('No tools disabled. Use the kill switch above to disable one.');
 
@@ -11873,24 +11908,48 @@ function renderMcpGateway(inv) {
 async function mcpDisableTool() {
   const name = (document.getElementById('mcp-tool-name').value || '').trim();
   const reason = (document.getElementById('mcp-tool-reason').value || '').trim();
+  // Blank = fleet-wide, which is the historical behavior of this form.
+  const route = (document.getElementById('mcp-tool-route').value || '').trim();
   if (!name) { showToast('Enter a tool name', 'error'); return; }
   try {
     await apiCall(`/v1/tenant/me/mcp/tools/${encodeURIComponent(name)}/disable`,
-      { method: 'POST', body: JSON.stringify({ reason }) });
-    showToast(`Disabled ${name}`, 'success');
+      { method: 'POST', body: JSON.stringify({ reason, route: route || null }) });
+    showToast(route ? `Disabled ${name} on ${route}` : `Disabled ${name} everywhere`, 'success');
     document.getElementById('mcp-tool-name').value = '';
     document.getElementById('mcp-tool-reason').value = '';
+    document.getElementById('mcp-tool-route').value = '';
     loadMcpGateway();
   } catch (e) {
     showToast('Failed: ' + e.message, 'error');
   }
 }
 
-async function mcpEnableTool(encName) {
+async function mcpEnableTool(encName, encRoute) {
   const name = decodeURIComponent(encName);
+  // Must re-enable at the SAME scope it was disabled at: lifting a route-scoped
+  // block does not lift a fleet-wide one, and vice versa.
+  const route = encRoute ? decodeURIComponent(encRoute) : null;
   try {
-    await apiCall(`/v1/tenant/me/mcp/tools/${encodeURIComponent(name)}/enable`, { method: 'POST' });
-    showToast(`Enabled ${name}`, 'success');
+    await apiCall(`/v1/tenant/me/mcp/tools/${encodeURIComponent(name)}/enable`,
+      { method: 'POST', body: JSON.stringify({ route }) });
+    showToast(route ? `Enabled ${name} on ${route}` : `Enabled ${name}`, 'success');
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+async function mcpToggleServer(encRoute, makeActive) {
+  const route = decodeURIComponent(encRoute);
+  const action = makeActive ? 'enable' : 'disable';
+  if (!makeActive && !confirm(
+      `Disable "${route}"?\n\nEvery MCP client (Cursor, Claude, Codex, …) loses ` +
+      `access to this server immediately. Its configuration and credentials are ` +
+      `kept, so you can re-enable it without re-entering them.`)) return;
+  try {
+    await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/${action}`,
+      { method: 'POST', body: JSON.stringify({ reason: 'via portal' }) });
+    showToast(`${makeActive ? 'Enabled' : 'Disabled'} ${route}`, 'success');
     loadMcpGateway();
   } catch (e) {
     showToast('Failed: ' + e.message, 'error');
