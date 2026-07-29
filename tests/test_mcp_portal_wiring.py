@@ -91,3 +91,21 @@ def test_track_counter_handles_nested_functions():
     """Guard the guard: a naive split() counts 'minmax(200px, 1fr)' as two."""
     assert _track_count("minmax(200px, 0.9fr) minmax(170px, 0.7fr) 1fr auto") == 4
     assert _track_count("1fr 1fr") == 2
+
+
+def test_identifier_badges_are_not_capitalized():
+    """`.badge` capitalizes globally. A route name or profile id rendered that
+    way reads as `Higgsfield`, and typing that back into the kill-switch route
+    field produces a member that never matches — the disable silently no-ops.
+
+    So every badge carrying an identifier must also carry .badge-id.
+    """
+    assert re.search(r"\.badge-id\s*\{[^}]*text-transform:\s*none", HTML), \
+        "badge-id lost its text-transform override"
+
+    for label in ("Policy profile bound to this server",
+                  "Disabled on this server only"):
+        m = re.search(r'<span class="([^"]*)" title="' + re.escape(label), HTML)
+        assert m, f"identifier badge for {label!r} not found"
+        assert "badge-id" in m.group(1), \
+            f"identifier badge for {label!r} would render capitalized"
