@@ -156,6 +156,110 @@ async def _control_plane_results(tool_name, arguments, *, agent_key, tenant_id,
     return out
 
 
+# ── server-scoped tool floor (fleet control plane) ───────────────────
+#
+# A "floor" is a per-server control enforced on EVERY call regardless of who the
+# caller claims to be. That distinction is load-bearing: the MCP gateway resolves
+# a caller's role from the X-User-Role header unless verified-identity middleware
+# supplied one (api/routes_mcp_server.py::_resolve_identity), so a caller can
+# choose its own role. A floor never reads the role, so it holds anyway.
+#
+# Role-scoped GRANTS (role R may call tool T) are a separate, later concern — they
+# are only worth as much as the identity behind them.
+
+_FLEET_POLICY_ENV = "SHIELD_MCP_FLEET_POLICY"
+_OFF = ("0", "false", "no", "off")
+
+
+def fleet_policy_enabled() -> bool:
+    """Escape hatch: SHIELD_MCP_FLEET_POLICY=0 reverts to pre-fleet behavior."""
+    return os.getenv(_FLEET_POLICY_ENV, "1").strip().lower() not in _OFF
+
+
+def tool_floor_decision(policy: Optional[dict], tool_name: str) -> Optional[str]:
+    """Why ``tool_name`` is barred on this server, or None if it may proceed.
+
+    Semantics, all deliberate:
+      * no policy / no ``tools`` block  -> allow (an unbound server is unchanged)
+      * ``deny`` listing the tool       -> block, and deny beats allow
+      * ``allow`` is None/absent        -> allow all (inherit)
+      * ``allow`` is a list             -> the tool must be in it; ``[]`` denies all
+
+    ``allow: []`` and ``allow: null`` are intentionally different: an operator who
+    writes an empty list means "nothing", not "everything".
+
+    Tool names are compared literally. A poisoned upstream advertising a tool
+    called ``other-route:admin`` must not be able to smuggle itself past a floor
+    by looking like a qualified name.
+    """
+    if not policy or not fleet_policy_enabled():
+        return None
+    tools = policy.get("tools")
+    if not isinstance(tools, dict):
+        return None
+
+    deny = tools.get("deny")
+    if isinstance(deny, list) and tool_name in deny:
+        return f"Tool '{tool_name}' is denied on this MCP server by policy"
+
+    allow = tools.get("allow")
+    if isinstance(allow, list) and tool_name not in allow:
+        return f"Tool '{tool_name}' is not on this MCP server's allowed tool list"
+    return None
+
+
+def _normalize_guardrail_cfg(raw: dict) -> dict:
+    """Coerce a stored GuardrailPolicy into the shape BaseGuardrail reads."""
+    return {
+        "enabled": raw.get("enabled", True),
+        "action": raw.get("action", "block"),
+        "settings": raw.get("settings", {}) or {},
+    }
+
+
+def build_request_configs(
+    tenant_config: Optional[dict], policy: Optional[dict] = None
+) -> dict:
+    """Per-request guardrail config installed on the ``_request_configs``
+    ContextVar, merging tenant defaults with this server's policy.
+
+    Route policy wins: it is the more specific layer, and the whole point of a
+    profile is that an untrusted third-party server can be screened harder than
+    an internal one.
+
+    Scope worth being explicit about: this TUNES the guards already in
+    ``_tool_guard_chain`` (enable/disable, action, settings). It cannot install a
+    guard that is not in the chain, because the chain is fixed per call.
+    """
+    configs: dict = {}
+
+    # Tenant layer — historically only the allowlist guard was threaded here.
+    if tenant_config and "input_guardrails" in tenant_config:
+        ta = (tenant_config["input_guardrails"] or {}).get("tool_allowlist")
+        if ta:
+            configs["tool_allowlist"] = _normalize_guardrail_cfg(ta)
+
+    # Route layer.
+    if policy and fleet_policy_enabled():
+        for name, raw in (policy.get("input_guardrails") or {}).items():
+            if isinstance(raw, dict):
+                configs[name] = _normalize_guardrail_cfg(raw)
+
+    return configs
+
+
+def filter_tools_by_floor(tools: list[dict], policy: Optional[dict]) -> list[dict]:
+    """Drop tools the server-scoped floor bars, for tools/list.
+
+    A tool a caller can never invoke should not be advertised: leaving it in the
+    listing invites the model to keep trying, and leaks the upstream's surface.
+    """
+    if not policy or not fleet_policy_enabled():
+        return tools
+    return [t for t in tools
+            if tool_floor_decision(policy, t.get("name", "")) is None]
+
+
 def _tool_guard_chain() -> list:
     """The ordered guard chain enforce_tool_call runs on a tools/call.
 
@@ -210,8 +314,20 @@ async def enforce_tool_call(
     session_id: Optional[str] = None,
     workflow: Optional[str] = None,
     confirmation_token: Optional[str] = None,
+    route: Optional[str] = None,
+    policy: Optional[dict] = None,
 ) -> dict:
     """Decide whether an MCP tools/call may proceed.
+
+    ``route`` names the MCP server this call is bound for, when there is one. It
+    scopes the kill switch so an operator can isolate a single compromised server
+    instead of every server exposing that tool name. Keyword-only with a None
+    default, so every caller without a route — REST tool routes, the embedded
+    server, the lite gateway — is unchanged.
+
+    ``policy`` is that server's materialized policy. Its ``input_guardrails``
+    tune this call's guard chain (see ``build_request_configs``), so a third-party
+    server can be screened harder than an internal one. Also None by default.
 
     ``session_id`` must come from a *verified* agent-token claim, never from a
     caller-supplied header: it namespaces the confirmation tokens and the
@@ -253,26 +369,19 @@ async def enforce_tool_call(
 
     # Kill switch: an operator-disabled tool is an administrative block —
     # enforced even in monitor mode (matches routes_tool / routes_gateway).
-    if _killswitch_blocks(tenant_id, tool_name):
+    if _killswitch_blocks(tenant_id, tool_name, route):
         results = [{
             "guardrail": "tool_killswitch", "passed": False, "action": "block",
             "message": f"Tool '{tool_name}' is disabled via kill switch",
-            "details": {"administrative": True, "tool_name": tool_name},
+            "details": {"administrative": True, "tool_name": tool_name,
+                        "route": route},
         }]
         decision = policy_mode.apply(results, allowed=False, action="block", mode=mode)
         _record_metrics(tenant_id, results)
         return _shape(decision, results, risk)
 
-    # Per-request tenant config for the allowlist guard (mirrors the gateway).
-    configs: dict = {}
-    if tenant_config and "input_guardrails" in tenant_config:
-        ta = tenant_config["input_guardrails"].get("tool_allowlist")
-        if ta:
-            configs["tool_allowlist"] = {
-                "enabled": ta.get("enabled", True),
-                "action": ta.get("action", "block"),
-                "settings": ta.get("settings", {}),
-            }
+    # Per-request guardrail config: tenant defaults, then this server's policy.
+    configs = build_request_configs(tenant_config, policy)
 
     context = {
         "agent_key": agent_key,
@@ -391,6 +500,90 @@ def _shape(decision: dict, results: list[dict], risk: str) -> dict:
     }
 
 
+def dlp_role_for(policy: Optional[dict], user_role: Optional[str]) -> Optional[str]:
+    """The role the output sanitizer should be told about for this server.
+
+    ToolOutputSanitizationGuardrail puts ``user_role`` into its LLM prompt, so a
+    claimed role influences how much of a result is redacted. The gateway takes
+    that role from a header unless verified-identity middleware supplied one, so
+    a caller can claim ``admin``. ``dlp.sanitize_as`` replaces it outright for
+    this server: "whatever they claim, sanitize this server's output as public".
+
+    Naming note: the spec called this ``role_ceiling``. A ceiling needs an
+    ordering over role names, and this codebase has none — core/rbac.py orders
+    ``data_clearance`` values (public/internal/confidential/restricted), not role
+    names like admin/viewer. Rather than invent a role lattice, this replaces
+    outright, which is what the untrusted-server case actually wants and is
+    simpler to reason about. Absent -> the claimed role, i.e. today's behavior.
+    """
+    if not policy or not fleet_policy_enabled():
+        return user_role
+    dlp = policy.get("dlp")
+    if not isinstance(dlp, dict):
+        return user_role
+    return dlp.get("sanitize_as") or user_role
+
+
+def result_scanning_for(policy: Optional[dict]) -> Optional[dict]:
+    """This server's tool-result scanning override, or None to use the env flags.
+
+    IndirectInjectionGuardrail is gated by two process-wide env vars
+    (SHIELD_INDIRECT_INJECTION_SCAN / _BLOCK), which is all-or-nothing across a
+    fleet. A tenant fronting both an untrusted SaaS server and an internal one
+    wants the first scanned and blocking, the second left alone — so the decision
+    moves to the call site when a policy expresses one.
+
+    Returns ``{"enabled": bool, "block": bool}``; None means "unchanged, use env".
+    """
+    if not policy or not fleet_policy_enabled():
+        return None
+    rs = policy.get("result_scanning")
+    if not isinstance(rs, dict) or "enabled" not in rs:
+        return None
+    return {"enabled": bool(rs.get("enabled")),
+            # Anything other than an explicit "block" is monitor: record the
+            # detection, do not withhold the result.
+            "block": rs.get("action") == "block"}
+
+
+def description_scan_for(policy: Optional[dict]) -> Optional[dict]:
+    """This server's tool-description scanning setting, or None to use the
+    route's existing ``scan_descriptions`` boolean.
+
+    Returns ``{"enabled": bool, "hide_flagged": bool}``.
+
+    Scope, stated plainly because it is easy to over-read: this gates
+    DISCOVERY. A flagged tool can be hidden from tools/list, which stops an
+    agent from being led into calling it by a poisoned description. It does not
+    gate INVOCATION — tools/call carries no description to scan, and fetching
+    the catalogue on every call to find one would put an upstream round trip on
+    the guard path. To make a flagged tool unreachable, add it to ``tools.deny``.
+    """
+    if not policy or not fleet_policy_enabled():
+        return None
+    sp = policy.get("scan_policy")
+    if not isinstance(sp, dict) or "descriptions" not in sp:
+        return None
+    return {"enabled": bool(sp.get("descriptions")),
+            # Anything other than an explicit "hide" annotates only, so a typo
+            # cannot silently make an upstream's tools vanish.
+            "hide_flagged": sp.get("on_flagged") == "hide"}
+
+
+def drop_flagged_tools(tools: list[dict]) -> list[dict]:
+    """Remove tools the description scan marked as poisoned."""
+    return [t for t in tools if not t.get("x-shield-poisoning")]
+
+
+def _output_request_configs(policy: Optional[dict]) -> dict:
+    """Per-request config for the output guards, from this server's policy."""
+    if not policy or not fleet_policy_enabled():
+        return {}
+    return {name: _normalize_guardrail_cfg(raw)
+            for name, raw in (policy.get("output_guardrails") or {}).items()
+            if isinstance(raw, dict)}
+
+
 async def sanitize_tool_result(
     tool_name: str,
     output,
@@ -398,23 +591,36 @@ async def sanitize_tool_result(
     agent_key: str = "",
     tenant_id: Optional[str] = None,
     user_role: Optional[str] = None,
+    policy: Optional[dict] = None,
 ) -> dict:
     """Run data-policy sanitization on an MCP tool result.
 
     Returns {sanitized_output, action, blocked}. On block, the output is
     replaced with a safe placeholder (the guard supplies it).
+
+    ``policy`` is the server's materialized policy: its ``output_guardrails``
+    tune the sanitizer and ``dlp.sanitize_as`` fixes the role it sanitizes for,
+    so an untrusted server can redact harder than the tenant default no matter
+    what role the caller claims.
     """
     guard = ToolOutputSanitizationGuardrail()
+    effective_role = dlp_role_for(policy, user_role)
     context = {
         "tool_name": tool_name,
         "tool_output": output,
         "agent_key": agent_key,
         "tenant_id": tenant_id,
         "X-Tenant-ID": tenant_id,
-        "user_role": user_role,
-        "X-User-Role": user_role,
+        "user_role": effective_role,
+        "X-User-Role": effective_role,
     }
-    r = await guard.check("", context)
+    configs = _output_request_configs(policy)
+    token = _request_configs.set(configs) if configs else None
+    try:
+        r = await guard.check("", context)
+    finally:
+        if token is not None:
+            _request_configs.reset(token)
     sanitized = (r.details or {}).get("sanitized_output", output)
     blocked = (not r.passed and r.action == "block")
 
@@ -423,11 +629,16 @@ async def sanitize_tool_result(
     # Records detections so the real false-positive rate can be observed before
     # SHIELD_INDIRECT_INJECTION_BLOCK is enabled; only replaces output on block.
     inj = IndirectInjectionGuardrail()
-    if inj.scan_enabled():
+    scan_cfg = result_scanning_for(policy)
+    if scan_cfg["enabled"] if scan_cfg else inj.scan_enabled():
         ir = await inj.check("", {**context, "content_source": "tool_result"})
-        if not (ir.passed and ir.action == "pass"):
+        detected = not (ir.passed and ir.action == "pass")
+        if detected:
             _record_metrics(tenant_id, [_result_dict(ir)])
-            if not ir.passed and ir.action == "block":
+            # Without a policy this is exactly the previous env-driven condition.
+            # With one, the server's own setting decides whether a detection
+            # withholds the result or is merely recorded.
+            if scan_cfg["block"] if scan_cfg else (not ir.passed and ir.action == "block"):
                 sanitized = "[blocked: indirect prompt injection detected in tool output]"
                 blocked = True
 
@@ -490,12 +701,20 @@ def filter_tools_for_role(
     return out
 
 
-def _killswitch_blocks(tenant_id: Optional[str], tool_name: str) -> bool:
+def _killswitch_blocks(tenant_id: Optional[str], tool_name: str,
+                       route: Optional[str] = None) -> bool:
+    """Fleet-wide kill switch, plus the route-scoped one when a route is known.
+
+    Both scopes resolve in a single round trip (storage does one SMISMEMBER), so
+    adding route scoping costs no extra Redis call. ``route=None`` — every caller
+    outside the gateway — behaves exactly as before.
+    """
     if not tenant_id:
         return False
     try:
         from core.feature_flags import KILLSWITCH_ENABLED
         from storage.tool_killswitch import is_tool_disabled
-        return bool(KILLSWITCH_ENABLED and is_tool_disabled(tenant_id, tool_name))
+        return bool(KILLSWITCH_ENABLED
+                    and is_tool_disabled(tenant_id, tool_name, route=route))
     except Exception:
         return False

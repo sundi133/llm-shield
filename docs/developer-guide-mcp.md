@@ -138,6 +138,13 @@ await proxy._upstream.aclose()                      # on shutdown
 
 Transports: `stdio`, `sse`, `http` (streamable). Requires `pip install mcp`.
 
+> **Governing a fleet, not just one server?** When SecOps needs to onboard many
+> MCP servers and set policy per server — a tool allowlist, an input/output
+> guardrail baseline, a redaction floor, result scanning, a per-server kill
+> switch, and an onboarding metadata scan — that is the same proxy driven from a
+> central console instead of code. See **[MCP gateway](mcp-gateway.md)**; this
+> Path B snippet is the embedded form of the same enforcement.
+
 ---
 
 ## Path C — broker calls over HTTP (runtime)

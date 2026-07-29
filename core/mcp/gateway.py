@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Awaitable, Callable, Optional
 
 from storage.mcp_gateway_store import get_upstream
@@ -78,13 +79,63 @@ def build_enforcer(cfg: dict):
     return None  # in-process pipeline
 
 
+#: A vault reference the materializer understands (core/secret_vault/materialize.py).
+#: Matched again AFTER materialization to prove nothing was left unresolved.
+_VAULT_REF_RE = re.compile(r"shield://[A-Za-z0-9_.\-]+|svlt_[0-9a-f]+")
+
+
+def materialize_upstream_headers(cfg: dict, tenant_id: str) -> dict:
+    """Replace vault references in a route's ``headers`` with real secrets.
+
+    Upstream credentials for SaaS MCP servers are bearer tokens. Storing one
+    literally in the route config leaves it in plaintext at rest, so a header may
+    instead hold a vault reference::
+
+        {"Authorization": "Bearer shield://higgsfield-token"}
+
+    The secret is revealed only if its bindings cover the upstream host, which is
+    the vault's existing anti-exfiltration control — and create_vault_entry
+    already refuses a binding to a Shield host, because a secret materializes on
+    the leg OUT of Shield to the real upstream. That is exactly this leg.
+
+    Fail-closed: if a reference cannot be resolved, or its binding does not cover
+    this upstream, materialize_obj leaves the placeholder inert — and sending
+    that literal string upstream would be an unauthenticated call wearing the
+    costume of an authenticated one. Raise instead.
+
+    Scope: network transports only. stdio ``env`` is not materialized here; that
+    transport has no host to bind against and is covered by its own spec.
+    """
+    headers = cfg.get("headers")
+    if not headers:
+        return cfg
+
+    from core.secret_vault.materialize import materialize_headers
+
+    resolved, leftover = materialize_headers(tenant_id, headers, cfg.get("url") or "")
+    if leftover:
+        # Never log or echo the value; the header NAME is enough to act on.
+        raise GatewayError(
+            502,
+            f"upstream credential could not be materialized for header(s) "
+            f"{', '.join(leftover)}: the vault reference is unknown, the vault is "
+            f"disabled, or the secret is not bound to this upstream host")
+
+    return {**cfg, "headers": resolved}
+
+
 async def _default_proxy_factory(cfg: dict, tenant_id: str):
     """Connect to the real upstream and wrap it in an enforced MCPProxy."""
     from core.mcp.proxy_server import proxy_for  # imports the mcp SDK transport
 
+    cfg = materialize_upstream_headers(cfg, tenant_id)
     enforcer = build_enforcer(cfg)
     return await proxy_for(
         cfg, enforcer=enforcer, scan_descriptions=bool(cfg.get("scan_descriptions")),
+        # Materialized by the admin plane when the route was bound to a profile;
+        # absent on an unbound route, which then behaves exactly as before.
+        policy=cfg.get("effective_policy"),
+        route=cfg.get("route"),
     )
 
 
@@ -116,6 +167,16 @@ class MCPGatewayRouter:
         cfg = get_upstream(tenant_id, route)
         if not cfg:
             raise GatewayError(404, f"no upstream configured for route '{route}'")
+        # SecOps kill switch for a whole server. This is the one choke point every
+        # gateway method funnels through, so disabling here cuts tools/call,
+        # tools/list, resources/* and prompts/* at once, for every client.
+        # Absent means enabled: routes registered before this field existed must
+        # keep serving traffic.
+        if not cfg.get("active", True):
+            raise GatewayError(
+                404,
+                f"route '{route}' is disabled by an administrator",
+            )
         if not cfg.get("isolation_ack"):
             # Non-bypassability is a deployment property: if the upstream is
             # directly reachable, agents can skip Shield. Surface it loudly.
@@ -163,6 +224,12 @@ class MCPGatewayRouter:
             # (per-call connect avoids cross-task session lifecycle entirely)
 
         proxy = await self._pooled_proxy(tenant_id, route, cfg)
+        # The connection is pooled; the policy must not be. Push the freshly read
+        # revision so a stdio route picks up a policy change on the next call
+        # rather than when its subprocess happens to cycle.
+        setter = getattr(proxy, "set_policy", None)
+        if callable(setter):
+            setter(cfg.get("effective_policy"))
         try:
             return await fn(proxy)
         except Exception as e:

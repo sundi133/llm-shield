@@ -28,16 +28,24 @@ def store(monkeypatch):
         return upstreams.get(t, {}).pop(route, None) is not None
 
     monkeypatch.setattr(mod, "delete_upstream", _delete_upstream)
-    monkeypatch.setattr(mod, "list_disabled_tools",
-                        lambda t: [dict(tool_name=k, **v)
-                                   for k, v in disabled.get(t, {}).items()])
+    monkeypatch.setattr(
+        mod, "list_disabled_tools",
+        lambda t: [{"tool_name": k.split(":", 1)[1] if v.get("route") else k, **v}
+                   for k, v in disabled.get(t, {}).items()])
 
-    def _disable(tenant_id, tool_name, reason="", actor=""):
-        disabled.setdefault(tenant_id, {})[tool_name] = {"reason": reason, "actor": actor}
-        return {"tool_name": tool_name, "reason": reason, "actor": actor}
+    # Mirrors storage.tool_killswitch: a route-scoped disable is a distinct
+    # member from the fleet-wide one, so the two never collide.
+    def _member(tool_name, route):
+        return f"{route}:{tool_name}" if route else tool_name
 
-    def _enable(tenant_id, tool_name):
-        return disabled.get(tenant_id, {}).pop(tool_name, None) is not None
+    def _disable(tenant_id, tool_name, reason="", actor="", route=None):
+        disabled.setdefault(tenant_id, {})[_member(tool_name, route)] = {
+            "reason": reason, "actor": actor, "route": route}
+        return {"tool_name": tool_name, "route": route,
+                "reason": reason, "actor": actor}
+
+    def _enable(tenant_id, tool_name, route=None):
+        return disabled.get(tenant_id, {}).pop(_member(tool_name, route), None) is not None
 
     monkeypatch.setattr(mod, "disable_tool", _disable)
     monkeypatch.setattr(mod, "enable_tool", _enable)

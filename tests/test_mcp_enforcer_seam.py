@@ -38,7 +38,8 @@ class _AllowEnforcer:
     async def enforce_tool_call(self, name, arguments, *, agent_key, user_role, tenant_id, tenant_config, **kw):
         return {"allowed": True, "action": "pass", "reason": ""}
 
-    async def sanitize_tool_result(self, name, raw, *, agent_key, tenant_id, user_role):
+    async def sanitize_tool_result(self, name, raw, *, agent_key, tenant_id, user_role,
+                                   policy=None):
         return {"blocked": False, "sanitized_output": raw}
 
     def filter_tools_for_role(self, tools, *, agent_key, user_role, tenant_id):
@@ -51,7 +52,8 @@ class _BlockEnforcer(_AllowEnforcer):
 
 
 class _OutputBlockEnforcer(_AllowEnforcer):
-    async def sanitize_tool_result(self, name, raw, *, agent_key, tenant_id, user_role):
+    async def sanitize_tool_result(self, name, raw, *, agent_key, tenant_id, user_role,
+                                   policy=None):
         return {"blocked": True, "sanitized_output": None}
 
 

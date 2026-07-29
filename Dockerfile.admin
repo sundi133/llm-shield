@@ -20,8 +20,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install minimal Python deps
+# Install minimal Python deps.
+# shield-mcp is installed from the local path, so its source has to be present
+# BEFORE pip runs — otherwise the build fails on a requirement it cannot resolve.
 COPY requirements-admin.txt .
+COPY packages/shield-mcp/ packages/shield-mcp/
 RUN pip install --no-cache-dir -r requirements-admin.txt
 
 # Copy only the modules needed for admin/tenant UI
@@ -34,6 +37,12 @@ COPY core/middleware.py core/
 COPY core/rbac.py core/
 COPY core/feature_flags.py core/
 COPY core/policy_inheritance.py core/
+# Imported at module load by api/routes_tool.py (which this image COPYs), so
+# their absence crash-loops the admin container at boot.
+COPY core/policy_mode.py core/
+COPY core/run_context.py core/
+# Onboarding scan (admin plane only; the scanner import is optional).
+COPY core/mcp_scan.py core/
 COPY core/webhook_dispatcher.py core/
 COPY core/models.py core/
 COPY core/llm_backend.py core/
@@ -120,9 +129,13 @@ COPY storage/aibom.py storage/
 COPY storage/aibom_mappings.py storage/
 COPY storage/aibom_interop.py storage/
 COPY storage/mcp_gateway_store.py storage/
+COPY storage/mcp_policy_store.py storage/
+COPY storage/mcp_scan_store.py storage/
 COPY core/telemetry.py core/
 COPY guardrails/__init__.py guardrails/
 COPY guardrails/base.py guardrails/
+# Imported at module load by api/routes_config.py.
+COPY guardrails/registry.py guardrails/
 COPY guardrails/agentic/__init__.py guardrails/agentic/
 COPY guardrails/agentic/rbac_guard.py guardrails/agentic/
 COPY guardrails/agentic/data_access_guard.py guardrails/agentic/

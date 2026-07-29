@@ -19,9 +19,16 @@ default fail-closed (block on transport error); set ``fail_open=True`` to allow.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Optional
 
 import httpx
+
+# Pure policy helper (no guard chain, no I/O), so importing it here does not
+# drag the in-process enforcement pipeline into the thin-edge backend.
+from core.mcp.enforcement import dlp_role_for
+
+logger = logging.getLogger("votal.mcp.http_enforcer")
 
 _MAX_OUTPUT_CHARS = 50_000
 
@@ -69,6 +76,9 @@ class HTTPEnforcer:
         self.auth_token = auth_token
         self.fail_open = fail_open
         self._client = client or httpx.AsyncClient(timeout=timeout)
+        # One warning per instance when a route's policy carries controls this
+        # backend cannot apply — enough to be noticed, not enough to spam.
+        self._warned_policy = False
 
     def _headers(self, *, tenant_id: Optional[str], agent_key: str, user_role: Optional[str]) -> dict:
         h = {"Content-Type": "application/json"}
@@ -96,6 +106,8 @@ class HTTPEnforcer:
         session_id: Optional[str] = None,
         workflow: Optional[str] = None,
         confirmation_token: Optional[str] = None,
+        route: Optional[str] = None,
+        policy: Optional[dict] = None,
     ) -> dict:
         """Map POST /v1/shield/tool/check to the MCPProxy decision shape.
 
@@ -104,7 +116,26 @@ class HTTPEnforcer:
         guards (confirmation, per-session rate limits) on the thin-edge path.
         ``workflow`` / ``confirmation_token`` come from the request's _meta and
         map onto the fields ToolCheckRequest already exposes.
+
+        ``route`` names the MCP server the call is bound for, so the central
+        Shield can scope the kill switch to it. Sent as an extra body field: a
+        deployment running an older data plane ignores the unknown key and keeps
+        applying the fleet-wide kill switch, so the two can roll independently.
+
+        ``policy`` is accepted but NOT applied here. The guard chain runs on the
+        central Shield with that tenant's own config, so per-server
+        ``input_guardrails`` have no effect on this backend. Warned once per
+        instance rather than silently ignored, and warned again at bind time by
+        the admin API, so an operator cannot believe a control is live when it
+        is not. The server-scoped tool floor is unaffected — it runs in MCPProxy,
+        ahead of any enforcer.
         """
+        if policy and (policy.get("input_guardrails") and not self._warned_policy):
+            self._warned_policy = True
+            logger.warning(
+                "mcp http enforcement backend: per-server input_guardrails are "
+                "ignored (the guard chain runs on the central Shield). Use the "
+                "inprocess backend for route-scoped input screening.")
         try:
             r = await self._client.post(
                 f"{self.base_url}/v1/shield/tool/check",
@@ -112,7 +143,8 @@ class HTTPEnforcer:
                       "tool_params": arguments or {}, "user_role": user_role or "",
                       "session_id": session_id or "",
                       "workflow": workflow or None,
-                      "confirmation_token": confirmation_token or None},
+                      "confirmation_token": confirmation_token or None,
+                      "route": route or None},
                 headers=self._headers(tenant_id=tenant_id, agent_key=agent_key, user_role=user_role),
             )
             r.raise_for_status()
@@ -139,14 +171,24 @@ class HTTPEnforcer:
         agent_key: str,
         tenant_id: Optional[str],
         user_role: Optional[str],
+        policy: Optional[dict] = None,
     ) -> dict:
-        """Map POST /v1/shield/tool/output to {blocked, sanitized_output}."""
+        """Map POST /v1/shield/tool/output to {blocked, sanitized_output}.
+
+        ``dlp.sanitize_as`` IS honored here, because the role travels in a header
+        this backend controls — so an untrusted server still redacts for the role
+        the policy fixes rather than the one the caller claimed. The rest of the
+        policy (output_guardrails, result_scanning) runs on the central Shield
+        under its own config; see the note on enforce_tool_call.
+        """
+        effective_role = dlp_role_for(policy, user_role)
         text = _as_text(raw)[:_MAX_OUTPUT_CHARS]
         try:
             r = await self._client.post(
                 f"{self.base_url}/v1/shield/tool/output",
                 json={"tool_name": name, "tool_output": text, "agent_key": agent_key},
-                headers=self._headers(tenant_id=tenant_id, agent_key=agent_key, user_role=user_role),
+                headers=self._headers(tenant_id=tenant_id, agent_key=agent_key,
+                                      user_role=effective_role),
             )
             r.raise_for_status()
             d = r.json()

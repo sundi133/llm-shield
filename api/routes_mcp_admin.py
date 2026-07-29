@@ -16,26 +16,54 @@ request.state, never from the body or a query param:
 
 Scope of the poisoning/threat view: it is the static threat mapping the AIBOM
 pipeline already computes from the registered server list (storage.aibom_mappings
-+ storage.aibom). The LIVE per-tool description scan runs in the data-plane proxy
-on tools/list and is deliberately not duplicated here — the admin image does not
-carry the scanner package, and a stale persisted copy would be worse than a
-truthful "scanned live at call time" note.
++ storage.aibom).
+
+Two different scans, deliberately kept distinct:
+  * the LIVE per-tool description scan runs in the data-plane proxy on tools/list;
+  * the ONBOARDING scan runs here, once, when a server is registered or rescanned
+    on demand (core/mcp_scan.py). It is a point-in-time audit of the metadata the
+    server advertised at that moment, and the console labels it with its
+    timestamp so it is never read as a live guarantee.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
-import re
 import time
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from storage.mcp_gateway_store import (
+    ROUTE_NAME_RULE,
     delete_upstream,
     get_upstream,
+    is_valid_route_name,
     list_upstreams,
     set_upstream,
+)
+from core.mcp_scan import (
+    blocks_activation,
+    scan_upstream,
+    scanner_available,
+    summary_for_route,
+)
+from storage.mcp_scan_store import (
+    delete_scan_report,
+    get_scan_report,
+    set_scan_report,
+)
+from storage.mcp_policy_store import (
+    bind_route,
+    delete_profile,
+    fanout_profile,
+    get_profile,
+    is_drifted,
+    list_bound_routes,
+    list_profiles,
+    set_profile,
+    stamp_effective_policy,
+    unbind_route,
 )
 from storage.tool_killswitch import (
     disable_tool,
@@ -77,6 +105,35 @@ def _redact(cfg: dict) -> dict:
     return out
 
 
+#: Fields owned by the governance layer, not by a registration request. A
+#: register/PUT call carries connection details; rebuilding the document from
+#: that body alone would silently unbind the route from its profile, drop its
+#: materialized policy, and re-enable a server SecOps had switched off.
+_PRESERVED_ON_REWRITE = (
+    "profile_id", "overrides", "effective_policy", "effective_rev",
+    "active", "scan", "scan_override",
+)
+
+
+def _carry_over(cfg: dict, existing: dict | None) -> dict:
+    """Copy governance-owned fields from the stored document onto a rewrite."""
+    for key in _PRESERVED_ON_REWRITE:
+        if existing and key in existing and key not in cfg:
+            cfg[key] = existing[key]
+    return cfg
+
+
+async def _rescan(tenant_id: str, route: str, cfg: dict) -> dict:
+    """Run the onboarding scan for one route, persist it, and return the report.
+
+    The full report is stored under its own key; only a three-field summary goes
+    on the route document, which the data plane reads once per guarded call.
+    """
+    report = await scan_upstream(cfg, tenant_id)
+    set_scan_report(tenant_id, route, report)
+    return report
+
+
 def _mcp_threats() -> list[str]:
     try:
         from storage.aibom_mappings import CATEGORY_THREATS
@@ -89,6 +146,10 @@ class ToolActionRequest(BaseModel):
     # Note: no tenant_id field. The tenant is the authenticated one, full stop.
     reason: str = Field("", max_length=500,
                         description="Why the tool is being disabled (audited)")
+    route: Optional[str] = Field(
+        None,
+        description="Disable only on this MCP server. Omit for fleet-wide "
+                    "(the original behavior).")
 
 
 def _actor(request: Request) -> str:
@@ -107,6 +168,15 @@ async def mcp_inventory(request: Request):
     tenant_id = _require_tenant(request)
 
     servers = [_redact(c) for c in list_upstreams(tenant_id)]
+    # Normalize the administrative on/off flag so the console never has to know
+    # that a missing key means enabled (routes predating the flag have no key).
+    for s in servers:
+        s["active"] = bool(s.get("active", True))
+        # Denormalizing policy onto the route buys a free guard path but can go
+        # stale if a fan-out only partly succeeded. Surface that rather than
+        # letting a route quietly serve a superseded revision.
+        profile_id = s.get("profile_id")
+        s["drift"] = is_drifted(s, get_profile(tenant_id, profile_id) if profile_id else None)
     disabled = list_disabled_tools(tenant_id)
     disabled_names = {d.get("tool_name") for d in disabled}
 
@@ -114,9 +184,13 @@ async def mcp_inventory(request: Request):
         "tenant_id": tenant_id,
         "servers": servers,
         "server_count": len(servers),
+        "inactive_server_count": sum(1 for s in servers if not s["active"]),
+        "drifted_server_count": sum(1 for s in servers if s["drift"]),
         "disabled_tools": disabled,
         "disabled_count": len(disabled),
         "threats_addressed": _mcp_threats(),
+        "scanner_available": scanner_available(),
+        "unscanned_server_count": sum(1 for s in servers if not s.get("scan")),
         # Honest scope note the UI renders verbatim, so the tab never implies it
         # ran a live description scan it did not.
         "scan_note": ("Tool descriptions are scanned live in the gateway on "
@@ -134,7 +208,7 @@ async def disable(tool_name: str, body: ToolActionRequest, request: Request):
     actor = _actor(request)
 
     meta = disable_tool(tenant_id=tenant_id, tool_name=tool_name,
-                        reason=body.reason, actor=actor)
+                        reason=body.reason, actor=actor, route=body.route)
 
     # Audit + webhook, matching the data-plane kill-switch path.
     try:
@@ -157,27 +231,41 @@ async def disable(tool_name: str, body: ToolActionRequest, request: Request):
         pass
 
     return {"status": "disabled", "tenant_id": tenant_id,
-            "tool_name": tool_name, "metadata": meta}
+            "tool_name": tool_name, "route": body.route, "metadata": meta}
+
+
+class ToolEnableRequest(BaseModel):
+    route: Optional[str] = Field(
+        None, description="Must match the scope the tool was disabled at.")
 
 
 @router.post("/tools/{tool_name}/enable")
-async def enable(tool_name: str, request: Request):
-    """Re-enable a tool this tenant previously disabled."""
+async def enable(tool_name: str, request: Request,
+                 body: Optional[ToolEnableRequest] = None):
+    """Re-enable a tool this tenant previously disabled.
+
+    The body is optional so existing callers that send none keep working; with
+    no ``route`` this lifts the fleet-wide disable, exactly as before.
+    """
     tenant_id = _require_tenant(request)
     actor = _actor(request)
+    route = body.route if body else None
 
-    if not enable_tool(tenant_id=tenant_id, tool_name=tool_name):
+    if not enable_tool(tenant_id=tenant_id, tool_name=tool_name, route=route):
+        scope = f" on route '{route}'" if route else ""
         raise HTTPException(status_code=404,
-                            detail=f"Tool '{tool_name}' was not disabled")
+                            detail=f"Tool '{tool_name}' was not disabled{scope}")
 
     try:
         from storage.admin_audit import log_admin_action
         log_admin_action(action="tool_enabled", actor=actor, tenant_id=tenant_id,
-                         after={"tool_name": tool_name, "via": "portal"})
+                         after={"tool_name": tool_name, "route": route,
+                                "via": "portal"})
     except Exception:
         pass
 
-    return {"status": "enabled", "tenant_id": tenant_id, "tool_name": tool_name}
+    return {"status": "enabled", "tenant_id": tenant_id, "tool_name": tool_name,
+            "route": route}
 
 
 # ── server registration (portal write path) ──────────────────────────────
@@ -191,8 +279,8 @@ async def enable(tool_name: str, request: Request):
 # connection object is pooled; config/enforcement is always re-read.)
 
 # Route names become a URL path segment and a Redis key component — constrain
-# them rather than trusting the caller.
-_ROUTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+# them rather than trusting the caller. The pattern now lives in
+# storage.mcp_gateway_store so the data plane applies the identical rule.
 
 
 class RegisterServerRequest(BaseModel):
@@ -210,11 +298,16 @@ class RegisterServerRequest(BaseModel):
     shield_tenant_key: Optional[str] = None
     scan_descriptions: bool = False
     isolation_ack: bool = False
+    # Administrative on/off for the whole server (see core/mcp/gateway.py).
+    # Optional, not defaulted: a registration body that does not mention `active`
+    # must leave the current state alone, or editing a URL would silently put a
+    # server SecOps disabled back into service.
+    active: Optional[bool] = None
 
     @model_validator(mode="after")
     def _check(self):
-        if not _ROUTE_RE.match(self.route or ""):
-            raise ValueError("route must be 1-64 chars: letters, digits, - or _")
+        if not is_valid_route_name(self.route or ""):
+            raise ValueError(ROUTE_NAME_RULE)
         if self.transport not in ("stdio", "sse", "http"):
             raise ValueError("transport must be one of: stdio, sse, http")
         if self.transport == "stdio" and not self.command:
@@ -240,6 +333,7 @@ async def register_server(body: RegisterServerRequest, request: Request):
     cfg["tenant_id"] = tenant_id
     cfg["created_at"] = (existing or {}).get("created_at") or int(time.time())
     cfg["updated_at"] = int(time.time())
+    _carry_over(cfg, existing)
     set_upstream(tenant_id, route, cfg)
 
     try:
@@ -252,8 +346,30 @@ async def register_server(body: RegisterServerRequest, request: Request):
     except Exception:
         pass
 
+    # Audit the metadata this server advertises, before an agent ever reads it.
+    # Tool descriptions are text a model will act on, so registering a
+    # third-party server without looking at them is the whole gap this closes.
+    report = await _rescan(tenant_id, route, cfg)
+    cfg["scan"] = summary_for_route(report)
+    scan_policy = (cfg.get("effective_policy") or {}).get("scan_policy")
+    if blocks_activation(report, scan_policy):
+        # Registered but not serving. Deliberately not a 4xx: the operator's
+        # request succeeded, and the server is here to be reviewed and released.
+        cfg["active"] = False
+    set_upstream(tenant_id, route, cfg)
+
     resp = {"status": "updated" if existing else "created",
-            "route": route, "server": _redact(cfg)}
+            "route": route, "server": _redact(cfg), "scan": report}
+    if cfg.get("active") is False:
+        resp["warning"] = (
+            "Registered but left INACTIVE: the metadata scan found a critical "
+            "finding and this profile is set to block_on_critical. Review the "
+            "findings, then POST /servers/{route}/activate to release it.")
+    elif report.get("verdict") in ("unavailable", "unreachable", "unresolved"):
+        resp["warning"] = (
+            f"The server was registered but NOT audited ({report['verdict']}): "
+            f"{report.get('detail') or 'see the scan report'}. Treat its tool "
+            f"descriptions as unreviewed.")
     if not body.isolation_ack:
         resp["warning"] = ("isolation_ack is false — Shield only enforces if this "
                            "upstream accepts connections ONLY from the gateway "
@@ -268,8 +384,18 @@ async def delete_server(route: str, request: Request):
     tenant_id = _require_tenant(request)
     actor = _actor(request)
 
+    # Drop the fan-out index entry first. A deleted route left in a profile's
+    # index would block that profile from ever being deleted (the 409 lists a
+    # route that no longer exists) and make every fan-out report it missing.
+    existing = get_upstream(tenant_id, route)
+    if existing and existing.get("profile_id"):
+        unbind_route(tenant_id, existing["profile_id"], route)
+
     if not delete_upstream(tenant_id, route):
         raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    # A report left behind would be shown against whatever server later reuses
+    # this route name.
+    delete_scan_report(tenant_id, route)
 
     try:
         from storage.admin_audit import log_admin_action
@@ -279,3 +405,387 @@ async def delete_server(route: str, request: Request):
         pass
 
     return {"status": "deleted", "tenant_id": tenant_id, "route": route}
+
+
+# ── onboarding scan ──────────────────────────────────────────────────────
+#
+# A scan is a point-in-time audit of the metadata a server advertised at that
+# moment. Servers change their tool descriptions without telling anyone, so the
+# console always shows WHEN a report was taken and never presents one as a
+# standing guarantee.
+
+
+@router.get("/servers/{route}/scan")
+async def get_scan(route: str, request: Request):
+    """The full stored scan report for one server, findings included."""
+    tenant_id = _require_tenant(request)
+    if not get_upstream(tenant_id, route):
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    report = get_scan_report(tenant_id, route)
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail=f"route '{route}' has no scan report; POST to this path to run one")
+    return {"tenant_id": tenant_id, "route": route, "scan": report}
+
+
+@router.post("/servers/{route}/scan")
+async def run_scan(route: str, request: Request):
+    """Re-audit a server now.
+
+    Worth doing on a schedule as well as on demand: a server that was clean at
+    registration can publish a poisoned description later, and nothing in the
+    protocol announces that.
+    """
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+
+    report = await _rescan(tenant_id, route, cfg)
+    cfg["scan"] = summary_for_route(report)
+    cfg["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, cfg)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_server_scanned", actor=actor, tenant_id=tenant_id,
+                         after={"route": route, "verdict": report.get("verdict"),
+                                "gating_count": report.get("gating_count", 0),
+                                "via": "portal"})
+    except Exception:
+        pass
+
+    resp = {"status": "scanned", "tenant_id": tenant_id, "route": route,
+            "scan": report}
+    # A rescan never disables a running server on its own: pulling a live
+    # integration mid-flight on a heuristic verdict is the operator's call, not
+    # the scanner's. Surface it and let them decide.
+    if report.get("verdict") == "fail" and cfg.get("active", True):
+        resp["warning"] = (
+            "This server has critical findings but is still serving traffic. "
+            "Disable it if that is not intended; a rescan does not stop a "
+            "running server by itself.")
+    return resp
+
+
+@router.post("/servers/{route}/activate")
+async def activate_server(route: str, request: Request):
+    """Release a server that its scan left inactive.
+
+    Separate from /enable on purpose: this one is an explicit, audited override
+    of a security finding, and it should read that way in the log rather than
+    looking like routine maintenance.
+    """
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+
+    report = get_scan_report(tenant_id, route) or {}
+    updated = dict(cfg)
+    updated["active"] = True
+    updated["scan_override"] = {
+        "actor": actor, "at": int(time.time()),
+        "verdict": report.get("verdict"),
+        "gating_count": report.get("gating_count", 0),
+    }
+    updated["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, updated)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_scan_override", actor=actor, tenant_id=tenant_id,
+                         after={"route": route, "verdict": report.get("verdict"),
+                                "gating_count": report.get("gating_count", 0),
+                                "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "activated", "tenant_id": tenant_id, "route": route,
+            "overrode_verdict": report.get("verdict"),
+            "server": _redact(updated)}
+
+
+# ── server enable / disable ──────────────────────────────────────────────
+#
+# Deleting a server loses its config (URL, credentials, enforcement backend).
+# During an incident SecOps wants to cut access NOW and restore it later, so
+# these flip an `active` flag the gateway checks in _load_cfg — one choke point
+# that every MCP method funnels through, which means one flag disconnects every
+# client (Cursor, Claude, Codex, and anything else speaking MCP) at once.
+
+def _set_active(tenant_id: str, route: str, active: bool) -> dict:
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    updated = dict(cfg)
+    updated["active"] = active
+    updated["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, updated)
+    return updated
+
+
+@router.post("/servers/{route}/disable")
+async def disable_server(route: str, body: ToolActionRequest, request: Request):
+    """Stop serving a whole MCP server, keeping its config. Effective on the
+    next call — the gateway re-reads config per request."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    cfg = _set_active(tenant_id, route, False)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_server_disabled", actor=actor,
+                         tenant_id=tenant_id,
+                         after={"route": route, "reason": body.reason,
+                                "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "disabled", "tenant_id": tenant_id, "route": route,
+            "server": _redact(cfg)}
+
+
+@router.post("/servers/{route}/enable")
+async def enable_server(route: str, request: Request):
+    """Re-enable a server previously disabled here."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    cfg = _set_active(tenant_id, route, True)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_server_enabled", actor=actor,
+                         tenant_id=tenant_id, after={"route": route, "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "enabled", "tenant_id": tenant_id, "route": route,
+            "server": _redact(cfg)}
+
+
+# ── policy profiles ──────────────────────────────────────────────────────
+#
+# A profile is a named policy bundle bound to many servers, so a fleet is
+# governed centrally. This phase stores and serves them; nothing enforces a
+# profile yet (see docs/spec-mcp-fleet-control-plane.md phases 3+), which is
+# deliberate — policy that is authored but inert cannot break the guard path.
+
+class ProfileRequest(BaseModel):
+    """Author-supplied profile body. Field shapes are validated as policy is
+    wired into enforcement, phase by phase; storing an unknown key now would let
+    an operator believe a control is live before it is, so the accepted set is
+    explicit and everything else is rejected."""
+
+    # Pydantic ignores unknown keys by default. Silently dropping a misspelled
+    # `output_guardrail` would store a profile the operator believes is stricter
+    # than it is, so unknown keys are an error.
+    model_config = ConfigDict(extra="forbid")
+
+    description: str = Field("", max_length=500)
+    tools: Optional[dict[str, Any]] = None
+    input_guardrails: Optional[dict[str, Any]] = None
+    output_guardrails: Optional[dict[str, Any]] = None
+    dlp: Optional[dict[str, Any]] = None
+    result_scanning: Optional[dict[str, Any]] = None
+    scan_policy: Optional[dict[str, Any]] = None
+
+
+@router.get("/profiles")
+async def list_policy_profiles(request: Request):
+    tenant_id = _require_tenant(request)
+    profiles = list_profiles(tenant_id)
+    return {
+        "tenant_id": tenant_id,
+        "profiles": profiles,
+        "count": len(profiles),
+        # State exactly which controls are live, so nobody assumes a field that
+        # is merely storable is also enforced.
+        "enforcement_note": (
+            "Enforced on bound routes: tools.allow / tools.deny (tools/list and "
+            "tools/call), dlp.sanitize_as (tool results and resources/read), "
+            "output_guardrails, result_scanning, and scan_policy (tool-description "
+            "scanning at tools/list). input_guardrails and output_guardrails apply "
+            "on the inprocess backend only. scan_policy gates discovery, not "
+            "invocation — use tools.deny to make a flagged tool unreachable."),
+    }
+
+
+@router.get("/profiles/{profile_id}")
+async def get_policy_profile(profile_id: str, request: Request):
+    tenant_id = _require_tenant(request)
+    doc = get_profile(tenant_id, profile_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"profile '{profile_id}' not found")
+    return {"tenant_id": tenant_id, "profile": doc,
+            "bound_routes": list_bound_routes(tenant_id, profile_id)}
+
+
+@router.put("/profiles/{profile_id}")
+async def put_policy_profile(profile_id: str, body: ProfileRequest, request: Request):
+    """Create or replace a profile. Profile ids share the route charset: both
+    end up in Redis keys, and one rule is easier to hold than two."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    if not is_valid_route_name(profile_id):
+        raise HTTPException(status_code=422,
+                            detail=ROUTE_NAME_RULE.replace("route", "profile_id"))
+
+    existing = get_profile(tenant_id, profile_id)
+    doc = set_profile(tenant_id, profile_id, body.model_dump(exclude_none=True))
+    # Push the new revision to every bound route. Partial failure is reported,
+    # not raised: one unwritable route must not abort the rest of the fleet, and
+    # whatever is left behind shows up as drift in the inventory.
+    fanout = fanout_profile(tenant_id, profile_id)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_profile_upsert", actor=actor,
+                         tenant_id=tenant_id, before=existing,
+                         after={"profile_id": profile_id, "via": "portal",
+                                "fanout": fanout})
+    except Exception:
+        pass
+
+    resp = {"status": "updated" if existing else "created",
+            "tenant_id": tenant_id, "profile": doc, "fanout": fanout}
+    if fanout["failed"] or fanout["missing"]:
+        resp["warning"] = (
+            "Some bound routes were not updated and are now serving a stale "
+            "policy revision; they are flagged as drifted in the inventory.")
+    return resp
+
+
+@router.delete("/profiles/{profile_id}")
+async def delete_policy_profile(profile_id: str, request: Request):
+    """Delete a profile. Refused while routes are bound: silently unbinding
+    servers would drop their policy without anyone asking for that."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+
+    bound = list_bound_routes(tenant_id, profile_id)
+    if bound:
+        raise HTTPException(
+            status_code=409,
+            detail=f"profile '{profile_id}' is bound to {len(bound)} route(s): "
+                   f"{', '.join(bound)}. Unbind them first.")
+
+    if not delete_profile(tenant_id, profile_id):
+        raise HTTPException(status_code=404, detail=f"profile '{profile_id}' not found")
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_profile_delete", actor=actor,
+                         tenant_id=tenant_id, after={"profile_id": profile_id,
+                                                     "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "deleted", "tenant_id": tenant_id, "profile_id": profile_id}
+
+
+# ── binding a server to a profile ────────────────────────────────────────
+#
+# Binding is its own sub-resource rather than a field on the server PUT, because
+# that PUT replaces the whole document: editing policy through it would force the
+# operator to re-send the upstream's credentials every time, which is how bearer
+# tokens end up in shell history.
+
+class BindingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str = Field(..., description="profile to apply to this server")
+    overrides: Optional[dict[str, Any]] = Field(
+        None, description="per-server exceptions; same shape as a profile, partial")
+
+
+@router.put("/servers/{route}/binding")
+async def put_binding(route: str, body: BindingRequest, request: Request):
+    """Bind a server to a policy profile and materialize its effective policy."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    profile = get_profile(tenant_id, body.profile_id)
+    if not profile:
+        raise HTTPException(status_code=404,
+                            detail=f"profile '{body.profile_id}' not found")
+
+    previous = cfg.get("profile_id")
+    if previous and previous != body.profile_id:
+        # Leave no dangling entry in the old profile's fan-out index, or its
+        # next write would try to recompute a route it no longer governs.
+        unbind_route(tenant_id, previous, route)
+
+    updated = dict(cfg)
+    updated["profile_id"] = body.profile_id
+    if body.overrides is None:
+        updated.pop("overrides", None)
+    else:
+        updated["overrides"] = body.overrides
+    updated = stamp_effective_policy(updated, profile, updated.get("overrides"))
+    updated["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, updated)
+    bind_route(tenant_id, body.profile_id, route)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_binding_set", actor=actor, tenant_id=tenant_id,
+                         before={"profile_id": previous},
+                         after={"route": route, "profile_id": body.profile_id,
+                                "via": "portal"})
+    except Exception:
+        pass
+
+    resp = {"status": "bound", "tenant_id": tenant_id, "route": route,
+            "profile_id": body.profile_id, "server": _redact(updated)}
+
+    # The guard chain runs on the central Shield under the `http` backend, so
+    # per-server input_guardrails silently would not apply there. Say so at bind
+    # time, where the operator can still change the backend or the profile.
+    if (updated.get("enforcement_backend") == "http"
+            and (updated.get("effective_policy") or {}).get("input_guardrails")):
+        resp["warning"] = (
+            "This route uses the 'http' enforcement backend, where the guard "
+            "chain runs on the central Shield: the profile's input_guardrails "
+            "will NOT apply. The tool allowlist and kill switch still do. Use "
+            "the 'inprocess' backend for route-scoped input screening.")
+    return resp
+
+
+@router.delete("/servers/{route}/binding")
+async def delete_binding(route: str, request: Request):
+    """Unbind a server, dropping its materialized policy. The server keeps
+    serving traffic under the tenant-wide defaults it used before binding."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    previous = cfg.get("profile_id")
+    if not previous:
+        raise HTTPException(status_code=404, detail=f"route '{route}' is not bound")
+
+    updated = dict(cfg)
+    for k in ("profile_id", "overrides", "effective_policy", "effective_rev"):
+        updated.pop(k, None)
+    updated["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, updated)
+    unbind_route(tenant_id, previous, route)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_binding_cleared", actor=actor,
+                         tenant_id=tenant_id, before={"profile_id": previous},
+                         after={"route": route, "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "unbound", "tenant_id": tenant_id, "route": route,
+            "previous_profile_id": previous}

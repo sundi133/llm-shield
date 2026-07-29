@@ -208,6 +208,11 @@
   .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; }
   .badge-warn { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
   .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+  /* Badges that carry an IDENTIFIER the operator has to type back exactly —
+     a route name, a profile id. The global capitalize would render
+     `higgsfield` as `Higgsfield`, and typing that into the kill-switch route
+     field produces a member that never matches: the disable silently no-ops. */
+  .badge-id { text-transform: none; font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace; }
 
   button { font-family: inherit; font-size: 13px; font-weight: 500; padding: 0.5rem 0.9rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-3); color: var(--text); cursor: pointer; transition: all 0.1s; }
   button:hover { background: var(--bg-hover); border-color: var(--border-strong); }
@@ -1890,12 +1895,23 @@
   /* Inputs: hover affordance */
   input[type=text]:hover, input[type=password]:hover, textarea:hover, select:hover { border-color: var(--border-strong); }
 
-  #aibom-cards.stat-grid,
-  #mcp-cards.stat-grid {
+  #aibom-cards.stat-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 0.85rem;
     margin-bottom: 1rem;
+  }
+  /* Four fixed columns rather than auto-fit: with exactly four stats, auto-fit
+     drops the last one onto a row of its own at common widths, which reads as
+     a rendering fault rather than as a layout choice. */
+  #mcp-cards.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.85rem;
+    margin-bottom: 1rem;
+  }
+  @media (max-width: 1080px) {
+    #mcp-cards.stat-grid { grid-template-columns: repeat(2, 1fr); }
   }
   #aibom-cards .stat-card,
   #mcp-cards .stat-card {
@@ -2122,11 +2138,87 @@
     font-size: 12px;
     line-height: 1.45;
   }
+  /* ── MCP fleet ──────────────────────────────────────────────────────
+     Servers are the subject of this page, so they get cards rather than
+     rows: during an incident an operator scans for one server and needs
+     its state (active / bound / drifted) to read as primary, not as
+     metadata trailing off the end of a dense line. */
+  .mcp-fleet-head {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 1rem; margin: 1.6rem 0 0.85rem;
+  }
+  .mcp-fleet-title { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+  .mcp-fleet-desc { font-size: 12px; color: var(--text-dim); margin-top: 0.15rem; }
+
+  .mcp-server-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 0.85rem;
+  }
+  .mcp-server-card {
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg-2); padding: 0.95rem 1rem 0.8rem;
+    display: flex; flex-direction: column; gap: 0.6rem;
+    transition: border-color 0.12s, box-shadow 0.12s;
+  }
+  .mcp-server-card:hover { border-color: var(--border-strong); box-shadow: 0 1px 3px rgba(0,0,0,0.18); }
+  /* A disabled server stays legible — an operator has to be able to read the
+     row they are about to re-enable — but must never be mistaken for live. */
+  .mcp-server-card.is-off { opacity: 0.72; border-style: dashed; }
+  /* Drift is the one state where a route disagrees with its profile, so it
+     gets the full-card treatment rather than a badge you can scroll past. */
+  .mcp-server-card.is-drift { border-color: var(--danger); }
+
+  .mcp-card-top { display: flex; align-items: center; gap: 0.5rem; }
+  .mcp-card-route {
+    font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+    font-size: 14px; font-weight: 650; letter-spacing: -0.01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mcp-card-dest {
+    font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+    font-size: 11.5px; color: var(--text-dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mcp-card-meta { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+  .mcp-card-actions {
+    display: flex; gap: 0.4rem; margin-top: 0.15rem;
+    padding-top: 0.65rem; border-top: 1px solid var(--border);
+  }
+  .mcp-card-actions button { padding: 0.35rem 0.7rem; font-size: 12px; }
+
+  /* Status pill: state first, in colour, before any identifier. */
+  .mcp-pill {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    padding: 0.15rem 0.5rem; border-radius: 999px;
+    font-size: 10.5px; font-weight: 650; letter-spacing: 0.02em;
+    text-transform: uppercase; white-space: nowrap;
+  }
+  .mcp-pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .mcp-pill-on   { background: rgba(16, 185, 129, 0.13); color: #34d399; }
+  .mcp-pill-off  { background: rgba(239, 68, 68, 0.13);  color: #f87171; }
+  .mcp-pill-warn { background: rgba(245, 158, 11, 0.13); color: #fbbf24; }
+
+  .mcp-controls-head {
+    font-size: 11px; font-weight: 650; letter-spacing: 0.07em;
+    text-transform: uppercase; color: var(--text-dim);
+    margin: 2rem 0 0.75rem; padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+  .stat-grid-compact .stat-card { padding: 0.8rem 0.95rem; }
+  .stat-grid-compact .stat-value { font-size: 22px; }
+
   .mcp-kill-grid {
     display: grid;
-    grid-template-columns: minmax(220px, 0.9fr) minmax(260px, 1.2fr) auto;
+    /* tool name · server scope · reason · action */
+    grid-template-columns: minmax(200px, 0.9fr) minmax(170px, 0.7fr) minmax(200px, 1fr) auto;
     gap: 0.7rem;
     align-items: end;
+  }
+  /* Narrow desktop: the four fields no longer fit on one row without crushing
+     them, so wrap to two before the mobile single-column rule takes over. */
+  @media (max-width: 1180px) {
+    .mcp-kill-grid { grid-template-columns: 1fr 1fr; }
   }
   .chip-cloud {
     display: flex;
@@ -4788,6 +4880,90 @@ if __name__ == "__main__":
         </div>
       </div>
 
+      <!-- Fleet at a glance. Compact by design: these are a health readout, not
+           the point of the page. The servers below are. -->
+      <div id="mcp-cards" class="stat-grid stat-grid-compact"></div>
+
+      <!-- ── The fleet itself: this page's subject ───────────────────────────
+           Rendered as cards, not table rows. An operator scanning during an
+           incident needs to find one server and see its state at a glance;
+           a dense row list makes state (active / bound / drifted) read as
+           incidental metadata rather than as the thing being managed. -->
+      <div class="mcp-fleet-head">
+        <div>
+          <div class="mcp-fleet-title">MCP Servers</div>
+          <div class="mcp-fleet-desc">Every upstream routed through Shield. Upstream credentials are masked.</div>
+        </div>
+        <button class="small primary" onclick="mcpFocusRegister()">+ Add Server</button>
+      </div>
+      <div id="mcp-servers" class="mcp-server-grid"></div>
+
+      <!-- Findings for one server, opened from its scan pill. Kept inline rather
+           than in a modal: an operator comparing a finding against the server's
+           config wants both on screen at once. -->
+      <div class="section-panel" id="mcp-findings" style="display:none;margin-top:1rem;">
+        <div class="section-panel-head">
+          <div>
+            <div class="section-panel-title">Scan findings &mdash; <span id="mcp-findings-route" class="mono"></span></div>
+            <div class="section-panel-desc">A point-in-time audit of the metadata this server advertised when the scan ran. Quoted text below comes from the server itself.</div>
+          </div>
+          <button class="small" onclick="document.getElementById('mcp-findings').style.display='none'">Close</button>
+        </div>
+        <div id="mcp-findings-body" class="section-panel-body" style="padding:0;"></div>
+      </div>
+
+      <!-- ── Controls, below the fleet ────────────────────────────────────────
+           Adding and kill-switching are deliberate, occasional actions. They sit
+           under the fleet so the page opens on state rather than on a form. -->
+      <div class="mcp-controls-head">Controls</div>
+
+      <div class="section-panel">
+        <div class="section-panel-head"><div><div class="section-panel-title">Register a Server</div><div class="section-panel-desc">Add an upstream MCP server. HTTP/SSE need a URL; stdio needs a command. Then grant a role its tools under Agent Registry.</div></div></div>
+        <div class="section-panel-body mcp-form-grid">
+          <label class="mcp-field"><span>Route name</span>
+            <input id="mcp-reg-route" placeholder="e.g. files" />
+          </label>
+          <label class="mcp-field"><span>Transport</span>
+            <select id="mcp-reg-transport" onchange="mcpToggleTransportFields()">
+              <option value="http">http</option>
+              <option value="sse">sse</option>
+              <option value="stdio">stdio</option>
+            </select>
+          </label>
+          <label id="mcp-reg-url-wrap" class="mcp-field mcp-field-wide"><span>Upstream URL</span>
+            <input id="mcp-reg-url" placeholder="https://your-mcp-server/mcp" />
+          </label>
+          <label id="mcp-reg-cmd-wrap" class="mcp-field mcp-field-wide" style="display:none;"><span>Command</span>
+            <input id="mcp-reg-cmd" placeholder="/usr/bin/your-mcp-server" />
+          </label>
+          <label class="mcp-check-row">
+            <input id="mcp-reg-isolation" type="checkbox" />
+            <span>Upstream accepts connections only from the gateway (isolation_ack)</span>
+          </label>
+          <div class="mcp-warning-note" id="mcp-reg-isolation-note">
+            Leave unchecked only if the upstream is still publicly reachable — Shield warns, because an agent could then bypass it.
+          </div>
+          <div style="grid-column:1/-1;">
+            <button class="primary" onclick="mcpRegisterServer()">Register Server</button>
+          </div>
+        </div>
+      </div>
+
+
+      <div class="section-panel">
+        <div class="section-panel-head"><div><div class="section-panel-title">Kill Switch</div><div class="section-panel-desc">Disabled tools are blocked at the guard path immediately, even in monitor mode. Leave the server blank to disable a tool on every MCP server; name one to isolate just that server.</div></div></div>
+        <div class="section-panel-body">
+          <div class="mcp-kill-grid">
+          <input id="mcp-tool-name" placeholder="tool name (e.g. transfer_funds)" />
+          <input id="mcp-tool-route" placeholder="server / route (blank = all servers)" />
+          <input id="mcp-tool-reason" placeholder="reason (audited)" />
+          <button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpDisableTool()">Disable Tool</button>
+          </div>
+        </div>
+        <div id="mcp-disabled" class="section-panel-body inventory-scroll" style="max-height:280px;border-top:1px solid var(--border);"></div>
+      </div>
+
+
       <!-- Inline setup guide: how a dev puts their own MCP server behind Shield.
            Registration is a data-plane API call (this portal is the admin plane),
            so the steps are shown here rather than as a form. -->
@@ -4841,57 +5017,6 @@ X-User-Role: reader</pre></div>
           </div>
         </div>
       </details>
-
-      <div id="mcp-cards" class="stat-grid"></div>
-
-      <div class="section-panel">
-        <div class="section-panel-head"><div><div class="section-panel-title">Register a Server</div><div class="section-panel-desc">Add an upstream MCP server. HTTP/SSE need a URL; stdio needs a command. Then grant a role its tools under Agent Registry.</div></div></div>
-        <div class="section-panel-body mcp-form-grid">
-          <label class="mcp-field"><span>Route name</span>
-            <input id="mcp-reg-route" placeholder="e.g. files" />
-          </label>
-          <label class="mcp-field"><span>Transport</span>
-            <select id="mcp-reg-transport" onchange="mcpToggleTransportFields()">
-              <option value="http">http</option>
-              <option value="sse">sse</option>
-              <option value="stdio">stdio</option>
-            </select>
-          </label>
-          <label id="mcp-reg-url-wrap" class="mcp-field mcp-field-wide"><span>Upstream URL</span>
-            <input id="mcp-reg-url" placeholder="https://your-mcp-server/mcp" />
-          </label>
-          <label id="mcp-reg-cmd-wrap" class="mcp-field mcp-field-wide" style="display:none;"><span>Command</span>
-            <input id="mcp-reg-cmd" placeholder="/usr/bin/your-mcp-server" />
-          </label>
-          <label class="mcp-check-row">
-            <input id="mcp-reg-isolation" type="checkbox" />
-            <span>Upstream accepts connections only from the gateway (isolation_ack)</span>
-          </label>
-          <div class="mcp-warning-note" id="mcp-reg-isolation-note">
-            Leave unchecked only if the upstream is still publicly reachable — Shield warns, because an agent could then bypass it.
-          </div>
-          <div style="grid-column:1/-1;">
-            <button class="primary" onclick="mcpRegisterServer()">Register Server</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="section-panel">
-        <div class="section-panel-head"><div><div class="section-panel-title">Registered Servers</div><div class="section-panel-desc">Upstream credentials are masked.</div></div></div>
-        <div id="mcp-servers" class="section-panel-body inventory-scroll" style="max-height:360px;"></div>
-      </div>
-
-      <div class="section-panel">
-        <div class="section-panel-head"><div><div class="section-panel-title">Kill Switch</div><div class="section-panel-desc">Disabled tools are blocked at the guard path immediately, even in monitor mode.</div></div></div>
-        <div class="section-panel-body">
-          <div class="mcp-kill-grid">
-          <input id="mcp-tool-name" placeholder="tool name (e.g. transfer_funds)" />
-          <input id="mcp-tool-reason" placeholder="reason (audited)" />
-          <button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpDisableTool()">Disable Tool</button>
-          </div>
-        </div>
-        <div id="mcp-disabled" class="section-panel-body inventory-scroll" style="max-height:280px;border-top:1px solid var(--border);"></div>
-      </div>
 
       <div class="section-panel">
         <div class="section-panel-head"><div><div class="section-panel-title">Threats Addressed</div></div></div>
@@ -11827,28 +11952,88 @@ async function loadMcpGateway() {
 
 function renderMcpGateway(inv) {
   const disabledCount = inv.disabled_count || 0;
+  const inactiveCount = inv.inactive_server_count || 0;
+  const driftCount = inv.drifted_server_count || 0;
+  // Counts what is NOT known to be clean: never scanned, plus every scan that
+  // could not run. Reporting only hard failures would let a fleet nobody has
+  // ever audited show a reassuring zero.
+  const unscanned = (inv.servers || []).filter(
+    s => !s.scan || !['pass', 'fail'].includes(s.scan.verdict)).length;
+  const failing = (inv.servers || []).filter(
+    s => (s.scan || {}).verdict === 'fail').length;
   document.getElementById('mcp-cards').innerHTML = `
     <div class="stat-card"><div class="stat-value">${inv.server_count || 0}</div><div class="stat-label">Registered Servers</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${inactiveCount ? 'var(--red)' : 'var(--text)'};">${inactiveCount}</div><div class="stat-label">Disabled Servers</div></div>
     <div class="stat-card"><div class="stat-value" style="color:${disabledCount ? 'var(--red)' : 'var(--text)'};">${disabledCount}</div><div class="stat-label">Disabled Tools</div></div>
-    <div class="stat-card"><div class="stat-value">${(inv.threats_addressed || []).length}</div><div class="stat-label">Threats Addressed</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${driftCount ? 'var(--red)' : 'var(--text)'};">${driftCount}</div><div class="stat-label">Policy Drift</div></div>
+    <div class="stat-card" title="Servers with critical findings in their advertised tool metadata."><div class="stat-value" style="color:${failing ? 'var(--red)' : 'var(--text)'};">${failing}</div><div class="stat-label">Failing Scan</div></div>
+    <div class="stat-card" title="Servers never audited, or whose scan could not run. Not the same as clean."><div class="stat-value" style="color:${unscanned ? 'var(--warn, #fbbf24)' : 'var(--text)'};">${unscanned}</div><div class="stat-label">Unscanned</div></div>
   `;
 
   const servers = inv.servers || [];
   document.getElementById('mcp-servers').innerHTML = servers.length
     ? servers.map(s => {
-        const route = escapeHtml(s.route || s.name || '(unnamed)');
+        const rawRoute = s.route || s.name || '';
+        const route = escapeHtml(rawRoute || '(unnamed)');
+        const enc = encodeURIComponent(rawRoute);
         const transport = escapeHtml(s.transport || '?');
         const dest = escapeHtml(s.url || s.command || '');
         const backend = escapeHtml(s.enforcement_backend || 'inprocess');
-        const rawRoute = s.route || s.name || '';
-        return _aibomRow(
-          `<span style="font-weight:600;min-width:120px;">${route}</span>` +
-          `<span style="color:var(--text-dim);">${transport}</span>` +
-          `<span style="flex:1;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;">${dest}</span>` +
-          `<span class="badge">${backend}</span>` +
-          `<button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpDeleteServer('${encodeURIComponent(rawRoute)}')">Remove</button>`);
+        // active is normalized server-side, so a route registered before the
+        // flag existed still reports true rather than rendering as disabled.
+        const active = s.active !== false;
+
+        // State reads first, in colour, before any identifier: during an
+        // incident "is this thing serving traffic?" is the only question.
+        const pill = active
+          ? `<span class="mcp-pill mcp-pill-on">live</span>`
+          : `<span class="mcp-pill mcp-pill-off">disabled</span>`;
+        // Drift = this route is serving a superseded policy revision. It gets a
+        // pill and a card border, because a badge here is easy to scroll past.
+        const drift = s.drift
+          ? `<span class="mcp-pill mcp-pill-warn" title="Serving a superseded policy revision. Re-save the profile to push the current one.">drift</span>`
+          : '';
+        // isolation_ack=false means agents may still reach the upstream
+        // directly, so policy on this route is advisory. Say so on the card.
+        const bypass = (s.isolation_ack === false)
+          ? `<span class="mcp-pill mcp-pill-warn" title="isolation_ack is false — this upstream may still be reachable directly, so an agent could bypass Shield.">bypassable</span>`
+          : '';
+        const profile = s.profile_id
+          ? `<span class="badge badge-id" title="Policy profile bound to this server">${escapeHtml(s.profile_id)}</span>`
+          : `<span class="badge" title="No policy profile bound: this server falls back to tenant-wide defaults.">unbound</span>`;
+
+        // Onboarding scan. A server that was never scanned, or whose scan could
+        // not run, must not look the same as one that passed — so "unscanned" is
+        // its own visible state rather than an absent badge.
+        const scan = mcpScanBadge(s.scan, rawRoute);
+        // Only offer the override where it means something: a server parked by a
+        // failing scan. Re-enabling anything else is the ordinary Enable button.
+        const blockedByScan = (active === false) && (s.scan || {}).verdict === 'fail';
+
+        return `<div class="mcp-server-card${active ? '' : ' is-off'}${s.drift ? ' is-drift' : ''}">
+            <div class="mcp-card-top">
+              <span class="mcp-card-route" title="${route}">${route}</span>
+              ${pill}${drift}${bypass}
+            </div>
+            <div class="mcp-card-dest" title="${dest}">${dest || '&mdash;'}</div>
+            <div class="mcp-card-meta">
+              <span class="badge">${transport}</span>
+              <span class="badge">${backend}</span>
+              ${profile}${scan}
+            </div>
+            <div class="mcp-card-actions">
+              ${blockedByScan
+                ? `<button class="small" title="Override the scan finding and put this server back into service. Recorded against your account." onclick="mcpActivateServer('${enc}')">Activate</button>`
+                : `<button class="small" onclick="mcpToggleServer('${enc}', ${active ? 'false' : 'true'})">${active ? 'Disable' : 'Enable'}</button>`}
+              <button class="small" onclick="mcpRunScan('${enc}')">Scan</button>
+              <button class="small" style="color:var(--red);border-color:var(--red);margin-left:auto;" onclick="mcpDeleteServer('${enc}')">Remove</button>
+            </div>
+          </div>`;
       }).join('')
-    : _aibomEmpty('No MCP servers registered yet. Use the form above to add one.');
+    : `<div class="mcp-server-card" style="grid-column:1/-1;align-items:center;text-align:center;padding:2rem 1rem;">
+         <div style="font-weight:600;margin-bottom:0.3rem;">No MCP servers yet</div>
+         <div style="font-size:12px;color:var(--text-dim);">Register one under Controls below to route it through Shield.</div>
+       </div>`;
 
   const disabled = inv.disabled_tools || [];
   document.getElementById('mcp-disabled').innerHTML = disabled.length
@@ -11856,10 +12041,17 @@ function renderMcpGateway(inv) {
         const name = escapeHtml(d.tool_name || '');
         const reason = escapeHtml(d.reason || '');
         const actor = escapeHtml(d.actor || '');
+        // Scope is the difference between "off on one server" and "off
+        // everywhere", so it has to be visible before someone re-enables.
+        const scope = d.route
+          ? `<span class="badge badge-id" title="Disabled on this server only">${escapeHtml(d.route)}</span>`
+          : `<span class="badge" title="Disabled on every MCP server">fleet-wide</span>`;
+        const encRoute = d.route ? encodeURIComponent(d.route) : '';
         return _aibomRow(
           `<span style="font-weight:600;min-width:160px;color:var(--red);">${name}</span>` +
+          scope +
           `<span style="flex:1;color:var(--text-dim);">${reason}${actor ? ' · ' + actor : ''}</span>` +
-          `<button class="small" onclick="mcpEnableTool('${encodeURIComponent(d.tool_name || '')}')">Enable</button>`);
+          `<button class="small" onclick="mcpEnableTool('${encodeURIComponent(d.tool_name || '')}', '${encRoute}')">Enable</button>`);
       }).join('')
     : _aibomEmpty('No tools disabled. Use the kill switch above to disable one.');
 
@@ -11873,24 +12065,182 @@ function renderMcpGateway(inv) {
 async function mcpDisableTool() {
   const name = (document.getElementById('mcp-tool-name').value || '').trim();
   const reason = (document.getElementById('mcp-tool-reason').value || '').trim();
+  // Blank = fleet-wide, which is the historical behavior of this form.
+  const route = (document.getElementById('mcp-tool-route').value || '').trim();
   if (!name) { showToast('Enter a tool name', 'error'); return; }
   try {
     await apiCall(`/v1/tenant/me/mcp/tools/${encodeURIComponent(name)}/disable`,
-      { method: 'POST', body: JSON.stringify({ reason }) });
-    showToast(`Disabled ${name}`, 'success');
+      { method: 'POST', body: JSON.stringify({ reason, route: route || null }) });
+    showToast(route ? `Disabled ${name} on ${route}` : `Disabled ${name} everywhere`, 'success');
     document.getElementById('mcp-tool-name').value = '';
     document.getElementById('mcp-tool-reason').value = '';
+    document.getElementById('mcp-tool-route').value = '';
     loadMcpGateway();
   } catch (e) {
     showToast('Failed: ' + e.message, 'error');
   }
 }
 
-async function mcpEnableTool(encName) {
+async function mcpEnableTool(encName, encRoute) {
   const name = decodeURIComponent(encName);
+  // Must re-enable at the SAME scope it was disabled at: lifting a route-scoped
+  // block does not lift a fleet-wide one, and vice versa.
+  const route = encRoute ? decodeURIComponent(encRoute) : null;
   try {
-    await apiCall(`/v1/tenant/me/mcp/tools/${encodeURIComponent(name)}/enable`, { method: 'POST' });
-    showToast(`Enabled ${name}`, 'success');
+    await apiCall(`/v1/tenant/me/mcp/tools/${encodeURIComponent(name)}/enable`,
+      { method: 'POST', body: JSON.stringify({ route }) });
+    showToast(route ? `Enabled ${name} on ${route}` : `Enabled ${name}`, 'success');
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+function mcpFocusRegister() {
+  // The register form now lives below the fleet, so the header button has to
+  // take the operator there rather than just existing as decoration.
+  const el = document.getElementById('mcp-reg-route');
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.focus({ preventScroll: true });
+}
+
+// Onboarding-scan verdicts. Every one of these is a distinct operational state
+// and the console must not blur them: "we could not check" is not "it is clean",
+// and "our credential failed" points at us while "unreachable" points at them.
+const MCP_SCAN_STATES = {
+  pass:        { cls: 'mcp-pill-on',   label: 'scan ok',    hint: 'Metadata audit found nothing at or above critical.' },
+  fail:        { cls: 'mcp-pill-off',  label: 'scan fail',  hint: 'Critical findings in this server\'s advertised metadata.' },
+  unavailable: { cls: 'mcp-pill-warn', label: 'unscanned',  hint: 'The scanner is not installed in this deployment, so this server was never audited.' },
+  unreachable: { cls: 'mcp-pill-warn', label: 'unscanned',  hint: 'The server did not answer, timed out, or rejected our credentials, so it could not be audited.' },
+  unresolved:  { cls: 'mcp-pill-warn', label: 'unscanned',  hint: 'A stored upstream credential could not be materialized, so the scan could not authenticate.' },
+};
+
+function mcpScanBadge(scan, route) {
+  const enc = encodeURIComponent(route);
+  if (!scan || !scan.verdict) {
+    return `<span class="mcp-pill mcp-pill-warn" title="This server has never been audited. Click Scan to run one.">unscanned</span>`;
+  }
+  const st = MCP_SCAN_STATES[scan.verdict] || MCP_SCAN_STATES.unavailable;
+  const when = scan.scanned_at
+    ? ` Last run ${new Date(scan.scanned_at * 1000).toLocaleString()}.` : '';
+  const count = scan.gating_count ? ` (${scan.gating_count})` : '';
+  // A scan is a point-in-time audit; the timestamp is part of the claim, not a
+  // detail — a server can change its descriptions the day after a clean run.
+  return `<span class="mcp-pill ${st.cls}" style="cursor:pointer;"
+                title="${escapeHtml(st.hint + when)} Click for findings."
+                onclick="mcpShowFindings('${enc}')">${st.label}${count}</span>`;
+}
+
+async function mcpRunScan(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  try {
+    showToast(`Scanning ${route}…`, 'info');
+    const r = await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/scan`,
+      { method: 'POST' });
+    const v = (r.scan || {}).verdict;
+    showToast(`${route}: ${v === 'pass' ? 'scan clean' : 'scan ' + v}`,
+              v === 'pass' ? 'success' : 'error');
+    loadMcpGateway();
+    mcpShowFindings(encRoute);
+  } catch (e) {
+    showToast('Scan failed: ' + e.message, 'error');
+  }
+}
+
+async function mcpActivateServer(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  // This is an explicit accept of a security finding, so it asks in those terms
+  // rather than as a routine enable, and the server records who did it.
+  if (!confirm(
+      `Activate "${route}" despite its scan findings?\n\n` +
+      `Its advertised tool descriptions contain something the scanner flagged as ` +
+      `critical. Activating puts the server back into service for every MCP ` +
+      `client, and the override is recorded against your account.`)) return;
+  try {
+    await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/activate`,
+      { method: 'POST' });
+    showToast(`Activated ${route} (override recorded)`, 'success');
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+async function mcpShowFindings(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  const panel = document.getElementById('mcp-findings');
+  const body = document.getElementById('mcp-findings-body');
+  document.getElementById('mcp-findings-route').textContent = route;
+  panel.style.display = '';
+  body.innerHTML = '<div style="padding:0.9rem;color:var(--text-dim);font-size:12px;">Loading…</div>';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  let scan;
+  try {
+    scan = (await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/scan`)).scan;
+  } catch (e) {
+    body.innerHTML = `<div style="padding:0.9rem;font-size:12px;color:var(--text-dim);">
+      No scan report for this server yet. Use <strong>Scan</strong> on its card to run one.</div>`;
+    return;
+  }
+
+  if (scan.verdict !== 'pass' && scan.verdict !== 'fail') {
+    body.innerHTML = `<div style="padding:0.9rem;font-size:12px;">
+      <div style="font-weight:600;margin-bottom:0.25rem;">This server was not audited</div>
+      <div style="color:var(--text-dim);">${escapeHtml(scan.detail || scan.verdict)}</div>
+      <div style="color:var(--text-dim);margin-top:0.5rem;">Treat its tool descriptions as unreviewed.</div></div>`;
+    return;
+  }
+
+  const findings = scan.findings || [];
+  if (!findings.length) {
+    body.innerHTML = `<div style="padding:0.9rem;font-size:12px;color:var(--text-dim);">
+      No findings. ${escapeHtml(JSON.stringify(scan.counts || {}))} audited.</div>`;
+    return;
+  }
+
+  const rows = findings.map(f => {
+    const sev = String(f.severity || '').toLowerCase();
+    const cls = (sev === 'critical' || sev === 'high') ? 'mcp-pill-off'
+              : (sev === 'medium' ? 'mcp-pill-warn' : 'mcp-pill-on');
+    // f.evidence and f.detail are quoted from the UPSTREAM's own text. On a
+    // poisoned server that is attacker-controlled, so it is escaped and rendered
+    // as inert text — never as markup, and never fed back to a model from here.
+    const ev = f.evidence
+      ? `<div class="mono" style="margin-top:0.3rem;font-size:11px;color:var(--text-dim);
+                 white-space:pre-wrap;word-break:break-word;">${escapeHtml(f.evidence)}</div>`
+      : '';
+    return `<div style="padding:0.7rem 0.9rem;border-top:1px solid var(--border);">
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+          <span class="mcp-pill ${cls}">${escapeHtml(sev)}</span>
+          <span class="badge">${escapeHtml(f.category || '')}</span>
+          <span class="mono" style="font-size:12px;font-weight:600;">${escapeHtml(f.subject_name || '')}</span>
+          <span style="font-size:11px;color:var(--text-dim);">${escapeHtml(f.subject_kind || '')}</span>
+        </div>
+        <div style="font-size:12px;margin-top:0.3rem;">${escapeHtml(f.detail || '')}</div>
+        ${ev}
+      </div>`;
+  }).join('');
+
+  const dropped = scan.findings_truncated
+    ? `<div style="padding:0.6rem 0.9rem;border-top:1px solid var(--border);font-size:11px;color:var(--text-dim);">
+         ${scan.findings_truncated} further finding(s) not shown. Run the CLI for the full report.</div>`
+    : '';
+  body.innerHTML = rows + dropped;
+}
+
+async function mcpToggleServer(encRoute, makeActive) {
+  const route = decodeURIComponent(encRoute);
+  const action = makeActive ? 'enable' : 'disable';
+  if (!makeActive && !confirm(
+      `Disable "${route}"?\n\nEvery MCP client (Cursor, Claude, Codex, …) loses ` +
+      `access to this server immediately. Its configuration and credentials are ` +
+      `kept, so you can re-enable it without re-entering them.`)) return;
+  try {
+    await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/${action}`,
+      { method: 'POST', body: JSON.stringify({ reason: 'via portal' }) });
+    showToast(`${makeActive ? 'Enabled' : 'Disabled'} ${route}`, 'success');
     loadMcpGateway();
   } catch (e) {
     showToast('Failed: ' + e.message, 'error');
