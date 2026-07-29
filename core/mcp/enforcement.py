@@ -500,6 +500,61 @@ def _shape(decision: dict, results: list[dict], risk: str) -> dict:
     }
 
 
+def dlp_role_for(policy: Optional[dict], user_role: Optional[str]) -> Optional[str]:
+    """The role the output sanitizer should be told about for this server.
+
+    ToolOutputSanitizationGuardrail puts ``user_role`` into its LLM prompt, so a
+    claimed role influences how much of a result is redacted. The gateway takes
+    that role from a header unless verified-identity middleware supplied one, so
+    a caller can claim ``admin``. ``dlp.sanitize_as`` replaces it outright for
+    this server: "whatever they claim, sanitize this server's output as public".
+
+    Naming note: the spec called this ``role_ceiling``. A ceiling needs an
+    ordering over role names, and this codebase has none — core/rbac.py orders
+    ``data_clearance`` values (public/internal/confidential/restricted), not role
+    names like admin/viewer. Rather than invent a role lattice, this replaces
+    outright, which is what the untrusted-server case actually wants and is
+    simpler to reason about. Absent -> the claimed role, i.e. today's behavior.
+    """
+    if not policy or not fleet_policy_enabled():
+        return user_role
+    dlp = policy.get("dlp")
+    if not isinstance(dlp, dict):
+        return user_role
+    return dlp.get("sanitize_as") or user_role
+
+
+def result_scanning_for(policy: Optional[dict]) -> Optional[dict]:
+    """This server's tool-result scanning override, or None to use the env flags.
+
+    IndirectInjectionGuardrail is gated by two process-wide env vars
+    (SHIELD_INDIRECT_INJECTION_SCAN / _BLOCK), which is all-or-nothing across a
+    fleet. A tenant fronting both an untrusted SaaS server and an internal one
+    wants the first scanned and blocking, the second left alone — so the decision
+    moves to the call site when a policy expresses one.
+
+    Returns ``{"enabled": bool, "block": bool}``; None means "unchanged, use env".
+    """
+    if not policy or not fleet_policy_enabled():
+        return None
+    rs = policy.get("result_scanning")
+    if not isinstance(rs, dict) or "enabled" not in rs:
+        return None
+    return {"enabled": bool(rs.get("enabled")),
+            # Anything other than an explicit "block" is monitor: record the
+            # detection, do not withhold the result.
+            "block": rs.get("action") == "block"}
+
+
+def _output_request_configs(policy: Optional[dict]) -> dict:
+    """Per-request config for the output guards, from this server's policy."""
+    if not policy or not fleet_policy_enabled():
+        return {}
+    return {name: _normalize_guardrail_cfg(raw)
+            for name, raw in (policy.get("output_guardrails") or {}).items()
+            if isinstance(raw, dict)}
+
+
 async def sanitize_tool_result(
     tool_name: str,
     output,
@@ -507,23 +562,36 @@ async def sanitize_tool_result(
     agent_key: str = "",
     tenant_id: Optional[str] = None,
     user_role: Optional[str] = None,
+    policy: Optional[dict] = None,
 ) -> dict:
     """Run data-policy sanitization on an MCP tool result.
 
     Returns {sanitized_output, action, blocked}. On block, the output is
     replaced with a safe placeholder (the guard supplies it).
+
+    ``policy`` is the server's materialized policy: its ``output_guardrails``
+    tune the sanitizer and ``dlp.sanitize_as`` fixes the role it sanitizes for,
+    so an untrusted server can redact harder than the tenant default no matter
+    what role the caller claims.
     """
     guard = ToolOutputSanitizationGuardrail()
+    effective_role = dlp_role_for(policy, user_role)
     context = {
         "tool_name": tool_name,
         "tool_output": output,
         "agent_key": agent_key,
         "tenant_id": tenant_id,
         "X-Tenant-ID": tenant_id,
-        "user_role": user_role,
-        "X-User-Role": user_role,
+        "user_role": effective_role,
+        "X-User-Role": effective_role,
     }
-    r = await guard.check("", context)
+    configs = _output_request_configs(policy)
+    token = _request_configs.set(configs) if configs else None
+    try:
+        r = await guard.check("", context)
+    finally:
+        if token is not None:
+            _request_configs.reset(token)
     sanitized = (r.details or {}).get("sanitized_output", output)
     blocked = (not r.passed and r.action == "block")
 
@@ -532,11 +600,16 @@ async def sanitize_tool_result(
     # Records detections so the real false-positive rate can be observed before
     # SHIELD_INDIRECT_INJECTION_BLOCK is enabled; only replaces output on block.
     inj = IndirectInjectionGuardrail()
-    if inj.scan_enabled():
+    scan_cfg = result_scanning_for(policy)
+    if scan_cfg["enabled"] if scan_cfg else inj.scan_enabled():
         ir = await inj.check("", {**context, "content_source": "tool_result"})
-        if not (ir.passed and ir.action == "pass"):
+        detected = not (ir.passed and ir.action == "pass")
+        if detected:
             _record_metrics(tenant_id, [_result_dict(ir)])
-            if not ir.passed and ir.action == "block":
+            # Without a policy this is exactly the previous env-driven condition.
+            # With one, the server's own setting decides whether a detection
+            # withholds the result or is merely recorded.
+            if scan_cfg["block"] if scan_cfg else (not ir.passed and ir.action == "block"):
                 sanitized = "[blocked: indirect prompt injection detected in tool output]"
                 blocked = True
 

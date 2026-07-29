@@ -429,8 +429,10 @@ async def list_policy_profiles(request: Request):
         # is merely storable is also enforced.
         "enforcement_note": (
             "Enforced on bound routes: tools.allow / tools.deny (tools/list and "
-            "tools/call) and input_guardrails (inprocess backend only). Stored "
-            "but not yet enforced: dlp, result_scanning, scan_policy."),
+            "tools/call), dlp.sanitize_as (tool results and resources/read), "
+            "output_guardrails and result_scanning. input_guardrails and "
+            "output_guardrails apply on the inprocess backend only. Stored but "
+            "not yet enforced: scan_policy."),
     }
 
 

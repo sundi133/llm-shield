@@ -49,7 +49,7 @@ class Enforcer(Protocol):
     ) -> dict: ...
     async def sanitize_tool_result(
         self, name: str, raw: Any, *, agent_key: str, tenant_id: Optional[str],
-        user_role: Optional[str],
+        user_role: Optional[str], policy: Optional[dict] = None,
     ) -> dict: ...
     def filter_tools_for_role(
         self, tools: list[dict], *, agent_key: str, user_role: Optional[str],
@@ -178,7 +178,8 @@ class MCPProxy:
         raw = _retokenize_mcp(tenant_id, raw)
 
         san = await self._enforcer.sanitize_tool_result(
-            name, raw, agent_key=agent_key, tenant_id=tenant_id, user_role=user_role
+            name, raw, agent_key=agent_key, tenant_id=tenant_id, user_role=user_role,
+            policy=self._policy,
         )
         if san["blocked"]:
             return _error("Output blocked by Shield data policy", decision)
@@ -209,8 +210,13 @@ class MCPProxy:
         for block in contents:
             text = block.get("text") if isinstance(block, dict) else None
             if text is not None:
+                # Resource content gets the same DLP posture as a tool result:
+                # it can carry the same PII, and an untrusted server should not
+                # get a softer floor just because the bytes arrived via
+                # resources/read.
                 san = await self._enforcer.sanitize_tool_result(
-                    uri, text, agent_key=agent_key, tenant_id=tenant_id, user_role=user_role)
+                    uri, text, agent_key=agent_key, tenant_id=tenant_id,
+                    user_role=user_role, policy=self._policy)
                 if san["blocked"]:
                     return {"blocked": True,
                             "reason": "Resource content blocked by Shield data policy",

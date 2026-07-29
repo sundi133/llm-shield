@@ -24,6 +24,10 @@ from typing import Any, Optional
 
 import httpx
 
+# Pure policy helper (no guard chain, no I/O), so importing it here does not
+# drag the in-process enforcement pipeline into the thin-edge backend.
+from core.mcp.enforcement import dlp_role_for
+
 logger = logging.getLogger("votal.mcp.http_enforcer")
 
 _MAX_OUTPUT_CHARS = 50_000
@@ -167,14 +171,24 @@ class HTTPEnforcer:
         agent_key: str,
         tenant_id: Optional[str],
         user_role: Optional[str],
+        policy: Optional[dict] = None,
     ) -> dict:
-        """Map POST /v1/shield/tool/output to {blocked, sanitized_output}."""
+        """Map POST /v1/shield/tool/output to {blocked, sanitized_output}.
+
+        ``dlp.sanitize_as`` IS honored here, because the role travels in a header
+        this backend controls — so an untrusted server still redacts for the role
+        the policy fixes rather than the one the caller claimed. The rest of the
+        policy (output_guardrails, result_scanning) runs on the central Shield
+        under its own config; see the note on enforce_tool_call.
+        """
+        effective_role = dlp_role_for(policy, user_role)
         text = _as_text(raw)[:_MAX_OUTPUT_CHARS]
         try:
             r = await self._client.post(
                 f"{self.base_url}/v1/shield/tool/output",
                 json={"tool_name": name, "tool_output": text, "agent_key": agent_key},
-                headers=self._headers(tenant_id=tenant_id, agent_key=agent_key, user_role=user_role),
+                headers=self._headers(tenant_id=tenant_id, agent_key=agent_key,
+                                      user_role=effective_role),
             )
             r.raise_for_status()
             d = r.json()
