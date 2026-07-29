@@ -39,11 +39,16 @@ from storage.mcp_gateway_store import (
     set_upstream,
 )
 from storage.mcp_policy_store import (
+    bind_route,
     delete_profile,
+    fanout_profile,
     get_profile,
+    is_drifted,
     list_bound_routes,
     list_profiles,
     set_profile,
+    stamp_effective_policy,
+    unbind_route,
 )
 from storage.tool_killswitch import (
     disable_tool,
@@ -119,6 +124,11 @@ async def mcp_inventory(request: Request):
     # that a missing key means enabled (routes predating the flag have no key).
     for s in servers:
         s["active"] = bool(s.get("active", True))
+        # Denormalizing policy onto the route buys a free guard path but can go
+        # stale if a fan-out only partly succeeded. Surface that rather than
+        # letting a route quietly serve a superseded revision.
+        profile_id = s.get("profile_id")
+        s["drift"] = is_drifted(s, get_profile(tenant_id, profile_id) if profile_id else None)
     disabled = list_disabled_tools(tenant_id)
     disabled_names = {d.get("tool_name") for d in disabled}
 
@@ -127,6 +137,7 @@ async def mcp_inventory(request: Request):
         "servers": servers,
         "server_count": len(servers),
         "inactive_server_count": sum(1 for s in servers if not s["active"]),
+        "drifted_server_count": sum(1 for s in servers if s["drift"]),
         "disabled_tools": disabled,
         "disabled_count": len(disabled),
         "threats_addressed": _mcp_threats(),
@@ -283,6 +294,13 @@ async def delete_server(route: str, request: Request):
     tenant_id = _require_tenant(request)
     actor = _actor(request)
 
+    # Drop the fan-out index entry first. A deleted route left in a profile's
+    # index would block that profile from ever being deleted (the 409 lists a
+    # route that no longer exists) and make every fan-out report it missing.
+    existing = get_upstream(tenant_id, route)
+    if existing and existing.get("profile_id"):
+        unbind_route(tenant_id, existing["profile_id"], route)
+
     if not delete_upstream(tenant_id, route):
         raise HTTPException(status_code=404, detail=f"route '{route}' not found")
 
@@ -419,17 +437,27 @@ async def put_policy_profile(profile_id: str, body: ProfileRequest, request: Req
 
     existing = get_profile(tenant_id, profile_id)
     doc = set_profile(tenant_id, profile_id, body.model_dump(exclude_none=True))
+    # Push the new revision to every bound route. Partial failure is reported,
+    # not raised: one unwritable route must not abort the rest of the fleet, and
+    # whatever is left behind shows up as drift in the inventory.
+    fanout = fanout_profile(tenant_id, profile_id)
 
     try:
         from storage.admin_audit import log_admin_action
         log_admin_action(action="mcp_profile_upsert", actor=actor,
                          tenant_id=tenant_id, before=existing,
-                         after={"profile_id": profile_id, "via": "portal"})
+                         after={"profile_id": profile_id, "via": "portal",
+                                "fanout": fanout})
     except Exception:
         pass
 
-    return {"status": "updated" if existing else "created",
-            "tenant_id": tenant_id, "profile": doc}
+    resp = {"status": "updated" if existing else "created",
+            "tenant_id": tenant_id, "profile": doc, "fanout": fanout}
+    if fanout["failed"] or fanout["missing"]:
+        resp["warning"] = (
+            "Some bound routes were not updated and are now serving a stale "
+            "policy revision; they are flagged as drifted in the inventory.")
+    return resp
 
 
 @router.delete("/profiles/{profile_id}")
@@ -458,3 +486,98 @@ async def delete_policy_profile(profile_id: str, request: Request):
         pass
 
     return {"status": "deleted", "tenant_id": tenant_id, "profile_id": profile_id}
+
+
+# ── binding a server to a profile ────────────────────────────────────────
+#
+# Binding is its own sub-resource rather than a field on the server PUT, because
+# that PUT replaces the whole document: editing policy through it would force the
+# operator to re-send the upstream's credentials every time, which is how bearer
+# tokens end up in shell history.
+
+class BindingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str = Field(..., description="profile to apply to this server")
+    overrides: Optional[dict[str, Any]] = Field(
+        None, description="per-server exceptions; same shape as a profile, partial")
+
+
+@router.put("/servers/{route}/binding")
+async def put_binding(route: str, body: BindingRequest, request: Request):
+    """Bind a server to a policy profile and materialize its effective policy."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    profile = get_profile(tenant_id, body.profile_id)
+    if not profile:
+        raise HTTPException(status_code=404,
+                            detail=f"profile '{body.profile_id}' not found")
+
+    previous = cfg.get("profile_id")
+    if previous and previous != body.profile_id:
+        # Leave no dangling entry in the old profile's fan-out index, or its
+        # next write would try to recompute a route it no longer governs.
+        unbind_route(tenant_id, previous, route)
+
+    updated = dict(cfg)
+    updated["profile_id"] = body.profile_id
+    if body.overrides is None:
+        updated.pop("overrides", None)
+    else:
+        updated["overrides"] = body.overrides
+    updated = stamp_effective_policy(updated, profile, updated.get("overrides"))
+    updated["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, updated)
+    bind_route(tenant_id, body.profile_id, route)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_binding_set", actor=actor, tenant_id=tenant_id,
+                         before={"profile_id": previous},
+                         after={"route": route, "profile_id": body.profile_id,
+                                "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "bound", "tenant_id": tenant_id, "route": route,
+            "profile_id": body.profile_id, "server": _redact(updated),
+            "enforcement_note": ("Policy is materialized on the route but not yet "
+                                 "read by the guard path; binding does not change "
+                                 "enforcement behavior in this release.")}
+
+
+@router.delete("/servers/{route}/binding")
+async def delete_binding(route: str, request: Request):
+    """Unbind a server, dropping its materialized policy. The server keeps
+    serving traffic under the tenant-wide defaults it used before binding."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    previous = cfg.get("profile_id")
+    if not previous:
+        raise HTTPException(status_code=404, detail=f"route '{route}' is not bound")
+
+    updated = dict(cfg)
+    for k in ("profile_id", "overrides", "effective_policy", "effective_rev"):
+        updated.pop(k, None)
+    updated["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, updated)
+    unbind_route(tenant_id, previous, route)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_binding_cleared", actor=actor,
+                         tenant_id=tenant_id, before={"profile_id": previous},
+                         after={"route": route, "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "unbound", "tenant_id": tenant_id, "route": route,
+            "previous_profile_id": previous}

@@ -127,6 +127,12 @@ async def put_route(route: str, body: UpstreamConfigRequest, request: Request):
 @router.delete("/upstreams/{route}")
 async def delete_route(route: str, request: Request):
     tenant_id = _tenant_id(request)
+    # Mirror the admin plane: a deleted route left in its profile's fan-out
+    # index would block that profile from ever being deleted.
+    existing = get_upstream(tenant_id, route)
+    if existing and existing.get("profile_id"):
+        from storage.mcp_policy_store import unbind_route
+        unbind_route(tenant_id, existing["profile_id"], route)
     if not delete_upstream(tenant_id, route):
         raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
     gateway_router.invalidate(tenant_id, route)

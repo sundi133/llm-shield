@@ -87,9 +87,12 @@ def _remove_member(key: str, value: str) -> None:
 def set_profile(tenant_id: str, profile_id: str, profile: dict) -> dict:
     """Create/replace a profile. Returns the stored document.
 
-    ``updated_at`` is stamped here rather than by the caller because it is the
-    revision token routes compare against to detect drift; a caller-supplied
-    value could silently make a stale route look current.
+    ``rev`` is a monotonic per-profile counter and is what routes compare against
+    to detect drift. Deliberately NOT a timestamp: ``updated_at`` has second
+    granularity, so two edits in the same second would be indistinguishable and a
+    stale route would look current; wall-clock also moves backwards under NTP
+    correction. Both are stamped here rather than taken from the caller, since a
+    caller-supplied revision could mask drift.
     """
     doc = dict(profile)
     doc["profile_id"] = profile_id
@@ -97,6 +100,7 @@ def set_profile(tenant_id: str, profile_id: str, profile: dict) -> dict:
     existing = get_profile(tenant_id, profile_id)
     doc["created_at"] = (existing or {}).get("created_at") or int(time.time())
     doc["updated_at"] = int(time.time())
+    doc["rev"] = int((existing or {}).get("rev") or 0) + 1
 
     payload = json.dumps(doc)
     r = _get_redis()
@@ -156,3 +160,101 @@ def unbind_route(tenant_id: str, profile_id: str, route: str) -> None:
 
 def list_bound_routes(tenant_id: str, profile_id: str) -> list[str]:
     return sorted(_members(_routes_key(tenant_id, profile_id)))
+
+
+# ── effective policy (denormalized onto the route) ────────────────
+#
+# The guard path reads policy from the route document it ALREADY loads once per
+# call (core/mcp/gateway.py::_load_cfg). Resolving a profile at call time would
+# add a second Redis GET to every guarded call; computing on write instead keeps
+# the hot path at its current round-trip count.
+#
+# The tenant layer is deliberately NOT merged in here. enforce_tool_call already
+# has tenant_config in hand, so folding it in at enforcement time costs nothing
+# and avoids having to re-fan-out the entire fleet whenever tenant config
+# changes. What lands on the route is: profile <- route overrides.
+
+#: Profile bookkeeping that describes the profile itself rather than the policy
+#: it carries. Excluded so a route's effective_policy holds policy only.
+_PROFILE_META = ("profile_id", "tenant_id", "created_at", "updated_at", "rev",
+                 "description")
+
+
+def compute_effective_policy(
+    profile: Optional[dict], overrides: Optional[dict]
+) -> dict:
+    """Merge ``profile`` with per-route ``overrides``; overrides win.
+
+    Uses the same deep-merge as the agentic control plane so nested guardrail
+    config composes identically in both places (pinned by a coupling test).
+    """
+    from storage.agentic_control_plane import _deep_merge
+
+    base = {k: v for k, v in (profile or {}).items() if k not in _PROFILE_META}
+    return _deep_merge(base, overrides or {})
+
+
+def stamp_effective_policy(
+    cfg: dict, profile: Optional[dict], overrides: Optional[dict]
+) -> dict:
+    """Return a copy of ``cfg`` with effective_policy/effective_rev refreshed.
+
+    ``effective_rev`` is the profile revision the policy was built from; a route
+    whose rev differs from its profile's current ``rev`` has drifted (see
+    ``is_drifted``). Pure — the caller persists.
+    """
+    out = dict(cfg)
+    out["effective_policy"] = compute_effective_policy(profile, overrides)
+    out["effective_rev"] = int((profile or {}).get("rev") or 0)
+    return out
+
+
+def is_drifted(cfg: dict, profile: Optional[dict]) -> bool:
+    """Whether a route's denormalized policy is stale w.r.t. its profile.
+
+    A route with no binding cannot drift. A bound route whose profile has since
+    vanished counts as drifted: its stored policy no longer has a source.
+    """
+    if not cfg.get("profile_id"):
+        return False
+    if profile is None:
+        return True
+    return int(cfg.get("effective_rev") or 0) != int(profile.get("rev") or 0)
+
+
+def recompute_route(tenant_id: str, route: str) -> Optional[dict]:
+    """Rebuild one route's effective policy from its current binding. Persists
+    and returns the updated config, or None if the route is gone."""
+    from storage.mcp_gateway_store import get_upstream, set_upstream
+
+    cfg = get_upstream(tenant_id, route)
+    if cfg is None:
+        return None
+    profile_id = cfg.get("profile_id")
+    profile = get_profile(tenant_id, profile_id) if profile_id else None
+    if profile_id and profile is None:
+        # Keep the last known-good policy rather than silently dropping a bound
+        # route to no policy; is_drifted() surfaces it for the reconciler.
+        return cfg
+    updated = stamp_effective_policy(cfg, profile, cfg.get("overrides"))
+    set_upstream(tenant_id, route, updated)
+    return updated
+
+
+def fanout_profile(tenant_id: str, profile_id: str) -> dict:
+    """Push a profile change to every route bound to it.
+
+    Returns ``{updated, missing, failed}``. Partial failure is reported rather
+    than raised: one unwritable route must not abort the rest of the fleet, and
+    anything left behind is detectable via ``is_drifted``.
+    """
+    updated, missing, failed = [], [], []
+    for route in list_bound_routes(tenant_id, profile_id):
+        try:
+            if recompute_route(tenant_id, route) is None:
+                missing.append(route)
+            else:
+                updated.append(route)
+        except Exception:
+            failed.append(route)
+    return {"updated": updated, "missing": missing, "failed": failed}
