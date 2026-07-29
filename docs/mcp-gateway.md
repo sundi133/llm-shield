@@ -350,9 +350,60 @@ gateway (e.g. `api.guardrails.votal.ai`) cannot reach your `localhost`. Options:
 | **Local dev** (upstream on your laptop) | expose it: `ngrok http 9100` → use the public URL (+ header `"ngrok-skip-browser-warning":"1"`) |
 | **Railway / Fly / Render** | the app's public URL (see [examples/mcp_gateway/RAILWAY.md](../examples/mcp_gateway/RAILWAY.md)) |
 | **Same VPC / private network** | the internal address (best — naturally gateway-only) |
+| **Kubernetes / OpenShift** (upstream in-cluster) | the Service DNS: `http://mcp-payments.mcp.svc.cluster.local:8080/mcp` (or `http://mcp-payments:8080/mcp` in the same namespace) |
 
 Runnable examples to copy from: [examples/mcp_gateway](../examples/mcp_gateway)
 (`register_agent.py`, `bank_upstream.py`, `rp_upstream.py` for resources/prompts).
+
+### In-cluster upstreams, and where `isolation_ack` becomes true
+
+How your MCP servers get deployed is not Shield's concern — Helm, an operator,
+ArgoCD, or a hand-written Deployment all work, and Shield ships nothing for it.
+What Shield needs is narrow, and it is worth stating as a contract:
+
+1. **An address resolvable from the data-plane pod.** The gateway dials the
+   upstream from that process, so a `ClusterIP` Service name is the right answer.
+   Not `localhost` (a different pod), and not a public hostname (defeats the next
+   point).
+2. **Ingress restricted to the data plane.** This is the requirement
+   `isolation_ack: true` attests to, and in a cluster it is the one deployment
+   where you can actually satisfy it.
+
+With a public SaaS upstream you cannot stop an agent calling the vendor directly,
+so policy is advisory and the route should stay `isolation_ack: false`. In-cluster,
+your platform team can make it real — a `ClusterIP` Service with no Ingress or
+LoadBalancer, plus a policy admitting only the Shield data plane:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-payments-gateway-only
+spec:
+  podSelector:
+    matchLabels: { app: mcp-payments }     # your MCP server's labels
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: shield-data-plane }   # your data-plane labels
+      ports:
+        - port: 8080
+          protocol: TCP
+```
+
+Substitute your own labels — the repo does not ship a data-plane manifest, so the
+selector depends on how you deploy Shield. Once that policy is in place,
+enforcement is non-bypassable by the network rather than by an agent's good
+behavior, and `isolation_ack: true` is an honest attestation instead of a promise.
+
+Use `transport: "http"` against the Service. Avoid `stdio` here: it runs your
+server as an **unsandboxed subprocess of the gateway pod**, which cannot scale or
+restart independently and is a known gap pending its own spec.
+
+Nothing else about a route is environment-specific — the same profiles, scans,
+kill switch, and vault references work identically on-prem, in a VPC, or against
+a SaaS endpoint. Only the `url` and the isolation story change.
 
 ## Manage routes
 
