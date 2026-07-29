@@ -15,8 +15,10 @@ from core.auth import get_tenant_from_request
 from core.mcp.gateway import router as gateway_router
 from storage.admin_audit import log_admin_action
 from storage.mcp_gateway_store import (
+    ROUTE_NAME_RULE,
     delete_upstream,
     get_upstream,
+    is_valid_route_name,
     list_upstreams,
     set_upstream,
 )
@@ -42,6 +44,10 @@ class UpstreamConfigRequest(BaseModel):
     scan_descriptions: bool = False
     # Non-bypassability: set true once the upstream is network-isolated to the gateway.
     isolation_ack: bool = False
+    # Administrative on/off for the whole server. False makes the gateway refuse
+    # every method for this route (core/mcp/gateway.py::_load_cfg) without losing
+    # the config, so SecOps can park a server instead of deleting it.
+    active: bool = True
 
     @model_validator(mode="after")
     def _check(self):
@@ -91,6 +97,11 @@ async def get_route(route: str, request: Request):
 async def put_route(route: str, body: UpstreamConfigRequest, request: Request):
     tenant_id = _tenant_id(request)
     existing = get_upstream(tenant_id, route)
+    # Validate only when CREATING. A route registered before this rule existed
+    # must stay editable by its owner; rejecting the update would strand it with
+    # no way to fix its config short of delete-and-recreate.
+    if existing is None and not is_valid_route_name(route):
+        raise HTTPException(status_code=422, detail=ROUTE_NAME_RULE)
     cfg: dict[str, Any] = body.model_dump(exclude_none=True)
     cfg["route"] = route
     cfg["tenant_id"] = tenant_id

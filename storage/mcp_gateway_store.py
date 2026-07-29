@@ -15,9 +15,33 @@ the API layer redacts them on read.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Optional
 
 from storage.tenant_store import _fallback_store, _get_redis
+
+#: A route id appears in the gateway URL (``/gateway/{route}/mcp``) and is the
+#: prefix of a qualified tool identity (``route:tool``). Both uses constrain the
+#: charset: ``:`` would make ``route:tool`` ambiguous, and ``/`` or whitespace
+#: would break the URL.
+#:
+#: This is the same pattern api/routes_mcp_admin.py has enforced on the portal
+#: register path; it lives here now so the data plane can apply the identical
+#: rule instead of a second, drifting copy.
+_ROUTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+#: Human-readable form of _ROUTE_RE, for API error messages.
+ROUTE_NAME_RULE = "route must be 1-64 chars: letters, digits, - or _"
+
+
+def is_valid_route_name(route: str) -> bool:
+    """Whether ``route`` is safe to use in a URL and in ``route:tool``.
+
+    Checked when a route is CREATED, never when one is read or updated: a route
+    registered before this rule existed keeps serving traffic, and its owner can
+    still edit it. Tightening on update would strand those routes.
+    """
+    return bool(route) and bool(_ROUTE_RE.match(route))
 
 
 def _key(tenant_id: str, route: str) -> str:

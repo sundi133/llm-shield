@@ -116,6 +116,16 @@ class MCPGatewayRouter:
         cfg = get_upstream(tenant_id, route)
         if not cfg:
             raise GatewayError(404, f"no upstream configured for route '{route}'")
+        # SecOps kill switch for a whole server. This is the one choke point every
+        # gateway method funnels through, so disabling here cuts tools/call,
+        # tools/list, resources/* and prompts/* at once, for every client.
+        # Absent means enabled: routes registered before this field existed must
+        # keep serving traffic.
+        if not cfg.get("active", True):
+            raise GatewayError(
+                404,
+                f"route '{route}' is disabled by an administrator",
+            )
         if not cfg.get("isolation_ack"):
             # Non-bypassability is a deployment property: if the upstream is
             # directly reachable, agents can skip Shield. Surface it loudly.

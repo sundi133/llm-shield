@@ -25,17 +25,25 @@ truthful "scanned live at call time" note.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
-import re
 import time
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from storage.mcp_gateway_store import (
+    ROUTE_NAME_RULE,
     delete_upstream,
     get_upstream,
+    is_valid_route_name,
     list_upstreams,
     set_upstream,
+)
+from storage.mcp_policy_store import (
+    delete_profile,
+    get_profile,
+    list_bound_routes,
+    list_profiles,
+    set_profile,
 )
 from storage.tool_killswitch import (
     disable_tool,
@@ -107,6 +115,10 @@ async def mcp_inventory(request: Request):
     tenant_id = _require_tenant(request)
 
     servers = [_redact(c) for c in list_upstreams(tenant_id)]
+    # Normalize the administrative on/off flag so the console never has to know
+    # that a missing key means enabled (routes predating the flag have no key).
+    for s in servers:
+        s["active"] = bool(s.get("active", True))
     disabled = list_disabled_tools(tenant_id)
     disabled_names = {d.get("tool_name") for d in disabled}
 
@@ -114,6 +126,7 @@ async def mcp_inventory(request: Request):
         "tenant_id": tenant_id,
         "servers": servers,
         "server_count": len(servers),
+        "inactive_server_count": sum(1 for s in servers if not s["active"]),
         "disabled_tools": disabled,
         "disabled_count": len(disabled),
         "threats_addressed": _mcp_threats(),
@@ -191,8 +204,8 @@ async def enable(tool_name: str, request: Request):
 # connection object is pooled; config/enforcement is always re-read.)
 
 # Route names become a URL path segment and a Redis key component — constrain
-# them rather than trusting the caller.
-_ROUTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+# them rather than trusting the caller. The pattern now lives in
+# storage.mcp_gateway_store so the data plane applies the identical rule.
 
 
 class RegisterServerRequest(BaseModel):
@@ -210,11 +223,13 @@ class RegisterServerRequest(BaseModel):
     shield_tenant_key: Optional[str] = None
     scan_descriptions: bool = False
     isolation_ack: bool = False
+    # Administrative on/off for the whole server (see core/mcp/gateway.py).
+    active: bool = True
 
     @model_validator(mode="after")
     def _check(self):
-        if not _ROUTE_RE.match(self.route or ""):
-            raise ValueError("route must be 1-64 chars: letters, digits, - or _")
+        if not is_valid_route_name(self.route or ""):
+            raise ValueError(ROUTE_NAME_RULE)
         if self.transport not in ("stdio", "sse", "http"):
             raise ValueError("transport must be one of: stdio, sse, http")
         if self.transport == "stdio" and not self.command:
@@ -279,3 +294,167 @@ async def delete_server(route: str, request: Request):
         pass
 
     return {"status": "deleted", "tenant_id": tenant_id, "route": route}
+
+
+# ── server enable / disable ──────────────────────────────────────────────
+#
+# Deleting a server loses its config (URL, credentials, enforcement backend).
+# During an incident SecOps wants to cut access NOW and restore it later, so
+# these flip an `active` flag the gateway checks in _load_cfg — one choke point
+# that every MCP method funnels through, which means one flag disconnects every
+# client (Cursor, Claude, Codex, and anything else speaking MCP) at once.
+
+def _set_active(tenant_id: str, route: str, active: bool) -> dict:
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    updated = dict(cfg)
+    updated["active"] = active
+    updated["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, updated)
+    return updated
+
+
+@router.post("/servers/{route}/disable")
+async def disable_server(route: str, body: ToolActionRequest, request: Request):
+    """Stop serving a whole MCP server, keeping its config. Effective on the
+    next call — the gateway re-reads config per request."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    cfg = _set_active(tenant_id, route, False)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_server_disabled", actor=actor,
+                         tenant_id=tenant_id,
+                         after={"route": route, "reason": body.reason,
+                                "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "disabled", "tenant_id": tenant_id, "route": route,
+            "server": _redact(cfg)}
+
+
+@router.post("/servers/{route}/enable")
+async def enable_server(route: str, request: Request):
+    """Re-enable a server previously disabled here."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    cfg = _set_active(tenant_id, route, True)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_server_enabled", actor=actor,
+                         tenant_id=tenant_id, after={"route": route, "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "enabled", "tenant_id": tenant_id, "route": route,
+            "server": _redact(cfg)}
+
+
+# ── policy profiles ──────────────────────────────────────────────────────
+#
+# A profile is a named policy bundle bound to many servers, so a fleet is
+# governed centrally. This phase stores and serves them; nothing enforces a
+# profile yet (see docs/spec-mcp-fleet-control-plane.md phases 3+), which is
+# deliberate — policy that is authored but inert cannot break the guard path.
+
+class ProfileRequest(BaseModel):
+    """Author-supplied profile body. Field shapes are validated as policy is
+    wired into enforcement, phase by phase; storing an unknown key now would let
+    an operator believe a control is live before it is, so the accepted set is
+    explicit and everything else is rejected."""
+
+    # Pydantic ignores unknown keys by default. Silently dropping a misspelled
+    # `output_guardrail` would store a profile the operator believes is stricter
+    # than it is, so unknown keys are an error.
+    model_config = ConfigDict(extra="forbid")
+
+    description: str = Field("", max_length=500)
+    tools: Optional[dict[str, Any]] = None
+    input_guardrails: Optional[dict[str, Any]] = None
+    output_guardrails: Optional[dict[str, Any]] = None
+    dlp: Optional[dict[str, Any]] = None
+    result_scanning: Optional[dict[str, Any]] = None
+    scan_policy: Optional[dict[str, Any]] = None
+
+
+@router.get("/profiles")
+async def list_policy_profiles(request: Request):
+    tenant_id = _require_tenant(request)
+    profiles = list_profiles(tenant_id)
+    return {
+        "tenant_id": tenant_id,
+        "profiles": profiles,
+        "count": len(profiles),
+        # Say plainly that authoring is ahead of enforcement, so the console
+        # cannot imply a bound profile is already gating traffic.
+        "enforcement_note": ("Profiles are stored and bindable. Enforcement of "
+                             "profile policy lands in a later phase; a bound "
+                             "profile does not yet change guard-path behavior."),
+    }
+
+
+@router.get("/profiles/{profile_id}")
+async def get_policy_profile(profile_id: str, request: Request):
+    tenant_id = _require_tenant(request)
+    doc = get_profile(tenant_id, profile_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"profile '{profile_id}' not found")
+    return {"tenant_id": tenant_id, "profile": doc,
+            "bound_routes": list_bound_routes(tenant_id, profile_id)}
+
+
+@router.put("/profiles/{profile_id}")
+async def put_policy_profile(profile_id: str, body: ProfileRequest, request: Request):
+    """Create or replace a profile. Profile ids share the route charset: both
+    end up in Redis keys, and one rule is easier to hold than two."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    if not is_valid_route_name(profile_id):
+        raise HTTPException(status_code=422,
+                            detail=ROUTE_NAME_RULE.replace("route", "profile_id"))
+
+    existing = get_profile(tenant_id, profile_id)
+    doc = set_profile(tenant_id, profile_id, body.model_dump(exclude_none=True))
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_profile_upsert", actor=actor,
+                         tenant_id=tenant_id, before=existing,
+                         after={"profile_id": profile_id, "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "updated" if existing else "created",
+            "tenant_id": tenant_id, "profile": doc}
+
+
+@router.delete("/profiles/{profile_id}")
+async def delete_policy_profile(profile_id: str, request: Request):
+    """Delete a profile. Refused while routes are bound: silently unbinding
+    servers would drop their policy without anyone asking for that."""
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+
+    bound = list_bound_routes(tenant_id, profile_id)
+    if bound:
+        raise HTTPException(
+            status_code=409,
+            detail=f"profile '{profile_id}' is bound to {len(bound)} route(s): "
+                   f"{', '.join(bound)}. Unbind them first.")
+
+    if not delete_profile(tenant_id, profile_id):
+        raise HTTPException(status_code=404, detail=f"profile '{profile_id}' not found")
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_profile_delete", actor=actor,
+                         tenant_id=tenant_id, after={"profile_id": profile_id,
+                                                     "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "deleted", "tenant_id": tenant_id, "profile_id": profile_id}
