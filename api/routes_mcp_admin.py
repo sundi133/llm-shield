@@ -425,11 +425,12 @@ async def list_policy_profiles(request: Request):
         "tenant_id": tenant_id,
         "profiles": profiles,
         "count": len(profiles),
-        # Say plainly that authoring is ahead of enforcement, so the console
-        # cannot imply a bound profile is already gating traffic.
-        "enforcement_note": ("Profiles are stored and bindable. Enforcement of "
-                             "profile policy lands in a later phase; a bound "
-                             "profile does not yet change guard-path behavior."),
+        # State exactly which controls are live, so nobody assumes a field that
+        # is merely storable is also enforced.
+        "enforcement_note": (
+            "Enforced on bound routes: tools.allow / tools.deny (tools/list and "
+            "tools/call) and input_guardrails (inprocess backend only). Stored "
+            "but not yet enforced: dlp, result_scanning, scan_policy."),
     }
 
 
@@ -561,11 +562,20 @@ async def put_binding(route: str, body: BindingRequest, request: Request):
     except Exception:
         pass
 
-    return {"status": "bound", "tenant_id": tenant_id, "route": route,
-            "profile_id": body.profile_id, "server": _redact(updated),
-            "enforcement_note": ("Policy is materialized on the route but not yet "
-                                 "read by the guard path; binding does not change "
-                                 "enforcement behavior in this release.")}
+    resp = {"status": "bound", "tenant_id": tenant_id, "route": route,
+            "profile_id": body.profile_id, "server": _redact(updated)}
+
+    # The guard chain runs on the central Shield under the `http` backend, so
+    # per-server input_guardrails silently would not apply there. Say so at bind
+    # time, where the operator can still change the backend or the profile.
+    if (updated.get("enforcement_backend") == "http"
+            and (updated.get("effective_policy") or {}).get("input_guardrails")):
+        resp["warning"] = (
+            "This route uses the 'http' enforcement backend, where the guard "
+            "chain runs on the central Shield: the profile's input_guardrails "
+            "will NOT apply. The tool allowlist and kill switch still do. Use "
+            "the 'inprocess' backend for route-scoped input screening.")
+    return resp
 
 
 @router.delete("/servers/{route}/binding")

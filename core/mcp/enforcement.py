@@ -208,6 +208,46 @@ def tool_floor_decision(policy: Optional[dict], tool_name: str) -> Optional[str]
     return None
 
 
+def _normalize_guardrail_cfg(raw: dict) -> dict:
+    """Coerce a stored GuardrailPolicy into the shape BaseGuardrail reads."""
+    return {
+        "enabled": raw.get("enabled", True),
+        "action": raw.get("action", "block"),
+        "settings": raw.get("settings", {}) or {},
+    }
+
+
+def build_request_configs(
+    tenant_config: Optional[dict], policy: Optional[dict] = None
+) -> dict:
+    """Per-request guardrail config installed on the ``_request_configs``
+    ContextVar, merging tenant defaults with this server's policy.
+
+    Route policy wins: it is the more specific layer, and the whole point of a
+    profile is that an untrusted third-party server can be screened harder than
+    an internal one.
+
+    Scope worth being explicit about: this TUNES the guards already in
+    ``_tool_guard_chain`` (enable/disable, action, settings). It cannot install a
+    guard that is not in the chain, because the chain is fixed per call.
+    """
+    configs: dict = {}
+
+    # Tenant layer — historically only the allowlist guard was threaded here.
+    if tenant_config and "input_guardrails" in tenant_config:
+        ta = (tenant_config["input_guardrails"] or {}).get("tool_allowlist")
+        if ta:
+            configs["tool_allowlist"] = _normalize_guardrail_cfg(ta)
+
+    # Route layer.
+    if policy and fleet_policy_enabled():
+        for name, raw in (policy.get("input_guardrails") or {}).items():
+            if isinstance(raw, dict):
+                configs[name] = _normalize_guardrail_cfg(raw)
+
+    return configs
+
+
 def filter_tools_by_floor(tools: list[dict], policy: Optional[dict]) -> list[dict]:
     """Drop tools the server-scoped floor bars, for tools/list.
 
@@ -275,6 +315,7 @@ async def enforce_tool_call(
     workflow: Optional[str] = None,
     confirmation_token: Optional[str] = None,
     route: Optional[str] = None,
+    policy: Optional[dict] = None,
 ) -> dict:
     """Decide whether an MCP tools/call may proceed.
 
@@ -283,6 +324,10 @@ async def enforce_tool_call(
     instead of every server exposing that tool name. Keyword-only with a None
     default, so every caller without a route — REST tool routes, the embedded
     server, the lite gateway — is unchanged.
+
+    ``policy`` is that server's materialized policy. Its ``input_guardrails``
+    tune this call's guard chain (see ``build_request_configs``), so a third-party
+    server can be screened harder than an internal one. Also None by default.
 
     ``session_id`` must come from a *verified* agent-token claim, never from a
     caller-supplied header: it namespaces the confirmation tokens and the
@@ -335,16 +380,8 @@ async def enforce_tool_call(
         _record_metrics(tenant_id, results)
         return _shape(decision, results, risk)
 
-    # Per-request tenant config for the allowlist guard (mirrors the gateway).
-    configs: dict = {}
-    if tenant_config and "input_guardrails" in tenant_config:
-        ta = tenant_config["input_guardrails"].get("tool_allowlist")
-        if ta:
-            configs["tool_allowlist"] = {
-                "enabled": ta.get("enabled", True),
-                "action": ta.get("action", "block"),
-                "settings": ta.get("settings", {}),
-            }
+    # Per-request guardrail config: tenant defaults, then this server's policy.
+    configs = build_request_configs(tenant_config, policy)
 
     context = {
         "agent_key": agent_key,

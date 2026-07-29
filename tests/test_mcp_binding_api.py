@@ -85,12 +85,34 @@ def test_bind_materializes_policy_and_indexes_route(client):
     assert pstore.list_bound_routes("acme", "saas") == ["higgsfield"]
 
 
-def test_bind_states_enforcement_is_not_wired_yet(client):
-    _server()
+def test_profile_list_states_which_controls_are_live(client):
+    """A field that is merely storable must not read as enforced. The note names
+    both sides so an operator cannot assume dlp is gating when it is not."""
     _profile(client)
+    note = client.get("/v1/tenant/me/mcp/profiles", headers=_H).json()["enforcement_note"]
+    assert "tools.allow" in note and "input_guardrails" in note
+    assert "not yet enforced" in note and "dlp" in note
+
+
+def test_http_backend_warns_that_input_guardrails_will_not_apply(client):
+    """On the http backend the guard chain runs on the central Shield, so
+    per-server input screening silently would not apply. Say so at bind time,
+    while the operator can still change the backend."""
+    _server(enforcement_backend="http")
+    _profile(client, "saas", {**_PROFILE,
+                              "input_guardrails": {"prompt_injection": {"enabled": True}}})
     r = client.put("/v1/tenant/me/mcp/servers/higgsfield/binding",
                    json={"profile_id": "saas"}, headers=_H)
-    assert "not yet" in r.json()["enforcement_note"]
+    assert "will NOT apply" in r.json()["warning"]
+
+
+def test_inprocess_backend_does_not_warn(client):
+    _server(enforcement_backend="inprocess")
+    _profile(client, "saas", {**_PROFILE,
+                              "input_guardrails": {"prompt_injection": {"enabled": True}}})
+    r = client.put("/v1/tenant/me/mcp/servers/higgsfield/binding",
+                   json={"profile_id": "saas"}, headers=_H)
+    assert "warning" not in r.json()
 
 
 def test_bind_applies_overrides(client):

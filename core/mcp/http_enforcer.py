@@ -19,9 +19,12 @@ default fail-closed (block on transport error); set ``fail_open=True`` to allow.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Optional
 
 import httpx
+
+logger = logging.getLogger("votal.mcp.http_enforcer")
 
 _MAX_OUTPUT_CHARS = 50_000
 
@@ -69,6 +72,9 @@ class HTTPEnforcer:
         self.auth_token = auth_token
         self.fail_open = fail_open
         self._client = client or httpx.AsyncClient(timeout=timeout)
+        # One warning per instance when a route's policy carries controls this
+        # backend cannot apply — enough to be noticed, not enough to spam.
+        self._warned_policy = False
 
     def _headers(self, *, tenant_id: Optional[str], agent_key: str, user_role: Optional[str]) -> dict:
         h = {"Content-Type": "application/json"}
@@ -97,6 +103,7 @@ class HTTPEnforcer:
         workflow: Optional[str] = None,
         confirmation_token: Optional[str] = None,
         route: Optional[str] = None,
+        policy: Optional[dict] = None,
     ) -> dict:
         """Map POST /v1/shield/tool/check to the MCPProxy decision shape.
 
@@ -110,7 +117,21 @@ class HTTPEnforcer:
         Shield can scope the kill switch to it. Sent as an extra body field: a
         deployment running an older data plane ignores the unknown key and keeps
         applying the fleet-wide kill switch, so the two can roll independently.
+
+        ``policy`` is accepted but NOT applied here. The guard chain runs on the
+        central Shield with that tenant's own config, so per-server
+        ``input_guardrails`` have no effect on this backend. Warned once per
+        instance rather than silently ignored, and warned again at bind time by
+        the admin API, so an operator cannot believe a control is live when it
+        is not. The server-scoped tool floor is unaffected — it runs in MCPProxy,
+        ahead of any enforcer.
         """
+        if policy and (policy.get("input_guardrails") and not self._warned_policy):
+            self._warned_policy = True
+            logger.warning(
+                "mcp http enforcement backend: per-server input_guardrails are "
+                "ignored (the guard chain runs on the central Shield). Use the "
+                "inprocess backend for route-scoped input screening.")
         try:
             r = await self._client.post(
                 f"{self.base_url}/v1/shield/tool/check",

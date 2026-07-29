@@ -45,6 +45,7 @@ class Enforcer(Protocol):
         tenant_id: Optional[str], tenant_config: Optional[dict],
         session_id: Optional[str] = None, workflow: Optional[str] = None,
         confirmation_token: Optional[str] = None, route: Optional[str] = None,
+        policy: Optional[dict] = None,
     ) -> dict: ...
     async def sanitize_tool_result(
         self, name: str, raw: Any, *, agent_key: str, tenant_id: Optional[str],
@@ -159,6 +160,7 @@ class MCPProxy:
             tenant_id=tenant_id, tenant_config=tenant_config,
             session_id=session_id, workflow=workflow,
             confirmation_token=confirmation_token, route=self._route,
+            policy=self._policy,
         )
         await self._record({"phase": "call", "tool": name, "agent_key": agent_key,
                             "tenant_id": tenant_id, **decision})
