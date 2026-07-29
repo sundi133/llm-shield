@@ -24,6 +24,7 @@ from typing import Any, Awaitable, Callable, Optional, Protocol
 # calls Shield's guard endpoints over HTTP) can be injected without changing this
 # file — both run the SAME checks, so the two enforcement paths can't drift.
 from core.mcp import enforcement as _inprocess_enforcement
+from core.mcp.enforcement import filter_tools_by_floor, tool_floor_decision
 
 
 class UpstreamClient(Protocol):
@@ -68,13 +69,31 @@ class MCPProxy:
         on_decision: Optional[DecisionSink] = None,
         scan_descriptions: bool = False,
         enforcer: Optional[Enforcer] = None,
+        policy: Optional[dict] = None,
     ):
         self._upstream = upstream
         self._on_decision = on_decision
         self._scan_descriptions = scan_descriptions
+        # Server-scoped policy floor, resolved on write and denormalized onto the
+        # route config. Applied HERE rather than inside the enforcer on purpose:
+        # the floor is deterministic and identity-independent, so running it at
+        # the proxy layer makes it apply to every enforcement backend — including
+        # the HTTP one — without changing that backend's wire format.
+        self._policy = policy or None
         # None -> in-process pipeline (unchanged default). Inject to relocate
         # enforcement (e.g. HTTP to a central Shield) without touching this class.
         self._enforcer: Enforcer = enforcer or _inprocess_enforcement
+
+    def set_policy(self, policy: Optional[dict]) -> None:
+        """Refresh the server-scoped floor on an already-constructed proxy.
+
+        stdio upstreams are pooled across requests, so a policy baked in at
+        construction would keep enforcing a superseded revision until the pool
+        cycled. The gateway re-reads route config on every call and pushes it
+        here, preserving the property that config is always re-read even though
+        the connection is not.
+        """
+        self._policy = policy or None
 
     async def list_tools(
         self, *, agent_key: str, user_role: Optional[str], tenant_id: Optional[str]
@@ -82,6 +101,9 @@ class MCPProxy:
         tools = await self._upstream.list_tools()
         if self._scan_descriptions:
             tools = await self._scan_for_poisoning(tools)
+        # Floor first: a tool this server may never expose should not be
+        # advertised to anyone, whatever role the caller claims.
+        tools = filter_tools_by_floor(tools, self._policy)
         return self._enforcer.filter_tools_for_role(
             tools, agent_key=agent_key, user_role=user_role, tenant_id=tenant_id
         )
@@ -106,6 +128,27 @@ class MCPProxy:
         and per-session rate limits; it must originate from a verified claim.
         ``workflow`` / ``confirmation_token`` come from the request's _meta.
         """
+        # The server-scoped floor runs before the guard chain and before any
+        # upstream connection: a barred tool must not reach the vendor at all,
+        # and the decision needs no LLM call to make.
+        barred = tool_floor_decision(self._policy, name)
+        if barred is not None:
+            decision = {
+                "allowed": False, "action": "block", "mode": "enforce",
+                "would_block": ["mcp_tool_floor"], "risk": "low", "reason": barred,
+                "results": [{
+                    "guardrail": "mcp_tool_floor", "passed": False, "action": "block",
+                    "message": barred,
+                    # Administrative, like the kill switch: an operator who barred
+                    # a tool on this server expects it barred, and monitor mode is
+                    # a dry-run for detection heuristics, not for that decision.
+                    "details": {"administrative": True, "tool_name": name},
+                }],
+            }
+            await self._record({"phase": "call", "tool": name, "agent_key": agent_key,
+                                "tenant_id": tenant_id, **decision})
+            return _error(f"Blocked by Shield: {barred}", decision)
+
         decision = await self._enforcer.enforce_tool_call(
             name, arguments, agent_key=agent_key, user_role=user_role,
             tenant_id=tenant_id, tenant_config=tenant_config,

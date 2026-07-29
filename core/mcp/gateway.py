@@ -85,6 +85,9 @@ async def _default_proxy_factory(cfg: dict, tenant_id: str):
     enforcer = build_enforcer(cfg)
     return await proxy_for(
         cfg, enforcer=enforcer, scan_descriptions=bool(cfg.get("scan_descriptions")),
+        # Materialized by the admin plane when the route was bound to a profile;
+        # absent on an unbound route, which then behaves exactly as before.
+        policy=cfg.get("effective_policy"),
     )
 
 
@@ -173,6 +176,12 @@ class MCPGatewayRouter:
             # (per-call connect avoids cross-task session lifecycle entirely)
 
         proxy = await self._pooled_proxy(tenant_id, route, cfg)
+        # The connection is pooled; the policy must not be. Push the freshly read
+        # revision so a stdio route picks up a policy change on the next call
+        # rather than when its subprocess happens to cycle.
+        setter = getattr(proxy, "set_policy", None)
+        if callable(setter):
+            setter(cfg.get("effective_policy"))
         try:
             return await fn(proxy)
         except Exception as e:

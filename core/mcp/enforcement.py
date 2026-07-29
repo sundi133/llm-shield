@@ -156,6 +156,70 @@ async def _control_plane_results(tool_name, arguments, *, agent_key, tenant_id,
     return out
 
 
+# ── server-scoped tool floor (fleet control plane) ───────────────────
+#
+# A "floor" is a per-server control enforced on EVERY call regardless of who the
+# caller claims to be. That distinction is load-bearing: the MCP gateway resolves
+# a caller's role from the X-User-Role header unless verified-identity middleware
+# supplied one (api/routes_mcp_server.py::_resolve_identity), so a caller can
+# choose its own role. A floor never reads the role, so it holds anyway.
+#
+# Role-scoped GRANTS (role R may call tool T) are a separate, later concern — they
+# are only worth as much as the identity behind them.
+
+_FLEET_POLICY_ENV = "SHIELD_MCP_FLEET_POLICY"
+_OFF = ("0", "false", "no", "off")
+
+
+def fleet_policy_enabled() -> bool:
+    """Escape hatch: SHIELD_MCP_FLEET_POLICY=0 reverts to pre-fleet behavior."""
+    return os.getenv(_FLEET_POLICY_ENV, "1").strip().lower() not in _OFF
+
+
+def tool_floor_decision(policy: Optional[dict], tool_name: str) -> Optional[str]:
+    """Why ``tool_name`` is barred on this server, or None if it may proceed.
+
+    Semantics, all deliberate:
+      * no policy / no ``tools`` block  -> allow (an unbound server is unchanged)
+      * ``deny`` listing the tool       -> block, and deny beats allow
+      * ``allow`` is None/absent        -> allow all (inherit)
+      * ``allow`` is a list             -> the tool must be in it; ``[]`` denies all
+
+    ``allow: []`` and ``allow: null`` are intentionally different: an operator who
+    writes an empty list means "nothing", not "everything".
+
+    Tool names are compared literally. A poisoned upstream advertising a tool
+    called ``other-route:admin`` must not be able to smuggle itself past a floor
+    by looking like a qualified name.
+    """
+    if not policy or not fleet_policy_enabled():
+        return None
+    tools = policy.get("tools")
+    if not isinstance(tools, dict):
+        return None
+
+    deny = tools.get("deny")
+    if isinstance(deny, list) and tool_name in deny:
+        return f"Tool '{tool_name}' is denied on this MCP server by policy"
+
+    allow = tools.get("allow")
+    if isinstance(allow, list) and tool_name not in allow:
+        return f"Tool '{tool_name}' is not on this MCP server's allowed tool list"
+    return None
+
+
+def filter_tools_by_floor(tools: list[dict], policy: Optional[dict]) -> list[dict]:
+    """Drop tools the server-scoped floor bars, for tools/list.
+
+    A tool a caller can never invoke should not be advertised: leaving it in the
+    listing invites the model to keep trying, and leaks the upstream's surface.
+    """
+    if not policy or not fleet_policy_enabled():
+        return tools
+    return [t for t in tools
+            if tool_floor_decision(policy, t.get("name", "")) is None]
+
+
 def _tool_guard_chain() -> list:
     """The ordered guard chain enforce_tool_call runs on a tools/call.
 
