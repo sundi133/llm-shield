@@ -1906,7 +1906,7 @@
      a rendering fault rather than as a layout choice. */
   #mcp-cards.stat-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 0.85rem;
     margin-bottom: 1rem;
   }
@@ -4897,6 +4897,20 @@ if __name__ == "__main__":
         <button class="small primary" onclick="mcpFocusRegister()">+ Add Server</button>
       </div>
       <div id="mcp-servers" class="mcp-server-grid"></div>
+
+      <!-- Findings for one server, opened from its scan pill. Kept inline rather
+           than in a modal: an operator comparing a finding against the server's
+           config wants both on screen at once. -->
+      <div class="section-panel" id="mcp-findings" style="display:none;margin-top:1rem;">
+        <div class="section-panel-head">
+          <div>
+            <div class="section-panel-title">Scan findings &mdash; <span id="mcp-findings-route" class="mono"></span></div>
+            <div class="section-panel-desc">A point-in-time audit of the metadata this server advertised when the scan ran. Quoted text below comes from the server itself.</div>
+          </div>
+          <button class="small" onclick="document.getElementById('mcp-findings').style.display='none'">Close</button>
+        </div>
+        <div id="mcp-findings-body" class="section-panel-body" style="padding:0;"></div>
+      </div>
 
       <!-- ── Controls, below the fleet ────────────────────────────────────────
            Adding and kill-switching are deliberate, occasional actions. They sit
@@ -11940,11 +11954,20 @@ function renderMcpGateway(inv) {
   const disabledCount = inv.disabled_count || 0;
   const inactiveCount = inv.inactive_server_count || 0;
   const driftCount = inv.drifted_server_count || 0;
+  // Counts what is NOT known to be clean: never scanned, plus every scan that
+  // could not run. Reporting only hard failures would let a fleet nobody has
+  // ever audited show a reassuring zero.
+  const unscanned = (inv.servers || []).filter(
+    s => !s.scan || !['pass', 'fail'].includes(s.scan.verdict)).length;
+  const failing = (inv.servers || []).filter(
+    s => (s.scan || {}).verdict === 'fail').length;
   document.getElementById('mcp-cards').innerHTML = `
     <div class="stat-card"><div class="stat-value">${inv.server_count || 0}</div><div class="stat-label">Registered Servers</div></div>
     <div class="stat-card"><div class="stat-value" style="color:${inactiveCount ? 'var(--red)' : 'var(--text)'};">${inactiveCount}</div><div class="stat-label">Disabled Servers</div></div>
     <div class="stat-card"><div class="stat-value" style="color:${disabledCount ? 'var(--red)' : 'var(--text)'};">${disabledCount}</div><div class="stat-label">Disabled Tools</div></div>
     <div class="stat-card"><div class="stat-value" style="color:${driftCount ? 'var(--red)' : 'var(--text)'};">${driftCount}</div><div class="stat-label">Policy Drift</div></div>
+    <div class="stat-card" title="Servers with critical findings in their advertised tool metadata."><div class="stat-value" style="color:${failing ? 'var(--red)' : 'var(--text)'};">${failing}</div><div class="stat-label">Failing Scan</div></div>
+    <div class="stat-card" title="Servers never audited, or whose scan could not run. Not the same as clean."><div class="stat-value" style="color:${unscanned ? 'var(--warn, #fbbf24)' : 'var(--text)'};">${unscanned}</div><div class="stat-label">Unscanned</div></div>
   `;
 
   const servers = inv.servers || [];
@@ -11979,6 +12002,14 @@ function renderMcpGateway(inv) {
           ? `<span class="badge badge-id" title="Policy profile bound to this server">${escapeHtml(s.profile_id)}</span>`
           : `<span class="badge" title="No policy profile bound: this server falls back to tenant-wide defaults.">unbound</span>`;
 
+        // Onboarding scan. A server that was never scanned, or whose scan could
+        // not run, must not look the same as one that passed — so "unscanned" is
+        // its own visible state rather than an absent badge.
+        const scan = mcpScanBadge(s.scan, rawRoute);
+        // Only offer the override where it means something: a server parked by a
+        // failing scan. Re-enabling anything else is the ordinary Enable button.
+        const blockedByScan = (active === false) && (s.scan || {}).verdict === 'fail';
+
         return `<div class="mcp-server-card${active ? '' : ' is-off'}${s.drift ? ' is-drift' : ''}">
             <div class="mcp-card-top">
               <span class="mcp-card-route" title="${route}">${route}</span>
@@ -11988,10 +12019,13 @@ function renderMcpGateway(inv) {
             <div class="mcp-card-meta">
               <span class="badge">${transport}</span>
               <span class="badge">${backend}</span>
-              ${profile}
+              ${profile}${scan}
             </div>
             <div class="mcp-card-actions">
-              <button class="small" onclick="mcpToggleServer('${enc}', ${active ? 'false' : 'true'})">${active ? 'Disable' : 'Enable'}</button>
+              ${blockedByScan
+                ? `<button class="small" title="Override the scan finding and put this server back into service. Recorded against your account." onclick="mcpActivateServer('${enc}')">Activate</button>`
+                : `<button class="small" onclick="mcpToggleServer('${enc}', ${active ? 'false' : 'true'})">${active ? 'Disable' : 'Enable'}</button>`}
+              <button class="small" onclick="mcpRunScan('${enc}')">Scan</button>
               <button class="small" style="color:var(--red);border-color:var(--red);margin-left:auto;" onclick="mcpDeleteServer('${enc}')">Remove</button>
             </div>
           </div>`;
@@ -12069,6 +12103,131 @@ function mcpFocusRegister() {
   if (!el) return;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   el.focus({ preventScroll: true });
+}
+
+// Onboarding-scan verdicts. Every one of these is a distinct operational state
+// and the console must not blur them: "we could not check" is not "it is clean",
+// and "our credential failed" points at us while "unreachable" points at them.
+const MCP_SCAN_STATES = {
+  pass:        { cls: 'mcp-pill-on',   label: 'scan ok',    hint: 'Metadata audit found nothing at or above critical.' },
+  fail:        { cls: 'mcp-pill-off',  label: 'scan fail',  hint: 'Critical findings in this server\'s advertised metadata.' },
+  unavailable: { cls: 'mcp-pill-warn', label: 'unscanned',  hint: 'The scanner is not installed in this deployment, so this server was never audited.' },
+  unreachable: { cls: 'mcp-pill-warn', label: 'unscanned',  hint: 'The server did not answer, timed out, or rejected our credentials, so it could not be audited.' },
+  unresolved:  { cls: 'mcp-pill-warn', label: 'unscanned',  hint: 'A stored upstream credential could not be materialized, so the scan could not authenticate.' },
+};
+
+function mcpScanBadge(scan, route) {
+  const enc = encodeURIComponent(route);
+  if (!scan || !scan.verdict) {
+    return `<span class="mcp-pill mcp-pill-warn" title="This server has never been audited. Click Scan to run one.">unscanned</span>`;
+  }
+  const st = MCP_SCAN_STATES[scan.verdict] || MCP_SCAN_STATES.unavailable;
+  const when = scan.scanned_at
+    ? ` Last run ${new Date(scan.scanned_at * 1000).toLocaleString()}.` : '';
+  const count = scan.gating_count ? ` (${scan.gating_count})` : '';
+  // A scan is a point-in-time audit; the timestamp is part of the claim, not a
+  // detail — a server can change its descriptions the day after a clean run.
+  return `<span class="mcp-pill ${st.cls}" style="cursor:pointer;"
+                title="${escapeHtml(st.hint + when)} Click for findings."
+                onclick="mcpShowFindings('${enc}')">${st.label}${count}</span>`;
+}
+
+async function mcpRunScan(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  try {
+    showToast(`Scanning ${route}…`, 'info');
+    const r = await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/scan`,
+      { method: 'POST' });
+    const v = (r.scan || {}).verdict;
+    showToast(`${route}: ${v === 'pass' ? 'scan clean' : 'scan ' + v}`,
+              v === 'pass' ? 'success' : 'error');
+    loadMcpGateway();
+    mcpShowFindings(encRoute);
+  } catch (e) {
+    showToast('Scan failed: ' + e.message, 'error');
+  }
+}
+
+async function mcpActivateServer(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  // This is an explicit accept of a security finding, so it asks in those terms
+  // rather than as a routine enable, and the server records who did it.
+  if (!confirm(
+      `Activate "${route}" despite its scan findings?\n\n` +
+      `Its advertised tool descriptions contain something the scanner flagged as ` +
+      `critical. Activating puts the server back into service for every MCP ` +
+      `client, and the override is recorded against your account.`)) return;
+  try {
+    await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/activate`,
+      { method: 'POST' });
+    showToast(`Activated ${route} (override recorded)`, 'success');
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+async function mcpShowFindings(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  const panel = document.getElementById('mcp-findings');
+  const body = document.getElementById('mcp-findings-body');
+  document.getElementById('mcp-findings-route').textContent = route;
+  panel.style.display = '';
+  body.innerHTML = '<div style="padding:0.9rem;color:var(--text-dim);font-size:12px;">Loading…</div>';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  let scan;
+  try {
+    scan = (await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/scan`)).scan;
+  } catch (e) {
+    body.innerHTML = `<div style="padding:0.9rem;font-size:12px;color:var(--text-dim);">
+      No scan report for this server yet. Use <strong>Scan</strong> on its card to run one.</div>`;
+    return;
+  }
+
+  if (scan.verdict !== 'pass' && scan.verdict !== 'fail') {
+    body.innerHTML = `<div style="padding:0.9rem;font-size:12px;">
+      <div style="font-weight:600;margin-bottom:0.25rem;">This server was not audited</div>
+      <div style="color:var(--text-dim);">${escapeHtml(scan.detail || scan.verdict)}</div>
+      <div style="color:var(--text-dim);margin-top:0.5rem;">Treat its tool descriptions as unreviewed.</div></div>`;
+    return;
+  }
+
+  const findings = scan.findings || [];
+  if (!findings.length) {
+    body.innerHTML = `<div style="padding:0.9rem;font-size:12px;color:var(--text-dim);">
+      No findings. ${escapeHtml(JSON.stringify(scan.counts || {}))} audited.</div>`;
+    return;
+  }
+
+  const rows = findings.map(f => {
+    const sev = String(f.severity || '').toLowerCase();
+    const cls = (sev === 'critical' || sev === 'high') ? 'mcp-pill-off'
+              : (sev === 'medium' ? 'mcp-pill-warn' : 'mcp-pill-on');
+    // f.evidence and f.detail are quoted from the UPSTREAM's own text. On a
+    // poisoned server that is attacker-controlled, so it is escaped and rendered
+    // as inert text — never as markup, and never fed back to a model from here.
+    const ev = f.evidence
+      ? `<div class="mono" style="margin-top:0.3rem;font-size:11px;color:var(--text-dim);
+                 white-space:pre-wrap;word-break:break-word;">${escapeHtml(f.evidence)}</div>`
+      : '';
+    return `<div style="padding:0.7rem 0.9rem;border-top:1px solid var(--border);">
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+          <span class="mcp-pill ${cls}">${escapeHtml(sev)}</span>
+          <span class="badge">${escapeHtml(f.category || '')}</span>
+          <span class="mono" style="font-size:12px;font-weight:600;">${escapeHtml(f.subject_name || '')}</span>
+          <span style="font-size:11px;color:var(--text-dim);">${escapeHtml(f.subject_kind || '')}</span>
+        </div>
+        <div style="font-size:12px;margin-top:0.3rem;">${escapeHtml(f.detail || '')}</div>
+        ${ev}
+      </div>`;
+  }).join('');
+
+  const dropped = scan.findings_truncated
+    ? `<div style="padding:0.6rem 0.9rem;border-top:1px solid var(--border);font-size:11px;color:var(--text-dim);">
+         ${scan.findings_truncated} further finding(s) not shown. Run the CLI for the full report.</div>`
+    : '';
+  body.innerHTML = rows + dropped;
 }
 
 async function mcpToggleServer(encRoute, makeActive) {

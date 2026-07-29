@@ -109,3 +109,63 @@ def test_identifier_badges_are_not_capitalized():
         assert m, f"identifier badge for {label!r} not found"
         assert "badge-id" in m.group(1), \
             f"identifier badge for {label!r} would render capitalized"
+
+
+def _js_function(name: str) -> str:
+    """Source of one top-level JS function.
+
+    Not a `\n}` regex: these functions contain nested blocks, so that stops at
+    the first inner brace and silently returns a fragment — which would make an
+    escaping assertion pass or fail for the wrong reason. Slice to the next
+    top-level declaration instead.
+    """
+    start = HTML.index(f"function {name}(")
+    rest = HTML[start + 1:]
+    ends = [i for i in (rest.find("\nasync function "), rest.find("\nfunction ")) if i != -1]
+    return rest[:min(ends)] if ends else rest
+
+
+def test_scan_findings_are_escaped_before_rendering():
+    """Findings quote the UPSTREAM server's own text — on a poisoned server that
+    is attacker-controlled. Rendering `detail` or `evidence` raw would turn a
+    tool-poisoning finding into stored XSS in the console that reports it.
+    """
+    body = _js_function("mcpShowFindings")
+
+    for field in ("f.evidence", "f.detail", "f.subject_name", "f.category",
+                  "scan.detail"):
+        # Allow the `|| ''` default the renderer uses; only the escapeHtml( wrapper
+        # is being asserted here.
+        assert re.search(re.escape(f"escapeHtml({field}") + r"\b", body), \
+            f"{field} is interpolated without escapeHtml"
+
+    # Nothing upstream-derived may reach the DOM through a bare ${f.<field>}.
+    unescaped = re.findall(r"\$\{f\.[a-z_]+\}", body)
+    assert not unescaped, f"unescaped upstream fields in findings markup: {unescaped}"
+
+
+def test_unscanned_is_a_distinct_state_from_clean():
+    """'We could not check' must never render as 'it passed'. Every non-pass
+    verdict maps to its own pill, and a server with no report at all still gets
+    one rather than silently showing nothing."""
+    m = re.search(r"const MCP_SCAN_STATES = \{.*?\n\};", HTML, re.S)
+    assert m, "MCP_SCAN_STATES not found"
+    states = m.group(0)
+    for verdict in ("pass", "fail", "unavailable", "unreachable", "unresolved"):
+        assert f"{verdict}:" in states, f"no console state for verdict {verdict!r}"
+
+    assert "mcp-pill-on" in states and "mcp-pill-off" in states
+    # pass is the only verdict allowed to render as the healthy pill.
+    healthy = re.findall(r"(\w+):\s*\{ cls: 'mcp-pill-on'", states)
+    assert healthy == ["pass"], f"non-pass verdicts rendering as healthy: {healthy}"
+
+    badge = _js_function("mcpScanBadge")
+    assert "never been audited" in badge, "a server with no report renders nothing"
+
+
+def test_activate_override_is_confirmed_in_security_terms():
+    """Activating a scan-blocked server is an explicit accept of a finding, not a
+    routine enable, and the dialog has to say so."""
+    body = _js_function("mcpActivateServer")
+    assert "confirm(" in body
+    assert "critical" in body and "recorded" in body
