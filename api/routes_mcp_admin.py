@@ -102,6 +102,10 @@ class ToolActionRequest(BaseModel):
     # Note: no tenant_id field. The tenant is the authenticated one, full stop.
     reason: str = Field("", max_length=500,
                         description="Why the tool is being disabled (audited)")
+    route: Optional[str] = Field(
+        None,
+        description="Disable only on this MCP server. Omit for fleet-wide "
+                    "(the original behavior).")
 
 
 def _actor(request: Request) -> str:
@@ -158,7 +162,7 @@ async def disable(tool_name: str, body: ToolActionRequest, request: Request):
     actor = _actor(request)
 
     meta = disable_tool(tenant_id=tenant_id, tool_name=tool_name,
-                        reason=body.reason, actor=actor)
+                        reason=body.reason, actor=actor, route=body.route)
 
     # Audit + webhook, matching the data-plane kill-switch path.
     try:
@@ -181,27 +185,41 @@ async def disable(tool_name: str, body: ToolActionRequest, request: Request):
         pass
 
     return {"status": "disabled", "tenant_id": tenant_id,
-            "tool_name": tool_name, "metadata": meta}
+            "tool_name": tool_name, "route": body.route, "metadata": meta}
+
+
+class ToolEnableRequest(BaseModel):
+    route: Optional[str] = Field(
+        None, description="Must match the scope the tool was disabled at.")
 
 
 @router.post("/tools/{tool_name}/enable")
-async def enable(tool_name: str, request: Request):
-    """Re-enable a tool this tenant previously disabled."""
+async def enable(tool_name: str, request: Request,
+                 body: Optional[ToolEnableRequest] = None):
+    """Re-enable a tool this tenant previously disabled.
+
+    The body is optional so existing callers that send none keep working; with
+    no ``route`` this lifts the fleet-wide disable, exactly as before.
+    """
     tenant_id = _require_tenant(request)
     actor = _actor(request)
+    route = body.route if body else None
 
-    if not enable_tool(tenant_id=tenant_id, tool_name=tool_name):
+    if not enable_tool(tenant_id=tenant_id, tool_name=tool_name, route=route):
+        scope = f" on route '{route}'" if route else ""
         raise HTTPException(status_code=404,
-                            detail=f"Tool '{tool_name}' was not disabled")
+                            detail=f"Tool '{tool_name}' was not disabled{scope}")
 
     try:
         from storage.admin_audit import log_admin_action
         log_admin_action(action="tool_enabled", actor=actor, tenant_id=tenant_id,
-                         after={"tool_name": tool_name, "via": "portal"})
+                         after={"tool_name": tool_name, "route": route,
+                                "via": "portal"})
     except Exception:
         pass
 
-    return {"status": "enabled", "tenant_id": tenant_id, "tool_name": tool_name}
+    return {"status": "enabled", "tenant_id": tenant_id, "tool_name": tool_name,
+            "route": route}
 
 
 # ── server registration (portal write path) ──────────────────────────────

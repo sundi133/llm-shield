@@ -96,6 +96,7 @@ class HTTPEnforcer:
         session_id: Optional[str] = None,
         workflow: Optional[str] = None,
         confirmation_token: Optional[str] = None,
+        route: Optional[str] = None,
     ) -> dict:
         """Map POST /v1/shield/tool/check to the MCPProxy decision shape.
 
@@ -104,6 +105,11 @@ class HTTPEnforcer:
         guards (confirmation, per-session rate limits) on the thin-edge path.
         ``workflow`` / ``confirmation_token`` come from the request's _meta and
         map onto the fields ToolCheckRequest already exposes.
+
+        ``route`` names the MCP server the call is bound for, so the central
+        Shield can scope the kill switch to it. Sent as an extra body field: a
+        deployment running an older data plane ignores the unknown key and keeps
+        applying the fleet-wide kill switch, so the two can roll independently.
         """
         try:
             r = await self._client.post(
@@ -112,7 +118,8 @@ class HTTPEnforcer:
                       "tool_params": arguments or {}, "user_role": user_role or "",
                       "session_id": session_id or "",
                       "workflow": workflow or None,
-                      "confirmation_token": confirmation_token or None},
+                      "confirmation_token": confirmation_token or None,
+                      "route": route or None},
                 headers=self._headers(tenant_id=tenant_id, agent_key=agent_key, user_role=user_role),
             )
             r.raise_for_status()

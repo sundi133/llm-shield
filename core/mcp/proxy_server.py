@@ -44,7 +44,7 @@ class Enforcer(Protocol):
         self, name: str, arguments: dict, *, agent_key: str, user_role: Optional[str],
         tenant_id: Optional[str], tenant_config: Optional[dict],
         session_id: Optional[str] = None, workflow: Optional[str] = None,
-        confirmation_token: Optional[str] = None,
+        confirmation_token: Optional[str] = None, route: Optional[str] = None,
     ) -> dict: ...
     async def sanitize_tool_result(
         self, name: str, raw: Any, *, agent_key: str, tenant_id: Optional[str],
@@ -70,8 +70,13 @@ class MCPProxy:
         scan_descriptions: bool = False,
         enforcer: Optional[Enforcer] = None,
         policy: Optional[dict] = None,
+        route: Optional[str] = None,
     ):
         self._upstream = upstream
+        # Which MCP server this proxy fronts. Scopes the kill switch so one
+        # compromised server can be isolated without disabling that tool name
+        # everywhere. Fixed for the life of the proxy — the pool is keyed on it.
+        self._route = route
         self._on_decision = on_decision
         self._scan_descriptions = scan_descriptions
         # Server-scoped policy floor, resolved on write and denormalized onto the
@@ -153,7 +158,7 @@ class MCPProxy:
             name, arguments, agent_key=agent_key, user_role=user_role,
             tenant_id=tenant_id, tenant_config=tenant_config,
             session_id=session_id, workflow=workflow,
-            confirmation_token=confirmation_token,
+            confirmation_token=confirmation_token, route=self._route,
         )
         await self._record({"phase": "call", "tool": name, "agent_key": agent_key,
                             "tenant_id": tenant_id, **decision})

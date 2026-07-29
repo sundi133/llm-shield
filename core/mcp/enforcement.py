@@ -274,8 +274,15 @@ async def enforce_tool_call(
     session_id: Optional[str] = None,
     workflow: Optional[str] = None,
     confirmation_token: Optional[str] = None,
+    route: Optional[str] = None,
 ) -> dict:
     """Decide whether an MCP tools/call may proceed.
+
+    ``route`` names the MCP server this call is bound for, when there is one. It
+    scopes the kill switch so an operator can isolate a single compromised server
+    instead of every server exposing that tool name. Keyword-only with a None
+    default, so every caller without a route — REST tool routes, the embedded
+    server, the lite gateway — is unchanged.
 
     ``session_id`` must come from a *verified* agent-token claim, never from a
     caller-supplied header: it namespaces the confirmation tokens and the
@@ -317,11 +324,12 @@ async def enforce_tool_call(
 
     # Kill switch: an operator-disabled tool is an administrative block —
     # enforced even in monitor mode (matches routes_tool / routes_gateway).
-    if _killswitch_blocks(tenant_id, tool_name):
+    if _killswitch_blocks(tenant_id, tool_name, route):
         results = [{
             "guardrail": "tool_killswitch", "passed": False, "action": "block",
             "message": f"Tool '{tool_name}' is disabled via kill switch",
-            "details": {"administrative": True, "tool_name": tool_name},
+            "details": {"administrative": True, "tool_name": tool_name,
+                        "route": route},
         }]
         decision = policy_mode.apply(results, allowed=False, action="block", mode=mode)
         _record_metrics(tenant_id, results)
@@ -554,12 +562,20 @@ def filter_tools_for_role(
     return out
 
 
-def _killswitch_blocks(tenant_id: Optional[str], tool_name: str) -> bool:
+def _killswitch_blocks(tenant_id: Optional[str], tool_name: str,
+                       route: Optional[str] = None) -> bool:
+    """Fleet-wide kill switch, plus the route-scoped one when a route is known.
+
+    Both scopes resolve in a single round trip (storage does one SMISMEMBER), so
+    adding route scoping costs no extra Redis call. ``route=None`` — every caller
+    outside the gateway — behaves exactly as before.
+    """
     if not tenant_id:
         return False
     try:
         from core.feature_flags import KILLSWITCH_ENABLED
         from storage.tool_killswitch import is_tool_disabled
-        return bool(KILLSWITCH_ENABLED and is_tool_disabled(tenant_id, tool_name))
+        return bool(KILLSWITCH_ENABLED
+                    and is_tool_disabled(tenant_id, tool_name, route=route))
     except Exception:
         return False

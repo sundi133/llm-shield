@@ -88,6 +88,7 @@ async def _default_proxy_factory(cfg: dict, tenant_id: str):
         # Materialized by the admin plane when the route was bound to a profile;
         # absent on an unbound route, which then behaves exactly as before.
         policy=cfg.get("effective_policy"),
+        route=cfg.get("route"),
     )
 
 
