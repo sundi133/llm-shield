@@ -430,9 +430,10 @@ async def list_policy_profiles(request: Request):
         "enforcement_note": (
             "Enforced on bound routes: tools.allow / tools.deny (tools/list and "
             "tools/call), dlp.sanitize_as (tool results and resources/read), "
-            "output_guardrails and result_scanning. input_guardrails and "
-            "output_guardrails apply on the inprocess backend only. Stored but "
-            "not yet enforced: scan_policy."),
+            "output_guardrails, result_scanning, and scan_policy (tool-description "
+            "scanning at tools/list). input_guardrails and output_guardrails apply "
+            "on the inprocess backend only. scan_policy gates discovery, not "
+            "invocation — use tools.deny to make a flagged tool unreachable."),
     }
 
 

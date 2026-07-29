@@ -4,8 +4,9 @@ Binding is a sub-resource rather than a field on the server PUT: that PUT
 replaces the whole document, so editing policy through it would force the
 operator to re-send the upstream's credentials every time.
 
-Phase 2 materializes effective policy onto the route. Nothing reads it yet, and
-these tests pin that the API says so.
+Binding materializes effective policy onto the route document, which is what the
+guard path reads. These tests cover the binding lifecycle and the index hygiene
+that fan-out depends on; enforcement itself is covered by the per-control suites.
 """
 
 from unittest.mock import patch
@@ -21,7 +22,7 @@ from storage import mcp_policy_store as pstore
 _PREFIXES = ("mcp_profile:", "mcp_profiles:", "mcp_gateway:")
 _H = {"X-Test-Tenant": "acme"}
 _PROFILE = {"description": "saas", "tools": {"allow": ["list_jobs"]},
-            "dlp": {"role_ceiling": "public"}}
+            "dlp": {"sanitize_as": "public"}}
 
 
 @pytest.fixture(autouse=True)
@@ -91,7 +92,9 @@ def test_profile_list_states_which_controls_are_live(client):
     _profile(client)
     note = client.get("/v1/tenant/me/mcp/profiles", headers=_H).json()["enforcement_note"]
     assert "tools.allow" in note and "input_guardrails" in note
-    assert "not yet enforced" in note and "dlp" in note
+    # Limits are named too, so no control reads as broader than it is.
+    assert "inprocess backend only" in note
+    assert "gates discovery, not invocation" in note
 
 
 def test_http_backend_warns_that_input_guardrails_will_not_apply(client):
@@ -120,10 +123,10 @@ def test_bind_applies_overrides(client):
     _profile(client)
     r = client.put("/v1/tenant/me/mcp/servers/higgsfield/binding",
                    json={"profile_id": "saas",
-                         "overrides": {"dlp": {"role_ceiling": "admin"}}},
+                         "overrides": {"dlp": {"sanitize_as": "admin"}}},
                    headers=_H)
     eff = r.json()["server"]["effective_policy"]
-    assert eff["dlp"]["role_ceiling"] == "admin"   # override wins
+    assert eff["dlp"]["sanitize_as"] == "admin"   # override wins
     assert eff["tools"]["allow"] == ["list_jobs"]  # profile survives
 
 
@@ -236,14 +239,14 @@ def test_fanout_preserves_per_route_overrides(client):
     _profile(client)
     client.put("/v1/tenant/me/mcp/servers/higgsfield/binding",
                json={"profile_id": "saas",
-                     "overrides": {"dlp": {"role_ceiling": "admin"}}}, headers=_H)
+                     "overrides": {"dlp": {"sanitize_as": "admin"}}}, headers=_H)
 
     client.put("/v1/tenant/me/mcp/profiles/saas",
                json={**_PROFILE, "tools": {"allow": ["x"]}}, headers=_H)
 
     eff = gstore.get_upstream("acme", "higgsfield")["effective_policy"]
     assert eff["tools"]["allow"] == ["x"]              # new profile value
-    assert eff["dlp"]["role_ceiling"] == "admin"       # override still applied
+    assert eff["dlp"]["sanitize_as"] == "admin"       # override still applied
 
 
 def test_partial_fanout_warns_and_shows_drift(client):

@@ -24,7 +24,12 @@ from typing import Any, Awaitable, Callable, Optional, Protocol
 # calls Shield's guard endpoints over HTTP) can be injected without changing this
 # file — both run the SAME checks, so the two enforcement paths can't drift.
 from core.mcp import enforcement as _inprocess_enforcement
-from core.mcp.enforcement import filter_tools_by_floor, tool_floor_decision
+from core.mcp.enforcement import (
+    description_scan_for,
+    drop_flagged_tools,
+    filter_tools_by_floor,
+    tool_floor_decision,
+)
 
 
 class UpstreamClient(Protocol):
@@ -105,8 +110,14 @@ class MCPProxy:
         self, *, agent_key: str, user_role: Optional[str], tenant_id: Optional[str]
     ) -> list[dict]:
         tools = await self._upstream.list_tools()
-        if self._scan_descriptions:
+        # Policy overrides the route's static scan_descriptions flag, so a
+        # profile can turn description scanning on for every untrusted server at
+        # once instead of route by route.
+        scan_cfg = description_scan_for(self._policy)
+        if scan_cfg["enabled"] if scan_cfg else self._scan_descriptions:
             tools = await self._scan_for_poisoning(tools)
+            if scan_cfg and scan_cfg["hide_flagged"]:
+                tools = drop_flagged_tools(tools)
         # Floor first: a tool this server may never expose should not be
         # advertised to anyone, whatever role the caller claims.
         tools = filter_tools_by_floor(tools, self._policy)

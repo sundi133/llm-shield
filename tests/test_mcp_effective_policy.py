@@ -4,7 +4,7 @@ The guard path reads policy from the route document it already loads once per
 call, so policy is computed on WRITE. That buys a free hot path and costs the
 possibility of drift, which is why is_drifted() and the fan-out report exist.
 
-Phase 2 materializes this policy; nothing reads it yet.
+Every per-control suite builds on what this produces.
 """
 
 from unittest.mock import patch
@@ -42,18 +42,18 @@ def _route(route="higgsfield", **extra):
 
 
 def test_profile_only():
-    prof = {"tools": {"allow": ["a"]}, "dlp": {"role_ceiling": "public"}}
+    prof = {"tools": {"allow": ["a"]}, "dlp": {"sanitize_as": "public"}}
     eff = store.compute_effective_policy(prof, None)
     assert eff["tools"]["allow"] == ["a"]
-    assert eff["dlp"]["role_ceiling"] == "public"
+    assert eff["dlp"]["sanitize_as"] == "public"
 
 
 def test_overrides_win_and_merge_deeply():
     """A route override must be able to change one nested key without having to
     restate the rest of the profile."""
-    prof = {"dlp": {"role_ceiling": "public", "max_output_length": 100}}
-    eff = store.compute_effective_policy(prof, {"dlp": {"role_ceiling": "admin"}})
-    assert eff["dlp"]["role_ceiling"] == "admin"
+    prof = {"dlp": {"sanitize_as": "public", "max_output_length": 100}}
+    eff = store.compute_effective_policy(prof, {"dlp": {"sanitize_as": "admin"}})
+    assert eff["dlp"]["sanitize_as"] == "admin"
     assert eff["dlp"]["max_output_length"] == 100  # untouched key survives
 
 
@@ -151,10 +151,10 @@ def test_recompute_route_refreshes_from_current_profile():
 
 
 def test_recompute_applies_route_overrides():
-    store.set_profile("acme", "p", {"dlp": {"role_ceiling": "public"}})
-    _route("vendor-x", profile_id="p", overrides={"dlp": {"role_ceiling": "admin"}})
+    store.set_profile("acme", "p", {"dlp": {"sanitize_as": "public"}})
+    _route("vendor-x", profile_id="p", overrides={"dlp": {"sanitize_as": "admin"}})
     out = store.recompute_route("acme", "vendor-x")
-    assert out["effective_policy"]["dlp"]["role_ceiling"] == "admin"
+    assert out["effective_policy"]["dlp"]["sanitize_as"] == "admin"
 
 
 def test_recompute_missing_route_returns_none():

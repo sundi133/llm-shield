@@ -546,6 +546,35 @@ def result_scanning_for(policy: Optional[dict]) -> Optional[dict]:
             "block": rs.get("action") == "block"}
 
 
+def description_scan_for(policy: Optional[dict]) -> Optional[dict]:
+    """This server's tool-description scanning setting, or None to use the
+    route's existing ``scan_descriptions`` boolean.
+
+    Returns ``{"enabled": bool, "hide_flagged": bool}``.
+
+    Scope, stated plainly because it is easy to over-read: this gates
+    DISCOVERY. A flagged tool can be hidden from tools/list, which stops an
+    agent from being led into calling it by a poisoned description. It does not
+    gate INVOCATION — tools/call carries no description to scan, and fetching
+    the catalogue on every call to find one would put an upstream round trip on
+    the guard path. To make a flagged tool unreachable, add it to ``tools.deny``.
+    """
+    if not policy or not fleet_policy_enabled():
+        return None
+    sp = policy.get("scan_policy")
+    if not isinstance(sp, dict) or "descriptions" not in sp:
+        return None
+    return {"enabled": bool(sp.get("descriptions")),
+            # Anything other than an explicit "hide" annotates only, so a typo
+            # cannot silently make an upstream's tools vanish.
+            "hide_flagged": sp.get("on_flagged") == "hide"}
+
+
+def drop_flagged_tools(tools: list[dict]) -> list[dict]:
+    """Remove tools the description scan marked as poisoned."""
+    return [t for t in tools if not t.get("x-shield-poisoning")]
+
+
 def _output_request_configs(policy: Optional[dict]) -> dict:
     """Per-request config for the output guards, from this server's policy."""
     if not policy or not fleet_policy_enabled():
