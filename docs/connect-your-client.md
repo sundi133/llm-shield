@@ -36,13 +36,19 @@ you no longer need one.
 
 ## What to ask your security team for
 
-Three values. They come from whoever administers your Shield tenant.
+Four values. They come from whoever administers your Shield tenant.
 
 | Value | Looks like | What it is |
 |---|---|---|
 | Gateway URL | `https://shield.acme.com/gateway/higgsfield/mcp` | The endpoint you connect to. The last path segment is the **route** — the short name your team gave that vendor. |
 | Tenant API key | `sk-...` | Which organization's policy applies. Treat it like a password. |
 | Your role | `viewer`, `creator`, `admin` | Which grants apply to you on top of the org-wide rules. |
+| Agent key | assigned by your admin | Identifies this client in the audit log. |
+
+> **Ask for the agent key; do not invent one.** Agent keys are registered
+> tenant-side, and an unrecognized one is treated as an unregistered agent rather
+> than as a new user. How these should be issued per person is still being
+> settled — until then, use exactly the value your admin gives you.
 
 Ask for a **route name**, not the vendor's own URL. Connecting straight to the
 vendor bypasses every control below, and on a properly configured server it will
@@ -55,7 +61,7 @@ simply be refused.
 Native header support, so this is one command:
 
 ```bash
-claude mcp add --transport http higgsfield https://shield.acme.com/gateway/higgsfield/mcp --header "X-API-Key: $SHIELD_KEY" --header "X-Agent-Key: $USER-claude-code" --header "X-User-Role: creator"
+claude mcp add --transport http higgsfield https://shield.acme.com/gateway/higgsfield/mcp --header "X-API-Key: $SHIELD_KEY" --header "X-Agent-Key: $SHIELD_AGENT_KEY" --header "X-User-Role: creator"
 ```
 
 Set `SHIELD_KEY` in your shell profile rather than pasting the key into the
@@ -85,9 +91,10 @@ vi "$HOME/Library/Application Support/Claude/claude_desktop_config.json"
       "command": "npx",
       "args": ["-y", "mcp-remote", "https://shield.acme.com/gateway/higgsfield/mcp",
                "--header", "X-API-Key:${SHIELD_KEY}",
-               "--header", "X-Agent-Key:my-desktop",
+               "--header", "X-Agent-Key:${SHIELD_AGENT_KEY}",
                "--header", "X-User-Role:creator"],
-      "env": { "SHIELD_KEY": "sk-your-tenant-key" }
+      "env": { "SHIELD_KEY": "sk-your-tenant-key",
+               "SHIELD_AGENT_KEY": "the-key-your-admin-gave-you" }
     }
   }
 }
@@ -104,7 +111,7 @@ finds none, then falls back to these headers — that is expected, not an error.
 ## Cursor, Codex, and other MCP clients
 
 Any client that speaks streamable-HTTP MCP works: give it the gateway URL and
-the three headers. Clients that only support stdio use the same `mcp-remote`
+the three headers above. Clients that only support stdio use the same `mcp-remote`
 bridge shown above.
 
 ## claude.ai on the web
@@ -151,8 +158,11 @@ Two things worth understanding rather than discovering later:
 client sends. Setting it to `admin` does **not** widen your access on a governed
 server, because the controls above are applied per server and never read the
 role. Verified identity is coming; until then, do not treat the role as a
-security boundary, and do not assume nobody notices — every call is audited
-against your `X-Agent-Key`.
+security boundary.
+
+> **Open question, deliberately not answered here:** how agent keys map to
+> individual employees is unsettled. Use the value your admin gives you and do
+> not derive your own.
 
 **Your calls are logged.** Tool name, decision, and your agent key are recorded
 for the security team. Blocked calls never reach the vendor at all, so they also
