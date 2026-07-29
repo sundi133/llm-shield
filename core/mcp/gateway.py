@@ -110,13 +110,9 @@ def materialize_upstream_headers(cfg: dict, tenant_id: str) -> dict:
     if not headers:
         return cfg
 
-    from core.secret_vault.materialize import materialize_obj
+    from core.secret_vault.materialize import materialize_headers
 
-    destination = cfg.get("url") or ""
-    resolved = materialize_obj(tenant_id, headers, destination)
-
-    leftover = sorted({k for k, v in (resolved or {}).items()
-                       if isinstance(v, str) and _VAULT_REF_RE.search(v)})
+    resolved, leftover = materialize_headers(tenant_id, headers, cfg.get("url") or "")
     if leftover:
         # Never log or echo the value; the header NAME is enough to act on.
         raise GatewayError(

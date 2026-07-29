@@ -16,10 +16,14 @@ request.state, never from the body or a query param:
 
 Scope of the poisoning/threat view: it is the static threat mapping the AIBOM
 pipeline already computes from the registered server list (storage.aibom_mappings
-+ storage.aibom). The LIVE per-tool description scan runs in the data-plane proxy
-on tools/list and is deliberately not duplicated here — the admin image does not
-carry the scanner package, and a stale persisted copy would be worse than a
-truthful "scanned live at call time" note.
++ storage.aibom).
+
+Two different scans, deliberately kept distinct:
+  * the LIVE per-tool description scan runs in the data-plane proxy on tools/list;
+  * the ONBOARDING scan runs here, once, when a server is registered or rescanned
+    on demand (core/mcp_scan.py). It is a point-in-time audit of the metadata the
+    server advertised at that moment, and the console labels it with its
+    timestamp so it is never read as a live guarantee.
 """
 
 from __future__ import annotations
@@ -37,6 +41,17 @@ from storage.mcp_gateway_store import (
     is_valid_route_name,
     list_upstreams,
     set_upstream,
+)
+from core.mcp_scan import (
+    blocks_activation,
+    scan_upstream,
+    scanner_available,
+    summary_for_route,
+)
+from storage.mcp_scan_store import (
+    delete_scan_report,
+    get_scan_report,
+    set_scan_report,
 )
 from storage.mcp_policy_store import (
     bind_route,
@@ -88,6 +103,35 @@ def _redact(cfg: dict) -> dict:
         elif v:
             out[k] = "***"
     return out
+
+
+#: Fields owned by the governance layer, not by a registration request. A
+#: register/PUT call carries connection details; rebuilding the document from
+#: that body alone would silently unbind the route from its profile, drop its
+#: materialized policy, and re-enable a server SecOps had switched off.
+_PRESERVED_ON_REWRITE = (
+    "profile_id", "overrides", "effective_policy", "effective_rev",
+    "active", "scan", "scan_override",
+)
+
+
+def _carry_over(cfg: dict, existing: dict | None) -> dict:
+    """Copy governance-owned fields from the stored document onto a rewrite."""
+    for key in _PRESERVED_ON_REWRITE:
+        if existing and key in existing and key not in cfg:
+            cfg[key] = existing[key]
+    return cfg
+
+
+async def _rescan(tenant_id: str, route: str, cfg: dict) -> dict:
+    """Run the onboarding scan for one route, persist it, and return the report.
+
+    The full report is stored under its own key; only a three-field summary goes
+    on the route document, which the data plane reads once per guarded call.
+    """
+    report = await scan_upstream(cfg, tenant_id)
+    set_scan_report(tenant_id, route, report)
+    return report
 
 
 def _mcp_threats() -> list[str]:
@@ -145,6 +189,8 @@ async def mcp_inventory(request: Request):
         "disabled_tools": disabled,
         "disabled_count": len(disabled),
         "threats_addressed": _mcp_threats(),
+        "scanner_available": scanner_available(),
+        "unscanned_server_count": sum(1 for s in servers if not s.get("scan")),
         # Honest scope note the UI renders verbatim, so the tab never implies it
         # ran a live description scan it did not.
         "scan_note": ("Tool descriptions are scanned live in the gateway on "
@@ -253,7 +299,10 @@ class RegisterServerRequest(BaseModel):
     scan_descriptions: bool = False
     isolation_ack: bool = False
     # Administrative on/off for the whole server (see core/mcp/gateway.py).
-    active: bool = True
+    # Optional, not defaulted: a registration body that does not mention `active`
+    # must leave the current state alone, or editing a URL would silently put a
+    # server SecOps disabled back into service.
+    active: Optional[bool] = None
 
     @model_validator(mode="after")
     def _check(self):
@@ -284,6 +333,7 @@ async def register_server(body: RegisterServerRequest, request: Request):
     cfg["tenant_id"] = tenant_id
     cfg["created_at"] = (existing or {}).get("created_at") or int(time.time())
     cfg["updated_at"] = int(time.time())
+    _carry_over(cfg, existing)
     set_upstream(tenant_id, route, cfg)
 
     try:
@@ -296,8 +346,30 @@ async def register_server(body: RegisterServerRequest, request: Request):
     except Exception:
         pass
 
+    # Audit the metadata this server advertises, before an agent ever reads it.
+    # Tool descriptions are text a model will act on, so registering a
+    # third-party server without looking at them is the whole gap this closes.
+    report = await _rescan(tenant_id, route, cfg)
+    cfg["scan"] = summary_for_route(report)
+    scan_policy = (cfg.get("effective_policy") or {}).get("scan_policy")
+    if blocks_activation(report, scan_policy):
+        # Registered but not serving. Deliberately not a 4xx: the operator's
+        # request succeeded, and the server is here to be reviewed and released.
+        cfg["active"] = False
+    set_upstream(tenant_id, route, cfg)
+
     resp = {"status": "updated" if existing else "created",
-            "route": route, "server": _redact(cfg)}
+            "route": route, "server": _redact(cfg), "scan": report}
+    if cfg.get("active") is False:
+        resp["warning"] = (
+            "Registered but left INACTIVE: the metadata scan found a critical "
+            "finding and this profile is set to block_on_critical. Review the "
+            "findings, then POST /servers/{route}/activate to release it.")
+    elif report.get("verdict") in ("unavailable", "unreachable", "unresolved"):
+        resp["warning"] = (
+            f"The server was registered but NOT audited ({report['verdict']}): "
+            f"{report.get('detail') or 'see the scan report'}. Treat its tool "
+            f"descriptions as unreviewed.")
     if not body.isolation_ack:
         resp["warning"] = ("isolation_ack is false — Shield only enforces if this "
                            "upstream accepts connections ONLY from the gateway "
@@ -321,6 +393,9 @@ async def delete_server(route: str, request: Request):
 
     if not delete_upstream(tenant_id, route):
         raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    # A report left behind would be shown against whatever server later reuses
+    # this route name.
+    delete_scan_report(tenant_id, route)
 
     try:
         from storage.admin_audit import log_admin_action
@@ -330,6 +405,108 @@ async def delete_server(route: str, request: Request):
         pass
 
     return {"status": "deleted", "tenant_id": tenant_id, "route": route}
+
+
+# ── onboarding scan ──────────────────────────────────────────────────────
+#
+# A scan is a point-in-time audit of the metadata a server advertised at that
+# moment. Servers change their tool descriptions without telling anyone, so the
+# console always shows WHEN a report was taken and never presents one as a
+# standing guarantee.
+
+
+@router.get("/servers/{route}/scan")
+async def get_scan(route: str, request: Request):
+    """The full stored scan report for one server, findings included."""
+    tenant_id = _require_tenant(request)
+    if not get_upstream(tenant_id, route):
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    report = get_scan_report(tenant_id, route)
+    if not report:
+        raise HTTPException(
+            status_code=404,
+            detail=f"route '{route}' has no scan report; POST to this path to run one")
+    return {"tenant_id": tenant_id, "route": route, "scan": report}
+
+
+@router.post("/servers/{route}/scan")
+async def run_scan(route: str, request: Request):
+    """Re-audit a server now.
+
+    Worth doing on a schedule as well as on demand: a server that was clean at
+    registration can publish a poisoned description later, and nothing in the
+    protocol announces that.
+    """
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+
+    report = await _rescan(tenant_id, route, cfg)
+    cfg["scan"] = summary_for_route(report)
+    cfg["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, cfg)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_server_scanned", actor=actor, tenant_id=tenant_id,
+                         after={"route": route, "verdict": report.get("verdict"),
+                                "gating_count": report.get("gating_count", 0),
+                                "via": "portal"})
+    except Exception:
+        pass
+
+    resp = {"status": "scanned", "tenant_id": tenant_id, "route": route,
+            "scan": report}
+    # A rescan never disables a running server on its own: pulling a live
+    # integration mid-flight on a heuristic verdict is the operator's call, not
+    # the scanner's. Surface it and let them decide.
+    if report.get("verdict") == "fail" and cfg.get("active", True):
+        resp["warning"] = (
+            "This server has critical findings but is still serving traffic. "
+            "Disable it if that is not intended; a rescan does not stop a "
+            "running server by itself.")
+    return resp
+
+
+@router.post("/servers/{route}/activate")
+async def activate_server(route: str, request: Request):
+    """Release a server that its scan left inactive.
+
+    Separate from /enable on purpose: this one is an explicit, audited override
+    of a security finding, and it should read that way in the log rather than
+    looking like routine maintenance.
+    """
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+
+    report = get_scan_report(tenant_id, route) or {}
+    updated = dict(cfg)
+    updated["active"] = True
+    updated["scan_override"] = {
+        "actor": actor, "at": int(time.time()),
+        "verdict": report.get("verdict"),
+        "gating_count": report.get("gating_count", 0),
+    }
+    updated["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, updated)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_scan_override", actor=actor, tenant_id=tenant_id,
+                         after={"route": route, "verdict": report.get("verdict"),
+                                "gating_count": report.get("gating_count", 0),
+                                "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "activated", "tenant_id": tenant_id, "route": route,
+            "overrode_verdict": report.get("verdict"),
+            "server": _redact(updated)}
 
 
 # ── server enable / disable ──────────────────────────────────────────────

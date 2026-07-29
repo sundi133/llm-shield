@@ -47,7 +47,8 @@ class UpstreamConfigRequest(BaseModel):
     # Administrative on/off for the whole server. False makes the gateway refuse
     # every method for this route (core/mcp/gateway.py::_load_cfg) without losing
     # the config, so SecOps can park a server instead of deleting it.
-    active: bool = True
+    # Optional, not defaulted — see the note in api/routes_mcp_admin.py.
+    active: Optional[bool] = None
 
     @model_validator(mode="after")
     def _check(self):
@@ -107,6 +108,10 @@ async def put_route(route: str, body: UpstreamConfigRequest, request: Request):
     cfg["tenant_id"] = tenant_id
     cfg["created_at"] = (existing or {}).get("created_at") or int(time.time())
     cfg["updated_at"] = int(time.time())
+    # Mirror the admin plane: a config rewrite must not silently unbind the route
+    # from its policy profile or re-enable a server an operator disabled.
+    from api.routes_mcp_admin import _carry_over
+    _carry_over(cfg, existing)
     set_upstream(tenant_id, route, cfg)
     gateway_router.invalidate(tenant_id, route)  # drop any pooled connection
     log_admin_action(

@@ -133,6 +133,33 @@ def materialize_obj(tenant_id: str, obj, destination: str, tool_id: str | None =
     return _walk(tenant_id, obj, destination, tool_id)
 
 
+def materialize_headers(
+    tenant_id: str, headers: dict | None, destination: str
+) -> tuple[dict, list[str]]:
+    """Resolve vault references in outbound request headers.
+
+    Returns ``(resolved_headers, unresolved_header_names)``. A reference that
+    cannot be resolved — unknown ref, vault disabled, or a binding that does not
+    cover ``destination`` — is left INERT by the materializer, which is right for
+    tool arguments and wrong for credentials: sending the literal placeholder is
+    an unauthenticated call dressed as an authenticated one. Rather than decide
+    that here, the leftovers are named so each caller can react in its own idiom
+    (the gateway refuses the connection; the scanner records why it could not
+    authenticate).
+
+    Lives here rather than in core/mcp/gateway.py because both planes need it and
+    the admin image does not carry core/mcp.
+    """
+    if not headers:
+        return (headers or {}), []
+    resolved = materialize_obj(tenant_id, headers, destination) or {}
+    unresolved = sorted({
+        name for name, value in resolved.items()
+        if isinstance(value, str) and _REF_RE.search(value)
+    })
+    return resolved, unresolved
+
+
 def materialize_request(tenant_id: str, req, tool_id: str | None = None) -> None:
     """Materialize bound secrets into an outbound request, in place.
 

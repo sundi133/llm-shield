@@ -303,3 +303,37 @@ def test_delete_server_unbinds_so_profile_stays_deletable(client):
                          headers=_H).status_code == 200
     assert pstore.list_bound_routes("acme", "saas") == []
     assert client.delete("/v1/tenant/me/mcp/profiles/saas", headers=_H).status_code == 200
+
+
+def test_reregistering_a_server_keeps_its_binding_and_policy(client):
+    """A register call carries connection details, not governance. Rebuilding the
+    document from that body alone would silently unbind the route from its
+    profile and drop the materialized policy the guard path reads."""
+    _server()
+    _profile(client)
+    client.put("/v1/tenant/me/mcp/servers/higgsfield/binding",
+               json={"profile_id": "saas"}, headers=_H)
+
+    r = client.post("/v1/tenant/me/mcp/servers",
+                    json={"route": "higgsfield", "transport": "http",
+                          "url": "https://new-url/mcp", "isolation_ack": True},
+                    headers=_H)
+    assert r.status_code == 200
+
+    cfg = gstore.get_upstream("acme", "higgsfield")
+    assert cfg["url"] == "https://new-url/mcp"          # the edit applied
+    assert cfg["profile_id"] == "saas"                  # ...without losing policy
+    assert cfg["effective_policy"]["tools"]["allow"] == ["list_jobs"]
+    assert pstore.list_bound_routes("acme", "saas") == ["higgsfield"]
+
+
+def test_reregistering_does_not_silently_re_enable_a_disabled_server(client):
+    """SecOps disabled it; editing the URL is not consent to put it back live."""
+    _server()
+    client.post("/v1/tenant/me/mcp/servers/higgsfield/disable",
+                json={"reason": "incident"}, headers=_H)
+    client.post("/v1/tenant/me/mcp/servers",
+                json={"route": "higgsfield", "transport": "http",
+                      "url": "https://new-url/mcp", "isolation_ack": True},
+                headers=_H)
+    assert gstore.get_upstream("acme", "higgsfield")["active"] is False

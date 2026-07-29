@@ -11,3 +11,8 @@ aiosqlite
 cryptography>=42
 PyJWT[crypto]>=2.8
 python-multipart
+
+# Onboarding scan for registered MCP servers (api/routes_mcp_admin.py).
+# Imported behind a guard: without it the console reports
+# verdict="unavailable" rather than failing to boot or blocking registration.
+./packages/shield-mcp

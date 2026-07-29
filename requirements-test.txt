@@ -6,3 +6,6 @@
 mcp<2          # MCP transparent proxy (core/mcp/upstream.py) + generated MCP servers (codegen tests).
                # Pinned below 2.0: it removed mcp.server.fastmcp and streamablehttp_client,
                # which broke CI with no code change on our side. Unpin with a migration.
+./packages/shield-mcp   # MCP onboarding scan (core/mcp_scan.py). Installed from the
+                       # local path, not PyPI, so CI exercises this repo's scanner
+                       # rather than whatever version happens to be published.
