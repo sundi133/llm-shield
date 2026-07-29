@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Awaitable, Callable, Optional
 
 from storage.mcp_gateway_store import get_upstream
@@ -78,10 +79,60 @@ def build_enforcer(cfg: dict):
     return None  # in-process pipeline
 
 
+#: A vault reference the materializer understands (core/secret_vault/materialize.py).
+#: Matched again AFTER materialization to prove nothing was left unresolved.
+_VAULT_REF_RE = re.compile(r"shield://[A-Za-z0-9_.\-]+|svlt_[0-9a-f]+")
+
+
+def materialize_upstream_headers(cfg: dict, tenant_id: str) -> dict:
+    """Replace vault references in a route's ``headers`` with real secrets.
+
+    Upstream credentials for SaaS MCP servers are bearer tokens. Storing one
+    literally in the route config leaves it in plaintext at rest, so a header may
+    instead hold a vault reference::
+
+        {"Authorization": "Bearer shield://higgsfield-token"}
+
+    The secret is revealed only if its bindings cover the upstream host, which is
+    the vault's existing anti-exfiltration control — and create_vault_entry
+    already refuses a binding to a Shield host, because a secret materializes on
+    the leg OUT of Shield to the real upstream. That is exactly this leg.
+
+    Fail-closed: if a reference cannot be resolved, or its binding does not cover
+    this upstream, materialize_obj leaves the placeholder inert — and sending
+    that literal string upstream would be an unauthenticated call wearing the
+    costume of an authenticated one. Raise instead.
+
+    Scope: network transports only. stdio ``env`` is not materialized here; that
+    transport has no host to bind against and is covered by its own spec.
+    """
+    headers = cfg.get("headers")
+    if not headers:
+        return cfg
+
+    from core.secret_vault.materialize import materialize_obj
+
+    destination = cfg.get("url") or ""
+    resolved = materialize_obj(tenant_id, headers, destination)
+
+    leftover = sorted({k for k, v in (resolved or {}).items()
+                       if isinstance(v, str) and _VAULT_REF_RE.search(v)})
+    if leftover:
+        # Never log or echo the value; the header NAME is enough to act on.
+        raise GatewayError(
+            502,
+            f"upstream credential could not be materialized for header(s) "
+            f"{', '.join(leftover)}: the vault reference is unknown, the vault is "
+            f"disabled, or the secret is not bound to this upstream host")
+
+    return {**cfg, "headers": resolved}
+
+
 async def _default_proxy_factory(cfg: dict, tenant_id: str):
     """Connect to the real upstream and wrap it in an enforced MCPProxy."""
     from core.mcp.proxy_server import proxy_for  # imports the mcp SDK transport
 
+    cfg = materialize_upstream_headers(cfg, tenant_id)
     enforcer = build_enforcer(cfg)
     return await proxy_for(
         cfg, enforcer=enforcer, scan_descriptions=bool(cfg.get("scan_descriptions")),
