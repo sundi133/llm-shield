@@ -45,6 +45,7 @@ COPY core/run_context.py core/
 COPY core/mcp_scan.py core/
 # OAuth brokering for upstream MCP servers (admin plane only).
 COPY core/mcp_oauth.py core/
+COPY core/mcp_credentials.py core/
 COPY core/webhook_dispatcher.py core/
 COPY core/models.py core/
 COPY core/llm_backend.py core/
