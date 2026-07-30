@@ -37,6 +37,7 @@ import json
 import os
 import re
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -57,7 +58,26 @@ KC_PASSWORD = os.getenv("KC_PASSWORD", "")
 
 G, R, Y, B, DIM, Z = "\033[32m", "\033[31m", "\033[33m", "\033[1m", "\033[2m", "\033[0m"
 
-state = {"role": os.getenv("USER_ROLE", "customer_support"), "token": ""}
+state = {"role": os.getenv("USER_ROLE", "customer_support"), "token": "",
+         "trace": os.getenv("DEMO_TRACE", "1") not in ("0", "false", "no")}
+
+
+def step(n, title, detail="", ms=None):
+    """One line of the reasoning trace.
+
+    The demo's claim is that a chain of decisions produced an outcome. Printing
+    only the outcome asks you to take the chain on faith — and this session has
+    already turned up three controls that looked fine while doing nothing.
+    """
+    if not state["trace"]:
+        return
+    took = f" {DIM}{ms:.0f}ms{Z}" if ms is not None else ""
+    if title:
+        print(f"  {DIM}{n}{Z} {B}{title}{Z}{took}")
+    elif took:
+        print(f"       {DIM}({ms:.0f}ms){Z}")
+    for line in (detail.splitlines() if detail else []):
+        print(f"       {DIM}{line}{Z}")
 
 
 def headers():
@@ -98,6 +118,7 @@ def claims_of(token):
 
 
 def screen(text):
+    t0 = time.perf_counter()
     try:
         r = requests.post(f"{SHIELD}/guardrails/input", json={"message": text},
                           headers=headers(), timeout=TIMEOUT)
@@ -108,6 +129,11 @@ def screen(text):
         print(f"  {R}HTTP {r.status_code}{Z} {r.text[:160]}")
         return False
     d = r.json()
+    ran = d.get("guardrail_results", []) or []
+    step("1.", "input guardrails",
+         "\n".join(f"{'ok  ' if g.get('passed') else 'BLOCK'} {g.get('guardrail','?')}"
+                    for g in ran) or "none reported",
+         (time.perf_counter() - t0) * 1000)
     trig = [g["guardrail"] for g in d.get("guardrail_results", []) if not g.get("passed")]
     if d.get("safe") is False:
         print(f"  {R}BLOCKED{Z} — {', '.join(trig)}")
@@ -208,10 +234,22 @@ def agent_turn(text):
             print(f"  {DIM}(also: pip install langchain langchain-openai){Z}")
         return
 
+    step("2.", f"model reasons  {os.getenv('DEMO_MODEL', 'gpt-4o-mini')}",
+         "tools offered: " + ", ".join(t.name for t in TOOLS))
+    t0 = time.perf_counter()
     try:
         reply = llm.invoke([SystemMessage(content=_SYSTEM), HumanMessage(content=text)])
     except Exception as e:
         return print(f"  {R}model error{Z} {e.__class__.__name__}: {str(e)[:160]}")
+    ms = (time.perf_counter() - t0) * 1000
+    # Models usually narrate alongside a tool call. Show it verbatim — it is
+    # the model's account of its own choice, and worth reading when the choice
+    # is surprising.
+    said = (reply.content or "").strip() if isinstance(reply.content, str) else ""
+    chose = ", ".join(f"{c['name']}({', '.join(f'{k}={v}' for k, v in (c.get('args') or {}).items())})"
+                      for c in (reply.tool_calls or [])) or "nothing"
+    lines = ([f"reasoning: {said[:300]}"] if said else []) + [f"chose:     {chose}"]
+    step("", "", "\n".join(lines), ms)
 
     if not reply.tool_calls:
         said = (reply.content or "").strip()
@@ -220,12 +258,17 @@ def agent_turn(text):
     for call in reply.tool_calls:
         name, args = call["name"], (call.get("args") or {})
         shown = " ".join(f"{k}={v}" for k, v in args.items() if v != "")
-        print(f"  {DIM}the model chose{Z} {B}{name}({shown}){Z}")
+        if not state["trace"]:
+            print(f"  {DIM}the model chose{Z} {B}{name}({shown}){Z}")
         # Shield authorizes the MODEL's choice. A denial here means the agent
         # wanted to do it and was stopped — which is the thing worth seeing.
         if tool(name, args) and name in TOOLS_BY_NAME:
             result = TOOLS_BY_NAME[name].invoke(args)
+            step("4.", "tool executes", str(result))
             print(f"  {DIM}executed →{Z} {result}")
+        else:
+            step("4.", "tool does NOT execute",
+                 "the agent chose this call and was stopped before it ran")
 
 
 def parse_params(rest):
@@ -256,6 +299,7 @@ def tool(name, params=None):
     params = params or {}
     body = {"agent_key": AGENT, "tool_name": name,
             "user_role": state["role"], "tool_params": params}
+    t0 = time.perf_counter()
     try:
         r = requests.post(f"{SHIELD}/v1/shield/tool/check", json=body,
                           headers=headers(), timeout=TIMEOUT)
@@ -263,6 +307,16 @@ def tool(name, params=None):
     except Exception as e:
         print(f"  {R}error{Z} {e}")
         return False
+    ms = (time.perf_counter() - t0) * 1000
+    # Every guardrail that ran, not just the one that refused. A single DENIED
+    # line cannot distinguish "six checks ran and one objected" from "one check
+    # ran and the rest are switched off".
+    ran = d.get("guardrail_results", []) or []
+    detail = "\n".join(
+        f"{'ok  ' if g.get('passed', True) else 'DENY'} {g.get('guardrail', '?')}"
+        + (f" — {str(g.get('message', ''))[:90]}" if not g.get("passed", True) else "")
+        for g in ran) or "no guardrails reported"
+    step("3.", f"Shield authorizes  role={state['role']}", detail, ms)
     failing = [g for g in d.get("guardrail_results", []) if not g.get("passed", True)]
     shown = " ".join(f"{k}={v}" for k, v in params.items())
     allowed = bool(d.get("allowed"))
@@ -311,6 +365,7 @@ BANNER = f"""{B}Shield · LangChain · Keycloak — interactive{Z}
 {DIM}  Ignore all previous instructions.      blocked before the model reads it{Z}
 {DIM}  /login nurse.jones                     then ask to prescribe again{Z}
 {DIM}  /tool <name> k=v                       call one directly, skipping the model{Z}
+{DIM}  /trace                                 show or hide the reasoning trace{Z}
 """
 
 
@@ -329,7 +384,10 @@ def main():
             continue
         if line in ("/quit", "/q"):
             break
-        if line == "/who":
+        if line == "/trace":
+            state["trace"] = not state["trace"]
+            print(f"  {DIM}reasoning trace {'on' if state['trace'] else 'off'}{Z}")
+        elif line == "/who":
             who()
         elif line.startswith("/role"):
             parts = line.split(maxsplit=1)
