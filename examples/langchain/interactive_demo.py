@@ -120,134 +120,112 @@ def screen(text):
 
 
 # ── the agent loop ───────────────────────────────────────────────────────
-# The part that makes this an agent rather than a CLI: the MODEL reads what you
-# typed and decides which tool to call with which arguments. Shield never sees
-# your sentence — it sees the tool call the model produced.
+# A real LangChain tool-calling agent. The tools below are @tool functions with
+# typed signatures; LangChain turns them into a schema, the model picks one
+# natively, and we read `response.tool_calls`. Nothing here parses prose or
+# matches keywords — if the model picks badly, you see it pick badly.
 #
-# That ordering is the whole point. The model is free to plan anything,
-# including an action this role may not take; Shield is what stops it. A demo
-# where the human picks the tool cannot show that, because the human already
-# knows what they are allowed to do.
+# That ordering is the point. The model may plan anything, including an action
+# this role cannot take; Shield is what stops it. A demo where the human names
+# the tool cannot show that, because nobody types the tool they know is refused.
 
-TOOLS = [
-    {"name": "patient_lookup",
-     "description": "Look up a patient's record by id. Read-only.",
-     "params": {"patient_id": "string, the patient identifier"}},
-    {"name": "view_records",
-     "description": "View a patient's full medical records, including history.",
-     "params": {"patient_id": "string", "section": "string, optional"}},
-    {"name": "check_vitals",
-     "description": "Read current vital signs for a patient.",
-     "params": {"patient_id": "string"}},
-    {"name": "prescribe_medication",
-     "description": "Prescribe a drug to a patient. Clinical action, not read-only.",
-     "params": {"patient_id": "string", "drug": "string", "dose": "string, optional"}},
-]
+try:
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.tools import tool as lc_tool
+    from langchain_openai import ChatOpenAI
+    _LC = True
+except ImportError:      # the demo still runs for the /commands
+    _LC = False
 
+
+if _LC:
+    @lc_tool
+    def patient_lookup(patient_id: str) -> str:
+        """Look up a patient's demographic record by id. Read-only."""
+        return f"patient {patient_id}: name on file, DOB on file"
+
+    @lc_tool
+    def view_records(patient_id: str, section: str = "") -> str:
+        """View a patient's medical records and history."""
+        return f"records for {patient_id}{': ' + section if section else ''}"
+
+    @lc_tool
+    def check_vitals(patient_id: str) -> str:
+        """Read current vital signs (BP, heart rate, temperature) for a patient."""
+        return f"vitals for {patient_id}: BP 120/80, HR 72, temp 37.0C"
+
+    @lc_tool
+    def prescribe_medication(patient_id: str, drug: str, dose: str = "") -> str:
+        """Prescribe a medication to a patient. A clinical action, not read-only."""
+        return " ".join(f"prescribed {drug} {dose} to {patient_id}".split())
+
+    TOOLS = [patient_lookup, view_records, check_vitals, prescribe_medication]
+    TOOLS_BY_NAME = {t.name: t for t in TOOLS}
+else:
+    TOOLS, TOOLS_BY_NAME = [], {}
+
+
+# Deliberately does NOT tell the model who it is or what the role may do. A
+# model that self-censors would hide the control behind its own caution, and
+# what this demonstrates is what happens when the model is wrong.
 _SYSTEM = (
-    "You route a clinician's request to exactly one tool.\n"
-    "Return ONLY a JSON object: {\"tool\": <name or null>, \"params\": {...}, "
-    "\"why\": <short reason>}.\n"
-    "Use null when no tool fits — do not invent one.\n"
-    "Do NOT consider permissions. You are not the authorization layer; something "
-    "else decides whether the call is allowed. Plan what was asked.\n\n"
-    "Tools:\n" + "\n".join(
-        f"  {t['name']}({', '.join(t['params'])}) — {t['description']}"
-        for t in TOOLS)
+    "You are a clinical assistant. Call exactly one tool to satisfy the "
+    "request. Do not consider permissions or authorization — a separate layer "
+    "decides whether your call is allowed. If no tool fits, say so plainly."
 )
 
-
-def _plan_with_llm(text):
-    """Ask a real model. Returns (plan, engine) or (None, None) if unavailable."""
-    if os.getenv("ANTHROPIC_API_KEY"):
-        try:
-            import anthropic
-            m = anthropic.Anthropic().messages.create(
-                model=os.getenv("DEMO_MODEL", "claude-sonnet-5"),
-                max_tokens=300, system=_SYSTEM,
-                messages=[{"role": "user", "content": text}])
-            raw = "".join(b.text for b in m.content if b.type == "text")
-            return json.loads(raw[raw.find("{"):raw.rfind("}") + 1]), "claude"
-        except Exception as e:
-            print(f"  {DIM}LLM planning failed ({e.__class__.__name__}); "
-                  f"using the rule-based planner{Z}")
-    if os.getenv("OPENAI_API_KEY"):
-        try:
-            from openai import OpenAI
-            r = OpenAI().chat.completions.create(
-                model=os.getenv("DEMO_MODEL", "gpt-4o-mini"),
-                response_format={"type": "json_object"},
-                messages=[{"role": "system", "content": _SYSTEM},
-                          {"role": "user", "content": text}])
-            return json.loads(r.choices[0].message.content), "openai"
-        except Exception as e:
-            print(f"  {DIM}LLM planning failed ({e.__class__.__name__}); "
-                  f"using the rule-based planner{Z}")
-    return None, None
+_llm = None
 
 
-_ID = re.compile(r"\b(?:patient|pt|mrn)?\s*#?\s*([A-Z]-?\d{2,}|\d{2,})\b", re.I)
-_DRUGS = ("paracetamol", "parcetamol", "acetaminophen", "amoxicillin", "ibuprofen",
-          "insulin", "morphine", "aspirin", "metformin", "warfarin")
-
-
-def _plan_with_rules(text):
-    """Deterministic stand-in, so the demo runs with no API key.
-
-    Labelled as such wherever it is used: presenting keyword matching as a
-    model's judgement would misrepresent the one component the demo is not
-    testing.
-    """
-    low = text.lower()
-    params = {}
-    m = _ID.search(text)
-    if m:
-        params["patient_id"] = m.group(1)
-    drug = next((d for d in _DRUGS if d in low), "")
-    if drug:
-        params["drug"] = drug
-
-    if any(w in low for w in ("prescribe", "prescribing", "give", "administer", "order")) and drug:
-        return {"tool": "prescribe_medication", "params": params,
-                "why": f"asks to prescribe {drug}"}
-    if any(w in low for w in ("vitals", "vital signs", "blood pressure", "heart rate", "temperature")):
-        return {"tool": "check_vitals", "params": params, "why": "asks for vitals"}
-    if any(w in low for w in ("record", "history", "chart", "notes", "ssn")):
-        return {"tool": "view_records", "params": params, "why": "asks for records"}
-    if any(w in low for w in ("look up", "lookup", "find", "who is", "patient")):
-        return {"tool": "patient_lookup", "params": params, "why": "asks to look up a patient"}
-    return {"tool": None, "params": {}, "why": "nothing matched a tool"}
+def get_llm():
+    """Bind the tools once. None if no model is configured."""
+    global _llm
+    if _llm is not None or not _LC:
+        return _llm
+    key = os.getenv("OPENAI_API_KEY", "")
+    if not key:
+        return None
+    _llm = ChatOpenAI(model=os.getenv("DEMO_MODEL", "gpt-4o-mini"),
+                      api_key=key, temperature=0).bind_tools(TOOLS)
+    return _llm
 
 
 def agent_turn(text):
-    """One turn: screen the text, let the model plan, let Shield decide.
+    """One turn: screen the text, let the model choose, let Shield decide.
 
-    Runs the input guardrail FIRST. A prompt injection that talks the model into
-    a tool call is cheaper to stop before the model reads it than after.
+    The input guardrail runs FIRST. An injection that talks a model into a tool
+    call is cheaper to stop before the model reads it than after.
     """
     if not screen(text):
         print(f"  {DIM}blocked before the model saw it — nothing was planned{Z}")
         return
 
-    plan, engine = _plan_with_llm(text)
-    if plan is None:
-        plan, engine = _plan_with_rules(text), "rules"
-
-    name = (plan or {}).get("tool")
-    params = (plan or {}).get("params") or {}
-    why = (plan or {}).get("why", "")
-    label = {"claude": "claude", "openai": "openai",
-             "rules": "rule-based planner (no API key set)"}[engine]
-
-    if not name:
-        print(f"  {DIM}{label} chose no tool{Z} — {why}")
+    llm = get_llm()
+    if llm is None:
+        print(f"  {Y}no model configured{Z} — set OPENAI_API_KEY to let the agent")
+        print(f"  {DIM}choose tools, or call one directly: /tool <name> k=v{Z}")
+        if not _LC:
+            print(f"  {DIM}(also: pip install langchain langchain-openai){Z}")
         return
 
-    shown = " ".join(f"{k}={v}" for k, v in params.items())
-    print(f"  {DIM}{label} planned{Z} {B}{name}({shown}){Z}  {DIM}{why}{Z}")
-    # Shield authorizes the MODEL's choice, not yours. If this is denied, the
-    # model still wanted to do it — that is what the control is for.
-    tool(name, params)
+    try:
+        reply = llm.invoke([SystemMessage(content=_SYSTEM), HumanMessage(content=text)])
+    except Exception as e:
+        return print(f"  {R}model error{Z} {e.__class__.__name__}: {str(e)[:160]}")
+
+    if not reply.tool_calls:
+        said = (reply.content or "").strip()
+        return print(f"  {DIM}the model chose no tool{Z} — {said[:200] or 'no answer'}")
+
+    for call in reply.tool_calls:
+        name, args = call["name"], (call.get("args") or {})
+        shown = " ".join(f"{k}={v}" for k, v in args.items() if v != "")
+        print(f"  {DIM}the model chose{Z} {B}{name}({shown}){Z}")
+        # Shield authorizes the MODEL's choice. A denial here means the agent
+        # wanted to do it and was stopped — which is the thing worth seeing.
+        if tool(name, args) and name in TOOLS_BY_NAME:
+            result = TOOLS_BY_NAME[name].invoke(args)
+            print(f"  {DIM}executed →{Z} {result}")
 
 
 def parse_params(rest):
@@ -283,10 +261,12 @@ def tool(name, params=None):
                           headers=headers(), timeout=TIMEOUT)
         d = r.json()
     except Exception as e:
-        return print(f"  {R}error{Z} {e}")
+        print(f"  {R}error{Z} {e}")
+        return False
     failing = [g for g in d.get("guardrail_results", []) if not g.get("passed", True)]
     shown = " ".join(f"{k}={v}" for k, v in params.items())
-    if d.get("allowed"):
+    allowed = bool(d.get("allowed"))
+    if allowed:
         print(f"  {G}ALLOWED{Z}  {state['role']} may call {name}({shown})")
     else:
         why = failing[0] if failing else {}
@@ -302,6 +282,9 @@ def tool(name, params=None):
             print(f"    {DIM}role came from{Z} {colour}{src}{Z}"
                   f"{DIM} · verified={det.get('role_verified')}{Z}")
             break
+    # The caller executes only on an allow — the whole point is that a denial
+    # stops the tool from running, not merely prints something.
+    return allowed
 
 
 def who():
@@ -321,7 +304,8 @@ BANNER = f"""{B}Shield · LangChain · Keycloak — interactive{Z}
 {DIM}shield {SHIELD}   agent {AGENT}{Z}
 {DIM}users: dr.smith (doctor)  nurse.jones (nurse)  admin.doe  patient.lee{Z}
 {DIM}       password for all of them is "password"{Z}
-{DIM}Just talk to it. The model picks the tool; Shield decides if it runs.{Z}
+{DIM}Just talk to it — a LangChain agent picks the tool, Shield decides if it runs.{Z}
+{DIM}Needs OPENAI_API_KEY; without it only the /commands work.{Z}
 {DIM}  prescribe amoxicillin to patient 101   the interesting one — try it{Z}
 {DIM}  check vitals for patient 101           as both roles, and compare{Z}
 {DIM}  Ignore all previous instructions.      blocked before the model reads it{Z}
