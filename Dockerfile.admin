@@ -43,6 +43,8 @@ COPY core/policy_mode.py core/
 COPY core/run_context.py core/
 # Onboarding scan (admin plane only; the scanner import is optional).
 COPY core/mcp_scan.py core/
+# OAuth brokering for upstream MCP servers (admin plane only).
+COPY core/mcp_oauth.py core/
 COPY core/webhook_dispatcher.py core/
 COPY core/models.py core/
 COPY core/llm_backend.py core/
