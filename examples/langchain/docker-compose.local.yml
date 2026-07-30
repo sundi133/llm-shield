@@ -38,7 +38,13 @@ services:
       # Tokens carry `iss` derived from this. It must equal the issuer the
       # data plane trusts, character for character, or verification fails
       # and `prefer` silently falls back to the X-User-Role header.
-      - KC_HOSTNAME=https://9d61-2600-1700-38d0-8d30-e44d-4317-ea6d-157.ngrok-free.app
+      #
+      # Defaults to the in-network address, not localhost:8180, because the
+      # verifier is the guardrails CONTAINER: it fetches JWKS from whatever
+      # `iss` says, and inside that container localhost is its own loopback.
+      # Override both this and SHIELD_WORKLOAD_OIDC_ISSUERS together — they
+      # have to agree — e.g. when tunnelling Keycloak to a cloud data plane.
+      - KC_HOSTNAME=${KC_HOSTNAME:-http://keycloak:8080}
       - KC_HOSTNAME_STRICT=false
       - KC_PROXY_HEADERS=xforwarded
       - KC_HEALTH_ENABLED=true
@@ -81,6 +87,19 @@ services:
       - SHIELD_AUTH_ENABLED=true
       - PYTHONPATH=/app
       - ENVIRONMENT=development
+      # handler.py defaults to PORT=80; the port mapping and healthcheck both
+      # target 8000, so without this nothing is listening where they look.
+      - PORT=8000
+      # Workload identity and role binding are resolved on the DATA plane, so
+      # they belong here and nowhere else. The issuer must match KC_HOSTNAME
+      # above exactly — a mismatch is not an error, it is a silent fallback to
+      # the self-asserted X-User-Role header.
+      - SHIELD_WORKLOAD_IDENTITY_PROVIDERS=admin_key,spiffe,oidc_sa
+      - SHIELD_WORKLOAD_OIDC_ISSUERS=${KC_ISSUER:-http://keycloak:8080/realms/shield}
+      # oidc_sa refuses a token with no audience: issuer alone would mean any
+      # token this realm ever signs. setup_keycloak.py adds the matching mapper.
+      - SHIELD_WORKLOAD_OIDC_AUDIENCE=votal-shield
+      - SHIELD_ROLE_BINDING=prefer
       # Agent token signing keys (hex-encoded 32-byte Ed25519 seeds)
       # THESE ARE FOR LOCAL TESTING ONLY — never use in production
       - SHIELD_AGENT_TOKEN_PRIVATE_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
