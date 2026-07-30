@@ -197,6 +197,25 @@ UNSAFE_SCHEMA = {
 }
 
 
+def _resolve_request_identity(request, body=None):
+    """Resolve caller identity for telemetry, never raising.
+
+    Telemetry must not be able to fail a guardrail check: if resolution throws,
+    fall back to an empty identity so the decision still gets logged (with
+    role_source "none") rather than 500ing a request that already passed.
+    """
+    from core.identity_resolution import ResolvedIdentity, resolve_identity
+
+    try:
+        return resolve_identity(
+            request,
+            body_agent_key=(body or {}).get("agent_key") or "",
+            body_user_role=(body or {}).get("user_role") or "",
+        )
+    except Exception:  # pragma: no cover - defensive
+        return ResolvedIdentity()
+
+
 @router.post("/guardrails/input")
 async def classify(request: Request, body: dict):
     """Classify a message through all specified guardrails in a single call.
@@ -262,7 +281,17 @@ async def classify(request: Request, body: dict):
 
     # Log to audit_logger so input guardrail checks appear in tenant telemetry
     agent_key = (getattr(request.state, "agent_key", None) if hasattr(request, "state") else None) or body.get("agent_key", "")
-    role_name = (getattr(request.state, "role_name", None) if hasattr(request, "state") else None) or ""
+    # Resolve through the shared identity seam rather than request.state.role_name.
+    # That field is set by middleware from enforcer.resolve_role(agent_key) — the
+    # STATIC rbac config's agent->role map. An agent registered in the tenant
+    # registry (rather than that config) resolves to None, so every input decision
+    # was logged with no role and the console rendered "role unavailable" even
+    # when a verified OIDC claim was present on the request.
+    #
+    # resolve_identity() is what the tool path already uses: header, body, agent
+    # token, mTLS and OIDC in one place, plus the provenance to say WHICH.
+    _identity = _resolve_request_identity(request, body)
+    role_name = _identity.user_role or ""
     # Device attribution for the guardrails dashboard (browser extension sends
     # X-Device-Id / body device_id). Header/dict reads only — no added I/O.
     device_id = request.headers.get("x-device-id", "") or str(body.get("device_id") or "")
@@ -285,6 +314,12 @@ async def classify(request: Request, body: dict):
             "run_id": resolve_run_id(request, body),
             "tenant_id": tenant_id,
             "user_role": role_name,
+            # HOW the role was established, not just what it was. Without this an
+            # audit cannot tell a verified claim from a header the caller typed —
+            # which is the only distinction that matters when reviewing an
+            # escalation after the fact.
+            "role_source": _identity.role_source,
+            "identity_method": _identity.identity_method or "",
             "stage": "input",
             "device_id": device_id,
             "destination": destination,
@@ -462,6 +497,10 @@ async def screen_file(
     text is "filename: {name}\\n\\n{extracted}" so a sensitive filename alone
     can trip policies even when the content is not extractable.
     """
+    # Same seam as /guardrails/input. There is no JSON body here, so header /
+    # token / mTLS / OIDC resolution is the only source — which is exactly why
+    # this path recorded no role at all before.
+    _file_identity = _resolve_request_identity(request)
     max_bytes = _file_max_bytes()
     max_chars = _file_extract_max_chars()
 
@@ -545,7 +584,11 @@ async def screen_file(
             "kind": "agent_chat_telemetry",
             "run_id": resolve_run_id(request, {"session_id": session_id}),
             "tenant_id": tenant_id,
-            "user_role": "",
+            # Was hardcoded to "" — file screening recorded no role at all,
+            # regardless of configuration.
+            "user_role": _file_identity.user_role or "",
+            "role_source": _file_identity.role_source,
+            "identity_method": _file_identity.identity_method or "",
             "stage": "input",
             "device_id": dev,
             "destination": request.headers.get("x-shield-destination", ""),
