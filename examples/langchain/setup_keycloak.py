@@ -33,17 +33,23 @@ LDAP_BIND_DN = "cn=admin,dc=shield,dc=local"
 LDAP_BIND_PASS = "adminpassword"
 LDAP_BASE_DN = "dc=shield,dc=local"
 
-ROLES = [
-    # Banking roles (match your Shield tenant config)
-    "customer_support", "payments_officer", "fraud_analyst",
-    "compliance_officer", "branch_manager",
-]
+# These MUST match the role names in the Shield agent's role_permissions. A
+# verified claim only means something if the policy knows the role: a token
+# asserting a role Shield has never heard of resolves to no grants, which looks
+# exactly like role binding being broken.
+#
+# Mirrors the `test-oidc-agent` registry entry (tools: patient_lookup,
+# view_records, prescribe_medication, check_vitals).
+ROLES = ["doctor", "nurse", "admin", "patient"]
 
+# Usernames are healthcare personas, so the roles are too. They previously mapped
+# to banking roles (branch_manager, compliance_officer, ...) left over from a
+# different demo — names that matched neither the users nor Shield's config.
 USER_ROLES = {
-    "dr.smith": "branch_manager",        # full access
-    "nurse.jones": "customer_support",   # limited access
-    "admin.doe": "compliance_officer",   # compliance access
-    "patient.lee": "fraud_analyst",      # fraud + read access
+    "dr.smith":    "doctor",    # full clinical access, incl. prescribe_medication
+    "nurse.jones": "nurse",     # patient_lookup / view_records / check_vitals
+    "admin.doe":   "admin",     # everything
+    "patient.lee": "patient",   # own vitals only
 }
 
 
