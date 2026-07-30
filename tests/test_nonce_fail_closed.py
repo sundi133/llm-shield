@@ -24,6 +24,7 @@ class _Boom:
 def _clean_env(monkeypatch):
     monkeypatch.delenv("SHIELD_NONCE_LOCAL_FALLBACK", raising=False)
     monkeypatch.delenv("SHIELD_CAP_ALLOW_DRYRUN_VERIFY", raising=False)
+    monkeypatch.delenv("WORKERS", raising=False)
     from core.nonce_store import clear_prefix_for_tests
     clear_prefix_for_tests("test:nonce:")
     yield
@@ -37,6 +38,55 @@ def test_no_redis_configured_still_burns_locally():
     with patch("storage.tenant_store._get_redis", return_value=None):
         assert burn_nonce_if_unused("test:nonce:a", 30) is True
         assert burn_nonce_if_unused("test:nonce:a", 30) is False
+
+
+def test_no_redis_with_many_workers_refuses(monkeypatch):
+    """Found by running the flow against a real server: handler.py defaults to
+    WORKERS=32, so "no Redis configured" is not "one process" — it is 32
+    private dicts, and a cap verifies once in each."""
+    monkeypatch.setenv("WORKERS", "32")
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        with pytest.raises(NonceStoreUnavailable) as e:
+            burn_nonce_if_unused("test:nonce:mw", 30)
+    assert "WORKERS=32" in str(e.value)
+
+
+def test_no_redis_single_worker_is_still_fine(monkeypatch):
+    """One process has nothing to share, so this must stay working — it is
+    every test run and every local dev server."""
+    monkeypatch.setenv("WORKERS", "1")
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        assert burn_nonce_if_unused("test:nonce:sw", 30) is True
+
+
+def test_unset_worker_count_is_treated_as_one(monkeypatch):
+    monkeypatch.delenv("WORKERS", raising=False)
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        assert burn_nonce_if_unused("test:nonce:unset", 30) is True
+
+
+def test_garbage_worker_count_does_not_break_verification(monkeypatch):
+    monkeypatch.setenv("WORKERS", "not-a-number")
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        assert burn_nonce_if_unused("test:nonce:junk", 30) is True
+
+
+def test_many_workers_with_redis_is_fine(monkeypatch):
+    """The refusal is about the MISSING shared store, not the worker count."""
+    class _Ok:
+        def set(self, *a, **kw):
+            return True
+
+    monkeypatch.setenv("WORKERS", "32")
+    with patch("storage.tenant_store._get_redis", return_value=_Ok()):
+        assert burn_nonce_if_unused("test:nonce:mwr", 30) is True
+
+
+def test_many_workers_escape_hatch(monkeypatch):
+    monkeypatch.setenv("WORKERS", "32")
+    monkeypatch.setenv("SHIELD_NONCE_LOCAL_FALLBACK", "1")
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        assert burn_nonce_if_unused("test:nonce:mwh", 30) is True
 
 
 def test_configured_but_failing_redis_raises_instead_of_allowing():
@@ -225,3 +275,34 @@ def test_store_outage_does_not_500_the_endpoint():
     assert r.status_code == 200
     assert r.json()["valid"] is False
     assert "unavailable" in (r.json().get("error") or "")
+
+
+# ── issuance gate legibility ────────────────────────────────────────────────
+
+def test_admin_key_only_and_unset_is_an_operator_error(monkeypatch):
+    """Nothing can authorize issuance, so it is a 500 and not the caller."""
+    monkeypatch.setenv("SHIELD_WORKLOAD_IDENTITY_PROVIDERS", "admin_key")
+    monkeypatch.delenv("SHIELD_ADMIN_KEY", raising=False)
+    r = _client().post("/v1/shield/auth/agent-token", json={
+        "user_sub": "u", "agent_id": "a", "agent_instance_id": "i",
+        "tenant_id": "t1", "build_hash": "b", "model_version": "m",
+        "session_id": "s"})
+    assert r.status_code == 500
+    assert "SHIELD_ADMIN_KEY not configured" in r.json()["detail"]
+
+
+def test_unset_admin_key_alongside_oidc_does_not_blame_the_admin_key(monkeypatch):
+    """An OIDC deployment leaves SHIELD_ADMIN_KEY unset on purpose. Reporting
+    it for every rejection sent me to the wrong config file for a full cycle —
+    the token was actually failing on its issuer."""
+    monkeypatch.setenv("SHIELD_WORKLOAD_IDENTITY_PROVIDERS", "admin_key,oidc_sa")
+    monkeypatch.delenv("SHIELD_ADMIN_KEY", raising=False)
+    r = _client().post("/v1/shield/auth/agent-token", json={
+        "user_sub": "u", "agent_id": "a", "agent_instance_id": "i",
+        "tenant_id": "t1", "build_hash": "b", "model_version": "m",
+        "session_id": "s"})
+    assert r.status_code == 403
+    detail = r.json()["detail"]
+    assert "SHIELD_ADMIN_KEY" not in detail
+    # Naming what was tried is the difference between one guess and none.
+    assert "oidc_sa" in detail and "admin_key" in detail

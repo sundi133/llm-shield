@@ -150,16 +150,54 @@ def _require_admin(request: Request) -> None:
         request.state.workload_identity = identity
         return
 
-    # Preserve the operator misconfiguration signal: when admin_key is enabled
-    # but SHIELD_ADMIN_KEY is unset, issuance is disabled (500), matching the
-    # legacy behavior. Otherwise a caller simply failed to present an identity.
+    # Preserve the operator misconfiguration signal: admin_key enabled with no
+    # SHIELD_ADMIN_KEY means issuance really is impossible, which is a 500 and
+    # not the caller's fault.
+    #
+    # Only when it is the ONLY way in, though. With a chain like
+    # `admin_key,oidc_sa`, an unset admin key is a deliberate choice — the
+    # deployment authenticates by OIDC — and reporting it for every failure
+    # blames the wrong thing: a token rejected for a bad issuer or audience
+    # came back as "SHIELD_ADMIN_KEY not configured", which sends you to the
+    # wrong config file entirely.
     names = [p.name for p in enabled_providers()]
-    if "admin_key" in names and not os.environ.get("SHIELD_ADMIN_KEY", ""):
+    others = [n for n in names if n != "admin_key"]
+    if "admin_key" in names and not os.environ.get("SHIELD_ADMIN_KEY", "") and not others:
         raise HTTPException(
             status_code=500,
             detail="SHIELD_ADMIN_KEY not configured — token issuance disabled",
         )
-    raise HTTPException(status_code=403, detail="admin key required")
+    raise HTTPException(
+        status_code=403,
+        detail=("no accepted workload identity; tried: "
+                + (", ".join(names) or "none enabled")),
+    )
+
+
+def _enforce_tenant_binding(request: Request, claimed_tenant: str) -> None:
+    """A tenant key issues for its OWN tenant and no other.
+
+    The identity carries the tenant the key RESOLVED to. The body carries the
+    tenant the caller asked for. Trusting the second is how one tenant mints
+    identities for another, so they must match exactly.
+
+    An empty claimed tenant is a mismatch, not consent: quietly substituting
+    the resolved tenant would let a caller stay vague and receive a token for
+    whatever the key happened to own.
+
+    Only applies to tenant-scoped identities. An admin key is deliberately not
+    tenant-bound — that is what makes it an operator credential.
+    """
+    identity = getattr(request.state, "workload_identity", None)
+    if identity is None or getattr(identity, "provider", "") != "tenant_key":
+        return
+    owned = (getattr(identity, "claims", {}) or {}).get("tenant_id", "")
+    if (claimed_tenant or "").strip() != owned:
+        raise HTTPException(
+            status_code=403,
+            detail=(f"tenant key authorizes tenant {owned!r}, "
+                    f"not {(claimed_tenant or '').strip()!r}"),
+        )
 
 
 def _require_registered_agent(tenant_id: str, agent_id: str) -> None:
@@ -195,9 +233,11 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
 
     In production, this endpoint should be wired to an OIDC token exchange
     that takes a verified user id_token + a SPIFFE workload SVID and emits
-    the agent token. v1 takes the claims directly, gated by admin key.
+    the agent token. v1 takes the claims directly, gated by the
+    workload-identity chain.
     """
     _require_admin(request)
+    _enforce_tenant_binding(request, body.tenant_id)
     _require_registered_agent(body.tenant_id, body.agent_id)
     try:
         token = mint_agent_token(

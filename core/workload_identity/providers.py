@@ -42,6 +42,50 @@ class AdminKeyProvider:
         return None
 
 
+class TenantKeyProvider:
+    """The tenant's own API key, via X-API-Key. trust: medium.
+
+    Exists because the alternative was worse. Agent-token issuance was gated by
+    SHIELD_ADMIN_KEY — one platform-wide operator secret that authorizes
+    issuance for EVERY tenant — so letting a tenant run agents meant handing it
+    the master key. That does not scale past the first customer and inverts the
+    trust boundary it was meant to protect.
+
+    A tenant API key identifies exactly one tenant, and cap/mint already treats
+    it as authoritative. This makes issuance accept the same credential.
+
+    The identity carries the RESOLVED tenant, never the one the caller claimed.
+    The route binds the issued token to it, so a tenant key cannot mint for
+    anyone else however the request body is written.
+
+    Not in the default provider chain: enabling it widens who may mint agent
+    tokens, which is an operator's decision to make explicitly.
+    """
+
+    name = "tenant_key"
+
+    def verify(self, request: Request) -> Optional[WorkloadIdentity]:
+        api_key = (request.headers.get("X-API-Key")
+                   or request.headers.get("x-api-key") or "").strip()
+        if not api_key:
+            return None
+        try:
+            from storage.tenant_store import resolve_tenant_by_api_key
+            tenant_id = resolve_tenant_by_api_key(api_key)
+        except Exception as exc:
+            # Redis down, store misconfigured — an unresolvable key must not
+            # authorize anything. Returning None lets the chain continue and
+            # the caller gets a 403, not a token.
+            logger.warning("tenant_key: could not resolve API key (%s)",
+                           exc.__class__.__name__)
+            return None
+        if not tenant_id:
+            return None
+        return WorkloadIdentity(
+            provider=self.name, subject=f"tenant:{tenant_id}",
+            trust_level="medium", claims={"tenant_id": tenant_id})
+
+
 class SpiffeProvider:
     """SPIFFE identity already validated by SPIFFEMiddleware. trust: high*."""
 
