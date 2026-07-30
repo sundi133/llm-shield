@@ -33,6 +33,73 @@ def _validate_agent_id(agent_id: str) -> None:
         )
 
 
+#: Characters that make an identifier unsafe to carry around regardless of where
+#: it ends up: path traversal, separators, control characters, whitespace.
+_UNSAFE_ID_RE = re.compile(r"[\x00-\x1f\x7f/\\\s]|\.\.")
+
+
+def _validate_observed_agent_id(agent_id: str) -> None:
+    """Validate an agent id that was OBSERVED in traffic, not authored here.
+
+    Block/allow do not create anything — they reference an identifier some caller
+    already sent, which shadow-agent discovery recorded verbatim. Applying the
+    registration rule here made the riskiest agents unblockable: anything with an
+    ``@`` or ``.`` (an email-shaped key, say) could be seen in the console and
+    never acted on. An attacker could pick such a key deliberately.
+
+    So this rejects what is genuinely dangerous — path traversal, separators,
+    control characters, whitespace — and accepts the rest. ``blocked_agents`` is a
+    plain list membership test (core/middleware.py), never a key or a path, so
+    stricter than this buys nothing and costs the ability to respond.
+    """
+    if not agent_id or len(agent_id) > 128:
+        raise HTTPException(
+            status_code=400,
+            detail="agent_id must be 1-128 characters",
+        )
+    if _UNSAFE_ID_RE.search(agent_id):
+        raise HTTPException(
+            status_code=400,
+            detail="agent_id may not contain path separators, whitespace, or "
+                   "control characters",
+        )
+
+
+def _is_observed_shadow_agent(tenant_id: str, agent_id: str) -> bool:
+    """Whether this id was actually seen in traffic for this tenant.
+
+    Read fresh rather than trusted from the request: it is the difference between
+    adopting an identifier the system already recorded and letting a caller author
+    an arbitrary one.
+    """
+    try:
+        data = get_redis_data(f"unregistered:{tenant_id}") or {}
+        return agent_id in (data.get("agents") or {})
+    except Exception:
+        # Storage trouble must not silently widen what is accepted.
+        return False
+
+
+def _validate_new_agent_id(agent_id: str, tenant_id: str) -> None:
+    """Validate an id being registered.
+
+    Strict by default — an operator authoring a new agent should use a clean name.
+    But registering a SHADOW agent means adopting an id that real traffic already
+    produced, and it has to be stored byte-identical or it will not match the
+    caller, block/allow, or the audit trail. Rewriting it to fit a charset would
+    quietly register something that governs nothing.
+
+    So an id that fails the strict rule is accepted only if it is genuinely in
+    this tenant's observed list, and only if it is not dangerous in shape.
+    """
+    if _VALID_ID_RE.match(agent_id or ""):
+        return
+    if agent_id and _is_observed_shadow_agent(tenant_id, agent_id):
+        _validate_observed_agent_id(agent_id)
+        return
+    _validate_agent_id(agent_id)   # raises with the strict message
+
+
 def _sanitize_string(value: str, max_len: int = _MAX_STRING_LEN) -> str:
     """Strip HTML/JS tags from user-provided strings to prevent stored XSS.
 
@@ -379,7 +446,7 @@ async def block_shadow_agent(agent_id: str, request: Request):
     The agent is rejected with 403 on all future calls, even if
     block_unregistered_agents is False.
     """
-    _validate_agent_id(agent_id)
+    _validate_observed_agent_id(agent_id)
     tenant_id = get_tenant_from_api_key(request)
 
     from storage.tenant_store import get_tenant, update_tenant
@@ -407,7 +474,7 @@ async def allow_shadow_agent(agent_id: str, request: Request):
     To fully approve a shadow agent, register it via POST /v1/agents/registry
     with its tools and role_permissions. This endpoint only unblocks.
     """
-    _validate_agent_id(agent_id)
+    _validate_observed_agent_id(agent_id)
     tenant_id = get_tenant_from_api_key(request)
 
     from storage.tenant_store import get_tenant, update_tenant
@@ -599,7 +666,9 @@ async def create_agent(request: Request):
         agent_id = body.get("agent_id", "").strip()
         if not agent_id:
             raise HTTPException(status_code=400, detail="agent_id is required")
-        _validate_agent_id(agent_id)
+        # Strict for a newly authored id; the observed rule when adopting a
+        # shadow agent, whose id must be stored exactly as traffic produced it.
+        _validate_new_agent_id(agent_id, tenant_id)
         _validate_agent_body(body)
 
         agents_key = f"agents:{tenant_id}"
