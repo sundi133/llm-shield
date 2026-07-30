@@ -27,6 +27,10 @@ KC_ADMIN_PASS = "admin"
 REALM = "shield"
 CLIENT_ID = "shield-api"
 CLIENT_SECRET = "shield-client-secret"  # fixed for local testing
+PUBLIC_CLIENT_ID = "demo-cli"           # public: CLI demos have nowhere to keep a secret
+# Must equal SHIELD_WORKLOAD_OIDC_AUDIENCE on the verifying plane, or the token
+# is refused. Shield treats a missing audience as fatal rather than optional.
+AUDIENCE = "votal-shield"
 
 LDAP_URL = "ldap://openldap:389"  # Keycloak resolves this via docker network
 LDAP_BIND_DN = "cn=admin,dc=shield,dc=local"
@@ -145,6 +149,62 @@ def create_client(token: str):
         print("  Created!")
     else:
         print(f"  ERROR {r.status_code}: {r.text}")
+
+
+def create_public_client(token: str):
+    """The client the demos actually authenticate with.
+
+    shield-api above is confidential, so a password grant that sends only a
+    client_id fails with `unauthorized_client` — which reads like bad
+    credentials rather than a client-type mismatch. The demos are CLIs with no
+    place to keep a secret, so they need a public client.
+    """
+    print(f"Creating public client '{PUBLIC_CLIENT_ID}'...")
+    r = requests.post(f"{KC_URL}/admin/realms/{REALM}/clients", headers=admin_headers(token), json={
+        "clientId": PUBLIC_CLIENT_ID,
+        "enabled": True,
+        "protocol": "openid-connect",
+        "publicClient": True,
+        "directAccessGrantsEnabled": True,   # password grant, for scripted demos
+        "standardFlowEnabled": True,
+        "redirectUris": ["http://localhost:*"],
+    })
+    if r.status_code == 409:
+        print("  Client already exists — OK")
+    elif r.status_code != 201:
+        return print(f"  ERROR {r.status_code}: {r.text}")
+    else:
+        print("  Created!")
+
+    # Shield's oidc_sa provider REFUSES a token with no audience, by design:
+    # issuer alone means "anyone this IdP will sign for", so without `aud` any
+    # token from the realm would authorize against Shield. Keycloak does not
+    # add an audience for a client that isn't itself a resource, so without
+    # this mapper every demo token verifies as None and role binding silently
+    # falls back to the X-User-Role header — the exact failure it demonstrates.
+    cid = _client_uuid(token, PUBLIC_CLIENT_ID)
+    if not cid:
+        return print("  WARNING: client not found, skipping audience mapper")
+    m = requests.post(
+        f"{KC_URL}/admin/realms/{REALM}/clients/{cid}/protocol-mappers/models",
+        headers=admin_headers(token),
+        json={"name": f"{AUDIENCE}-audience", "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "config": {"included.custom.audience": AUDIENCE,
+                         "access.token.claim": "true", "id.token.claim": "false"}})
+    if m.status_code == 409:
+        print(f"  Audience mapper '{AUDIENCE}' already exists — OK")
+    elif m.status_code == 201:
+        print(f"  Audience mapper '{AUDIENCE}' created!")
+    else:
+        print(f"  ERROR {m.status_code}: {m.text}")
+
+
+def _client_uuid(token: str, client_id: str) -> str:
+    r = requests.get(f"{KC_URL}/admin/realms/{REALM}/clients",
+                     headers=admin_headers(token), params={"clientId": client_id})
+    found = r.json() if r.status_code == 200 else []
+    return found[0]["id"] if found else ""
 
 
 def setup_ldap_federation(token: str):
@@ -367,6 +427,7 @@ if __name__ == "__main__":
 
     create_roles(token)
     create_client(token)
+    create_public_client(token)
     setup_ldap_federation(token)
 
     # Wait for LDAP sync to complete
