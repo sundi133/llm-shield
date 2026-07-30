@@ -131,6 +131,7 @@ COPY storage/aibom_interop.py storage/
 COPY storage/mcp_gateway_store.py storage/
 COPY storage/mcp_policy_store.py storage/
 COPY storage/mcp_scan_store.py storage/
+COPY storage/mcp_oauth_store.py storage/
 COPY core/telemetry.py core/
 COPY guardrails/__init__.py guardrails/
 COPY guardrails/base.py guardrails/
