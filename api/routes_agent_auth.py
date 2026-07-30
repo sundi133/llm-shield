@@ -150,16 +150,28 @@ def _require_admin(request: Request) -> None:
         request.state.workload_identity = identity
         return
 
-    # Preserve the operator misconfiguration signal: when admin_key is enabled
-    # but SHIELD_ADMIN_KEY is unset, issuance is disabled (500), matching the
-    # legacy behavior. Otherwise a caller simply failed to present an identity.
+    # Preserve the operator misconfiguration signal: admin_key enabled with no
+    # SHIELD_ADMIN_KEY means issuance really is impossible, which is a 500 and
+    # not the caller's fault.
+    #
+    # Only when it is the ONLY way in, though. With a chain like
+    # `admin_key,oidc_sa`, an unset admin key is a deliberate choice — the
+    # deployment authenticates by OIDC — and reporting it for every failure
+    # blames the wrong thing: a token rejected for a bad issuer or audience
+    # came back as "SHIELD_ADMIN_KEY not configured", which sends you to the
+    # wrong config file entirely.
     names = [p.name for p in enabled_providers()]
-    if "admin_key" in names and not os.environ.get("SHIELD_ADMIN_KEY", ""):
+    others = [n for n in names if n != "admin_key"]
+    if "admin_key" in names and not os.environ.get("SHIELD_ADMIN_KEY", "") and not others:
         raise HTTPException(
             status_code=500,
             detail="SHIELD_ADMIN_KEY not configured — token issuance disabled",
         )
-    raise HTTPException(status_code=403, detail="admin key required")
+    raise HTTPException(
+        status_code=403,
+        detail=("no accepted workload identity; tried: "
+                + (", ".join(names) or "none enabled")),
+    )
 
 
 def _require_registered_agent(tenant_id: str, agent_id: str) -> None:

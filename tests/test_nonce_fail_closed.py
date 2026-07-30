@@ -275,3 +275,34 @@ def test_store_outage_does_not_500_the_endpoint():
     assert r.status_code == 200
     assert r.json()["valid"] is False
     assert "unavailable" in (r.json().get("error") or "")
+
+
+# ── issuance gate legibility ────────────────────────────────────────────────
+
+def test_admin_key_only_and_unset_is_an_operator_error(monkeypatch):
+    """Nothing can authorize issuance, so it is a 500 and not the caller."""
+    monkeypatch.setenv("SHIELD_WORKLOAD_IDENTITY_PROVIDERS", "admin_key")
+    monkeypatch.delenv("SHIELD_ADMIN_KEY", raising=False)
+    r = _client().post("/v1/shield/auth/agent-token", json={
+        "user_sub": "u", "agent_id": "a", "agent_instance_id": "i",
+        "tenant_id": "t1", "build_hash": "b", "model_version": "m",
+        "session_id": "s"})
+    assert r.status_code == 500
+    assert "SHIELD_ADMIN_KEY not configured" in r.json()["detail"]
+
+
+def test_unset_admin_key_alongside_oidc_does_not_blame_the_admin_key(monkeypatch):
+    """An OIDC deployment leaves SHIELD_ADMIN_KEY unset on purpose. Reporting
+    it for every rejection sent me to the wrong config file for a full cycle —
+    the token was actually failing on its issuer."""
+    monkeypatch.setenv("SHIELD_WORKLOAD_IDENTITY_PROVIDERS", "admin_key,oidc_sa")
+    monkeypatch.delenv("SHIELD_ADMIN_KEY", raising=False)
+    r = _client().post("/v1/shield/auth/agent-token", json={
+        "user_sub": "u", "agent_id": "a", "agent_instance_id": "i",
+        "tenant_id": "t1", "build_hash": "b", "model_version": "m",
+        "session_id": "s"})
+    assert r.status_code == 403
+    detail = r.json()["detail"]
+    assert "SHIELD_ADMIN_KEY" not in detail
+    # Naming what was tried is the difference between one guess and none.
+    assert "oidc_sa" in detail and "admin_key" in detail

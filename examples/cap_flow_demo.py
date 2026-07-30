@@ -11,15 +11,27 @@ tells you the control works is what it REFUSES. So after the happy path this
 replays the cap, presents it for a different tool, and waits out the TTL. A
 run where those three succeed is a broken deployment, not a passing test.
 
-Usage:
-    python examples/cap_flow_demo.py                       # local
-    SHIELD_URL=https://api.guardrails.votal.ai python examples/cap_flow_demo.py
+Takes the same environment as examples/langchain/interactive_demo.py, so one
+export block drives both:
+
+    export LLM_SHIELD_URL=https://api.guardrails.votal.ai \
+           KEYCLOAK_URL=http://localhost:8180 KEYCLOAK_REALM=shield \
+           KEYCLOAK_CLIENT=demo-cli KC_USER=dr.smith KC_PASSWORD=password \
+           AGENT_ID=test-oidc-agent TENANT_API_KEY=bank-co-key
+    python examples/cap_flow_demo.py
+
+With KC_USER set, the identity baked into the cap is the one Keycloak signed —
+`user_sub` is the token's `sub`, not a string this script made up — and the
+token is what authorizes issuance, via the oidc_sa workload provider. Without
+it, falls back to SHIELD_ADMIN_KEY. Both are accepted by the same gate; the
+difference is whether the human in the audit trail is real.
 
 Needs SHIELD_AGENT_TOKEN_PRIVATE_KEY and SHIELD_CAP_TOKEN_PRIVATE_KEY set on
 the server. Without them it mints with an ephemeral key that dies with the
 worker, and verification fails for reasons that have nothing to do with policy.
 """
 
+import base64
 import json
 import os
 import sys
@@ -38,6 +50,12 @@ TOOL = os.getenv("TOOL", "send_email")
 RESOURCE = os.getenv("RESOURCE", "user/42/inbox")
 TIMEOUT = float(os.getenv("SHIELD_TIMEOUT", "30"))
 
+KC_URL = (os.getenv("KEYCLOAK_URL") or "").rstrip("/")
+KC_REALM = os.getenv("KEYCLOAK_REALM", "shield")
+KC_CLIENT = os.getenv("KEYCLOAK_CLIENT", "demo-cli")
+KC_USER = os.getenv("KC_USER", "")
+KC_PASSWORD = os.getenv("KC_PASSWORD", "")
+
 G, R, Y, DIM, B, Z = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[1m", "\033[0m"
 INSTANCE = "inst-" + uuid.uuid4().hex[:8]
 SESSION = "sess-" + uuid.uuid4().hex[:8]
@@ -53,6 +71,39 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
+def claims_of(token: str) -> dict:
+    """Read a JWT's claims WITHOUT verifying — for display only.
+
+    Shield does the verifying. Decoding here is how the script reports which
+    identity it is actually carrying, so a run that silently fell back to the
+    admin key is visible rather than inferred.
+    """
+    try:
+        p = token.split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
+    except Exception:
+        return {}
+
+
+def keycloak_login() -> str:
+    """Password grant against the realm. Empty string if not configured."""
+    if not (KC_URL and KC_USER and KC_PASSWORD):
+        return ""
+    try:
+        r = requests.post(
+            f"{KC_URL}/realms/{KC_REALM}/protocol/openid-connect/token",
+            data={"grant_type": "password", "client_id": KC_CLIENT,
+                  "username": KC_USER, "password": KC_PASSWORD},
+            timeout=TIMEOUT)
+    except Exception as e:
+        print(f"   {Y}Keycloak unreachable ({e}){Z}")
+        return ""
+    if r.status_code != 200:
+        print(f"   {Y}Keycloak login failed — {r.status_code}: {r.text[:160]}{Z}")
+        return ""
+    return r.json().get("access_token", "")
+
+
 def post(path: str, body: dict, headers: dict = None) -> requests.Response:
     h = {"Content-Type": "application/json"}
     if API_KEY:
@@ -65,23 +116,54 @@ def main() -> int:
     print(f"\n{B}Shield capability flow{Z}  {DIM}{SHIELD}{Z}")
     print(f"{DIM}agent={AGENT} instance={INSTANCE} tool={TOOL} resource={RESOURCE}{Z}")
 
+    # ── 0. who the human is ─────────────────────────────────────────────
+    # A cap carries user_sub. If this script invents one, the audit trail says
+    # a capability was minted for a person who does not exist — so prefer the
+    # subject Keycloak signed.
+    kc_token = keycloak_login()
+    user_sub = "user-1"
+    if kc_token:
+        c = claims_of(kc_token)
+        user_sub = c.get("sub") or user_sub
+        roles = (c.get("realm_access") or {}).get("roles", [])
+        print(f"{DIM}user  {KC_USER} -> sub={user_sub[:18]}... roles={roles}{Z}")
+    elif KC_URL:
+        print(f"{Y}no Keycloak token — falling back to a made-up user_sub{Z}")
+
     # ── 1. AuthN ────────────────────────────────────────────────────────
     print(f"\n{B}1. POST /v1/shield/auth/agent-token{Z}  {DIM}who is calling{Z}")
-    # Token issuance is gated by the workload-identity providers — an admin key
-    # here, or SPIFFE/mTLS in a deployment that has them. Minting identity is
-    # exactly the operation you would not leave open to the agent itself.
+    # Gated by the workload-identity providers: a signed OIDC token (oidc_sa),
+    # an admin key, or SPIFFE/mTLS where those exist. Minting identity is
+    # exactly the operation you would not leave open to the agent itself, so
+    # send whichever credential this environment has.
+    issue_headers = {}
+    if kc_token:
+        issue_headers["Authorization"] = "Bearer " + kc_token
+    if ADMIN_KEY:
+        issue_headers["X-Admin-Key"] = ADMIN_KEY
+    if not issue_headers:
+        print(f"   {Y}No credential to authorize issuance.{Z}")
+        print(f"   {DIM}Set KC_USER/KC_PASSWORD (with KEYCLOAK_URL) or SHIELD_ADMIN_KEY.{Z}")
+        return 1
+    print(f"   {DIM}authorizing with: {', '.join(sorted(issue_headers))}{Z}")
+
     r = post("/v1/shield/auth/agent-token", {
-        "user_sub": "user-1", "agent_id": AGENT, "agent_instance_id": INSTANCE,
+        "user_sub": user_sub, "agent_id": AGENT, "agent_instance_id": INSTANCE,
         "tenant_id": TENANT, "build_hash": "b1", "model_version": "m1",
         "session_id": SESSION, "ttl_seconds": 300,
-    }, {"X-Admin-Key": ADMIN_KEY} if ADMIN_KEY else {})
+    }, issue_headers)
     if r.status_code != 200:
         print(f"   {R}HTTP {r.status_code}{Z} {r.text[:300]}")
         print(f"\n   {Y}Cannot continue without an agent token.{Z}")
         return 1
     agent_token = r.json()["agent_token"]
     print(f"   {G}issued{Z} {DIM}{agent_token[:40]}... ({len(agent_token)} chars){Z}")
+    # Carry the OIDC token onward too: cap/mint runs AuthZ, and with role
+    # binding on it resolves the role from this signed claim rather than from
+    # anything the caller asserts.
     auth = {"X-Agent-Token": agent_token}
+    if kc_token:
+        auth["Authorization"] = "Bearer " + kc_token
 
     # ── 2. AuthZ ────────────────────────────────────────────────────────
     print(f"\n{B}2. POST /v1/shield/cap/mint{Z}  {DIM}may it? -> cap for ONE action{Z}")
@@ -93,7 +175,14 @@ def main() -> int:
         print(f"   {R}HTTP {r.status_code}{Z} {r.text[:300]}")
         print(f"\n   {Y}Policy denied the mint, or the endpoint is gated.{Z}")
         print(f"   {DIM}A denial here is a working control, not a broken demo —{Z}")
-        print(f"   {DIM}check that {AGENT} is allowed {TOOL} on {RESOURCE}.{Z}")
+        print(f"   {DIM}check that {AGENT} is allowed {TOOL} on {RESOURCE};{Z}")
+        print(f"   {DIM}override with TOOL=... RESOURCE=...{Z}")
+        if API_KEY and "tenant" in r.text.lower():
+            # cap/mint cross-checks the agent token's tenant against the tenant
+            # the API key resolves to, so a default TENANT_ID that does not
+            # match the key fails here rather than at issuance.
+            print(f"   {DIM}TENANT_ID={TENANT} must match the tenant "
+                  f"TENANT_API_KEY resolves to.{Z}")
         return 1
     body = r.json()
     cap = body["cap_token"]
