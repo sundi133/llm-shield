@@ -29,7 +29,7 @@ Two different scans, deliberately kept distinct:
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import time
 from typing import Any, Optional
 
@@ -62,6 +62,7 @@ from core.mcp_oauth import (
 )
 from storage.mcp_oauth_store import (
     STATUS_PENDING,
+    take_pending,
     access_ref,
     client_secret_ref,
     get_broker,
@@ -631,6 +632,101 @@ async def get_oauth_status(route: str, request: Request):
         raise HTTPException(status_code=404, detail=f"route '{route}' not found")
     return {"tenant_id": tenant_id, "route": route,
             "oauth": public_status(get_broker(tenant_id, route))}
+
+
+def _callback_page(title: str, detail: str, ok: bool) -> HTMLResponse:
+    """A plain page for the operator's browser.
+
+    Deliberately minimal and self-contained: it is rendered from a provider
+    redirect, so it must not depend on portal session state, and it must never
+    echo a token or a code.
+    """
+    colour = "#16a34a" if ok else "#dc2626"
+    return HTMLResponse(status_code=200 if ok else 400, content=(
+        "<!doctype html><meta charset=utf-8>"
+        "<title>Shield — MCP credential</title>"
+        "<div style=\"font:15px/1.5 -apple-system,Segoe UI,sans-serif;"
+        "max-width:34rem;margin:4rem auto;padding:0 1rem;\">"
+        f"<h2 style=\"color:{colour};margin:0 0 .5rem;\">{escapeHtml(title)}</h2>"
+        f"<p style=\"color:#444;\">{escapeHtml(detail)}</p>"
+        "<p style=\"color:#888;font-size:13px;\">You can close this tab and "
+        "return to the Shield console.</p></div>"))
+
+
+def escapeHtml(text: str) -> str:
+    """Escape provider-supplied text before it reaches the page.
+
+    `error_description` comes from the authorization server and lands in HTML, so
+    it is untrusted input on a path an operator will actually open in a browser.
+    """
+    return (str(text).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+@router.get("/oauth/callback")
+async def oauth_callback(request: Request, code: str = "", state: str = "",
+                         error: str = "", error_description: str = ""):
+    """Receive the provider redirect and finish the flow.
+
+    The ONLY unauthenticated endpoint in this router, because a provider redirects
+    a browser here and that browser carries no tenant key. It is safe because it
+    authorizes on ``state`` alone: 256 bits of entropy, single-use, 10-minute TTL,
+    and the tenant is read from the stored pending record — never from a query
+    parameter, which the caller controls.
+    """
+    if error:
+        # The operator declined, or the provider refused. Say so plainly rather
+        # than leaving a route stuck in `pending` with no explanation.
+        return _callback_page(
+            "Authorization was not completed",
+            f"The provider reported: {error}. {error_description}".strip(),
+            ok=False)
+
+    pending = take_pending(state)        # single-use: consumed even on failure
+    if not pending:
+        return _callback_page(
+            "This authorization link is no longer valid",
+            "It was already used, or it expired. Start the connection again from "
+            "the Shield console.", ok=False)
+
+    tenant_id = pending["tenant_id"]
+    route = pending["route"]
+    record = get_broker(tenant_id, route)
+    if not record:
+        return _callback_page(
+            "That route is no longer configured",
+            "Its credential setup was removed while you were authorizing.",
+            ok=False)
+
+    from core.mcp_credentials import AuthCodeProvider, CredentialContext, CredentialError
+
+    cfg = get_upstream(tenant_id, route) or {}
+    record = {**record, "redirect_uri": pending.get("redirect_uri", "")}
+    ctx = CredentialContext(tenant_id=tenant_id, route=route, record=record,
+                            upstream_url=cfg.get("url") or "", actor="oauth-callback")
+    try:
+        await AuthCodeProvider().complete(
+            ctx, code=code, code_verifier=pending.get("code_verifier", ""))
+    except CredentialError as e:
+        from storage.mcp_oauth_store import STATUS_ERROR, update_status
+        update_status(tenant_id, route, STATUS_ERROR, error=e.message)
+        return _callback_page("Could not exchange the authorization code",
+                              e.message, ok=False)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_oauth_connected", actor="oauth-callback",
+                         tenant_id=tenant_id,
+                         after={"route": route, "issuer": record.get("issuer", ""),
+                                "via": "callback"})
+    except Exception:
+        pass
+
+    return _callback_page(
+        f"Connected: {route}",
+        "Shield now holds a credential for this server and will keep it "
+        "refreshed. No token was shown on this page or stored outside the vault.",
+        ok=True)
 
 
 @router.post("/servers/{route}/oauth/connect")
