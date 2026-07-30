@@ -107,7 +107,14 @@ class CapVerifyRequest(BaseModel):
     cap_token: str
     expected_tool: str
     expected_resource: Optional[str] = None
+    #: Honoured only when SHIELD_CAP_ALLOW_DRYRUN_VERIFY is set — see
+    #: verify_capability() for why a caller does not get to waive single-use.
     burn_nonce: bool = True
+
+
+def _dryrun_verify_allowed() -> bool:
+    return os.environ.get("SHIELD_CAP_ALLOW_DRYRUN_VERIFY", "").strip().lower() in (
+        "1", "true", "yes", "on")
 
 
 class CapVerifyResponse(BaseModel):
@@ -377,17 +384,29 @@ async def verify_capability(body: CapVerifyRequest):
 
     Deliberately NOT gated by X-Agent-Token: tool servers verify caps on
     behalf of agents, and the cap itself is the bearer credential.
+
+    `burn_nonce` in the request is ignored by default. Single-use is the
+    property the cap exists to provide, and this endpoint is unauthenticated by
+    design (above), so honouring the field let any caller waive its own replay
+    protection for the token's lifetime. Whether dry-run verification is
+    permitted is now the operator's call, not the caller's.
     """
+    burn = True
+    if _dryrun_verify_allowed():
+        burn = body.burn_nonce
     try:
         claims = verify_cap(
             body.cap_token,
             expected_tool=body.expected_tool,
             expected_resource=body.expected_resource,
-            burn_nonce=body.burn_nonce,
+            burn_nonce=burn,
         )
     except CapabilityError as e:
         msg = str(e)
-        event = EVENT_CAP_REPLAY if "replay" in msg else EVENT_CAP_INVALID
+        # Match the full phrase, not the bare word: a store-unavailable error
+        # mentions replay protection in its remediation hint, and classifying
+        # an outage as an attack is the wrong page to wake someone with.
+        event = EVENT_CAP_REPLAY if "replay detected" in msg else EVENT_CAP_INVALID
         # Try to recover tenant_id from the (unverified) cap claims so the
         # event still attributes to the right tenant for the portal.
         recovered_tenant = None

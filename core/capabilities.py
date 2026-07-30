@@ -48,6 +48,7 @@ from cryptography.exceptions import InvalidSignature
 
 from core.identity import IdentityTuple
 from core.jwt_utils import JWTError, encode_jwt, decode_jwt, decode_jwt_unverified, is_jwt_format
+from core.nonce_store import NonceStoreUnavailable, burn_nonce_if_unused, clear_prefix_for_tests
 from core.signers import Signer, SignerError, build_signer
 
 logger = logging.getLogger("votal.capabilities")
@@ -141,31 +142,14 @@ _NONCE_KEY_PREFIX = "shield:cap:nonce:"
 def _burn_nonce_if_unused(nonce: str, ttl: int) -> bool:
     """Atomically claim a nonce. Returns True if first-use, False if replayed.
 
-    Uses Redis SETNX (via `set(nx=True)`) when available, falls back to
-    in-process dict for tests/dev.
+    Raises NonceStoreUnavailable if Redis is configured but unreachable — see
+    core/nonce_store.py for why that is not treated as first-use.
     """
-    from storage.tenant_store import _get_redis, _fallback_store
-
-    key = _NONCE_KEY_PREFIX + nonce
-    r = _get_redis()
-    if r:
-        try:
-            # nx=True → only set if key doesn't exist (atomic claim)
-            ok = r.set(key, "1", ex=ttl, nx=True)
-            return bool(ok)
-        except Exception:
-            pass
-    if key in _fallback_store:
-        return False
-    _fallback_store[key] = str(int(time.time()) + ttl)
-    return True
+    return burn_nonce_if_unused(_NONCE_KEY_PREFIX + nonce, ttl)
 
 
 def clear_nonce_store_for_tests() -> None:
-    from storage.tenant_store import _fallback_store
-    for k in list(_fallback_store.keys()):
-        if k.startswith(_NONCE_KEY_PREFIX):
-            _fallback_store.pop(k, None)
+    clear_prefix_for_tests(_NONCE_KEY_PREFIX)
 
 
 # ── Claims dataclass ─────────────────────────────────────────────────────
@@ -337,7 +321,14 @@ def verify_cap(
     if burn_nonce:
         # nonce TTL = remaining cap lifetime + 5s grace
         nonce_ttl = max(1, claims["exp"] - now + 5)
-        if not _burn_nonce_if_unused(claims["nonce"], nonce_ttl):
+        try:
+            first_use = _burn_nonce_if_unused(claims["nonce"], nonce_ttl)
+        except NonceStoreUnavailable as e:
+            # Deliberately not phrased as a replay: this is "we cannot tell",
+            # and sending whoever is on call after an attacker during a Redis
+            # outage costs more than the clearer message does.
+            raise CapabilityError(f"cap verification unavailable: {e}") from e
+        if not first_use:
             raise CapabilityError("cap replay detected (nonce already used)")
 
     return CapClaims(

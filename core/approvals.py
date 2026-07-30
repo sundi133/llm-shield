@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from core.jwt_utils import JWTError, decode_jwt, decode_jwt_unverified, encode_jwt
+from core.nonce_store import NonceStoreUnavailable, burn_nonce_if_unused
 from core.signers import Signer, SignerError, build_signer
 
 APPROVAL_AUDIENCE = "shield-approvals"
@@ -105,20 +106,13 @@ _NONCE_PREFIX = "shield:approval:nonce:"
 
 
 def _burn_nonce_if_unused(nonce: str, ttl: int) -> bool:
-    """Atomically claim a nonce. True if first-use, False if replayed."""
-    from storage.tenant_store import _fallback_store, _get_redis
+    """Atomically claim a nonce. True if first-use, False if replayed.
 
-    key = _NONCE_PREFIX + nonce
-    r = _get_redis()
-    if r:
-        try:
-            return bool(r.set(key, "1", ex=ttl, nx=True))
-        except Exception:
-            pass
-    if key in _fallback_store:
-        return False
-    _fallback_store[key] = str(int(time.time()) + ttl)
-    return True
+    Raises NonceStoreUnavailable if Redis is configured but unreachable. An
+    approval grant is a human's "yes"; letting one be reused because the store
+    blinked is the outcome least worth risking.
+    """
+    return burn_nonce_if_unused(_NONCE_PREFIX + nonce, ttl)
 
 
 def clear_nonce_store_for_tests() -> None:
@@ -285,7 +279,11 @@ def verify_grant(
     if burn_nonce:
         now = int(time.time())
         nonce_ttl = max(1, claims["exp"] - now + 5)
-        if not _burn_nonce_if_unused(claims["nonce"], nonce_ttl):
+        try:
+            first_use = _burn_nonce_if_unused(claims["nonce"], nonce_ttl)
+        except NonceStoreUnavailable as e:
+            raise ApprovalError(f"approval verification unavailable: {e}") from e
+        if not first_use:
             raise ApprovalError("approval replay detected (nonce already used)")
 
     return GrantClaims(
