@@ -256,6 +256,53 @@ connection to the vendor. `POST .../enable` restores it. The kill switch also
 takes an optional `route` now, so you can disable one tool on one server instead
 of everywhere.
 
+### Credential modes
+
+Eight ways an upstream can authenticate. The first three need nothing but a header;
+the rest are acquired and kept fresh for you.
+
+| Mode | Config | Renewal |
+|---|---|---|
+| **No auth** | omit `headers` | — |
+| **API key** | `{"X-API-Key": "..."}` (any header name) | — |
+| **Static bearer / PAT** | `{"Authorization": "Bearer ..."}` | — you rotate it |
+| **OAuth auth code + PKCE** | `POST .../oauth/connect`, visit the URL | automatic |
+| **OAuth device flow** | same, provider shows a code to type | automatic |
+| **OAuth client credentials** | `client_id` + secret | automatic (re-acquires) |
+| **GitHub App installation** | app id, installation id, RSA key | automatic (hourly) |
+| **Gateway-issued capability** | nothing — Shield mints and signs it | automatic |
+
+The first three are **static**: nothing is acquired, nothing expires on Shield's
+schedule, and a route configured this way is untouched by any of the machinery
+below. That is why existing routes keep working unchanged.
+
+The other five are **brokered**: Shield holds the long-lived half (a refresh token,
+a client secret, an App private key) in the vault and keeps a current access token
+there for the gateway to present. Renewal happens on the admin plane *before*
+expiry, so the guard path adds no round-trip; if that timer is ever missed the
+gateway renews on the next call, once, under a lock.
+
+Two of these are worth singling out.
+
+**Client credentials** is usually the right answer for an enterprise upstream: a
+machine identity, no user consent, no browser, nothing personal. Prefer it over a
+personal PAT wherever the provider offers it.
+
+**Gateway-issued capability** is the only mode with **no vendor credential at
+all**. Shield mints a short-lived signed token and your upstream verifies it
+against Shield's JWKS — nothing to leak, rotate, or steal. For an in-cluster
+upstream this is the strongest option, and it composes with `isolation_ack` for
+genuinely non-bypassable enforcement.
+
+> **A brokered OAuth grant is one identity.** Everyone routed through that server
+> acts as whoever consented, so the vendor's own audit log shows a single account.
+> Use a service account, not a personal login. Per-user brokering needs verified
+> identity first — see
+> [spec-mcp-verified-identity.md](spec-mcp-verified-identity.md).
+
+To try all eight without a vendor account, `examples/mcp_credential_lab` is a local
+MCP server that demands whichever mode you point it at.
+
 ### Credentials in the vault, not in Redis
 
 A route header may hold a vault reference instead of a literal token:
@@ -350,9 +397,60 @@ gateway (e.g. `api.guardrails.votal.ai`) cannot reach your `localhost`. Options:
 | **Local dev** (upstream on your laptop) | expose it: `ngrok http 9100` → use the public URL (+ header `"ngrok-skip-browser-warning":"1"`) |
 | **Railway / Fly / Render** | the app's public URL (see [examples/mcp_gateway/RAILWAY.md](../examples/mcp_gateway/RAILWAY.md)) |
 | **Same VPC / private network** | the internal address (best — naturally gateway-only) |
+| **Kubernetes / OpenShift** (upstream in-cluster) | the Service DNS: `http://mcp-payments.mcp.svc.cluster.local:8080/mcp` (or `http://mcp-payments:8080/mcp` in the same namespace) |
 
 Runnable examples to copy from: [examples/mcp_gateway](../examples/mcp_gateway)
 (`register_agent.py`, `bank_upstream.py`, `rp_upstream.py` for resources/prompts).
+
+### In-cluster upstreams, and where `isolation_ack` becomes true
+
+How your MCP servers get deployed is not Shield's concern — Helm, an operator,
+ArgoCD, or a hand-written Deployment all work, and Shield ships nothing for it.
+What Shield needs is narrow, and it is worth stating as a contract:
+
+1. **An address resolvable from the data-plane pod.** The gateway dials the
+   upstream from that process, so a `ClusterIP` Service name is the right answer.
+   Not `localhost` (a different pod), and not a public hostname (defeats the next
+   point).
+2. **Ingress restricted to the data plane.** This is the requirement
+   `isolation_ack: true` attests to, and in a cluster it is the one deployment
+   where you can actually satisfy it.
+
+With a public SaaS upstream you cannot stop an agent calling the vendor directly,
+so policy is advisory and the route should stay `isolation_ack: false`. In-cluster,
+your platform team can make it real — a `ClusterIP` Service with no Ingress or
+LoadBalancer, plus a policy admitting only the Shield data plane:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-payments-gateway-only
+spec:
+  podSelector:
+    matchLabels: { app: mcp-payments }     # your MCP server's labels
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: shield-data-plane }   # your data-plane labels
+      ports:
+        - port: 8080
+          protocol: TCP
+```
+
+Substitute your own labels — the repo does not ship a data-plane manifest, so the
+selector depends on how you deploy Shield. Once that policy is in place,
+enforcement is non-bypassable by the network rather than by an agent's good
+behavior, and `isolation_ack: true` is an honest attestation instead of a promise.
+
+Use `transport: "http"` against the Service. Avoid `stdio` here: it runs your
+server as an **unsandboxed subprocess of the gateway pod**, which cannot scale or
+restart independently and is a known gap pending its own spec.
+
+Nothing else about a route is environment-specific — the same profiles, scans,
+kill switch, and vault references work identically on-prem, in a VPC, or against
+a SaaS endpoint. Only the `url` and the isolation story change.
 
 ## Manage routes
 

@@ -29,6 +29,7 @@ Two different scans, deliberately kept distinct:
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 import time
 from typing import Any, Optional
 
@@ -47,6 +48,27 @@ from core.mcp_scan import (
     scan_upstream,
     scanner_available,
     summary_for_route,
+)
+from core.mcp_credentials import MODE_AUTH_CODE
+from core.mcp_oauth import (
+    OAuthBrokerError,
+    broker_enabled,
+    build_authorize_url,
+    check_brokerable,
+    discover,
+    public_status,
+    redirect_uri,
+    register_client,
+)
+from storage.mcp_oauth_store import (
+    STATUS_PENDING,
+    access_ref,
+    client_secret_ref,
+    get_broker,
+    new_state,
+    put_pending,
+    refresh_ref,
+    set_broker,
 )
 from storage.mcp_scan_store import (
     delete_scan_report,
@@ -565,6 +587,152 @@ async def enable_server(route: str, request: Request):
 
     return {"status": "enabled", "tenant_id": tenant_id, "route": route,
             "server": _redact(cfg)}
+
+
+# ── OAuth brokering ──────────────────────────────────────────────────────
+#
+# Some upstreams issue only short-lived OAuth tokens and have no API key at all.
+# Shield completes the authorization-code flow once, then keeps a valid access
+# token in the vault so the route's existing shield:// header always resolves.
+# See docs/spec-mcp-oauth-brokering.md.
+
+
+class OAuthConnectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # For providers without dynamic registration. Omit to self-register.
+    client_id: Optional[str] = Field(None, max_length=256)
+    client_secret: Optional[str] = Field(None, max_length=2048)
+
+
+def _oauth_precondition(route: str) -> dict:
+    """Shared checks for the brokering endpoints. Returns the route config."""
+    if not broker_enabled():
+        raise HTTPException(
+            status_code=409,
+            detail="OAuth brokering is disabled (SHIELD_MCP_OAUTH_BROKER=0)")
+    # The vault is where the tokens go. Refusing beats holding a live delegation
+    # of someone's account in plaintext.
+    from core.secret_vault.keyprovider import vault_enabled
+    if not vault_enabled():
+        raise HTTPException(
+            status_code=409,
+            detail="the secret vault is disabled (SECRET_VAULT_ENABLED); OAuth "
+                   "brokering stores tokens there and will not fall back to "
+                   "plaintext")
+    return {}
+
+
+@router.get("/servers/{route}/oauth")
+async def get_oauth_status(route: str, request: Request):
+    """Brokering status for one route. Never returns tokens, on any path."""
+    tenant_id = _require_tenant(request)
+    if not get_upstream(tenant_id, route):
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    return {"tenant_id": tenant_id, "route": route,
+            "oauth": public_status(get_broker(tenant_id, route))}
+
+
+@router.post("/servers/{route}/oauth/connect")
+async def oauth_connect(route: str, request: Request,
+                        body: Optional[OAuthConnectRequest] = None):
+    """Begin brokering: discover the provider, register, return an authorize URL.
+
+    Obtains no token — the operator must visit ``authorize_url`` and the provider
+    then redirects to the callback. Returns 202 because the work is not finished.
+    """
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    _oauth_precondition(route)
+
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    upstream_url = cfg.get("url") or ""
+    if not upstream_url:
+        raise HTTPException(
+            status_code=422,
+            detail="OAuth brokering needs an http/sse upstream with a URL; "
+                   "stdio routes have no OAuth provider to discover")
+
+    import httpx
+
+    from core.oauth.pkce import generate_code_challenge, generate_code_verifier
+
+    try:
+        redirect = redirect_uri()
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            meta = await discover(client, upstream_url)
+            scopes = check_brokerable(meta)
+
+            if body and body.client_id:
+                creds = {"client_id": body.client_id,
+                         "client_secret": body.client_secret or ""}
+            else:
+                creds = await register_client(client, meta, route=route)
+    except OAuthBrokerError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+
+    # A client secret is credential material: vault, not the broker record.
+    secret_ref = ""
+    if creds.get("client_secret"):
+        from storage.vault_store import create_vault_entry
+        from urllib.parse import urlparse
+        host = urlparse(meta["token_endpoint"]).hostname or ""
+        create_vault_entry(tenant_id, client_secret_ref(route),
+                           creds["client_secret"], [host], mode="inject")
+        secret_ref = f"shield://{client_secret_ref(route)}"
+
+    verifier = generate_code_verifier()
+    state = new_state()
+    put_pending(state, tenant_id, route, verifier, redirect)
+
+    # Denormalized onto the route document so the gateway can skip the broker
+    # lookup entirely for static routes — see gateway.ensure_credential_fresh.
+    cfg["credential_mode"] = MODE_AUTH_CODE
+    cfg["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, cfg)
+
+    set_broker(tenant_id, route, {
+        "mode": MODE_AUTH_CODE,
+        "issuer": meta["issuer"],
+        "authorization_endpoint": meta["authorization_endpoint"],
+        "token_endpoint": meta["token_endpoint"],
+        "revocation_endpoint": meta.get("revocation_endpoint", ""),
+        "client_id": creds["client_id"],
+        "client_secret_ref": secret_ref,
+        "scopes": scopes,
+        "access_token_ref": f"shield://{access_ref(route)}",
+        "refresh_token_ref": f"shield://{refresh_ref(route)}",
+        "status": STATUS_PENDING,
+        "last_error": "",
+        "connected_by": actor,
+    })
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_oauth_connect_started", actor=actor,
+                         tenant_id=tenant_id,
+                         after={"route": route, "issuer": meta["issuer"],
+                                "scopes": scopes, "via": "portal"})
+    except Exception:
+        pass
+
+    return JSONResponse(status_code=202, content={
+        "status": "pending",
+        "tenant_id": tenant_id,
+        "route": route,
+        "authorize_url": build_authorize_url(
+            meta, client_id=creds["client_id"], scopes=scopes, state=state,
+            code_challenge=generate_code_challenge(verifier)),
+        # Said plainly: this is a durable delegation of a real account, not a
+        # one-off token paste, and it persists until revoked.
+        "consent_note": (
+            f"Visiting this URL grants Shield ongoing access to the account you "
+            f"sign in with at {meta['issuer']}, with scopes "
+            f"{', '.join(scopes)}. The grant persists until revoked here or at "
+            f"the provider. Use a service account, not a personal login."),
+    })
 
 
 # ── policy profiles ──────────────────────────────────────────────────────

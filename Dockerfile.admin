@@ -43,6 +43,9 @@ COPY core/policy_mode.py core/
 COPY core/run_context.py core/
 # Onboarding scan (admin plane only; the scanner import is optional).
 COPY core/mcp_scan.py core/
+# OAuth brokering for upstream MCP servers (admin plane only).
+COPY core/mcp_oauth.py core/
+COPY core/mcp_credentials.py core/
 COPY core/webhook_dispatcher.py core/
 COPY core/models.py core/
 COPY core/llm_backend.py core/
@@ -131,6 +134,7 @@ COPY storage/aibom_interop.py storage/
 COPY storage/mcp_gateway_store.py storage/
 COPY storage/mcp_policy_store.py storage/
 COPY storage/mcp_scan_store.py storage/
+COPY storage/mcp_oauth_store.py storage/
 COPY core/telemetry.py core/
 COPY guardrails/__init__.py guardrails/
 COPY guardrails/base.py guardrails/
