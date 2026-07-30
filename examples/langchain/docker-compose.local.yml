@@ -35,6 +35,12 @@ services:
       - KC_BOOTSTRAP_ADMIN_USERNAME=admin
       - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
       - KC_HTTP_RELATIVE_PATH=/
+      # Tokens carry `iss` derived from this. It must equal the issuer the
+      # data plane trusts, character for character, or verification fails
+      # and `prefer` silently falls back to the X-User-Role header.
+      - KC_HOSTNAME=https://9d61-2600-1700-38d0-8d30-e44d-4317-ea6d-157.ngrok-free.app
+      - KC_HOSTNAME_STRICT=false
+      - KC_PROXY_HEADERS=xforwarded
       - KC_HEALTH_ENABLED=true
     command: start-dev
     depends_on:
