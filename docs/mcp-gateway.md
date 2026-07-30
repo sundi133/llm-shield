@@ -256,6 +256,53 @@ connection to the vendor. `POST .../enable` restores it. The kill switch also
 takes an optional `route` now, so you can disable one tool on one server instead
 of everywhere.
 
+### Credential modes
+
+Eight ways an upstream can authenticate. The first three need nothing but a header;
+the rest are acquired and kept fresh for you.
+
+| Mode | Config | Renewal |
+|---|---|---|
+| **No auth** | omit `headers` | — |
+| **API key** | `{"X-API-Key": "..."}` (any header name) | — |
+| **Static bearer / PAT** | `{"Authorization": "Bearer ..."}` | — you rotate it |
+| **OAuth auth code + PKCE** | `POST .../oauth/connect`, visit the URL | automatic |
+| **OAuth device flow** | same, provider shows a code to type | automatic |
+| **OAuth client credentials** | `client_id` + secret | automatic (re-acquires) |
+| **GitHub App installation** | app id, installation id, RSA key | automatic (hourly) |
+| **Gateway-issued capability** | nothing — Shield mints and signs it | automatic |
+
+The first three are **static**: nothing is acquired, nothing expires on Shield's
+schedule, and a route configured this way is untouched by any of the machinery
+below. That is why existing routes keep working unchanged.
+
+The other five are **brokered**: Shield holds the long-lived half (a refresh token,
+a client secret, an App private key) in the vault and keeps a current access token
+there for the gateway to present. Renewal happens on the admin plane *before*
+expiry, so the guard path adds no round-trip; if that timer is ever missed the
+gateway renews on the next call, once, under a lock.
+
+Two of these are worth singling out.
+
+**Client credentials** is usually the right answer for an enterprise upstream: a
+machine identity, no user consent, no browser, nothing personal. Prefer it over a
+personal PAT wherever the provider offers it.
+
+**Gateway-issued capability** is the only mode with **no vendor credential at
+all**. Shield mints a short-lived signed token and your upstream verifies it
+against Shield's JWKS — nothing to leak, rotate, or steal. For an in-cluster
+upstream this is the strongest option, and it composes with `isolation_ack` for
+genuinely non-bypassable enforcement.
+
+> **A brokered OAuth grant is one identity.** Everyone routed through that server
+> acts as whoever consented, so the vendor's own audit log shows a single account.
+> Use a service account, not a personal login. Per-user brokering needs verified
+> identity first — see
+> [spec-mcp-verified-identity.md](spec-mcp-verified-identity.md).
+
+To try all eight without a vendor account, `examples/mcp_credential_lab` is a local
+MCP server that demands whichever mode you point it at.
+
 ### Credentials in the vault, not in Redis
 
 A route header may hold a vault reference instead of a literal token:

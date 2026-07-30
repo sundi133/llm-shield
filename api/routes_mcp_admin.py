@@ -49,6 +49,7 @@ from core.mcp_scan import (
     scanner_available,
     summary_for_route,
 )
+from core.mcp_credentials import MODE_AUTH_CODE
 from core.mcp_oauth import (
     OAuthBrokerError,
     broker_enabled,
@@ -686,7 +687,14 @@ async def oauth_connect(route: str, request: Request,
     state = new_state()
     put_pending(state, tenant_id, route, verifier, redirect)
 
+    # Denormalized onto the route document so the gateway can skip the broker
+    # lookup entirely for static routes — see gateway.ensure_credential_fresh.
+    cfg["credential_mode"] = MODE_AUTH_CODE
+    cfg["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, cfg)
+
     set_broker(tenant_id, route, {
+        "mode": MODE_AUTH_CODE,
         "issuer": meta["issuer"],
         "authorization_endpoint": meta["authorization_endpoint"],
         "token_endpoint": meta["token_endpoint"],

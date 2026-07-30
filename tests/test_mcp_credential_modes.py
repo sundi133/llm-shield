@@ -529,3 +529,132 @@ def test_sweep_only_touches_routes_that_are_due():
         out = run(cred.sweep_tenant("acme"))
     assert out["renewed"] == ["due"]
     assert out["skipped"] == ["fresh"]
+
+
+# ── task 7: reactive renewal on the guard path ───────────────────────
+#
+# The only guard-path change in the whole workstream, so the property that gets
+# asserted hardest is the one that keeps the latency contract: a static or
+# unbrokered route must do NO extra I/O.
+
+
+def _reads_counted():
+    """Count broker-record reads so 'zero I/O' is measured, not asserted."""
+    reads = []
+    import storage.mcp_oauth_store as s
+
+    real = s.get_broker
+
+    def _counting(tenant_id, route):
+        reads.append((tenant_id, route))
+        return real(tenant_id, route)
+
+    return reads, patch.object(s, "get_broker", _counting)
+
+
+@pytest.mark.parametrize("cfg", [
+    {"route": "r"},                                        # predates brokering
+    {"route": "r", "credential_mode": cred.MODE_NONE},
+    {"route": "r", "credential_mode": cred.MODE_API_KEY},
+    {"route": "r", "credential_mode": cred.MODE_STATIC_BEARER},
+])
+def test_static_routes_do_no_extra_io_on_the_guard_path(cfg):
+    """This is the latency contract. If checking 'does this need renewal?' read the
+    broker record on every call, every static route would pay a Redis GET per
+    tools/call — which is exactly what denormalizing the mode onto the route
+    document avoids."""
+    from core.mcp.gateway import ensure_credential_fresh
+
+    reads, counting = _reads_counted()
+    with counting:
+        run(ensure_credential_fresh(cfg, "acme"))
+    assert reads == []
+
+
+def test_dynamic_route_not_yet_due_reads_once_and_does_not_renew():
+    from core.mcp.gateway import ensure_credential_fresh
+
+    ostore.set_broker("acme", "r", {"mode": cred.MODE_CLIENT_CREDENTIALS,
+                                    "status": ostore.STATUS_CONNECTED,
+                                    "expires_at": int(time.time()) + 9999})
+    renewed = []
+
+    async def _spy(tenant_id, route, **kw):
+        renewed.append(route)
+        return {"renewed": True}
+
+    reads, counting = _reads_counted()
+    with counting, patch("core.mcp_credentials.renew_route", _spy):
+        run(ensure_credential_fresh({"route": "r",
+                                     "credential_mode": cred.MODE_CLIENT_CREDENTIALS},
+                                    "acme"))
+    assert len(reads) == 1        # one read to decide
+    assert renewed == []          # nothing due, nothing renewed
+
+
+def test_expiring_route_is_renewed_reactively():
+    from core.mcp.gateway import ensure_credential_fresh
+
+    ostore.set_broker("acme", "r", {"mode": cred.MODE_CLIENT_CREDENTIALS,
+                                    "status": ostore.STATUS_CONNECTED,
+                                    "expires_at": int(time.time()) + 5})
+    renewed = []
+
+    async def _spy(tenant_id, route, **kw):
+        renewed.append(route)
+        return {"renewed": True}
+
+    with patch("core.mcp_credentials.renew_route", _spy):
+        run(ensure_credential_fresh({"route": "r",
+                                     "credential_mode": cred.MODE_CLIENT_CREDENTIALS},
+                                    "acme"))
+    assert renewed == ["r"]
+
+
+def test_reactive_renewal_never_raises_into_the_guard_path():
+    """A transient provider blip must not become a gateway exception. If the token
+    really is dead, materialization fails closed with a clear message instead."""
+    from core.mcp.gateway import ensure_credential_fresh
+
+    ostore.set_broker("acme", "r", {"mode": cred.MODE_CLIENT_CREDENTIALS,
+                                    "status": ostore.STATUS_CONNECTED,
+                                    "expires_at": int(time.time()) - 1})
+
+    async def _boom(*a, **kw):
+        raise RuntimeError("provider on fire")
+
+    with patch("core.mcp_credentials.renew_route", _boom):
+        run(ensure_credential_fresh({"route": "r",
+                                     "credential_mode": cred.MODE_CLIENT_CREDENTIALS},
+                                    "acme"))   # must not raise
+
+
+def test_needs_consent_is_not_retried_on_the_guard_path():
+    """Otherwise every single call would fire a doomed token request at the
+    provider — the worst possible place for a retry storm."""
+    from core.mcp.gateway import ensure_credential_fresh
+
+    ostore.set_broker("acme", "r", {"mode": cred.MODE_AUTH_CODE,
+                                    "status": ostore.STATUS_NEEDS_CONSENT,
+                                    "expires_at": int(time.time()) - 100})
+    renewed = []
+
+    async def _spy(tenant_id, route, **kw):
+        renewed.append(route)
+        return {}
+
+    with patch("core.mcp_credentials.renew_route", _spy):
+        run(ensure_credential_fresh({"route": "r",
+                                     "credential_mode": cred.MODE_AUTH_CODE}, "acme"))
+    assert renewed == []
+
+
+def test_escape_hatch_disables_the_guard_path_work_entirely():
+    from core.mcp.gateway import ensure_credential_fresh
+
+    reads, counting = _reads_counted()
+    with counting, patch.dict("os.environ", {"SHIELD_MCP_CREDENTIAL_MODES": "0"}):
+        run(ensure_credential_fresh({"route": "r",
+                                     "credential_mode": cred.MODE_CLIENT_CREDENTIALS},
+                                    "acme"))
+    assert reads == []

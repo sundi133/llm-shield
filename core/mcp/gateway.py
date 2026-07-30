@@ -124,10 +124,58 @@ def materialize_upstream_headers(cfg: dict, tenant_id: str) -> dict:
     return {**cfg, "headers": resolved}
 
 
+async def ensure_credential_fresh(cfg: dict, tenant_id: str) -> None:
+    """Renew this route's brokered credential if the admin-plane timer missed it.
+
+    This is the ONLY part of credential brokering that can touch the guard path,
+    so it is gated hard:
+
+    * ``credential_mode`` lives on the route document, which _load_cfg has already
+      read. A route that is static, or predates brokering, returns here with **zero
+      extra I/O** — which is the overwhelming majority of calls and the reason the
+      latency contract still holds.
+    * Only a dynamic mode reads the broker record, and only a *due* one attempts a
+      renewal.
+    * The renewal is single-flighted through the same Redis lock the timer uses, so
+      a burst of calls arriving on an expired credential produces one token
+      request, not one per call. That matters because most providers invalidate the
+      old refresh token when it is used: N concurrent renewals can destroy the
+      credential outright.
+
+    Never raises. A failed reactive renewal leaves the existing header in place and
+    lets materialization decide — if the token is genuinely dead the call fails
+    closed there with a clear message, which beats turning a transient provider
+    blip into a gateway exception.
+    """
+    from core.mcp_credentials import is_static, modes_enabled
+
+    mode = cfg.get("credential_mode")
+    if not mode or is_static(mode) or not modes_enabled():
+        return  # the common path: nothing read, nothing done
+
+    try:
+        from core.mcp_credentials import due_for_renewal, renew_route
+        from storage.mcp_oauth_store import get_broker
+
+        route = cfg.get("route") or ""
+        record = get_broker(tenant_id, route)
+        if not record or not due_for_renewal(record):
+            return
+        logger.info("mcp-gateway: reactively renewing %s/%s (timer missed it)",
+                    tenant_id, route)
+        await renew_route(tenant_id, route, actor="gateway")
+    except Exception:
+        # Renewal is an optimization here, not a precondition. Materialization is
+        # the fail-closed gate.
+        logger.warning("mcp-gateway: reactive renewal failed for %s/%s",
+                       tenant_id, cfg.get("route"), exc_info=True)
+
+
 async def _default_proxy_factory(cfg: dict, tenant_id: str):
     """Connect to the real upstream and wrap it in an enforced MCPProxy."""
     from core.mcp.proxy_server import proxy_for  # imports the mcp SDK transport
 
+    await ensure_credential_fresh(cfg, tenant_id)
     cfg = materialize_upstream_headers(cfg, tenant_id)
     enforcer = build_enforcer(cfg)
     return await proxy_for(
