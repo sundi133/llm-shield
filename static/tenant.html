@@ -6907,7 +6907,14 @@ function renderTelemetryEntries(entries) {
               <td>
                 <div class="telemetry-row-meta">
                   <div class="telemetry-row-strong">${escapeHtml(entry.agent_key || 'unknown-agent')}</div>
-                  <div class="telemetry-row-sub">${escapeHtml(entry.user_role || 'role unavailable')}</div>
+                  <div class="telemetry-row-sub">${escapeHtml(entry.user_role || 'role unavailable')}${
+                    // How the role was established. `header` means the caller
+                    // typed it; `oidc`/`agent_token`/`mtls` mean it was verified.
+                    // Without this an auditor cannot tell an escalation from a
+                    // legitimate call.
+                    entry.role_source && entry.role_source !== 'none'
+                      ? ` <span class="badge badge-id" title="How this role was established">${escapeHtml(entry.role_source)}</span>`
+                      : ''}</div>
                 </div>
               </td>
               <td><div class="telemetry-row-message">${escapeHtml(entry.message || '(empty message)')}</div></td>
