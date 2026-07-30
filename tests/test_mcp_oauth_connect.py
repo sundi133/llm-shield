@@ -447,3 +447,117 @@ def test_status_of_an_unconnected_route(client):
     _route()
     r = client.get("/v1/tenant/me/mcp/servers/higgsfield/oauth", headers=_H)
     assert r.json()["oauth"]["status"] == "not_connected"
+
+
+# ── callback: the only unauthenticated endpoint ──────────────────────
+
+
+def _pending(route="higgsfield", tenant="acme"):
+    st = ostore.new_state()
+    ostore.put_pending(st, tenant, route, "verifier", _REDIRECT)
+    ostore.set_broker(tenant, route, {
+        "mode": "auth_code", "issuer": "https://mcp.higgsfield.ai",
+        "token_endpoint": "https://mcp.higgsfield.ai/oauth2/token",
+        "client_id": "cid", "status": ostore.STATUS_PENDING})
+    return st
+
+
+def test_callback_completes_the_flow(client):
+    _route()
+    st = _pending()
+    done = {}
+
+    async def _complete(self, ctx, *, code="", code_verifier="", **kw):
+        done.update(code=code, verifier=code_verifier, tenant=ctx.tenant_id)
+        return {"expires_at": 1}
+
+    from core import mcp_credentials as cred
+    with patch.object(cred.AuthCodeProvider, "complete", _complete):
+        r = client.get(f"/v1/tenant/me/mcp/oauth/callback?code=abc&state={st}")
+
+    assert r.status_code == 200
+    assert done["code"] == "abc" and done["verifier"] == "verifier"
+    # Tenancy comes from the stored state, never from the query string.
+    assert done["tenant"] == "acme"
+
+
+def test_callback_never_shows_a_token(client):
+    _route()
+    st = _pending()
+    from core import mcp_credentials as cred
+
+    async def _complete(self, ctx, **kw):
+        return {"expires_at": 1}
+
+    with patch.object(cred.AuthCodeProvider, "complete", _complete):
+        r = client.get(f"/v1/tenant/me/mcp/oauth/callback?code=abc&state={st}")
+    for leak in ("access_token", "refresh_token", "shield://", "abc"):
+        assert leak not in r.text
+
+
+def test_callback_state_is_single_use(client):
+    """A leaked authorization code must not be replayable."""
+    _route()
+    st = _pending()
+    from core import mcp_credentials as cred
+
+    async def _complete(self, ctx, **kw):
+        return {"expires_at": 1}
+
+    with patch.object(cred.AuthCodeProvider, "complete", _complete):
+        assert client.get(f"/v1/tenant/me/mcp/oauth/callback?code=a&state={st}").status_code == 200
+        again = client.get(f"/v1/tenant/me/mcp/oauth/callback?code=a&state={st}")
+    assert again.status_code == 400
+    assert "no longer valid" in again.text
+
+
+def test_callback_rejects_a_fabricated_state(client):
+    r = client.get("/v1/tenant/me/mcp/oauth/callback?code=a&state=made-up")
+    assert r.status_code == 400
+    assert ostore.get_broker("acme", "higgsfield") is None
+
+
+def test_callback_reports_a_declined_consent(client):
+    """Otherwise the route sits in `pending` with no explanation."""
+    r = client.get("/v1/tenant/me/mcp/oauth/callback"
+                   "?error=access_denied&error_description=User+declined")
+    assert r.status_code == 400
+    assert "access_denied" in r.text
+
+
+def test_callback_escapes_provider_supplied_text(client):
+    """error_description comes from the authorization server and lands in HTML on
+    a page an operator opens in a browser."""
+    r = client.get("/v1/tenant/me/mcp/oauth/callback"
+                   "?error=bad&error_description=%3Cscript%3Ealert(1)%3C/script%3E")
+    assert "<script>" not in r.text
+    assert "&lt;script&gt;" in r.text
+
+
+def test_callback_needs_no_tenant_header(client):
+    """It is reached by a provider redirect, so the browser carries no key. The
+    unguessable single-use state is the authorization."""
+    _route()
+    st = _pending()
+    from core import mcp_credentials as cred
+
+    async def _complete(self, ctx, **kw):
+        return {"expires_at": 1}
+
+    with patch.object(cred.AuthCodeProvider, "complete", _complete):
+        r = client.get(f"/v1/tenant/me/mcp/oauth/callback?code=a&state={st}")
+    assert r.status_code == 200      # no _H headers passed
+
+
+def test_callback_records_an_exchange_failure(client):
+    _route()
+    st = _pending()
+    from core import mcp_credentials as cred
+
+    async def _boom(self, ctx, **kw):
+        raise cred.CredentialError(502, "token endpoint said no", permanent=True)
+
+    with patch.object(cred.AuthCodeProvider, "complete", _boom):
+        r = client.get(f"/v1/tenant/me/mcp/oauth/callback?code=a&state={st}")
+    assert r.status_code == 400
+    assert ostore.get_broker("acme", "higgsfield")["status"] == ostore.STATUS_ERROR
