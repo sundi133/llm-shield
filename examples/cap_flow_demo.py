@@ -20,11 +20,17 @@ export block drives both:
            AGENT_ID=test-oidc-agent TENANT_API_KEY=bank-co-key
     python examples/cap_flow_demo.py
 
-With KC_USER set, the identity baked into the cap is the one Keycloak signed —
-`user_sub` is the token's `sub`, not a string this script made up — and the
-token is what authorizes issuance, via the oidc_sa workload provider. Without
-it, falls back to SHIELD_ADMIN_KEY. Both are accepted by the same gate; the
-difference is whether the human in the audit trail is real.
+Any of three credentials can authorize issuance, and the script sends whatever
+it has:
+
+  TENANT_API_KEY    the tenant's own key — needs `tenant_key` in
+                    SHIELD_WORKLOAD_IDENTITY_PROVIDERS on the data plane. Issues
+                    for that tenant and no other.
+  KC_USER/PASSWORD  a signed OIDC token (oidc_sa). Also makes `user_sub` the
+                    subject Keycloak signed rather than one this script made up,
+                    so the audit trail names a real person.
+  SHIELD_ADMIN_KEY  the operator's platform-wide key. Not tenant-scoped, which
+                    is exactly why a tenant should not be holding it.
 
 Needs SHIELD_AGENT_TOKEN_PRIVATE_KEY and SHIELD_CAP_TOKEN_PRIVATE_KEY set on
 the server. Without them it mints with an ephemeral key that dies with the
@@ -136,16 +142,21 @@ def main() -> int:
     # an admin key, or SPIFFE/mTLS where those exist. Minting identity is
     # exactly the operation you would not leave open to the agent itself, so
     # send whichever credential this environment has.
+    # X-API-Key is already sent by post(); with the tenant_key provider enabled
+    # it authorizes issuance for that tenant, so a tenant never needs the
+    # operator's SHIELD_ADMIN_KEY.
     issue_headers = {}
     if kc_token:
         issue_headers["Authorization"] = "Bearer " + kc_token
     if ADMIN_KEY:
         issue_headers["X-Admin-Key"] = ADMIN_KEY
-    if not issue_headers:
+    offered = sorted(issue_headers) + (["X-API-Key"] if API_KEY else [])
+    if not offered:
         print(f"   {Y}No credential to authorize issuance.{Z}")
-        print(f"   {DIM}Set KC_USER/KC_PASSWORD (with KEYCLOAK_URL) or SHIELD_ADMIN_KEY.{Z}")
+        print(f"   {DIM}Set TENANT_API_KEY, or KC_USER/KC_PASSWORD with "
+              f"KEYCLOAK_URL, or SHIELD_ADMIN_KEY.{Z}")
         return 1
-    print(f"   {DIM}authorizing with: {', '.join(sorted(issue_headers))}{Z}")
+    print(f"   {DIM}authorizing with: {', '.join(offered)}{Z}")
 
     r = post("/v1/shield/auth/agent-token", {
         "user_sub": user_sub, "agent_id": AGENT, "agent_instance_id": INSTANCE,
@@ -155,6 +166,10 @@ def main() -> int:
     if r.status_code != 200:
         print(f"   {R}HTTP {r.status_code}{Z} {r.text[:300]}")
         print(f"\n   {Y}Cannot continue without an agent token.{Z}")
+        if r.status_code == 403 and API_KEY:
+            print(f"   {DIM}A tenant key issues its own agent tokens only when the{Z}")
+            print(f"   {DIM}data plane enables it — add tenant_key to{Z}")
+            print(f"   {DIM}SHIELD_WORKLOAD_IDENTITY_PROVIDERS. It is off by default.{Z}")
         return 1
     agent_token = r.json()["agent_token"]
     print(f"   {G}issued{Z} {DIM}{agent_token[:40]}... ({len(agent_token)} chars){Z}")

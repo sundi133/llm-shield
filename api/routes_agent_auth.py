@@ -174,6 +174,32 @@ def _require_admin(request: Request) -> None:
     )
 
 
+def _enforce_tenant_binding(request: Request, claimed_tenant: str) -> None:
+    """A tenant key issues for its OWN tenant and no other.
+
+    The identity carries the tenant the key RESOLVED to. The body carries the
+    tenant the caller asked for. Trusting the second is how one tenant mints
+    identities for another, so they must match exactly.
+
+    An empty claimed tenant is a mismatch, not consent: quietly substituting
+    the resolved tenant would let a caller stay vague and receive a token for
+    whatever the key happened to own.
+
+    Only applies to tenant-scoped identities. An admin key is deliberately not
+    tenant-bound — that is what makes it an operator credential.
+    """
+    identity = getattr(request.state, "workload_identity", None)
+    if identity is None or getattr(identity, "provider", "") != "tenant_key":
+        return
+    owned = (getattr(identity, "claims", {}) or {}).get("tenant_id", "")
+    if (claimed_tenant or "").strip() != owned:
+        raise HTTPException(
+            status_code=403,
+            detail=(f"tenant key authorizes tenant {owned!r}, "
+                    f"not {(claimed_tenant or '').strip()!r}"),
+        )
+
+
 def _require_registered_agent(tenant_id: str, agent_id: str) -> None:
     """Reject token issuance for an agent the tenant hasn't registered.
 
@@ -207,9 +233,11 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
 
     In production, this endpoint should be wired to an OIDC token exchange
     that takes a verified user id_token + a SPIFFE workload SVID and emits
-    the agent token. v1 takes the claims directly, gated by admin key.
+    the agent token. v1 takes the claims directly, gated by the
+    workload-identity chain.
     """
     _require_admin(request)
+    _enforce_tenant_binding(request, body.tenant_id)
     _require_registered_agent(body.tenant_id, body.agent_id)
     try:
         token = mint_agent_token(

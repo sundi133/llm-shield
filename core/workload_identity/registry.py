@@ -20,6 +20,7 @@ from core.workload_identity.providers import (
     MTLSProvider,
     OIDCServiceAccountProvider,
     SpiffeProvider,
+    TenantKeyProvider,
 )
 
 logger = logging.getLogger("votal.workload_identity")
@@ -30,6 +31,7 @@ _REGISTRY = {
     "spiffe": SpiffeProvider,
     "mtls": MTLSProvider,
     "oidc_sa": OIDCServiceAccountProvider,
+    "tenant_key": TenantKeyProvider,
 }
 
 # Legacy-preserving default: admin key OR SPIFFE — exactly what the old gate
