@@ -50,6 +50,19 @@ def _local_fallback_allowed() -> bool:
         "1", "true", "yes", "on")
 
 
+def _worker_count() -> int:
+    """Workers in this deployment, as handler.py exports it.
+
+    Absent (tests, a library import, an ASGI server that does not set it) means
+    treat as one — the conservative read, since a lone process genuinely has
+    nothing to share.
+    """
+    try:
+        return max(1, int(os.environ.get("WORKERS", "1")))
+    except (TypeError, ValueError):
+        return 1
+
+
 def burn_nonce_if_unused(key: str, ttl: int) -> bool:
     """Atomically claim ``key``. True if first-use, False if already claimed.
 
@@ -80,7 +93,18 @@ def burn_nonce_if_unused(key: str, ttl: int) -> bool:
                 exc.__class__.__name__,
             )
 
-    # Either Redis was never configured, or the operator opted into degrading.
+    # No Redis configured. That is fine in ONE process and useless in several:
+    # the dict is per-process, so a token burns once per worker and each one
+    # reports first-use. handler.py defaults to 32 workers, so this is not an
+    # exotic case — it is what `python handler.py` does out of the box.
+    if r is None and _worker_count() > 1 and not _local_fallback_allowed():
+        raise NonceStoreUnavailable(
+            f"no shared nonce store, but WORKERS={_worker_count()}: a token "
+            f"would be accepted once per worker. Configure REDIS_URL (or "
+            f"UPSTASH_REDIS_REST_URL), or run WORKERS=1, or set "
+            f"SHIELD_NONCE_LOCAL_FALLBACK=1 to accept per-process tracking"
+        )
+
     if key in _fallback_store:
         return False
     _fallback_store[key] = str(int(time.time()) + ttl)

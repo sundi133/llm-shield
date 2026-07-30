@@ -24,6 +24,7 @@ class _Boom:
 def _clean_env(monkeypatch):
     monkeypatch.delenv("SHIELD_NONCE_LOCAL_FALLBACK", raising=False)
     monkeypatch.delenv("SHIELD_CAP_ALLOW_DRYRUN_VERIFY", raising=False)
+    monkeypatch.delenv("WORKERS", raising=False)
     from core.nonce_store import clear_prefix_for_tests
     clear_prefix_for_tests("test:nonce:")
     yield
@@ -37,6 +38,55 @@ def test_no_redis_configured_still_burns_locally():
     with patch("storage.tenant_store._get_redis", return_value=None):
         assert burn_nonce_if_unused("test:nonce:a", 30) is True
         assert burn_nonce_if_unused("test:nonce:a", 30) is False
+
+
+def test_no_redis_with_many_workers_refuses(monkeypatch):
+    """Found by running the flow against a real server: handler.py defaults to
+    WORKERS=32, so "no Redis configured" is not "one process" — it is 32
+    private dicts, and a cap verifies once in each."""
+    monkeypatch.setenv("WORKERS", "32")
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        with pytest.raises(NonceStoreUnavailable) as e:
+            burn_nonce_if_unused("test:nonce:mw", 30)
+    assert "WORKERS=32" in str(e.value)
+
+
+def test_no_redis_single_worker_is_still_fine(monkeypatch):
+    """One process has nothing to share, so this must stay working — it is
+    every test run and every local dev server."""
+    monkeypatch.setenv("WORKERS", "1")
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        assert burn_nonce_if_unused("test:nonce:sw", 30) is True
+
+
+def test_unset_worker_count_is_treated_as_one(monkeypatch):
+    monkeypatch.delenv("WORKERS", raising=False)
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        assert burn_nonce_if_unused("test:nonce:unset", 30) is True
+
+
+def test_garbage_worker_count_does_not_break_verification(monkeypatch):
+    monkeypatch.setenv("WORKERS", "not-a-number")
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        assert burn_nonce_if_unused("test:nonce:junk", 30) is True
+
+
+def test_many_workers_with_redis_is_fine(monkeypatch):
+    """The refusal is about the MISSING shared store, not the worker count."""
+    class _Ok:
+        def set(self, *a, **kw):
+            return True
+
+    monkeypatch.setenv("WORKERS", "32")
+    with patch("storage.tenant_store._get_redis", return_value=_Ok()):
+        assert burn_nonce_if_unused("test:nonce:mwr", 30) is True
+
+
+def test_many_workers_escape_hatch(monkeypatch):
+    monkeypatch.setenv("WORKERS", "32")
+    monkeypatch.setenv("SHIELD_NONCE_LOCAL_FALLBACK", "1")
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        assert burn_nonce_if_unused("test:nonce:mwh", 30) is True
 
 
 def test_configured_but_failing_redis_raises_instead_of_allowing():

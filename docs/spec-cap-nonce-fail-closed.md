@@ -40,7 +40,7 @@ caller.
   timeout can still execute twice with a fresh cap. Single-use bounds *one
   token*, not *one intent*; idempotency keys are the fix and are out of scope.
 - Changing TTLs, the signing scheme, or the two-plane split.
-- The dev/test path where Redis was never configured at all (see §5).
+- The single-process path where Redis was never configured (see §5).
 
 ## 2. Plane & latency contract
 
@@ -71,15 +71,28 @@ not the other is how this reappears.
 
 The distinction that makes this non-breaking:
 
-| `_get_redis()` | Meaning | Behaviour |
+| `_get_redis()` | `WORKERS` | Behaviour |
 |---|---|---|
-| returns `None` | no Redis configured — dev, tests, single process | in-process dict, **unchanged** |
-| returns a client, `.set()` raises | Redis configured and failing — production | **fail closed** (new) |
+| returns `None` | 1 or unset | in-process dict, **unchanged** |
+| returns `None` | > 1 | **fail closed** (new) |
+| returns a client, `.set()` raises | any | **fail closed** (new) |
 
-A deployment with no Redis has no cross-worker state to lose and is already
-non-production; failing it closed would break every test and local run for no
-security gain. A deployment that configured Redis and lost it is exactly the
-case that silently degrades today.
+The middle row was a correction, and worth recording because the first draft of
+this spec got it wrong. It claimed no-Redis meant "dev, tests, a single
+process — nothing to share". Running the flow against a real server disproved
+that in one line of startup output: `handler.py` defaults to **`WORKERS=32`**,
+so `python handler.py` with no Redis is not one process, it is 32 private
+dicts, and a capability verifies once in each. The demo replayed a cap
+successfully on the first run.
+
+So the condition is not "was Redis configured" but "is there a shared store
+when something needs sharing". `handler.py` now exports the resolved worker
+count so child processes can see it; absent or unparseable reads as 1, the
+conservative direction, which keeps every test and single-process dev server
+working.
+
+A deployment that configured Redis and lost it is the other case that silently
+degrades today, and it fails closed regardless of worker count.
 
 Escape hatch: `SHIELD_NONCE_LOCAL_FALLBACK=1` restores the old behaviour
 (degrade to the local dict, log a warning). For an operator who would rather
@@ -122,7 +135,11 @@ a deploy with no env change is a pure correctness improvement.
 - **Redis configured, down** → `NonceStoreUnavailable` → verification fails
   closed with a message naming the cause, distinct from "replay detected" so
   the two are not confused in triage.
-- **Redis never configured** → local dict, unchanged.
+- **Redis never configured, one worker** → local dict, unchanged.
+- **Redis never configured, many workers** → refuse, naming the worker count
+  and the three ways out (configure Redis / WORKERS=1 / accept the fallback).
+- **`WORKERS` unset or unparseable** → treated as 1, so a library import or a
+  non-uvicorn host does not start failing verification.
 - **Fallback flag on, Redis down** → local dict + `WARNING` naming the
   degradation, so it appears in logs rather than nowhere.
 - **`.set()` returns `False`** → genuine replay, unchanged.
@@ -148,4 +165,10 @@ is not.
 - Same request with `SHIELD_CAP_ALLOW_DRYRUN_VERIFY=1` → honoured.
 - `verify_cap(..., burn_nonce=False)` in-process still does not burn.
 - Regression: `tests/test_admin_dockerfile_imports.py` catches the new module.
+- No Redis + `WORKERS=32` → refuses; message names the count.
+- No Redis + `WORKERS=1`, unset, or garbage → still burns locally.
+- Redis present + `WORKERS=32` → fine (the refusal is about the missing store,
+  not the worker count).
+- End-to-end: `examples/cap_flow_demo.py` against a running server, which is
+  how the multi-worker case surfaced in the first place.
 - Full suite green in a clean venv; CI `pytest` gate passes.

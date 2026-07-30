@@ -47,6 +47,12 @@ app = create_app()
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "80"))
     workers = int(os.getenv("WORKERS", "32"))
+    # Export the resolved count so worker processes inherit it. Anything that
+    # keeps per-process state needs to know whether it is alone — the nonce
+    # store reads this to refuse single-use verification when there is no
+    # shared Redis behind several workers, which would otherwise allow one
+    # replay per worker while reporting success.
+    os.environ["WORKERS"] = str(workers)
     print(f"Starting LLM Shield on port {port} with {workers} workers")
     backlog = int(os.getenv("BACKLOG", "4096"))
     limit_concurrency = int(os.getenv("LIMIT_CONCURRENCY", "0")) or None
