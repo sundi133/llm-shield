@@ -50,7 +50,7 @@ async def evaluate_payload_policy_llm(
     if not payload and not tool_name:
         return None
 
-    policies_text = _format_data_policies(data_policies, tenant_id)
+    policies_text = _format_data_policies(data_policies, tenant_id, tool_name)
 
     # Prefill optimization: the static instruction, the tenant policy text, and
     # the static "check for" guidance are stable across requests, so they go in
@@ -166,8 +166,16 @@ async def evaluate_message_egress_risk_llm(
         return None  # Fail open
 
 
-def _load_data_policies(tenant_id: str) -> list[dict[str, Any]]:
-    """Load tenant data policies from Redis."""
+def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, Any]]:
+    """Load tenant data policies from Redis, scoped to one tool when given.
+
+    Policies are keyed by tool name, and a policy written for one tool must not
+    judge another. Loading all of them and handing the lot to the LLM meant a
+    rule about `customer_profile.get` was in scope while evaluating
+    `patient_lookup` — different agent, different domain, no relationship — and
+    the model generalised from it, reporting that a role was "explicitly
+    blocked" by a rule that does not exist for that tool.
+    """
     if not tenant_id:
         return []
     try:
@@ -179,10 +187,15 @@ def _load_data_policies(tenant_id: str) -> list[dict[str, Any]]:
         if not raw:
             return []
         all_policies = json.loads(raw)
+        if tool_name:
+            # Exact match only. A near-miss is a different tool, and guessing
+            # which policy "probably applies" is the behaviour being removed.
+            all_policies = ({tool_name: all_policies[tool_name]}
+                            if tool_name in all_policies else {})
         policies = []
-        for tool_name, policy in all_policies.items():
+        for name, policy in all_policies.items():
             policies.append({
-                "tool_name": tool_name,
+                "tool_name": name,
                 "sanitization_rules": policy.get("sanitization_rules", []),
                 "role_policies": policy.get("role_policies", []),
                 "compliance_framework": policy.get("compliance_framework", ""),
@@ -194,12 +207,21 @@ def _load_data_policies(tenant_id: str) -> list[dict[str, Any]]:
 
 
 def _format_data_policies(
-    data_policies: list[dict[str, Any]] | None, tenant_id: str = ""
+    data_policies: list[dict[str, Any]] | None, tenant_id: str = "",
+    tool_name: str = "",
 ) -> str:
     """Format data policies for inclusion in an LLM prompt."""
-    policies = data_policies if data_policies is not None else _load_data_policies(tenant_id)
+    policies = (data_policies if data_policies is not None
+                else _load_data_policies(tenant_id, tool_name))
     if not policies:
-        return "No specific data policies configured. Apply reasonable security defaults for financial/banking operations."
+        # Deliberately does not name a domain. The old text said "financial/
+        # banking operations", which is how a healthcare tenant's clinical tool
+        # got judged against banking norms. Generic risk is still evaluated;
+        # invented domain rules are not.
+        return ("No data policy is configured for this tool. Do not infer one. "
+                "Evaluate only for generic risk: injection, exfiltration, bulk "
+                "retrieval. Do NOT make authorization or role decisions — a "
+                "separate layer already did that.")
 
     lines = []
     for p in policies:
