@@ -166,10 +166,31 @@ def main() -> int:
     if r.status_code != 200:
         print(f"   {R}HTTP {r.status_code}{Z} {r.text[:300]}")
         print(f"\n   {Y}Cannot continue without an agent token.{Z}")
-        if r.status_code == 403 and API_KEY:
-            print(f"   {DIM}A tenant key issues its own agent tokens only when the{Z}")
-            print(f"   {DIM}data plane enables it — add tenant_key to{Z}")
-            print(f"   {DIM}SHIELD_WORKLOAD_IDENTITY_PROVIDERS. It is off by default.{Z}")
+        # The server says which providers it tried. Read it, rather than
+        # guessing "the provider is off" at every 403 — that sends someone back
+        # to an env var they already set while the real cause is elsewhere.
+        detail = ""
+        try:
+            detail = str(r.json().get("detail", ""))
+        except Exception:
+            detail = r.text[:200]
+
+        if "admin key required" in detail:
+            print(f"   {Y}That error string was removed from Shield.{Z}")
+            print(f"   {DIM}The data plane is running a build from before the{Z}")
+            print(f"   {DIM}tenant_key provider existed, so it drops that name from{Z}")
+            print(f"   {DIM}SHIELD_WORKLOAD_IDENTITY_PROVIDERS as unknown, however{Z}")
+            print(f"   {DIM}the variable is set. Deploy current main.{Z}")
+        elif "tenant key authorizes tenant" in detail:
+            print(f"   {DIM}The key worked; TENANT_ID is the problem. Set it to the{Z}")
+            print(f"   {DIM}tenant named above — TENANT_ID={TENANT} was sent.{Z}")
+        elif "tried:" in detail and "tenant_key" not in detail:
+            print(f"   {DIM}tenant_key is not in the chain the server tried. Add it to{Z}")
+            print(f"   {DIM}SHIELD_WORKLOAD_IDENTITY_PROVIDERS on the DATA plane and{Z}")
+            print(f"   {DIM}restart it — it is off by default.{Z}")
+        elif "tried:" in detail and API_KEY:
+            print(f"   {DIM}tenant_key was tried and did not accept this key: it may not{Z}")
+            print(f"   {DIM}resolve to a tenant on this deployment. Check TENANT_API_KEY.{Z}")
         return 1
     agent_token = r.json()["agent_token"]
     print(f"   {G}issued{Z} {DIM}{agent_token[:40]}... ({len(agent_token)} chars){Z}")
