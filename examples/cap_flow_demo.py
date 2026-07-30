@@ -69,12 +69,56 @@ SESSION = "sess-" + uuid.uuid4().hex[:8]
 _passed, _failed = [], []
 
 
-def check(name: str, ok: bool, detail: str = "") -> bool:
+def check(name: str, ok: bool, detail: str = "", because: str = "") -> bool:
+    """Assert the refusal AND its reason.
+
+    Checking only that something was refused is how a broken deployment reads
+    as a passing run: an unverifiable signature refuses everything, so every
+    negative test goes green while nothing works. `because` pins WHY.
+    """
+    if ok and because and because.lower() not in (detail or "").lower():
+        (_failed).append(f"{name} [refused, but for the wrong reason]")
+        print(f"   {R}FAIL{Z} {name}")
+        print(f"        {DIM}refused — but expected {because!r}, got: {detail}{Z}")
+        return False
     (_passed if ok else _failed).append(name)
     print(f"   {G}PASS{Z} {name}" if ok else f"   {R}FAIL{Z} {name}")
     if detail:
         print(f"        {DIM}{detail}{Z}")
     return ok
+
+
+def preflight_signing_key(auth: dict) -> bool:
+    """Mint several caps and verify each immediately. All must verify.
+
+    A cap is signed at mint and checked at verify, by whichever worker each
+    request lands on. If SHIELD_CAP_TOKEN_PRIVATE_KEY is unset, every worker
+    generates its own ephemeral key at boot, so a cap only verifies on the
+    worker that minted it and the rest fail as forgeries. Nothing downstream
+    means anything until this holds.
+    """
+    bad = 0
+    n = 8
+    for _ in range(n):
+        r = post("/v1/shield/cap/mint", {"tool": TOOL, "resource": RESOURCE,
+                                         "ttl_seconds": 30, "session_id": SESSION}, auth)
+        if r.status_code != 200:
+            return True  # a mint failure is reported by the caller, not here
+        d = post("/v1/shield/cap/verify",
+                 {"cap_token": r.json()["cap_token"], "expected_tool": TOOL}).json()
+        if "signature" in (d.get("error") or ""):
+            bad += 1
+    if not bad:
+        print(f"   {G}PASS{Z} every worker can verify what another minted ({n}/{n})")
+        _passed.append("signing key is shared across workers")
+        return True
+    print(f"   {R}FAIL{Z} {bad}/{n} freshly-minted caps failed as 'invalid signature'")
+    print(f"        {DIM}SHIELD_CAP_TOKEN_PRIVATE_KEY is not set on the data plane, so{Z}")
+    print(f"        {DIM}each worker signs with its own ephemeral key and a cap only{Z}")
+    print(f"        {DIM}verifies on the worker that minted it. Set it (32 hex bytes),{Z}")
+    print(f"        {DIM}identical across every replica, and restart.{Z}")
+    _failed.append("signing key is shared across workers")
+    return False
 
 
 def claims_of(token: str) -> dict:
@@ -227,6 +271,7 @@ def main() -> int:
 
     # ── 3. the tool server verifies ─────────────────────────────────────
     print(f"\n{B}3. POST /v1/shield/cap/verify{Z}  {DIM}the tool server, before executing{Z}")
+    preflight_signing_key(auth)
     r = post("/v1/shield/cap/verify", {"cap_token": cap, "expected_tool": TOOL})
     d = r.json()
     check("a fresh cap verifies", d.get("valid") is True, d.get("error", ""))
@@ -241,8 +286,9 @@ def main() -> int:
     r = post("/v1/shield/cap/verify", {"cap_token": cap, "expected_tool": TOOL})
     d = r.json()
     check("the same cap a second time is rejected (nonce burned)",
-          d.get("valid") is False and "replay" in (d.get("error") or ""),
-          d.get("error") or "it verified twice — single-use is NOT holding")
+          d.get("valid") is False,
+          d.get("error") or "it verified twice — single-use is NOT holding",
+          because="replay")
 
     r = post("/v1/shield/cap/mint", {"tool": TOOL, "resource": RESOURCE,
                                      "ttl_seconds": 30, "session_id": SESSION}, auth)
@@ -252,7 +298,9 @@ def main() -> int:
                  {"cap_token": cap2, "expected_tool": "delete_everything"})
         d = r.json()
         check("a cap for one tool does not authorize another",
-              d.get("valid") is False, d.get("error") or "IT AUTHORIZED THE WRONG TOOL")
+              d.get("valid") is False,
+              d.get("error") or "IT AUTHORIZED THE WRONG TOOL",
+              because="tool mismatch")
 
     r = post("/v1/shield/cap/verify", {"cap_token": "not.a.token",
                                        "expected_tool": TOOL})
@@ -272,7 +320,7 @@ def main() -> int:
         d = post("/v1/shield/cap/verify",
                  {"cap_token": short, "expected_tool": TOOL}).json()
         check("an expired cap is rejected", d.get("valid") is False,
-              d.get("error") or "EXPIRY IS NOT ENFORCED")
+              d.get("error") or "EXPIRY IS NOT ENFORCED", because="expired")
 
     # Single-use must not be waivable by the party it constrains.
     r = post("/v1/shield/cap/mint", {"tool": TOOL, "resource": RESOURCE,
@@ -286,7 +334,8 @@ def main() -> int:
         check("a caller cannot waive single-use with burn_nonce=false",
               d.get("valid") is False,
               d.get("error") or "the caller opted out of replay protection "
-              "(expected if SHIELD_CAP_ALLOW_DRYRUN_VERIFY is set)")
+              "(expected if SHIELD_CAP_ALLOW_DRYRUN_VERIFY is set)",
+              because="replay")
 
     print(f"\n{B}Result{Z}  {G}{len(_passed)} passed{Z}"
           + (f"  {R}{len(_failed)} FAILED{Z}" if _failed else ""))
