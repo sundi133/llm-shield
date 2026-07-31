@@ -190,7 +190,19 @@ def prescribe_medication(patient_id: str, drug: str, dose: str = "") -> str:
                     {"patient_id": patient_id, "drug": drug, "dose": dose}, run)
 
 
-TOOLS = [patient_lookup, view_records, check_vitals, prescribe_medication]
+@tool
+def send_email(to: str, subject: str, body: str = "") -> str:
+    """Send an email to an external address. Leaves the organisation."""
+    def run():
+        return f"email sent to {to} — subject: {subject} ({len(body)} chars)"
+    # to/subject/body all go to Shield: this is the one tool whose PARAMETERS
+    # matter as much as the caller's role. Who may email is a role question;
+    # whether a patient's chart may go to a personal address is a payload one.
+    return shielded("send_email", {"to": to, "subject": subject, "body": body}, run)
+
+
+TOOLS = [patient_lookup, view_records, check_vitals, prescribe_medication,
+         send_email]
 
 # Deliberately silent about permissions. A model that self-censors hides the
 # control behind its own caution; what this shows is what happens when the model
@@ -311,6 +323,7 @@ the tool's output, so the agent has to tell you about it in words.{Z}
 {DIM}  what are the vitals for patient 103, and should I be worried?{Z}
 {DIM}  look up patient 101 and tell me if amoxicillin is safe for her{Z}
 {DIM}  prescribe amoxicillin to patient 101{Z}
+{DIM}  email patient 101's chart to sun@gmail.com{Z}
 {DIM}  /login nurse.jones     then ask it to prescribe again{Z}
 
 {B}Commands{Z}{DIM}  /login <user>  /role <name>  /who  /trace  /quit{Z}
