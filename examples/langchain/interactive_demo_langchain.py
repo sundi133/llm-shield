@@ -243,7 +243,16 @@ def stream_turn(agent, history):
     into existence.
     """
     answered = False
-    for chunk, meta in agent.stream({"messages": history}, stream_mode="messages"):
+    final_state = None
+    # Ask for BOTH streams in one run: token chunks to print, and the
+    # accumulated state to keep. Re-invoking afterwards to get the state would
+    # replay the entire turn — every tool a second time.
+    for mode, payload in agent.stream({"messages": history},
+                                      stream_mode=["messages", "values"]):
+        if mode == "values":
+            final_state = payload
+            continue
+        chunk, meta = payload
         # Some providers attach reasoning summaries here. Most attach nothing.
         extra = getattr(chunk, "additional_kwargs", {}) or {}
         thought = extra.get("reasoning_content") or extra.get("reasoning")
@@ -264,9 +273,11 @@ def stream_turn(agent, history):
         print(Z)
     else:
         print(f"\n{DIM}(no text answer){Z}")
-    # stream() does not return the accumulated state, so re-read it once the
-    # turn is done. Dropping this would make every turn amnesiac.
-    return agent.invoke({"messages": history})["messages"]
+    # The last "values" payload IS the final state. Calling invoke() here to
+    # fetch it re-ran the whole turn: every tool executed twice, which for a
+    # read is wasted latency and for prescribe_medication or send_email is a
+    # duplicate side effect.
+    return final_state["messages"] if final_state else history
 
 
 def screen(text):
