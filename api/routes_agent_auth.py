@@ -201,6 +201,32 @@ def _enforce_tenant_binding(request: Request, claimed_tenant: str) -> None:
         )
 
 
+def _enforce_user_sub_binding(request: Request, claimed_sub: str) -> None:
+    """If a verified user credential is present, user_sub must be its subject.
+
+    user_sub was taken from the request body and never checked against the
+    credential presented alongside it. A caller holding a valid tenant key could
+    mint an agent token naming any person, and every capability minted from that
+    token carried the name into the audit trail as though it had been verified.
+
+    Only enforced when a verified identity is actually present. A deployment
+    with no user credential on this path is unchanged — this closes "the claim
+    contradicts the proof", not "there is no proof". Requiring proof is
+    SHIELD_ROLE_BINDING's job.
+    """
+    ident = getattr(getattr(request, "state", None), "workload_identity", None)
+    claims = (getattr(ident, "claims", {}) or {}) if ident is not None else {}
+    verified_sub = str(claims.get("sub") or "").strip()
+    if not verified_sub:
+        return
+    if (claimed_sub or "").strip() != verified_sub:
+        raise HTTPException(
+            status_code=403,
+            detail=(f"user_sub {(claimed_sub or '').strip()!r} does not match the "
+                    f"verified subject {verified_sub!r} on this request"),
+        )
+
+
 def _require_registered_agent(tenant_id: str, agent_id: str) -> None:
     """Reject token issuance for an agent the tenant hasn't registered.
 
@@ -239,6 +265,7 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
     """
     _require_admin(request)
     _enforce_tenant_binding(request, body.tenant_id)
+    _enforce_user_sub_binding(request, body.user_sub)
     _require_registered_agent(body.tenant_id, body.agent_id)
     try:
         token = mint_agent_token(
