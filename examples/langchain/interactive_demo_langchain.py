@@ -30,6 +30,7 @@ import json
 import os
 import sys
 import time
+import uuid
 
 import requests
 
@@ -46,10 +47,21 @@ KC_CLIENT = os.getenv("KEYCLOAK_CLIENT", "demo-cli")
 KC_USER = os.getenv("KC_USER", "dr.smith")
 KC_PASSWORD = os.getenv("KC_PASSWORD", "")
 
+# DEMO_CAPS=1 switches from the advisory path to the capability path.
+#   off: tool/check — Shield answers allow/deny and this client chooses to obey
+#   on:  cap/mint -> cap/verify — Shield mints a signed, single-use token bound
+#        to one tool and one resource, and the nonce is burned before the tool
+#        runs. Skipping Shield is no longer a client-side decision.
+CAPS = os.getenv("DEMO_CAPS", "").strip().lower() in ("1", "true", "yes", "on")
+TENANT = os.getenv("TENANT_ID", "")
+INSTANCE = "inst-" + uuid.uuid4().hex[:8]
+SESSION = "sess-" + uuid.uuid4().hex[:8]
+
 G, R, Y, DIM, B, Z = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[1m", "\033[0m"
 
 state = {"role": os.getenv("USER_ROLE", "customer_support"), "token": "",
-         "trace": os.getenv("DEMO_TRACE", "1") not in ("0", "false", "no")}
+         "trace": os.getenv("DEMO_TRACE", "1") not in ("0", "false", "no"),
+         "agent_token": ""}
 
 _DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo_data.json")
 try:
@@ -81,6 +93,93 @@ def _pt(patient_id):
     return PATIENTS.get(str(patient_id).strip())
 
 
+def mint_agent_token():
+    """Exchange the tenant credential for an agent identity token (AuthN).
+
+    Needs `tenant_key` in SHIELD_WORKLOAD_IDENTITY_PROVIDERS on the data plane;
+    a tenant issues for its own tenant and no other, so the operator's admin key
+    stays out of this. user_sub is the Keycloak subject when signed in, so the
+    capability names a real person rather than a string this script invented.
+    """
+    sub = "anonymous"
+    if state["token"]:
+        sub = claims_of(state["token"]).get("sub") or sub
+    body = {"user_sub": sub, "agent_id": AGENT, "agent_instance_id": INSTANCE,
+            "tenant_id": TENANT, "build_hash": "demo", "model_version": MODEL,
+            "session_id": SESSION, "ttl_seconds": 900}
+    try:
+        r = requests.post(f"{SHIELD}/v1/shield/auth/agent-token", json=body,
+                          headers=headers(), timeout=TIMEOUT)
+    except Exception as e:
+        return None, f"{e.__class__.__name__}"
+    if r.status_code != 200:
+        return None, f"{r.status_code}: {r.text[:160]}"
+    return r.json()["agent_token"], None
+
+
+def _capability_path(tool_name, params, run):
+    """mint -> verify (nonce burned) -> execute.
+
+    cap/mint runs the SAME authorization stack as tool/check, so this replaces
+    that call rather than adding to it. Doing both would pay twice and write two
+    audit entries for one decision.
+    """
+    if not state["agent_token"]:
+        tok, err = mint_agent_token()
+        if err:
+            return (f"DENIED — no agent identity ({err}). "
+                    f"Needs tenant_key enabled and TENANT_ID matching the API key.")
+        state["agent_token"] = tok
+        if state["trace"]:
+            print(f"  {DIM}authn{Z} {G}agent token{Z} {DIM}instance={INSTANCE}{Z}")
+
+    # The resource the capability is bound to. A cap for patient 101 does not
+    # authorize patient 102 — that binding is the point of minting per action.
+    resource = f"patient/{params.get('patient_id')}" if params.get("patient_id") \
+        else f"{tool_name}/{params.get('to', 'any')}"
+    auth = dict(headers(), **{"X-Agent-Token": state["agent_token"]})
+
+    t0 = time.perf_counter()
+    try:
+        r = requests.post(f"{SHIELD}/v1/shield/cap/mint", timeout=TIMEOUT, headers=auth,
+                          json={"tool": tool_name, "resource": resource,
+                                "ttl_seconds": 30, "session_id": SESSION,
+                                "tool_params": params})
+    except Exception as e:
+        return f"DENIED — could not reach Shield to mint a capability ({e.__class__.__name__})"
+    mint_ms = (time.perf_counter() - t0) * 1000
+
+    if r.status_code != 200:
+        if state["trace"]:
+            print(f"  {DIM}cap{Z} {R}NO MINT{Z} {B}{tool_name}{Z} "
+                  f"{DIM}role={state['role']} {mint_ms:.0f}ms{Z}")
+            print(f"       {DIM}{r.text[:160]}{Z}")
+        # A refused mint IS the authorization decision.
+        return f"DENIED by policy: {r.text[:200]}"
+    cap = r.json()["cap_token"]
+
+    # The verify step is what a tool server would do before executing. Here it
+    # runs in the same process, so the process boundary is simulated — but the
+    # signature check, the tool binding and the nonce burn are real, and the cap
+    # cannot be presented twice.
+    t1 = time.perf_counter()
+    v = requests.post(f"{SHIELD}/v1/shield/cap/verify", timeout=TIMEOUT,
+                      headers=headers(),
+                      json={"cap_token": cap, "expected_tool": tool_name}).json()
+    verify_ms = (time.perf_counter() - t1) * 1000
+
+    if state["trace"]:
+        ok = v.get("valid") is True
+        print(f"  {DIM}cap{Z} {(G + 'MINT+BURN' + Z) if ok else (R + 'INVALID' + Z)} "
+              f"{B}{tool_name}({resource}){Z} {DIM}role={state['role']} "
+              f"mint {mint_ms:.0f}ms · verify {verify_ms:.0f}ms{Z}")
+        if not ok:
+            print(f"       {DIM}{v.get('error', '')}{Z}")
+    if v.get("valid") is not True:
+        return f"DENIED — capability did not verify: {v.get('error', 'invalid')}"
+    return run()
+
+
 # ── Shield, inside the tool ──────────────────────────────────────────────
 
 def shielded(tool_name, params, run):
@@ -90,6 +189,9 @@ def shielded(tool_name, params, run):
     agent should learn that it may not do this and say so, which means the
     refusal has to arrive the way any other tool result does.
     """
+    if CAPS:
+        return _capability_path(tool_name, params, run)
+
     t0 = time.perf_counter()
     try:
         r = requests.post(f"{SHIELD}/v1/shield/tool/check", timeout=TIMEOUT,
@@ -386,6 +488,7 @@ def main():
                 # a role change would let the previous role's tool results stay
                 # in context and be summarised to someone not entitled to them.
                 history = []
+                state["agent_token"] = ""   # new subject -> new agent identity
                 print(f"  {G}signed in as {user}{Z} — roles {roles} "
                       f"{DIM}(history cleared){Z}")
             continue
