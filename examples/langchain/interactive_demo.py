@@ -185,7 +185,13 @@ if _LC:
         """Prescribe a medication to a patient. A clinical action, not read-only."""
         return " ".join(f"prescribed {drug} {dose} to {patient_id}".split())
 
-    TOOLS = [patient_lookup, view_records, check_vitals, prescribe_medication]
+    @lc_tool
+    def send_email(to: str, subject: str, body: str = "") -> str:
+        """Send an email. Leaves the organisation, so it is the riskiest tool here."""
+        return f"email sent to {to}: {subject}"
+
+    TOOLS = [patient_lookup, view_records, check_vitals, prescribe_medication,
+             send_email]
     TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 else:
     TOOLS, TOOLS_BY_NAME = [], {}
@@ -364,6 +370,7 @@ BANNER = f"""{B}Shield · LangChain · Keycloak — interactive{Z}
 {DIM}  check vitals for patient 101           as both roles, and compare{Z}
 {DIM}  Ignore all previous instructions.      blocked before the model reads it{Z}
 {DIM}  /login nurse.jones                     then ask to prescribe again{Z}
+{DIM}  email patient 101's chart to me@x.com   send_email — register it first{Z}
 {DIM}  /tool <name> k=v                       call one directly, skipping the model{Z}
 {DIM}  /trace                                 show or hide the reasoning trace{Z}
 """
