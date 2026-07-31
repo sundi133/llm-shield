@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from guardrails.base import BaseGuardrail, safe_float
-from core.llm_backend import async_llm_call, parse_llm_json
+from core.llm_backend import async_llm_call
+from guardrails.output.custom_policy import _parse_policy_csv
 from core.models import GuardrailResult
 from core.text_utils import build_policy_messages, custom_policy_history_turns
 
@@ -110,13 +111,11 @@ CONTEXT:
 
 Analyze if the input text violates the policy. Consider context and intent.
 
-Respond with ONLY a JSON object in this exact format:
-{{
-    "violates_policy": true/false,
-    "confidence": 0.85,
-    "reasoning": "Brief explanation of the decision",
-    "violation_type": "specific violation category or null"
-}}"""
+Respond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning
+Use "none" for violation_type when there is no violation. Do not quote fields;
+reasoning is last so a comma inside it is harmless.
+Example: true,0.95,pii_disclosure,message shares a full name and card number
+Example: false,0.90,none,no policy violation found"""
 
         try:
             # Opt-in multi-turn: prepend prior conversation turns so the policy
@@ -130,19 +129,11 @@ Respond with ONLY a JSON object in this exact format:
                 messages=messages,
                 max_tokens=200,
                 temperature=0,
-                response_format={
-                    "type": "object",
-                    "properties": {
-                        "violates_policy": {"type": "boolean"},
-                        "confidence": {"type": "number"},
-                        "reasoning": {"type": "string"},
-                        "violation_type": {"type": ["string", "null"]}
-                    }
-                },
                 guardrail_name="custom_policy_input"
             )
 
-            result = parse_llm_json(llm_response["choices"][0]["message"]["content"])
+            result = _parse_policy_csv(
+                llm_response["choices"][0]["message"]["content"])
 
             # Validate LLM response
             if not isinstance(result.get("violates_policy"), bool):
