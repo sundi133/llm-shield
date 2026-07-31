@@ -215,6 +215,48 @@ def get_agent():
     return _agent
 
 
+def stream_turn(agent, history):
+    """Run one turn, printing tokens as they arrive.
+
+    stream_mode="messages" yields (chunk, metadata) per LLM token, so the answer
+    appears as it is generated rather than after the whole turn. Tool calls and
+    Shield's verdicts interleave in the order they actually happen — which is
+    the honest picture of an agent loop, and not what a spinner followed by a
+    finished paragraph suggests.
+
+    On reasoning: gpt-4o-mini produces none. Reasoning tokens are an o-series /
+    GPT-5 feature, and OpenAI returns a COUNT plus optional summaries, never the
+    raw chain — so there is nothing to stream for most models. Where a chunk
+    does carry reasoning content it is printed, dimmed, rather than pretended
+    into existence.
+    """
+    answered = False
+    for chunk, meta in agent.stream({"messages": history}, stream_mode="messages"):
+        # Some providers attach reasoning summaries here. Most attach nothing.
+        extra = getattr(chunk, "additional_kwargs", {}) or {}
+        thought = extra.get("reasoning_content") or extra.get("reasoning")
+        if thought and state["trace"]:
+            print(f"{DIM}{thought}{Z}", end="", flush=True)
+
+        if isinstance(chunk, ToolMessage):
+            if state["trace"]:
+                print(f"\n  {DIM}tool result → {str(chunk.content)[:150]}{Z}")
+            continue
+        text = chunk.content if isinstance(chunk.content, str) else ""
+        if text:
+            if not answered:
+                print(f"\n{G}", end="")
+                answered = True
+            print(text, end="", flush=True)
+    if answered:
+        print(Z)
+    else:
+        print(f"\n{DIM}(no text answer){Z}")
+    # stream() does not return the accumulated state, so re-read it once the
+    # turn is done. Dropping this would make every turn amnesiac.
+    return agent.invoke({"messages": history})["messages"]
+
+
 def screen(text):
     """Input guardrails, before the agent sees anything."""
     t0 = time.perf_counter()
@@ -272,6 +314,10 @@ the tool's output, so the agent has to tell you about it in words.{Z}
 {DIM}  /login nurse.jones     then ask it to prescribe again{Z}
 
 {B}Commands{Z}{DIM}  /login <user>  /role <name>  /who  /trace  /quit{Z}
+{DIM}Answers stream as they are generated. gpt-4o-mini emits no reasoning tokens —
+those are an o-series/GPT-5 feature and the provider returns summaries, not the
+raw chain. Set DEMO_MODEL to a reasoning model and any summary shown will
+appear dimmed above the answer.{Z}
 """
 
 
@@ -329,20 +375,10 @@ def main():
 
         history.append(HumanMessage(content=line))
         try:
-            out = agent.invoke({"messages": history})
+            history = stream_turn(agent, history)
         except Exception as e:
             print(f"  {R}agent error{Z} {e.__class__.__name__}: {str(e)[:200]}")
             history.pop()
-            continue
-        msgs = out["messages"]
-        if state["trace"]:
-            for m in msgs[len(history):]:
-                if isinstance(m, ToolMessage):
-                    print(f"  {DIM}tool result → {str(m.content)[:150]}{Z}")
-        history = msgs
-        final = next((m for m in reversed(msgs)
-                      if isinstance(m, AIMessage) and m.content), None)
-        print(f"\n{G}{final.content if final else '(no answer)'}{Z}")
 
 
 if __name__ == "__main__":
