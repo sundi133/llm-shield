@@ -60,12 +60,22 @@ jobs:
 
       - name: Validate SPIRE configs
         run: |
-          docker run --rm -e SPIRE_TRUST_DOMAIN=ci.local \
+          # --entrypoint is required: the image's ENTRYPOINT is already
+          # `spire-server run`, so plain args produce `run validate ...`. Go
+          # stops parsing flags at the first positional, so -config is never
+          # read and validation silently checks the default path instead.
+          docker run --rm --entrypoint /opt/spire/bin/spire-server \
+            -e SPIRE_TRUST_DOMAIN=ci.local \
             -v "$PWD/deploy/identity/spire/server.conf:/s.conf:ro" \
             ghcr.io/spiffe/spire-server:1.9.0 validate -expandEnv -config /s.conf
-          docker run --rm -e SPIRE_TRUST_DOMAIN=ci.local -e SPIRE_DB_CONN='postgres://x' \
+          docker run --rm --entrypoint /opt/spire/bin/spire-server \
+            -e SPIRE_TRUST_DOMAIN=ci.local -e SPIRE_DB_CONN='postgres://x' \
             -v "$PWD/deploy/identity/prod/server.conf:/s.conf:ro" \
             ghcr.io/spiffe/spire-server:1.9.0 validate -expandEnv -config /s.conf
+          docker run --rm --entrypoint /opt/spire/bin/spire-agent \
+            -e SPIRE_TRUST_DOMAIN=ci.local \
+            -v "$PWD/deploy/identity/spire/agent.conf:/a.conf:ro" \
+            ghcr.io/spiffe/spire-agent:1.9.0 validate -expandEnv -config /a.conf
 
       - name: Lint + template Helm chart
         uses: azure/setup-helm@v4

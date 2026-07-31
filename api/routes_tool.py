@@ -130,6 +130,23 @@ def _reconcile_agent_identity(header_agent: str, body_agent: str) -> "Optional[s
     return None
 
 
+def _first_denial(results) -> str:
+    """The message of the guardrail that actually denied.
+
+    Falls back to a plain statement rather than a passing guardrail's message:
+    "blocked (no failing guardrail reported)" is a legible anomaly, whereas
+    "RBAC check passed" next to BLOCKED reads as a contradiction and sends
+    whoever is reading it to the wrong subsystem entirely.
+    """
+    for r in results or []:
+        is_dict = isinstance(r, dict)
+        passed = r.get("passed", True) if is_dict else getattr(r, "passed", True)
+        msg = r.get("message", "") if is_dict else getattr(r, "message", "")
+        if not passed and msg:
+            return msg
+    return "blocked (no failing guardrail reported)"
+
+
 def _emit_tool_check_telemetry(
     *,
     trace_id: str,
@@ -205,7 +222,12 @@ def _emit_tool_check_telemetry(
             "user_role": user_role or "",
             "stage": "complete",
             "blocked": not allowed,
-            "block_reason": results[0].get("message", "") if results and not allowed else None,
+            # results[0] is whichever guardrail ran FIRST, not the one that
+            # objected. rbac_guard runs first and passes with "RBAC check
+            # passed", so a call blocked by a later guard recorded that as its
+            # block reason — an audit trail asserting the check that allowed it
+            # was the reason it was denied.
+            "block_reason": _first_denial(results) if not allowed else None,
             "session_id": session_id or "",
             "tool_calls": tool_results,
             "tool_call_count": 1,
