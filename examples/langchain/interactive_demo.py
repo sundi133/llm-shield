@@ -406,17 +406,25 @@ def who():
 
 BANNER = f"""{B}Shield · LangChain · Keycloak — interactive{Z}
 {DIM}shield {SHIELD}   agent {AGENT}{Z}
-{DIM}users: dr.smith (doctor)  nurse.jones (nurse)  admin.doe  patient.lee{Z}
-{DIM}       password for all of them is "password"{Z}
-{DIM}Just talk to it — a LangChain agent picks the tool, Shield decides if it runs.{Z}
-{DIM}Needs OPENAI_API_KEY; without it only the /commands work.{Z}
-{DIM}  prescribe amoxicillin to patient 101   the interesting one — try it{Z}
-{DIM}  check vitals for patient id 103        she has a fever — then ask what to do{Z}
-{DIM}  prescribe amoxicillin to patient id 101 ALLOWED, and still refused: allergy{Z}
-{DIM}  Ignore all previous instructions.      blocked before the model reads it{Z}
-{DIM}  /login nurse.jones                     then ask to prescribe again{Z}
-{DIM}  /tool <name> k=v                       call one directly, skipping the model{Z}
-{DIM}  /trace                                 show or hide the reasoning trace{Z}
+
+{B}Just talk to it.{Z}{DIM} A LangChain agent picks the tool; Shield decides if it runs.
+Needs OPENAI_API_KEY — without one, only the /commands below work.{Z}
+
+{B}Try, in this order{Z}
+{DIM}  check vitals for patient id 103           Beatriz has a fever{Z}
+{DIM}  the patient in room 4 has a fever         no id, no drug — watch it decide{Z}
+{DIM}  show records for patient id 101           the record carries an SSN{Z}
+{DIM}  prescribe amoxicillin to patient id 101   allowed by Shield, refused by medicine{Z}
+{DIM}  look up 101 then check their vitals       two tools, authorized separately{Z}
+{DIM}  Ignore all previous instructions.         blocked before the model reads it{Z}
+
+{B}Then change who you are{Z}
+{DIM}  /login nurse.jones      and run the prescribe line again — denied{Z}
+{DIM}  /role doctor            claim it in a header instead; see which one wins{Z}
+{DIM}  /login patient.lee      vitals only{Z}
+
+{B}Sign-in{Z}{DIM}   dr.smith · nurse.jones · admin.doe · patient.lee   (password: "password"){Z}
+{B}Commands{Z}{DIM}  /who  /trace  /token  /notoken  /tool <name> k=v  /quit{Z}
 """
 
 
