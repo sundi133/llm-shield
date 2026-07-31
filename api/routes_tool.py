@@ -205,7 +205,12 @@ def _emit_tool_check_telemetry(
         "rbac": {
             "allowed": allowed,
             "action": action,
-            "message": results[0].get("message", "") if results else "",
+            # Same bug as block_reason, in the field the console prints UNDER
+            # each tool call: results[0] is the first guardrail to run, not the
+            # one that objected. rbac_guard runs first and passes, so a blocked
+            # tool was labelled "RBAC check passed" — under a red BLOCKED chip.
+            "message": (_first_denial(results) if not allowed
+                        else (results[0].get("message", "") if results else "")),
         },
     }]
     asyncio.get_event_loop().create_task(audit_logger.log({

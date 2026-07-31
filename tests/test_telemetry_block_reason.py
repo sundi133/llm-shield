@@ -42,3 +42,24 @@ def test_first_of_several_denials_wins():
     results = [{"passed": False, "message": "first denial"},
                {"passed": False, "message": "second denial"}]
     assert _first_denial(results) == "first denial"
+
+
+def test_the_per_tool_message_also_names_the_denial():
+    """The console prints this under each tool call. It showed "RBAC check
+    passed" beneath a red BLOCKED chip, because it had the same results[0] bug
+    as block_reason and was missed when that one was fixed."""
+    import api.routes_tool as rt
+    import inspect
+
+    src = inspect.getsource(rt._emit_tool_check_telemetry)
+    assert "_first_denial(results) if not allowed" in src, \
+        "the per-tool rbac message must report the denying guardrail"
+
+
+def test_a_passing_call_keeps_its_first_guardrail_message():
+    """Only the blocked case changes — an allowed call still reports normally."""
+    import api.routes_tool as rt
+    import inspect
+
+    src = inspect.getsource(rt._emit_tool_check_telemetry)
+    assert 'else (results[0].get("message", "") if results else "")' in src
