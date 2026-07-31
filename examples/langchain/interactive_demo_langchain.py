@@ -117,6 +117,32 @@ def mint_agent_token():
     return r.json()["agent_token"], None
 
 
+def _advisory_check(tool_name, params):
+    """tool/check as a gate before minting. None if allowed, else the denial."""
+    t0 = time.perf_counter()
+    try:
+        d = requests.post(f"{SHIELD}/v1/shield/tool/check", timeout=TIMEOUT,
+                          headers=headers(),
+                          json={"agent_key": AGENT, "tool_name": tool_name,
+                                "user_role": state["role"],
+                                "tool_params": params}).json()
+    except Exception as e:
+        return f"DENIED — could not reach Shield to authorize this ({e.__class__.__name__})"
+    ms = (time.perf_counter() - t0) * 1000
+    allowed = bool(d.get("allowed"))
+    if state["trace"]:
+        print(f"  {DIM}rbac{Z} {(G + 'ALLOW' + Z) if allowed else (R + 'DENY' + Z)} "
+              f"{B}{tool_name}{Z} {DIM}role={state['role']} {ms:.0f}ms{Z}")
+    if allowed:
+        return None
+    why = next((g.get("message") for g in d.get("guardrail_results", [])
+                if not g.get("passed", True)), "not permitted")
+    if state["trace"]:
+        print(f"       {DIM}{str(why)[:120]}{Z}")
+        print(f"       {DIM}no capability minted — the check gates the mint{Z}")
+    return f"DENIED by policy: {why}"
+
+
 def _capability_path(tool_name, params, run):
     """mint -> verify (nonce burned) -> execute.
 
@@ -190,6 +216,18 @@ def shielded(tool_name, params, run):
     refusal has to arrive the way any other tool result does.
     """
     if CAPS:
+        # RBAC FIRST, then mint. cap/mint does not enforce role -> tool: it
+        # unions every role's permissions, so a nurse can mint a capability to
+        # prescribe that tool/check denies. Until that is fixed server-side, an
+        # application that wants the role respected has to ask for the check
+        # explicitly and refuse to mint on a denial.
+        #
+        # This makes the DEMO correct. It does not close the hole — a client
+        # that skips this call still gets the capability. The fix belongs in
+        # _decide_authz.
+        verdict = _advisory_check(tool_name, params)
+        if verdict is not None:
+            return verdict
         return _capability_path(tool_name, params, run)
 
     t0 = time.perf_counter()
