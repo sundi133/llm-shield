@@ -97,8 +97,7 @@ def _capture_llm(monkeypatch, module):
     async def fake(messages, **kwargs):
         captured["messages"] = messages
         return {"choices": [{"message": {"content":
-            '{"violates_policy": false, "confidence": 0.9, '
-            '"reasoning": "ok", "violation_type": null}'}}]}
+            'false,0.9,none,ok'}}]}
 
     monkeypatch.setattr(module, "async_llm_call", fake)
     return captured
@@ -243,8 +242,7 @@ async def test_input_policies_evaluated_concurrently(monkeypatch):
         await asyncio.sleep(0.05)  # hold the slot so siblings start
         inflight -= 1
         return {"choices": [{"message": {"content":
-            '{"violates_policy": false, "confidence": 0.9, '
-            '"reasoning": "ok", "violation_type": null}'}}]}
+            'false,0.9,none,ok'}}]}
 
     monkeypatch.setattr(mod, "async_llm_call", fake)
     g = CustomPolicyInputGuardrail()
@@ -266,8 +264,7 @@ async def test_input_all_policies_evaluated_no_early_exit(monkeypatch):
     async def fake(messages, **kwargs):
         calls.append(1)
         return {"choices": [{"message": {"content":
-            '{"violates_policy": true, "confidence": 0.99, '
-            '"reasoning": "x", "violation_type": "pii"}'}}]}
+            'true,0.99,pii,x'}}]}
 
     monkeypatch.setattr(mod, "async_llm_call", fake)
     g = CustomPolicyInputGuardrail()
