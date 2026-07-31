@@ -66,7 +66,7 @@ def test_payload_risk_policy_in_system_params_in_user(monkeypatch):
 
     monkeypatch.setattr(pr, "async_llm_call", fake_llm)
     # pin the rendered policy text so we can assert it lands in the system prefix
-    monkeypatch.setattr(pr, "_format_data_policies", lambda dp, tid: "POLICY_MARKER no external")
+    monkeypatch.setattr(pr, "_format_data_policies", lambda dp, tid, tool_name="": "POLICY_MARKER no external")
 
     out = _run(pr.evaluate_payload_policy_llm(
         tool_name="send_payment",

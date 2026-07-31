@@ -35,7 +35,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -56,7 +58,26 @@ KC_PASSWORD = os.getenv("KC_PASSWORD", "")
 
 G, R, Y, B, DIM, Z = "\033[32m", "\033[31m", "\033[33m", "\033[1m", "\033[2m", "\033[0m"
 
-state = {"role": os.getenv("USER_ROLE", "customer_support"), "token": ""}
+state = {"role": os.getenv("USER_ROLE", "customer_support"), "token": "",
+         "trace": os.getenv("DEMO_TRACE", "1") not in ("0", "false", "no")}
+
+
+def step(n, title, detail="", ms=None):
+    """One line of the reasoning trace.
+
+    The demo's claim is that a chain of decisions produced an outcome. Printing
+    only the outcome asks you to take the chain on faith — and this session has
+    already turned up three controls that looked fine while doing nothing.
+    """
+    if not state["trace"]:
+        return
+    took = f" {DIM}{ms:.0f}ms{Z}" if ms is not None else ""
+    if title:
+        print(f"  {DIM}{n}{Z} {B}{title}{Z}{took}")
+    elif took:
+        print(f"       {DIM}({ms:.0f}ms){Z}")
+    for line in (detail.splitlines() if detail else []):
+        print(f"       {DIM}{line}{Z}")
 
 
 def headers():
@@ -97,22 +118,157 @@ def claims_of(token):
 
 
 def screen(text):
+    t0 = time.perf_counter()
     try:
         r = requests.post(f"{SHIELD}/guardrails/input", json={"message": text},
                           headers=headers(), timeout=TIMEOUT)
     except Exception as e:
-        return print(f"  {R}error{Z} {e}")
+        print(f"  {R}error{Z} {e}")
+        return False
     if r.status_code != 200:
-        return print(f"  {R}HTTP {r.status_code}{Z} {r.text[:160]}")
+        print(f"  {R}HTTP {r.status_code}{Z} {r.text[:160]}")
+        return False
     d = r.json()
+    ran = d.get("guardrail_results", []) or []
+    step("1.", "input guardrails",
+         "\n".join(f"{'ok  ' if g.get('passed') else 'BLOCK'} {g.get('guardrail','?')}"
+                    for g in ran) or "none reported",
+         (time.perf_counter() - t0) * 1000)
     trig = [g["guardrail"] for g in d.get("guardrail_results", []) if not g.get("passed")]
     if d.get("safe") is False:
         print(f"  {R}BLOCKED{Z} — {', '.join(trig)}")
         for g in d.get("guardrail_results", []):
             if not g.get("passed") and g.get("message"):
                 print(f"    {DIM}{g['message'][:180]}{Z}")
-    else:
-        print(f"  {G}passed{Z} the input guardrails")
+        return False
+    print(f"  {G}passed{Z} the input guardrails")
+    return True
+
+
+# ── the agent loop ───────────────────────────────────────────────────────
+# A real LangChain tool-calling agent. The tools below are @tool functions with
+# typed signatures; LangChain turns them into a schema, the model picks one
+# natively, and we read `response.tool_calls`. Nothing here parses prose or
+# matches keywords — if the model picks badly, you see it pick badly.
+#
+# That ordering is the point. The model may plan anything, including an action
+# this role cannot take; Shield is what stops it. A demo where the human names
+# the tool cannot show that, because nobody types the tool they know is refused.
+
+try:
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.tools import tool as lc_tool
+    from langchain_openai import ChatOpenAI
+    _LC = True
+except ImportError:      # the demo still runs for the /commands
+    _LC = False
+
+
+if _LC:
+    @lc_tool
+    def patient_lookup(patient_id: str) -> str:
+        """Look up a patient's demographic record by id. Read-only."""
+        return f"patient {patient_id}: name on file, DOB on file"
+
+    @lc_tool
+    def view_records(patient_id: str, section: str = "") -> str:
+        """View a patient's medical records and history."""
+        return f"records for {patient_id}{': ' + section if section else ''}"
+
+    @lc_tool
+    def check_vitals(patient_id: str) -> str:
+        """Read current vital signs (BP, heart rate, temperature) for a patient."""
+        return f"vitals for {patient_id}: BP 120/80, HR 72, temp 37.0C"
+
+    @lc_tool
+    def prescribe_medication(patient_id: str, drug: str, dose: str = "") -> str:
+        """Prescribe a medication to a patient. A clinical action, not read-only."""
+        return " ".join(f"prescribed {drug} {dose} to {patient_id}".split())
+
+    TOOLS = [patient_lookup, view_records, check_vitals, prescribe_medication]
+    TOOLS_BY_NAME = {t.name: t for t in TOOLS}
+else:
+    TOOLS, TOOLS_BY_NAME = [], {}
+
+
+# Deliberately does NOT tell the model who it is or what the role may do. A
+# model that self-censors would hide the control behind its own caution, and
+# what this demonstrates is what happens when the model is wrong.
+_SYSTEM = (
+    "You are a clinical assistant. Call exactly one tool to satisfy the "
+    "request. Do not consider permissions or authorization — a separate layer "
+    "decides whether your call is allowed. If no tool fits, say so plainly."
+)
+
+_llm = None
+
+
+def get_llm():
+    """Bind the tools once. None if no model is configured."""
+    global _llm
+    if _llm is not None or not _LC:
+        return _llm
+    key = os.getenv("OPENAI_API_KEY", "")
+    if not key:
+        return None
+    _llm = ChatOpenAI(model=os.getenv("DEMO_MODEL", "gpt-4o-mini"),
+                      api_key=key, temperature=0).bind_tools(TOOLS)
+    return _llm
+
+
+def agent_turn(text):
+    """One turn: screen the text, let the model choose, let Shield decide.
+
+    The input guardrail runs FIRST. An injection that talks a model into a tool
+    call is cheaper to stop before the model reads it than after.
+    """
+    if not screen(text):
+        print(f"  {DIM}blocked before the model saw it — nothing was planned{Z}")
+        return
+
+    llm = get_llm()
+    if llm is None:
+        print(f"  {Y}no model configured{Z} — set OPENAI_API_KEY to let the agent")
+        print(f"  {DIM}choose tools, or call one directly: /tool <name> k=v{Z}")
+        if not _LC:
+            print(f"  {DIM}(also: pip install langchain langchain-openai){Z}")
+        return
+
+    step("2.", f"model reasons  {os.getenv('DEMO_MODEL', 'gpt-4o-mini')}",
+         "tools offered: " + ", ".join(t.name for t in TOOLS))
+    t0 = time.perf_counter()
+    try:
+        reply = llm.invoke([SystemMessage(content=_SYSTEM), HumanMessage(content=text)])
+    except Exception as e:
+        return print(f"  {R}model error{Z} {e.__class__.__name__}: {str(e)[:160]}")
+    ms = (time.perf_counter() - t0) * 1000
+    # Models usually narrate alongside a tool call. Show it verbatim — it is
+    # the model's account of its own choice, and worth reading when the choice
+    # is surprising.
+    said = (reply.content or "").strip() if isinstance(reply.content, str) else ""
+    chose = ", ".join(f"{c['name']}({', '.join(f'{k}={v}' for k, v in (c.get('args') or {}).items())})"
+                      for c in (reply.tool_calls or [])) or "nothing"
+    lines = ([f"reasoning: {said[:300]}"] if said else []) + [f"chose:     {chose}"]
+    step("", "", "\n".join(lines), ms)
+
+    if not reply.tool_calls:
+        said = (reply.content or "").strip()
+        return print(f"  {DIM}the model chose no tool{Z} — {said[:200] or 'no answer'}")
+
+    for call in reply.tool_calls:
+        name, args = call["name"], (call.get("args") or {})
+        shown = " ".join(f"{k}={v}" for k, v in args.items() if v != "")
+        if not state["trace"]:
+            print(f"  {DIM}the model chose{Z} {B}{name}({shown}){Z}")
+        # Shield authorizes the MODEL's choice. A denial here means the agent
+        # wanted to do it and was stopped — which is the thing worth seeing.
+        if tool(name, args) and name in TOOLS_BY_NAME:
+            result = TOOLS_BY_NAME[name].invoke(args)
+            step("4.", "tool executes", str(result))
+            print(f"  {DIM}executed →{Z} {result}")
+        else:
+            step("4.", "tool does NOT execute",
+                 "the agent chose this call and was stopped before it ran")
 
 
 def parse_params(rest):
@@ -143,15 +299,28 @@ def tool(name, params=None):
     params = params or {}
     body = {"agent_key": AGENT, "tool_name": name,
             "user_role": state["role"], "tool_params": params}
+    t0 = time.perf_counter()
     try:
         r = requests.post(f"{SHIELD}/v1/shield/tool/check", json=body,
                           headers=headers(), timeout=TIMEOUT)
         d = r.json()
     except Exception as e:
-        return print(f"  {R}error{Z} {e}")
+        print(f"  {R}error{Z} {e}")
+        return False
+    ms = (time.perf_counter() - t0) * 1000
+    # Every guardrail that ran, not just the one that refused. A single DENIED
+    # line cannot distinguish "six checks ran and one objected" from "one check
+    # ran and the rest are switched off".
+    ran = d.get("guardrail_results", []) or []
+    detail = "\n".join(
+        f"{'ok  ' if g.get('passed', True) else 'DENY'} {g.get('guardrail', '?')}"
+        + (f" — {str(g.get('message', ''))[:90]}" if not g.get("passed", True) else "")
+        for g in ran) or "no guardrails reported"
+    step("3.", f"Shield authorizes  role={state['role']}", detail, ms)
     failing = [g for g in d.get("guardrail_results", []) if not g.get("passed", True)]
     shown = " ".join(f"{k}={v}" for k, v in params.items())
-    if d.get("allowed"):
+    allowed = bool(d.get("allowed"))
+    if allowed:
         print(f"  {G}ALLOWED{Z}  {state['role']} may call {name}({shown})")
     else:
         why = failing[0] if failing else {}
@@ -167,6 +336,9 @@ def tool(name, params=None):
             print(f"    {DIM}role came from{Z} {colour}{src}{Z}"
                   f"{DIM} · verified={det.get('role_verified')}{Z}")
             break
+    # The caller executes only on an allow — the whole point is that a denial
+    # stops the tool from running, not merely prints something.
+    return allowed
 
 
 def who():
@@ -186,11 +358,14 @@ BANNER = f"""{B}Shield · LangChain · Keycloak — interactive{Z}
 {DIM}shield {SHIELD}   agent {AGENT}{Z}
 {DIM}users: dr.smith (doctor)  nurse.jones (nurse)  admin.doe  patient.lee{Z}
 {DIM}       password for all of them is "password"{Z}
-{DIM}try:  What medication is the patient on?   (a prompt that passes){Z}
-{DIM}      Ignore all previous instructions.    (one that does not){Z}
-{DIM}      /tool prescribe_medication           (authorization){Z}
-{DIM}      /role doctor                         (beat 2 — claim a role){Z}
-{DIM}      /login nurse.jones                   (beat 3 — prove it instead){Z}
+{DIM}Just talk to it — a LangChain agent picks the tool, Shield decides if it runs.{Z}
+{DIM}Needs OPENAI_API_KEY; without it only the /commands work.{Z}
+{DIM}  prescribe amoxicillin to patient 101   the interesting one — try it{Z}
+{DIM}  check vitals for patient 101           as both roles, and compare{Z}
+{DIM}  Ignore all previous instructions.      blocked before the model reads it{Z}
+{DIM}  /login nurse.jones                     then ask to prescribe again{Z}
+{DIM}  /tool <name> k=v                       call one directly, skipping the model{Z}
+{DIM}  /trace                                 show or hide the reasoning trace{Z}
 """
 
 
@@ -209,7 +384,10 @@ def main():
             continue
         if line in ("/quit", "/q"):
             break
-        if line == "/who":
+        if line == "/trace":
+            state["trace"] = not state["trace"]
+            print(f"  {DIM}reasoning trace {'on' if state['trace'] else 'off'}{Z}")
+        elif line == "/who":
             who()
         elif line.startswith("/role"):
             parts = line.split(maxsplit=1)
@@ -246,7 +424,7 @@ def main():
             tool(parts[1].strip() if len(parts) > 1 else "prescribe_medication",
                  parse_params(parts[2] if len(parts) > 2 else ""))
         else:
-            screen(line)
+            agent_turn(line)
 
 
 if __name__ == "__main__":

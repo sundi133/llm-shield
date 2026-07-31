@@ -50,10 +50,15 @@ ROLES = ["doctor", "nurse", "admin", "patient"]
 # to banking roles (branch_manager, compliance_officer, ...) left over from a
 # different demo — names that matched neither the users nor Shield's config.
 USER_ROLES = {
-    "dr.smith":    "doctor",    # full clinical access, incl. prescribe_medication
-    "nurse.jones": "nurse",     # patient_lookup / view_records / check_vitals
-    "admin.doe":   "admin",     # everything
-    "patient.lee": "patient",   # own vitals only
+    # Grants as the tenant registry actually has them, probed rather than
+    # assumed. Shield is the authority here; these comments are a convenience
+    # and will drift if the registry changes.
+    "dr.smith":    "doctor",    # patient_lookup, check_vitals, prescribe_medication
+    "nurse.jones": "nurse",     # check_vitals only
+    "admin.doe":   "admin",     # patient_lookup, view_records, check_vitals
+    "patient.lee": "patient",   # check_vitals only
+    # NB: view_records is admin-only — not even doctor has it. If that is not
+    # what you intended, fix the registry, not this comment.
 }
 
 
