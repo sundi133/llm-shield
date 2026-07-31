@@ -519,10 +519,59 @@ BANNER = f"""{B}Shield · SRE copilot — an agent with production access{Z}
 """
 
 
+def preflight():
+    """Say up front whether this agent exists in the tenant.
+
+    Without a registry entry every tool call fails tool_allowlist, which reads
+    as a broken demo rather than missing configuration — and it fails the same
+    way for every role, so the matrix looks like it denies everything. Better to
+    say so once, at startup, than to have it discovered mid-demo.
+    """
+    try:
+        d = requests.post(f"{SHIELD}/v1/shield/tool/check", timeout=TIMEOUT,
+                          headers=headers(),
+                          json={"agent_key": AGENT, "tool_name": "read_logs",
+                                "user_role": "sre_lead",
+                                "tool_params": {"service": "checkout-api"}}).json()
+    except Exception as e:
+        print(f"  {Y}cannot reach Shield at {SHIELD}{Z} {DIM}({e.__class__.__name__}){Z}\n")
+        return
+    if d.get("allowed"):
+        print(f"  {G}agent registered{Z} {DIM}— sre_lead may read_logs, matrix is live{Z}\n")
+        return
+    why = " ".join(str(g.get("message", "")) for g in d.get("guardrail_results", [])
+                   if not g.get("passed", True)).lower()
+    # Match only the phrase the registry itself emits. Matching "allowlist" or
+    # "unknown" caught a REGISTERED agent that simply lacks this tool, and told
+    # the operator to go create something that already exists — a diagnostic
+    # confidently pointing at the wrong problem.
+    # The phrases the registry actually emits, checked against the live
+    # deployment rather than guessed: rbac_guard says "unknown agent key" for an
+    # agent that does not exist, and the registry gate says "not registered" /
+    # "is not active". An earlier version matched "allowlist" too, which caught
+    # a REGISTERED agent merely lacking this tool and told the operator to
+    # create something that already existed.
+    if ("unknown agent key" in why or "not registered" in why
+            or "is not active" in why):
+        print(f"  {Y}agent '{AGENT}' is not registered in this tenant.{Z}")
+        print(f"  {DIM}Every tool will be denied the same way regardless of role, which{Z}")
+        print(f"  {DIM}looks like the matrix denying everything. Create '{AGENT}' in the{Z}")
+        print(f"  {DIM}portal with these tools:{Z}")
+        print(f"  {DIM}    {', '.join(t.name for t in TOOLS)}{Z}")
+        print(f"  {DIM}and roles: {', '.join(DEMO_ROLES)}{Z}\n")
+    else:
+        # Registered, but this tool is not granted to sre_lead. A policy
+        # answer, not a setup problem — do not send anyone to the portal.
+        print(f"  {Y}agent '{AGENT}' exists, but sre_lead is not granted read_logs{Z}")
+        print(f"  {DIM}{why[:170]}{Z}")
+        print(f"  {DIM}Expected if this agent is not the SRE one — check AGENT_ID.{Z}\n")
+
+
 def main():
     if not KEY:
         sys.exit("set TENANT_API_KEY")
     print(BANNER)
+    preflight()
     who()
     history = []
     while True:
