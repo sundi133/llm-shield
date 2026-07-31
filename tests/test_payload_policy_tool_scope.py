@@ -85,3 +85,18 @@ def test_exact_match_only():
     with _with_redis():
         assert _load_data_policies("acme", "customer_profile") == []
         assert _load_data_policies("acme", "view_records_v2") == []
+
+
+def test_the_prompt_forbids_role_decisions_even_when_a_policy_exists():
+    """The scoping fix alone was not enough. view_records HAS a policy — with
+    role_policies empty and only SSN redaction patterns — and the model still
+    produced "role 'nurse' is explicitly blocked for tool 'view_records'"."""
+    from guardrails.agentic.tool.payload_risk import _TOOL_SYSTEM
+    low = _TOOL_SYSTEM.lower()
+    assert "do not decide whether a role may use a tool" in low
+    assert "never cite a role permission" in low
+
+
+def test_the_prompt_says_redaction_is_not_grounds_to_block():
+    from guardrails.agentic.tool.payload_risk import _TOOL_SYSTEM
+    assert "never a reason to block" in _TOOL_SYSTEM.lower()

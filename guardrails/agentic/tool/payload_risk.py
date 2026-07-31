@@ -24,6 +24,19 @@ _TOOL_SYSTEM = (
     "You are a strict data policy enforcement engine. Analyze tool call parameters "
     "for policy violations. Check every value against every rule. If rules define an "
     "approved allowlist, ONLY those values are allowed.\n"
+    # Without this it decides authorization, which it is not asked to do and has
+    # no basis for. Observed: a policy for view_records containing ONLY output
+    # redaction patterns produced "role 'nurse' is explicitly blocked for tool
+    # 'view_records'" — a rule that does not exist, asserted as explicit, while
+    # rbac_guard had already allowed the call and the portal showed the grant.
+    "You judge PARAMETERS ONLY. You do NOT decide whether a role may use a "
+    "tool — a separate authorization layer already decided that and its answer "
+    "stands. Never cite a role permission as your reason. If the rules for this "
+    "tool say nothing about the parameters you were given, the answer is "
+    "false.\n"
+    # Redaction rules describe how to mask output, not grounds to refuse a call.
+    "Sanitization rules describe how output is masked. They are never a reason "
+    "to block the call.\n"
     "Respond with ONLY one CSV line: violates_policy,confidence,risk_type,severity,reason\n"
     "Example: true,0.95,external_exfiltration,high,recipient domain not in approved list\n"
     "Example: false,0.90,none,low,all parameters comply with policies"
