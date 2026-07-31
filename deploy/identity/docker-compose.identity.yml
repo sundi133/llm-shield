@@ -24,7 +24,12 @@ services:
     image: ghcr.io/spiffe/spire-server:1.9.0
     profiles: ["identity"]
     hostname: spire-server
-    command: ["-config", "/run/spire/config/server.conf"]
+    environment:
+      # Compose supports `:-` defaults; the .conf files must not, so the
+      # fallback lives here. -expandEnv is what makes ${SPIRE_TRUST_DOMAIN}
+      # in the config a variable rather than a literal trust domain.
+      SPIRE_TRUST_DOMAIN: ${SPIRE_TRUST_DOMAIN:-example.org}
+    command: ["-expandEnv", "-config", "/run/spire/config/server.conf"]
     volumes:
       - ./spire/server.conf:/run/spire/config/server.conf:ro
       - spire-server-data:/run/spire/data
@@ -42,7 +47,9 @@ services:
       spire-server:
         condition: service_healthy
     pid: "host"                       # unix workload attestation needs host pids
-    command: ["-config", "/run/spire/config/agent.conf"]
+    environment:
+      SPIRE_TRUST_DOMAIN: ${SPIRE_TRUST_DOMAIN:-example.org}
+    command: ["-expandEnv", "-config", "/run/spire/config/agent.conf"]
     volumes:
       - ./spire/agent.conf:/run/spire/config/agent.conf:ro
       - spire-agent-sock:/tmp/spire-agent/public   # Workload API socket (Envoy + workloads read here)
