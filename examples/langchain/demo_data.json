@@ -1,0 +1,55 @@
+{
+  "_comment": "Synthetic. Invented names, 000-prefixed SSNs that no real person holds, and 555 numbers. Realistic SHAPE matters here — the records carry an SSN and an allergy list so the redaction policy and the prescribing check have something real to act on — but nothing in this file belongs to anyone.",
+  "patients": {
+    "101": {
+      "name": "Amina Rahman",
+      "dob": "1984-03-22",
+      "sex": "F",
+      "mrn": "MRN-101",
+      "ssn": "000-11-0101",
+      "phone": "+1-555-0101",
+      "conditions": ["Type 2 diabetes", "Hypertension"],
+      "allergies": ["penicillin", "amoxicillin"],
+      "medications": [
+        {"drug": "metformin", "dose": "500mg", "frequency": "twice daily"},
+        {"drug": "lisinopril", "dose": "10mg", "frequency": "daily"}
+      ],
+      "vitals": {"bp": "138/86", "hr": 78, "temp_c": 37.1, "spo2": 97,
+                 "taken_at": "2026-07-30T08:14:00Z"},
+      "notes": [
+        "2026-06-02 Routine review. HbA1c 7.4%. Diet advice given.",
+        "2026-07-18 BP trending up. Consider dose review at next visit."
+      ]
+    },
+    "102": {
+      "name": "Daniel Okoye",
+      "dob": "1972-11-05",
+      "sex": "M",
+      "mrn": "MRN-102",
+      "ssn": "000-11-0102",
+      "phone": "+1-555-0102",
+      "conditions": ["Asthma"],
+      "allergies": [],
+      "medications": [
+        {"drug": "salbutamol inhaler", "dose": "100mcg", "frequency": "as needed"}
+      ],
+      "vitals": {"bp": "118/74", "hr": 66, "temp_c": 36.8, "spo2": 98,
+                 "taken_at": "2026-07-30T09:02:00Z"},
+      "notes": ["2026-05-11 Asthma well controlled. Inhaler technique reviewed."]
+    },
+    "103": {
+      "name": "Beatriz Salgado",
+      "dob": "1995-07-19",
+      "sex": "F",
+      "mrn": "MRN-103",
+      "ssn": "000-11-0103",
+      "phone": "+1-555-0103",
+      "conditions": [],
+      "allergies": ["ibuprofen"],
+      "medications": [],
+      "vitals": {"bp": "110/70", "hr": 72, "temp_c": 38.4, "spo2": 99,
+                 "taken_at": "2026-07-31T07:40:00Z"},
+      "notes": ["2026-07-31 Presented with fever. Awaiting review."]
+    }
+  }
+}
