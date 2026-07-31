@@ -57,3 +57,38 @@ def test_a_non_boolean_verdict_is_rejected_not_guessed():
     output the model was unsure about."""
     r = _parse_policy_csv("maybe,0.5,none,unclear")
     assert not isinstance(r.get("violates_policy"), bool)
+
+
+# ── the prompt and the parser must agree ────────────────────────────────────
+# I shipped them disagreeing. The output policy's parser was converted to CSV
+# while its prompt still asked for JSON, so every evaluation failed to parse,
+# hit the fail-open path, and passed content unchecked. The earlier tests
+# exercised the parser in isolation and could not see it.
+
+import re
+
+
+def _prompt_of(module_path: str) -> str:
+    return open(module_path).read()
+
+
+def test_output_policy_asks_for_csv_not_json():
+    src = _prompt_of("guardrails/output/custom_policy.py")
+    assert "ONLY one CSV line" in src
+    assert "Respond with ONLY a JSON object" not in src
+
+
+def test_input_policy_asks_for_csv_not_json():
+    src = _prompt_of("guardrails/input/custom_policy.py")
+    assert "ONLY one CSV line" in src
+    assert "Respond with ONLY a JSON object" not in src
+
+
+def test_the_prompt_lists_the_fields_the_parser_reads():
+    """A reordered prompt would put values in the wrong columns silently."""
+    for path in ("guardrails/output/custom_policy.py",
+                 "guardrails/input/custom_policy.py"):
+        src = _prompt_of(path)
+        m = re.search(r"ONLY one CSV line: ([a-z_,]+)", src)
+        assert m, f"no CSV field list in {path}"
+        assert m.group(1).split(",") == _CSV_FIELDS, f"field order drift in {path}"

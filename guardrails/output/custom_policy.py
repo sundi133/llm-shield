@@ -134,13 +134,11 @@ CONTEXT:
 
 Analyze if the output text violates the policy. Consider context and intent.
 
-Respond with ONLY a JSON object in this exact format:
-{{
-    "violates_policy": true/false,
-    "confidence": 0.85,
-    "reasoning": "Brief explanation of the decision",
-    "violation_type": "specific violation category or null"
-}}"""
+Respond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning
+Use "none" for violation_type when there is no violation. Do not quote fields;
+reasoning is last so a comma inside it is harmless.
+Example: true,0.95,pii_disclosure,output contains a customer name and card number
+Example: false,0.90,none,no policy violation found"""
 
         try:
             # Opt-in multi-turn: prepend prior conversation turns so the policy
