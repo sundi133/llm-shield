@@ -44,7 +44,23 @@ LDAP_BASE_DN = "dc=shield,dc=local"
 #
 # Mirrors the `test-oidc-agent` registry entry (tools: patient_lookup,
 # view_records, prescribe_medication, check_vitals).
-ROLES = ["doctor", "nurse", "admin", "patient"]
+ROLES = ["doctor", "nurse", "admin", "patient",
+         # SRE copilot demo (examples/langchain/interactive_demo_sre.py)
+         "sre_lead", "oncall_engineer", "contractor", "ci_bot", "intern"]
+
+# Created directly in Keycloak rather than via LDAP: the healthcare personas
+# come from OpenLDAP, but these exist only for the demo and adding LDAP entries
+# for them buys nothing. Same password as the others so one instruction covers
+# every login.
+SRE_USERS = {
+    "alex.chen":  ("sre_lead", "Alex", "Chen"),
+    "sam.patel":  ("oncall_engineer", "Sam", "Patel"),
+    "jordan.ext": ("contractor", "Jordan", "Ext"),
+    "riley.grad": ("intern", "Riley", "Grad"),
+    # No human behind this one — that is the point of demoing it. It cannot be
+    # phished and cannot be MFA'd, so role scoping is the only control it has.
+    "ci-bot":     ("ci_bot", "CI", "Bot"),
+}
 
 # Usernames are healthcare personas, so the roles are too. They previously mapped
 # to banking roles (branch_manager, compliance_officer, ...) left over from a
@@ -154,6 +170,47 @@ def create_client(token: str):
         print("  Created!")
     else:
         print(f"  ERROR {r.status_code}: {r.text}")
+
+
+def create_sre_users(token: str):
+    """Create the SRE demo users and bind each to its realm role.
+
+    Without these, the SRE demo needs /role <name> — a role claimed in a header
+    and provably nothing else. With them /login works the same way it does for
+    dr.smith, so the role arrives in a signed token and the demo can show the
+    difference between claiming a role and proving one.
+    """
+    print("Creating SRE demo users...")
+    roles = {r["name"]: r for r in requests.get(
+        f"{KC_URL}/admin/realms/{REALM}/roles", headers=admin_headers(token)).json()}
+    for username, (role, first, last) in SRE_USERS.items():
+        r = requests.post(f"{KC_URL}/admin/realms/{REALM}/users",
+                          headers=admin_headers(token), json={
+                              "username": username, "enabled": True,
+                              "firstName": first, "lastName": last,
+                              "email": f"{username}@example.com",
+                              "emailVerified": True,
+                              "credentials": [{"type": "password",
+                                               "value": "password",
+                                               "temporary": False}]})
+        if r.status_code not in (201, 409):
+            print(f"  {username} — ERROR {r.status_code}: {r.text[:120]}")
+            continue
+        found = requests.get(f"{KC_URL}/admin/realms/{REALM}/users",
+                             headers=admin_headers(token),
+                             params={"username": username, "exact": "true"}).json()
+        if not found:
+            print(f"  {username} — created but not found, skipping role")
+            continue
+        uid = found[0]["id"]
+        if role not in roles:
+            print(f"  {username} — realm role '{role}' missing, skipping")
+            continue
+        m = requests.post(
+            f"{KC_URL}/admin/realms/{REALM}/users/{uid}/role-mappings/realm",
+            headers=admin_headers(token), json=[roles[role]])
+        ok = "OK" if m.status_code in (204, 409) else f"ERROR {m.status_code}"
+        print(f"  {username} -> {role} — {ok}")
 
 
 def create_public_client(token: str):
@@ -433,6 +490,7 @@ if __name__ == "__main__":
     create_roles(token)
     create_client(token)
     create_public_client(token)
+    create_sre_users(token)
     setup_ldap_federation(token)
 
     # Wait for LDAP sync to complete
