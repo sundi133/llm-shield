@@ -478,10 +478,10 @@ the tool's output, so the agent has to tell you about it in words.{Z}
 {DIM}  /login nurse.jones     then ask it to prescribe again{Z}
 
 {B}Commands{Z}{DIM}  /login <user>  /role <name>  /who  /trace  /quit{Z}
-{DIM}Answers stream as they are generated. gpt-4o-mini emits no reasoning tokens —
-those are an o-series/GPT-5 feature and the provider returns summaries, not the
-raw chain. Set DEMO_MODEL to a reasoning model and any summary shown will
-appear dimmed above the answer.{Z}
+{DIM}Answers stream as they are generated. Reasoning summaries appear dimmed above
+the answer when the model returns them — most do not. Reasoning tokens are an
+o-series/GPT-5 feature, and providers return a summary, never the raw chain, so
+seeing nothing here means the API sent nothing rather than a fault.{Z}
 """
 
 
