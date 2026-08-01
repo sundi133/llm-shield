@@ -48,10 +48,18 @@ def test_tenant_agent_tool_not_permitted(monkeypatch):
     assert d["allowed"] is False
 
 
-def test_tenant_agent_role_permissions_unioned(monkeypatch):
+def test_tenant_agent_role_permissions_are_scoped_to_the_caller(monkeypatch):
+    """This asserted the union — a caller got every role's tools.
+
+    That was the defect, not the design: a nurse minted a signed capability for
+    prescribe_medication that tool/check denies. The tool granted to `admin` is
+    now reachable BY admin, and by nobody else.
+    """
     _patch_registry(monkeypatch, {"role_permissions": {"admin": ["send_payment"]}})
-    d = _decide_authz(_identity(), CapMintRequest(tool="send_payment", resource="acct/1"))
-    assert d["allowed"] is True
+    body = CapMintRequest(tool="send_payment", resource="acct/1")
+    assert _decide_authz(_identity(), body, caller_role="admin")["allowed"] is True
+    assert _decide_authz(_identity(), body, caller_role="clerk")["allowed"] is False
+    assert _decide_authz(_identity(), body)["allowed"] is False
 
 
 def test_registered_agent_with_no_tools_denied(monkeypatch):

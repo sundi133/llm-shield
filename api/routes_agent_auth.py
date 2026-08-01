@@ -38,6 +38,7 @@ from core.agent_auth_safety import (
     verbose_reasons_enabled,
 )
 from core.identity import IdentityTuple, get_identity_from_request
+from core.identity_resolution import resolve_identity
 from core.rbac import enforcer as rbac_enforcer
 from storage.agent_auth_stats import (
     EVENT_CAP_DENIED,
@@ -200,6 +201,32 @@ def _enforce_tenant_binding(request: Request, claimed_tenant: str) -> None:
         )
 
 
+def _enforce_user_sub_binding(request: Request, claimed_sub: str) -> None:
+    """If a verified user credential is present, user_sub must be its subject.
+
+    user_sub was taken from the request body and never checked against the
+    credential presented alongside it. A caller holding a valid tenant key could
+    mint an agent token naming any person, and every capability minted from that
+    token carried the name into the audit trail as though it had been verified.
+
+    Only enforced when a verified identity is actually present. A deployment
+    with no user credential on this path is unchanged — this closes "the claim
+    contradicts the proof", not "there is no proof". Requiring proof is
+    SHIELD_ROLE_BINDING's job.
+    """
+    ident = getattr(getattr(request, "state", None), "workload_identity", None)
+    claims = (getattr(ident, "claims", {}) or {}) if ident is not None else {}
+    verified_sub = str(claims.get("sub") or "").strip()
+    if not verified_sub:
+        return
+    if (claimed_sub or "").strip() != verified_sub:
+        raise HTTPException(
+            status_code=403,
+            detail=(f"user_sub {(claimed_sub or '').strip()!r} does not match the "
+                    f"verified subject {verified_sub!r} on this request"),
+        )
+
+
 def _require_registered_agent(tenant_id: str, agent_id: str) -> None:
     """Reject token issuance for an agent the tenant hasn't registered.
 
@@ -238,6 +265,7 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
     """
     _require_admin(request)
     _enforce_tenant_binding(request, body.tenant_id)
+    _enforce_user_sub_binding(request, body.user_sub)
     _require_registered_agent(body.tenant_id, body.agent_id)
     try:
         token = mint_agent_token(
@@ -301,7 +329,15 @@ async def mint_capability(
     if not allowed:
         raise HTTPException(status_code=429, detail=err or "rate limit exceeded")
 
-    decision = _decide_authz(identity, body)
+    # Same seam as rbac_guard and /v1/shield/tool/check, so cap/mint cannot
+    # reach a different verdict from the check that precedes it.
+    caller_role = ""
+    if request is not None:
+        try:
+            caller_role = resolve_identity(request).user_role or ""
+        except Exception:
+            caller_role = ""   # fail closed: no role -> no role-scoped grant
+    decision = _decide_authz(identity, body, caller_role=caller_role)
     if not decision["allowed"]:
         # Full reasons go to the audit log so operators can debug; the
         # response body only includes reasons when SHIELD_VERBOSE_REASONS=1
@@ -611,7 +647,14 @@ def _enforce_cap_clearance() -> bool:
         in ("1", "true", "yes", "on")
 
 
-def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
+def _role_union_allowed() -> bool:
+    """Escape hatch for the pre-enforcement behaviour. Default off."""
+    return os.environ.get("SHIELD_CAP_MINT_ROLE_UNION", "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+def _decide_authz(identity: IdentityTuple, body: CapMintRequest,
+                  caller_role: Optional[str] = None) -> dict:
     """Compose the AuthZ verdict.
 
     v1 wires up the two policy primitives that already exist in this
@@ -623,7 +666,12 @@ def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
     """
     reasons: list[str] = []
     allowed = True
-    role_name: Optional[str] = None
+    # The caller's role, resolved by the same seam rbac_guard and the tool path
+    # use. Previously this stayed None until the static-RBAC block below, which
+    # runs AFTER the tool decision — so the tool decision never saw a role at
+    # all, and rbac_enforcer.resolve_role returns None for any agent registered
+    # in the tenant registry regardless.
+    role_name: Optional[str] = (caller_role or "").strip() or None
 
     # Per-tenant authorization (takes precedence over global/static RBAC).
     # If the tenant explicitly registered this agent, the tenant's config is
@@ -640,15 +688,32 @@ def _decide_authz(identity: IdentityTuple, body: CapMintRequest) -> dict:
             allowed = False
             reasons.append(f"agent '{identity.agent_id}' is disabled for this tenant")
         else:
-            allowed_tools = set(agent_entry.get("tools", []) or [])
-            for perms in (agent_entry.get("role_permissions", {}) or {}).values():
-                allowed_tools.update(perms or [])
+            role_perms = agent_entry.get("role_permissions", {}) or {}
+            base_tools = set(agent_entry.get("tools", []) or [])
+            if not role_perms or _role_union_allowed():
+                # No role map (the agent's own list is the policy), or the
+                # operator staged the old behaviour deliberately.
+                allowed_tools = set(base_tools)
+                for perms in role_perms.values():
+                    allowed_tools.update(perms or [])
+            else:
+                # Role -> tool, scoped to the CALLER. Unioning every role's
+                # permissions meant any tool ANY role could use was mintable by
+                # EVERY caller: a nurse minted a signed capability to prescribe
+                # that tool/check denies. An unknown or absent role gets an
+                # empty grant, not the union — otherwise omitting the role is
+                # the bypass.
+                role_tools = set(role_perms.get(role_name, []) or []) if role_name else set()
+                # An empty base list means "not enumerated", not "deny all":
+                # entries that only carry role_permissions must keep working.
+                allowed_tools = (base_tools & role_tools) if base_tools else role_tools
             # Fail closed: a registered agent with no permitted tools gets nothing.
             if not allowed_tools or body.tool not in allowed_tools:
                 allowed = False
                 reasons.append(
-                    f"tenant policy does not permit agent '{identity.agent_id}' "
-                    f"to use tool '{body.tool}'")
+                    f"tenant policy does not permit agent '{identity.agent_id}'"
+                    + (f" acting as role '{role_name}'" if role_name else " (no role resolved)")
+                    + f" to use tool '{body.tool}'")
             else:
                 # Object-level (target) authorization. Previously the agent could
                 # name any `resource` and get a signed cap for it. Enforce the

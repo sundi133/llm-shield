@@ -6,11 +6,35 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from guardrails.base import BaseGuardrail, safe_float
-from core.llm_backend import async_llm_call, parse_llm_json
+from core.llm_backend import async_llm_call, parse_csv_response
 from core.text_utils import build_policy_messages, custom_policy_history_turns
 from core.models import GuardrailResult
 
 logger = logging.getLogger(__name__)
+
+
+# Same four values the JSON schema carried. CSV is not about decode cost —
+# json.loads on 200 bytes is microseconds — it is about GENERATION cost: the
+# braces, quotes and field names of a JSON object are tokens the model must
+# emit before this guard can return, on a path that already dominates request
+# latency. Free text goes LAST so an unescaped comma inside it cannot shift the
+# fields that carry the decision.
+_CSV_FIELDS = ["violates_policy", "confidence", "violation_type", "reasoning"]
+
+
+def _parse_policy_csv(raw: str) -> dict:
+    """parse_csv_response, with the trailing free-text field kept whole.
+
+    The shared parser splits on every comma, so a reasoning string containing
+    one would be truncated at it. Truncated prose is cosmetic; a shifted field
+    is not, which is why reasoning is last.
+    """
+    result = parse_csv_response(raw, _CSV_FIELDS)
+    line = raw.strip().splitlines()[-1].strip().strip('"')
+    parts = line.split(",")
+    if len(parts) > len(_CSV_FIELDS):
+        result["reasoning"] = ",".join(parts[len(_CSV_FIELDS) - 1:]).strip().strip('"')
+    return result
 
 
 class CustomPolicyOutputGuardrail(BaseGuardrail):
@@ -110,13 +134,11 @@ CONTEXT:
 
 Analyze if the output text violates the policy. Consider context and intent.
 
-Respond with ONLY a JSON object in this exact format:
-{{
-    "violates_policy": true/false,
-    "confidence": 0.85,
-    "reasoning": "Brief explanation of the decision",
-    "violation_type": "specific violation category or null"
-}}"""
+Respond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning
+Use "none" for violation_type when there is no violation. Do not quote fields;
+reasoning is last so a comma inside it is harmless.
+Example: true,0.95,pii_disclosure,output contains a customer name and card number
+Example: false,0.90,none,no policy violation found"""
 
         try:
             # Opt-in multi-turn: prepend prior conversation turns so the policy
@@ -130,23 +152,18 @@ Respond with ONLY a JSON object in this exact format:
                 messages=messages,
                 max_tokens=200,
                 temperature=0,
-                response_format={
-                    "type": "object",
-                    "properties": {
-                        "violates_policy": {"type": "boolean"},
-                        "confidence": {"type": "number"},
-                        "reasoning": {"type": "string"},
-                        "violation_type": {"type": ["string", "null"]}
-                    }
-                },
                 guardrail_name="custom_policy_output"
             )
 
-            result = parse_llm_json(llm_response["choices"][0]["message"]["content"])
+            result = _parse_policy_csv(
+                llm_response["choices"][0]["message"]["content"])
 
-            # Validate LLM response
+            # reasoning is last so a comma inside it cannot shift the other
+            # fields; rejoin whatever the split scattered.
             if not isinstance(result.get("violates_policy"), bool):
                 raise ValueError("Invalid LLM response format")
+            if result.get("violation_type", "").lower() in ("none", "null", ""):
+                result["violation_type"] = None
 
             confidence = safe_float(result.get("confidence"), 0.5)
             violates_policy = result["violates_policy"]

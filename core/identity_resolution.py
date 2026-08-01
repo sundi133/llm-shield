@@ -419,6 +419,17 @@ def resolve_identity(
         # The claim wins and the header is ignored. Deterministic ordering: the
         # first role as issued, never set iteration.
         user_role, role_source = str(claimed[0]), agent_source
+    elif mode == MODE_STRICT:
+        # STRICT means a self-asserted role is not a role. Falling through to
+        # the body or header here is what made `strict` behave identically to
+        # `prefer`: both preferred a verified claim and both accepted a typed
+        # one when none was present, so there was no mode that actually refused.
+        #
+        # The caller gets NO role rather than a rejected request: authorization
+        # is the caller's decision to make, and a role of "" resolves to no
+        # grants everywhere it is consulted. That fails closed without turning
+        # a missing credential into a 500 on a path that may not need one.
+        user_role, role_source = "", SOURCE_NONE
     elif (body_user_role or "").strip():
         user_role, role_source = body_user_role.strip(), SOURCE_BODY
     else:
