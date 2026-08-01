@@ -164,6 +164,28 @@ logic only ever *relaxes* a decision, and only for a tenant that explicitly opte
   enforce) is a natural extension of `resolve_mode()` in `core/policy_mode.py` — not
   wired yet.
 
+## Tuning a custom policy that missed
+
+A custom policy that returns `"violations": 0` is not always a clean scan. The
+`custom_policy_input` / `custom_policy_output` response carries two extra fields
+whenever they apply:
+
+| Field | Meaning | What to do |
+|---|---|---|
+| `suppressed_by_threshold` | The model DID flag the content, but below the policy's `confidence_threshold` (default `0.8`), so it was not acted on. Each entry has the policy, the confidence, and the threshold it missed. | Lower that policy's threshold, or sharpen its `prompt` so the model commits. |
+| `errors` | The policy could not be evaluated at all (LLM error, unparseable verdict). `policies_evaluated` drops below `policies_checked`. | Investigate the upstream. These are NOT passes. |
+
+Long, multi-topic messages are the common cause of a low-confidence miss: the
+evaluator is told to scan every sentence rather than summarise the message, but
+a violating clause buried in a long unrelated request still scores lower than
+the same clause on its own. Watch `suppressed_by_threshold` before assuming a
+policy simply does not fire.
+
+**`SHIELD_CUSTOM_POLICY_FAIL_OPEN`** (default `1`) controls what happens to a
+policy that failed to evaluate. The default lets it pass, which is the historic
+behavior. Set it to `0` when your custom policies are the control rather than
+defense in depth, and an unevaluated policy will block instead.
+
 ## Where to next
 
 - [Guardrails Catalog]({{ "/guardrails/" | relative_url }}) — what each guardrail in a template does
