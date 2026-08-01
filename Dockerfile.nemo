@@ -1,0 +1,104 @@
+# Data plane serving nvidia/Nemotron-3.5-Content-Safety.
+#
+# Same application as `Dockerfile`; what differs is the dependency floor and
+# the serving defaults. The point of a separate image is that FIVE env vars
+# have to be exactly right for Nemotron, and a single missed
+# VLLM_NOTHINK_SUFFIX=false silently injects Qwen thinking tokens
+# ("/no_think /set nothink") into every prompt the moderator sees. Baking them
+# in makes the deployment correct by construction instead of correct by
+# checklist.
+#
+# See docs/spec-nemotron-guardrail-family.md.
+#
+# Nemotron documents vllm>=0.11.0,<=0.20.2, so unlike the default image this
+# one PINS the base rather than tracking :latest. Override at build time only
+# to move within that window:
+#   docker build -f Dockerfile.nemo --build-arg VLLM_BASE_IMAGE=vllm/vllm-openai:v0.20.1 .
+ARG VLLM_BASE_IMAGE=vllm/vllm-openai:v0.20.2
+FROM ${VLLM_BASE_IMAGE}
+
+# Install additional tools and dependencies for the application
+RUN apt-get update && apt-get install -y \
+    curl wget git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Model will be downloaded automatically by vLLM on first start
+
+# Install Python deps for the application.
+# requirements-nemo.txt states the model card's dependency window on top of the
+# shared runtime deps. Kept as a separate file so the default image is not
+# constrained by a model it does not serve.
+WORKDIR /runpod
+COPY requirements.txt .
+COPY requirements-nemo.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -r requirements-nemo.txt
+
+# Copy application code.
+# Keep this list in sync with Dockerfile — tests/test_nemo_dockerfile.py fails
+# the build if the two drift.
+COPY handler.py .
+COPY config/ config/
+COPY core/ core/
+COPY guardrails/ guardrails/
+COPY api/ api/
+COPY storage/ storage/
+COPY static/ static/
+COPY scripts/ scripts/
+
+# Create logs directory for telemetry file logging
+RUN mkdir -p logs && chmod 755 logs
+
+# Telemetry / SIEM defaults (non-secret). Credentials must be injected at
+# RUNTIME via RunPod Secrets. Never bake these into the image — it may be public.
+ENV VOTAL_ES_ENABLED=true
+ENV VOTAL_ES_INDEX=votal-shield-logs
+
+# ── Nemotron serving defaults ───────────────────────────────────────────
+# These are the five that must not be forgotten.
+ENV MODEL_NAME=nvidia/Nemotron-3.5-Content-Safety
+ENV SERVED_MODEL_NAME=nemotron_moderator
+# Not an fp8 checkpoint: it is a bf16 LoRA merge on Gemma-3-4B-it, so the
+# Qwen-era quantization flags must be omitted, not merely changed.
+ENV VLLM_QUANTIZATION=none
+ENV VLLM_KV_CACHE_DTYPE=none
+ENV VLLM_PERFORMANCE_MODE=none
+# Non-Qwen model: the thinking-suppression suffix would be literal prompt text
+# and skews classification. See core/llm_backend.py::_nothink_suffix_enabled.
+ENV VLLM_NOTHINK_SUFFIX=false
+# Multimodal checkpoint (SigLIP vision tower). Text-only serving skips it.
+ENV VLLM_LANGUAGE_MODEL_ONLY=true
+
+# NOT set yet: SHIELD_GUARDRAIL_FAMILY=nemo.
+# The family seam ships with zero adapters registered (task 2 of the spec), so
+# turning it on today would make every guardrail log "no adapter" and fall back
+# to the vai prompt anyway. Until tasks 3 and 4 land, this image's value is
+# serving Nemotron with the right flags — which is exactly what
+# docs/spec-nemotron-model-option.md delivers, as an artifact instead of a
+# checklist. Task 4 flips this on.
+
+ENV VLLM_HOST=0.0.0.0
+ENV VLLM_PORT=8000
+ENV LLM_BACKEND_TYPE=vllm
+
+# vLLM Performance Optimizations - Cache Directories
+ENV CACHE=/tmp/cache
+ENV PIP_CACHE_DIR=$CACHE/pip
+ENV HF_HOME=$CACHE/huggingface
+ENV HUGGINGFACE_HUB_CACHE=$CACHE/huggingface/hub
+ENV VLLM_CACHE_ROOT=$CACHE/vllm
+ENV TORCHINDUCTOR_CACHE_DIR=$CACHE/inductor
+ENV FLASHINFER_CACHE_DIR=$CACHE/flashinfer
+ENV TRITON_CACHE_DIR=$CACHE/triton
+
+ENV VLLM_ATTENTION_BACKEND=FLASHINFER
+
+RUN mkdir -p $CACHE/pip $CACHE/huggingface/hub $CACHE/vllm $CACHE/inductor $CACHE/flashinfer $CACHE/triton
+
+EXPOSE 8000 80
+
+RUN cp /runpod/scripts/start_vllm.sh /start-services.sh \
+    && chmod +x /start-services.sh
+
+ENTRYPOINT []
+CMD ["/start-services.sh"]
