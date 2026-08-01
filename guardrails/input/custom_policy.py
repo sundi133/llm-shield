@@ -7,7 +7,11 @@ from typing import Dict, Optional
 
 from guardrails.base import BaseGuardrail, safe_float
 from core.llm_backend import async_llm_call
-from guardrails.output.custom_policy import _parse_policy_csv
+from guardrails.output.custom_policy import (
+    POLICY_SCAN_INSTRUCTION,
+    _parse_policy_csv,
+    custom_policy_fail_open,
+)
 from core.models import GuardrailResult
 from core.text_utils import build_policy_messages, custom_policy_history_turns
 
@@ -54,18 +58,41 @@ class CustomPolicyInputGuardrail(BaseGuardrail):
                     return await self._evaluate_policy_with_llm(text, policy, context)
                 except Exception as e:
                     logger.error(f"Error evaluating input policy {policy['policy_id']}: {e}")
-                    return None
+                    # Return a shaped error rather than None: an unevaluated
+                    # policy must stay countable downstream, or it disappears
+                    # into the "all policies passed" summary.
+                    return {
+                        "passed": True, "action": "pass", "confidence": 0.0,
+                        "suppressed": False, "error": str(e),
+                        "message": f"Input policy evaluation error: {e}",
+                        "details": {
+                            "policy_id": policy.get("policy_id"),
+                            "policy_name": policy.get("name", ""),
+                            "error": str(e),
+                        },
+                    }
 
-            results = await asyncio.gather(*[_eval(p) for p in enabled_policies])
+            results = [r for r in await asyncio.gather(
+                *[_eval(p) for p in enabled_policies]) if r is not None]
             # enabled_policies is priority-sorted; gather preserves order, so
             # violations stay in priority order for aggregation.
-            violations = [r for r in results if r is not None and not r["passed"]]
+            violations = [r for r in results if not r["passed"]]
+            suppressed = [r for r in results if r.get("suppressed")]
+            errored = [r for r in results if r.get("error")]
 
             end_time = datetime.now()
             latency_ms = (end_time - start_time).total_seconds() * 1000
 
             # Return worst violation or pass
-            final_result = self._aggregate_policy_results(violations, enabled_policies)
+            final_result = self._aggregate_policy_results(
+                violations, enabled_policies, suppressed, errored)
+            if errored and final_result["passed"] and not custom_policy_fail_open():
+                final_result["passed"] = False
+                final_result["action"] = "block"
+                final_result["message"] = (
+                    f"{len(errored)} of {len(enabled_policies)} custom input "
+                    "policies could not be evaluated and "
+                    "SHIELD_CUSTOM_POLICY_FAIL_OPEN=0")
             final_result["action"] = self._apply_guardrail_action(final_result["action"])
             final_result["latency_ms"] = round(latency_ms, 2)
 
@@ -80,12 +107,13 @@ class CustomPolicyInputGuardrail(BaseGuardrail):
 
         except Exception as e:
             logger.error(f"Error in custom policy input guardrail: {e}")
+            fail_open = custom_policy_fail_open()
             return GuardrailResult(
-                passed=True,  # Fail open for safety
-                action="pass",
+                passed=fail_open,
+                action="pass" if fail_open else "block",
                 guardrail_name=self.name,
                 message=f"Custom input policy evaluation error: {str(e)}",
-                details={"error": str(e)},
+                details={"error": str(e), "fail_open": fail_open},
                 latency_ms=0.0
             )
 
@@ -101,15 +129,17 @@ POLICY INFORMATION:
 EVALUATION CRITERIA:
 {policy['prompt']}
 
-INPUT TEXT TO ANALYZE:
-"{text}"
+INPUT TEXT TO ANALYZE (everything between the markers):
+<<<BEGIN TEXT
+{text}
+END TEXT>>>
 
 CONTEXT:
 - User Role: {context.get('user_role', 'unknown')}
 - Session ID: {context.get('session_id', 'unknown')}
 - Stage: Input validation
 
-Analyze if the input text violates the policy. Consider context and intent.
+{POLICY_SCAN_INSTRUCTION}
 
 Respond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning
 Use "none" for violation_type when there is no violation. Do not quote fields;
@@ -142,14 +172,22 @@ Example: false,0.90,none,no policy violation found"""
             confidence = safe_float(result.get("confidence"), 0.5)
             violates_policy = result["violates_policy"]
 
-            # Apply confidence threshold
+            # Apply confidence threshold. A flagged-but-under-threshold verdict
+            # is recorded: without it, "the model found nothing" and "the model
+            # flagged this at 0.79 and we dropped it" are the same response, and
+            # the second is the one an operator needs to see to tune the
+            # threshold or the policy prompt.
+            suppressed = False
             if confidence < policy.get("confidence_threshold", 0.8):
+                suppressed = bool(violates_policy)
                 violates_policy = False  # Not confident enough
 
             return {
                 "passed": not violates_policy,
                 "action": policy["action"] if violates_policy else "pass",
                 "confidence": confidence,
+                "suppressed": suppressed,
+                "error": None,
                 "message": f"Custom input policy '{policy['name']}': {result.get('reasoning', 'No reasoning provided')}",
                 "details": {
                     "policy_id": policy["policy_id"],
@@ -163,14 +201,18 @@ Example: false,0.90,none,no policy violation found"""
 
         except Exception as e:
             logger.error(f"LLM evaluation error for input policy {policy['policy_id']}: {e}")
-            # Fail open - don't block due to evaluation errors
+            # Fail open per policy - the aggregate decides what to do with it
+            # (see custom_policy_fail_open), but the error is always counted.
             return {
                 "passed": True,
                 "action": "pass",
                 "confidence": 0.0,
+                "suppressed": False,
+                "error": str(e),
                 "message": f"Input policy evaluation error: {str(e)}",
                 "details": {
                     "policy_id": policy["policy_id"],
+                    "policy_name": policy.get("name", ""),
                     "error": str(e)
                 }
             }
@@ -191,17 +233,49 @@ Example: false,0.90,none,no policy violation found"""
             key=lambda action: action_severity.get(action, 0),
         )
 
-    def _aggregate_policy_results(self, violations: list[Dict], all_policies: list[Dict]) -> Dict:
+    def _aggregate_policy_results(self, violations: list[Dict], all_policies: list[Dict],
+                                  suppressed: Optional[list[Dict]] = None,
+                                  errored: Optional[list[Dict]] = None) -> Dict:
         """Aggregate results from multiple policy violations."""
 
+        # Near-misses and failed evaluations ride along on every response.
+        # Both used to be invisible: a policy that flagged at 0.79 and a policy
+        # whose LLM call raised both landed in the same "passed" summary as a
+        # policy that genuinely found nothing.
+        extra: Dict = {}
+        if suppressed:
+            extra["suppressed_by_threshold"] = [{
+                "policy_id": s["details"].get("policy_id"),
+                "policy_name": s["details"].get("policy_name"),
+                "violation_type": s["details"].get("violation_type"),
+                "confidence": s["confidence"],
+                "threshold": s["details"].get("threshold"),
+            } for s in suppressed]
+        if errored:
+            extra["errors"] = [{
+                "policy_id": e["details"].get("policy_id"),
+                "policy_name": e["details"].get("policy_name"),
+                "error": e["details"].get("error"),
+            } for e in errored]
+
         if not violations:
+            evaluated = len(all_policies) - len(errored or [])
+            message = f"All {len(all_policies)} custom input policies passed"
+            if errored:
+                message = (f"{evaluated} of {len(all_policies)} custom input policies "
+                           f"passed; {len(errored)} could not be evaluated")
+            if suppressed:
+                message += (f" ({len(suppressed)} detection(s) below the "
+                            "confidence threshold)")
             return {
                 "passed": True,
                 "action": "pass",
-                "message": f"All {len(all_policies)} custom input policies passed",
+                "message": message,
                 "details": {
                     "policies_checked": len(all_policies),
-                    "violations": 0
+                    "policies_evaluated": evaluated,
+                    "violations": 0,
+                    **extra,
                 }
             }
 
@@ -225,8 +299,10 @@ Example: false,0.90,none,no policy violation found"""
             "message": f"{len(violations)} custom input policy violation(s). Worst: {worst_violation['message']}",
             "details": {
                 "policies_checked": len(all_policies),
+                "policies_evaluated": len(all_policies) - len(errored or []),
                 "violations": len(violations),
                 "violation_details": violation_details,
-                "primary_violation": worst_violation["details"]
+                "primary_violation": worst_violation["details"],
+                **extra,
             }
         }
