@@ -74,12 +74,29 @@ class BiasDetectionGuardrail(BaseGuardrail):
                 latency_ms=elapsed,
             )
 
+        # Same silent-suppression defect the toxicity guard had: a real
+        # detection under the threshold was reported as "No bias detected in
+        # output" while the details in that same response still said
+        # biased=true. Blocking behaviour above is unchanged; this only stops
+        # the message from contradicting its own details.
+        details = dict(result) if isinstance(result, dict) else {"result": result}
+        details["threshold"] = threshold
+        if biased:
+            details["suppressed_by_threshold"] = True
+            message = (
+                f"Bias detected ({bias_type}, {severity} severity, score "
+                f"{bias_score:.2f}) but below the {threshold:.2f} threshold, "
+                "not blocked"
+            )
+        else:
+            message = "No bias detected in output"
+
         return GuardrailResult(
             passed=True,
             action="pass",
             guardrail_name=self.name,
-            message="No bias detected in output",
-            details=result,
+            message=message,
+            details=details,
             latency_ms=elapsed,
         )
 

@@ -81,6 +81,7 @@ class ToxicityGuardrail(BaseGuardrail):
                 action="pass",
                 guardrail_name=self.name,
                 message=f"Toxicity check failed, allowing by default: {e}",
+                details={"error": str(e), "fail_open": True},
                 latency_ms=elapsed,
             )
 
@@ -90,12 +91,23 @@ class ToxicityGuardrail(BaseGuardrail):
         severity = result.get("severity", "none")
         elapsed = (time.perf_counter() - start) * 1000
 
-        # Filter by specific categories if configured
+        # A detection can be dropped two ways: the tenant scoped the guardrail
+        # to specific categories, or the score sits under the threshold. Both
+        # are legitimate policy choices. Reporting either as "No toxic content
+        # detected" is not — that response asserted the opposite of the
+        # `is_toxic: true, category: hate_speech, severity: high` sitting in
+        # its own details, and an operator reading the message would never
+        # think to look. Blocking behaviour below is unchanged.
+        detected = bool(is_toxic)
         allowed_categories = self.settings.get("categories")
-        if allowed_categories and category not in allowed_categories:
-            is_toxic = False
+        suppressed_by_category = bool(
+            detected and allowed_categories and category not in allowed_categories
+        )
+        suppressed_by_threshold = bool(
+            detected and not suppressed_by_category and score < threshold
+        )
 
-        if is_toxic and score >= threshold:
+        if detected and not suppressed_by_category and score >= threshold:
             return GuardrailResult(
                 passed=False,
                 action=self.configured_action,
@@ -105,12 +117,33 @@ class ToxicityGuardrail(BaseGuardrail):
                 latency_ms=elapsed,
             )
 
+        details = dict(result) if isinstance(result, dict) else {"result": result}
+        details["threshold"] = threshold
+        if allowed_categories:
+            details["allowed_categories"] = list(allowed_categories)
+
+        if suppressed_by_category:
+            details["suppressed_by_category"] = True
+            message = (
+                f"Toxic content [{category}] ({severity}, score {score:.2f}) "
+                "detected but its category is outside the configured set, "
+                "not blocked"
+            )
+        elif suppressed_by_threshold:
+            details["suppressed_by_threshold"] = True
+            message = (
+                f"Toxic content [{category}] ({severity}, score {score:.2f}) "
+                f"detected but below the {threshold:.2f} threshold, not blocked"
+            )
+        else:
+            message = "No toxic content detected"
+
         return GuardrailResult(
             passed=True,
             action="pass",
             guardrail_name=self.name,
-            message="No toxic content detected",
-            details=result,
+            message=message,
+            details=details,
             latency_ms=elapsed,
         )
 
@@ -154,12 +187,31 @@ class ToxicityGuardrail(BaseGuardrail):
                 r.message = f"[chunked {len(chunks)} parts] {r.message}"
                 return r
 
+        # No chunk blocked, but a chunk may still have carried a detection that
+        # was suppressed by threshold or category. Surface the highest-scoring
+        # one rather than collapsing every chunk into "no toxic content".
         elapsed = (time.perf_counter() - start) * 1000
+        suppressed = [
+            r for r in results
+            if (r.details or {}).get("suppressed_by_threshold")
+            or (r.details or {}).get("suppressed_by_category")
+        ]
+        details = {"chunks_checked": len(chunks)}
+        message = f"No toxic content detected (checked {len(chunks)} chunks)"
+        if suppressed:
+            worst = max(
+                suppressed,
+                key=lambda r: as_float((r.details or {}).get("toxicity_score")),
+            )
+            details["suppressed_chunks"] = len(suppressed)
+            details["worst_suppressed"] = worst.details
+            message = f"[chunked {len(chunks)} parts] {worst.message}"
+
         return GuardrailResult(
             passed=True,
             action="pass",
             guardrail_name=self.name,
-            message=f"No toxic content detected (checked {len(chunks)} chunks)",
-            details={"chunks_checked": len(chunks)},
+            message=message,
+            details=details,
             latency_ms=elapsed,
         )
