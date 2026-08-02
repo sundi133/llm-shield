@@ -84,11 +84,24 @@ def test_the_default_image_still_serves_the_votal_model():
     assert "VLLM_NOTHINK_SUFFIX" not in _env(DEFAULT)
 
 
-def test_the_family_is_not_switched_on_until_adapters_exist():
-    """Zero adapters are registered today, so SHIELD_GUARDRAIL_FAMILY=nemo
-    would only log "no adapter" and fall back to the vai prompt. Task 4 of
-    docs/spec-nemotron-guardrail-family.md flips this and deletes this test."""
-    assert "SHIELD_GUARDRAIL_FAMILY" not in _env(NEMO)
+def test_the_nemo_image_runs_the_nemo_family():
+    """The family selects the verdict parser, so it is not optional here.
+    Nemotron under the vai family fails every parse and passes everything."""
+    assert _env(NEMO)["SHIELD_GUARDRAIL_FAMILY"] == "nemo"
+
+
+def test_the_default_image_does_not_set_a_family():
+    """Unset resolves to vai in active_family(); pinning it would make the
+    default image's behaviour depend on a var nobody sets today."""
+    assert "SHIELD_GUARDRAIL_FAMILY" not in _env(DEFAULT)
+
+
+def test_startup_refuses_a_family_model_mismatch():
+    """Boot-time failure beats a silent hole: a mismatch does not error at
+    request time, it passes everything behind clean 200s."""
+    script = (ROOT / "scripts" / "start_vllm.sh").read_text(encoding="utf-8")
+    assert "SHIELD_ALLOW_FAMILY_MISMATCH" in script
+    assert script.count("exit 1") >= 3   # ollama x2, plus the family guard
 
 
 def test_the_vllm_base_is_pinned_inside_the_documented_window():

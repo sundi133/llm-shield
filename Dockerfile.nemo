@@ -69,13 +69,12 @@ ENV VLLM_NOTHINK_SUFFIX=false
 # Multimodal checkpoint (SigLIP vision tower). Text-only serving skips it.
 ENV VLLM_LANGUAGE_MODEL_ONLY=true
 
-# NOT set yet: SHIELD_GUARDRAIL_FAMILY=nemo.
-# The family seam ships with zero adapters registered (task 2 of the spec), so
-# turning it on today would make every guardrail log "no adapter" and fall back
-# to the vai prompt anyway. Until tasks 3 and 4 land, this image's value is
-# serving Nemotron with the right flags — which is exactly what
-# docs/spec-nemotron-model-option.md delivers, as an artifact instead of a
-# checklist. Task 4 flips this on.
+# The family is the whole point of this image: it selects both the prompt style
+# and the verdict parser. Serving Nemotron under the `vai` family does not
+# error, it silently passes everything (the CSV parse fails, `.get(field,
+# False)` reads as "no violation"), so scripts/start_vllm.sh refuses to boot on
+# a family/model mismatch rather than letting that reach production.
+ENV SHIELD_GUARDRAIL_FAMILY=nemo
 
 ENV VLLM_HOST=0.0.0.0
 ENV VLLM_PORT=8000
