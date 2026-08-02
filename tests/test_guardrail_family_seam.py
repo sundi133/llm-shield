@@ -73,19 +73,17 @@ def test_an_unknown_family_falls_back_to_vai():
         assert active_family() == FAMILY_VAI
 
 
-def test_no_adapters_are_registered_yet():
-    """Task 2 ships the seam inert. Tasks 3 and 4 populate this."""
-    assert registered_adapters() == {}
-
-
 def test_adapter_lookup_is_none_under_vai():
+    """The default family never reaches the adapter table."""
     assert adapter_for("toxicity") is None
+    assert adapter_for("bias_detection") is None
 
 
-def test_adapter_lookup_is_none_under_nemo_without_an_adapter():
-    """An unported guardrail keeps working rather than taking the suite down."""
+def test_an_unported_guardrail_falls_back_rather_than_failing():
+    """language_detection is deliberately unregistered: identifying a language
+    is not a moderation task. It keeps working on the vai prompt."""
     with patch.dict(os.environ, {"SHIELD_GUARDRAIL_FAMILY": "nemo"}):
-        assert adapter_for("toxicity") is None
+        assert adapter_for("language_detection") is None
 
 
 def test_a_registered_adapter_is_returned_only_under_nemo():

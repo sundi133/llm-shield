@@ -89,6 +89,7 @@ def adapter_for(guardrail_name: str) -> Optional[NemoAdapter]:
     if active_family() != FAMILY_NEMO:
         return None
 
+    _load_adapters()
     adapter = _ADAPTERS.get(guardrail_name)
     if adapter is None:
         # A guardrail with no adapter yet still has to work. Falling back to
@@ -110,7 +111,25 @@ def register_adapter(guardrail_name: str, adapter: NemoAdapter) -> None:
 
 def registered_adapters() -> dict[str, NemoAdapter]:
     """Snapshot of the adapter table. For tests and diagnostics."""
+    _load_adapters()
     return dict(_ADAPTERS)
+
+
+_loaded = False
+
+
+def _load_adapters() -> None:
+    """Import the adapter table on first use.
+
+    Deferred rather than imported at module top so the seam costs nothing
+    under the default family: a `vai` deployment never imports the adapters,
+    the policy text, or the format constants at all.
+    """
+    global _loaded
+    if _loaded:
+        return
+    _loaded = True
+    from guardrails.nemo import prompts  # noqa: F401  (registers on import)
 
 
 __all__ = [
