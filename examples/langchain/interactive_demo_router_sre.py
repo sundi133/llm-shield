@@ -497,10 +497,14 @@ def guard_block(x):
     do surface as exceptions, and those go through here too.
     """
     low = str(x).lower()
-    return ("blocked by votal guardrails" in low
+    # "by votal guardrails" and not "blocked by votal guardrails": the output
+    # guard firing part-way through a stream says "blocked MID-STREAM by Votal
+    # guardrails", which the narrower phrase missed — and a working control then
+    # printed as "agent error", which is the one way it must never read.
+    return ("by votal guardrails" in low
             or "triggered guardrails:" in low
             or "guardrail check failed" in low
-            or "failed final votal check" in low)
+            or "votal check" in low)
 
 
 # ── the loop ─────────────────────────────────────────────────────────────
@@ -815,8 +819,12 @@ def main():
                 history = before
         except Exception as e:
             if guard_block(e):
-                print(f"  {R}BLOCKED at the router{Z} "
-                      f"{DIM}— the turn did not complete{Z}")
+                # The output guard fires on text already on its way out, so
+                # some of the answer is above this line. Say so — a truncated
+                # sentence followed by a red line otherwise looks like a crash.
+                print(f"\n  {R}CUT OFF at the router{Z} "
+                      f"{DIM}— the output guard stopped the answer mid-stream; "
+                      f"what printed above is partial{Z}")
                 print(f"  {DIM}{str(e)[:300]}{Z}")
             else:
                 print(f"  {R}agent error{Z} {e.__class__.__name__}: {str(e)[:200]}")
