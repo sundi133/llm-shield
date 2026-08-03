@@ -5,6 +5,41 @@ set -e
 echo "LLM_BACKEND_URL=${LLM_BACKEND_URL:-<unset>}"
 echo "LLM_BACKEND_TYPE=${LLM_BACKEND_TYPE:-vllm}"
 
+# ── guardrail family / served model must agree ──────────────────────────
+# The family selects the prompt style AND the verdict parser
+# (guardrails/nemo/__init__.py). Pointing one at the other model does not
+# error at request time: the parse fails, `.get(field, False)` reads as "no
+# violation", and the guard passes everything behind clean 200s. That is the
+# bug class of PRs #378 and #379, so it fails at BOOT instead, where it is
+# one log line rather than a silent hole in production.
+#
+# Escape hatch: SHIELD_ALLOW_FAMILY_MISMATCH=1 (for benchmarking one model
+# against the other family's prompts).
+SERVED_MODEL="${MODEL_NAME:-${LLM_MODEL_NAME:-}}"
+FAMILY="${SHIELD_GUARDRAIL_FAMILY:-vai}"
+if [ "${SHIELD_ALLOW_FAMILY_MISMATCH:-0}" != "1" ]; then
+  case "$SERVED_MODEL" in
+    *[Nn]emotron*) SERVED_IS_NEMO=true ;;
+    *)             SERVED_IS_NEMO=false ;;
+  esac
+  if [ "$SERVED_IS_NEMO" = "true" ] && [ "$FAMILY" != "nemo" ]; then
+    echo "ERROR: serving '$SERVED_MODEL' with SHIELD_GUARDRAIL_FAMILY='$FAMILY'."
+    echo "       Nemotron needs SHIELD_GUARDRAIL_FAMILY=nemo, or its verdicts"
+    echo "       will fail to parse and every guardrail will pass by default."
+    echo "       Use the llm-shield-nemo image, or set SHIELD_ALLOW_FAMILY_MISMATCH=1."
+    exit 1
+  fi
+  if [ "$FAMILY" = "nemo" ] && [ "$SERVED_IS_NEMO" = "false" ]; then
+    echo "ERROR: SHIELD_GUARDRAIL_FAMILY=nemo but the served model is '$SERVED_MODEL'."
+    echo "       The nemo family parses Nemotron's moderation format; against"
+    echo "       another model every verdict fails to parse."
+    echo "       Set MODEL_NAME=nvidia/Nemotron-3.5-Content-Safety, or unset the"
+    echo "       family, or set SHIELD_ALLOW_FAMILY_MISMATCH=1."
+    exit 1
+  fi
+fi
+echo "SHIELD_GUARDRAIL_FAMILY=$FAMILY (model: ${SERVED_MODEL:-<unset>})"
+
 SKIP_VLLM="${SKIP_VLLM:-false}"
 
 if [ "$SKIP_VLLM" = "true" ]; then
