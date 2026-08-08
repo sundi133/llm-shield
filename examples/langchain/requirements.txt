@@ -3,3 +3,6 @@ langchain-openai>=0.3.0
 openai>=1.0.0
 requests>=2.31.0
 langchain-core>=0.3.0
+# trusted_proxy_app.py only
+fastapi>=0.110.0
+uvicorn>=0.27.0
