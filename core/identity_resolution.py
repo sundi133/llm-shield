@@ -30,9 +30,15 @@ SOURCE_MTLS = "mtls"                 # client cert, via the trusted-proxy bounda
 SOURCE_OIDC = "oidc"                 # external IdP token, signature + aud verified
 SOURCE_BODY = "body"                 # caller asserted it in the request body
 SOURCE_HEADER = "header"             # caller asserted it in a request header
+SOURCE_PROXY = "proxy"               # asserted, but vouched for by a trusted hop
 SOURCE_NONE = "none"                 # absent
 
 #: Sources where the value was proven cryptographically rather than claimed.
+#:
+#: SOURCE_PROXY is deliberately absent. The trusted proxy proved *the hop* with
+#: a shared secret; it did not prove the end user's credential to Shield. Adding
+#: it here would make ``role_verified`` mean two different things and would
+#: silently promote a vouched role to a proven one in every audit built on it.
 VERIFIED_SOURCES = frozenset({SOURCE_AGENT_TOKEN, SOURCE_MTLS, SOURCE_OIDC})
 
 #: Token binding (proof-of-possession). Separate from role binding: one asks
@@ -115,7 +121,22 @@ def verify_token_binding(request: Any, claims: Optional[dict]) -> tuple:
 
 
 MODE_OFF, MODE_PREFER, MODE_STRICT = "off", "prefer", "strict"
-_MODES = (MODE_OFF, MODE_PREFER, MODE_STRICT)
+
+#: ``strict``, except a self-asserted role is accepted from a request that came
+#: through the trusted-proxy boundary. For a deployment where Shield is public
+#: but internal callers legitimately send X-User-Role: strict alone breaks them,
+#: and prefer leaves the header forgeable by anyone on the internet.
+#: See docs/spec-proxy-trusted-role-header.md.
+MODE_STRICT_PROXY = "strict_proxy"
+
+_MODES = (MODE_OFF, MODE_PREFER, MODE_STRICT, MODE_STRICT_PROXY)
+
+#: Modes that prefer a verified claim over anything self-asserted.
+_CLAIM_FIRST_MODES = (MODE_PREFER, MODE_STRICT, MODE_STRICT_PROXY)
+
+#: Modes that refuse a self-asserted role absent some other warrant.
+_REFUSING_MODES = (MODE_STRICT, MODE_STRICT_PROXY)
+
 _ENV = "SHIELD_ROLE_BINDING"
 _CACHE: dict = {}
 _CACHE_TTL_S = 30
@@ -333,6 +354,25 @@ def _verified_identity(request: Any):
     return getattr(state, "identity", None) if state is not None else None
 
 
+def _proxy_vouched(request: Any) -> bool:
+    """True only when the trusted-proxy boundary is ON and this peer passed it.
+
+    Both halves are required. Without ``trusted_proxy_only()`` an operator could
+    set ``strict_proxy`` while the boundary is disabled and get ``strict``
+    semantics under a name that promises otherwise — the mode would look
+    configured and do nothing.
+
+    Any failure is False: boundary off, module missing, exception. A role that
+    cannot be attributed to a trusted hop is not a role. Imported lazily so a
+    deployment on any other mode never loads the module on the guard path.
+    """
+    try:
+        from core.proxy_trust import peer_is_trusted, trusted_proxy_only
+        return bool(trusted_proxy_only() and peer_is_trusted(request))
+    except Exception:
+        return False
+
+
 def resolve_identity(
     request: Any,
     *,
@@ -408,18 +448,27 @@ def resolve_identity(
             delegation_error="",
         )
 
-    if not claimed and mode in (MODE_PREFER, MODE_STRICT):
+    if not claimed and mode in _CLAIM_FIRST_MODES:
         # No role on the agent token — try a verified external credential.
         wl = _workload_roles(request, cfg)
         if wl:
             claimed = wl
             if agent_source == SOURCE_NONE:
                 agent_source = SOURCE_OIDC
-    if claimed and mode in (MODE_PREFER, MODE_STRICT):
+    if claimed and mode in _CLAIM_FIRST_MODES:
         # The claim wins and the header is ignored. Deterministic ordering: the
         # first role as issued, never set iteration.
         user_role, role_source = str(claimed[0]), agent_source
-    elif mode == MODE_STRICT:
+    elif mode == MODE_STRICT_PROXY and _proxy_vouched(request):
+        # A self-asserted role, but from a hop that proved itself with a shared
+        # secret. Recorded as SOURCE_PROXY, never as a verified source: the
+        # proxy vouched for it, nobody verified the user's credential here.
+        #
+        # Reached only when no verified claim was found, so this cannot be used
+        # to override a real credential.
+        hdr = (body_user_role or "").strip() or _header(request, "X-User-Role")
+        user_role, role_source = (hdr, SOURCE_PROXY) if hdr else ("", SOURCE_NONE)
+    elif mode in _REFUSING_MODES:
         # STRICT means a self-asserted role is not a role. Falling through to
         # the body or header here is what made `strict` behave identically to
         # `prefer`: both preferred a verified claim and both accepted a typed
