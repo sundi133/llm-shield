@@ -96,6 +96,7 @@ COPY api/routes_oauth_registration.py api/
 COPY api/routes_oidc_admin.py api/
 COPY api/routes_a2a.py api/
 COPY api/routes_agentic_control_plane.py api/
+COPY api/routes_identity_config.py api/
 COPY api/routes_guardrail_metrics.py api/
 COPY api/routes_siem.py api/
 COPY api/routes_vault.py api/
@@ -107,6 +108,11 @@ COPY api/routes_tool.py api/
 COPY api/routes_config.py api/
 COPY storage/__init__.py storage/
 COPY storage/tenant_store.py storage/
+# Per-tenant role-binding config. identity_resolution imports it lazily
+# inside a try/except, so a missing COPY does NOT crash the boot — it
+# silently falls back to env defaults and every tenant's IdP claim-path
+# config stops applying. Silent, and security-relevant.
+COPY storage/role_binding_config.py storage/
 COPY storage/tenant_models.py storage/
 COPY storage/admin_audit.py storage/
 COPY storage/custom_policies.py storage/

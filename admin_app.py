@@ -61,6 +61,7 @@ except Exception as _edge_import_err:  # optional module — never crash-loop th
         "edge routes unavailable: %s", _edge_import_err)
 from api.routes_data_policies import router as data_policies_router
 from api.routes_agentic_control_plane import router as agentic_control_plane_router
+from api.routes_identity_config import router as identity_config_router
 from api.routes_guardrail_metrics import router as guardrail_metrics_router
 from api.routes_siem import router as siem_router
 from api.routes_vault import router as vault_router
@@ -1077,6 +1078,7 @@ def create_admin_app() -> FastAPI:
         app.include_router(edge_router)         # /v1/edge/policy-bundle (edge fast-path rules)
     app.include_router(data_policies_router)    # /v1/data-policies/*
     app.include_router(agentic_control_plane_router)  # /v1/tenant/me/agentic/*
+    app.include_router(identity_config_router)   # /v1/tenant/me/identity/role-binding
     app.include_router(guardrail_metrics_router)       # /v1/tenant/me/guardrails/metrics
     app.include_router(siem_router)                    # /v1/tenant/me/siem
     app.include_router(vault_router)                   # /v1/tenant/me/vault
@@ -2017,6 +2019,19 @@ def create_admin_app() -> FastAPI:
         except ImportError:
             # New module unavailable (e.g. cryptography missing); admin
             # still boots, agent-auth tab will degrade.
+            pass
+        # A delegation depth limit set without parent proof bounds nothing:
+        # the depth is derived from a caller-asserted parent. Say so at boot
+        # rather than let an operator believe they have a control they do not.
+        try:
+            from core.agent_tokens import warn_if_depth_limit_is_unenforceable
+            warn_if_depth_limit_is_unenforceable()
+        except Exception:
+            pass
+        try:
+            from core.agent_tokens import warn_if_allow_unbound_is_inert
+            warn_if_allow_unbound_is_inert()
+        except Exception:
             pass
 
     return app

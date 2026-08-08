@@ -73,7 +73,8 @@ def _allowed_issuers() -> list:
     return [i.strip() for i in raw.split(",") if i.strip()]
 
 
-def verify_user_token(token: str, *, audience: Optional[str] = None) -> Delegation:
+def verify_user_token(token: str, *, audience: Optional[str] = None,
+                      tenant_id: Optional[str] = None) -> Delegation:
     """Verify a delegated user token against the trusted issuers.
 
     Mirrors the oidc_sa provider: read the issuer unverified, refuse unless it
@@ -121,15 +122,29 @@ def verify_user_token(token: str, *, audience: Optional[str] = None) -> Delegati
     return Delegation(
         present=True, verified=True,
         user_sub=str(claims.get("sub", "")),
-        user_roles=_roles_from(claims),
+        user_roles=_roles_from(claims, tenant_id),
     )
 
 
-def _roles_from(claims: dict) -> tuple:
-    from core.identity_resolution import extract_roles
+def _roles_from(claims: dict, tenant_id: Optional[str] = None) -> tuple:
+    """Roles from a verified user token, using the SAME configuration as role
+    binding.
 
-    path = os.environ.get("SHIELD_ROLE_CLAIM", "realm_access.roles").strip()
-    return extract_roles(claims, path)
+    This used to read ``SHIELD_ROLE_CLAIM`` directly while role binding read a
+    per-tenant ``role_claim``. Two sources of truth for "where does the role
+    live" is how the two paths silently disagreed: point a deployment at Okta
+    and delegation would look at ``groups`` while role binding looked at
+    ``realm_access.roles``, or the reverse, depending on which knob was set.
+
+    ``claim_config`` resolves tenant config, then ``SHIELD_ROLE_CLAIM``, then
+    Keycloak's default — so a deployment with no tenant config behaves exactly
+    as it did.
+    """
+    from core.identity_resolution import claim_config, extract_roles
+
+    cfg = claim_config(tenant_id)
+    return extract_roles(claims, cfg["role_claim"], cfg["role_map"],
+                         cfg["role_allowlist"])
 
 
 def actor_from_act_claim(claims: dict) -> str:
@@ -145,7 +160,7 @@ def actor_from_act_claim(claims: dict) -> str:
     return ""
 
 
-def resolve_delegation(request: Any) -> Delegation:
+def resolve_delegation(request: Any, tenant_id: Optional[str] = None) -> Delegation:
     """Delegation for this request. Never raises — it is on the guard path."""
     if delegation_mode() == MODE_OFF:
         return Delegation()
@@ -158,7 +173,7 @@ def resolve_delegation(request: Any) -> Delegation:
         token = token[7:].strip()
     if token:
         try:
-            return verify_user_token(token)
+            return verify_user_token(token, tenant_id=tenant_id)
         except Exception as e:
             return Delegation(present=True, error=str(e))
 
@@ -173,7 +188,7 @@ def resolve_delegation(request: Any) -> Delegation:
             return Delegation(
                 present=True, verified=True,
                 user_sub=str(claims.get("sub", "")),
-                user_roles=_roles_from(claims),
+                user_roles=_roles_from(claims, tenant_id),
             )
     except Exception:
         pass

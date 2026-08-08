@@ -30,9 +30,15 @@ SOURCE_MTLS = "mtls"                 # client cert, via the trusted-proxy bounda
 SOURCE_OIDC = "oidc"                 # external IdP token, signature + aud verified
 SOURCE_BODY = "body"                 # caller asserted it in the request body
 SOURCE_HEADER = "header"             # caller asserted it in a request header
+SOURCE_PROXY = "proxy"               # asserted, but vouched for by a trusted hop
 SOURCE_NONE = "none"                 # absent
 
 #: Sources where the value was proven cryptographically rather than claimed.
+#:
+#: SOURCE_PROXY is deliberately absent. The trusted proxy proved *the hop* with
+#: a shared secret; it did not prove the end user's credential to Shield. Adding
+#: it here would make ``role_verified`` mean two different things and would
+#: silently promote a vouched role to a proven one in every audit built on it.
 VERIFIED_SOURCES = frozenset({SOURCE_AGENT_TOKEN, SOURCE_MTLS, SOURCE_OIDC})
 
 #: Token binding (proof-of-possession). Separate from role binding: one asks
@@ -62,27 +68,18 @@ def token_binding_mode() -> str:
 def _request_uri(request: Any) -> str:
     """The htu comparison target.
 
-    Behind a load balancer the scheme and host the client used are in
-    X-Forwarded-*, and the raw URL says http://internal-host. Trust those
-    headers ONLY when the proxy boundary says the hop is trusted — otherwise a
-    caller picks its own htu and the check means nothing.
+    Delegates to core.proxy_trust.effective_request_uri, which is the single
+    implementation shared with agent-token possession proofs. Kept as a thin
+    alias so existing call sites and tests do not move.
     """
     try:
-        url = str(request.url)
+        from core.proxy_trust import effective_request_uri
+        return effective_request_uri(request)
     except Exception:
-        return ""
-    try:
-        from core.proxy_trust import peer_is_trusted, trusted_proxy_only
-        if trusted_proxy_only() and peer_is_trusted(request):
-            from urllib.parse import urlsplit, urlunsplit
-            proto = _header(request, "X-Forwarded-Proto")
-            host = _header(request, "X-Forwarded-Host")
-            if proto or host:
-                p = urlsplit(url)
-                url = urlunsplit((proto or p.scheme, host or p.netloc, p.path, "", ""))
-    except Exception:
-        pass
-    return url
+        try:
+            return str(request.url)
+        except Exception:
+            return ""
 
 
 def verify_token_binding(request: Any, claims: Optional[dict]) -> tuple:
@@ -115,10 +112,30 @@ def verify_token_binding(request: Any, claims: Optional[dict]) -> tuple:
 
 
 MODE_OFF, MODE_PREFER, MODE_STRICT = "off", "prefer", "strict"
-_MODES = (MODE_OFF, MODE_PREFER, MODE_STRICT)
+
+#: ``strict``, except a self-asserted role is accepted from a request that came
+#: through the trusted-proxy boundary. For a deployment where Shield is public
+#: but internal callers legitimately send X-User-Role: strict alone breaks them,
+#: and prefer leaves the header forgeable by anyone on the internet.
+#: See docs/spec-proxy-trusted-role-header.md.
+MODE_STRICT_PROXY = "strict_proxy"
+
+_MODES = (MODE_OFF, MODE_PREFER, MODE_STRICT, MODE_STRICT_PROXY)
+
+#: Modes that prefer a verified claim over anything self-asserted.
+_CLAIM_FIRST_MODES = (MODE_PREFER, MODE_STRICT, MODE_STRICT_PROXY)
+
+#: Modes that refuse a self-asserted role absent some other warrant.
+_REFUSING_MODES = (MODE_STRICT, MODE_STRICT_PROXY)
+
 _ENV = "SHIELD_ROLE_BINDING"
-_CACHE: dict = {}
-_CACHE_TTL_S = 30
+
+#: Keycloak's realm roles. Canonical home is here rather than in the storage
+#: module because the guard path needs it on every call: importing it from
+#: storage would put a module import on `/guardrails/*` even when role binding
+#: is off, and would raise — rather than fall back — in any image that did not
+#: ship that module.
+DEFAULT_ROLE_CLAIM = "realm_access.roles"
 
 
 def _env_mode() -> str:
@@ -126,96 +143,197 @@ def _env_mode() -> str:
     return v if v in _MODES else MODE_OFF
 
 
+def _stored_config(tenant_id: Optional[str]) -> Optional[dict]:
+    """Per-tenant stored config, via the cache in storage.role_binding_config.
+
+    Guarded: the module is absent from slim images that do not COPY it, and a
+    missing optional module must degrade to env defaults rather than raise on
+    the guard path.
+    """
+    try:
+        from storage.role_binding_config import get_config
+        return get_config(tenant_id)
+    except Exception:
+        return None
+
+
 def role_binding_mode(tenant_id: Optional[str] = None) -> str:
-    """off | prefer | strict — default off, so nothing changes until opted in.
+    """off | prefer | strict | strict_proxy — default off.
 
     ``SHIELD_ROLE_BINDING=off`` disables the feature globally regardless of
-    tenant config: the operator kill switch. Otherwise a tenant setting wins.
+    tenant config: the operator kill switch, checked before any store read so
+    a deployment with binding off performs ZERO Redis reads on the guard path.
+    Otherwise a tenant setting wins.
 
-    Cached briefly. A store that is unreachable resolves to the env default
-    rather than locking out every tenant on a Redis blip — the failure mode of
-    "cannot read config" should not be "deny everything".
+    A store that is unreachable resolves to the env default rather than locking
+    out every tenant on a Redis blip — the failure mode of "cannot read config"
+    should not be "deny everything".
     """
     env = _env_mode()
     if env == MODE_OFF or not tenant_id:
         return env
-    hit = _CACHE.get(tenant_id)
-    now = time.time()
-    if hit and now - hit[1] < _CACHE_TTL_S:
-        return hit[0]
-    mode = env
-    try:
-        from storage.tenant_store import _get_redis
-        r = _get_redis()
-        if r:
-            import json
-            raw = r.get(f"shield:role_binding:{tenant_id}")
-            if raw:
-                cfg = json.loads(raw if isinstance(raw, str) else raw.decode())
-                cand = str(cfg.get("mode", "")).strip().lower()
-                if cand in _MODES:
-                    mode = cand
-    except Exception:
-        mode = env
-    _CACHE[tenant_id] = (mode, now)
-    return mode
+    stored = _stored_config(tenant_id)
+    if stored:
+        cand = str(stored.get("mode", "")).strip().lower()
+        if cand in _MODES:
+            return cand
+    return env
+
+
+def _env_role_claim() -> str:
+    """The deployment-wide claim path, honoured by BOTH paths that read roles.
+
+    Role binding used to ignore this and hard-code Keycloak's path, while
+    delegation read it. Pointing a deployment at Okta therefore worked for one
+    and silently not the other: delegation looked at ``groups`` while role
+    binding looked at ``realm_access.roles``, found nothing, and fell back to
+    the header.
+    """
+    return os.environ.get("SHIELD_ROLE_CLAIM", "").strip() or DEFAULT_ROLE_CLAIM
+
+
+def claim_config(tenant_id: Optional[str] = None) -> dict:
+    """Where roles live and what they are called, for this tenant.
+
+    Deliberately independent of the role-binding mode. Delegation has its own
+    switch (``SHIELD_DELEGATION``) and needs the tenant's claim path even when
+    role binding is off; requiring an unrelated second flag to make a tenant's
+    IdP configuration apply would be a footgun.
+
+    Resolution order: tenant config, then ``SHIELD_ROLE_CLAIM``, then Keycloak's
+    default. A tenant with no stored config resolves exactly as before.
+    """
+    cfg = {"role_claim": _env_role_claim(), "role_map": {}, "role_allowlist": ()}
+    stored = _stored_config(tenant_id) if tenant_id else None
+    if not stored:
+        return cfg
+    if stored.get("role_claim"):
+        cfg["role_claim"] = str(stored["role_claim"])
+    if isinstance(stored.get("role_map"), dict):
+        cfg["role_map"] = stored["role_map"]
+    allow = stored.get("role_allowlist")
+    if isinstance(allow, (list, tuple)):
+        cfg["role_allowlist"] = tuple(
+            str(r).strip() for r in allow if str(r).strip())
+    return cfg
 
 
 def role_binding_config(tenant_id: Optional[str] = None) -> dict:
-    """Mode plus the claim path and role rename map for this tenant.
+    """Mode plus the claim path, rename map and allowlist for this tenant.
 
     ``role_claim`` supports a dotted path, because IdPs nest it: Keycloak puts
-    realm roles at ``realm_access.roles``.
+    realm roles at ``realm_access.roles``, Okta uses ``groups``, Entra ``roles``.
+
+    One store read backs every field. This previously issued a second, uncached
+    GET on the same key for the claim path — harmless only while the config was
+    unreachable, and a synchronous Redis round trip per guarded request the
+    moment it became live.
     """
-    cfg = {"mode": role_binding_mode(tenant_id),
-           "role_claim": "realm_access.roles", "role_map": {}}
-    if cfg["mode"] == MODE_OFF or not tenant_id:
-        return cfg
-    try:
-        from storage.tenant_store import _get_redis
-        r = _get_redis()
-        if r:
-            import json
-            raw = r.get(f"shield:role_binding:{tenant_id}")
-            if raw:
-                stored = json.loads(raw if isinstance(raw, str) else raw.decode())
-                if stored.get("role_claim"):
-                    cfg["role_claim"] = str(stored["role_claim"])
-                if isinstance(stored.get("role_map"), dict):
-                    cfg["role_map"] = stored["role_map"]
-    except Exception:
-        pass
-    return cfg
+    env = _env_mode()
+    if env == MODE_OFF or not tenant_id:
+        # Kill switch: return without touching the store, so a deployment with
+        # role binding off performs zero reads on the guard path.
+        return {"mode": env, "role_claim": _env_role_claim(),
+                "role_map": {}, "role_allowlist": ()}
+
+    cfg = claim_config(tenant_id)
+    stored = _stored_config(tenant_id)      # cached; same 30s entry as above
+    mode = env
+    if stored:
+        cand = str(stored.get("mode", "")).strip().lower()
+        if cand in _MODES:
+            mode = cand
+    return {"mode": mode, **cfg}
+
+
+def _split_path(path: str) -> list:
+    """Split a claim path into segments, honouring ``["..."]`` for literal keys.
+
+    Plain dotted paths are the common case: ``realm_access.roles`` -> two
+    segments. But Auth0 and custom Okta claims are namespaced URLs —
+    ``https://votal.ai/roles`` — which contain dots and would otherwise split
+    into nonsense, silently yielding no roles. Bracket-quoting a segment takes
+    it literally:
+
+        ["https://votal.ai/roles"]        -> ['https://votal.ai/roles']
+        resource_access.["my.app"].roles  -> ['resource_access', 'my.app', 'roles']
+
+    An unterminated bracket is treated as an ordinary character rather than an
+    error: this runs on the guard path, and a typo should yield no roles, not a
+    500.
+    """
+    segments: list = []
+    buf = ""
+    i, n = 0, len(path or "")
+    while i < n:
+        ch = path[i]
+        if ch == "[" and i + 1 < n and path[i + 1] in "\"'":
+            quote = path[i + 1]
+            end = path.find(quote + "]", i + 2)
+            if end != -1:
+                if buf:
+                    segments.append(buf)
+                    buf = ""
+                segments.append(path[i + 2:end])
+                i = end + 2
+                if i < n and path[i] == ".":
+                    i += 1
+                continue
+        if ch == ".":
+            if buf:
+                segments.append(buf)
+                buf = ""
+            i += 1
+            continue
+        buf += ch
+        i += 1
+    if buf:
+        segments.append(buf)
+    return segments
 
 
 def _dotted(claims: dict, path: str):
     """Read a possibly-nested claim. Returns None rather than raising."""
     cur: Any = claims
-    for part in (path or "").split("."):
+    for part in _split_path(path):
         if not isinstance(cur, dict) or part not in cur:
             return None
         cur = cur[part]
     return cur
 
 
-def extract_roles(claims: dict, role_claim: str, role_map: Optional[dict] = None) -> tuple:
+def extract_roles(claims: dict, role_claim: str, role_map: Optional[dict] = None,
+                  role_allowlist: Optional[Any] = None) -> tuple:
     """Roles from a set of VERIFIED claims, in a stable order.
 
     Accepts a list or a single string, since IdPs differ. Order is preserved as
     issued — never set iteration, or the same token would authorize differently
     between calls.
+
+    ``role_allowlist`` filters the result to roles Shield actually knows, AFTER
+    ``role_map`` has renamed them (the allowlist names Shield roles, not IdP
+    groups). This is the fix for the most common rollout failure: an Okta or
+    Entra token carries every group the user belongs to, most of them unrelated
+    to Shield, and the first of those would otherwise be taken as the role
+    purely because it happened to be first in the token. An empty or absent
+    allowlist filters nothing, so a tenant that has not configured one is
+    unaffected.
     """
     val = _dotted(claims or {}, role_claim)
     if val is None:
         return ()
     raw = [val] if isinstance(val, str) else list(val) if isinstance(val, (list, tuple)) else []
     mapping = role_map or {}
+    allowed = {str(r).strip() for r in (role_allowlist or ()) if str(r).strip()}
     out, seen = [], set()
     for r in raw:
         name = str(mapping.get(str(r), r)).strip()
-        if name and name not in seen:
-            seen.add(name)
-            out.append(name)
+        if not name or name in seen:
+            continue
+        if allowed and name not in allowed:
+            continue
+        seen.add(name)
+        out.append(name)
     return tuple(out)
 
 
@@ -235,11 +353,16 @@ def _workload_roles(request: Any, cfg: dict) -> tuple:
     if wi is None:
         return ()
     return extract_roles(getattr(wi, "claims", {}) or {},
-                         cfg.get("role_claim", ""), cfg.get("role_map"))
+                         cfg.get("role_claim", ""), cfg.get("role_map"),
+                         cfg.get("role_allowlist"))
 
 
 def clear_role_binding_cache_for_tests() -> None:
-    _CACHE.clear()
+    try:
+        from storage.role_binding_config import clear_cache_for_tests
+        clear_cache_for_tests()
+    except Exception:
+        pass
 
 
 @dataclass(frozen=True)
@@ -333,6 +456,47 @@ def _verified_identity(request: Any):
     return getattr(state, "identity", None) if state is not None else None
 
 
+def _tenant_of(request: Any) -> str:
+    """The tenant this request authenticated as, for per-tenant config lookup.
+
+    Reads ONLY ``request.state.tenant_id`` — set by the tenant API-key auth in
+    core/auth.py and core/middleware.py after the key is verified.
+
+    The ``X-Tenant-ID`` header is deliberately NOT consulted, even though other
+    call sites accept it for their own purposes. Role-binding config decides
+    which claim path is read and how IdP groups map to Shield roles; letting a
+    caller name the tenant whose mapping applies would let it pick a config that
+    maps its own groups onto another tenant's privileged role. Config selection
+    must follow authentication, not assertion.
+
+    Returns "" when no authenticated tenant is present, which resolves to the
+    env default — the behaviour every deployment has today.
+    """
+    state = getattr(request, "state", None)
+    if state is None:
+        return ""
+    return str(getattr(state, "tenant_id", "") or "")
+
+
+def _proxy_vouched(request: Any) -> bool:
+    """True only when the trusted-proxy boundary is ON and this peer passed it.
+
+    Both halves are required. Without ``trusted_proxy_only()`` an operator could
+    set ``strict_proxy`` while the boundary is disabled and get ``strict``
+    semantics under a name that promises otherwise — the mode would look
+    configured and do nothing.
+
+    Any failure is False: boundary off, module missing, exception. A role that
+    cannot be attributed to a trusted hop is not a role. Imported lazily so a
+    deployment on any other mode never loads the module on the guard path.
+    """
+    try:
+        from core.proxy_trust import peer_is_trusted, trusted_proxy_only
+        return bool(trusted_proxy_only() and peer_is_trusted(request))
+    except Exception:
+        return False
+
+
 def resolve_identity(
     request: Any,
     *,
@@ -349,8 +513,17 @@ def resolve_identity(
 
     The role has no verified source yet, so body then header, exactly as before.
     ``role_source`` will read ``oidc``/``agent_token`` once claims carry it.
+
+    ``tenant_id`` selects the per-tenant role-binding config. When not passed it
+    is resolved from the request's *authenticated* tenant. Resolving it here
+    rather than at each call site is deliberate: the config was unreachable in
+    production for exactly one reason — every one of the seven call sites
+    omitted it — and a rule that each new route must remember to pass it would
+    reintroduce that the next time a route is added.
     """
     ident = _verified_identity(request)
+    if not tenant_id:
+        tenant_id = _tenant_of(request)
 
     agent_key, agent_source = "", SOURCE_NONE
     identity_method, trust_level = "", ""
@@ -376,7 +549,7 @@ def resolve_identity(
     # short-circuits before reading any header.
     try:
         from core.delegation import resolve_delegation
-        deleg = resolve_delegation(request)
+        deleg = resolve_delegation(request, tenant_id=tenant_id)
     except Exception:
         deleg = None
 
@@ -408,18 +581,37 @@ def resolve_identity(
             delegation_error="",
         )
 
-    if not claimed and mode in (MODE_PREFER, MODE_STRICT):
+    # Where the ROLE was proven, which is not always where the agent key came
+    # from. Borrowing agent_source for both reported role_source="header" for a
+    # role read out of a verified OIDC credential whenever the agent key had
+    # arrived in a header — understating the role's provenance, and silently
+    # disabling header_overridden, since that keys off role_verified.
+    claim_source = agent_source if claimed else SOURCE_NONE
+
+    if not claimed and mode in _CLAIM_FIRST_MODES:
         # No role on the agent token — try a verified external credential.
         wl = _workload_roles(request, cfg)
         if wl:
             claimed = wl
+            # Proven by the workload credential's signature, regardless of how
+            # the agent key was presented.
+            claim_source = SOURCE_OIDC
             if agent_source == SOURCE_NONE:
                 agent_source = SOURCE_OIDC
-    if claimed and mode in (MODE_PREFER, MODE_STRICT):
+    if claimed and mode in _CLAIM_FIRST_MODES:
         # The claim wins and the header is ignored. Deterministic ordering: the
         # first role as issued, never set iteration.
-        user_role, role_source = str(claimed[0]), agent_source
-    elif mode == MODE_STRICT:
+        user_role, role_source = str(claimed[0]), claim_source
+    elif mode == MODE_STRICT_PROXY and _proxy_vouched(request):
+        # A self-asserted role, but from a hop that proved itself with a shared
+        # secret. Recorded as SOURCE_PROXY, never as a verified source: the
+        # proxy vouched for it, nobody verified the user's credential here.
+        #
+        # Reached only when no verified claim was found, so this cannot be used
+        # to override a real credential.
+        hdr = (body_user_role or "").strip() or _header(request, "X-User-Role")
+        user_role, role_source = (hdr, SOURCE_PROXY) if hdr else ("", SOURCE_NONE)
+    elif mode in _REFUSING_MODES:
         # STRICT means a self-asserted role is not a role. Falling through to
         # the body or header here is what made `strict` behave identically to
         # `prefer`: both preferred a verified claim and both accepted a typed
