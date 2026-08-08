@@ -34,9 +34,6 @@ logger = logging.getLogger("votal.role_binding_config")
 
 KEY_PREFIX = "shield:role_binding:"
 
-#: Keycloak's realm roles. The historical default, kept so a tenant with no
-#: stored config resolves exactly as it did before this module existed.
-DEFAULT_ROLE_CLAIM = "realm_access.roles"
 
 _CACHE_TTL_S = 30
 

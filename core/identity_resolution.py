@@ -139,6 +139,13 @@ _REFUSING_MODES = (MODE_STRICT, MODE_STRICT_PROXY)
 
 _ENV = "SHIELD_ROLE_BINDING"
 
+#: Keycloak's realm roles. Canonical home is here rather than in the storage
+#: module because the guard path needs it on every call: importing it from
+#: storage would put a module import on `/guardrails/*` even when role binding
+#: is off, and would raise — rather than fall back — in any image that did not
+#: ship that module.
+DEFAULT_ROLE_CLAIM = "realm_access.roles"
+
 
 def _env_mode() -> str:
     v = os.environ.get(_ENV, MODE_OFF).strip().lower()
@@ -193,8 +200,6 @@ def role_binding_config(tenant_id: Optional[str] = None) -> dict:
     config was unreachable, and a synchronous Redis round trip per guarded
     request the moment it became live.
     """
-    from storage.role_binding_config import DEFAULT_ROLE_CLAIM
-
     env = _env_mode()
     cfg = {"mode": env, "role_claim": DEFAULT_ROLE_CLAIM, "role_map": {}}
     if env == MODE_OFF or not tenant_id:

@@ -17,10 +17,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from core.auth import get_tenant_from_request
-from core.identity_resolution import _MODES, _env_mode, MODE_OFF
+from core.identity_resolution import (_MODES, _env_mode, DEFAULT_ROLE_CLAIM,
+                                      MODE_OFF)
 from storage.admin_audit import log_admin_action
-from storage.role_binding_config import (DEFAULT_ROLE_CLAIM, MODE_STRENGTH,
-                                         get_config, set_config)
+from storage.role_binding_config import MODE_STRENGTH, get_config, set_config
 
 router = APIRouter(prefix="/v1/tenant/me/identity", tags=["tenant-identity-config"])
 
