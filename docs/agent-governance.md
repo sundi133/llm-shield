@@ -122,6 +122,70 @@ curl -s -X POST "$SHIELD_URL/v1/governance/reviews/$CID/close" -H "X-API-Key: $K
 Every decision and the close action is retained on the campaign (reviewer,
 timestamp, applied actions) as the certification trail.
 
+## 4. Delegation chains
+
+When an agent spawns a sub-agent, the child's token records which agent
+delegated to it. Two controls govern that link, both **off by default**.
+
+### Prove the parent
+
+By default `parent_agent_id` is whatever the caller put in the request body.
+Shield signs it, but nothing verifies that the named parent exists or delegated
+anything — so the lineage in your audit is a caller-supplied string.
+
+```
+SHIELD_DELEGATION_PARENT_PROOF=required
+```
+
+The parent is then derived from a **verified parent token** the caller presents
+as `parent_agent_token`, and the body field is ignored. Holding a valid parent
+token already implies more authority than the child will have, so there is no
+escalation in deriving from it. A parent token belonging to a different tenant
+is refused with `403`.
+
+```bash
+curl -X POST "$SHIELD/v1/tenant/me/agent-auth/agent-token" -H "X-API-Key: $TENANT_KEY" -H 'Content-Type: application/json' -d "{\"user_sub\":\"alice\",\"agent_id\":\"research-bot\",\"agent_instance_id\":\"inst-2\",\"build_hash\":\"b\",\"model_version\":\"m\",\"session_id\":\"s\",\"parent_agent_token\":\"$PARENT_TOKEN\"}"
+```
+
+### Bound the depth
+
+```
+SHIELD_MAX_DELEGATION_DEPTH=1
+```
+
+A root token is depth 0, its child depth 1. With the limit at 1, that child
+cannot mint a grandchild — `403 delegation depth 2 exceeds limit 1`. The depth
+is enforced at mint **and** at verification, so lowering the ceiling takes
+effect immediately rather than waiting out every issued token's lifetime.
+
+{: .warning }
+> **Set the proof flag first.** A depth limit without
+> `SHIELD_DELEGATION_PARENT_PROOF=required` bounds nothing: the depth is
+> computed from the parent the caller named, so the caller also chooses its own
+> depth. Shield logs a warning at boot if you configure it that way, but the
+> limit will silently not apply.
+
+### Rollout order
+
+1. Set `SHIELD_DELEGATION_PARENT_PROOF=required`, no depth limit. Chains become
+   proven but unbounded. Nothing breaks that was not already asserting an
+   unproven parent.
+2. Watch `delegation_depth` in the audit to learn your real maximum. This is
+   why the claim reaches the audit before the limit is enforced.
+3. Set `SHIELD_MAX_DELEGATION_DEPTH` at or above that observed maximum.
+4. Lower it deliberately.
+
+Turning both on at once without step 2 is how you break a legitimate
+three-hop workflow.
+
+### Known limit
+
+**Revoking a parent does not revoke its children.** A child token stays valid
+until its own expiry, capped at 15 minutes. Cascading revocation would need a
+chain registry, and a registry means a Redis read per guarded request — the
+15-minute ceiling is the mitigation instead. Revoke the child's
+`agent_instance_id` directly if you need it gone sooner.
+
 ## See also
 
 - [Agentic Integration Guide](/agentic-integration-guide/) — registering agents and entitlements.
