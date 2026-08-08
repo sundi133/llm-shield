@@ -798,6 +798,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* "+N more" after the latest line. Deliberately quiet: it is a pointer to
+     Details, not content, and it must not compete with the message itself. */
+  .telemetry-row-more {
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text-dim);
+    font-size: 0.75em;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: default;
+  }
   .telemetry-row-meta {
     display: grid;
     gap: 0.22rem;
@@ -6879,6 +6892,35 @@ function renderTelemetryGuardrailRows(title, rows) {
   `;
 }
 
+function telemetryMessagePreview(text) {
+  // A logged message is often several turns, not one. The LiteLLM guardrail
+  // hook screens the last K user messages joined by newlines
+  // (votal_guardrail.py), so one row's `message` can be three separate things
+  // the user typed at different times.
+  //
+  // The cell is nowrap + ellipsis, which collapses those newlines and renders
+  // three turns as one run-on sentence:
+  //   "restart checkout-api show logs last 30 events restart checkout-api"
+  // — which reads as a single nonsensical request rather than three sensible
+  // ones.
+  //
+  // Show the most recent line here and say how much was left out. The Details
+  // panel still renders the whole thing with newlines intact, so nothing is
+  // hidden, only deferred.
+  const lines = String(text == null ? '' : text)
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  if (!lines.length) return escapeHtml('(empty message)');
+
+  const last = escapeHtml(lines[lines.length - 1]);
+  const hidden = lines.length - 1;
+  // "lines" rather than "messages": from the string alone we cannot tell a
+  // multi-turn window from one message someone pasted with line breaks, and
+  // claiming the wrong one is how a dashboard loses trust.
+  return hidden
+    ? `${last} <span class="telemetry-row-more" title="${hidden} earlier line(s) — open Details for the full message">+${hidden} more</span>`
+    : last;
+}
+
 function renderTelemetryEntries(entries) {
   const container = document.getElementById('telemetry-list');
   if (!entries || !entries.length) {
@@ -6917,7 +6959,7 @@ function renderTelemetryEntries(entries) {
                       : ''}</div>
                 </div>
               </td>
-              <td><div class="telemetry-row-message">${escapeHtml(entry.message || '(empty message)')}</div></td>
+              <td><div class="telemetry-row-message">${telemetryMessagePreview(entry.message)}</div></td>
               <td>
                 <div class="telemetry-row-meta">
                   <div>${telemetryPill(telemetryDisplayStatus(entry))}</div>
