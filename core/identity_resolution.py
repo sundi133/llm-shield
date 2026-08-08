@@ -68,27 +68,18 @@ def token_binding_mode() -> str:
 def _request_uri(request: Any) -> str:
     """The htu comparison target.
 
-    Behind a load balancer the scheme and host the client used are in
-    X-Forwarded-*, and the raw URL says http://internal-host. Trust those
-    headers ONLY when the proxy boundary says the hop is trusted — otherwise a
-    caller picks its own htu and the check means nothing.
+    Delegates to core.proxy_trust.effective_request_uri, which is the single
+    implementation shared with agent-token possession proofs. Kept as a thin
+    alias so existing call sites and tests do not move.
     """
     try:
-        url = str(request.url)
+        from core.proxy_trust import effective_request_uri
+        return effective_request_uri(request)
     except Exception:
-        return ""
-    try:
-        from core.proxy_trust import peer_is_trusted, trusted_proxy_only
-        if trusted_proxy_only() and peer_is_trusted(request):
-            from urllib.parse import urlsplit, urlunsplit
-            proto = _header(request, "X-Forwarded-Proto")
-            host = _header(request, "X-Forwarded-Host")
-            if proto or host:
-                p = urlsplit(url)
-                url = urlunsplit((proto or p.scheme, host or p.netloc, p.path, "", ""))
-    except Exception:
-        pass
-    return url
+        try:
+            return str(request.url)
+        except Exception:
+            return ""
 
 
 def verify_token_binding(request: Any, claims: Optional[dict]) -> tuple:

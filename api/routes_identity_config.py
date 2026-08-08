@@ -38,9 +38,9 @@ PRESETS = {
              "note": "Requires a groups claim on the authorization server."},
     "entra": {"role_claim": "roles",
               "note": "Entra ID app roles. Directory groups appear as 'groups'."},
-    "auth0": {"role_claim": "https://<your-namespace>/roles",
-              "note": "Namespaced claims are not yet resolvable by the dotted "
-                      "path reader. Tracked in spec-idp-role-claim-config."},
+    "auth0": {"role_claim": '["https://<your-namespace>/roles"]',
+              "note": "Namespaced claims contain dots, so bracket-quote them "
+                      "or the path reader treats the dots as nesting."},
 }
 
 

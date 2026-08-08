@@ -76,6 +76,45 @@ def _secret_matches(request: Request) -> bool:
     return bool(provided) and hmac.compare_digest(provided, secret)
 
 
+def effective_request_uri(request: Request) -> str:
+    """The URI a DPoP-style proof should be compared against.
+
+    Behind a load balancer the scheme and host the client actually used live in
+    X-Forwarded-Proto / X-Forwarded-Host, while ``request.url`` says
+    ``http://internal-host``. A proof signed over the public URL would fail
+    against the internal one, so those headers have to be honoured — but ONLY
+    when this hop is trusted. Otherwise the caller picks its own ``htu`` and the
+    proof binds nothing.
+
+    Lives here rather than in either consumer because there are two of them
+    (agent-token possession and workload-token binding). Two independent
+    implementations of this is how you get a feature that works in tests and
+    fails in every real deployment — and how you get a security bug, since the
+    naive version trusts X-Forwarded-Host unconditionally.
+
+    Never raises: returns "" if the URL cannot be read at all.
+    """
+    try:
+        url = str(request.url)
+    except Exception:
+        return ""
+    try:
+        if trusted_proxy_only() and peer_is_trusted(request):
+            from urllib.parse import urlsplit, urlunsplit
+            headers = request.headers
+            proto = (headers.get("X-Forwarded-Proto")
+                     or headers.get("x-forwarded-proto") or "").strip()
+            host = (headers.get("X-Forwarded-Host")
+                    or headers.get("x-forwarded-host") or "").strip()
+            if proto or host:
+                parts = urlsplit(url)
+                url = urlunsplit((proto or parts.scheme, host or parts.netloc,
+                                  parts.path, "", ""))
+    except Exception:
+        pass
+    return url
+
+
 def peer_is_trusted(request: Request) -> bool:
     """True if the request came from the trusted proxy.
 
