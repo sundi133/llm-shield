@@ -74,7 +74,12 @@ class AgentTokenRequest(BaseModel):
     build_hash: str = Field(..., description="Exact build hash of agent code")
     model_version: str = Field(..., description="LLM model version in use")
     session_id: str = Field(..., description="Conversation/session id")
-    parent_agent_id: Optional[str] = Field(None, description="Delegating agent, if any")
+    parent_agent_id: Optional[str] = Field(
+        None, description="Delegating agent. Ignored when "
+                          "SHIELD_DELEGATION_PARENT_PROOF=required.")
+    parent_agent_token: Optional[str] = Field(
+        None, description="Verified parent's agent token. Required to set "
+                          "a parent when parent proof is required.")
     ttl_seconds: int = Field(DEFAULT_TOKEN_TTL_SECONDS, ge=1, le=MAX_TOKEN_TTL_SECONDS)
 
 
@@ -227,6 +232,61 @@ def _enforce_user_sub_binding(request: Request, claimed_sub: str) -> None:
         )
 
 
+def _resolve_parent(
+    *, tenant_id: str,
+    body_parent_agent_id: Optional[str],
+    parent_agent_token: Optional[str],
+) -> tuple:
+    """(parent_agent_id, delegation_depth) for a token about to be minted.
+
+    ONE implementation, called by both mint endpoints. They carried the same
+    caller-asserted `parent_agent_id` pattern, and fixing one while leaving the
+    other would be a bypass — worse than the control not existing, because it
+    would look like it did.
+
+    With proof off this returns the body's value unchanged at depth 0, which is
+    exactly the previous behaviour.
+
+    With proof required the body field is IGNORED and the parent is derived from
+    a verified token the caller presents. Holding that token already implies more
+    authority than the child will have, so there is no escalation in deriving
+    from it.
+
+    See docs/spec-delegation-chain-depth.md.
+    """
+    from core.agent_tokens import (max_delegation_depth, parent_proof_required,
+                                   verify_agent_token)
+
+    if not parent_proof_required():
+        return (body_parent_agent_id or None), 0
+
+    if not parent_agent_token:
+        # No proof presented: a root token. The body's claim is deliberately
+        # dropped rather than honoured — an unproven parent is not a parent.
+        return None, 0
+
+    try:
+        parent = verify_agent_token(parent_agent_token)
+    except TokenError as e:
+        raise HTTPException(status_code=400, detail=f"invalid parent_agent_token: {e}")
+
+    # A token valid for another tenant is still a perfectly valid token.
+    # Without this check the naive implementation accepts it and lets tenant A
+    # seed a delegation chain inside tenant B.
+    if parent.tenant_id != tenant_id:
+        raise HTTPException(
+            status_code=403, detail="parent token belongs to a different tenant")
+
+    depth = int(getattr(parent, "delegation_depth", 0) or 0) + 1
+    ceiling = max_delegation_depth()
+    if ceiling is not None and depth > ceiling:
+        raise HTTPException(
+            status_code=403,
+            detail=f"delegation depth {depth} exceeds limit {ceiling}")
+
+    return parent.agent_id, depth
+
+
 def _require_registered_agent(tenant_id: str, agent_id: str) -> None:
     """Reject token issuance for an agent the tenant hasn't registered.
 
@@ -267,6 +327,11 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
     _enforce_tenant_binding(request, body.tenant_id)
     _enforce_user_sub_binding(request, body.user_sub)
     _require_registered_agent(body.tenant_id, body.agent_id)
+    parent_id, depth = _resolve_parent(
+        tenant_id=body.tenant_id,
+        body_parent_agent_id=body.parent_agent_id,
+        parent_agent_token=body.parent_agent_token,
+    )
     try:
         token = mint_agent_token(
             user_sub=body.user_sub,
@@ -276,7 +341,8 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
             build_hash=body.build_hash,
             model_version=body.model_version,
             session_id=body.session_id,
-            parent_agent_id=body.parent_agent_id,
+            parent_agent_id=parent_id,
+            delegation_depth=depth,
             ttl_seconds=body.ttl_seconds,
         )
     except TokenError as e:
@@ -935,7 +1001,12 @@ class TenantAgentTokenRequest(BaseModel):
     build_hash: str = Field(..., description="Exact build hash of the agent code")
     model_version: str = Field(..., description="LLM model version in use")
     session_id: str = Field(..., description="Conversation/session id")
-    parent_agent_id: Optional[str] = Field(None, description="Delegating agent, if any")
+    parent_agent_id: Optional[str] = Field(
+        None, description="Delegating agent. Ignored when "
+                          "SHIELD_DELEGATION_PARENT_PROOF=required.")
+    parent_agent_token: Optional[str] = Field(
+        None, description="Verified parent's agent token. Required to set "
+                          "a parent when parent proof is required.")
     ttl_seconds: int = Field(DEFAULT_TOKEN_TTL_SECONDS, ge=1, le=MAX_TOKEN_TTL_SECONDS)
 
 
@@ -952,6 +1023,11 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
     if not allowed:
         raise HTTPException(status_code=429, detail=err or "rate limit exceeded")
     _require_registered_agent(tenant_id, body.agent_id)
+    parent_id, depth = _resolve_parent(
+        tenant_id=tenant_id,
+        body_parent_agent_id=body.parent_agent_id,
+        parent_agent_token=body.parent_agent_token,
+    )
     try:
         token = mint_agent_token(
             user_sub=body.user_sub,
@@ -961,7 +1037,8 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
             build_hash=body.build_hash,
             model_version=body.model_version,
             session_id=body.session_id,
-            parent_agent_id=body.parent_agent_id,
+            parent_agent_id=parent_id,
+            delegation_depth=depth,
             ttl_seconds=body.ttl_seconds,
         )
     except TokenError as e:

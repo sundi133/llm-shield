@@ -34,6 +34,9 @@ class IdentityTuple:
     #: does not assert one, which is every method until a claim is minted or an
     #: OIDC token supplies it. Never populated from a header.
     roles: tuple = ()
+    #: Delegation hops from a root token. 0 means minted directly for a user.
+    #: Absent on tokens minted before delegation depth existed, which IS 0.
+    delegation_depth: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -52,6 +55,7 @@ class IdentityTuple:
             "trust_level": self.trust_level,
             "identity_method": self.identity_method,
             "roles": list(self.roles),
+            "delegation_depth": self.delegation_depth,
         }
 
 

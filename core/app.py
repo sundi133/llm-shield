@@ -240,6 +240,14 @@ def create_app() -> FastAPI:
         except Exception as e:
             # Re-raise to actually refuse the boot.
             raise
+        # A delegation depth limit set without parent proof bounds nothing:
+        # the depth is derived from a caller-asserted parent. Say so at boot
+        # rather than let an operator believe they have a control they do not.
+        try:
+            from core.agent_tokens import warn_if_depth_limit_is_unenforceable
+            warn_if_depth_limit_is_unenforceable()
+        except Exception:
+            pass
         # Audit logging now uses Redis — no init needed
         # Initialize telemetry (ES, Splunk, OTLP, file)
         import asyncio

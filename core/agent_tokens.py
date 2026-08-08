@@ -64,6 +64,71 @@ logger = logging.getLogger("votal.agent_tokens")
 MAX_TOKEN_TTL_SECONDS = 15 * 60   # hard cap, regardless of caller request
 DEFAULT_TOKEN_TTL_SECONDS = 10 * 60
 
+# ── Delegation chains ──────────────────────────────────────────────────
+#
+# `parent_agent_id` was accepted from the request body and signed unverified.
+# A depth limit over an unproven parent link limits nothing, because the caller
+# also picks the depth — so provenance has to come first.
+# See docs/spec-delegation-chain-depth.md.
+
+_PARENT_PROOF_ENV = "SHIELD_DELEGATION_PARENT_PROOF"
+_MAX_DEPTH_ENV = "SHIELD_MAX_DELEGATION_DEPTH"
+
+PARENT_PROOF_OFF, PARENT_PROOF_REQUIRED = "off", "required"
+
+
+def parent_proof_required() -> bool:
+    """Whether parent_agent_id must be derived from a verified parent token.
+
+    Default off: the body field is trusted and stamped as-is, exactly as before.
+    """
+    v = os.environ.get(_PARENT_PROOF_ENV, PARENT_PROOF_OFF).strip().lower()
+    return v == PARENT_PROOF_REQUIRED
+
+
+def max_delegation_depth() -> Optional[int]:
+    """Maximum delegation depth, or None for unlimited (the default).
+
+    A negative or non-integer value is treated as unset rather than as zero:
+    misreading "-1" as "no delegation at all" would turn a typo into an outage.
+    """
+    raw = os.environ.get(_MAX_DEPTH_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        val = int(raw)
+    except ValueError:
+        logger.warning(
+            "%s=%r is not an integer; treating delegation depth as unlimited",
+            _MAX_DEPTH_ENV, raw)
+        return None
+    if val < 0:
+        logger.warning(
+            "%s=%d is negative; treating delegation depth as unlimited",
+            _MAX_DEPTH_ENV, val)
+        return None
+    return val
+
+
+def warn_if_depth_limit_is_unenforceable() -> bool:
+    """A depth limit without parent proof bounds nothing. Say so, loudly.
+
+    The depth is computed from the parent the caller named. With proof off the
+    caller names any parent it likes, so it also chooses its own depth. An
+    operator who believes they have a limit and does not is worse off than one
+    who knows they have none.
+
+    Returns True when the warning applied, so a test can assert it.
+    """
+    if max_delegation_depth() is not None and not parent_proof_required():
+        logger.warning(
+            "%s is set but %s is not 'required'. The delegation depth is "
+            "derived from a caller-asserted parent, so the limit is NOT "
+            "enforceable. Set %s=required to make it mean something.",
+            _MAX_DEPTH_ENV, _PARENT_PROOF_ENV, _PARENT_PROOF_ENV)
+        return True
+    return False
+
 # Default audience for agent tokens. Verifier rejects mismatch.
 # Override at deploy time via env to prevent cross-environment token reuse.
 DEFAULT_AGENT_AUDIENCE = "shield-agent-tokens"
@@ -160,6 +225,7 @@ def mint_agent_token(
     model_version: str,
     session_id: str,
     parent_agent_id: Optional[str] = None,
+    delegation_depth: int = 0,
     roles: Optional[list] = None,
     ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
     signer: Optional[AgentTokenSigner] = None,
@@ -188,6 +254,9 @@ def mint_agent_token(
         # Verified role claim. Absent unless the issuer supplies one, so an
         # existing caller's tokens are byte-compatible with before.
         **({"roles": [str(r) for r in roles]} if roles else {}),
+        # How many delegation hops from a root token. Omitted at 0 for the same
+        # byte-compatibility reason: an absent claim IS depth 0.
+        **({"delegation_depth": int(delegation_depth)} if delegation_depth else {}),
         "iat": now,
         "exp": now + ttl_seconds,
         "jti": uuid.uuid4().hex,
@@ -300,6 +369,15 @@ def verify_agent_token(token: str) -> IdentityTuple:
     if is_user_revoked(claims["user_sub"]):
         raise TokenError("user revoked")
 
+    # Depth ceiling, checked at verify as well as at mint so lowering the limit
+    # takes effect immediately instead of waiting out every issued token's TTL.
+    # One int comparison against a claim already parsed — no I/O on the guard path.
+    depth = int(claims.get("delegation_depth") or 0)
+    ceiling = max_delegation_depth()
+    if ceiling is not None and depth > ceiling:
+        raise TokenError(
+            f"delegation depth {depth} exceeds limit {ceiling}")
+
     return IdentityTuple(
         user_sub=claims["user_sub"],
         agent_id=claims["agent_id"],
@@ -314,6 +392,7 @@ def verify_agent_token(token: str) -> IdentityTuple:
         # Roles are part of the signed payload, so they are verified in the same
         # sense as agent_id: sealed by the signature. Absent on older tokens.
         roles=tuple(str(r) for r in (claims.get("roles") or [])),
+        delegation_depth=depth,
     )
 
 

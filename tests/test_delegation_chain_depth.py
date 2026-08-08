@@ -19,6 +19,8 @@ Spec: docs/spec-delegation-chain-depth.md
 """
 from __future__ import annotations
 
+import logging
+import time
 from typing import Iterator
 
 import pytest
@@ -29,9 +31,11 @@ from starlette.testclient import TestClient
 from api.routes_agent_auth import (router as agent_auth_router,
                                    tenant_router as agent_auth_tenant_router)
 from core.agent_identity_middleware import AgentIdentityMiddleware
-from core.agent_tokens import (decode_claims_unverified,
+from core.agent_tokens import (TokenError, decode_claims_unverified,
+                               max_delegation_depth,
                                reset_signer_cache_for_tests,
-                               verify_agent_token)
+                               verify_agent_token,
+                               warn_if_depth_limit_is_unenforceable)
 from storage.revocation import clear_all_for_tests
 
 TENANT = "t1"
@@ -147,3 +151,171 @@ def test_both_routes_mint_a_verifiable_token(minter):
 def test_no_depth_claim_by_default(minter):
     """Absent rather than 0, so existing callers' tokens stay byte-compatible."""
     assert "delegation_depth" not in decode_claims_unverified(minter.token())
+
+
+# ── Provenance: the parent link must be proven ───────────────────────────
+
+
+@pytest.fixture
+def proof(monkeypatch):
+    monkeypatch.setenv("SHIELD_DELEGATION_PARENT_PROOF", "required")
+    return monkeypatch
+
+
+def _foreign_token(client, tenant="other-tenant"):
+    """A perfectly valid token belonging to a DIFFERENT tenant."""
+    r = client.post("/v1/shield/auth/agent-token",
+                    headers={"X-Admin-Key": "admin"},
+                    json=dict(user_sub="mallory", agent_id="billing-bot",
+                              agent_instance_id="inst-x", tenant_id=tenant,
+                              build_hash="b", model_version="m",
+                              session_id="s", ttl_seconds=300))
+    assert r.status_code == 200, r.text
+    return r.json()["agent_token"]
+
+
+def test_body_parent_is_ignored_without_proof(minter, proof):
+    """An unproven parent is not a parent. The body's claim is dropped rather
+    than honoured, so the audit cannot be poisoned with a fictional lineage."""
+    token = minter.token(parent_agent_id="some-agent-i-do-not-control")
+    claims = decode_claims_unverified(token)
+    assert claims.get("parent_agent_id") is None
+    assert "delegation_depth" not in claims
+
+
+def test_parent_comes_from_the_verified_token_not_the_body(minter, proof):
+    """Send a body value that disagrees with the token. The token wins."""
+    root = minter.token()
+    child = minter.token(parent_agent_token=root,
+                         parent_agent_id="a-different-agent-entirely")
+    claims = decode_claims_unverified(child)
+    assert claims["parent_agent_id"] == "billing-bot"
+    assert claims["delegation_depth"] == 1
+
+
+def test_garbage_parent_token_is_refused(minter, proof):
+    assert minter.post(parent_agent_token="not-a-token").status_code == 400
+
+
+def test_expired_parent_token_is_refused(minter, proof):
+    from unittest.mock import patch as _patch
+
+    root = minter.token()
+    with _patch("core.agent_tokens.time.time", return_value=time.time() + 100000):
+        assert minter.post(parent_agent_token=root).status_code == 400
+
+
+def test_revoked_parent_instance_is_refused(minter, proof):
+    from storage.revocation import revoke_instance
+
+    root = minter.token()
+    revoke_instance("inst-1", ttl=600)
+    assert minter.post(parent_agent_token=root).status_code == 400
+
+
+def test_cross_tenant_parent_is_refused(minter, proof, client):
+    """A token valid for another tenant is still a perfectly valid token.
+    Without an explicit check the naive implementation accepts it and lets
+    tenant A seed a delegation chain inside tenant B."""
+    foreign = _foreign_token(client)
+    r = minter.post(parent_agent_token=foreign)
+    assert r.status_code == 403
+    assert "different tenant" in r.json()["detail"]
+
+
+# ── Depth ────────────────────────────────────────────────────────────────
+
+
+def test_depth_increments_along_the_chain(minter, proof):
+    root = minter.token()
+    child = minter.token(parent_agent_token=root)
+    grandchild = minter.token(parent_agent_token=child)
+    assert decode_claims_unverified(child)["delegation_depth"] == 1
+    assert decode_claims_unverified(grandchild)["delegation_depth"] == 2
+
+
+def test_identity_carries_the_depth(minter, proof):
+    root = minter.token()
+    child = minter.token(parent_agent_token=root)
+    assert verify_agent_token(root).delegation_depth == 0
+    assert verify_agent_token(child).delegation_depth == 1
+
+
+def test_limit_one_allows_a_child_but_not_a_grandchild(minter, proof):
+    proof.setenv("SHIELD_MAX_DELEGATION_DEPTH", "1")
+    root = minter.token()
+    child = minter.token(parent_agent_token=root)
+    r = minter.post(parent_agent_token=child)
+    assert r.status_code == 403
+    assert "exceeds limit" in r.json()["detail"]
+
+
+def test_limit_zero_refuses_any_delegation(minter, proof):
+    proof.setenv("SHIELD_MAX_DELEGATION_DEPTH", "0")
+    root = minter.token()
+    assert minter.post(parent_agent_token=root).status_code == 403
+
+
+def test_unset_limit_allows_a_long_chain(minter, proof):
+    token = minter.token()
+    for _ in range(5):
+        token = minter.token(parent_agent_token=token)
+    assert decode_claims_unverified(token)["delegation_depth"] == 5
+
+
+def test_lowering_the_limit_invalidates_deeper_tokens(minter, proof):
+    """Checked at verify as well as at mint, so lowering the ceiling takes
+    effect immediately rather than waiting out every issued token's TTL."""
+    token = minter.token()
+    for _ in range(3):
+        token = minter.token(parent_agent_token=token)
+
+    verify_agent_token(token)          # fine while unlimited
+    proof.setenv("SHIELD_MAX_DELEGATION_DEPTH", "2")
+    with pytest.raises(TokenError, match="exceeds limit"):
+        verify_agent_token(token)
+
+
+def test_a_legacy_token_without_the_claim_is_depth_zero(minter, proof):
+    """Old tokens predate the claim. Absent IS zero, and must stay valid under
+    any limit."""
+    proof.setenv("SHIELD_MAX_DELEGATION_DEPTH", "0")
+    assert verify_agent_token(minter.token()).delegation_depth == 0
+
+
+# ── Configuration hygiene ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("value", ["-1", "abc", "1.5", ""])
+def test_bad_limits_are_treated_as_unset(monkeypatch, value):
+    """A typo must not become an outage: misreading '-1' as 'no delegation at
+    all' would refuse every chain."""
+    monkeypatch.setenv("SHIELD_MAX_DELEGATION_DEPTH", value)
+    assert max_delegation_depth() is None
+
+
+def test_valid_limit_is_read(monkeypatch):
+    monkeypatch.setenv("SHIELD_MAX_DELEGATION_DEPTH", "3")
+    assert max_delegation_depth() == 3
+
+
+def test_depth_limit_without_parent_proof_warns(monkeypatch, caplog):
+    """The limit is computed from a caller-asserted parent, so it bounds
+    nothing. An operator who believes they have a limit and does not is worse
+    off than one who knows they have none."""
+    monkeypatch.delenv("SHIELD_DELEGATION_PARENT_PROOF", raising=False)
+    monkeypatch.setenv("SHIELD_MAX_DELEGATION_DEPTH", "2")
+    with caplog.at_level(logging.WARNING):
+        assert warn_if_depth_limit_is_unenforceable() is True
+    assert "NOT" in caplog.text and "enforceable" in caplog.text
+
+
+def test_no_warning_when_the_limit_is_enforceable(monkeypatch):
+    monkeypatch.setenv("SHIELD_DELEGATION_PARENT_PROOF", "required")
+    monkeypatch.setenv("SHIELD_MAX_DELEGATION_DEPTH", "2")
+    assert warn_if_depth_limit_is_unenforceable() is False
+
+
+def test_no_warning_when_no_limit_is_set(monkeypatch):
+    monkeypatch.delenv("SHIELD_MAX_DELEGATION_DEPTH", raising=False)
+    assert warn_if_depth_limit_is_unenforceable() is False
