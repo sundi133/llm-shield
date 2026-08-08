@@ -49,7 +49,7 @@ class RoleBindingConfigRequest(BaseModel):
     role_claim: Optional[str] = Field(None, description="Dotted path to the role claim")
     role_map: Optional[dict[str, str]] = Field(None, description="IdP group -> Shield role")
     role_allowlist: Optional[list[str]] = Field(
-        None, description="Not yet enforced; sending it is refused.")
+        None, description="Shield role names to accept; others are dropped")
 
 
 def _tenant_id(request: Request) -> str:
@@ -80,6 +80,7 @@ def _view(tenant_id: str) -> dict[str, Any]:
         "env_kill_switch": env == MODE_OFF,
         "role_claim": stored.get("role_claim") or DEFAULT_ROLE_CLAIM,
         "role_map": stored.get("role_map") or {},
+        "role_allowlist": stored.get("role_allowlist") or [],
         "updated_at": stored.get("updated_at"),
         "updated_by": stored.get("updated_by"),
         "propagation_seconds": 30,
@@ -87,12 +88,6 @@ def _view(tenant_id: str) -> dict[str, Any]:
 
 
 def _validate(body: RoleBindingConfigRequest) -> None:
-    if body.role_allowlist is not None:
-        # Storing a control that nothing enforces is worse than not offering it:
-        # the operator sets an allowlist, believes roles outside it are refused,
-        # and they are not.
-        raise HTTPException(422, "role_allowlist is not enforced yet; omit it")
-
     if body.mode is not None:
         mode = body.mode.strip().lower()
         if mode not in _MODES:
@@ -113,6 +108,17 @@ def _validate(body: RoleBindingConfigRequest) -> None:
             raise HTTPException(422, "role_claim must not be empty")
         if len(claim) > MAX_CLAIM_LEN:
             raise HTTPException(422, f"role_claim exceeds {MAX_CLAIM_LEN} characters")
+
+    if body.role_allowlist is not None:
+        if len(body.role_allowlist) > MAX_MAP_ENTRIES:
+            raise HTTPException(
+                422, f"role_allowlist exceeds {MAX_MAP_ENTRIES} entries")
+        for r in body.role_allowlist:
+            if not str(r).strip():
+                raise HTTPException(422, "role_allowlist entries must not be empty")
+            if len(str(r)) > MAX_TERM_LEN:
+                raise HTTPException(
+                    422, f"role_allowlist entries must be under {MAX_TERM_LEN} characters")
 
     if body.role_map is not None:
         if len(body.role_map) > MAX_MAP_ENTRIES:
@@ -158,6 +164,9 @@ async def put_role_binding(body: RoleBindingConfigRequest, request: Request):
     if body.role_map is not None:
         current["role_map"] = {str(k).strip(): str(v).strip()
                                for k, v in body.role_map.items()}
+    if body.role_allowlist is not None:
+        current["role_allowlist"] = [str(r).strip() for r in body.role_allowlist
+                                     if str(r).strip()]
     current["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     current["updated_by"] = f"tenant:{tenant_id}"
 
@@ -175,7 +184,8 @@ async def put_role_binding(body: RoleBindingConfigRequest, request: Request):
         source_ip=request.client.host if request.client else "",
         metadata={"mode": current.get("mode"),
                   "role_claim": current.get("role_claim"),
-                  "role_map_entries": len(current.get("role_map") or {})},
+                  "role_map_entries": len(current.get("role_map") or {}),
+                  "role_allowlist_entries": len(current.get("role_allowlist") or [])},
     )
 
     return _view(tenant_id)

@@ -102,11 +102,32 @@ curl -s "$SHIELD_ADMIN/v1/tenant/me/identity/role-binding/presets" -H "X-API-Key
 | Okta | `groups` |
 | Entra ID | `roles` (app roles; directory groups appear as `groups`) |
 
-Set the path, and optionally map IdP group names onto Shield role names:
+Set the path, map IdP group names onto Shield role names, and list the roles
+Shield should accept:
 
 ```bash
-curl -X PUT "$SHIELD_ADMIN/v1/tenant/me/identity/role-binding" -H "X-API-Key: $TENANT_KEY" -H 'Content-Type: application/json' -d '{"role_claim":"groups","role_map":{"bank-payments-officers":"payments_officer"}}'
+curl -X PUT "$SHIELD_ADMIN/v1/tenant/me/identity/role-binding" -H "X-API-Key: $TENANT_KEY" -H 'Content-Type: application/json' -d '{"role_claim":"groups","role_map":{"bank-payments-officers":"payments_officer"},"role_allowlist":["payments_officer","auditor"]}'
 ```
+
+{: .warning }
+> **Set `role_allowlist` if you are using Okta or Entra.** Their tokens carry
+> *every* group the user belongs to — `all-employees`, `vpn-users`,
+> `printer-access`. Without an allowlist, the first group in the token is taken
+> as the role, purely because it was first. The allowlist names **Shield** role
+> names and is applied after `role_map` renames them. An empty allowlist filters
+> nothing, so this is opt-in.
+
+### Namespaced claims (Auth0, custom Okta)
+
+Auth0 and custom Okta claims are namespaced URLs, which contain dots the path
+reader would otherwise treat as nesting. Bracket-quote the segment to take it
+literally:
+
+```json
+{"role_claim": "[\"https://votal.ai/roles\"]"}
+```
+
+Bracket and dotted segments mix: `resource_access.["my.app"].roles`.
 
 Read it back to see whether it is actually taking effect:
 
@@ -118,6 +139,21 @@ curl -s "$SHIELD_ADMIN/v1/tenant/me/identity/role-binding" -H "X-API-Key: $TENAN
 `SHIELD_ROLE_BINDING=off` overrides tenant config globally, so a tenant can have
 `prefer` stored and see header roles still winning. That asymmetry is otherwise
 invisible.
+
+### One claim path, both features
+
+`SHIELD_ROLE_CLAIM` is the deployment-wide fallback and now applies to **both**
+role binding and delegation. It previously applied only to delegation, while
+role binding hard-coded Keycloak's `realm_access.roles` — so pointing a
+deployment at Okta fixed one path and silently not the other.
+
+If your deployment already sets `SHIELD_ROLE_CLAIM` **and** has role binding
+enabled, role binding will now honour it. That is the fix, but it is a change:
+verify with the audit that `role_source` is `oidc` where you expect it, rather
+than assuming.
+
+Resolution order is tenant config, then `SHIELD_ROLE_CLAIM`, then
+`realm_access.roles`.
 
 Two behaviours to know:
 

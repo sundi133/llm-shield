@@ -189,64 +189,160 @@ def role_binding_mode(tenant_id: Optional[str] = None) -> str:
     return env
 
 
-def role_binding_config(tenant_id: Optional[str] = None) -> dict:
-    """Mode plus the claim path and role rename map for this tenant.
+def _env_role_claim() -> str:
+    """The deployment-wide claim path, honoured by BOTH paths that read roles.
 
-    ``role_claim`` supports a dotted path, because IdPs nest it: Keycloak puts
-    realm roles at ``realm_access.roles``, Okta uses ``groups``, Entra ``roles``.
-
-    One store read backs all three fields. This previously issued a second,
-    uncached GET on the same key for the claim path — harmless only while the
-    config was unreachable, and a synchronous Redis round trip per guarded
-    request the moment it became live.
+    Role binding used to ignore this and hard-code Keycloak's path, while
+    delegation read it. Pointing a deployment at Okta therefore worked for one
+    and silently not the other: delegation looked at ``groups`` while role
+    binding looked at ``realm_access.roles``, found nothing, and fell back to
+    the header.
     """
-    env = _env_mode()
-    cfg = {"mode": env, "role_claim": DEFAULT_ROLE_CLAIM, "role_map": {}}
-    if env == MODE_OFF or not tenant_id:
-        return cfg
+    return os.environ.get("SHIELD_ROLE_CLAIM", "").strip() or DEFAULT_ROLE_CLAIM
 
-    stored = _stored_config(tenant_id)
+
+def claim_config(tenant_id: Optional[str] = None) -> dict:
+    """Where roles live and what they are called, for this tenant.
+
+    Deliberately independent of the role-binding mode. Delegation has its own
+    switch (``SHIELD_DELEGATION``) and needs the tenant's claim path even when
+    role binding is off; requiring an unrelated second flag to make a tenant's
+    IdP configuration apply would be a footgun.
+
+    Resolution order: tenant config, then ``SHIELD_ROLE_CLAIM``, then Keycloak's
+    default. A tenant with no stored config resolves exactly as before.
+    """
+    cfg = {"role_claim": _env_role_claim(), "role_map": {}, "role_allowlist": ()}
+    stored = _stored_config(tenant_id) if tenant_id else None
     if not stored:
         return cfg
-
-    cand = str(stored.get("mode", "")).strip().lower()
-    if cand in _MODES:
-        cfg["mode"] = cand
     if stored.get("role_claim"):
         cfg["role_claim"] = str(stored["role_claim"])
     if isinstance(stored.get("role_map"), dict):
         cfg["role_map"] = stored["role_map"]
+    allow = stored.get("role_allowlist")
+    if isinstance(allow, (list, tuple)):
+        cfg["role_allowlist"] = tuple(
+            str(r).strip() for r in allow if str(r).strip())
     return cfg
+
+
+def role_binding_config(tenant_id: Optional[str] = None) -> dict:
+    """Mode plus the claim path, rename map and allowlist for this tenant.
+
+    ``role_claim`` supports a dotted path, because IdPs nest it: Keycloak puts
+    realm roles at ``realm_access.roles``, Okta uses ``groups``, Entra ``roles``.
+
+    One store read backs every field. This previously issued a second, uncached
+    GET on the same key for the claim path — harmless only while the config was
+    unreachable, and a synchronous Redis round trip per guarded request the
+    moment it became live.
+    """
+    env = _env_mode()
+    if env == MODE_OFF or not tenant_id:
+        # Kill switch: return without touching the store, so a deployment with
+        # role binding off performs zero reads on the guard path.
+        return {"mode": env, "role_claim": _env_role_claim(),
+                "role_map": {}, "role_allowlist": ()}
+
+    cfg = claim_config(tenant_id)
+    stored = _stored_config(tenant_id)      # cached; same 30s entry as above
+    mode = env
+    if stored:
+        cand = str(stored.get("mode", "")).strip().lower()
+        if cand in _MODES:
+            mode = cand
+    return {"mode": mode, **cfg}
+
+
+def _split_path(path: str) -> list:
+    """Split a claim path into segments, honouring ``["..."]`` for literal keys.
+
+    Plain dotted paths are the common case: ``realm_access.roles`` -> two
+    segments. But Auth0 and custom Okta claims are namespaced URLs —
+    ``https://votal.ai/roles`` — which contain dots and would otherwise split
+    into nonsense, silently yielding no roles. Bracket-quoting a segment takes
+    it literally:
+
+        ["https://votal.ai/roles"]        -> ['https://votal.ai/roles']
+        resource_access.["my.app"].roles  -> ['resource_access', 'my.app', 'roles']
+
+    An unterminated bracket is treated as an ordinary character rather than an
+    error: this runs on the guard path, and a typo should yield no roles, not a
+    500.
+    """
+    segments: list = []
+    buf = ""
+    i, n = 0, len(path or "")
+    while i < n:
+        ch = path[i]
+        if ch == "[" and i + 1 < n and path[i + 1] in "\"'":
+            quote = path[i + 1]
+            end = path.find(quote + "]", i + 2)
+            if end != -1:
+                if buf:
+                    segments.append(buf)
+                    buf = ""
+                segments.append(path[i + 2:end])
+                i = end + 2
+                if i < n and path[i] == ".":
+                    i += 1
+                continue
+        if ch == ".":
+            if buf:
+                segments.append(buf)
+                buf = ""
+            i += 1
+            continue
+        buf += ch
+        i += 1
+    if buf:
+        segments.append(buf)
+    return segments
 
 
 def _dotted(claims: dict, path: str):
     """Read a possibly-nested claim. Returns None rather than raising."""
     cur: Any = claims
-    for part in (path or "").split("."):
+    for part in _split_path(path):
         if not isinstance(cur, dict) or part not in cur:
             return None
         cur = cur[part]
     return cur
 
 
-def extract_roles(claims: dict, role_claim: str, role_map: Optional[dict] = None) -> tuple:
+def extract_roles(claims: dict, role_claim: str, role_map: Optional[dict] = None,
+                  role_allowlist: Optional[Any] = None) -> tuple:
     """Roles from a set of VERIFIED claims, in a stable order.
 
     Accepts a list or a single string, since IdPs differ. Order is preserved as
     issued — never set iteration, or the same token would authorize differently
     between calls.
+
+    ``role_allowlist`` filters the result to roles Shield actually knows, AFTER
+    ``role_map`` has renamed them (the allowlist names Shield roles, not IdP
+    groups). This is the fix for the most common rollout failure: an Okta or
+    Entra token carries every group the user belongs to, most of them unrelated
+    to Shield, and the first of those would otherwise be taken as the role
+    purely because it happened to be first in the token. An empty or absent
+    allowlist filters nothing, so a tenant that has not configured one is
+    unaffected.
     """
     val = _dotted(claims or {}, role_claim)
     if val is None:
         return ()
     raw = [val] if isinstance(val, str) else list(val) if isinstance(val, (list, tuple)) else []
     mapping = role_map or {}
+    allowed = {str(r).strip() for r in (role_allowlist or ()) if str(r).strip()}
     out, seen = [], set()
     for r in raw:
         name = str(mapping.get(str(r), r)).strip()
-        if name and name not in seen:
-            seen.add(name)
-            out.append(name)
+        if not name or name in seen:
+            continue
+        if allowed and name not in allowed:
+            continue
+        seen.add(name)
+        out.append(name)
     return tuple(out)
 
 
@@ -266,7 +362,8 @@ def _workload_roles(request: Any, cfg: dict) -> tuple:
     if wi is None:
         return ()
     return extract_roles(getattr(wi, "claims", {}) or {},
-                         cfg.get("role_claim", ""), cfg.get("role_map"))
+                         cfg.get("role_claim", ""), cfg.get("role_map"),
+                         cfg.get("role_allowlist"))
 
 
 def clear_role_binding_cache_for_tests() -> None:
@@ -461,7 +558,7 @@ def resolve_identity(
     # short-circuits before reading any header.
     try:
         from core.delegation import resolve_delegation
-        deleg = resolve_delegation(request)
+        deleg = resolve_delegation(request, tenant_id=tenant_id)
     except Exception:
         deleg = None
 

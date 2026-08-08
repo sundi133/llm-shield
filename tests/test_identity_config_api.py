@@ -224,12 +224,28 @@ def test_empty_role_map_term_is_refused(client):
                       headers=_hdr()).status_code == 422
 
 
-def test_role_allowlist_is_refused_while_unenforced(client):
-    """Storing a control nothing enforces is worse than not offering it: the
-    operator sets it, believes roles outside it are refused, and they are not."""
-    r = client.put(BASE, json={"role_allowlist": ["a"]}, headers=_hdr())
+def test_role_allowlist_is_stored(client, store):
+    r = client.put(BASE, json={"role_allowlist": ["payments_officer", "auditor"]},
+                   headers=_hdr())
+    assert r.status_code == 200
+    assert store["bankco"]["role_allowlist"] == ["payments_officer", "auditor"]
+    assert r.json()["role_allowlist"] == ["payments_officer", "auditor"]
+
+
+def test_oversized_role_allowlist_is_refused(client):
+    r = client.put(BASE, json={"role_allowlist": [f"r{i}" for i in range(257)]},
+                   headers=_hdr())
     assert r.status_code == 422
-    assert "not enforced" in r.json()["detail"]
+
+
+def test_empty_role_allowlist_entry_is_refused(client):
+    assert client.put(BASE, json={"role_allowlist": ["ok", "  "]},
+                      headers=_hdr()).status_code == 422
+
+
+def test_oversized_role_allowlist_entry_is_refused(client):
+    assert client.put(BASE, json={"role_allowlist": ["x" * 129]},
+                      headers=_hdr()).status_code == 422
 
 
 # ── a tenant may strengthen, never weaken ────────────────────────────────
