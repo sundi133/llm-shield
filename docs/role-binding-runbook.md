@@ -274,10 +274,16 @@ VOTAL_SHIELD_PROXY_TOKEN=<same value as SHIELD_TRUSTED_PROXY_SECRET>
 > caller gets no grants. This is the step most likely to be missed in a
 > rollout.
 
-When `VOTAL_SHIELD_PROXY_TOKEN` is set, the hook stops forwarding the caller's
-own `x-user-role` header entirely. Asserting the hop is trusted while
-forwarding a caller-chosen role would launder the forgery through a hop Shield
-trusts.
+When `VOTAL_SHIELD_PROXY_TOKEN` is set, the hook stops forwarding **both** the
+caller's `x-user-role` header and any `metadata.user_role` in the request body.
+Both are caller-supplied — a client puts the second there with
+`extra_body.metadata` — and asserting the hop is trusted while forwarding
+either would launder the forgery through a hop Shield trusts.
+
+That means under Tier 2 the role comes from the virtual key and nowhere else. A
+caller that genuinely has a user identity should use Tier 1 instead: send the
+OIDC token as `X-On-Behalf-Of` and the role is proven rather than vouched,
+which outranks every source here.
 
 Note the hook does **not** read LiteLLM's `UserAPIKeyAuth.user_role`. That field
 is LiteLLM's admin model (`proxy_admin`, `internal_user`), not your RBAC role.

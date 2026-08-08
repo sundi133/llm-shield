@@ -463,7 +463,16 @@ def _chat_model():
                          "user_role": state["role"], "session_id": SESSION},
         },
         default_headers={"x-agent-key": AGENT, "x-user-role": state["role"],
-                         "x-session-id": SESSION, "x-shield-run-id": RUN},
+                         "x-session-id": SESSION, "x-shield-run-id": RUN,
+                         # The user's OIDC token, so the role stays PROVEN on
+                         # this hop too. The tool path already sends it as a
+                         # bearer; the router path had no verified credential at
+                         # all, so under SHIELD_ROLE_BINDING=strict the guards
+                         # resolved no role. Unlike a possession proof, a bearer
+                         # token is not bound to the request, so it survives
+                         # LiteLLM re-originating the call.
+                         **({"x-on-behalf-of": state["token"]}
+                            if state.get("token") else {})},
     )
 
 
@@ -475,11 +484,15 @@ def get_agent():
     # metadata, so a cached agent built as "contractor" would keep telling the
     # proxy "contractor" after /login makes you an sre_lead — the tools would
     # enforce the new role and the router would enforce the old one.
-    if _agent["obj"] is None or _agent["role"] != state["role"]:
+    # Keyed on the token as well as the role: default_headers are baked in at
+    # construction, so re-logging in as the same role would otherwise keep
+    # sending the previous user's token.
+    key = (state["role"], state.get("token") or "")
+    if _agent["obj"] is None or _agent["role"] != key:
         if not LITELLM_KEY:
             return None
         _agent["obj"] = create_agent(_chat_model(), TOOLS, system_prompt=SYSTEM)
-        _agent["role"] = state["role"]
+        _agent["role"] = key
     return _agent["obj"]
 
 

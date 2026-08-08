@@ -111,20 +111,24 @@ class VotalGuardrail(CustomGuardrail):
            the only role on the request that was *authenticated* — the caller
            proved the key, and whoever provisioned the key chose the role.
         2. ``data["metadata"]["user_role"]``, the pre-existing path.
-        3. The caller's own ``x-user-role`` header — kept only when we are NOT
-           vouching, because it preserves today's behaviour for deployments
-           that have not configured the proxy boundary.
+        3. The caller's own ``x-user-role`` header.
 
         NOTE: ``user_api_key_dict.user_role`` is deliberately not read. That
         field is LiteLLM's own admin model (proxy_admin, internal_user, ...),
         not the application's RBAC role; forwarding it would inject LiteLLM's
         vocabulary into Shield's policy matrix.
 
-        When ``self.proxy_token`` is set, this plugin is asserting to Shield
-        that the hop is trusted (strict_proxy). Forwarding a caller-supplied
-        header under that assertion would launder the caller's own claim
-        through a hop Shield trusts, which is precisely the forgery the mode
-        exists to stop — so source 3 is dropped in that case.
+        When ``self.proxy_token`` is set this plugin asserts to Shield that the
+        hop is trusted (strict_proxy), and sources 2 and 3 are BOTH dropped.
+        Both are caller-supplied: a client sets the header directly, and
+        ``data["metadata"]`` carries whatever it put in ``extra_body.metadata``.
+        Forwarding either under a trust assertion would launder the caller's own
+        claim through a hop Shield trusts — the exact forgery strict_proxy
+        exists to stop.
+
+        A caller that genuinely has a user identity should send its OIDC token
+        as ``X-On-Behalf-Of`` instead; Shield verifies the signature and the
+        role is proven rather than vouched, which beats every source here.
         """
         if user_api_key_dict is not None:
             try:
@@ -135,13 +139,14 @@ class VotalGuardrail(CustomGuardrail):
             except Exception:
                 pass
 
+        if self.proxy_token:
+            # Nothing below this line was authenticated by the proxy.
+            return ""
+
         metadata = data.get("metadata", {}) or {}
         role = str(metadata.get("user_role", "") or "").strip()
         if role:
             return role
-
-        if self.proxy_token:
-            return ""
 
         proxy_headers = data.get("proxy_server_request", {}).get("headers", {})
         return str(proxy_headers.get("x-user-role", "") or "").strip()

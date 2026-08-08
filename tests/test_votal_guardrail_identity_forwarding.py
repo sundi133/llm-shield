@@ -154,6 +154,36 @@ def test_caller_header_is_dropped_entirely_when_vouching(clean_env):
     assert h["x-shield-proxy-token"] == SECRET
 
 
+def test_body_metadata_role_is_also_dropped_when_vouching(clean_env):
+    """data["metadata"] is caller-supplied too — a client puts it there with
+    extra_body.metadata. Dropping only the header while honouring the body
+    would leave the same forgery open through a different door."""
+    clean_env.setenv("VOTAL_SHIELD_PROXY_TOKEN", SECRET)
+    g = VotalGuardrail()
+    h = g._extract_shield_headers(_data(metadata={"user_role": "sre_lead"}))
+    assert "x-user-role" not in h
+
+
+def test_vouching_still_honours_the_authenticated_key(clean_env):
+    """The virtual key IS authenticated, so it survives the cutoff."""
+    clean_env.setenv("VOTAL_SHIELD_PROXY_TOKEN", SECRET)
+    g = VotalGuardrail()
+    h = g._extract_shield_headers(
+        _data(headers={"x-user-role": "sre_lead"},
+              metadata={"user_role": "sre_lead"}),
+        _key(shield_user_role="ci_bot"))
+    assert h["x-user-role"] == "ci_bot"
+
+
+def test_delegated_token_still_forwarded_when_vouching(clean_env):
+    """The escape hatch for real users behind a gateway: a verified claim
+    outranks every vouched source, so this is the path that keeps working."""
+    clean_env.setenv("VOTAL_SHIELD_PROXY_TOKEN", SECRET)
+    g = VotalGuardrail()
+    h = g._extract_shield_headers(_data(headers={"x-on-behalf-of": "user.jwt"}))
+    assert h["x-on-behalf-of"] == "user.jwt"
+
+
 def test_litellm_admin_role_is_never_forwarded(clean_env):
     """UserAPIKeyAuth.user_role is LiteLLM's admin model (proxy_admin,
     internal_user), not the application's RBAC role. Forwarding it would inject
