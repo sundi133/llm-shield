@@ -93,12 +93,27 @@ def test_token_at_exactly_the_limit_is_kept(clean_env):
         "x-on-behalf-of"] == ok
 
 
-def test_agent_token_is_forwarded(clean_env):
+def test_agent_token_is_forwarded_when_identity_forwarding_is_wired(clean_env):
     """Verified agent identity beats the x-agent-key string Shield can only
     take our word for. Possession stays unproven on this path."""
+    clean_env.setenv("VOTAL_SHIELD_PROXY_TOKEN", SECRET)
     g = VotalGuardrail()
     h = g._extract_shield_headers(_data(headers={"x-agent-token": "agent.jwt.sig"}))
     assert h["x-agent-token"] == "agent.jwt.sig"
+
+
+def test_agent_token_is_not_forwarded_by_default(clean_env):
+    """Upgrade safety, not squeamishness.
+
+    Shield's AgentIdentityMiddleware rejects a PRESENT-but-invalid agent token
+    with 401, while an absent one passes through. This hook used to drop the
+    header, so forwarding it unconditionally would turn a caller that happens to
+    send a stale x-agent-token from "silently ignored" into "401" purely by
+    upgrading the plugin.
+    """
+    g = VotalGuardrail()
+    h = g._extract_shield_headers(_data(headers={"x-agent-token": "stale.jwt.sig"}))
+    assert "x-agent-token" not in h
 
 
 # ── Tier 2: vouching, and what it must exclude ───────────────────────────────

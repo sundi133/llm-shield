@@ -171,9 +171,18 @@ class VotalGuardrail(CustomGuardrail):
         # expiry, revocation, build allowlist) rather than the x-agent-key
         # string it can only take our word for. Possession is not proven on
         # this path — see docs/spec-agent-token-pop.md §9.
-        agent_token = metadata.get("agent_token") or proxy_headers.get("x-agent-token", "")
-        if agent_token:
-            headers["x-agent-token"] = agent_token
+        #
+        # Gated on proxy_token deliberately. Shield's AgentIdentityMiddleware
+        # rejects a PRESENT-but-invalid agent token with 401, where an absent
+        # one passes through. This hook used to drop the header, so forwarding
+        # it unconditionally would turn a caller that happens to send a stale
+        # x-agent-token from "silently ignored" into "401" on upgrade. Tying it
+        # to the operator having wired identity forwarding keeps the upgrade
+        # inert for everyone else.
+        if self.proxy_token:
+            agent_token = metadata.get("agent_token") or proxy_headers.get("x-agent-token", "")
+            if agent_token:
+                headers["x-agent-token"] = agent_token
 
         # Delegated user token. This is what lets role binding stay VERIFIED
         # behind LiteLLM: unlike a DPoP proof, a bearer user token is not bound
