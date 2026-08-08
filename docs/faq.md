@@ -143,6 +143,40 @@ Yes. Set a `parent_tenant_id` and the child tenant inherits all parent policies.
 
 ## Agentic Security & Tool Calls
 
+### Do I have to replace my identity provider?
+
+No. LLM Shield authenticates nobody and has no user store, login flow, or MFA.
+
+Keep Okta, Entra, Keycloak or Auth0 for your people, and SPIFFE or mTLS for your
+workloads. Shield consumes both and issues a short-lived agent credential
+derived from them. Nothing about your existing identity estate moves.
+
+### Isn't our existing workload identity (SPIFFE, mTLS) enough?
+
+It answers "which service is calling", which is necessary and not sufficient for
+agents. An agent credential also has to carry which **build** of the agent code,
+which **model version**, which **human** it acts for, which **agent delegated**
+to it, and which **session** it belongs to.
+
+The practical difference: a service with fixed code behaves the same tomorrow;
+an agent with the same code and new model weights does not. Identity that stops
+at "which binary" cannot tell you whether an incident came from the code or the
+model.
+
+Shield verifies SPIFFE and mTLS where you already have them, so this is additive
+rather than a replacement. See
+[FAQ: verified identity](faq-verified-identity.md) for the full comparison.
+
+### Can a stolen agent token be replayed by someone else?
+
+Not with `SHIELD_AGENT_TOKEN_POP=required`. The agent holds a keypair, Shield
+only ever sees the public half, and every request carries a signature the token
+alone cannot produce. The signature also covers the exact call being made, so a
+captured one cannot be replayed or redirected.
+
+Off by default, and it is a direct-path control — a proof cannot exist when an
+LLM gateway sits in front. [Details and limits](faq-verified-identity.md).
+
 ### Does LLM Shield support agentic AI?
 
 Yes — it ships **7 dedicated agentic guardrails** covering tool authorization, data access, session limits, taint tracking, and goal drift. Integration is via HTTP callbacks: call `/v1/shield/tool/check` before each tool execution and `/v1/shield/tool/output` after.
