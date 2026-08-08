@@ -75,7 +75,7 @@ from typing import Optional
 
 import requests
 from fastapi import Cookie, FastAPI, HTTPException, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from langchain.agents import create_agent
@@ -268,6 +268,60 @@ def run_agent(question: str, role: str) -> dict:
     return {"role": role, "answer": answer, "shield_decisions": trace}
 
 
+def stream_agent(question: str, role: str):
+    """Server-sent events: tokens as the model produces them, and every Shield
+    decision the moment it is made.
+
+    The Shield events are the reason this is worth streaming at all. A user
+    watching a tool get refused mid-answer understands the authorization model
+    in a way a final JSON blob never conveys.
+
+    `trace` is appended by guarded() on the same thread, so draining it between
+    chunks emits decisions in the order they actually happened.
+    """
+    trace: list = []
+    sent = 0
+
+    def sse(payload: dict) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
+    try:
+        agent = create_agent(
+            ChatOpenAI(model=MODEL, temperature=0, streaming=True),
+            build_tools(role, trace),
+            system_prompt=SYSTEM,
+        )
+        yield sse({"type": "start", "role": role})
+
+        for chunk, _meta in agent.stream(
+                {"messages": [{"role": "user", "content": question}]},
+                stream_mode="messages"):
+
+            while sent < len(trace):                 # decisions made so far
+                yield sse({"type": "shield", **trace[sent]})
+                sent += 1
+
+            # Tool results arrive on this stream too; only forward the model's
+            # own words, or the transcript shows raw tool output as if the
+            # assistant had said it.
+            if getattr(chunk, "type", "") != "AIMessageChunk" and \
+                    chunk.__class__.__name__ != "AIMessageChunk":
+                continue
+            text = getattr(chunk, "content", "")
+            if isinstance(text, list):               # some providers chunk parts
+                text = "".join(part.get("text", "") for part in text
+                               if isinstance(part, dict))
+            if text:
+                yield sse({"type": "token", "text": text})
+
+        while sent < len(trace):
+            yield sse({"type": "shield", **trace[sent]})
+            sent += 1
+        yield sse({"type": "done"})
+    except Exception as e:
+        yield sse({"type": "error", "detail": f"{e.__class__.__name__}: {e}"})
+
+
 # ── HTTP ─────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="LangChain agent behind your own login")
@@ -318,39 +372,180 @@ def chat(body: ChatBody, session: Optional[str] = Cookie(None)):
         raise HTTPException(500, f"{e.__class__.__name__}: {e}")
 
 
+@app.post("/chat/stream")
+def chat_stream(body: ChatBody, session: Optional[str] = Cookie(None)):
+    """Same authorization as /chat. The role still comes from the session."""
+    role = role_for(read_session(session))
+    if not role:
+        raise HTTPException(401, "log in first")
+    return StreamingResponse(
+        stream_agent(body.message, role),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     # No secret here. The page only ever talks to this backend.
-    return """<!doctype html><meta charset=utf-8><title>Shielded LangChain agent</title>
-<style>body{font-family:system-ui;max-width:48rem;margin:3rem auto;padding:0 1rem}
-button{padding:.4rem .8rem;margin:.2rem}input{width:60%;padding:.4rem}
-pre{background:#f4f4f5;padding:1rem;border-radius:8px;white-space:pre-wrap}</style>
-<h2>LangChain agent, role enforced by Shield</h2>
-<p>Log in, then ask. The role comes from this server's session — the box below
-cannot change it, and neither can the model.</p>
-<div>
-  <button onclick="login('alex')">alex (sre_lead)</button>
-  <button onclick="login('riley')">riley (intern)</button>
-  <button onclick="fetch('/whoami').then(r=>r.json()).then(show)">whoami</button>
-</div>
-<p><input id=q value="restart checkout-api"> <button onclick="ask()">ask</button></p>
-<pre id=out>...</pre>
+    return PAGE
+
+
+# RAW string: the JS below contains \n inside string literals
+# (SSE frame splitting, newline in an error message). In a normal
+# triple-quoted string Python turns those into real newlines, which
+# breaks the JS string literals and the whole script fails to parse —
+# silently, so the page renders and no button does anything.
+PAGE = r"""<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Shielded agent</title>
+<style>
+*{box-sizing:border-box}
+:root{--bg:#fff;--fg:#0d0d0d;--muted:#8f8f8f;--line:#e5e5e5;--user:#f4f4f4;
+      --ok:#0a7c42;--no:#b42318;--okbg:#eaf6ef;--nobg:#fdeceb}
+@media(prefers-color-scheme:dark){:root{--bg:#212121;--fg:#ececec;--muted:#9b9b9b;
+  --line:#3a3a3a;--user:#303030;--ok:#5ed09a;--no:#ff8a80;--okbg:#1c3328;--nobg:#3a2220}}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);display:flex;flex-direction:column;
+     font:16px/1.6 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:.6rem;padding:.7rem 1rem;
+       border-bottom:1px solid var(--line);flex-wrap:wrap}
+header b{font-size:.95rem;margin-right:auto}
+.pill{font-size:.78rem;padding:.2rem .6rem;border-radius:999px;border:1px solid var(--line);
+      color:var(--muted);white-space:nowrap}
+header button{font:inherit;font-size:.8rem;padding:.25rem .7rem;border-radius:999px;
+  border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
+header button:hover{background:var(--user)}
+main{flex:1;overflow-y:auto}
+.thread{max-width:46rem;margin:0 auto;padding:1.5rem 1rem 7rem}
+.turn{margin:1.4rem 0}
+.turn.user{display:flex;justify-content:flex-end}
+.turn.user .body{background:var(--user);padding:.65rem 1rem;border-radius:1.25rem;
+                 max-width:80%;white-space:pre-wrap}
+.turn.bot .body{white-space:pre-wrap;min-height:1.6rem}
+.who{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+     margin-bottom:.35rem}
+.chip{display:flex;width:fit-content;align-items:center;gap:.4rem;font-size:.78rem;
+      padding:.25rem .6rem;border-radius:.6rem;margin:.15rem 0 .5rem;border:1px solid transparent}
+.chip.ok{background:var(--okbg);color:var(--ok);border-color:var(--ok)}
+.chip.no{background:var(--nobg);color:var(--no);border-color:var(--no)}
+.chip code{font:inherit;font-weight:600}
+.cursor{display:inline-block;width:.5rem;height:1.05rem;background:var(--fg);
+        vertical-align:-2px;animation:b 1s steps(2) infinite}
+@keyframes b{50%{opacity:0}}
+footer{position:fixed;bottom:0;left:0;right:0;background:linear-gradient(transparent,var(--bg) 35%);
+       padding:1rem}
+.composer{max-width:46rem;margin:0 auto;display:flex;gap:.5rem;align-items:flex-end;
+  border:1px solid var(--line);background:var(--bg);border-radius:1.6rem;padding:.5rem .5rem .5rem 1rem}
+.composer textarea{flex:1;border:0;outline:0;resize:none;background:transparent;color:var(--fg);
+  font:inherit;max-height:9rem;padding:.35rem 0}
+.send{border:0;border-radius:999px;width:2.1rem;height:2.1rem;cursor:pointer;
+      background:var(--fg);color:var(--bg);font-size:1rem;flex:none}
+.send:disabled{opacity:.3;cursor:default}
+.hint{max-width:46rem;margin:.5rem auto 0;font-size:.74rem;color:var(--muted);text-align:center}
+</style></head><body>
+<header>
+  <b>Shielded agent</b>
+  <span class=pill id=who>not signed in</span>
+  <button onclick="login('alex')">alex · sre_lead</button>
+  <button onclick="login('riley')">riley · intern</button>
+</header>
+<main id=main><div class=thread id=thread></div></main>
+<footer>
+  <div class=composer>
+    <textarea id=q rows=1 placeholder="Ask the agent to do something..."></textarea>
+    <button class=send id=send onclick=send()>&#8593;</button>
+  </div>
+  <div class=hint>Your role comes from this server's session. Neither this box nor the model can change it.</div>
+</footer>
 <script>
-const out = document.getElementById('out');
-const show = o => out.textContent = JSON.stringify(o, null, 2);
+const thread = document.getElementById('thread'), main = document.getElementById('main');
+const q = document.getElementById('q'), sendBtn = document.getElementById('send');
+let busy = false;
+
+const scroll = () => main.scrollTop = main.scrollHeight;
+q.addEventListener('input', () => { q.style.height='auto'; q.style.height=q.scrollHeight+'px'; });
+q.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+
+function turn(role, label){
+  const d = document.createElement('div');
+  d.className = 'turn ' + role;
+  d.innerHTML = (label ? `<div class=who>${label}</div>` : '') + '<div class=body></div>';
+  thread.appendChild(d); scroll();
+  return d.querySelector('.body');
+}
+
 async function login(u){
-  show(await (await fetch('/login',{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({username:u,password:'demo'})})).json());
+  const r = await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username:u,password:'demo'})});
+  const j = await r.json();
+  document.getElementById('who').textContent = `${j.user} · ${j.role}`;
+  turn('bot','system').textContent = `Signed in as ${j.user}. Role ${j.role}, decided by the server.`;
 }
-async function ask(){
-  out.textContent = 'thinking...';
-  // The forged header below changes nothing — the server never reads it.
-  show(await (await fetch('/chat',{method:'POST',
-    headers:{'Content-Type':'application/json','X-User-Role':'sre_lead'},
-    body:JSON.stringify({message:document.getElementById('q').value})})).json());
+
+async function send(){
+  const text = q.value.trim();
+  if (!text || busy) return;
+  busy = true; sendBtn.disabled = true;
+  q.value = ''; q.style.height = 'auto';
+  turn('user','').textContent = text;
+
+  const body = turn('bot','assistant');
+  const cursor = document.createElement('span');
+  cursor.className = 'cursor'; body.appendChild(cursor);
+
+  let res;
+  try {
+    // The forged role header below is deliberate. It changes nothing: the
+    // server reads the session cookie and never looks at this.
+    res = await fetch('/chat/stream',{method:'POST',
+      headers:{'Content-Type':'application/json','X-User-Role':'sre_lead'},
+      body:JSON.stringify({message:text})});
+  } catch(e){ cursor.remove(); body.textContent = 'network error'; busy=false; sendBtn.disabled=false; return; }
+
+  if (!res.ok){
+    cursor.remove();
+    body.textContent = res.status === 401 ? 'Sign in first.' : `error ${res.status}`;
+    busy = false; sendBtn.disabled = false; return;
+  }
+
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = '', answer = '';
+  while (true){
+    const {value, done} = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, {stream:true});
+    const parts = buf.split('\n\n'); buf = parts.pop();
+    for (const p of parts){
+      if (!p.startsWith('data:')) continue;
+      let ev; try { ev = JSON.parse(p.slice(5)); } catch { continue; }
+      if (ev.type === 'token'){
+        answer += ev.text;
+        cursor.insertAdjacentText('beforebegin', ev.text);
+      } else if (ev.type === 'shield'){
+        const chip = document.createElement('span');
+        chip.className = 'chip ' + (ev.allowed ? 'ok' : 'no');
+        chip.innerHTML = `${ev.allowed ? '&#10003;' : '&#10007;'} <code>${ev.tool}</code> `
+                       + `<span>${ev.allowed ? 'allowed' : 'denied'} for ${ev.role}</span>`;
+        chip.title = ev.reason || '';
+        cursor.insertAdjacentElement('beforebegin', chip);
+      } else if (ev.type === 'error'){
+        cursor.insertAdjacentText('beforebegin', '\n[' + ev.detail + ']');
+      }
+      scroll();
+    }
+  }
+  cursor.remove();
+  if (!answer.trim() && !body.querySelector('.chip')) body.textContent = '(no response)';
+  busy = false; sendBtn.disabled = false; q.focus();
 }
-</script>"""
+
+fetch('/whoami').then(r=>r.json()).then(j=>{
+  if (j.role) document.getElementById('who').textContent = `${j.user} · ${j.role}`;
+});
+</script></body></html>"""
 
 
 # ── Prove it, without needing a model ────────────────────────────────────
