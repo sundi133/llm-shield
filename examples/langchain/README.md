@@ -59,6 +59,9 @@ not the middleware breaking.
 | Full agent with input/output guardrails | `shield_langchain_agent.py` |
 | Per-tool capabilities (mint + verify at the tool boundary) | `langchain_guarded_tools.py` |
 | OIDC / workload identity | `langchain_oidc_decorator.py`, `spiffe_guarded_e2e.py` |
+| LangChain agent behind **your own login**, no IdP | `langchain_trusted_proxy_agent.py` |
+| Prove a stolen agent token is useless | `agent_token_theft_demo.py` |
+| Prove a delegation chain cannot climb past its limit | `delegation_chain_demo.py` |
 
 Two things worth knowing before you pick:
 
