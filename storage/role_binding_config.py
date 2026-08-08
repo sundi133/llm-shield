@@ -53,16 +53,19 @@ def clear_cache_for_tests() -> None:
 
 
 def _load(tenant_id: str) -> Optional[dict]:
-    """Read and parse the stored config. None when absent or unreadable."""
+    """Read and parse the stored config. None when absent or unreadable.
+
+    Goes through ``tenant_store.kv_get`` rather than talking to Redis directly,
+    so reads and writes agree about where the value lives. ``kv_get``/``kv_set``
+    fall back to an in-memory store when Redis is not configured; a reader that
+    bypassed that would never see a write made in a Redis-less environment, and
+    the config would appear to save and then do nothing.
+    """
     try:
-        from storage.tenant_store import _get_redis
-        r = _get_redis()
-        if not r:
-            return None
-        raw = r.get(key_for(tenant_id))
-        if not raw:
-            return None
-        stored = json.loads(raw if isinstance(raw, str) else raw.decode())
+        from storage.tenant_store import kv_get
+        stored = kv_get(key_for(tenant_id))
+        # kv_get returns the raw string when the value is not valid JSON, and
+        # whatever type it decoded to otherwise. Only an object is a config.
         return stored if isinstance(stored, dict) else None
     except Exception as e:
         # Deliberately not re-raised. This runs on the guard path; a malformed
@@ -70,6 +73,30 @@ def _load(tenant_id: str) -> Optional[dict]:
         # request that would otherwise have been decided correctly.
         logger.debug("role_binding config unreadable for %r: %s", tenant_id, e)
         return None
+
+
+#: Modes ordered weakest to strongest. Used to stop a tenant self-service write
+#: from downgrading a deployment-wide baseline: an operator who sets
+#: SHIELD_ROLE_BINDING=strict has made a security decision, and a tenant able to
+#: store "off" over it would quietly undo that decision for their own traffic.
+MODE_STRENGTH = {"off": 0, "prefer": 1, "strict_proxy": 2, "strict": 3}
+
+
+def set_config(tenant_id: str, cfg: dict) -> dict:
+    """Persist config for a tenant and drop the local cache entry.
+
+    Raises on a write failure rather than returning quietly: a config that
+    looks saved and is not is worse than an error, because the operator moves
+    on believing role binding is configured.
+
+    NOTE: the cache drop is process-local. Other replicas keep their cached
+    copy for up to ``_CACHE_TTL_S``, so a change takes effect fleet-wide within
+    that window. Callers should say so rather than implying it is instant.
+    """
+    from storage.tenant_store import kv_set
+    kv_set(key_for(tenant_id), cfg)
+    _CACHE.pop(tenant_id, None)
+    return cfg
 
 
 def get_config(tenant_id: Optional[str]) -> Optional[dict]:

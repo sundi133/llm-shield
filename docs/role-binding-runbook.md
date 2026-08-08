@@ -84,6 +84,51 @@ causes, in order:
 `role_verified` is true only for the first row. A `proxy` role is deliberately
 not "verified", and any dashboard that treats it as such is wrong.
 
+## Configure the IdP claim path (per tenant)
+
+Which claim carries the role differs per IdP. Guessing fails silently: a wrong
+path yields no roles, binding falls back, and the symptom looks like "binding is
+broken" rather than "the path is wrong".
+
+Ask for the known-good paths rather than guessing:
+
+```bash
+curl -s "$SHIELD_ADMIN/v1/tenant/me/identity/role-binding/presets" -H "X-API-Key: $TENANT_KEY"
+```
+
+| IdP | `role_claim` |
+|---|---|
+| Keycloak | `realm_access.roles` (the default) |
+| Okta | `groups` |
+| Entra ID | `roles` (app roles; directory groups appear as `groups`) |
+
+Set the path, and optionally map IdP group names onto Shield role names:
+
+```bash
+curl -X PUT "$SHIELD_ADMIN/v1/tenant/me/identity/role-binding" -H "X-API-Key: $TENANT_KEY" -H 'Content-Type: application/json' -d '{"role_claim":"groups","role_map":{"bank-payments-officers":"payments_officer"}}'
+```
+
+Read it back to see whether it is actually taking effect:
+
+```bash
+curl -s "$SHIELD_ADMIN/v1/tenant/me/identity/role-binding" -H "X-API-Key: $TENANT_KEY"
+```
+
+`effective_mode` and `env_kill_switch` are the fields to look at.
+`SHIELD_ROLE_BINDING=off` overrides tenant config globally, so a tenant can have
+`prefer` stored and see header roles still winning. That asymmetry is otherwise
+invisible.
+
+Two behaviours to know:
+
+- **Changes take up to 30 seconds fleet-wide.** Each replica caches the config
+  for that long. The write drops the cache on the replica that served it; the
+  others expire on their own.
+- **A tenant may strengthen role binding, not weaken it.** If the deployment is
+  `strict`, a tenant write of `off` or `prefer` is refused with `422`. Ordering
+  is `off` < `prefer` < `strict_proxy` < `strict`. This applies to writes made
+  through the API; configs already in Redis are read as-is.
+
 ## Configure the trusted-proxy boundary
 
 Only needed for `strict_proxy`.

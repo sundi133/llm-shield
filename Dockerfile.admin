@@ -96,6 +96,7 @@ COPY api/routes_oauth_registration.py api/
 COPY api/routes_oidc_admin.py api/
 COPY api/routes_a2a.py api/
 COPY api/routes_agentic_control_plane.py api/
+COPY api/routes_identity_config.py api/
 COPY api/routes_guardrail_metrics.py api/
 COPY api/routes_siem.py api/
 COPY api/routes_vault.py api/

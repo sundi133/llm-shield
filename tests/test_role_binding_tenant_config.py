@@ -277,6 +277,41 @@ def test_tenant_mode_overrides_env(monkeypatch):
         assert role_binding_mode("t1") == "strict"
 
 
+def test_write_then_read_round_trips_without_redis(monkeypatch):
+    """The admin PUT must be visible to the guard-path reader.
+
+    tenant_store.kv_get/kv_set fall back to an in-memory store when Redis is
+    not configured. A reader that talked to Redis directly would never see a
+    write made in that environment: the config would appear to save and then do
+    nothing, which is the worst possible failure for a security control.
+    """
+    from storage.role_binding_config import get_config, set_config
+
+    monkeypatch.setenv("SHIELD_ROLE_BINDING", "prefer")
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        set_config("roundtrip-tenant",
+                   {"mode": "prefer", "role_claim": "groups",
+                    "role_map": {"g": "payments_officer"}})
+        assert get_config("roundtrip-tenant")["role_claim"] == "groups"
+
+        req = _request(tenant_id="roundtrip-tenant", claims={"groups": ["g"]})
+        res = resolve_identity(req)
+
+    assert res.user_role == "payments_officer"
+    assert res.role_source == SOURCE_OIDC
+
+
+def test_set_config_drops_the_cache_entry(monkeypatch):
+    """A write must not be masked by this process's own 30s cache."""
+    from storage.role_binding_config import get_config, set_config
+
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        set_config("cache-tenant", {"role_claim": "groups"})
+        assert get_config("cache-tenant")["role_claim"] == "groups"
+        set_config("cache-tenant", {"role_claim": "roles"})
+        assert get_config("cache-tenant")["role_claim"] == "roles"
+
+
 def test_dockerfile_admin_copies_the_new_module():
     """The lazy import is inside a try/except, so a missing COPY does not
     crash the admin image — it silently ignores every tenant's IdP config.
