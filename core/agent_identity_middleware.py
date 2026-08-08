@@ -10,12 +10,16 @@ no token at all.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from core.agent_tokens import TokenError, verify_agent_token
+from core.agent_tokens import (POP_OFF, POP_REQUIRED, POP_UNBOUND,
+                               POP_VERIFIED, TokenError,
+                               agent_token_pop_mode, pop_allow_unbound,
+                               verify_agent_pop, verify_agent_token)
 
 logger = logging.getLogger("votal.agent_identity_mw")
 
@@ -73,5 +77,43 @@ class AgentIdentityMiddleware(BaseHTTPMiddleware):
                 content={"error": "invalid_agent_token", "detail": str(e)},
             )
 
+        # Proof-of-possession. Without this an agent token is a bearer token:
+        # a copy in a log file or crash dump works until it expires. Inert by
+        # default — one cached env read and nothing else.
+        mode = agent_token_pop_mode()
+        if mode != POP_OFF:
+            status, err = verify_agent_pop(request, identity)
+            identity = replace(identity, pop_verified=(status == POP_VERIFIED))
+            if mode == POP_REQUIRED and status != POP_VERIFIED:
+                if not self._exempt(request, status):
+                    logger.info("agent_token possession check failed: %s", err)
+                    return JSONResponse(
+                        status_code=401,
+                        content={"error": "agent_pop_required", "detail": err},
+                    )
+
         request.state.identity = identity
         return await call_next(request)
+
+    @staticmethod
+    def _exempt(request, status: str) -> bool:
+        """Whether a failed/absent proof is tolerated in ``required`` mode.
+
+        Two exemptions, both narrow:
+
+        * An unbound legacy token while ``allow_unbound`` is set — the
+          migration rung between "deny nothing" and "deny every legacy token".
+        * A request from the trusted proxy. Behind an LLM gateway a proof
+          CANNOT exist: DPoP binds htm/htu, the agent signs for the gateway's
+          URL, and Shield receives its own. The gateway authenticates itself
+          with a shared secret instead, and pop_verified stays false so the
+          audit records that possession was vouched for rather than proven.
+          See docs/spec-agent-token-pop.md section 9.
+        """
+        if status == POP_UNBOUND and pop_allow_unbound():
+            return True
+        try:
+            from core.proxy_trust import peer_is_trusted, trusted_proxy_only
+            return bool(trusted_proxy_only() and peer_is_trusted(request))
+        except Exception:
+            return False

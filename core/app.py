@@ -248,6 +248,11 @@ def create_app() -> FastAPI:
             warn_if_depth_limit_is_unenforceable()
         except Exception:
             pass
+        try:
+            from core.agent_tokens import warn_if_allow_unbound_is_inert
+            warn_if_allow_unbound_is_inert()
+        except Exception:
+            pass
         # Audit logging now uses Redis — no init needed
         # Initialize telemetry (ES, Splunk, OTLP, file)
         import asyncio

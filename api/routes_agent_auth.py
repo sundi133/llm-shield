@@ -80,6 +80,10 @@ class AgentTokenRequest(BaseModel):
     parent_agent_token: Optional[str] = Field(
         None, description="Verified parent's agent token. Required to set "
                           "a parent when parent proof is required.")
+    agent_jwk: Optional[dict] = Field(
+        None, description="Agent PUBLIC JWK. Its thumbprint is bound into "
+                          "the token as cnf.jkt for proof-of-possession. "
+                          "Private key members are refused.")
     ttl_seconds: int = Field(DEFAULT_TOKEN_TTL_SECONDS, ge=1, le=MAX_TOKEN_TTL_SECONDS)
 
 
@@ -343,6 +347,7 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
             session_id=body.session_id,
             parent_agent_id=parent_id,
             delegation_depth=depth,
+            agent_jwk=body.agent_jwk,
             ttl_seconds=body.ttl_seconds,
         )
     except TokenError as e:
@@ -1007,6 +1012,10 @@ class TenantAgentTokenRequest(BaseModel):
     parent_agent_token: Optional[str] = Field(
         None, description="Verified parent's agent token. Required to set "
                           "a parent when parent proof is required.")
+    agent_jwk: Optional[dict] = Field(
+        None, description="Agent PUBLIC JWK. Its thumbprint is bound into "
+                          "the token as cnf.jkt for proof-of-possession. "
+                          "Private key members are refused.")
     ttl_seconds: int = Field(DEFAULT_TOKEN_TTL_SECONDS, ge=1, le=MAX_TOKEN_TTL_SECONDS)
 
 
@@ -1039,6 +1048,7 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
             session_id=body.session_id,
             parent_agent_id=parent_id,
             delegation_depth=depth,
+            agent_jwk=body.agent_jwk,
             ttl_seconds=body.ttl_seconds,
         )
     except TokenError as e:

@@ -37,6 +37,12 @@ class IdentityTuple:
     #: Delegation hops from a root token. 0 means minted directly for a user.
     #: Absent on tokens minted before delegation depth existed, which IS 0.
     delegation_depth: int = 0
+    #: Thumbprint of the key this token is bound to (cnf.jkt). Empty means the
+    #: token is a bearer token: whoever holds the string can use it.
+    cnf_jkt: str = ""
+    #: Whether a valid possession proof accompanied THIS request. Distinct from
+    #: cnf_jkt being set: a bound token with no proof is the stolen-token case.
+    pop_verified: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -56,6 +62,8 @@ class IdentityTuple:
             "identity_method": self.identity_method,
             "roles": list(self.roles),
             "delegation_depth": self.delegation_depth,
+            "cnf_jkt": self.cnf_jkt,
+            "pop_verified": self.pop_verified,
         }
 
 

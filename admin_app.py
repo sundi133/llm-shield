@@ -2028,6 +2028,11 @@ def create_admin_app() -> FastAPI:
             warn_if_depth_limit_is_unenforceable()
         except Exception:
             pass
+        try:
+            from core.agent_tokens import warn_if_allow_unbound_is_inert
+            warn_if_allow_unbound_is_inert()
+        except Exception:
+            pass
 
     return app
 
