@@ -35,7 +35,12 @@ Setup
     export LLM_SHIELD_URL=https://api.guardrails.votal.ai
     export TENANT_API_KEY=<your tenant key>
     export SHIELD_PROXY_TOKEN=<same value as SHIELD_TRUSTED_PROXY_SECRET>
-    export OPENAI_API_KEY=sk-...        # optional; without it, tools run directly
+    export AGENT_ID=sre-agent           # must be registered for your tenant
+
+No OPENAI_API_KEY, and no Keycloak. There is no model call here on purpose:
+this example is about WHERE the role comes from, and an LLM in the middle only
+obscures that. The tools are stubs. Point them at real work once the
+authorization story is the one you want.
 
 On Shield:
     SHIELD_ROLE_BINDING=strict_proxy
@@ -66,7 +71,10 @@ from pydantic import BaseModel
 
 SHIELD = os.getenv("LLM_SHIELD_URL", "http://localhost:8000").rstrip("/")
 TENANT_KEY = os.getenv("TENANT_API_KEY", "")
-AGENT_KEY = os.getenv("SHIELD_AGENT_KEY", "sre-agent")
+# AGENT_ID is what the other examples in this folder use; SHIELD_AGENT_KEY is
+# accepted too so either muscle memory works.
+AGENT_KEY = (os.getenv("SHIELD_AGENT_KEY") or os.getenv("AGENT_ID")
+             or "sre-agent")
 
 # The shared secret. Lives ONLY on the server. It is never sent to the browser,
 # never in a template, never in an API response. If it reaches the client, the
