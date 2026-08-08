@@ -48,6 +48,8 @@ Setup
     export SHIELD_PROXY_TOKEN=<same value as SHIELD_TRUSTED_PROXY_SECRET>
     export OPENAI_API_KEY=sk-...              # the agent needs a model
     export DEMO_MODEL=gpt-4.1-mini            # optional
+    export DEMO_CAPS=1                        # optional: capability path
+    export TENANT_ID=<tenant id>              # only needed with DEMO_CAPS=1
 
 On Shield:
     SHIELD_ROLE_BINDING=strict_proxy
@@ -71,6 +73,8 @@ import json
 import os
 import secrets
 import sys
+import time
+import uuid
 from typing import Optional
 
 import requests
@@ -98,6 +102,15 @@ APP_PORT = int(os.getenv("APP_PORT", "8500"))
 TENANT_KEY = os.getenv("TENANT_API_KEY", "")
 AGENT_KEY = os.getenv("SHIELD_AGENT_KEY") or os.getenv("AGENT_ID") or "sre-agent"
 MODEL = os.getenv("DEMO_MODEL", "gpt-4.1-mini")
+TENANT_ID = os.getenv("TENANT_ID", "")
+
+# DEMO_CAPS=1 switches the tool path from advisory (tool/check only) to the
+# capability path: mint a single-use token bound to this exact action, then
+# verify and burn it. Same switch name as interactive_demo_sre.py.
+CAPS = os.getenv("DEMO_CAPS", "").strip().lower() in ("1", "true", "yes", "on")
+
+INSTANCE = "inst-" + uuid.uuid4().hex[:8]
+SESSION = "sess-" + uuid.uuid4().hex[:8]
 
 # The shared secret. Lives ONLY on the server. Never in a template, never in an
 # API response. If it reaches the browser, the browser becomes the trusted
@@ -178,23 +191,144 @@ def shield_headers(role: str) -> dict:
     return headers
 
 
-def shield_allows(tool_name: str, role: str, params: dict) -> tuple:
-    """(allowed, reason). Fail closed — a check you could not perform is not a
-    check that passed."""
+def _post(path: str, body: dict, role: str, extra: Optional[dict] = None):
+    """(json, elapsed_ms, error). Never raises — the caller decides."""
+    t0 = time.perf_counter()
+    headers = shield_headers(role)
+    if extra:
+        headers.update(extra)
     try:
-        r = requests.post(f"{SHIELD}/v1/shield/tool/check", timeout=TIMEOUT,
-                          headers=shield_headers(role),
-                          json={"agent_key": AGENT_KEY, "tool_name": tool_name,
-                                "tool_input": json.dumps(params),
-                                "user_role": role})
+        r = requests.post(f"{SHIELD}{path}", timeout=TIMEOUT,
+                          headers=headers, json=body)
     except Exception as e:
-        return False, f"Shield unreachable ({e.__class__.__name__})"
+        return None, (time.perf_counter() - t0) * 1000, e.__class__.__name__
+    ms = (time.perf_counter() - t0) * 1000
     if r.status_code != 200:
-        return False, f"Shield returned {r.status_code}"
-    body = r.json()
-    allowed = bool(body.get("allowed", False))
-    return allowed, (body.get("reason") or body.get("message")
-                     or ("allowed" if allowed else "denied by policy"))
+        return None, ms, f"{r.status_code}: {r.text[:160]}"
+    try:
+        return r.json(), ms, None
+    except Exception:
+        return None, ms, "non-JSON response"
+
+
+def screen_input(text: str, role: str, trace: list) -> Optional[str]:
+    """Input guardrails, before the model sees anything.
+
+    Returns a refusal string when the prompt is blocked, else None. This runs
+    ahead of the agent on purpose: a jailbreak that never reaches the model
+    cannot talk it into anything.
+    """
+    d, ms, err = _post("/guardrails/input", {"message": text}, role)
+    if err:
+        trace.append({"stage": "input", "status": "fail",
+                      "label": "unreachable", "meta": err, "ms": ms})
+        return "Shield could not screen this request, so I did not send it."
+
+    ran = d.get("guardrail_results", []) or []
+    bad = [g for g in ran if not g.get("passed", True)]
+    trace.append({"stage": "input", "status": "block" if bad else "pass",
+                  "label": "BLOCK" if bad else "pass",
+                  "meta": f"{len(ran)} guardrails", "ms": ms})
+    for g in bad:
+        trace.append({"stage": "", "status": "detail",
+                      "label": g.get("guardrail", ""),
+                      "meta": str(g.get("message", ""))[:160], "ms": None})
+    if d.get("safe") is False or bad:
+        why = bad[0].get("message") if bad else "blocked"
+        return f"Blocked by input guardrails: {why}"
+    return None
+
+
+def rbac_check(tool_name: str, role: str, params: dict, trace: list) -> tuple:
+    """(allowed, reason). The advisory path — and the gate on minting."""
+    d, ms, err = _post("/v1/shield/tool/check",
+                       {"agent_key": AGENT_KEY, "tool_name": tool_name,
+                        "user_role": role, "tool_params": params}, role)
+    if err:
+        trace.append({"stage": "rbac", "status": "fail", "label": "unreachable",
+                      "meta": err, "ms": ms})
+        return False, f"could not reach Shield ({err})"
+
+    allowed = bool(d.get("allowed"))
+    shown = " ".join(f"{k}={v}" for k, v in params.items())
+    trace.append({"stage": "rbac", "status": "allow" if allowed else "deny",
+                  "label": f"{'ALLOW' if allowed else 'DENY'} {tool_name}",
+                  "meta": f"{shown}  role={role}".strip(), "ms": ms})
+    why = next((g.get("message") for g in d.get("guardrail_results", [])
+                if not g.get("passed", True)), None)
+    if not allowed:
+        why = why or "not permitted"
+        trace.append({"stage": "", "status": "detail", "label": "",
+                      "meta": str(why)[:200], "ms": None})
+        if CAPS:
+            trace.append({"stage": "", "status": "detail", "label": "",
+                          "meta": "no capability minted — the check gates the mint",
+                          "ms": None})
+    return allowed, (why or "allowed")
+
+
+_agent_token = {"value": ""}
+
+
+def ensure_agent_token(role: str, trace: list) -> Optional[str]:
+    """Exchange the tenant credential for an agent identity (AuthN).
+
+    Needs `tenant_key` in SHIELD_WORKLOAD_IDENTITY_PROVIDERS on the data plane.
+    """
+    if _agent_token["value"]:
+        return _agent_token["value"]
+    d, ms, err = _post("/v1/shield/auth/agent-token",
+                       {"user_sub": "app-session", "agent_id": AGENT_KEY,
+                        "agent_instance_id": INSTANCE,
+                        "tenant_id": TENANT_ID, "build_hash": "demo",
+                        "model_version": MODEL, "session_id": SESSION,
+                        "ttl_seconds": 900}, role)
+    if err:
+        trace.append({"stage": "authn", "status": "fail", "label": "no agent token",
+                      "meta": err, "ms": ms})
+        return None
+    _agent_token["value"] = d["agent_token"]
+    trace.append({"stage": "authn", "status": "ok", "label": "agent token",
+                  "meta": f"instance={INSTANCE}", "ms": ms})
+    return _agent_token["value"]
+
+
+def capability_path(tool_name: str, role: str, params: dict, trace: list) -> Optional[str]:
+    """mint -> verify (nonce burned). Returns a refusal string, or None to run.
+
+    The verify step is what a tool server would do before executing. It runs in
+    this process, so the process boundary is simulated — but the signature
+    check, the tool binding and the nonce burn are real.
+    """
+    token = ensure_agent_token(role, trace)
+    if not token:
+        return "DENIED — no agent identity could be established."
+
+    resource = (f"service/{params['service']}" if params.get("service")
+                else f"secret/{params['name']}" if params.get("name")
+                else f"{tool_name}/any")
+
+    d, mint_ms, err = _post("/v1/shield/cap/mint",
+                            {"tool": tool_name, "resource": resource,
+                             "ttl_seconds": 30, "session_id": SESSION,
+                             "tool_params": params}, role,
+                            extra={"X-Agent-Token": token})
+    if err:
+        trace.append({"stage": "cap", "status": "deny", "label": f"NO MINT {tool_name}",
+                      "meta": err, "ms": mint_ms})
+        return f"DENIED by policy: {err}"
+
+    v, verify_ms, verr = _post("/v1/shield/cap/verify",
+                               {"cap_token": d["cap_token"],
+                                "expected_tool": tool_name}, role)
+    ok = bool(v and v.get("valid") is True)
+    trace.append({"stage": "cap", "status": "ok" if ok else "deny",
+                  "label": f"{'MINT+BURN' if ok else 'INVALID'} {tool_name}({resource})",
+                  "meta": f"role={role}  mint {mint_ms:.0f}ms · verify {verify_ms:.0f}ms",
+                  "ms": None})
+    if not ok:
+        return f"DENIED — capability did not verify: {(v or {}).get('error', verr)}"
+    return None
 
 
 # ── The LangChain tools ──────────────────────────────────────────────────
@@ -204,15 +338,27 @@ def shield_allows(tool_name: str, role: str, params: dict) -> tuple:
 
 def build_tools(role: str, trace: list):
     def guarded(tool_name: str, params: dict, run):
-        allowed, reason = shield_allows(tool_name, role, params)
-        trace.append({"tool": tool_name, "role": role,
-                      "allowed": allowed, "reason": reason})
+        """RBAC first, then optionally mint. Never the other way round.
+
+        cap/mint does not enforce role -> tool on its own; it unions every
+        role's permissions. An app that wants the role respected has to ask for
+        the check explicitly and refuse to mint on a denial.
+        """
+        allowed, reason = rbac_check(tool_name, role, params, trace)
         if not allowed:
-            # Return the refusal to the MODEL rather than raising. The agent
-            # then explains it to the user instead of the request 500ing, and
-            # a refusal it can read is a refusal it can relay accurately.
-            return f"DENIED by Shield: {reason}"
-        return run()
+            # Returned to the MODEL, not raised. The agent then explains the
+            # refusal instead of the request 500ing.
+            return f"DENIED by policy: {reason}"
+
+        if CAPS:
+            refusal = capability_path(tool_name, role, params, trace)
+            if refusal:
+                return refusal
+
+        out = run()
+        trace.append({"stage": "tool", "status": "ok", "label": "result",
+                      "meta": str(out)[:300], "ms": None})
+        return out
 
     @tool
     def read_logs(service: str) -> str:
@@ -286,19 +432,31 @@ def stream_agent(question: str, role: str):
         return f"data: {json.dumps(payload)}\n\n"
 
     try:
+        yield sse({"type": "start", "role": role})
+
+        # Input guardrails run BEFORE the model, so a blocked prompt never
+        # reaches it. Drain the trace either way — the pass is worth showing.
+        refusal = screen_input(question, role, trace)
+        while sent < len(trace):
+            yield sse({"type": "stage", **trace[sent]})
+            sent += 1
+        if refusal:
+            yield sse({"type": "token", "text": refusal})
+            yield sse({"type": "done"})
+            return
+
         agent = create_agent(
             ChatOpenAI(model=MODEL, temperature=0, streaming=True),
             build_tools(role, trace),
             system_prompt=SYSTEM,
         )
-        yield sse({"type": "start", "role": role})
 
         for chunk, _meta in agent.stream(
                 {"messages": [{"role": "user", "content": question}]},
                 stream_mode="messages"):
 
             while sent < len(trace):                 # decisions made so far
-                yield sse({"type": "shield", **trace[sent]})
+                yield sse({"type": "stage", **trace[sent]})
                 sent += 1
 
             # Tool results arrive on this stream too; only forward the model's
@@ -315,7 +473,7 @@ def stream_agent(question: str, role: str):
                 yield sse({"type": "token", "text": text})
 
         while sent < len(trace):
-            yield sse({"type": "shield", **trace[sent]})
+            yield sse({"type": "stage", **trace[sent]})
             sent += 1
         yield sse({"type": "done"})
     except Exception as e:
@@ -425,11 +583,19 @@ main{flex:1;overflow-y:auto}
 .turn.bot .body{white-space:pre-wrap;min-height:1.6rem}
 .who{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
      margin-bottom:.35rem}
-.chip{display:flex;width:fit-content;align-items:center;gap:.4rem;font-size:.78rem;
-      padding:.25rem .6rem;border-radius:.6rem;margin:.15rem 0 .5rem;border:1px solid transparent}
-.chip.ok{background:var(--okbg);color:var(--ok);border-color:var(--ok)}
-.chip.no{background:var(--nobg);color:var(--no);border-color:var(--no)}
-.chip code{font:inherit;font-weight:600}
+/* The pipeline trace, in the shape the terminal demo prints it. */
+.trace{font:12.5px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);
+  border-left:2px solid var(--line);padding:.35rem 0 .35rem .8rem;margin:.2rem 0 .7rem}
+.trace.hide{display:none}
+/* Grid, not flex: a long meta then wraps UNDER the label instead of back to
+   the left edge, which is what keeps this readable as a column of stages. */
+.trace .row{display:grid;grid-template-columns:3.6rem 1fr;gap:.5rem;align-items:start}
+.trace .st{color:var(--muted)}
+.trace .lb{font-weight:600;color:var(--fg)}
+.trace .allow .lb,.trace .pass .lb,.trace .ok .lb{color:var(--ok)}
+.trace .deny .lb,.trace .block .lb,.trace .fail .lb{color:var(--no)}
+.trace .meta{color:var(--muted)}
+.trace .c{white-space:pre-wrap;word-break:break-word}
 .cursor{display:inline-block;width:.5rem;height:1.05rem;background:var(--fg);
         vertical-align:-2px;animation:b 1s steps(2) infinite}
 @keyframes b{50%{opacity:0}}
@@ -449,6 +615,7 @@ footer{position:fixed;bottom:0;left:0;right:0;background:linear-gradient(transpa
   <span class=pill id=who>not signed in</span>
   <button onclick="login('alex')">alex · sre_lead</button>
   <button onclick="login('riley')">riley · intern</button>
+  <button id=tracebtn onclick=toggleTrace()>trace on</button>
 </header>
 <main id=main><div class=thread id=thread></div></main>
 <footer>
@@ -459,11 +626,19 @@ footer{position:fixed;bottom:0;left:0;right:0;background:linear-gradient(transpa
   <div class=hint>Your role comes from this server's session. Neither this box nor the model can change it.</div>
 </footer>
 <script>
+let showTrace = true;
+function toggleTrace(){
+  showTrace = !showTrace;
+  document.getElementById('tracebtn').textContent = showTrace ? 'trace on' : 'trace off';
+  document.querySelectorAll('.trace').forEach(t => t.classList.toggle('hide', !showTrace));
+}
+
 const thread = document.getElementById('thread'), main = document.getElementById('main');
 const q = document.getElementById('q'), sendBtn = document.getElementById('send');
 let busy = false;
 
 const scroll = () => main.scrollTop = main.scrollHeight;
+const esc = t => String(t).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 q.addEventListener('input', () => { q.style.height='auto'; q.style.height=q.scrollHeight+'px'; });
 q.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -493,6 +668,7 @@ async function send(){
   turn('user','').textContent = text;
 
   const body = turn('bot','assistant');
+  let trace = null;
   const cursor = document.createElement('span');
   cursor.className = 'cursor'; body.appendChild(cursor);
 
@@ -524,13 +700,20 @@ async function send(){
       if (ev.type === 'token'){
         answer += ev.text;
         cursor.insertAdjacentText('beforebegin', ev.text);
-      } else if (ev.type === 'shield'){
-        const chip = document.createElement('span');
-        chip.className = 'chip ' + (ev.allowed ? 'ok' : 'no');
-        chip.innerHTML = `${ev.allowed ? '&#10003;' : '&#10007;'} <code>${ev.tool}</code> `
-                       + `<span>${ev.allowed ? 'allowed' : 'denied'} for ${ev.role}</span>`;
-        chip.title = ev.reason || '';
-        cursor.insertAdjacentElement('beforebegin', chip);
+      } else if (ev.type === 'stage'){
+        if (!trace){
+          trace = document.createElement('div');
+          trace.className = 'trace' + (showTrace ? '' : ' hide');
+          body.parentNode.insertBefore(trace, body);
+        }
+        const row = document.createElement('div');
+        row.className = 'row ' + (ev.status || '');
+        const meta = [ev.meta, ev.ms != null ? `${Math.round(ev.ms)}ms` : '']
+                       .filter(Boolean).join('  ');
+        row.innerHTML = `<span class=st>${esc(ev.stage || '')}</span>`
+          + `<span class=c>${ev.label ? `<span class=lb>${esc(ev.label)}</span> ` : ''}`
+          + `<span class=meta>${esc(meta)}</span></span>`;
+        trace.appendChild(row);
       } else if (ev.type === 'error'){
         cursor.insertAdjacentText('beforebegin', '\n[' + ev.detail + ']');
       }
@@ -538,7 +721,7 @@ async function send(){
     }
   }
   cursor.remove();
-  if (!answer.trim() && !body.querySelector('.chip')) body.textContent = '(no response)';
+  if (!answer.trim()) body.textContent = '(no response)';
   busy = false; sendBtn.disabled = false; q.focus();
 }
 
