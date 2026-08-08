@@ -42,7 +42,7 @@ Setup
 -----
     pip install -r requirements.txt
 
-    export LLM_SHIELD_URL=https://api.guardrails.votal.ai
+    export LLM_SHIELD_URL=https://api.guardrails.votal.ai   # NOT localhost:8000
     export TENANT_API_KEY=<your tenant key>
     export AGENT_ID=sre-agent                 # registered for that tenant
     export SHIELD_PROXY_TOKEN=<same value as SHIELD_TRUSTED_PROXY_SECRET>
@@ -58,7 +58,7 @@ No Keycloak. That is the point — your login replaces it.
 
 Run
 ---
-    python langchain_trusted_proxy_agent.py            # serve on :8000
+    python langchain_trusted_proxy_agent.py            # serve on :8500
     python langchain_trusted_proxy_agent.py --attack   # forgeries, no LLM needed
 """
 # NOTE: no `from __future__ import annotations`. It turns the Pydantic model
@@ -79,6 +79,12 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 SHIELD = os.getenv("LLM_SHIELD_URL", "http://localhost:8000").rstrip("/")
+
+# NOT 8000. That is Shield's own default port and the default LLM_SHIELD_URL
+# above, so binding there means this app either collides with a local Shield or
+# calls itself. Both fail in confusing ways: you get Shield's auth error in the
+# browser and assume this app is broken.
+APP_PORT = int(os.getenv("APP_PORT", "8500"))
 TENANT_KEY = os.getenv("TENANT_API_KEY", "")
 AGENT_KEY = os.getenv("SHIELD_AGENT_KEY") or os.getenv("AGENT_ID") or "sre-agent"
 MODEL = os.getenv("DEMO_MODEL", "gpt-4.1-mini")
@@ -406,5 +412,12 @@ if __name__ == "__main__":
         if not os.getenv("OPENAI_API_KEY"):
             print(f"{Y}OPENAI_API_KEY is unset — /chat will 500. "
                   f"Use --attack to exercise authorization without a model.{Z}")
-        print(f"{DIM}http://localhost:8000  ·  Shield {SHIELD}  ·  model {MODEL}{Z}")
-        uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+        # Calling ourselves would produce Shield's error text from this app's
+        # port, which reads as "the example is broken" rather than "the URL is
+        # wrong". Refuse instead of starting.
+        if SHIELD.rstrip("/").endswith(f":{APP_PORT}"):
+            sys.exit(f"{R}LLM_SHIELD_URL points at this app's own port "
+                     f"({APP_PORT}). Set it to your Shield deployment.{Z}")
+        print(f"{DIM}app    http://localhost:{APP_PORT}{Z}")
+        print(f"{DIM}shield {SHIELD}   model {MODEL}   agent {AGENT_KEY}{Z}")
+        uvicorn.run(app, host="127.0.0.1", port=APP_PORT, log_level="warning")
