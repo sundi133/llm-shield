@@ -11,19 +11,34 @@ incomplete it says so, with the flag or spec that closes it.
 By default, yes — it is a caller assertion, exactly like `user_role` in a
 request body. Anything that can reach the API can claim any role.
 
-`SHIELD_ROLE_BINDING` changes that. With `prefer`, a role in a **verified**
-credential (OIDC, agent token, mTLS, SPIFFE) wins over the header. The decision
-records `role_source`, so an audit entry distinguishes `oidc` from `header`.
+`SHIELD_ROLE_BINDING` changes that. There are four modes:
 
-Two things to know before relying on it:
+| mode | verified claim present | no verified claim |
+|---|---|---|
+| `off` (default) | header wins | header wins |
+| `prefer` | claim wins, header ignored | header wins |
+| `strict` | claim wins, header ignored | **no role** |
+| `strict_proxy` | claim wins, header ignored | header accepted **only** from the trusted proxy |
 
+The decision records `role_source`, so an audit entry distinguishes `oidc` from
+`header` from `proxy`.
+
+Three things to know before relying on it:
+
+- **`prefer` does not close the forgery.** It only upgrades callers that
+  *present* a credential. A caller that presents none and sends
+  `X-User-Role: admin` still gets `admin`, because there is no verified claim to
+  prefer. On a publicly reachable deployment, `prefer` is not a control.
 - If the verifying provider is misconfigured — issuer mismatch, missing
-  audience — verification returns nothing and the header is used. **No error is
-  raised.** Test it by sending a request with no credential and a claimed
-  privileged role; if it succeeds, binding is not enforcing.
-- `strict` does not currently reject a header-derived role. There is no mode
-  today meaning *"self-asserted roles are refused"*. That gap is tracked; until
-  it lands, treat `prefer` as "prefer when available", not "require".
+  audience — verification returns nothing. Under `prefer` the header is then
+  used and **no error is raised**. Test it by sending a request with no
+  credential and a claimed privileged role; if it succeeds, binding is not
+  enforcing.
+- `strict_proxy` accepts a self-asserted role only from a peer that presents
+  `X-Shield-Proxy-Token`. It is recorded as `role_source: proxy` and
+  `role_verified: false` — the proxy vouched for the hop, it did not prove the
+  user's credential to Shield. See
+  [the role-binding runbook](role-binding-runbook.md).
 
 ### Can a caller mint an agent token naming someone else?
 
