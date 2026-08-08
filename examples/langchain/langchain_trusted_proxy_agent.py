@@ -134,11 +134,19 @@ USERS = {
     "riley":  {"password": "demo", "role": "intern"},
 }
 
-# Pretend infrastructure the tools act on.
-SERVICES = {
-    "checkout-api": {"replicas": 3, "logs": ["200 GET /健", "500 POST /pay"]},
-    "auth-api": {"replicas": 2, "logs": ["200 GET /token"]},
-}
+# The same fixture interactive_demo_sre.py uses — services, secrets, db tables,
+# firewall. Shared rather than copied so the two demos cannot drift.
+_DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo_data_sre.json")
+try:
+    with open(_DATA) as _f:
+        INFRA = json.load(_f)
+except Exception as _e:                                    # pragma: no cover
+    print(f"could not load demo_data_sre.json ({_e})")
+    INFRA = {"services": {}, "secrets": {}, "db": {}}
+
+
+def _svc(name):
+    return (INFRA.get("services") or {}).get(str(name).strip())
 
 
 # ── Sessions ─────────────────────────────────────────────────────────────
@@ -361,37 +369,111 @@ def build_tools(role: str, trace: list):
         return out
 
     @tool
-    def read_logs(service: str) -> str:
+    def read_logs(service: str, lines: int = 20) -> str:
         """Read recent log lines for a service. Read-only."""
         def run():
-            s = SERVICES.get(service)
-            return "\n".join(s["logs"]) if s else f"no service named {service}"
+            sv = _svc(service)
+            if not sv:
+                return f"no service named {service}"
+            return "\n".join(sv["logs"][-int(lines or 20):])
         return guarded("read_logs", {"service": service}, run)
+
+    @tool
+    def query_prod_db(table: str, limit: int = 5) -> str:
+        """Run a read query against the production database."""
+        def run():
+            rows = (INFRA.get("db") or {}).get(table.strip())
+            if rows is None:
+                return f"no table named {table}"
+            return json.dumps(rows[:int(limit or 5)])
+        return guarded("query_prod_db", {"table": table, "limit": limit}, run)
 
     @tool
     def restart_service(service: str) -> str:
         """Restart a service. Disruptive but reversible."""
         def run():
-            s = SERVICES.get(service)
-            return (f"restarted {service} ({s['replicas']} replicas)"
-                    if s else f"no service named {service}")
+            sv = _svc(service)
+            return (f"restarted {service} ({sv['replicas']} replicas)"
+                    if sv else f"no service named {service}")
         return guarded("restart_service", {"service": service}, run)
 
     @tool
-    def rotate_secret(name: str) -> str:
-        """Rotate a production secret. Destructive."""
+    def scale_deployment(service: str, replicas: int) -> str:
+        """Change the replica count for a service."""
         def run():
-            return f"rotated secret {name}"
-        return guarded("rotate_secret", {"name": name}, run)
+            sv = _svc(service)
+            if not sv:
+                return f"no service named {service}"
+            was = sv["replicas"]
+            sv["replicas"] = int(replicas)
+            return f"scaled {service} from {was} to {replicas} replicas"
+        return guarded("scale_deployment",
+                       {"service": service, "replicas": replicas}, run)
+
+    @tool
+    def read_secret(name: str) -> str:
+        """Read a secret value from the vault."""
+        def run():
+            v = (INFRA.get("secrets") or {}).get(name.strip())
+            return f"{name} = {v}" if v else f"no secret named {name}"
+        return guarded("read_secret", {"name": name}, run)
+
+    @tool
+    def rotate_credential(name: str) -> str:
+        """Rotate a credential and return the new value."""
+        def run():
+            secrets_ = INFRA.get("secrets") or {}
+            if name.strip() not in secrets_:
+                return f"no secret named {name}"
+            new = f"pk_live_ROTATED_{uuid.uuid4().hex[:16]}"
+            secrets_[name.strip()] = new
+            return f"{name} rotated; new value {new}"
+        return guarded("rotate_credential", {"name": name}, run)
+
+    @tool
+    def open_firewall_rule(port: int, cidr: str) -> str:
+        """Open a port to a CIDR range on the production edge."""
+        def run():
+            INFRA.setdefault("firewall", []).append({"port": int(port), "cidr": cidr})
+            return f"opened port {port} to {cidr}"
+        return guarded("open_firewall_rule", {"port": port, "cidr": cidr}, run)
+
+    @tool
+    def delete_namespace(namespace: str) -> str:
+        """Delete an entire Kubernetes namespace. Irreversible."""
+        def run():
+            return f"deleted namespace {namespace} and everything in it"
+        return guarded("delete_namespace", {"namespace": namespace}, run)
+
+    @tool
+    def send_webhook(url: str, payload: str) -> str:
+        """POST a payload to an external URL. Leaves the organisation."""
+        # url AND payload both go to Shield: who may call a webhook is a role
+        # question, whether a rotated credential may travel in the body is not.
+        def run():
+            return f"posted {len(payload)} bytes to {url}"
+        return guarded("send_webhook", {"url": url, "payload": payload}, run)
 
     # Every signature above takes only what the WORK needs. None takes a role.
-    return [read_logs, restart_service, rotate_secret]
+    return [read_logs, query_prod_db, restart_service, scale_deployment,
+            read_secret, rotate_credential, open_firewall_rule,
+            delete_namespace, send_webhook]
 
 
 SYSTEM = (
-    "You are an SRE assistant. Use the tools to answer. "
-    "If a tool returns a line starting with 'DENIED by Shield', tell the user "
-    "plainly that they are not authorized for that action and do not retry it."
+    "You are a site-reliability assistant. Use the tools to answer.\n"
+    # Without this the model invents service names: asked for "logs last 30
+    # events" it calls read_logs(service="last_30_events") and gets nothing.
+    f"Known services: {', '.join((INFRA.get('services') or {}) ) or 'none loaded'}. "
+    f"Known secrets: {', '.join((INFRA.get('secrets') or {})) or 'none loaded'}. "
+    f"Known db tables: {', '.join((INFRA.get('db') or {})) or 'none loaded'}.\n"
+    "A count like 'last 30 events' is the `lines` argument, never part of the "
+    "service name. If the user does not name a service, ask which one rather "
+    "than guessing.\n"
+    "If a tool returns DENIED, tell the user plainly that they are not "
+    "permitted to do it and say which action was refused — do not retry it and "
+    "do not work around it. Do not consider permissions when choosing a tool; "
+    "a separate layer decides."
 )
 
 
