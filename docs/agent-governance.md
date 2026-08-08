@@ -186,6 +186,87 @@ chain registry, and a registry means a Redis read per guarded request — the
 15-minute ceiling is the mitigation instead. Revoke the child's
 `agent_instance_id` directly if you need it gone sooner.
 
+## 5. Proof-of-possession for agent tokens
+
+By default an agent token is a **bearer** token: whoever holds the string can
+use it. A copy in a log file, a crash dump, an error report, or a proxy access
+log is a working credential until it expires. The 15-minute lifetime caps the
+window, but that is a mitigation, not a control.
+
+Binding the token to a keypair fixes that. The agent generates a keypair, sends
+only the **public** half at mint, and proves possession of the private half on
+every request.
+
+### Mint a bound token
+
+```bash
+curl -X POST "$SHIELD/v1/tenant/me/agent-auth/agent-token" -H "X-API-Key: $TENANT_KEY" -H 'Content-Type: application/json' -d '{"user_sub":"alice","agent_id":"billing-bot","agent_instance_id":"inst-1","build_hash":"b","model_version":"m","session_id":"s","agent_jwk":{"kty":"OKP","crv":"Ed25519","x":"<public-key>"}}'
+```
+
+The token gains a `cnf.jkt` claim carrying the key's thumbprint. Shield stores
+no keys: the thumbprint travels in the signed token and the full public key
+arrives inside each proof.
+
+{: .warning }
+> Send the **public** JWK only. A JWK containing private members (`d`, `p`,
+> `q`, …) is refused with `400`, and the key is never echoed into the response
+> or the logs. Shield never needs your private key, and it should never leave
+> the agent process.
+
+### Prove possession per request
+
+Each request carries a DPoP proof in `X-Agent-DPoP`, signed over the method and
+URI being called. Proofs are single-use for 60 seconds and expire after 30, so
+one captured in flight cannot be replayed.
+
+The header is `X-Agent-DPoP`, not `DPoP` — `DPoP` is already used for external
+IdP token binding (`SHIELD_TOKEN_BINDING`), and with both enabled and different
+keypairs one header cannot satisfy two thumbprints.
+
+### Roll it out in four steps
+
+```
+SHIELD_AGENT_TOKEN_POP=off | optional | required
+SHIELD_AGENT_TOKEN_POP_ALLOW_UNBOUND=true|false
+```
+
+| step | setting | effect |
+|---|---|---|
+| 1 | `off`, clients start sending `agent_jwk` | tokens gain `cnf`, nothing enforced |
+| 2 | `optional` | proofs verified and recorded, denied never — watch `pop_verified` in the audit |
+| 3 | `required` + `ALLOW_UNBOUND=true` | bound tokens must prove; unmigrated clients keep working |
+| 4 | `required` | once the audit shows no unbound tokens |
+
+`cnf` is minted whenever a key is supplied regardless of mode, which is what
+makes step 1 possible. **Skipping step 3 is how you take down every client that
+has not shipped a key yet.**
+
+Deploy the data plane before the admin plane: an admin plane minting `cnf`
+tokens against a data plane that ignores them is harmless, while a data plane in
+`required` against an admin plane that cannot mint `cnf` refuses everything.
+
+### What this does and does not cover
+
+This is a **direct-path** control. It covers `cap/mint` and `tools/call` — the
+endpoints that actually authorize an action.
+
+Behind an LLM gateway a proof cannot exist: a proof binds to the method and URI
+of the request, the agent signs for the gateway's URL, and Shield receives its
+own. There is no configuration that fixes this. The gateway authenticates
+itself with the trusted-proxy secret instead, and the audit records
+`pop_verified: false` so a vouched request is distinguishable from a proven one.
+
+The accurate claim, and the one to make to a security team:
+
+> On paths where the agent calls Shield directly, a stolen agent token is
+> useless without the agent's private key. Where an LLM gateway sits in front,
+> the gateway authenticates itself and the audit records that possession was
+> vouched for rather than proven.
+
+Not covered: an attacker with code execution **inside** the agent process has
+the private key. This binds the credential to a key, not to a machine or a
+human.
+
 ## See also
 
 - [Agentic Integration Guide](/agentic-integration-guide/) — registering agents and entitlements.
