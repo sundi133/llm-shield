@@ -78,6 +78,16 @@ from fastapi import Cookie, FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+from langchain.agents import create_agent
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
+
+# The tools are declared inside build_tools() rather than here at module level,
+# and that is the security design, not an accident. A module-level @tool is
+# shared by every request, so the role would have to travel as a tool ARGUMENT
+# — which hands the choice of role to the model. Building them per request lets
+# each one close over the role from the session instead. See build_tools().
+
 SHIELD = os.getenv("LLM_SHIELD_URL", "http://localhost:8000").rstrip("/")
 
 # NOT 8000. That is Shield's own default port and the default LLM_SHIELD_URL
@@ -193,8 +203,6 @@ def shield_allows(tool_name: str, role: str, params: dict) -> tuple:
 # model can pick a tool, and it has no way to express a different role.
 
 def build_tools(role: str, trace: list):
-    from langchain_core.tools import tool
-
     def guarded(tool_name: str, params: dict, run):
         allowed, reason = shield_allows(tool_name, role, params)
         trace.append({"tool": tool_name, "role": role,
@@ -243,9 +251,6 @@ SYSTEM = (
 
 def run_agent(question: str, role: str) -> dict:
     """One request, one agent, one role. Nothing is cached across users."""
-    from langchain.agents import create_agent
-    from langchain_openai import ChatOpenAI
-
     trace: list = []
     agent = create_agent(
         ChatOpenAI(model=MODEL, temperature=0),
