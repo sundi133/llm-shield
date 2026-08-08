@@ -31,6 +31,11 @@ from litellm.caching.caching import DualCache
 class VotalGuardrail(CustomGuardrail):
     """Votal guardrail with input, output, and tool RBAC enforcement."""
 
+    #: Cap on a forwarded delegated user token. Mirrors _MAX_TOKEN_BYTES in
+    #: core/delegation.py — a user token is small, and anything larger is not a
+    #: credential. Bounds what this hook will push at Shield per request.
+    MAX_OBO_BYTES = 8192
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -76,6 +81,16 @@ class VotalGuardrail(CustomGuardrail):
             self.enforce_tool_rbac = True
         self.check_every_n_chunks = 20  # streaming check cadence
 
+        # Shared secret proving this hop to Shield. When set, Shield's
+        # strict_proxy role-binding mode accepts a role we assert; when unset,
+        # nothing changes and Shield treats us as any other caller.
+        # Must match SHIELD_TRUSTED_PROXY_SECRET on the Shield side.
+        try:
+            import os as _os
+            self.proxy_token = _os.environ.get("VOTAL_SHIELD_PROXY_TOKEN", "").strip()
+        except Exception:
+            self.proxy_token = ""
+
         # Client with optional auth for RunPod/cloud deployments
         client_headers = {"Content-Type": "application/json"}
         if api_token:
@@ -87,7 +102,51 @@ class VotalGuardrail(CustomGuardrail):
 
         print(f"VotalGuardrail initialized → {self.api_base} (last_k={self.last_k_messages}, auth={'yes' if api_token else 'no'})")
 
-    def _extract_shield_headers(self, data: dict) -> dict:
+    def _resolve_user_role(self, data: dict, user_api_key_dict) -> str:
+        """The role Shield should see, most trustworthy source first.
+
+        Sources, in order:
+
+        1. The LiteLLM virtual key's metadata (``shield_user_role``). This is
+           the only role on the request that was *authenticated* — the caller
+           proved the key, and whoever provisioned the key chose the role.
+        2. ``data["metadata"]["user_role"]``, the pre-existing path.
+        3. The caller's own ``x-user-role`` header — kept only when we are NOT
+           vouching, because it preserves today's behaviour for deployments
+           that have not configured the proxy boundary.
+
+        NOTE: ``user_api_key_dict.user_role`` is deliberately not read. That
+        field is LiteLLM's own admin model (proxy_admin, internal_user, ...),
+        not the application's RBAC role; forwarding it would inject LiteLLM's
+        vocabulary into Shield's policy matrix.
+
+        When ``self.proxy_token`` is set, this plugin is asserting to Shield
+        that the hop is trusted (strict_proxy). Forwarding a caller-supplied
+        header under that assertion would launder the caller's own claim
+        through a hop Shield trusts, which is precisely the forgery the mode
+        exists to stop — so source 3 is dropped in that case.
+        """
+        if user_api_key_dict is not None:
+            try:
+                key_meta = getattr(user_api_key_dict, "metadata", None) or {}
+                role = str(key_meta.get("shield_user_role", "") or "").strip()
+                if role:
+                    return role
+            except Exception:
+                pass
+
+        metadata = data.get("metadata", {}) or {}
+        role = str(metadata.get("user_role", "") or "").strip()
+        if role:
+            return role
+
+        if self.proxy_token:
+            return ""
+
+        proxy_headers = data.get("proxy_server_request", {}).get("headers", {})
+        return str(proxy_headers.get("x-user-role", "") or "").strip()
+
+    def _extract_shield_headers(self, data: dict, user_api_key_dict=None) -> dict:
         """Extract tenant/agent headers from the proxy request to forward to Shield.
 
         Reads from proxy_server_request.headers first, then falls back to
@@ -108,8 +167,26 @@ class VotalGuardrail(CustomGuardrail):
         if agent_key:
             headers["x-agent-key"] = agent_key
 
-        # User role
-        user_role = metadata.get("user_role") or proxy_headers.get("x-user-role", "")
+        # Verified agent identity. A signed token Shield checks (signature,
+        # expiry, revocation, build allowlist) rather than the x-agent-key
+        # string it can only take our word for. Possession is not proven on
+        # this path — see docs/spec-agent-token-pop.md §9.
+        agent_token = metadata.get("agent_token") or proxy_headers.get("x-agent-token", "")
+        if agent_token:
+            headers["x-agent-token"] = agent_token
+
+        # Delegated user token. This is what lets role binding stay VERIFIED
+        # behind LiteLLM: unlike a DPoP proof, a bearer user token is not bound
+        # to the HTTP request, so Shield can check its signature against the
+        # issuer's JWKS even though we re-originated the call. Requires
+        # SHIELD_DELEGATION=optional|required on Shield.
+        obo = metadata.get("on_behalf_of") or proxy_headers.get("x-on-behalf-of", "")
+        if obo and len(str(obo).encode("utf-8", "ignore")) <= self.MAX_OBO_BYTES:
+            headers["x-on-behalf-of"] = str(obo)
+
+        # User role — see _resolve_user_role for why this is not a plain
+        # passthrough of the caller's header.
+        user_role = self._resolve_user_role(data, user_api_key_dict)
         if user_role:
             headers["x-user-role"] = user_role
 
@@ -117,6 +194,11 @@ class VotalGuardrail(CustomGuardrail):
         tenant_id = proxy_headers.get("x-tenant-id", "")
         if tenant_id:
             headers["x-tenant-id"] = tenant_id
+
+        # Prove the hop. Shield's strict_proxy mode accepts a self-asserted
+        # role only from a peer that presents this secret.
+        if self.proxy_token:
+            headers["x-shield-proxy-token"] = self.proxy_token
 
         return headers
 
@@ -140,7 +222,7 @@ class VotalGuardrail(CustomGuardrail):
                 return data
 
             # Forward tenant/agent headers to Shield
-            shield_headers = self._extract_shield_headers(data)
+            shield_headers = self._extract_shield_headers(data, user_api_key_dict)
 
             response = await self.client.post(
                 f"{self.api_base}/guardrails/input",
@@ -209,7 +291,7 @@ class VotalGuardrail(CustomGuardrail):
                         tool_calls = msg.tool_calls
 
             # Forward tenant/agent headers to Shield
-            shield_headers = self._extract_shield_headers(data)
+            shield_headers = self._extract_shield_headers(data, user_api_key_dict)
             metadata = data.get("metadata", {}) or {}
             proxy_headers = data.get("proxy_server_request", {}).get("headers", {})
             agent_key = metadata.get("agent_key") or proxy_headers.get("x-agent-key", "")
@@ -399,7 +481,7 @@ class VotalGuardrail(CustomGuardrail):
         accumulated_text = []
         accumulated_tool_calls = {}  # index -> {id, name, arguments}
         chunks_since_check = 0
-        shield_headers = self._extract_shield_headers(request_data)
+        shield_headers = self._extract_shield_headers(request_data, user_api_key_dict)
 
         async for chunk in response:
             delta_text = None

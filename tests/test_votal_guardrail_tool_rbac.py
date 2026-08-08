@@ -1,14 +1,17 @@
 """Tool-RBAC enforcement switch on the LiteLLM guardrail plugin.
 
 `litellm` is not a declared dependency of this repo (the plugin ships with the
-proxy, not with Shield), so these skip when it is absent rather than breaking
-collection in CI.
+proxy, not with Shield). These used to `importorskip` and therefore never ran
+in CI, which meant an authorization control had no coverage on the machine that
+gates merges. The three litellm symbols the plugin touches are stubbed instead.
 """
 import os
 
 import pytest
 
-pytest.importorskip("litellm", reason="litellm is not a Shield dependency")
+from tests import _litellm_stub
+
+_litellm_stub.install()
 
 from votal_guardrail import VotalGuardrail  # noqa: E402
 
