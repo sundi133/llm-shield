@@ -31,27 +31,39 @@ You need a Shield deployment already running and reachable — this deploys the
 
 ## 1. Create the service
 
-From the Railway dashboard: **New Project → Deploy from GitHub repo**, pick this
-repo, and let it build once. It will fail or serve nothing useful until step 2,
-which is expected.
+**New Project → Deploy from GitHub repo**, pick this repo.
 
-`examples/langchain/railway.json` already sets the build and start commands:
+## 2. Set the root directory — do this before anything else
+
+**Settings → Source → Root Directory:** `examples/langchain`
+
+This is not cosmetic, and skipping it is the most likely way to lose an hour:
+
+- Railway looks for `railway.json` in the root directory and does **not** scan
+  subdirectories. Without this it never sees the config.
+- The repo root contains a `Dockerfile` that builds **Shield itself**. Railway
+  prefers a Dockerfile over Nixpacks, so it would build the wrong application
+  entirely and the failure would not obviously point here.
+- Nixpacks needs to see the example's `requirements.txt`, not the repo's.
+
+With the root directory set, `examples/langchain/railway.json` supplies the
+rest:
 
 ```json
 {
-  "build": {
-    "buildCommand": "pip install -r examples/langchain/requirements.txt"
-  },
-  "deploy": {
-    "startCommand": "python examples/langchain/langchain_trusted_proxy_agent.py",
-    "healthcheckPath": "/whoami"
-  }
+  "build":  { "builder": "NIXPACKS" },
+  "deploy": { "startCommand": "python langchain_trusted_proxy_agent.py",
+              "healthcheckPath": "/whoami" }
 }
 ```
 
-If Railway does not pick it up automatically, set **Config-as-code path** to
-`examples/langchain/railway.json` in service settings, or paste the two
-commands into **Settings → Build** and **Settings → Deploy** by hand.
+There is no `buildCommand` on purpose. Nixpacks detects `requirements.txt` and
+installs it in its own phase; adding one duplicates the install and gives a
+second place for a path to be wrong.
+
+Paths are relative to `examples/langchain`. The example is self-contained —
+`shield_client.py`, `code_tour.py` and `demo_data_sre.json` all sit beside it,
+so nothing outside that directory is needed at runtime.
 
 ## 2. Set the variables
 
@@ -140,6 +152,21 @@ Pick one before sharing:
 
 The `SHIELD_PROXY_TOKEN` deserves the same care: anything holding it can assert
 any role to your Shield tenant. Rotate it after a public demo.
+
+## If the build fails
+
+```
+ERROR: Could not open requirements file:
+  [Errno 2] No such file or directory: 'examples/langchain/requirements.txt'
+```
+
+Every path in `railway.json` is relative to the **root directory**, not the
+repo. With Root Directory set to `examples/langchain`, the build context IS
+that folder — so `requirements.txt`, not `examples/langchain/requirements.txt`.
+
+Seeing this error is actually good news: it means the root directory is set
+correctly. If it were wrong, that path would resolve and something else would
+break later and less clearly.
 
 ## If something does not work
 
