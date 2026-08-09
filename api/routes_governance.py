@@ -104,6 +104,9 @@ async def governance_agents(request: Request):
             # somebody to ask; without this the campaign rubber-stamps.
             "owner": entry.get("owner", "") or "",
             "owner_contact": entry.get("owner_contact", "") or "",
+            # [] means "runs anywhere", which is the pre-existing behaviour and
+            # worth seeing at a glance once SHIELD_ENVIRONMENT is set.
+            "environments": entry.get("environments", []) or [],
             "granted_tools": _granted_tools(entry),
             "allowed_resources": entry.get("allowed_resources", []) or [],
             "require_resource_scope": bool(entry.get("require_resource_scope", False)),

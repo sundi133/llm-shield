@@ -27,6 +27,11 @@ _MAX_TOOLS_PER_AGENT = 200
 _MAX_OWNER_LEN = 128
 _MAX_OWNER_CONTACT_LEN = 256
 
+# Which environments an agent may run in. Absent or empty means "any", which is
+# what every entry written before this field said implicitly.
+_MAX_ENVIRONMENTS = 16
+_MAX_ENVIRONMENT_LEN = 64
+
 
 def _validate_agent_id(agent_id: str) -> None:
     """Reject agent IDs that contain path-traversal or special characters.
@@ -159,6 +164,23 @@ def _validate_agent_body(body: dict) -> None:
             raise HTTPException(
                 status_code=400,
                 detail=f"owner_contact must be at most {_MAX_OWNER_CONTACT_LEN} characters")
+
+    envs = body.get("environments")
+    if envs is not None:
+        if not isinstance(envs, list):
+            raise HTTPException(status_code=400, detail="environments must be a list")
+        if len(envs) > _MAX_ENVIRONMENTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"too many environments (max {_MAX_ENVIRONMENTS})")
+        for e in envs:
+            if not isinstance(e, str) or not e.strip():
+                raise HTTPException(
+                    status_code=400, detail="environments entries must be non-empty strings")
+            if len(e) > _MAX_ENVIRONMENT_LEN:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"environment name exceeds {_MAX_ENVIRONMENT_LEN} characters")
 
     tools = body.get("tools", [])
     if not isinstance(tools, list):
@@ -730,6 +752,10 @@ async def create_agent(request: Request):
             "owner": _sanitize_string(body.get("owner", ""), _MAX_OWNER_LEN),
             "owner_contact": _sanitize_string(
                 body.get("owner_contact", ""), _MAX_OWNER_CONTACT_LEN),
+            "environments": [
+                _sanitize_string(e, _MAX_ENVIRONMENT_LEN).strip()
+                for e in body.get("environments", [])
+            ],
             "status": body.get("status", "active"),
             "created_at": now,
             "updated_at": now,
@@ -785,6 +811,11 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
         if "owner_contact" in sanitized:
             sanitized["owner_contact"] = _sanitize_string(
                 sanitized["owner_contact"], _MAX_OWNER_CONTACT_LEN)
+        if "environments" in sanitized:
+            sanitized["environments"] = [
+                _sanitize_string(e, _MAX_ENVIRONMENT_LEN).strip()
+                for e in (sanitized.get("environments") or [])
+            ]
 
         # Prevent overriding immutable fields
         sanitized.pop("created_at", None)

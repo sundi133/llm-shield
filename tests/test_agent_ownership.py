@@ -209,3 +209,46 @@ def test_unowned_route_is_not_shadowed_by_the_agent_id_route(client):
     r = client.get("/v1/governance/agents/unowned", headers=_hdr())
     assert r.status_code == 200
     assert "unowned_count" in r.json()
+
+
+# ── environments: write-side validation (enforcement lives in
+#    test_agent_environment.py) ────────────────────────────────────────────
+
+
+def test_environments_round_trip(client):
+    agent = _create(client, environments=["prod", "staging"]).json()["agent"]
+    assert agent["environments"] == ["prod", "staging"]
+
+
+def test_environments_default_to_empty(client):
+    """Empty means "runs anywhere" — the pre-existing behaviour."""
+    assert _create(client).json()["agent"]["environments"] == []
+
+
+def test_non_list_environments_refused(client):
+    assert _create(client, environments="prod").status_code == 400
+
+
+def test_too_many_environments_refused(client):
+    assert _create(client, environments=[f"e{i}" for i in range(17)]).status_code == 400
+
+
+def test_empty_environment_name_refused(client):
+    assert _create(client, environments=["prod", "  "]).status_code == 400
+
+
+def test_oversized_environment_name_refused(client):
+    assert _create(client, environments=["x" * 65]).status_code == 400
+
+
+def test_environments_survive_an_unrelated_update(client):
+    _create(client, environments=["prod"])
+    r = client.put("/v1/agents/registry/payments-bot",
+                   json={"name": "renamed"}, headers=_hdr())
+    assert r.json()["agent"]["environments"] == ["prod"]
+
+
+def test_governance_lists_environments(client):
+    _create(client, environments=["staging"])
+    agents = client.get("/v1/governance/agents", headers=_hdr()).json()["agents"]
+    assert agents[0]["environments"] == ["staging"]

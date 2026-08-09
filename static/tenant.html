@@ -5327,6 +5327,16 @@ openssl x509 -in agent.crt -fingerprint -sha256 -noout
         <div style="font-size: 11px; color: var(--text-muted); margin-top: -0.25rem;">
           Who to ask at review time. Metadata only &mdash; it never affects what this agent may do.
         </div>
+        <div class="form-row">
+          <label style="font-size: 12px;">Environments</label>
+          <input type="text" id="agent-modal-environments"
+                 placeholder="prod, staging &mdash; leave blank to run anywhere"
+                 style="font-size: 13px;">
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
+            Enforced only where <code>SHIELD_ENVIRONMENT</code> is set on the Shield
+            deployment. Guards against a copied config, not against an attacker.
+          </div>
+        </div>
       </div>
 
       <!-- Section 2: Tools -->
@@ -7372,6 +7382,14 @@ function createAgentCard(agentId, agent) {
                        style="background: var(--warn-bg, #fef3c7); color: var(--warn, #92400e);
                               padding: 0.25rem 0.5rem; border-radius: 4px; font-weight: 600;">
                    unowned</span>`}
+            ${(agent.environments && agent.environments.length)
+              ? `<span title="This agent may only run where SHIELD_ENVIRONMENT matches one of these"
+                       style="background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 4px;">
+                   env ${escapeHtml(agent.environments.join(', '))}</span>`
+              /* No badge when unscoped: "runs anywhere" is the default and the
+                 pre-existing behaviour, so badging it would flag every legacy
+                 agent as if something were wrong. */
+              : ``}
           </div>
         </div>
         <div style="display: flex; gap: 0.5rem;">
@@ -7504,6 +7522,7 @@ async function editAgent(agentId) {
     document.getElementById('agent-modal-desc').value = agent.description || '';
     document.getElementById('agent-modal-owner').value = agent.owner || '';
     document.getElementById('agent-modal-owner-contact').value = agent.owner_contact || '';
+    document.getElementById('agent-modal-environments').value = (agent.environments || []).join(', ');
     document.getElementById('agent-modal-tools').value = (agent.tools || []).join(', ');
     document.getElementById('agent-modal-roles').innerHTML = '';
     const perms = agent.role_permissions || {};
@@ -7681,6 +7700,8 @@ async function saveAgentFromModal() {
   const description = document.getElementById('agent-modal-desc').value.trim();
   const owner = document.getElementById('agent-modal-owner').value.trim();
   const ownerContact = document.getElementById('agent-modal-owner-contact').value.trim();
+  const environments = document.getElementById('agent-modal-environments').value
+    .split(',').map(e => e.trim()).filter(Boolean);
   const tools = getToolsFromInput();
   const rolePermissions = getRolePermissionsFromUI();
   const agentPermissions = getAgentPermissionsFromUI();
@@ -7689,6 +7710,7 @@ async function saveAgentFromModal() {
   if (!name) return showToast('Agent name is required', 'error');
 
   const agentData = { agent_id: agentId, name, description, owner, owner_contact: ownerContact,
+                      environments,
                       tools, role_permissions: rolePermissions,
                       agent_permissions: agentPermissions, status: 'active' };
 
