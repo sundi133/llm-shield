@@ -1,3 +1,11 @@
+---
+title: "Spec: non-fakeable HITL approval and break-glass"
+layout: default
+nav_exclude: true
+permalink: /spec-hitl-breakglass/
+description: "Draft spec for human approval that an agent cannot forge."
+---
+
 # Spec: Non-fakeable Human-in-the-Loop approval + break-glass
 
 Status: **DRAFT — for approval.** Spec-first per `CLAUDE.md`; no code until sign-off.

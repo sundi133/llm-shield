@@ -31,7 +31,7 @@ Two complementary layers:
 - **Scan (static, pre-flight):** `shield-mcp scan` inspects a server's advertised
   tools, resources, and prompts *before* an agent ever calls them. Free, offline,
   runs on a laptop or in CI.
-- **Gateway (runtime):** the [MCP gateway](mcp-gateway.md) enforces RBAC, screens
+- **Gateway (runtime):** the [MCP gateway](/mcp-gateway/) enforces RBAC, screens
   input, and sanitizes output on every live tool call.
 
 The scanner catches the class of attack where the *metadata itself* is the

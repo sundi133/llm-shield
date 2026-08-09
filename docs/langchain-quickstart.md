@@ -101,6 +101,12 @@ Open <http://localhost:8500>. Sign in as **riley (intern)** and ask it to
 restart checkout-api. You should see it refused, with the reason. Sign in as
 **alex (sre_lead)** and ask the same thing.
 
+Five users, one per role: `alex` (sre_lead), `sam` (oncall), `jordan`
+(contractor), `ci` (ci_bot), `riley` (intern). Password is `demo` for all of
+them. The role names must match your agent's registry entry exactly — a role
+the registry has never heard of gets no grants, which looks exactly like
+correctly-restricted access.
+
 The buttons deliberately send a forged `X-User-Role: sre_lead` header on every
 request. It changes nothing, which is the point.
 
@@ -225,10 +231,10 @@ That is the right trade for a team with its own login and no identity provider.
 If you do have one (Okta, Entra, Keycloak, Auth0), you can do better: forward
 the user's token as `X-On-Behalf-Of` and Shield verifies the signature itself,
 so the role is proven rather than taken on trust. See
-[the role-binding runbook](role-binding-runbook.md).
+[the role-binding runbook](/role-binding-runbook/).
 
 ## Next
 
-- [Role-binding runbook](role-binding-runbook.md) — the modes, and rolling them out
-- [Agent governance](agent-governance.md) — delegation and stolen-token protection
-- [FAQ: verified identity](faq-verified-identity.md) — what Shield proves, and what it does not
+- [Role-binding runbook](/role-binding-runbook/) — the modes, and rolling them out
+- [Agent governance](/agent-governance/) — delegation and stolen-token protection
+- [FAQ: verified identity](/faq-verified-identity/) — what Shield proves, and what it does not

@@ -86,7 +86,7 @@ Runnable copy: [examples/openshell/shield-policy.yaml](https://github.com/sundi1
   On macOS this installs the Homebrew formula and starts a `brew services` gateway
   on `:17670`. `uv tool install openshell` alone gives only the CLI — no gateway.
 - A **Shield tenant + API key**, and (for Test B) a **gateway route + agent policy**
-  configured — see the [MCP Gateway guide](mcp-gateway.md).
+  configured — see the [MCP Gateway guide](/mcp-gateway/).
 
 ## Test A — the lockdown (non-bypassability)
 
@@ -140,7 +140,7 @@ gets `-32000`. Identity comes from the connection headers (`X-Agent-Key` /
 
 Test A and the *block* in Test B need only egress to the (public) Shield host. An
 *allowed, forwarding* call also needs the **gateway → upstream** leg reachable —
-see [Reachability](mcp-gateway.md#reachability--deploying-the-upstream) in the
+see [Reachability](/mcp-gateway/#reachability--deploying-the-upstream) in the
 gateway guide.
 
 ## Second integration: the inference layer
@@ -153,6 +153,6 @@ one that makes tool-call enforcement non-bypassable.
 
 ## See also
 
-- [MCP Gateway — protect any MCP server](mcp-gateway.md) — the gateway Test B calls
-- [MCP Runtime Enforcement](mcp-runtime-enforcement.md) — policy vs. enforcement location
+- [MCP Gateway — protect any MCP server](/mcp-gateway/) — the gateway Test B calls
+- [MCP Runtime Enforcement](/mcp-runtime-enforcement/) — policy vs. enforcement location
 - [examples/openshell](https://github.com/sundi133/llm-shield/tree/main/examples/openshell) — the runnable policy + test scripts

@@ -124,7 +124,7 @@ during a rollout.
 `SHIELD_ROLE_BINDING=off` remains the global operator kill switch that overrides
 any tenant setting, and a Redis read failure resolves to the env default rather
 than locking tenants out. Note the known gap recorded in
-[spec-idp-role-claim-config](spec-idp-role-claim-config.md): most call sites do
+[spec-idp-role-claim-config](/spec-idp-role-claim-config/): most call sites do
 not currently pass `tenant_id`, so in practice the env value is what applies.
 This spec does not fix that and does not depend on it.
 

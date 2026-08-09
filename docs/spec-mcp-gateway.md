@@ -89,7 +89,7 @@ endpoints (reusing the `shield_guard.py` request shapes from PR #242). Both run 
   callers/tests unaffected.
 - **Non-bypassability (hard requirement).** The gateway only enforces what flows
   through it. The upstream MUST accept connections **only** from the gateway
-  (firewall / mTLS / localhost) — per [mcp-runtime-enforcement.md:74-86](mcp-runtime-enforcement.md).
+  (firewall / mTLS / localhost) — per [mcp-runtime-enforcement.md:74-86](/mcp-runtime-enforcement/).
   Enforce operationally: a route with `isolation_ack: false` starts in
   `monitor_only` mode and logs a loud warning, so an un-isolated upstream can't be
   silently mistaken for "protected."

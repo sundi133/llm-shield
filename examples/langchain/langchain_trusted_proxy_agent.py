@@ -129,11 +129,16 @@ G, R, Y, B, DIM, Z = ("\033[32m", "\033[31m", "\033[33m", "\033[1m",
 
 # Stands in for whatever you already have: a users table, LDAP, your SaaS auth.
 # What matters is that the ROLE is decided HERE, on the server.
+# These role names must match the `role_permissions` on the sre-agent registry
+# entry EXACTLY. A role the registry has never heard of gets no grants, which
+# looks identical to "this role is correctly restricted" — so a typo here reads
+# as working security. Check them against the Agent Registry page in the portal.
 USERS = {
     "alex":   {"password": "demo", "role": "sre_lead"},
-    "sam":    {"password": "demo", "role": "oncall_engineer"},
+    "sam":    {"password": "demo", "role": "oncall"},
     "jordan": {"password": "demo", "role": "contractor"},
     "riley":  {"password": "demo", "role": "intern"},
+    "ci":     {"password": "demo", "role": "ci_bot"},
 }
 
 # The same fixture interactive_demo_sre.py uses — services, secrets, db tables,
@@ -502,6 +507,9 @@ footer{position:fixed;bottom:0;left:0;right:0;background:linear-gradient(transpa
   <b>Shielded agent</b>
   <span class=pill id=who>not signed in</span>
   <button onclick="login('alex')">alex · sre_lead</button>
+  <button onclick="login('sam')">sam · oncall</button>
+  <button onclick="login('jordan')">jordan · contractor</button>
+  <button onclick="login('ci')">ci · ci_bot</button>
   <button onclick="login('riley')">riley · intern</button>
   <button id=tracebtn onclick=toggleTrace()>trace on</button>
 </header>
@@ -626,8 +634,8 @@ def attack():
     print(f"{DIM}Shield {SHIELD}   agent {AGENT_KEY}   proxy token "
           f"{'set' if PROXY_TOKEN else R + 'NOT SET' + Z}{Z}\n")
 
-    print(f"{B}1. The same request as two different users{Z}")
-    for username in ("riley", "alex"):
+    print(f"{B}1. The same request as each user{Z}")
+    for username in USERS:
         role = role_for(username)
         allowed, reason = shield.session(role).check(
             "restart_service", {"service": "checkout-api"})
