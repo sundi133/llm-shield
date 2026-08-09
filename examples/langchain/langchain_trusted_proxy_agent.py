@@ -82,15 +82,20 @@ from fastapi import Cookie, FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
+# shield_client.py sits beside this file. Put that directory on the path
+# explicitly rather than relying on cwd: `python examples/langchain/app.py`
+# happens to work, `uvicorn app:app` from the repo root does not.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shield_client import ShieldClient  # noqa: E402
+
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
-# The tools are declared inside build_tools() rather than here at module level,
-# and that is the security design, not an accident. A module-level @tool is
-# shared by every request, so the role would have to travel as a tool ARGUMENT
-# — which hands the choice of role to the model. Building them per request lets
-# each one close over the role from the session instead. See build_tools().
+# The @tool objects are built per REQUEST by session.tools(), closed over the
+# role, rather than once at module level. That is the security design, not an
+# accident: a shared tool would have to receive the role as an ARGUMENT, and
+# every argument is chosen by the model. See shield_client.py.
 
 SHIELD = os.getenv("LLM_SHIELD_URL", "http://localhost:8000").rstrip("/")
 
@@ -106,11 +111,8 @@ TENANT_ID = os.getenv("TENANT_ID", "")
 
 # DEMO_CAPS=1 switches the tool path from advisory (tool/check only) to the
 # capability path: mint a single-use token bound to this exact action, then
-# verify and burn it. Same switch name as interactive_demo_sre.py.
-CAPS = os.getenv("DEMO_CAPS", "").strip().lower() in ("1", "true", "yes", "on")
-
-INSTANCE = "inst-" + uuid.uuid4().hex[:8]
-SESSION = "sess-" + uuid.uuid4().hex[:8]
+# verify and burn it. Read by ShieldClient.from_env(); same switch name as
+# interactive_demo_sre.py.
 
 # The shared secret. Lives ONLY on the server. Never in a template, never in an
 # API response. If it reaches the browser, the browser becomes the trusted
@@ -186,278 +188,94 @@ def role_for(username: Optional[str]) -> str:
 
 
 # ── Shield ───────────────────────────────────────────────────────────────
-
-def shield_headers(role: str) -> dict:
-    """X-User-Role says what we assert; X-Shield-Proxy-Token says why Shield
-    should believe us. Without the second, strict_proxy discards the first."""
-    headers = {"Content-Type": "application/json", "X-API-Key": TENANT_KEY,
-               "X-Agent-Key": AGENT_KEY}
-    if role:
-        headers["X-User-Role"] = role
-    if PROXY_TOKEN:
-        headers["X-Shield-Proxy-Token"] = PROXY_TOKEN
-    return headers
-
-
-def _post(path: str, body: dict, role: str, extra: Optional[dict] = None):
-    """(json, elapsed_ms, error). Never raises — the caller decides."""
-    t0 = time.perf_counter()
-    headers = shield_headers(role)
-    if extra:
-        headers.update(extra)
-    try:
-        r = requests.post(f"{SHIELD}{path}", timeout=TIMEOUT,
-                          headers=headers, json=body)
-    except Exception as e:
-        return None, (time.perf_counter() - t0) * 1000, e.__class__.__name__
-    ms = (time.perf_counter() - t0) * 1000
-    if r.status_code != 200:
-        return None, ms, f"{r.status_code}: {r.text[:160]}"
-    try:
-        return r.json(), ms, None
-    except Exception:
-        return None, ms, "non-JSON response"
-
-
-def screen_input(text: str, role: str, trace: list) -> Optional[str]:
-    """Input guardrails, before the model sees anything.
-
-    Returns a refusal string when the prompt is blocked, else None. This runs
-    ahead of the agent on purpose: a jailbreak that never reaches the model
-    cannot talk it into anything.
-    """
-    d, ms, err = _post("/guardrails/input", {"message": text}, role)
-    if err:
-        trace.append({"stage": "input", "status": "fail",
-                      "label": "unreachable", "meta": err, "ms": ms})
-        return "Shield could not screen this request, so I did not send it."
-
-    ran = d.get("guardrail_results", []) or []
-    bad = [g for g in ran if not g.get("passed", True)]
-    trace.append({"stage": "input", "status": "block" if bad else "pass",
-                  "label": "BLOCK" if bad else "pass",
-                  "meta": f"{len(ran)} guardrails", "ms": ms})
-    for g in bad:
-        trace.append({"stage": "", "status": "detail",
-                      "label": g.get("guardrail", ""),
-                      "meta": str(g.get("message", ""))[:160], "ms": None})
-    if d.get("safe") is False or bad:
-        why = bad[0].get("message") if bad else "blocked"
-        return f"Blocked by input guardrails: {why}"
-    return None
-
-
-def rbac_check(tool_name: str, role: str, params: dict, trace: list) -> tuple:
-    """(allowed, reason). The advisory path — and the gate on minting."""
-    d, ms, err = _post("/v1/shield/tool/check",
-                       {"agent_key": AGENT_KEY, "tool_name": tool_name,
-                        "user_role": role, "tool_params": params}, role)
-    if err:
-        trace.append({"stage": "rbac", "status": "fail", "label": "unreachable",
-                      "meta": err, "ms": ms})
-        return False, f"could not reach Shield ({err})"
-
-    allowed = bool(d.get("allowed"))
-    shown = " ".join(f"{k}={v}" for k, v in params.items())
-    trace.append({"stage": "rbac", "status": "allow" if allowed else "deny",
-                  "label": f"{'ALLOW' if allowed else 'DENY'} {tool_name}",
-                  "meta": f"{shown}  role={role}".strip(), "ms": ms})
-    why = next((g.get("message") for g in d.get("guardrail_results", [])
-                if not g.get("passed", True)), None)
-    if not allowed:
-        why = why or "not permitted"
-        trace.append({"stage": "", "status": "detail", "label": "",
-                      "meta": str(why)[:200], "ms": None})
-        if CAPS:
-            trace.append({"stage": "", "status": "detail", "label": "",
-                          "meta": "no capability minted — the check gates the mint",
-                          "ms": None})
-    return allowed, (why or "allowed")
-
-
-_agent_token = {"value": ""}
-
-
-def ensure_agent_token(role: str, trace: list) -> Optional[str]:
-    """Exchange the tenant credential for an agent identity (AuthN).
-
-    Needs `tenant_key` in SHIELD_WORKLOAD_IDENTITY_PROVIDERS on the data plane.
-    """
-    if _agent_token["value"]:
-        return _agent_token["value"]
-    d, ms, err = _post("/v1/shield/auth/agent-token",
-                       {"user_sub": "app-session", "agent_id": AGENT_KEY,
-                        "agent_instance_id": INSTANCE,
-                        "tenant_id": TENANT_ID, "build_hash": "demo",
-                        "model_version": MODEL, "session_id": SESSION,
-                        "ttl_seconds": 900}, role)
-    if err:
-        trace.append({"stage": "authn", "status": "fail", "label": "no agent token",
-                      "meta": err, "ms": ms})
-        return None
-    _agent_token["value"] = d["agent_token"]
-    trace.append({"stage": "authn", "status": "ok", "label": "agent token",
-                  "meta": f"instance={INSTANCE}", "ms": ms})
-    return _agent_token["value"]
-
-
-def capability_path(tool_name: str, role: str, params: dict, trace: list) -> Optional[str]:
-    """mint -> verify (nonce burned). Returns a refusal string, or None to run.
-
-    The verify step is what a tool server would do before executing. It runs in
-    this process, so the process boundary is simulated — but the signature
-    check, the tool binding and the nonce burn are real.
-    """
-    token = ensure_agent_token(role, trace)
-    if not token:
-        return "DENIED — no agent identity could be established."
-
-    resource = (f"service/{params['service']}" if params.get("service")
-                else f"secret/{params['name']}" if params.get("name")
-                else f"{tool_name}/any")
-
-    d, mint_ms, err = _post("/v1/shield/cap/mint",
-                            {"tool": tool_name, "resource": resource,
-                             "ttl_seconds": 30, "session_id": SESSION,
-                             "tool_params": params}, role,
-                            extra={"X-Agent-Token": token})
-    if err:
-        trace.append({"stage": "cap", "status": "deny", "label": f"NO MINT {tool_name}",
-                      "meta": err, "ms": mint_ms})
-        return f"DENIED by policy: {err}"
-
-    v, verify_ms, verr = _post("/v1/shield/cap/verify",
-                               {"cap_token": d["cap_token"],
-                                "expected_tool": tool_name}, role)
-    ok = bool(v and v.get("valid") is True)
-    trace.append({"stage": "cap", "status": "ok" if ok else "deny",
-                  "label": f"{'MINT+BURN' if ok else 'INVALID'} {tool_name}({resource})",
-                  "meta": f"role={role}  mint {mint_ms:.0f}ms · verify {verify_ms:.0f}ms",
-                  "ms": None})
-    if not ok:
-        return f"DENIED — capability did not verify: {(v or {}).get('error', verr)}"
-    return None
-
-
-# ── The LangChain tools ──────────────────────────────────────────────────
 #
-# Built per request, closed over the role. This is the structural part: the
-# model can pick a tool, and it has no way to express a different role.
+# One client for the process. Everything it needs comes from the environment;
+# see shield_client.py for the constructor if you would rather be explicit.
 
-def build_tools(role: str, trace: list):
-    def guarded(tool_name: str, params: dict, run):
-        """RBAC first, then optionally mint. Never the other way round.
+shield = ShieldClient.from_env()
 
-        cap/mint does not enforce role -> tool on its own; it unions every
-        role's permissions. An app that wants the role respected has to ask for
-        the check explicitly and refuse to mint on a denial.
-        """
-        allowed, reason = rbac_check(tool_name, role, params, trace)
-        if not allowed:
-            # Returned to the MODEL, not raised. The agent then explains the
-            # refusal instead of the request 500ing.
-            return f"DENIED by policy: {reason}"
 
-        if CAPS:
-            refusal = capability_path(tool_name, role, params, trace)
-            if refusal:
-                return refusal
+# ── The tools ────────────────────────────────────────────────────────────
+#
+# Ordinary functions. `@shield.tool` is a drop-in for LangChain's `@tool`, and
+# adds the authorization check (and the capability mint, when enabled) around
+# the body. Note what no signature has: a `role` argument. The role is bound
+# per request in session.tools(), so the model cannot choose it.
 
-        out = run()
-        trace.append({"stage": "tool", "status": "ok", "label": "result",
-                      "meta": str(out)[:300], "ms": None})
-        return out
+@shield.tool
+def read_logs(service: str, lines: int = 20) -> str:
+    """Read recent log lines for a service. Read-only."""
+    sv = _svc(service)
+    if not sv:
+        return f"no service named {service}"
+    return "\n".join(sv["logs"][-int(lines or 20):])
 
-    @tool
-    def read_logs(service: str, lines: int = 20) -> str:
-        """Read recent log lines for a service. Read-only."""
-        def run():
-            sv = _svc(service)
-            if not sv:
-                return f"no service named {service}"
-            return "\n".join(sv["logs"][-int(lines or 20):])
-        return guarded("read_logs", {"service": service}, run)
 
-    @tool
-    def query_prod_db(table: str, limit: int = 5) -> str:
-        """Run a read query against the production database."""
-        def run():
-            rows = (INFRA.get("db") or {}).get(table.strip())
-            if rows is None:
-                return f"no table named {table}"
-            return json.dumps(rows[:int(limit or 5)])
-        return guarded("query_prod_db", {"table": table, "limit": limit}, run)
+@shield.tool
+def query_prod_db(table: str, limit: int = 5) -> str:
+    """Run a read query against the production database."""
+    rows = (INFRA.get("db") or {}).get(table.strip())
+    if rows is None:
+        return f"no table named {table}"
+    return json.dumps(rows[:int(limit or 5)])
 
-    @tool
-    def restart_service(service: str) -> str:
-        """Restart a service. Disruptive but reversible."""
-        def run():
-            sv = _svc(service)
-            return (f"restarted {service} ({sv['replicas']} replicas)"
-                    if sv else f"no service named {service}")
-        return guarded("restart_service", {"service": service}, run)
 
-    @tool
-    def scale_deployment(service: str, replicas: int) -> str:
-        """Change the replica count for a service."""
-        def run():
-            sv = _svc(service)
-            if not sv:
-                return f"no service named {service}"
-            was = sv["replicas"]
-            sv["replicas"] = int(replicas)
-            return f"scaled {service} from {was} to {replicas} replicas"
-        return guarded("scale_deployment",
-                       {"service": service, "replicas": replicas}, run)
+@shield.tool
+def restart_service(service: str) -> str:
+    """Restart a service. Disruptive but reversible."""
+    sv = _svc(service)
+    return (f"restarted {service} ({sv['replicas']} replicas)"
+            if sv else f"no service named {service}")
 
-    @tool
-    def read_secret(name: str) -> str:
-        """Read a secret value from the vault."""
-        def run():
-            v = (INFRA.get("secrets") or {}).get(name.strip())
-            return f"{name} = {v}" if v else f"no secret named {name}"
-        return guarded("read_secret", {"name": name}, run)
 
-    @tool
-    def rotate_credential(name: str) -> str:
-        """Rotate a credential and return the new value."""
-        def run():
-            secrets_ = INFRA.get("secrets") or {}
-            if name.strip() not in secrets_:
-                return f"no secret named {name}"
-            new = f"pk_live_ROTATED_{uuid.uuid4().hex[:16]}"
-            secrets_[name.strip()] = new
-            return f"{name} rotated; new value {new}"
-        return guarded("rotate_credential", {"name": name}, run)
+@shield.tool
+def scale_deployment(service: str, replicas: int) -> str:
+    """Change the replica count for a service."""
+    sv = _svc(service)
+    if not sv:
+        return f"no service named {service}"
+    was = sv["replicas"]
+    sv["replicas"] = int(replicas)
+    return f"scaled {service} from {was} to {replicas} replicas"
 
-    @tool
-    def open_firewall_rule(port: int, cidr: str) -> str:
-        """Open a port to a CIDR range on the production edge."""
-        def run():
-            INFRA.setdefault("firewall", []).append({"port": int(port), "cidr": cidr})
-            return f"opened port {port} to {cidr}"
-        return guarded("open_firewall_rule", {"port": port, "cidr": cidr}, run)
 
-    @tool
-    def delete_namespace(namespace: str) -> str:
-        """Delete an entire Kubernetes namespace. Irreversible."""
-        def run():
-            return f"deleted namespace {namespace} and everything in it"
-        return guarded("delete_namespace", {"namespace": namespace}, run)
+@shield.tool
+def read_secret(name: str) -> str:
+    """Read a secret value from the vault."""
+    v = (INFRA.get("secrets") or {}).get(name.strip())
+    return f"{name} = {v}" if v else f"no secret named {name}"
 
-    @tool
-    def send_webhook(url: str, payload: str) -> str:
-        """POST a payload to an external URL. Leaves the organisation."""
-        # url AND payload both go to Shield: who may call a webhook is a role
-        # question, whether a rotated credential may travel in the body is not.
-        def run():
-            return f"posted {len(payload)} bytes to {url}"
-        return guarded("send_webhook", {"url": url, "payload": payload}, run)
 
-    # Every signature above takes only what the WORK needs. None takes a role.
-    return [read_logs, query_prod_db, restart_service, scale_deployment,
-            read_secret, rotate_credential, open_firewall_rule,
-            delete_namespace, send_webhook]
+@shield.tool
+def rotate_credential(name: str) -> str:
+    """Rotate a credential and return the new value."""
+    secrets_ = INFRA.get("secrets") or {}
+    if name.strip() not in secrets_:
+        return f"no secret named {name}"
+    new = f"pk_live_ROTATED_{uuid.uuid4().hex[:16]}"
+    secrets_[name.strip()] = new
+    return f"{name} rotated; new value {new}"
+
+
+@shield.tool
+def open_firewall_rule(port: int, cidr: str) -> str:
+    """Open a port to a CIDR range on the production edge."""
+    INFRA.setdefault("firewall", []).append({"port": int(port), "cidr": cidr})
+    return f"opened port {port} to {cidr}"
+
+
+@shield.tool
+def delete_namespace(namespace: str) -> str:
+    """Delete an entire Kubernetes namespace. Irreversible."""
+    return f"deleted namespace {namespace} and everything in it"
+
+
+@shield.tool
+def send_webhook(url: str, payload: str) -> str:
+    """POST a payload to an external URL. Leaves the organisation."""
+    # url AND payload both reach Shield: who may call a webhook is a role
+    # question, whether a rotated credential may travel in the body is not.
+    return f"posted {len(payload)} bytes to {url}"
 
 
 SYSTEM = (
@@ -478,50 +296,48 @@ SYSTEM = (
 
 
 def run_agent(question: str, role: str) -> dict:
-    """One request, one agent, one role. Nothing is cached across users."""
-    trace: list = []
-    agent = create_agent(
-        ChatOpenAI(model=MODEL, temperature=0),
-        build_tools(role, trace),
-        system_prompt=SYSTEM,
-    )
+    """One request, one session, one role. Nothing is cached across users."""
+    session = shield.session(role)
+    refusal = session.screen_input(question)
+    if refusal:
+        return {"role": role, "answer": refusal, "trace": session.trace}
+
+    agent = create_agent(ChatOpenAI(model=MODEL, temperature=0),
+                         session.tools(), system_prompt=SYSTEM)
     result = agent.invoke({"messages": [{"role": "user", "content": question}]})
-    messages = result.get("messages", [])
     answer = ""
-    for msg in reversed(messages):
+    for msg in reversed(result.get("messages", [])):
         content = getattr(msg, "content", None)
         if content and getattr(msg, "type", "") == "ai":
             answer = content if isinstance(content, str) else str(content)
             break
-    return {"role": role, "answer": answer, "shield_decisions": trace}
+    return {"role": role, "answer": answer, "trace": session.trace}
 
 
 def stream_agent(question: str, role: str):
-    """Server-sent events: tokens as the model produces them, and every Shield
-    decision the moment it is made.
+    """Server-sent events: pipeline stages as they happen, then model tokens.
 
-    The Shield events are the reason this is worth streaming at all. A user
-    watching a tool get refused mid-answer understands the authorization model
-    in a way a final JSON blob never conveys.
-
-    `trace` is appended by guarded() on the same thread, so draining it between
-    chunks emits decisions in the order they actually happened.
+    The stage events are the reason this is worth streaming. Watching a tool
+    get refused mid-answer conveys the authorization model in a way a final
+    JSON blob never does.
     """
-    trace: list = []
-    sent = 0
+    pending: list = []
 
     def sse(payload: dict) -> str:
         return f"data: {json.dumps(payload)}\n\n"
 
+    def drain():
+        while pending:
+            yield sse({"type": "stage", **pending.pop(0)})
+
     try:
+        session = shield.session(role, on_stage=pending.append)
         yield sse({"type": "start", "role": role})
 
         # Input guardrails run BEFORE the model, so a blocked prompt never
-        # reaches it. Drain the trace either way — the pass is worth showing.
-        refusal = screen_input(question, role, trace)
-        while sent < len(trace):
-            yield sse({"type": "stage", **trace[sent]})
-            sent += 1
+        # reaches it.
+        refusal = session.screen_input(question)
+        yield from drain()
         if refusal:
             yield sse({"type": "token", "text": refusal})
             yield sse({"type": "done"})
@@ -529,34 +345,24 @@ def stream_agent(question: str, role: str):
 
         agent = create_agent(
             ChatOpenAI(model=MODEL, temperature=0, streaming=True),
-            build_tools(role, trace),
-            system_prompt=SYSTEM,
-        )
+            session.tools(), system_prompt=SYSTEM)
 
         for chunk, _meta in agent.stream(
                 {"messages": [{"role": "user", "content": question}]},
                 stream_mode="messages"):
-
-            while sent < len(trace):                 # decisions made so far
-                yield sse({"type": "stage", **trace[sent]})
-                sent += 1
-
-            # Tool results arrive on this stream too; only forward the model's
-            # own words, or the transcript shows raw tool output as if the
-            # assistant had said it.
-            if getattr(chunk, "type", "") != "AIMessageChunk" and \
-                    chunk.__class__.__name__ != "AIMessageChunk":
+            yield from drain()
+            # Tool results arrive on this stream too; forwarding them would
+            # print raw tool output as if the assistant had said it.
+            if chunk.__class__.__name__ != "AIMessageChunk":
                 continue
             text = getattr(chunk, "content", "")
-            if isinstance(text, list):               # some providers chunk parts
+            if isinstance(text, list):
                 text = "".join(part.get("text", "") for part in text
                                if isinstance(part, dict))
             if text:
                 yield sse({"type": "token", "text": text})
 
-        while sent < len(trace):
-            yield sse({"type": "stage", **trace[sent]})
-            sent += 1
+        yield from drain()
         yield sse({"type": "done"})
     except Exception as e:
         yield sse({"type": "error", "detail": f"{e.__class__.__name__}: {e}"})
@@ -823,8 +629,8 @@ def attack():
     print(f"{B}1. The same request as two different users{Z}")
     for username in ("riley", "alex"):
         role = role_for(username)
-        allowed, reason = shield_allows("restart_service", role,
-                                        {"service": "checkout-api"})
+        allowed, reason = shield.session(role).check(
+            "restart_service", {"service": "checkout-api"})
         mark = f"{G}allowed{Z}" if allowed else f"{R}refused{Z}"
         print(f"   {username:<8} ({role:<16}) {mark}  {DIM}{reason}{Z}")
 
@@ -834,13 +640,11 @@ def attack():
     print(f"   {G}no effect{Z}")
 
     print(f"\n{B}3. The model tries to pick its own role{Z}")
-    from inspect import signature
-    tools = build_tools("intern", [])
-    for t in tools:
+    for t in shield.session("intern").tools():
         params = list(getattr(t, "args", {}) or {})
         has_role = any("role" in p.lower() for p in params)
         mark = f"{R}HAS A ROLE ARG{Z}" if has_role else f"{G}no role arg{Z}"
-        print(f"   {t.name:<18} args={params}  {mark}")
+        print(f"   {t.name:<20} args={params}  {mark}")
     print(f"   {DIM}The role is in a closure, not a parameter. A prompt "
           f"injection has nowhere to put one.{Z}")
 
@@ -850,7 +654,7 @@ def attack():
                           headers={"Content-Type": "application/json",
                                    "X-API-Key": TENANT_KEY,
                                    "X-Agent-Key": AGENT_KEY,
-                                   "X-User-Role": "sre_lead"},
+                                   "X-User-Role": "sre_lead"},  # no proxy token
                           json={"agent_key": AGENT_KEY,
                                 "tool_name": "restart_service",
                                 "tool_input": "{}", "user_role": "sre_lead"})
