@@ -318,8 +318,11 @@ async def classify(request: Request, body: dict):
             # audit cannot tell a verified claim from a header the caller typed —
             # which is the only distinction that matters when reviewing an
             # escalation after the fact.
-            "role_source": _identity.role_source,
-            "identity_method": _identity.identity_method or "",
+            # The full provenance set the resolver already built, rather than
+            # two fields picked by hand. acting_for and delegation_verified are
+            # the ones that were missing: without them "what has alice
+            # delegated" is unanswerable, because this path never recorded it.
+            **_identity.audit_fields(),
             "stage": "input",
             "device_id": device_id,
             "destination": destination,
@@ -587,8 +590,7 @@ async def screen_file(
             # Was hardcoded to "" — file screening recorded no role at all,
             # regardless of configuration.
             "user_role": _file_identity.user_role or "",
-            "role_source": _file_identity.role_source,
-            "identity_method": _file_identity.identity_method or "",
+            **_file_identity.audit_fields(),
             "stage": "input",
             "device_id": dev,
             "destination": request.headers.get("x-shield-destination", ""),
