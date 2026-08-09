@@ -2515,11 +2515,11 @@ curl -w "@curl-format.txt" -s -o /dev/null \
 
 ## 📚 Additional Resources
 
-- [LLM Shield API Reference](./api-reference.md)
-- [Multi-Tenant Architecture Guide](./multi-tenant-architecture.md) 
-- [Agentic Guardrails Guide](./agentic-guardrails-guide.md)
-- [Integration Guide](./integration-guide.md)
-- [Compliance Mapping](./compliance-mapping.md)
+- [LLM Shield API Reference](/api-reference/)
+- [Multi-Tenant Architecture Guide](/multi-tenant-architecture/) 
+- [Agentic Guardrails Guide](/agentic-guardrails-guide/)
+- [Integration Guide](/integration-guide/)
+- [Compliance Mapping](/compliance-mapping/)
 
 ---
 
