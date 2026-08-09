@@ -110,7 +110,7 @@ from the gateway — private network / firewall / mTLS, or a gateway-only bearer
 token in the route `headers` that the upstream checks — then keep
 `isolation_ack: true` (your attestation of this). A route with
 `isolation_ack: false` starts in a warned, not-truly-protected state.
-See [mcp-runtime-enforcement.md](mcp-runtime-enforcement.md).
+See [mcp-runtime-enforcement.md](/mcp-runtime-enforcement/).
 
 ## Connect it to Claude
 
@@ -193,7 +193,7 @@ not semantic guardrails. Pair them: allowlist **only** the Shield gateway host i
 sandbox's egress policy, and the agent is *forced* through Shield with no way around
 it — enforcement becomes non-bypassable, by the kernel, not by trusting the agent.
 
-Full walkthrough (policy + verified tests): **[Agent Sandbox (OpenShell)](openshell-sandbox.md)**.
+Full walkthrough (policy + verified tests): **[Agent Sandbox (OpenShell)](/openshell-sandbox/)**.
 
 ## Govern a fleet: policy profiles
 
@@ -298,7 +298,7 @@ genuinely non-bypassable enforcement.
 > acts as whoever consented, so the vendor's own audit log shows a single account.
 > Use a service account, not a personal login. Per-user brokering needs verified
 > identity first — see
-> [spec-mcp-verified-identity.md](spec-mcp-verified-identity.md).
+> [spec-mcp-verified-identity.md](/spec-mcp-verified-identity/).
 
 To try all eight without a vendor account, `examples/mcp_credential_lab` is a local
 MCP server that demands whichever mode you point it at.

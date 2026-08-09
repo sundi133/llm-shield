@@ -142,7 +142,7 @@ Transports: `stdio`, `sse`, `http` (streamable). Requires `pip install mcp`.
 > MCP servers and set policy per server — a tool allowlist, an input/output
 > guardrail baseline, a redaction floor, result scanning, a per-server kill
 > switch, and an onboarding metadata scan — that is the same proxy driven from a
-> central console instead of code. See **[MCP gateway](mcp-gateway.md)**; this
+> central console instead of code. See **[MCP gateway](/mcp-gateway/)**; this
 > Path B snippet is the embedded form of the same enforcement.
 
 ---

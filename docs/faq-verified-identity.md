@@ -1,3 +1,11 @@
+---
+title: "FAQ: verified identity"
+layout: default
+nav_exclude: true
+permalink: /faq-verified-identity/
+description: "What Shield proves about identity and what it does not, with the defaults that are off until you turn them on."
+---
+
 # FAQ: verified identity — what Shield proves, and what it doesn't
 
 Written for the questions a security architect asks in the first twenty minutes.
@@ -107,7 +115,7 @@ Three things to know before relying on it:
   `X-Shield-Proxy-Token`. It is recorded as `role_source: proxy` and
   `role_verified: false` — the proxy vouched for the hop, it did not prove the
   user's credential to Shield. See
-  [the role-binding runbook](role-binding-runbook.md).
+  [the role-binding runbook](/role-binding-runbook/).
 
 ### Can a caller mint an agent token naming someone else?
 
@@ -291,6 +299,6 @@ Note the last row: **`oidc_sa` is not in the default chain**, so a Keycloak or
 Okta bearer token is not verified until you add it.
 
 Turn them on in the order given in
-[the role-binding runbook](role-binding-runbook.md) — several interact, and two
+[the role-binding runbook](/role-binding-runbook/) — several interact, and two
 combinations fail closed in ways that look like a broken feature rather than a
 missing setting.

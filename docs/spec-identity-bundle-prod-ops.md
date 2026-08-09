@@ -10,7 +10,7 @@ Status: **DRAFT — awaiting approval.** Built one PR at a time.
 
 ## 1. Problem & outcome
 
-A doc review of [identity-bundle.md](identity-bundle.md) found it strong as a
+A doc review of [identity-bundle.md](/workload-identity-bundle/) found it strong as a
 design + threat-model doc but **thin as a production operations manual**, and in
 one place **overpromising** (it references a Helm chart and SPIRE Controller
 Manager that do not exist in the repo). Concrete gaps:

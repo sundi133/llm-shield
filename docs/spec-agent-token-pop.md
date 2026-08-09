@@ -439,7 +439,7 @@ New file `tests/test_agent_token_pop.py`. Existing DPoP tests cover
 24c. `required` + unbound token + trusted-proxy peer → 200.
 24d. Exemption does not apply when `trusted_proxy_only()` is off, even if the
      secret happens to match. Mirrors `_proxy_vouched()` in
-     [spec-proxy-trusted-role-header](spec-proxy-trusted-role-header.md).
+     [spec-proxy-trusted-role-header](/spec-proxy-trusted-role-header/).
 24e. A valid proof from a trusted-proxy peer still sets `pop_verified is True` —
      the exemption relaxes the requirement, it does not skip verification.
 
@@ -503,7 +503,7 @@ LiteLLM path — signature, expiry, revocation, `build_hash` allowlist — which
 strictly more than the `x-agent-key` string it gets today. Only possession is
 unproven. That is a real improvement and belongs in the same hook PR as the
 `X-On-Behalf-Of` forwarding specified in
-[spec-proxy-trusted-role-header §10](spec-proxy-trusted-role-header.md).
+[spec-proxy-trusted-role-header §10](/spec-proxy-trusted-role-header/).
 
 ### What to tell customers
 

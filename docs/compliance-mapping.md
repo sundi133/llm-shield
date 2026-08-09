@@ -103,7 +103,7 @@ Frameworks covered:
 | **AU-2** | Event Logging | `TelemetryMiddleware` → Elasticsearch SIEM |
 | **AU-3** | Content of Audit Records | Full event schema (ECS-compliant) with timestamp, source, action, outcome |
 | **AU-6** | Audit Record Review, Analysis, and Reporting | Kibana dashboards, alerts on high-risk events |
-| **AU-9** | Protection of Audit Information | SIEM with API key auth; append-only Redis stores; cryptographic tamper-evidence on the [tamper-evident audit roadmap](spec-tamper-evident-audit.md) |
+| **AU-9** | Protection of Audit Information | SIEM with API key auth; append-only Redis stores; cryptographic tamper-evidence on the [tamper-evident audit roadmap](/spec-tamper-evident-audit/) |
 | **AU-12** | Audit Record Generation | `audit_log` (Redis ZSET) + `decision_audit` + ES exporter |
 
 ### Identification and Authentication (IA)
@@ -138,7 +138,7 @@ Frameworks covered:
 |---|---|---|
 | **Art. 9** | Risk Management System | Full guardrail pipeline + SIEM telemetry + audit logs |
 | **Art. 10** | Data and Data Governance | `pii_detection`, `data_access_guard`, `memory_pii_scrubbing` |
-| **Art. 12** | Record-Keeping | Audit logs (Redis, append-only) + ES telemetry; cryptographic tamper-evidence on the [roadmap](spec-tamper-evident-audit.md) |
+| **Art. 12** | Record-Keeping | Audit logs (Redis, append-only) + ES telemetry; cryptographic tamper-evidence on the [roadmap](/spec-tamper-evident-audit/) |
 | **Art. 13** | Transparency and Provision of Information | `guardrail_results` in API responses with reasoning |
 | **Art. 14** | Human Oversight | `sensitive_action_confirmation`, `action_guard`, workflow approval gates |
 | **Art. 15** | Accuracy, Robustness, and Cybersecurity | `adversarial_detection`, `rate_limiter`, `budget_controls`, `regex_pattern` |
@@ -258,7 +258,7 @@ maps one-to-one to the control tables above and is reproducible on demand.
 | 8 | **Identity & least-privilege** | RBAC role→tool matrix (`GET /v1/agents/registry`); agent tokens bound to `agent_instance_id`+`build_hash`; capability scoping. |
 | 9 | **Incident response** | Tool kill-switch history (`/v1/shield/tools/disabled`); webhook alert config; instance revocation (≤1s propagation). |
 | 10 | **Data protection** | PII/secret detection + redaction config; taint-tracking clearance map; residency = self-host / air-gapped deploy (`docs/on-premises-deployment-guide.md`). |
-| 11 | **Integrity of the trail itself** | Once the [tamper-evident audit](spec-tamper-evident-audit.md) ships: `GET /v1/shield/audit/verify` (chain intact) + signed `…/audit/export` bundle verifiable offline. |
+| 11 | **Integrity of the trail itself** | Once the [tamper-evident audit](/spec-tamper-evident-audit/) ships: `GET /v1/shield/audit/verify` (chain intact) + signed `…/audit/export` bundle verifiable offline. |
 
 **Tip for staged rollout evidence:** run new controls in monitor mode
 (`action: warn|log`) first; the decision audit shows `would_block` volume so you

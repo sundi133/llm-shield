@@ -165,7 +165,7 @@ model.
 
 Shield verifies SPIFFE and mTLS where you already have them, so this is additive
 rather than a replacement. See
-[FAQ: verified identity](faq-verified-identity.md) for the full comparison.
+[FAQ: verified identity](/faq-verified-identity/) for the full comparison.
 
 ### Can a stolen agent token be replayed by someone else?
 
@@ -175,7 +175,7 @@ alone cannot produce. The signature also covers the exact call being made, so a
 captured one cannot be replayed or redirected.
 
 Off by default, and it is a direct-path control — a proof cannot exist when an
-LLM gateway sits in front. [Details and limits](faq-verified-identity.md).
+LLM gateway sits in front. [Details and limits](/faq-verified-identity/).
 
 ### Does LLM Shield support agentic AI?
 

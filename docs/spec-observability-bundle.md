@@ -18,7 +18,7 @@ already have an OTEL collector / Langfuse to reuse, but many customers have
 nothing.
 
 **Outcome:** an **opt-in Observability Bundle** — separate containers, layered on
-Shield like the [identity bundle](identity-bundle.md) — that gives a customer a
+Shield like the [identity bundle](/workload-identity-bundle/) — that gives a customer a
 working, durable, **scalable** trace store + UI with one command, without them
 assembling it or Shield reinventing a trace database. Two tiers:
 

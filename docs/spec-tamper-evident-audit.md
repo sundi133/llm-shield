@@ -1,3 +1,11 @@
+---
+title: "Spec: tamper-evident audit trail"
+layout: default
+nav_exclude: true
+permalink: /spec-tamper-evident-audit/
+description: "Draft spec for a cryptographically verifiable audit chain."
+---
+
 # Spec: Tamper-evident audit trail
 
 Status: **DRAFT — for approval.** Spec-first per `CLAUDE.md`; no code until sign-off.

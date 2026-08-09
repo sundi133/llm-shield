@@ -1,3 +1,11 @@
+---
+title: "Spec: verified identity for the MCP gateway"
+layout: default
+nav_exclude: true
+permalink: /spec-mcp-verified-identity/
+description: "Draft spec for verified identity on the MCP gateway path."
+---
+
 # Spec: verified identity for the MCP gateway (fleet control plane v2, step 1)
 
 Status: **DRAFT — for approval.** Spec-first per `CLAUDE.md`; no code until sign-off.

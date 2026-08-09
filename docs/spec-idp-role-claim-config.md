@@ -110,7 +110,7 @@ the mode. One Redis `GET` per tenant per 30s, amortised to roughly zero per
 request. Budget: **under 1 ms added p99** to `/v1/shield/tool/check` on a cache
 hit, and unchanged (0 reads) when `SHIELD_ROLE_BINDING=off`.
 
-Related: [spec-guard-path-scale](spec-guard-path-scale.md) covers the blocking
+Related: [spec-guard-path-scale](/spec-guard-path-scale/) covers the blocking
 Redis call on the async guard path. This config read must follow whatever
 non-blocking pattern that spec lands, and must not introduce a second blocking
 call. If that spec has not shipped, the 30s cache keeps the blocking read rare

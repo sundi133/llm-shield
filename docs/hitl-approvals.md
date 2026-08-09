@@ -12,7 +12,7 @@ High-risk tool calls can require a human to approve them first. The approval is 
 cleartext token — so it cannot be forged by anyone with Redis/backup access, and
 the agent cannot self-assert it.
 
-Design rationale: [spec-hitl-breakglass.md](spec-hitl-breakglass.md).
+Design rationale: [spec-hitl-breakglass.md](/spec-hitl-breakglass/).
 
 ## Enable
 

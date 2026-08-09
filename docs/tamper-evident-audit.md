@@ -14,7 +14,7 @@ Enabling tamper-evidence links every record into a per-scope **hash chain** and
 signs the chain head into periodic **Ed25519 checkpoints**, so any alteration,
 deletion, or truncation becomes provable — and pinpointable to the exact record.
 
-Design rationale and threat model: [spec-tamper-evident-audit.md](spec-tamper-evident-audit.md).
+Design rationale and threat model: [spec-tamper-evident-audit.md](/spec-tamper-evident-audit/).
 
 ## Enable
 

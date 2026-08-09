@@ -11,8 +11,8 @@ Status: **DRAFT.** Built one PR at a time; each item is independently shippable.
 ## 1. Problem & outcome
 
 The modular workload-identity layer + SPIRE bundle
-([spec-modular-workload-identity.md](spec-modular-workload-identity.md),
-[spec-shield-identity-bundle.md](spec-shield-identity-bundle.md)) are functional
+([spec-modular-workload-identity.md](/spec-modular-workload-identity/),
+[spec-shield-identity-bundle.md](/spec-shield-identity-bundle/)) are functional
 and unit-tested, but **not production-ready**: the X.509 SVID validation is
 forgeable, `oidc_sa` is unverified against a real issuer, the SPIRE bundle is
 PoC-config and never executed, and the "only-Envoy-reaches-Shield" trust boundary

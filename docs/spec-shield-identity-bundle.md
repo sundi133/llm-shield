@@ -30,7 +30,7 @@ hand-rolled CA.**
 
 The moat is the **integration + the governance layer**, delivered as one
 package. Shield **consumes** SPIRE identity via the modular provider layer
-([spec-modular-workload-identity.md](spec-modular-workload-identity.md)); it does
+([spec-modular-workload-identity.md](/spec-modular-workload-identity/)); it does
 **not** reimplement attestation or PKI.
 
 ### Non-goals
@@ -210,7 +210,7 @@ can't run nested containers).
 - ⚠️ **Prerequisite:** modular-workload-identity providers must land first. The direct-SVID-in-Shield mode also needs the X.509 fix (`task_02d25da6`); the Envoy mode does not.
 
 ## Dependencies & sequence
-1. **(prereq)** Modular workload-identity providers — [spec-modular-workload-identity.md](spec-modular-workload-identity.md) PR 1.
+1. **(prereq)** Modular workload-identity providers — [spec-modular-workload-identity.md](/spec-modular-workload-identity/) PR 1.
 2. **(prereq, for direct mode only)** X.509 validation fix — `task_02d25da6`.
 
 ## Proposed task breakdown (PRs)

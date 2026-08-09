@@ -394,7 +394,7 @@ This document provides visual diagrams of the Votal Shield multi-tenant architec
 
 ## References
 
-- [Multi-Tenant Architecture Guide](multi-tenant-architecture.md)
-- [Agentic Guardrails Guide](agentic-guardrails-guide.md)
-- [Compliance Mapping](compliance-mapping.md)
-- [Integration Guide](integration-guide.md)
+- [Multi-Tenant Architecture Guide](/multi-tenant-architecture/)
+- [Agentic Guardrails Guide](/agentic-guardrails-guide/)
+- [Compliance Mapping](/compliance-mapping/)
+- [Integration Guide](/integration-guide/)
