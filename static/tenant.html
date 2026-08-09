@@ -11895,7 +11895,7 @@ async function loadGuardrailDashboard() {
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin-bottom:1rem;">
         ${_gdTopTable('Top issues', d.top_issues, 'guardrail', 'Guardrail / policy', r => _gdSevChip(r.severity) + ' ')}
         ${_gdTopTable('Top destinations', d.top_destinations, 'destination', 'AI destination', r => _gdDestLogo(r.destination))}
-        ${_gdTopTable('Top users', d.top_users, 'agent_key', 'User / agent')}
+        ${_gdTopTable('Top Users/Agents', d.top_users, 'agent_key', 'User / agent')}
         ${_gdTopTable('Top devices', d.top_devices, 'device_id', 'Device')}
       </div>
       <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
