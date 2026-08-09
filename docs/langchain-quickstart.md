@@ -233,6 +233,16 @@ the user's token as `X-On-Behalf-Of` and Shield verifies the signature itself,
 so the role is proven rather than taken on trust. See
 [the role-binding runbook](/role-binding-runbook/).
 
+## Put it on a URL
+
+[Deploy it on Railway](/deploy-langchain-demo-railway/) — about ten minutes,
+with the two settings that decide whether it is a demo or an open door.
+
+## Want a walkthrough?
+
+[Book a 30-minute demo](https://calendly.com/sundi133/book-a-meet) and we will
+run it against your own Shield tenant.
+
 ## Next
 
 - [Role-binding runbook](/role-binding-runbook/) — the modes, and rolling them out
