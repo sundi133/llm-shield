@@ -395,7 +395,7 @@ gateway (e.g. `api.guardrails.votal.ai`) cannot reach your `localhost`. Options:
 | Setup | `url` in the route |
 |---|---|
 | **Local dev** (upstream on your laptop) | expose it: `ngrok http 9100` → use the public URL (+ header `"ngrok-skip-browser-warning":"1"`) |
-| **Railway / Fly / Render** | the app's public URL (see [examples/mcp_gateway/RAILWAY.md](../examples/mcp_gateway/RAILWAY.md)) |
+| **Railway / Fly / Render** | the app's public URL (see [examples/mcp_gateway/RAILWAY.md](https://github.com/sundi133/llm-shield/blob/main/examples/mcp_gateway/RAILWAY.md)) |
 | **Same VPC / private network** | the internal address (best — naturally gateway-only) |
 | **Kubernetes / OpenShift** (upstream in-cluster) | the Service DNS: `http://mcp-payments.mcp.svc.cluster.local:8080/mcp` (or `http://mcp-payments:8080/mcp` in the same namespace) |
 

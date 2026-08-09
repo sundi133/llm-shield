@@ -26,8 +26,14 @@ import pytest
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 
-#: Links of the form ](something.md) or ](something.md#anchor).
-_MD_LINK = re.compile(r"\]\(([a-zA-Z0-9._-]+\.md)(#[^)]*)?\)")
+#: Any markdown link to a .md file that is not site-absolute. Covers the plain
+#: form, ./foo.md and ../foo.md — the last two slipped past an earlier version
+#: of this test that only matched a bare filename, and five of them were live
+#: on the site at the time.
+_MD_LINK = re.compile(r"\]\((?!https?:|/)([^)\s]*\.md)(#[^)]*)?\)")
+
+#: The same mistake written as HTML, which Markdown passes through untouched.
+_HTML_MD_LINK = re.compile(r"""href=["\'](?!https?:|/)([^"\']*\.md)["\']""")
 
 #: Links to a site-absolute permalink: ](/foo/) or ](/foo/#anchor).
 _PERMALINK_LINK = re.compile(r"\]\((/[a-zA-Z0-9._/-]*/)(#[^)]*)?\)")
@@ -72,11 +78,14 @@ def test_no_relative_md_links(path: Path):
     """Relative filenames 404 on the site. Link by permalink instead."""
     offenders = []
     for i, line in enumerate(path.read_text().split("\n"), 1):
-        for m in _MD_LINK.finditer(line):
-            offenders.append(f"{path.relative_to(DOCS)}:{i} -> {m.group(1)}")
+        for pat in (_MD_LINK, _HTML_MD_LINK):
+            for m in pat.finditer(line):
+                offenders.append(f"{path.relative_to(DOCS)}:{i} -> {m.group(1)}")
     assert not offenders, (
         "link by permalink, not filename — these resolve under the linking "
-        "page's URL and 404:\n  " + "\n  ".join(offenders))
+        "page's URL and 404. A file outside docs/ (a repo README, an example) "
+        "has no site URL at all: link it on GitHub.\n  "
+        + "\n  ".join(offenders))
 
 
 @pytest.mark.parametrize("path", _pages(), ids=lambda p: str(p.relative_to(DOCS)))
