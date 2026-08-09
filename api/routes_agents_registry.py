@@ -20,6 +20,13 @@ _MAX_STRING_LEN = 500
 _MAX_TOOL_NAME_LEN = 128
 _MAX_TOOLS_PER_AGENT = 200
 
+# Ownership is METADATA, never an authorization input. Nothing in the authz
+# path may read it — it is free text a tenant admin types, and a grant that
+# depended on it would depend on an unverified string.
+# See docs/spec-agent-ownership-environment.md section 5.
+_MAX_OWNER_LEN = 128
+_MAX_OWNER_CONTACT_LEN = 256
+
 
 def _validate_agent_id(agent_id: str) -> None:
     """Reject agent IDs that contain path-traversal or special characters.
@@ -134,6 +141,24 @@ def _validate_agent_body(body: dict) -> None:
     desc = body.get("description", "")
     if isinstance(desc, str) and len(desc) > _MAX_STRING_LEN:
         raise HTTPException(status_code=400, detail=f"description must be at most {_MAX_STRING_LEN} characters")
+
+    owner = body.get("owner")
+    if owner is not None:
+        if not isinstance(owner, str):
+            raise HTTPException(status_code=400, detail="owner must be a string")
+        if len(owner) > _MAX_OWNER_LEN:
+            raise HTTPException(
+                status_code=400,
+                detail=f"owner must be at most {_MAX_OWNER_LEN} characters")
+
+    contact = body.get("owner_contact")
+    if contact is not None:
+        if not isinstance(contact, str):
+            raise HTTPException(status_code=400, detail="owner_contact must be a string")
+        if len(contact) > _MAX_OWNER_CONTACT_LEN:
+            raise HTTPException(
+                status_code=400,
+                detail=f"owner_contact must be at most {_MAX_OWNER_CONTACT_LEN} characters")
 
     tools = body.get("tools", [])
     if not isinstance(tools, list):
@@ -699,6 +724,12 @@ async def create_agent(request: Request):
             "require_resource_scope": bool(
                 body.get("require_resource_scope", bool(body.get("allowed_resources")))
             ),
+            # Who to ask about this agent. Free text on purpose: as likely to
+            # be a Slack channel or a rota as a person, and a format check
+            # would only teach people to lie to it.
+            "owner": _sanitize_string(body.get("owner", ""), _MAX_OWNER_LEN),
+            "owner_contact": _sanitize_string(
+                body.get("owner_contact", ""), _MAX_OWNER_CONTACT_LEN),
             "status": body.get("status", "active"),
             "created_at": now,
             "updated_at": now,
@@ -747,6 +778,13 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
             ]
         if "require_resource_scope" in sanitized:
             sanitized["require_resource_scope"] = bool(sanitized["require_resource_scope"])
+        # Only sanitized when PRESENT: the merge below must not clear an owner
+        # just because this update was about something else.
+        if "owner" in sanitized:
+            sanitized["owner"] = _sanitize_string(sanitized["owner"], _MAX_OWNER_LEN)
+        if "owner_contact" in sanitized:
+            sanitized["owner_contact"] = _sanitize_string(
+                sanitized["owner_contact"], _MAX_OWNER_CONTACT_LEN)
 
         # Prevent overriding immutable fields
         sanitized.pop("created_at", None)

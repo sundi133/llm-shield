@@ -5312,6 +5312,21 @@ openssl x509 -in agent.crt -fingerprint -sha256 -noout
           <label style="font-size: 12px; font-weight: 600;">Description</label>
           <input type="text" id="agent-modal-desc" placeholder="What does this agent do? e.g. Handles customer inquiries and account lookups" style="font-size: 13px;">
         </div>
+        <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+          <div>
+            <label style="font-size: 12px;">Owner</label>
+            <input type="text" id="agent-modal-owner" maxlength="128"
+                   placeholder="team-payments" style="font-size: 13px;">
+          </div>
+          <div>
+            <label style="font-size: 12px;">Owner contact</label>
+            <input type="text" id="agent-modal-owner-contact" maxlength="256"
+                   placeholder="#payments-oncall or payments@example.com" style="font-size: 13px;">
+          </div>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: -0.25rem;">
+          Who to ask at review time. Metadata only &mdash; it never affects what this agent may do.
+        </div>
       </div>
 
       <!-- Section 2: Tools -->
@@ -7344,8 +7359,19 @@ function createAgentCard(agentId, agent) {
             </div>
           </div>
           <div style="font-size: 12px; color: var(--text-dim); margin-bottom: 0.5rem;">${agent.description || 'No description'}</div>
-          <div style="font-size: 11px; color: var(--text-muted);">
+          <div style="font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
             <code style="background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 4px;">${agentId}</code>
+            ${agent.owner
+              ? `<span title="${escapeHtml(agent.owner_contact || 'no contact recorded')}"
+                       style="background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 4px;">
+                   owner ${escapeHtml(agent.owner)}</span>`
+              /* Unowned is the state worth surfacing, not owned. A reviewer
+                 looking at a grant list needs to know there is nobody to ask
+                 BEFORE they approve it. */
+              : `<span title="No owner recorded — nobody to ask at review time"
+                       style="background: var(--warn-bg, #fef3c7); color: var(--warn, #92400e);
+                              padding: 0.25rem 0.5rem; border-radius: 4px; font-weight: 600;">
+                   unowned</span>`}
           </div>
         </div>
         <div style="display: flex; gap: 0.5rem;">
@@ -7476,6 +7502,8 @@ async function editAgent(agentId) {
     document.getElementById('agent-modal-id').disabled = true;
     document.getElementById('agent-modal-name').value = agent.name || '';
     document.getElementById('agent-modal-desc').value = agent.description || '';
+    document.getElementById('agent-modal-owner').value = agent.owner || '';
+    document.getElementById('agent-modal-owner-contact').value = agent.owner_contact || '';
     document.getElementById('agent-modal-tools').value = (agent.tools || []).join(', ');
     document.getElementById('agent-modal-roles').innerHTML = '';
     const perms = agent.role_permissions || {};
@@ -7651,6 +7679,8 @@ async function saveAgentFromModal() {
   const agentId = EDITING_AGENT_ID || document.getElementById('agent-modal-id').value.trim();
   const name = document.getElementById('agent-modal-name').value.trim();
   const description = document.getElementById('agent-modal-desc').value.trim();
+  const owner = document.getElementById('agent-modal-owner').value.trim();
+  const ownerContact = document.getElementById('agent-modal-owner-contact').value.trim();
   const tools = getToolsFromInput();
   const rolePermissions = getRolePermissionsFromUI();
   const agentPermissions = getAgentPermissionsFromUI();
@@ -7658,7 +7688,9 @@ async function saveAgentFromModal() {
   if (!agentId) return showToast('Agent ID is required', 'error');
   if (!name) return showToast('Agent name is required', 'error');
 
-  const agentData = { agent_id: agentId, name, description, tools, role_permissions: rolePermissions, agent_permissions: agentPermissions, status: 'active' };
+  const agentData = { agent_id: agentId, name, description, owner, owner_contact: ownerContact,
+                      tools, role_permissions: rolePermissions,
+                      agent_permissions: agentPermissions, status: 'active' };
 
   try {
     const method = EDITING_AGENT_ID ? 'PUT' : 'POST';
