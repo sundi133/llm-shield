@@ -51,12 +51,15 @@ rest:
 
 ```json
 {
-  "build":  { "builder": "NIXPACKS",
-              "buildCommand": "pip install -r requirements.txt" },
+  "build":  { "builder": "NIXPACKS" },
   "deploy": { "startCommand": "python langchain_trusted_proxy_agent.py",
               "healthcheckPath": "/whoami" }
 }
 ```
+
+There is no `buildCommand` on purpose. Nixpacks detects `requirements.txt` and
+installs it in its own phase; adding one duplicates the install and gives a
+second place for a path to be wrong.
 
 Paths are relative to `examples/langchain`. The example is self-contained —
 `shield_client.py`, `code_tour.py` and `demo_data_sre.json` all sit beside it,
@@ -149,6 +152,21 @@ Pick one before sharing:
 
 The `SHIELD_PROXY_TOKEN` deserves the same care: anything holding it can assert
 any role to your Shield tenant. Rotate it after a public demo.
+
+## If the build fails
+
+```
+ERROR: Could not open requirements file:
+  [Errno 2] No such file or directory: 'examples/langchain/requirements.txt'
+```
+
+Every path in `railway.json` is relative to the **root directory**, not the
+repo. With Root Directory set to `examples/langchain`, the build context IS
+that folder — so `requirements.txt`, not `examples/langchain/requirements.txt`.
+
+Seeing this error is actually good news: it means the root directory is set
+correctly. If it were wrong, that path would resolve and something else would
+break later and less clearly.
 
 ## If something does not work
 
