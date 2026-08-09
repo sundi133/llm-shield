@@ -52,6 +52,11 @@ not the middleware breaking.
 
 ### Which example do I want?
 
+> **New to this?** Start with the
+> [LangChain quickstart](../../docs/langchain-quickstart.md) — one page, a
+> diagram, and the three lines to copy into your own app.
+
+
 | you want | file |
 | --- | --- |
 | Guardrails on a LangChain agent (**start here**) | `votalai_middleware.py` + `middleware_demo.py` |
