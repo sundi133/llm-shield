@@ -308,6 +308,79 @@ async def get_my_audit_log(request: Request, limit: int = 50):
     return {"tenant_id": tenant_id, "entries": entries}
 
 
+@router.get("/me/delegations")
+async def get_my_delegations(
+    request: Request,
+    user_sub: Optional[str] = Query(None, description="Filter to one delegating user"),
+    since: Optional[str] = Query(None, description="ISO timestamp"),
+    limit: int = Query(200, ge=1, le=1000, description="Telemetry entries scanned"),
+):
+    """Which agents have acted on behalf of which users.
+
+    Reads the telemetry the guard path already writes rather than a separate
+    delegations table. A table would mean a store WRITE on /guardrails/* per
+    delegated request, unbounded growth, and a second, less trustworthy copy of
+    a record that already exists. See the spec, section 3.
+
+    Aggregated per (user, agent): the reviewer's question is "which agents act
+    for alice", not "list every call she made".
+
+    Only entries whose delegation was VERIFIED are counted. An unverified
+    X-On-Behalf-Of is a claim that failed, and counting it would put people in
+    this report who never successfully delegated anything.
+    """
+    tenant_id = _require_tenant(request)
+
+    filters = {"since": since} if since else None
+    raw_entries = await audit_logger.query(
+        limit=limit, offset=0, tenant_id=tenant_id, filters=filters)
+
+    pairs: dict = {}
+    scanned = 0
+    for entry in raw_entries:
+        metadata = entry.get("metadata") or {}
+        if metadata.get("kind") != "agent_chat_telemetry":
+            continue
+        if metadata.get("tenant_id") != tenant_id:
+            continue
+        scanned += 1
+
+        acting_for = (metadata.get("acting_for") or "").strip()
+        if not acting_for or not metadata.get("delegation_verified"):
+            continue
+        if user_sub and acting_for != user_sub:
+            continue
+
+        agent = entry.get("agent_key") or "unknown"
+        ts = entry.get("timestamp")
+        key = (acting_for, agent)
+        row = pairs.get(key)
+        if row is None:
+            pairs[key] = {"user_sub": acting_for, "agent_id": agent,
+                          "decisions": 1, "first_seen": ts, "last_seen": ts}
+        else:
+            row["decisions"] += 1
+            # Telemetry comes back newest-first, so the oldest seen so far is
+            # the earliest. Compared as strings: ISO-8601 UTC sorts correctly.
+            if ts and (not row["first_seen"] or ts < row["first_seen"]):
+                row["first_seen"] = ts
+            if ts and (not row["last_seen"] or ts > row["last_seen"]):
+                row["last_seen"] = ts
+
+    rows = sorted(pairs.values(), key=lambda r: r["decisions"], reverse=True)
+    return {
+        "tenant_id": tenant_id,
+        "user_sub": user_sub,
+        # Say what was looked at. A caller that does not know the window was
+        # capped will read an empty result as "nobody delegated" rather than
+        # "look further back".
+        "entries_scanned": scanned,
+        "scan_limit": limit,
+        "truncated": scanned >= limit,
+        "delegations": rows,
+    }
+
+
 @router.get("/me/telemetry")
 async def get_my_telemetry(
     request: Request,

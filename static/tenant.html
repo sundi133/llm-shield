@@ -2652,19 +2652,21 @@
         <div>Agents: <b id="gov-count" style="color:var(--text);">–</b></div>
         <div>Registered: <b id="gov-registered" style="color:var(--text);">–</b></div>
         <div>Shadow: <b id="gov-shadow" style="color:#b45309;">–</b></div>
+        <div>Unowned: <b id="gov-unowned" style="color:#b45309;">–</b></div>
       </div>
 
       <div class="gov-table-wrap">
         <table class="gov-table">
           <thead><tr>
             <th>Agent</th>
+            <th>Owner</th>
             <th>Status</th>
             <th>Granted tools</th>
             <th>Recently used</th>
             <th>Last seen</th>
             <th></th>
           </tr></thead>
-          <tbody id="gov-agents-body"><tr><td colspan="6" style="padding:1rem;color:var(--text-muted);">Loading…</td></tr></tbody>
+          <tbody id="gov-agents-body"><tr><td colspan="7" style="padding:1rem;color:var(--text-muted);">Loading…</td></tr></tbody>
         </table>
       </div>
 
@@ -11692,27 +11694,43 @@ function _govWhen(ts) { return ts ? new Date(ts * 1000).toLocaleString() : '—'
 
 async function loadGovernance() {
   const body = document.getElementById('gov-agents-body');
-  body.innerHTML = '<tr><td colspan="6" style="padding:1rem;color:var(--text-muted);">Loading…</td></tr>';
+  body.innerHTML = '<tr><td colspan="7" style="padding:1rem;color:var(--text-muted);">Loading…</td></tr>';
   try {
     const data = await apiCall('/v1/governance/agents');
     document.getElementById('gov-count').textContent = data.count;
     document.getElementById('gov-registered').textContent = data.registered_count;
     document.getElementById('gov-shadow').textContent = data.shadow_count;
+    // Derived from the response already in hand rather than a second call to
+    // /agents/unowned. That endpoint exists for scripting and CI checks.
+    document.getElementById('gov-unowned').textContent =
+      (data.agents || []).filter(a => a.registered && !a.owner).length;
     body.innerHTML = (data.agents || []).map(a => {
       const badge = a.registered
         ? '<span class="status-chip ok">'+_govEsc(a.status)+'</span>'
         : '<span class="status-chip warn">shadow</span>';
       return `<tr style="border-top:1px solid var(--border);">
         <td style="padding:0.5rem 0.75rem;font-weight:600;">${_govEsc(a.agent_id)}</td>
-        <td style="padding:0.5rem 0.75rem;">${badge}</td>
+        <td style="padding:0.5rem 0.75rem;">${a.owner
+            ? `<span title="${_govEsc(a.owner_contact || 'no contact recorded')}">${_govEsc(a.owner)}</span>`
+            /* A shadow agent is unregistered by definition, so it cannot have
+               an owner. Badging it "unowned" reads as "go fill in a field"
+               when the action is "register or block it" — and the Unowned tile
+               counts registered agents only, so badging both would not add up. */
+            : (a.registered
+                ? '<span class="status-chip warn">unowned</span>'
+                : '<span style="color:var(--text-muted);">\u2014</span>')}</td>
+        <td style="padding:0.5rem 0.75rem;">${badge}${
+            (a.environments || []).length
+              ? ` <span class="status-chip" title="Runs only in these environments">${_govEsc(a.environments.join(', '))}</span>`
+              : ''}</td>
         <td style="padding:0.5rem 0.75rem;">${(a.granted_tools||[]).length}</td>
         <td style="padding:0.5rem 0.75rem;">${_govEsc((a.recent_tools_used||[]).join(', ') || '—')}</td>
         <td style="padding:0.5rem 0.75rem;">${_govWhen(a.last_seen)}</td>
         <td style="padding:0.5rem 0.75rem;"><button class="small" onclick="govShowUsage('${_govEsc(a.agent_id)}')">Used vs granted</button></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="6" style="padding:1rem;color:var(--text-muted);">No agents yet.</td></tr>';
+    }).join('') || '<tr><td colspan="7" style="padding:1rem;color:var(--text-muted);">No agents yet.</td></tr>';
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="6" style="padding:1rem;color:#b91c1c;">${_govEsc(e.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" style="padding:1rem;color:#b91c1c;">${_govEsc(e.message)}</td></tr>`;
   }
   loadGovReviews();
 }
