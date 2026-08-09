@@ -103,7 +103,13 @@ SHIELD = os.getenv("LLM_SHIELD_URL", "http://localhost:8000").rstrip("/")
 # above, so binding there means this app either collides with a local Shield or
 # calls itself. Both fail in confusing ways: you get Shield's auth error in the
 # browser and assume this app is broken.
-APP_PORT = int(os.getenv("APP_PORT", "8500"))
+# PORT is what Railway, Render, Fly and Heroku inject. Honour it first, or the
+# platform health-checks a port nothing is listening on and kills the deploy.
+APP_PORT = int(os.getenv("PORT") or os.getenv("APP_PORT") or "8500")
+
+# Loopback locally, all interfaces when a platform assigns the port — a
+# container bound to 127.0.0.1 is unreachable from outside itself.
+APP_HOST = os.getenv("APP_HOST") or ("0.0.0.0" if os.getenv("PORT") else "127.0.0.1")
 TENANT_KEY = os.getenv("TENANT_API_KEY", "")
 AGENT_KEY = os.getenv("SHIELD_AGENT_KEY") or os.getenv("AGENT_ID") or "sre-agent"
 MODEL = os.getenv("DEMO_MODEL", "gpt-4.1-mini")
@@ -436,6 +442,19 @@ def chat_stream(body: ChatBody, session: Optional[str] = Cookie(None)):
     )
 
 
+@app.get("/code")
+def code():
+    """Source for the panel behind the Code button.
+
+    Public on purpose: it is this repo's own example code, and a developer
+    evaluating Shield should be able to read exactly what the integration costs
+    before signing up for anything.
+    """
+    import sys as _sys
+    import code_tour
+    return {"sections": code_tour.sections(_sys.modules[__name__])}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     # No secret here. The page only ever talks to this backend.
@@ -467,6 +486,25 @@ header b{font-size:.95rem;margin-right:auto}
 header button{font:inherit;font-size:.8rem;padding:.25rem .7rem;border-radius:999px;
   border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
 header button:hover{background:var(--user)}
+.cta{font-size:.8rem;padding:.3rem .8rem;border-radius:999px;background:var(--fg);
+     color:var(--bg);text-decoration:none;white-space:nowrap}
+.cta:hover{opacity:.85}
+/* Slide-over with the real integration source. */
+#codepanel{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:20}
+#codepanel.open{display:block}
+#codeinner{position:absolute;right:0;top:0;bottom:0;width:min(46rem,100%);
+  background:var(--bg);overflow-y:auto;padding:1.2rem 1.4rem 3rem;
+  border-left:1px solid var(--line)}
+#codeinner h3{margin:1.6rem 0 .2rem;font-size:1rem}
+#codeinner .why{color:var(--muted);font-size:.87rem;margin:0 0 .7rem}
+#codeinner .lbl{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--muted);margin:.9rem 0 .3rem}
+#codeinner pre{background:var(--user);padding:.8rem 1rem;border-radius:10px;
+  overflow-x:auto;font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+  margin:0;white-space:pre}
+#codehead{display:flex;align-items:center;gap:.6rem;position:sticky;top:0;
+  background:var(--bg);padding:.2rem 0 .8rem;border-bottom:1px solid var(--line)}
+#codehead b{margin-right:auto}
 main{flex:1;overflow-y:auto}
 .thread{max-width:46rem;margin:0 auto;padding:1.5rem 1rem 7rem}
 .turn{margin:1.4rem 0}
@@ -512,8 +550,23 @@ footer{position:fixed;bottom:0;left:0;right:0;background:linear-gradient(transpa
   <button onclick="login('ci')">ci · ci_bot</button>
   <button onclick="login('riley')">riley · intern</button>
   <button id=tracebtn onclick=toggleTrace()>trace on</button>
+  <button onclick=openCode()>&lt;/&gt; code</button>
+  <a class=cta href="https://calendly.com/sundi133/book-a-meet" target=_blank rel=noopener>book a demo</a>
 </header>
 <main id=main><div class=thread id=thread></div></main>
+<div id=codepanel onclick="if(event.target.id==='codepanel')closeCode()">
+  <div id=codeinner>
+    <div id=codehead>
+      <b>How the integration works</b>
+      <a class=cta href="https://calendly.com/sundi133/book-a-meet" target=_blank rel=noopener>book a demo</a>
+      <button onclick=closeCode()>close</button>
+    </div>
+    <p class=why>Pulled live from the running source with
+       <code>inspect.getsource</code> — this is the code executing right now,
+       not a copy that can drift.</p>
+    <div id=codebody>loading...</div>
+  </div>
+</div>
 <footer>
   <div class=composer>
     <textarea id=q rows=1 placeholder="Ask the agent to do something..."></textarea>
@@ -621,6 +674,24 @@ async function send(){
   busy = false; sendBtn.disabled = false; q.focus();
 }
 
+let codeLoaded = false;
+function closeCode(){ document.getElementById('codepanel').classList.remove('open'); }
+async function openCode(){
+  document.getElementById('codepanel').classList.add('open');
+  if (codeLoaded) return;
+  const body = document.getElementById('codebody');
+  try {
+    const secs = (await (await fetch('/code')).json()).sections;
+    body.innerHTML = secs.map(s => `
+      <h3>${esc(s.title)}</h3>
+      <p class=why>${esc(s.why)}</p>
+      ${s.blocks.map(b => `<div class=lbl>${esc(b.label)}</div>`
+                        + `<pre>${esc(b.code)}</pre>`).join('')}`).join('');
+    codeLoaded = true;
+  } catch(e) { body.textContent = 'could not load source'; }
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCode(); });
+
 fetch('/whoami').then(r=>r.json()).then(j=>{
   if (j.role) document.getElementById('who').textContent = `${j.user} · ${j.role}`;
 });
@@ -695,6 +766,6 @@ if __name__ == "__main__":
         if SHIELD.rstrip("/").endswith(f":{APP_PORT}"):
             sys.exit(f"{R}LLM_SHIELD_URL points at this app's own port "
                      f"({APP_PORT}). Set it to your Shield deployment.{Z}")
-        print(f"{DIM}app    http://localhost:{APP_PORT}{Z}")
+        print(f"{DIM}app    http://{APP_HOST}:{APP_PORT}{Z}")
         print(f"{DIM}shield {SHIELD}   model {MODEL}   agent {AGENT_KEY}{Z}")
-        uvicorn.run(app, host="127.0.0.1", port=APP_PORT, log_level="warning")
+        uvicorn.run(app, host=APP_HOST, port=APP_PORT, log_level="warning")
