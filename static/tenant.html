@@ -2652,19 +2652,21 @@
         <div>Agents: <b id="gov-count" style="color:var(--text);">–</b></div>
         <div>Registered: <b id="gov-registered" style="color:var(--text);">–</b></div>
         <div>Shadow: <b id="gov-shadow" style="color:#b45309;">–</b></div>
+        <div>Unowned: <b id="gov-unowned" style="color:#b45309;">–</b></div>
       </div>
 
       <div class="gov-table-wrap">
         <table class="gov-table">
           <thead><tr>
             <th>Agent</th>
+            <th>Owner</th>
             <th>Status</th>
             <th>Granted tools</th>
             <th>Recently used</th>
             <th>Last seen</th>
             <th></th>
           </tr></thead>
-          <tbody id="gov-agents-body"><tr><td colspan="6" style="padding:1rem;color:var(--text-muted);">Loading…</td></tr></tbody>
+          <tbody id="gov-agents-body"><tr><td colspan="7" style="padding:1rem;color:var(--text-muted);">Loading…</td></tr></tbody>
         </table>
       </div>
 
@@ -5312,6 +5314,31 @@ openssl x509 -in agent.crt -fingerprint -sha256 -noout
           <label style="font-size: 12px; font-weight: 600;">Description</label>
           <input type="text" id="agent-modal-desc" placeholder="What does this agent do? e.g. Handles customer inquiries and account lookups" style="font-size: 13px;">
         </div>
+        <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+          <div>
+            <label style="font-size: 12px;">Owner</label>
+            <input type="text" id="agent-modal-owner" maxlength="128"
+                   placeholder="team-payments" style="font-size: 13px;">
+          </div>
+          <div>
+            <label style="font-size: 12px;">Owner contact</label>
+            <input type="text" id="agent-modal-owner-contact" maxlength="256"
+                   placeholder="#payments-oncall or payments@example.com" style="font-size: 13px;">
+          </div>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: -0.25rem;">
+          Who to ask at review time. Metadata only &mdash; it never affects what this agent may do.
+        </div>
+        <div class="form-row">
+          <label style="font-size: 12px;">Environments</label>
+          <input type="text" id="agent-modal-environments"
+                 placeholder="prod, staging &mdash; leave blank to run anywhere"
+                 style="font-size: 13px;">
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
+            Enforced only where <code>SHIELD_ENVIRONMENT</code> is set on the Shield
+            deployment. Guards against a copied config, not against an attacker.
+          </div>
+        </div>
       </div>
 
       <!-- Section 2: Tools -->
@@ -7344,8 +7371,27 @@ function createAgentCard(agentId, agent) {
             </div>
           </div>
           <div style="font-size: 12px; color: var(--text-dim); margin-bottom: 0.5rem;">${agent.description || 'No description'}</div>
-          <div style="font-size: 11px; color: var(--text-muted);">
+          <div style="font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
             <code style="background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 4px;">${agentId}</code>
+            ${agent.owner
+              ? `<span title="${escapeHtml(agent.owner_contact || 'no contact recorded')}"
+                       style="background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 4px;">
+                   owner ${escapeHtml(agent.owner)}</span>`
+              /* Unowned is the state worth surfacing, not owned. A reviewer
+                 looking at a grant list needs to know there is nobody to ask
+                 BEFORE they approve it. */
+              : `<span title="No owner recorded — nobody to ask at review time"
+                       style="background: var(--warn-bg, #fef3c7); color: var(--warn, #92400e);
+                              padding: 0.25rem 0.5rem; border-radius: 4px; font-weight: 600;">
+                   unowned</span>`}
+            ${(agent.environments && agent.environments.length)
+              ? `<span title="This agent may only run where SHIELD_ENVIRONMENT matches one of these"
+                       style="background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 4px;">
+                   env ${escapeHtml(agent.environments.join(', '))}</span>`
+              /* No badge when unscoped: "runs anywhere" is the default and the
+                 pre-existing behaviour, so badging it would flag every legacy
+                 agent as if something were wrong. */
+              : ``}
           </div>
         </div>
         <div style="display: flex; gap: 0.5rem;">
@@ -7476,6 +7522,9 @@ async function editAgent(agentId) {
     document.getElementById('agent-modal-id').disabled = true;
     document.getElementById('agent-modal-name').value = agent.name || '';
     document.getElementById('agent-modal-desc').value = agent.description || '';
+    document.getElementById('agent-modal-owner').value = agent.owner || '';
+    document.getElementById('agent-modal-owner-contact').value = agent.owner_contact || '';
+    document.getElementById('agent-modal-environments').value = (agent.environments || []).join(', ');
     document.getElementById('agent-modal-tools').value = (agent.tools || []).join(', ');
     document.getElementById('agent-modal-roles').innerHTML = '';
     const perms = agent.role_permissions || {};
@@ -7651,6 +7700,10 @@ async function saveAgentFromModal() {
   const agentId = EDITING_AGENT_ID || document.getElementById('agent-modal-id').value.trim();
   const name = document.getElementById('agent-modal-name').value.trim();
   const description = document.getElementById('agent-modal-desc').value.trim();
+  const owner = document.getElementById('agent-modal-owner').value.trim();
+  const ownerContact = document.getElementById('agent-modal-owner-contact').value.trim();
+  const environments = document.getElementById('agent-modal-environments').value
+    .split(',').map(e => e.trim()).filter(Boolean);
   const tools = getToolsFromInput();
   const rolePermissions = getRolePermissionsFromUI();
   const agentPermissions = getAgentPermissionsFromUI();
@@ -7658,7 +7711,10 @@ async function saveAgentFromModal() {
   if (!agentId) return showToast('Agent ID is required', 'error');
   if (!name) return showToast('Agent name is required', 'error');
 
-  const agentData = { agent_id: agentId, name, description, tools, role_permissions: rolePermissions, agent_permissions: agentPermissions, status: 'active' };
+  const agentData = { agent_id: agentId, name, description, owner, owner_contact: ownerContact,
+                      environments,
+                      tools, role_permissions: rolePermissions,
+                      agent_permissions: agentPermissions, status: 'active' };
 
   try {
     const method = EDITING_AGENT_ID ? 'PUT' : 'POST';
@@ -11638,27 +11694,43 @@ function _govWhen(ts) { return ts ? new Date(ts * 1000).toLocaleString() : '—'
 
 async function loadGovernance() {
   const body = document.getElementById('gov-agents-body');
-  body.innerHTML = '<tr><td colspan="6" style="padding:1rem;color:var(--text-muted);">Loading…</td></tr>';
+  body.innerHTML = '<tr><td colspan="7" style="padding:1rem;color:var(--text-muted);">Loading…</td></tr>';
   try {
     const data = await apiCall('/v1/governance/agents');
     document.getElementById('gov-count').textContent = data.count;
     document.getElementById('gov-registered').textContent = data.registered_count;
     document.getElementById('gov-shadow').textContent = data.shadow_count;
+    // Derived from the response already in hand rather than a second call to
+    // /agents/unowned. That endpoint exists for scripting and CI checks.
+    document.getElementById('gov-unowned').textContent =
+      (data.agents || []).filter(a => a.registered && !a.owner).length;
     body.innerHTML = (data.agents || []).map(a => {
       const badge = a.registered
         ? '<span class="status-chip ok">'+_govEsc(a.status)+'</span>'
         : '<span class="status-chip warn">shadow</span>';
       return `<tr style="border-top:1px solid var(--border);">
         <td style="padding:0.5rem 0.75rem;font-weight:600;">${_govEsc(a.agent_id)}</td>
-        <td style="padding:0.5rem 0.75rem;">${badge}</td>
+        <td style="padding:0.5rem 0.75rem;">${a.owner
+            ? `<span title="${_govEsc(a.owner_contact || 'no contact recorded')}">${_govEsc(a.owner)}</span>`
+            /* A shadow agent is unregistered by definition, so it cannot have
+               an owner. Badging it "unowned" reads as "go fill in a field"
+               when the action is "register or block it" — and the Unowned tile
+               counts registered agents only, so badging both would not add up. */
+            : (a.registered
+                ? '<span class="status-chip warn">unowned</span>'
+                : '<span style="color:var(--text-muted);">\u2014</span>')}</td>
+        <td style="padding:0.5rem 0.75rem;">${badge}${
+            (a.environments || []).length
+              ? ` <span class="status-chip" title="Runs only in these environments">${_govEsc(a.environments.join(', '))}</span>`
+              : ''}</td>
         <td style="padding:0.5rem 0.75rem;">${(a.granted_tools||[]).length}</td>
         <td style="padding:0.5rem 0.75rem;">${_govEsc((a.recent_tools_used||[]).join(', ') || '—')}</td>
         <td style="padding:0.5rem 0.75rem;">${_govWhen(a.last_seen)}</td>
         <td style="padding:0.5rem 0.75rem;"><button class="small" onclick="govShowUsage('${_govEsc(a.agent_id)}')">Used vs granted</button></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="6" style="padding:1rem;color:var(--text-muted);">No agents yet.</td></tr>';
+    }).join('') || '<tr><td colspan="7" style="padding:1rem;color:var(--text-muted);">No agents yet.</td></tr>';
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="6" style="padding:1rem;color:#b91c1c;">${_govEsc(e.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" style="padding:1rem;color:#b91c1c;">${_govEsc(e.message)}</td></tr>`;
   }
   loadGovReviews();
 }

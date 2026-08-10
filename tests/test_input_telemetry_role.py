@@ -77,8 +77,30 @@ def test_missing_body_is_tolerated():
 
 
 def test_both_endpoints_record_role_and_provenance():
-    """Pinning the two call sites: the file path previously hardcoded ''."""
+    """Pinning the two call sites: the file path previously hardcoded ''.
+
+    Originally this grepped for two literal "role_source" keys. Both were
+    later replaced by `**identity.audit_fields()`, which emits role_source
+    along with acting_for, delegation_verified and the rest — a superset. The
+    assertion moved with it: what matters is that both paths spread the full
+    provenance set, not that a particular key is typed out.
+    """
     src = open(rc.__file__).read()
-    assert src.count('"role_source"') >= 2
+    assert src.count("audit_fields()") >= 2, (
+        "both the JSON and file paths must record the full provenance set")
     assert '"user_role": _file_identity.user_role or ""' in src
     assert '"user_role": ""' not in src, "a path is still hardcoding an empty role"
+
+
+def test_provenance_set_still_carries_what_the_literals_did():
+    """The superset claim, checked rather than asserted in a comment.
+
+    If audit_fields ever stops emitting role_source or identity_method, the
+    telemetry regression this file exists to prevent comes back silently —
+    the grep above would still pass.
+    """
+    from core.identity_resolution import ResolvedIdentity
+    fields = ResolvedIdentity().audit_fields()
+    for key in ("role_source", "identity_method", "acting_for",
+                "delegation_verified"):
+        assert key in fields, f"audit_fields no longer emits {key}"

@@ -100,6 +100,13 @@ async def governance_agents(request: Request):
             "name": entry.get("name", aid),
             "registered": True,
             "status": entry.get("status", "active"),
+            # Metadata only. A reviewer looking at 14 granted tools needs
+            # somebody to ask; without this the campaign rubber-stamps.
+            "owner": entry.get("owner", "") or "",
+            "owner_contact": entry.get("owner_contact", "") or "",
+            # [] means "runs anywhere", which is the pre-existing behaviour and
+            # worth seeing at a glance once SHIELD_ENVIRONMENT is set.
+            "environments": entry.get("environments", []) or [],
             "granted_tools": _granted_tools(entry),
             "allowed_resources": entry.get("allowed_resources", []) or [],
             "require_resource_scope": bool(entry.get("require_resource_scope", False)),
@@ -133,6 +140,41 @@ async def governance_agents(request: Request):
         "registered_count": sum(1 for a in agents if a["registered"]),
         "shadow_count": sum(1 for a in agents if not a["registered"]),
         "agents": agents,
+    }
+
+
+@router.get("/agents/unowned")
+async def governance_unowned_agents(request: Request):
+    """Registered agents with nobody accountable for them.
+
+    The question that drives adoption of the owner field: "what in our estate
+    has no owner". Shadow agents are excluded — they are unregistered by
+    definition, and /agents already reports them separately.
+
+    Registered here on purpose BEFORE /agents/{agent_id}/usage. The two do not
+    actually collide (different segment counts), but keeping the literal route
+    above the parameterised one is the habit that prevents the version of this
+    that does.
+    """
+    tenant_id = get_tenant_from_api_key(request)
+    registered = get_redis_data(f"agents:{tenant_id}") or {}
+
+    unowned = [
+        {"agent_id": aid,
+         "name": (entry or {}).get("name", aid),
+         "status": (entry or {}).get("status", "active"),
+         "granted_tools": _granted_tools(entry or {}),
+         "created_at": (entry or {}).get("created_at")}
+        for aid, entry in registered.items()
+        if not str((entry or {}).get("owner", "") or "").strip()
+    ]
+    unowned.sort(key=lambda a: len(a["granted_tools"]), reverse=True)
+
+    return {
+        "tenant_id": tenant_id,
+        "unowned_count": len(unowned),
+        "registered_count": len(registered),
+        "agents": unowned,
     }
 
 

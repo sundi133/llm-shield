@@ -315,6 +315,7 @@ authorize an action — are unaffected.
 
 ## Reference
 
+- [Agent governance](/agent-governance/) — ownership, environment scoping, delegation visibility
 - [Spec: proxy-trusted role header](/spec-proxy-trusted-role-header/) — design and rationale
 - [Spec: IdP role-claim configuration](/spec-idp-role-claim-config/) — Okta, Entra, Google claim paths
 - [FAQ: verified identity](/faq-verified-identity/) — what Shield proves and what it does not

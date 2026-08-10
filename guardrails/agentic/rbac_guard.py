@@ -115,6 +115,44 @@ def _resolve_role_from_registry(
         return None
 
 
+def deployment_environment() -> str:
+    """This Shield deployment's environment, or "" when unscoped.
+
+    Read from the PROCESS, never from the request. If a caller could send it,
+    it would be X-User-Role all over again: a control that reads as enforcement
+    and is a suggestion. Reading it here makes it unforgeable by construction.
+
+    Unset means enforcement is off, which is what keeps this non-breaking.
+    """
+    import os
+    return os.environ.get("SHIELD_ENVIRONMENT", "").strip()
+
+
+def _environment_mismatch(agent_key: str, tenant_id: str) -> "Optional[tuple]":
+    """(deployment_env, declared_envs) when this agent may NOT run here.
+
+    None means allowed — including both "the deployment is unscoped" and "the
+    agent declares nothing", which together are every deployment that existed
+    before this check.
+
+    Exact match on purpose. Case-insensitive comparison invites Prod/prod/PROD
+    to coexist meaning the same thing until one day they do not; a loud refusal
+    that names both values is the better failure.
+    """
+    env = deployment_environment()
+    if not env:
+        return None
+    entry = _load_agent_entry(agent_key, tenant_id)
+    if not entry:
+        return None
+    declared = entry.get("environments") or []
+    if not isinstance(declared, list) or not declared:
+        return None
+    if env in declared:
+        return None
+    return env, declared
+
+
 def _registry_agent_status(agent_key: str, tenant_id: str) -> "Optional[str]":
     """Return the registered agent's status, or None if it is not in the registry.
 
@@ -253,6 +291,26 @@ class RBACGuard(BaseGuardrail):
                         f"Re-enable it in the Agent Registry to allow tool calls.",
                 details={"agent_key": agent_key, "status": registry_status,
                          "agent_status": registry_status, "administrative": True},
+                latency_ms=round(elapsed, 2),
+            )
+
+        # Environment scoping. Same posture as the status check above: a hard
+        # block, tagged administrative, so neither a softened action nor
+        # monitor mode lets a staging agent act against production. Costs one
+        # cached env read and a list membership test, and short-circuits to
+        # nothing when SHIELD_ENVIRONMENT is unset.
+        mismatch = _environment_mismatch(agent_key, tenant_id) if tenant_id else None
+        if mismatch is not None:
+            env, declared = mismatch
+            elapsed = (datetime.now() - start).total_seconds() * 1000
+            return GuardrailResult(
+                passed=False,
+                action="block",
+                guardrail_name=self.name,
+                message=f"Agent '{agent_key}' is registered for "
+                        f"{declared}, not '{env}'.",
+                details={"agent_key": agent_key, "deployment_environment": env,
+                         "agent_environments": declared, "administrative": True},
                 latency_ms=round(elapsed, 2),
             )
 

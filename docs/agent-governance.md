@@ -267,6 +267,122 @@ Not covered: an attacker with code execution **inside** the agent process has
 the private key. This binds the credential to a key, not to a machine or a
 human.
 
+## 6. Ownership — who to ask
+
+A registry entry records when an agent was created. Until you set an owner it
+does not record **who to ask about it**, which is the first question in any
+review: a reviewer looking at `payments-bot` with fourteen granted tools has to
+either approve blind or stall.
+
+```bash
+curl -X POST "$SHIELD_ADMIN/v1/agents/registry" -H "X-API-Key: $TENANT_KEY" -H 'Content-Type: application/json' -d '{"agent_id":"payments-bot","name":"Payments bot","owner":"team-payments","owner_contact":"#payments-oncall","tools":["read_logs"]}'
+```
+
+Both fields are free text. An owner is as likely to be a Slack channel or a
+rota as a person, and a format check would only teach people to lie to it.
+
+Find what has nobody accountable for it:
+
+```bash
+curl -s "$SHIELD_ADMIN/v1/governance/agents/unowned" -H "X-API-Key: $TENANT_KEY"
+```
+
+Ordered by granted-tool count, so the biggest blast radius is first. The portal
+shows the same as an **Unowned** tile and a badge in the governance table.
+
+{: .warning }
+> **Ownership is metadata and never authorization.** No grant, denial or
+> capability reads it. It is free text a tenant admin types, so a permission
+> that depended on it would depend on an unverified string. A test asserts that
+> no authorization path references the field, so this cannot drift.
+
+Shadow agents are not badged unowned. They are unregistered by definition, so
+the action is to register or block them, not to fill in a field.
+
+## 7. Environment scoping
+
+Point a staging deployment at your production Shield — a copied env file, which
+happens constantly — and without this every grant applies.
+
+Two settings, and the asymmetry between them is the design:
+
+```
+SHIELD_ENVIRONMENT=prod          # on the Shield DEPLOYMENT
+```
+
+```json
+{"environments": ["staging"]}    // on the AGENT entry
+```
+
+The environment comes from the Shield process, never from the request. If a
+caller could send it, it would be `X-User-Role` all over again: a control that
+reads as enforcement and is a suggestion. Reading it from the deployment makes
+it unforgeable by construction.
+
+| deployment | agent declares | result |
+|---|---|---|
+| unset | anything | allowed — enforcement off |
+| `prod` | absent or `[]` | allowed — unscoped agent |
+| `prod` | `["prod"]` | allowed |
+| `prod` | `["staging"]` | **denied**, naming both values |
+
+Names match exactly. `Prod` is not `prod` — case-insensitive matching lets three
+spellings coexist meaning the same thing until one day they do not.
+
+{: .warning }
+> **This guards against a misconfiguration, not an attacker.** Anyone who can
+> write the registry can add `prod` to the list. It stops the copied-env-file
+> mistake; it is not tenant isolation and should not be described as such.
+
+### Rolling it out
+
+1. Declare `environments` on your agents first. Nothing changes yet — the
+   deployment is still unscoped.
+2. Check the governance table for agents still showing no environment chip.
+   Those will keep running anywhere.
+3. Set `SHIELD_ENVIRONMENT` on each deployment.
+4. Confirm a deliberately-mismatched agent is refused. **A control you have not
+   seen refuse something is a control you have not tested.**
+
+Doing 3 before 1 is safe — an agent that declares nothing runs anywhere — but
+it also means you get no protection while believing you do.
+
+## 8. Who is acting for whom
+
+`X-On-Behalf-Of` lets an agent act with a user's authority. To see what that
+produced:
+
+```bash
+curl -s "$SHIELD_ADMIN/v1/tenant/me/delegations?user_sub=alice@example.com" -H "X-API-Key: $TENANT_KEY"
+```
+
+```json
+{"delegations": [
+   {"user_sub": "alice@example.com", "agent_id": "payments-bot",
+    "decisions": 42, "first_seen": "…", "last_seen": "…"}],
+ "entries_scanned": 200, "scan_limit": 200, "truncated": true}
+```
+
+Aggregated per user and agent: the question at review time is *which agents act
+for alice*, not every call she made.
+
+Two things to read carefully:
+
+- **Only verified delegations are counted.** An `X-On-Behalf-Of` that failed
+  verification is a claim, not a delegation, and listing someone who never
+  successfully delegated anything would be worse than listing nobody.
+- **`truncated: true` means look further back.** The scan is capped, so a short
+  result is not the same as "nobody delegated". Raise `limit` or narrow `since`.
+
+There is no delegations table, deliberately. Delegation is established per
+request from a verified token, so recording it would mean a store write on the
+guard path for every delegated call. This reads the audit trail that already
+holds it.
+
+The cost of that choice: there is no standing grant to revoke. To stop a
+delegation you revoke the user's token at your IdP, or the agent instance at
+Shield.
+
 ## See also
 
 - [Agentic Integration Guide](/agentic-integration-guide/) — registering agents and entitlements.
