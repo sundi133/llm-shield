@@ -5314,30 +5314,34 @@ openssl x509 -in agent.crt -fingerprint -sha256 -noout
           <label style="font-size: 12px; font-weight: 600;">Description</label>
           <input type="text" id="agent-modal-desc" placeholder="What does this agent do? e.g. Handles customer inquiries and account lookups" style="font-size: 13px;">
         </div>
-        <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
-          <div>
-            <label style="font-size: 12px;">Owner</label>
+        <!-- Same grid, label weight and spacing as the Agent ID / Display Name
+             row above. These fields previously mixed `class="form-row"` with an
+             inline grid and dropped font-weight, so they sat on a different
+             rhythm from every other field in the modal. -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-top: 0.75rem;">
+          <div class="field" style="margin-bottom: 0;">
+            <label style="font-size: 12px; font-weight: 600;">Owner</label>
             <input type="text" id="agent-modal-owner" maxlength="128"
                    placeholder="team-payments" style="font-size: 13px;">
           </div>
-          <div>
-            <label style="font-size: 12px;">Owner contact</label>
+          <div class="field" style="margin-bottom: 0;">
+            <label style="font-size: 12px; font-weight: 600;">Owner contact</label>
             <input type="text" id="agent-modal-owner-contact" maxlength="256"
                    placeholder="#payments-oncall or payments@example.com" style="font-size: 13px;">
           </div>
         </div>
-        <div style="font-size: 11px; color: var(--text-muted); margin-top: -0.25rem;">
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.375rem;">
           Who to ask at review time. Metadata only &mdash; it never affects what this agent may do.
         </div>
-        <div class="form-row">
-          <label style="font-size: 12px;">Environments</label>
+        <div class="field" style="margin-top: 0.75rem; margin-bottom: 0;">
+          <label style="font-size: 12px; font-weight: 600;">Environments</label>
           <input type="text" id="agent-modal-environments"
                  placeholder="prod, staging &mdash; leave blank to run anywhere"
                  style="font-size: 13px;">
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
-            Enforced only where <code>SHIELD_ENVIRONMENT</code> is set on the Shield
-            deployment. Guards against a copied config, not against an attacker.
-          </div>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.375rem;">
+          Enforced only where <code>SHIELD_ENVIRONMENT</code> is set on the Shield
+          deployment. Guards against a copied config, not against an attacker.
         </div>
       </div>
 
