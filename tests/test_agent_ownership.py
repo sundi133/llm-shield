@@ -252,3 +252,39 @@ def test_governance_lists_environments(client):
     _create(client, environments=["staging"])
     agents = client.get("/v1/governance/agents", headers=_hdr()).json()["agents"]
     assert agents[0]["environments"] == ["staging"]
+
+
+# ── explicit nulls ───────────────────────────────────────────────────────
+#
+# `{"environments": null}` is what a generated client emits for an unset
+# optional field, so it arrives from real callers rather than from fuzzing.
+# It passes validation (the checks skip None, correctly — absent is legal),
+# which means the write path is the only thing standing between it and a 500.
+
+
+def test_null_environments_is_treated_as_absent(client):
+    r = _create(client, environments=None)
+    assert r.status_code == 200, r.text
+    assert r.json()["agent"]["environments"] == []
+
+
+def test_null_owner_stores_empty_string_not_none(client):
+    """None would reach the portal and render as the text "null"."""
+    agent = _create(client, owner=None, owner_contact=None).json()["agent"]
+    assert agent["owner"] == ""
+    assert agent["owner_contact"] == ""
+
+
+def test_null_owner_on_update_clears_rather_than_storing_none(client):
+    _create(client, owner="team-payments")
+    r = client.put("/v1/agents/registry/payments-bot",
+                   json={"owner": None}, headers=_hdr())
+    assert r.status_code == 200, r.text
+    assert r.json()["agent"]["owner"] == ""
+
+
+def test_null_owner_still_counts_as_unowned(client):
+    """The unowned report must not miss an agent whose owner is null."""
+    _create(client, agent_id="orphan-bot", owner=None)
+    r = client.get("/v1/governance/agents/unowned", headers=_hdr()).json()
+    assert r["unowned_count"] == 1

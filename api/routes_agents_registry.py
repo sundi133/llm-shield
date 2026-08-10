@@ -749,12 +749,15 @@ async def create_agent(request: Request):
             # Who to ask about this agent. Free text on purpose: as likely to
             # be a Slack channel or a rota as a person, and a format check
             # would only teach people to lie to it.
-            "owner": _sanitize_string(body.get("owner", ""), _MAX_OWNER_LEN),
+            # `or` rather than a get() default: a client that sends an explicit
+            # null means "unset", and .get(k, default) returns the null. Without
+            # this the list comprehension iterates None and the create 500s.
+            "owner": _sanitize_string(body.get("owner") or "", _MAX_OWNER_LEN),
             "owner_contact": _sanitize_string(
-                body.get("owner_contact", ""), _MAX_OWNER_CONTACT_LEN),
+                body.get("owner_contact") or "", _MAX_OWNER_CONTACT_LEN),
             "environments": [
                 _sanitize_string(e, _MAX_ENVIRONMENT_LEN).strip()
-                for e in body.get("environments", [])
+                for e in (body.get("environments") or [])
             ],
             "status": body.get("status", "active"),
             "created_at": now,
@@ -806,11 +809,14 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
             sanitized["require_resource_scope"] = bool(sanitized["require_resource_scope"])
         # Only sanitized when PRESENT: the merge below must not clear an owner
         # just because this update was about something else.
+        # An explicit null clears the field to "", never stores None: the
+        # portal renders these directly and would print "null".
         if "owner" in sanitized:
-            sanitized["owner"] = _sanitize_string(sanitized["owner"], _MAX_OWNER_LEN)
+            sanitized["owner"] = _sanitize_string(
+                sanitized["owner"] or "", _MAX_OWNER_LEN)
         if "owner_contact" in sanitized:
             sanitized["owner_contact"] = _sanitize_string(
-                sanitized["owner_contact"], _MAX_OWNER_CONTACT_LEN)
+                sanitized["owner_contact"] or "", _MAX_OWNER_CONTACT_LEN)
         if "environments" in sanitized:
             sanitized["environments"] = [
                 _sanitize_string(e, _MAX_ENVIRONMENT_LEN).strip()
