@@ -62,11 +62,17 @@ def validate_agent_id(agent_id: str) -> None:
         )
 
 
-def sanitize_string(value, max_len: int = MAX_STRING_LEN):
-    """Strip HTML/JS tags from user-provided strings to prevent stored XSS."""
+def sanitize_string(value, max_len: Optional[int] = MAX_STRING_LEN):
+    """Strip HTML/JS tags from user-provided strings to prevent stored XSS.
+
+    max_len=None strips without truncating. Length limits belong with the
+    caller that can reject an oversized value with a 400; silently shortening
+    one is how a config comes back different from how it was sent.
+    """
     if not isinstance(value, str):
         return value
-    return HTML_TAG_RE.sub("", value)[:max_len]
+    cleaned = HTML_TAG_RE.sub("", value)
+    return cleaned if max_len is None else cleaned[:max_len]
 
 
 def sanitize_value(value, max_len: int = MAX_STRING_LEN):
@@ -553,8 +559,19 @@ def register_agent(tenant_id: str, agent_config: dict) -> dict:
     # this function and neither validated; a third added later would not
     # either. The agent_id is checked before it is used as a dict key, since
     # that key is what governance, RBAC and the portal all index on.
+    #
+    # Deliberately NARROW. An earlier draft ran sanitize_value() over the whole
+    # config, which strips anything shaped like a tag and truncates as it goes.
+    # That silently cut tool lists to 200, descriptions to 500 characters, and
+    # turned the DLP pattern <\d+> into an empty string — disabling a data
+    # protection rule as a side effect of a fix for stored XSS. Functional
+    # fields are left byte-identical; only the two free-text fields that render
+    # in the portal are touched, and without truncation.
     validate_agent_id(agent_config.get("agent_id"))
-    agent_config = sanitize_value(agent_config)
+    agent_config = dict(agent_config)  # never mutate the caller's dict
+    for field in ("name", "description"):
+        if isinstance(agent_config.get(field), str):
+            agent_config[field] = sanitize_string(agent_config[field], max_len=None)
 
     agent_config.setdefault("created_at", int(time.time()))
     agent_config.setdefault("updated_at", int(time.time()))

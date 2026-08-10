@@ -157,14 +157,64 @@ def test_sink_accepts_legitimate_ids(store, ok):
     assert policy_store.register_agent(TENANT, {"agent_id": ok})["agent_id"] == ok
 
 
-def test_sink_sanitizes_nested_values(store):
-    """role_permissions is a dict of lists — sanitizing only top-level strings
-    would leave the payload that actually renders in the portal untouched."""
+def test_sink_sanitizes_the_display_fields(store):
+    stored = policy_store.register_agent(
+        TENANT, {"agent_id": "bot", "name": XSS_NAME, "description": XSS_NAME})
+    assert "<script>" not in stored["name"]
+    assert "<script>" not in stored["description"]
+
+
+# ── the collateral this fix must NOT cause ───────────────────────────────
+#
+# An earlier draft ran a recursive sanitizer over the whole config. It stripped
+# anything shaped like a tag and truncated as it went, which silently cut tool
+# lists to 200, descriptions to 500 characters, and turned the DLP pattern
+# <\d+> into an empty string — disabling a data protection rule as a side
+# effect of fixing stored XSS. These tests exist so re-widening it fails loudly.
+
+
+def test_a_dlp_regex_containing_angle_brackets_survives(store):
+    """The worst case: sanitizing a functional field silently disables a
+    data-protection rule and nothing anywhere reports it."""
+    pattern = r"<\d+>"
     stored = policy_store.register_agent(TENANT, {
-        "agent_id": "bot", "name": XSS_NAME,
-        "description": XSS_NAME,
-        "role_permissions": {XSS_NAME: [XSS_NAME]}})
-    assert "<script>" not in str(stored)
+        "agent_id": "bot",
+        "data_sanitization": {"pattern": pattern, "replacement": "[N]"}})
+    assert stored["data_sanitization"]["pattern"] == pattern
+
+
+def test_a_long_description_is_not_truncated(store):
+    long_desc = "x" * 600
+    stored = policy_store.register_agent(
+        TENANT, {"agent_id": "bot", "description": long_desc})
+    assert stored["description"] == long_desc
+
+
+def test_a_large_tool_list_is_not_capped(store):
+    tools = [f"tool_{i}" for i in range(250)]
+    stored = policy_store.register_agent(
+        TENANT, {"agent_id": "bot", "tools": list(tools)})
+    assert stored["tools"] == tools
+
+
+def test_role_permissions_pass_through_unchanged(store):
+    perms = {"analyst": [f"tool_{i}" for i in range(250)]}
+    stored = policy_store.register_agent(
+        TENANT, {"agent_id": "bot", "role_permissions": {"analyst": list(perms["analyst"])}})
+    assert stored["role_permissions"] == perms
+
+
+def test_only_the_display_fields_are_rewritten(store):
+    """Whole-config assertion: everything except name and description must come
+    back byte-identical. Catches a future field being swept in by accident."""
+    cfg = {"agent_id": "bot", "name": "Bot", "description": "does things",
+           "tools": ["a", "b"], "role_permissions": {"r": ["a"]},
+           "data_sanitization": {"pattern": "<x>"},
+           "llm_validation": {"prompt": "is <this> ok?"},
+           "allowed_resources": ["db://<prod>"], "status": "active"}
+    stored = policy_store.register_agent(TENANT, dict(cfg))
+    for key, original in cfg.items():
+        assert stored[key] == original, f"{key} was rewritten: {stored[key]!r}"
 
 
 def test_sink_does_not_mutate_the_callers_dict(store):
