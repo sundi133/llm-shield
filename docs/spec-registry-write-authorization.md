@@ -49,6 +49,14 @@ So any holder of a tenant key can:
 - `POST /v1/agents/registry` — register a new agent with any tool list
 - `PUT /v1/agents/registry/{id}` — widen an existing agent's grants
 - `DELETE /v1/agents/registry/{id}` — remove an agent from governance entirely
+- `POST /v1/agents/register` — a **second, separate** creation path
+- `POST /v1/shield/policies/{tenant}/bundle/import` — creates agents in bulk
+  from `bundle.agent_configs`
+
+The last two are the reason this section is longer than it should be. See
+"every way an agent can be created" below: gating only the `/registry` routes
+would have produced a control with a documented bypass, which is worse than no
+control because it would be described to customers as one.
 
 Every agent holds such a key by construction. A prompt injection that reaches
 any HTTP-capable tool is one request away from full tool access, and the RBAC
@@ -73,6 +81,53 @@ The enforcement half exists too. `_registry_agent_status()` hard-blocks any
 agent whose status is not `active`. An agent registered as `pending` is already
 inert, today, with no new enforcement code. What is missing is a reason for
 anything to ever be written as `pending`.
+
+### Every way an agent can be created
+
+Enumerated from the live route tables of both apps rather than by reading
+imports, because a control that covers three of five paths is a bypass with a
+changelog entry. All of these write `agents:{tenant}` and all authenticate with
+the same unscoped tenant key:
+
+| Route | Handler | Validates? |
+|---|---|---|
+| `POST /v1/agents/registry` | `routes_agents_registry` | id regex, sanitized, length caps |
+| `PUT /v1/agents/registry/{id}` | `routes_agents_registry` | same |
+| `DELETE /v1/agents/registry/{id}` | `routes_agents_registry` | id regex |
+| `POST /v1/agents/register` | `routes_agent_policy` → `policy_store.register_agent` | **Pydantic types only** |
+| `POST /v1/shield/policies/{t}/bundle/import` | `routes_policy` → `policy_store.register_agent` | **none** |
+| `POST /v1/agents/seed-test-data` | `routes_agents_registry` | **unauthenticated**, refuses when `ENVIRONMENT` is production |
+
+Two findings fall out of that table and are in scope here because the fix is
+the same helper:
+
+**`POST /v1/agents/register` bypasses the input hardening its twin has.**
+`AgentRegistration.agent_id` is a bare `str` with no pattern, and the handler
+calls `policy_store.register_agent()` directly, so neither `_validate_agent_id`
+nor `_sanitize_string` runs. Demonstrated against both routes with one body:
+
+```
+POST /v1/agents/registry  -> 400  agent_id must be 1-128 characters, alphanumeric...
+POST /v1/agents/register  -> 200
+
+stored agent_ids: ['../../etc/passwd']
+  name as stored: '<script>alert(1)</script>'
+  tools: ['rotate_credential']   status: <absent -> treated active>
+```
+
+That is the IEMLabs VAPT 8.7 finding (Improper Input Validation) still open on
+a parallel route, and the stored name renders in the portal. It also lands
+`status` absent, which `_registry_agent_status()` reads as **active**, so the
+agent is live immediately.
+
+**`bundle/import` creates agents with no validation at all**, in bulk, from an
+uploaded document.
+
+`seed-test-data` is gated on `ENVIRONMENT`, **not** `SHIELD_ENVIRONMENT`. Two
+similarly-named variables with unrelated semantics now exist, and an operator
+who sets only the new one leaves an unauthenticated seeding endpoint live. This
+spec does not change either variable; it documents the trap, and §9 adds the
+cross-check to the docs task.
 
 ### Outcome
 
@@ -372,8 +427,13 @@ value, and oversized are all `400` at the minting endpoint.
 - `warn`: a runtime key writes successfully **and** emits an audit record and
   the warning header. An admin key emits neither.
 - `enforce`: runtime → `403`; **unscoped → `403`**; admin → `200`.
-- All three flag values across all four write routes, parameterised, because
-  an enforcement gap on `DELETE` is the same escalation as one on `POST`.
+- All three flag values across **all six** write paths, parameterised, because
+  an enforcement gap on `DELETE` or on `bundle/import` is the same escalation
+  as one on `POST`.
+- A route-table test that fails when a **new** route reaches
+  `policy_store.register_agent` or `_save_agents` without the guard. The two
+  paths missed in the first draft of this spec were missed by reading imports;
+  the guard against a third is mechanical, not editorial.
 - A `403` body names the flag and the scope.
 
 ### Self-registration
@@ -410,8 +470,9 @@ behaviour until PR 2 ships a flag that is off.
 
 | # | Scope | Rough size |
 |---|---|---|
+| 0 | **Ships first, independent of everything else:** route `POST /v1/agents/register` and `bundle/import` through the same `_validate_agent_id` + `_sanitize_string` the `/registry` route uses. Closes a live traversal and stored-XSS path. No flag, no opt-in — this is a fix, not a feature. | small |
 | 1 | Scope storage, minting, `GET /v1/tenant/me/key-scope`. No enforcement anywhere. | small |
-| 2 | Stash the key hash in `core/auth.py`; `require_registry_write()`; the `off`/`warn`/`enforce` ladder on all four routes. | medium |
+| 2 | Stash the key hash in `core/auth.py`; `require_registry_write()`; the `off`/`warn`/`enforce` ladder on **all six** write paths in the table above. | medium |
 | 3 | `SHIELD_REGISTRY_SELF_REGISTER`, forced `pending` with zero grants. | small |
 | 4 | Portal: pending-approval queue, promote action, key-scope badge, write controls hidden for a runtime key. | medium |
 | 5 | Docs: the threat this closes, the rollout ladder, and the honest limit from §5. | small |
