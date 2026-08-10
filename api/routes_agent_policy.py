@@ -120,6 +120,11 @@ async def register_agent_endpoint(
     try:
         result = register_agent(tenant_id, agent.dict())
         return {"success": True, "agent": result}
+    except ValueError as e:
+        # Rejected input is the caller's fault, not ours. Without this the
+        # bare `except Exception` below turns a bad agent_id into a 500 and
+        # the caller has no idea what to fix.
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
