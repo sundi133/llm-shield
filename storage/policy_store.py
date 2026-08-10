@@ -16,12 +16,77 @@ Redis keys:
 
 import json
 import logging
+import re
 import time
 from typing import Optional, List, Dict, Any
 
 from storage.tenant_store import _get_redis, _cache_get, _cache_set, _cache_delete, _fallback_store
 
 logger = logging.getLogger("votal.policy_store")
+
+
+# ---------------------------------------------------------------------------
+# Agent input validation — canonical definitions
+#
+# These live here, at the storage layer, rather than in a route module because
+# register_agent() below is the sink two separate HTTP routes write through.
+# They were previously defined only in api/routes_agents_registry.py, so the
+# hardening for IEMLabs VAPT 8.7 (Improper Input Validation, May 2026) applied
+# to POST /v1/agents/registry and to nothing else — while POST
+# /v1/agents/register and the policy bundle import reached this function
+# directly and stored '../../etc/passwd' as an agent_id and an unescaped
+# <script> as a name.
+#
+# Validating at the sink rather than at each route means a route added later
+# inherits the check instead of having to remember it.
+# ---------------------------------------------------------------------------
+
+AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+MAX_STRING_LEN = 500
+MAX_TOOL_NAME_LEN = 128
+MAX_TOOLS_PER_AGENT = 200
+
+
+def validate_agent_id(agent_id: str) -> None:
+    """Raise ValueError for an agent_id containing traversal or special chars.
+
+    ValueError rather than HTTPException: the storage layer must not depend on
+    the web framework. Callers on an HTTP path translate it to a 400.
+    """
+    if not agent_id or not AGENT_ID_RE.match(agent_id):
+        raise ValueError(
+            "agent_id must be 1-128 characters, alphanumeric, hyphens, "
+            "or underscores only"
+        )
+
+
+def sanitize_string(value, max_len: Optional[int] = MAX_STRING_LEN):
+    """Strip HTML/JS tags from user-provided strings to prevent stored XSS.
+
+    max_len=None strips without truncating. Length limits belong with the
+    caller that can reject an oversized value with a 400; silently shortening
+    one is how a config comes back different from how it was sent.
+    """
+    if not isinstance(value, str):
+        return value
+    cleaned = HTML_TAG_RE.sub("", value)
+    return cleaned if max_len is None else cleaned[:max_len]
+
+
+def sanitize_value(value, max_len: int = MAX_STRING_LEN):
+    """Recursively sanitize strings within dicts and lists."""
+    if isinstance(value, str):
+        return sanitize_string(value, max_len)
+    if isinstance(value, dict):
+        return {
+            sanitize_string(str(k), MAX_TOOL_NAME_LEN): sanitize_value(v, max_len)
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [sanitize_value(item, max_len) for item in value[:MAX_TOOLS_PER_AGENT]]
+    return value
 
 
 _MAX_VERSIONS = 50  # maximum version history per policy
@@ -485,7 +550,29 @@ def register_agent(tenant_id: str, agent_config: dict) -> dict:
 
     Returns:
         The stored agent config.
+
+    Raises:
+        ValueError: if agent_id is missing or contains traversal/special
+            characters. Callers on an HTTP path translate this to a 400.
     """
+    # Validate and sanitize HERE, not in the callers. Two HTTP routes reach
+    # this function and neither validated; a third added later would not
+    # either. The agent_id is checked before it is used as a dict key, since
+    # that key is what governance, RBAC and the portal all index on.
+    #
+    # Deliberately NARROW. An earlier draft ran sanitize_value() over the whole
+    # config, which strips anything shaped like a tag and truncates as it goes.
+    # That silently cut tool lists to 200, descriptions to 500 characters, and
+    # turned the DLP pattern <\d+> into an empty string — disabling a data
+    # protection rule as a side effect of a fix for stored XSS. Functional
+    # fields are left byte-identical; only the two free-text fields that render
+    # in the portal are touched, and without truncation.
+    validate_agent_id(agent_config.get("agent_id"))
+    agent_config = dict(agent_config)  # never mutate the caller's dict
+    for field in ("name", "description"):
+        if isinstance(agent_config.get(field), str):
+            agent_config[field] = sanitize_string(agent_config[field], max_len=None)
+
     agent_config.setdefault("created_at", int(time.time()))
     agent_config.setdefault("updated_at", int(time.time()))
 

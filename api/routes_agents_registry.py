@@ -14,11 +14,18 @@ from storage.tenant_store import (
 
 router = APIRouter(prefix="/v1/agents", tags=["agents-registry"])
 
-_VALID_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
-_MAX_STRING_LEN = 500
-_MAX_TOOL_NAME_LEN = 128
-_MAX_TOOLS_PER_AGENT = 200
+# Canonical definitions live in storage/policy_store.py, at the sink both this
+# router and POST /v1/agents/register write through. They were duplicated here
+# and nowhere else, which is exactly how the other route ended up without them.
+from storage.policy_store import (  # noqa: E402
+    AGENT_ID_RE as _VALID_ID_RE,
+    HTML_TAG_RE as _HTML_TAG_RE,
+    MAX_STRING_LEN as _MAX_STRING_LEN,
+    MAX_TOOL_NAME_LEN as _MAX_TOOL_NAME_LEN,
+    MAX_TOOLS_PER_AGENT as _MAX_TOOLS_PER_AGENT,
+    sanitize_string as _sanitize_string,
+    sanitize_value as _sanitize_value,
+)
 
 # Ownership is METADATA, never an authorization input. Nothing in the authz
 # path may read it — it is free text a tenant admin types, and a grant that
@@ -110,28 +117,6 @@ def _validate_new_agent_id(agent_id: str, tenant_id: str) -> None:
         _validate_observed_agent_id(agent_id)
         return
     _validate_agent_id(agent_id)   # raises with the strict message
-
-
-def _sanitize_string(value: str, max_len: int = _MAX_STRING_LEN) -> str:
-    """Strip HTML/JS tags from user-provided strings to prevent stored XSS.
-
-    IEMLabs VAPT finding 8.7 (Improper Input Validation, May 2026).
-    """
-    if not isinstance(value, str):
-        return value
-    cleaned = _HTML_TAG_RE.sub("", value)
-    return cleaned[:max_len]
-
-
-def _sanitize_value(value, max_len: int = _MAX_STRING_LEN):
-    """Recursively sanitize strings within dicts and lists."""
-    if isinstance(value, str):
-        return _sanitize_string(value, max_len)
-    if isinstance(value, dict):
-        return {_sanitize_string(str(k), _MAX_TOOL_NAME_LEN): _sanitize_value(v, max_len) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_sanitize_value(item, max_len) for item in value[:_MAX_TOOLS_PER_AGENT]]
-    return value
 
 
 def _validate_agent_body(body: dict) -> None:

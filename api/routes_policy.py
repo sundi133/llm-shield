@@ -580,7 +580,15 @@ async def import_policies(
     agents_imported = 0
     for agent_id, agent_config in bundle.agent_configs.items():
         agent_config["agent_id"] = agent_id
-        register_agent(tenant_id, agent_config)
+        try:
+            register_agent(tenant_id, agent_config)
+        except ValueError as e:
+            # Name the offending agent. A bundle can carry many, and "invalid
+            # agent_id" without saying which one is not actionable.
+            raise HTTPException(
+                status_code=400,
+                detail=f"agent '{agent_id}' in bundle: {e}",
+            )
         agents_imported += 1
 
     # Import tool policies
