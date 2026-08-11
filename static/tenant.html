@@ -2375,6 +2375,36 @@
       <div id="hcaptcha-widget"></div>
     </div>
     <button class="primary" style="width: 100%;" onclick="login()">Sign In</button>
+
+    <!-- SSO. Collapsed behind a link so a deployment with no IdP looks exactly
+         as it did before, and so the organisation field appears ABOVE the
+         button it enables rather than below it — the first render had them the
+         other way round, which asks you to fill in a field that only shows up
+         after the action you were about to take. -->
+    <div style="text-align:center;margin-top:0.9rem;">
+      <a href="#" id="sso-toggle" onclick="revealSso(event)"
+         style="font-size:12px;color:var(--primary,#4f46e5);text-decoration:none;">
+        Sign in with SSO instead
+      </a>
+    </div>
+
+    <div id="sso-block" class="hidden">
+      <div style="display:flex;align-items:center;gap:0.6rem;margin:0.9rem 0;">
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+        <span style="font-size:11px;color:var(--text-muted);">or</span>
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+      </div>
+      <div class="field">
+        <label style="font-size:12px;">Organisation</label>
+        <input type="text" id="sso-tenant-input" placeholder="your-tenant-id"
+               autocomplete="organization" oninput="checkSso()"
+               style="font-size:13px;">
+      </div>
+      <button class="secondary hidden" style="width:100%;" id="sso-button"
+              onclick="startSso()">Sign in with SSO</button>
+      <div id="sso-hint" style="font-size:11px;color:var(--text-muted);
+                                margin-top:0.4rem;text-align:center;"></div>
+    </div>
     <div id="login-error" class="toast error hidden"></div>
     <div class="muted" style="text-align: center; margin-top: 1.25rem;">Need a key? Contact your administrator</div>
     <div style="text-align: center; margin-top: 0.75rem;"><a href="/" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">&larr; Back to home</a></div>
@@ -2509,6 +2539,7 @@
       <div class="page-header">
         <div>
           <div class="page-title" id="welcome-title">Overview</div>
+          <span id="session-badge" style="margin-left:0.75rem;"></span>
           <div class="page-desc">Your account summary and quick stats</div>
         </div>
         <div style="display:flex;gap:0.5rem;align-items:center;">
@@ -5896,10 +5927,103 @@ async function login() {
 
 initCaptcha();
 
-function logout() {
+// ── SSO ────────────────────────────────────────────────────────────────
+//
+// The sign-in button is a link into /v1/tenant/auth/login. Everything else —
+// PKCE, state, the token exchange — happens server-side, so nothing secret
+// passes through this file.
+
+let SSO_DEBOUNCE = null;
+
+function revealSso(ev) {
+  if (ev) ev.preventDefault();
+  document.getElementById('sso-block').classList.remove('hidden');
+  document.getElementById('sso-toggle').classList.add('hidden');
+  document.getElementById('sso-tenant-input').focus();
+}
+
+async function checkSso() {
+  const tenant = (document.getElementById('sso-tenant-input')?.value || '').trim();
+  const block = document.getElementById('sso-block');
+  if (!block) return;
+  clearTimeout(SSO_DEBOUNCE);
+  const button = document.getElementById('sso-button');
+  if (!tenant) { button.classList.add('hidden'); return; }
+  // Debounced: this fires per keystroke and each one is a request.
+  SSO_DEBOUNCE = setTimeout(async () => {
+    try {
+      const r = await fetch(
+        `${BASE_URL}/v1/tenant/auth/providers?tenant=${encodeURIComponent(tenant)}`);
+      const d = await r.json();
+      // The BLOCK stays open once revealed — collapsing it mid-typing would
+      // yank the field out from under the cursor. Only the button reacts.
+      button.classList.toggle('hidden', !d.sso_available);
+      const hint = document.getElementById('sso-hint');
+      if (hint && d.sso_available) {
+        const p = d.providers[0] || {};
+        // An unconfigured provider still lists, so say why the button will
+        // refuse rather than letting someone hit a 503 with no explanation.
+        hint.textContent = p.configured
+          ? (p.issuer || '')
+          : 'SSO is registered but has no admin groups set yet.';
+      }
+    } catch (e) {
+      button.classList.add('hidden');   // older Shield, or offline
+    }
+  }, 250);
+}
+
+function startSso() {
+  const tenant = (document.getElementById('sso-tenant-input')?.value || '').trim();
+  if (!tenant) return showError('login-error', 'Enter your organisation first');
+  // A full navigation, not fetch: the IdP has to render its own login page,
+  // and the session cookie is set on the redirect back.
+  window.location.href =
+    `${BASE_URL}/v1/tenant/auth/login?tenant=${encodeURIComponent(tenant)}` +
+    `&next=${encodeURIComponent('/tenant')}`;
+}
+
+async function loadSession() {
+  // Populates the header. Safe to call with only an API key: the endpoint
+  // describes the credential rather than 401ing, because "not signed in" is
+  // an answer and the portal renders the same screens either way.
+  try {
+    SESSION = await apiCall('/v1/tenant/me/session');
+  } catch (e) {
+    SESSION = null;
+  }
+  renderSessionBadge();
+}
+
+let SESSION = null;
+
+function renderSessionBadge() {
+  const el = document.getElementById('session-badge');
+  if (!el) return;
+  if (!SESSION || SESSION.method !== 'sso') { el.innerHTML = ''; return; }
+  const who = SESSION.name || SESSION.email || SESSION.sub;
+  el.innerHTML = `
+    <span title="${escapeHtml(SESSION.email || '')} · ${escapeHtml(SESSION.issuer || '')}"
+          style="font-size:11px;color:var(--text-dim);display:inline-flex;
+                 align-items:center;gap:0.4rem;">
+      <span style="width:6px;height:6px;border-radius:50%;background:var(--ok,#10b981);"></span>
+      ${escapeHtml(who)}${SESSION.is_admin ? '' : ' &middot; read only'}
+    </span>`;
+}
+
+async function logout() {
+  // Destroy the server-side session first. Clearing the cookie alone would
+  // leave a live session that anyone recovering the cookie could reuse, which
+  // is the whole reason sessions are server-side.
+  try {
+    await fetch(`${BASE_URL}/v1/tenant/auth/logout`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+  } catch (e) { /* sign out locally regardless */ }
   localStorage.removeItem('votal_tenant_key');
   API_KEY = '';
   TENANT_INFO = null;
+  SESSION = null;
   document.getElementById('app').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
 }
@@ -5907,6 +6031,7 @@ function logout() {
 function showApp() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
+  loadSession();
   document.getElementById('welcome-title').textContent = `Welcome, ${TENANT_INFO.name || TENANT_INFO.tenant_id}`;
   document.getElementById('sidebar-tenant-name').textContent = TENANT_INFO.name || TENANT_INFO.tenant_id;
   document.getElementById('sidebar-tenant-plan').innerHTML = `<span class="badge badge-${TENANT_INFO.plan}">${TENANT_INFO.plan}</span>`;
@@ -14710,15 +14835,32 @@ async function revokeCert() {
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-if (API_KEY) {
-  document.getElementById('api-key-input').value = API_KEY;
-  // Auto-login with stored key — skip captcha (already verified in prior session)
-  fetch(`${BASE_URL}/v1/tenant/me`, { headers: { 'X-API-Key': API_KEY } })
-    .then(r => r.status === 200
-      ? r.json().then(d => { TENANT_INFO = d; showApp(); })
-      : logout())
-    .catch(() => {});
-}
+// A session cookie is tried FIRST and without a key. Coming back from the IdP
+// there is nothing in localStorage, so a key-only boot would drop the user on
+// the login screen holding a perfectly good session — the login would appear
+// to have failed at the last step.
+(async function boot() {
+  try {
+    const r = await fetch(`${BASE_URL}/v1/tenant/me`, {
+      credentials: 'same-origin',
+    });
+    if (r.status === 200) {
+      TENANT_INFO = await r.json();
+      showApp();
+      return;
+    }
+  } catch (e) { /* fall through to the key path */ }
+
+  if (API_KEY) {
+    document.getElementById('api-key-input').value = API_KEY;
+    // Auto-login with stored key — skip captcha (already verified in prior session)
+    fetch(`${BASE_URL}/v1/tenant/me`, { headers: { 'X-API-Key': API_KEY } })
+      .then(r => r.status === 200
+        ? r.json().then(d => { TENANT_INFO = d; showApp(); })
+        : logout())
+      .catch(() => {});
+  }
+})();
 
 // Custom Policies Management
 let CUSTOM_POLICIES = [];
