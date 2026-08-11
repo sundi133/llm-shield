@@ -562,15 +562,31 @@ def _key_preview(api_key: str) -> str:
 
 @router.get("/me/api-keys")
 async def list_my_api_keys(request: Request):
-    """List hashed API keys mapped to the current tenant.
+    """List this tenant's API keys, with what is known about each.
 
-    Returns only hash prefixes — the plaintext keys are never stored.
+    Two sources, merged, because they cover different keys:
+
+      * apikeymeta:* — label, created, expires, last used. Everything minted
+        since key lifecycle existed.
+      * a scan of apikey:* — every key, including those minted before there
+        was anywhere to record any of this.
+
+    Dropping the scan would make older keys vanish from the list, which is
+    worse than showing them with nulls: a rotation runbook that cannot see the
+    key you are trying to rotate is useless. Dropping the metadata would leave
+    "created: null" on every row, which is where this started.
+
+    Never returns a plaintext key. Prefixes and fingerprints only.
     """
     tenant_id = _require_tenant(request)
-    from storage.tenant_store import _get_redis, _fallback_store
+    from storage.tenant_store import (
+        _get_redis, _fallback_store, list_tenant_api_keys)
 
+    described = {k["fingerprint"]: k for k in list_tenant_api_keys(tenant_id)}
+
+    # Every hash this tenant owns, so a key with no metadata still appears.
+    hashes = []
     r = _get_redis()
-    results = []
     if r:
         cursor = 0
         while True:
@@ -581,23 +597,28 @@ async def list_my_api_keys(request: Request):
             for key in keys:
                 try:
                     if r.get(key) == tenant_id:
-                        hash_part = key.split(":", 1)[1] if ":" in key else key
-                        results.append({
-                            "hash_prefix": hash_part[:12] + "...",
-                            "created": None,  # not tracked per-key currently
-                        })
+                        hashes.append(key.split(":", 1)[1] if ":" in key else key)
                 except Exception:
                     continue
             if cursor == 0:
                 break
     else:
-        for k, v in _fallback_store.items():
-            if k.startswith("apikey:") and v == tenant_id:
-                hash_part = k.split(":", 1)[1]
-                results.append({
-                    "hash_prefix": hash_part[:12] + "...",
-                    "created": None,
-                })
+        hashes = [k.split(":", 1)[1] for k, v in _fallback_store.items()
+                  if k.startswith("apikey:") and not k.startswith("apikeymeta:")
+                  and not k.startswith("apikeyscope:") and v == tenant_id]
+
+    results = []
+    for h in hashes:
+        row = described.pop(h[:8], None)
+        results.append(row or {
+            # Predates key lifecycle. Honest nulls rather than invented values.
+            "label": "", "prefix": "", "fingerprint": h[:8], "scope": None,
+            "created_at": None, "expires_at": None, "last_used": None,
+            "legacy": True,
+        })
+    # Anything described but not found in the scan has been revoked out from
+    # under its metadata; do not list a credential that no longer resolves.
+    results.sort(key=lambda e: e.get("created_at") or 0, reverse=True)
 
     return {"tenant_id": tenant_id, "api_keys": results, "count": len(results)}
 

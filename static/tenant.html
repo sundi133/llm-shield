@@ -3093,6 +3093,23 @@
 
       <!-- Quick Start -->
       <div id="api-tab-quick-start" class="api-tab-content">
+
+        <!-- API keys: the rotation surface. Everything needed to decide
+             whether a key is safe to revoke, on one row. -->
+        <div class="card" style="margin-bottom:1rem;">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <div class="card-title">API Keys</div>
+              <div class="card-subtitle">Rotate without downtime: create a new key, roll it out, watch traffic move, then revoke the old one.</div>
+            </div>
+            <button class="small primary" onclick="createApiKey()" style="font-size:12px;">+ New Key</button>
+          </div>
+          <div style="padding:0 1.25rem 1.25rem;">
+            <div id="api-keys-list" style="font-size:12px;color:var(--text-muted);overflow-x:auto;">Loading...</div>
+          </div>
+        </div>
+
+
         <div class="card" style="margin-bottom:1rem;border-left:4px solid var(--accent);">
           <div class="card-header"><div><div class="card-title">🚀 Votal AI Platform Access</div><div class="card-subtitle">Use X-Votal-Tenant-Key header for tenant-specific policies</div></div></div>
           <div style="padding:0 1.25rem 1.25rem;">
@@ -7261,6 +7278,131 @@ function filterActivity() {
   if (!q) { pre.textContent = pre._allLines; return; }
   const lines = pre._allLines.split('\n');
   pre.textContent = lines.filter(l => l.toLowerCase().includes(q)).join('\n') || 'No matching entries';
+}
+
+
+// ── API keys ───────────────────────────────────────────────────────────
+//
+// The list is the rotation surface. "Last used" is the field that turns
+// revocation from a guess into a decision, so it is the one the row is built
+// around.
+
+function _ago(ts) {
+  if (!ts) return 'never';
+  const s = Math.floor(Date.now() / 1000) - ts;
+  if (s < 0) return _ahead(-s);       // a future timestamp is not "just now"
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.floor(s / 60)}m ago`;
+  if (s < 172800) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function _ahead(s) {
+  // Expiry is the only forward-looking column, and reusing the past-tense
+  // formatter made a key expiring in 90 days read "just now" — which is
+  // exactly how it would read if it had ALREADY expired.
+  if (s < 3600) return `in ${Math.max(1, Math.floor(s / 60))}m`;
+  if (s < 172800) return `in ${Math.floor(s / 3600)}h`;
+  return `in ${Math.floor(s / 86400)}d`;
+}
+
+async function loadApiKeys() {
+  const el = document.getElementById('api-keys-list');
+  if (!el) return;
+  try {
+    const d = await apiCall('/v1/tenant/me/api-keys');
+    const keys = d.api_keys || [];
+    if (!keys.length) { el.textContent = 'No API keys found.'; return; }
+
+    el.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="text-align:left;color:var(--text-muted);">
+          <th style="padding:0.4rem 0.5rem;">Label</th>
+          <th style="padding:0.4rem 0.5rem;">Key</th>
+          <th style="padding:0.4rem 0.5rem;">Scope</th>
+          <th style="padding:0.4rem 0.5rem;">Created</th>
+          <th style="padding:0.4rem 0.5rem;">Last used</th>
+          <th style="padding:0.4rem 0.5rem;">Expires</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${keys.map(k => {
+          const stale = k.last_used && (Date.now()/1000 - k.last_used) > 604800;
+          const expired = k.expires_at && k.expires_at < Date.now()/1000;
+          return `
+          <tr style="border-top:1px solid var(--border);">
+            <td style="padding:0.5rem;">${escapeHtml(k.label || '') ||
+              '<span style="color:var(--text-muted);">unlabelled</span>'}</td>
+            <td style="padding:0.5rem;"><code style="font-size:11px;">${
+              escapeHtml(k.prefix || '')}…${escapeHtml(k.fingerprint || '')}</code></td>
+            <td style="padding:0.5rem;">${k.scope
+              ? escapeHtml(k.scope)
+              : '<span style="color:var(--text-muted);">unscoped</span>'}</td>
+            <td style="padding:0.5rem;color:var(--text-muted);">${_ago(k.created_at)}</td>
+            <td style="padding:0.5rem;${stale ? 'color:var(--warn,#92400e);font-weight:600;' : ''}">${
+              _ago(k.last_used)}</td>
+            <td style="padding:0.5rem;${expired ? 'color:var(--danger);font-weight:600;' : 'color:var(--text-muted);'}">${
+              k.expires_at ? (expired ? 'expired' : _ahead(k.expires_at - Date.now()/1000)) : '—'}</td>
+            <td style="padding:0.5rem;text-align:right;">
+              <button class="small danger" onclick="revokeApiKey('${escapeHtml(k.fingerprint)}')"
+                      style="font-size:11px;padding:0.2rem 0.5rem;">Revoke</button>
+            </td>
+          </tr>`; }).join('')}
+        </tbody>
+      </table>
+      <div style="margin-top:0.6rem;font-size:11px;color:var(--text-muted);">
+        Last used lags by up to a minute and is best effort. It answers
+        &ldquo;is this key idle&rdquo;, which is what makes revoking it safe.
+        It is not an audit trail.
+      </div>`;
+  } catch (e) {
+    el.textContent = 'Could not load API keys: ' + e.message;
+  }
+}
+
+async function createApiKey() {
+  const label = prompt('Label for the new key (e.g. ci-pipeline-v2):', '');
+  if (label === null) return;
+  try {
+    const d = await apiCall('/v1/tenant/me/api-keys', {
+      method: 'POST', body: JSON.stringify({ label }),
+    });
+    // Shown once. The plaintext is never stored, so there is no second chance
+    // and the dialog has to say so.
+    if (d.api_key) {
+      window.prompt(
+        'Copy this key now — it is not stored and cannot be shown again.\n\n'
+        + 'Your existing keys still work. Roll this one out, confirm traffic '
+        + 'has moved on the Last used column, then revoke the old key.',
+        d.api_key);
+    }
+    showToast('API key created', 'success');
+  } catch (e) {
+    showToast('Could not create key: ' + e.message, 'error');
+  } finally {
+    loadApiKeys();
+  }
+}
+
+async function revokeApiKey(fingerprint) {
+  // Revocation needs the key itself: only its hash is stored, and a
+  // fingerprint cannot be reversed into one. Asking for it is the honest
+  // consequence of never keeping the plaintext.
+  const key = prompt(
+    `Paste the full API key ending in fingerprint ${fingerprint} to revoke it.\n\n`
+    + 'Shield stores only a hash, so it cannot look the key up for you.\n'
+    + 'Check the Last used column first — revoking a key still in use breaks it '
+    + 'immediately.');
+  if (!key) return;
+  try {
+    await apiCall('/v1/tenant/me/api-keys', {
+      method: 'DELETE', body: JSON.stringify({ api_key: key }),
+    });
+    showToast('API key revoked', 'success');
+  } catch (e) {
+    showToast('Could not revoke key: ' + e.message, 'error');
+  } finally {
+    loadApiKeys();
+  }
 }
 
 async function loadAgentData() {
@@ -13025,7 +13167,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'activity') loadActivity();
     if (tab === 'telemetry') loadTelemetry();
     if (tab === 'policies') loadPolicies();
-    if (tab === 'apis') renderAllApiTabs();
+    if (tab === 'apis') { renderAllApiTabs(); loadApiKeys(); }
     if (tab === 'playground') initPlayground();
     if (tab === 'kill-switch') loadKillSwitchTools();
     if (tab === 'agent-identity') {} // manual actions

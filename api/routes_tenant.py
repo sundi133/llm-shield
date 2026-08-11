@@ -142,8 +142,12 @@ async def add_tenant_api_key(tenant_id: str, body: dict, request: Request):
     scope = body.get("scope")
     if scope is not None and not isinstance(scope, str):
         raise HTTPException(status_code=400, detail="scope must be a string")
+    # Both optional. A key minted without them behaves exactly as before.
+    label = body.get("label") or ""
+    expires_in_days = body.get("expires_in_days")
     try:
-        add_api_key(tenant_id, api_key, scope=scope)
+        add_api_key(tenant_id, api_key, scope=scope, label=label,
+                    expires_in_days=expires_in_days)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -157,7 +161,24 @@ async def add_tenant_api_key(tenant_id: str, body: dict, request: Request):
         metadata={"scope": scope or "unscoped"},
     )
 
-    return {"status": "added", "tenant_id": tenant_id, "scope": scope}
+    return {"status": "added", "tenant_id": tenant_id, "scope": scope,
+            "label": label, "expires_in_days": expires_in_days}
+
+
+@router.get("/{tenant_id}/api-keys")
+async def list_tenant_api_keys_endpoint(tenant_id: str, request: Request):
+    """List a tenant's API keys.
+
+    Never returns a plaintext key or a full hash — a prefix and a short
+    fingerprint, which is enough to match a row to a key somebody holds
+    without handing back anything reusable.
+
+    An unknown tenant returns an empty list identical to a tenant with no
+    keys, so this cannot be used to enumerate tenants.
+    """
+    from storage.tenant_store import list_tenant_api_keys
+    keys = list_tenant_api_keys(tenant_id)
+    return {"tenant_id": tenant_id, "count": len(keys), "keys": keys}
 
 
 @router.delete("/{tenant_id}/api-keys")
