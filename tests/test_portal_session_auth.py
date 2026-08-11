@@ -257,3 +257,44 @@ def test_the_guard_path_does_not_resolve_a_principal():
         src = inspect.getsource(mod)
         assert "portal_principal" not in src
         assert "portal_sessions" not in src
+
+
+# ── SHIELD_PORTAL_REQUIRE_SSO ────────────────────────────────────────────
+#
+# The last rung: once a tenant has verified SSO works, this closes the
+# shared-key path on portal routes. Off by default, because turning it on
+# breaks any automation calling /v1/tenant/* with a key — which is the point,
+# and has to be a decision rather than an upgrade side effect.
+
+
+def test_require_sso_is_off_by_default(client):
+    assert _me(client, key=API_KEY).status_code == 200
+
+
+def test_require_sso_refuses_an_api_key(client, monkeypatch):
+    monkeypatch.setenv("SHIELD_PORTAL_REQUIRE_SSO", "1")
+    r = _me(client, key=API_KEY)
+    assert r.status_code == 403
+    assert "SHIELD_PORTAL_REQUIRE_SSO" in r.json()["detail"]
+
+
+def test_require_sso_still_allows_a_session(client, session, monkeypatch):
+    """Enforcement that refuses everyone is not enforcement."""
+    monkeypatch.setenv("SHIELD_PORTAL_REQUIRE_SSO", "1")
+    assert _me(client, cookie=session).status_code == 200
+
+
+def test_require_sso_leaves_no_credential_as_a_401(client, monkeypatch):
+    """Still "sign in", not "you used the wrong kind of credential"."""
+    monkeypatch.setenv("SHIELD_PORTAL_REQUIRE_SSO", "1")
+    assert _me(client).status_code == 401
+
+
+def test_require_sso_does_not_reach_the_guard_path():
+    """Portal posture, not a global one. /guardrails/* and the agent registry
+    authenticate with keys by design, and always will."""
+    import inspect
+    from guardrails.agentic import rbac_guard
+    import api.routes_agents_registry as reg
+    for mod in (rbac_guard, reg):
+        assert "REQUIRE_SSO" not in inspect.getsource(mod)

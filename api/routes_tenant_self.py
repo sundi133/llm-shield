@@ -136,6 +136,21 @@ def _require_tenant(request: Request) -> str:
         return principal["tenant_id"]
 
     tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
+
+    # The last rung of the ladder: once a tenant has verified SSO works, this
+    # closes the shared-key path on the PORTAL routes only. Deliberately not a
+    # per-tenant setting — it is a deployment posture, and a tenant able to
+    # switch off the requirement that they sign in has not been required to.
+    import os
+    if tenant_id and os.environ.get(
+            "SHIELD_PORTAL_REQUIRE_SSO", "").strip().lower() in ("1", "true", "yes", "on"):
+        raise HTTPException(
+            status_code=403,
+            detail="This deployment requires signing in "
+                   "(SHIELD_PORTAL_REQUIRE_SSO=1). An API key cannot be used "
+                   "for portal endpoints.",
+        )
+
     if not tenant_id:
         raise HTTPException(
             status_code=401,
