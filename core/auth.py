@@ -555,3 +555,83 @@ def constrain_self_registration(request, tenant_id: str, entry: dict) -> dict:
     out["require_resource_scope"] = False
     out["self_registered"] = True       # why this is pending, for the reviewer
     return out
+
+
+# ---------------------------------------------------------------------------
+# Portal sessions as a caller identity
+#
+# A tenant API key answers "which tenant". A portal session answers "which
+# human", which is what makes an administrative action attributable to a person
+# rather than to a shared credential.
+#
+# Admin plane only. Nothing on the guard path reads a session.
+# ---------------------------------------------------------------------------
+
+PORTAL_COOKIE_NAME = "shield_portal_session"
+
+
+def portal_principal(request):
+    """The signed-in human behind this request, or None.
+
+    Cached on request.state for the life of the request: _require_tenant is
+    called by two dozen handlers and some call it more than once, and a session
+    lookup is a store read.
+
+    Resolution is deliberately cookie-first. A browser that still holds a
+    tenant API key in localStorage from before SSO was enabled would otherwise
+    keep acting as that key after the user signs in, and every action would
+    stay attributed to the tenant — the exact problem this is here to fix.
+    """
+    state = getattr(request, "state", None)
+    if state is not None and hasattr(state, "_portal_principal"):
+        return state._portal_principal
+
+    principal = None
+    try:
+        session_id = ""
+        cookies = getattr(request, "cookies", None)
+        if cookies:
+            session_id = cookies.get(PORTAL_COOKIE_NAME, "") or ""
+        if session_id:
+            from storage.portal_sessions import get_session, touch_session
+            record = get_session(session_id)
+            if record:
+                touch_session(session_id)
+                principal = {
+                    "kind": "user",
+                    "tenant_id": record.get("tenant_id", ""),
+                    "sub": record.get("sub", ""),
+                    "email": record.get("email", ""),
+                    "name": record.get("name", ""),
+                    "is_admin": bool(record.get("is_admin")),
+                    "issuer": record.get("issuer", ""),
+                }
+    except Exception as e:
+        # A broken session store must not 500 every portal request. The API key
+        # path below is exactly as trustworthy as it was before sessions
+        # existed, so falling through to it is the safe failure.
+        logger.debug("portal session lookup failed: %s", e)
+        principal = None
+
+    if state is not None:
+        state._portal_principal = principal
+    return principal
+
+
+def require_portal_admin(request) -> None:
+    """Refuse a signed-in human who is not an administrator.
+
+    Only meaningful for a session; a key-authenticated caller is governed by
+    its scope instead. Returns quietly when there is no session at all, so
+    callers can layer this over the existing key checks.
+    """
+    from fastapi import HTTPException
+
+    principal = portal_principal(request)
+    if principal is None or principal.get("is_admin"):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=f"{principal.get('email') or principal.get('sub')} is signed in "
+               f"but is not a portal administrator for this tenant.",
+    )

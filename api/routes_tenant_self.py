@@ -108,12 +108,29 @@ class ValidatePromptRequest(BaseModel):
 
 
 def _require_tenant(request: Request) -> str:
-    """Ensure request has a resolved tenant, else reject."""
+    """Ensure request has a resolved tenant, else reject.
+
+    A portal session takes precedence over an API key. A browser holding a
+    tenant key in localStorage from before SSO was enabled would otherwise keep
+    acting as that key after the user signs in, and every action would stay
+    attributed to the tenant rather than to them — the exact problem sessions
+    exist to solve.
+
+    Changing this one function gives every /v1/tenant/* handler session support
+    at once, which is also why it is the one place this must be correct.
+    """
+    from core.auth import portal_principal
+
+    principal = portal_principal(request)
+    if principal and principal.get("tenant_id"):
+        return principal["tenant_id"]
+
     tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
     if not tenant_id:
         raise HTTPException(
             status_code=401,
-            detail="Tenant API key required to access /v1/tenant/* endpoints",
+            detail="Sign in, or provide a tenant API key, to access "
+                   "/v1/tenant/* endpoints",
         )
     return tenant_id
 
@@ -130,7 +147,15 @@ async def _reject_tenant_id_spoof(request: Request, body_dict: Optional[dict] = 
     model would have silently dropped unknown fields like ``tenant_id``
     that the attacker added.
     """
-    resolved = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
+    # Resolve the same way _require_tenant does. Reading request.state alone
+    # would return early for a session-authenticated caller — no API key, so no
+    # state.tenant_id — and silently disable this IDOR defence for exactly the
+    # callers SSO introduces.
+    from core.auth import portal_principal
+
+    principal = portal_principal(request)
+    resolved = (principal or {}).get("tenant_id") or (
+        getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None)
     if not resolved:
         return  # _require_tenant() will handle the 401
 
@@ -1111,3 +1136,38 @@ async def get_my_key_scope(request: Request):
     registry_write = mode != "enforce" or scope == "admin"
 
     return {"scope": scope, "registry_write": registry_write, "enforcement": mode}
+
+
+@router.get("/me/session")
+async def get_my_session(request: Request):
+    """Who is signed in, or which credential is acting.
+
+    The portal renders the same screens either way and only needs to know which
+    to show in the header, so a key-authenticated caller gets a 200 describing
+    the key rather than a 401 — "not signed in" is an answer, not an error.
+    """
+    from core.auth import portal_principal
+
+    tenant_id = _require_tenant(request)
+    principal = portal_principal(request)
+
+    if principal:
+        return {
+            "method": "sso",
+            "tenant_id": tenant_id,
+            "sub": principal.get("sub", ""),
+            "email": principal.get("email", ""),
+            "name": principal.get("name", ""),
+            "is_admin": principal.get("is_admin", False),
+            "issuer": principal.get("issuer", ""),
+        }
+
+    return {
+        "method": "api_key",
+        "tenant_id": tenant_id,
+        "sub": "", "email": "", "name": "",
+        # A key is not a person, so there is nobody to call an administrator.
+        # What it may do is governed by its scope; see /v1/tenant/me/key-scope.
+        "is_admin": None,
+        "issuer": "",
+    }
