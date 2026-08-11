@@ -46,8 +46,14 @@ Setup
     export TENANT_API_KEY=<your tenant key>
     export AGENT_ID=sre-agent                 # registered for that tenant
     export SHIELD_PROXY_TOKEN=<same value as SHIELD_TRUSTED_PROXY_SECRET>
-    export OPENAI_API_KEY=sk-...              # the agent needs a model
-    export DEMO_MODEL=gpt-4.1-mini            # optional
+
+    # The agent needs a model. Set ONE of these; whichever key is present picks
+    # the provider, so an existing OpenAI deployment keeps working untouched.
+    export ANTHROPIC_API_KEY=sk-ant-...       # -> claude-opus-5
+    export OPENAI_API_KEY=sk-...              # -> gpt-4.1-mini
+    export DEMO_MODEL=<model id>              # optional, overrides the default
+    export DEMO_PROVIDER=anthropic|openai     # optional, only if both keys set
+
     export DEMO_CAPS=1                        # optional: capability path
     export TENANT_ID=<tenant id>              # only needed with DEMO_CAPS=1
 
@@ -89,8 +95,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shield_client import ShieldClient  # noqa: E402
 
 from langchain.agents import create_agent
+from langchain_core.messages import AIMessageChunk
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
 
 # The @tool objects are built per REQUEST by session.tools(), closed over the
 # role, rather than once at module level. That is the security design, not an
@@ -112,8 +118,83 @@ APP_PORT = int(os.getenv("PORT") or os.getenv("APP_PORT") or "8500")
 APP_HOST = os.getenv("APP_HOST") or ("0.0.0.0" if os.getenv("PORT") else "127.0.0.1")
 TENANT_KEY = os.getenv("TENANT_API_KEY", "")
 AGENT_KEY = os.getenv("SHIELD_AGENT_KEY") or os.getenv("AGENT_ID") or "sre-agent"
-MODEL = os.getenv("DEMO_MODEL", "gpt-4.1-mini")
 TENANT_ID = os.getenv("TENANT_ID", "")
+
+# Which model provider. Nothing in Shield cares — the guardrail and capability
+# calls are separate HTTP requests to Shield, and the LLM call goes straight to
+# the vendor. The provider is an implementation detail of the agent, which is
+# exactly why it is worth showing that swapping it changes no security code.
+#
+# Precedence, most specific signal first: an explicit DEMO_PROVIDER, then the
+# model name, then which key is present. The model name has to outrank the key
+# because DEMO_MODEL is the setting most likely to be stale in a shell that has
+# run this demo before — inferring the provider from the key while taking the
+# model from an old export asks Anthropic for gpt-4.1-mini, which is a 404 with
+# no obvious cause. Falling back to the key last is what lets an existing
+# OPENAI_API_KEY deployment keep working with no config change.
+DEFAULT_MODEL = {"anthropic": "claude-opus-5", "openai": "gpt-4.1-mini"}
+API_KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+
+
+def _provider_of(model: str) -> str:
+    """Which vendor serves this model id, or "" if the name does not say."""
+    if model.startswith("claude"):
+        return "anthropic"
+    if model.startswith(("gpt", "o1", "o3", "o4", "chatgpt")):
+        return "openai"
+    return ""
+
+
+MODEL = os.getenv("DEMO_MODEL", "")
+PROVIDER = (os.getenv("DEMO_PROVIDER") or _provider_of(MODEL) or
+            ("anthropic" if os.getenv("ANTHROPIC_API_KEY") else "openai")).lower()
+MODEL = MODEL or DEFAULT_MODEL[PROVIDER]
+
+
+def check_model_config() -> str:
+    """Return a human-readable problem with the model settings, or "".
+
+    Called at startup so a misconfiguration is a line in the terminal before
+    the first request, not a 404 the browser reports as a failed answer.
+    """
+    if PROVIDER not in DEFAULT_MODEL:
+        return (f"DEMO_PROVIDER={PROVIDER!r} is not one of "
+                f"{', '.join(sorted(DEFAULT_MODEL))}.")
+    named = _provider_of(MODEL)
+    if named and named != PROVIDER:
+        return (f"DEMO_MODEL={MODEL!r} is a {named} model but the provider "
+                f"resolved to {PROVIDER!r}. Unset one of them.")
+    if not os.getenv(API_KEY_ENV[PROVIDER]):
+        return (f"provider {PROVIDER!r} (model {MODEL!r}) needs "
+                f"{API_KEY_ENV[PROVIDER]}, which is not set. If you meant the "
+                f"other vendor, unset DEMO_MODEL so it picks its own default.")
+    return ""
+
+
+def build_llm(streaming: bool = False):
+    """The one place the provider is named. Both call paths go through here.
+
+    Claude notes, because two of these are 400s rather than style choices:
+
+      * No temperature. Claude Opus 5 removed the sampling parameters and
+        rejects `temperature` outright, including the temperature=0 that reads
+        as an obviously-safe default elsewhere.
+      * max_tokens bounds thinking AND the reply together, and thinking is ON
+        by default on Opus 5. Sized for the whole budget, not the answer.
+      * effort low, not thinking disabled. Disabling thinking is permitted at
+        this effort, but on Opus 5 it can make the model write a tool call as
+        plain text — the call silently never runs, the turn still succeeds, and
+        a demo whose entire point is watching tools get refused would quietly
+        stop calling them. Low effort buys most of the latency back safely.
+    """
+    if PROVIDER == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(model=MODEL, max_tokens=8192,
+                             output_config={"effort": "low"},
+                             streaming=streaming)
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(model=MODEL, temperature=0, streaming=streaming)
+
 
 # DEMO_CAPS=1 switches the tool path from advisory (tool/check only) to the
 # capability path: mint a single-use token bound to this exact action, then
@@ -313,8 +394,7 @@ def run_agent(question: str, role: str) -> dict:
     if refusal:
         return {"role": role, "answer": refusal, "trace": session.trace}
 
-    agent = create_agent(ChatOpenAI(model=MODEL, temperature=0),
-                         session.tools(), system_prompt=SYSTEM)
+    agent = create_agent(build_llm(), session.tools(), system_prompt=SYSTEM)
     result = agent.invoke({"messages": [{"role": "user", "content": question}]})
     answer = ""
     for msg in reversed(result.get("messages", [])):
@@ -354,9 +434,8 @@ def stream_agent(question: str, role: str):
             yield sse({"type": "done"})
             return
 
-        agent = create_agent(
-            ChatOpenAI(model=MODEL, temperature=0, streaming=True),
-            session.tools(), system_prompt=SYSTEM)
+        agent = create_agent(build_llm(streaming=True),
+                             session.tools(), system_prompt=SYSTEM)
 
         for chunk, _meta in agent.stream(
                 {"messages": [{"role": "user", "content": question}]},
@@ -364,12 +443,18 @@ def stream_agent(question: str, role: str):
             yield from drain()
             # Tool results arrive on this stream too; forwarding them would
             # print raw tool output as if the assistant had said it.
-            if chunk.__class__.__name__ != "AIMessageChunk":
+            # isinstance, not a class-name string: a subclass or a rename drops
+            # every token silently and the UI just says "(no response)".
+            if not isinstance(chunk, AIMessageChunk):
                 continue
             text = getattr(chunk, "content", "")
             if isinstance(text, list):
+                # Claude streams a list of typed blocks. Select text blocks
+                # rather than skipping known-bad ones, so a block type nobody
+                # has seen yet cannot end up rendered as the assistant talking.
                 text = "".join(part.get("text", "") for part in text
-                               if isinstance(part, dict))
+                               if isinstance(part, dict)
+                               and part.get("type") == "text")
             if text:
                 yield sse({"type": "token", "text": text})
 
@@ -637,7 +722,7 @@ async function send(){
   }
 
   const reader = res.body.getReader(), dec = new TextDecoder();
-  let buf = '', answer = '';
+  let buf = '', answer = '', failed = false;
   while (true){
     const {value, done} = await reader.read();
     if (done) break;
@@ -664,13 +749,18 @@ async function send(){
           + `<span class=meta>${esc(meta)}</span></span>`;
         trace.appendChild(row);
       } else if (ev.type === 'error'){
+        // failed, not just empty. Without this the '(no response)' fallback
+        // below overwrites body.textContent and deletes the message we just
+        // showed — which is how every server-side exception in this demo
+        // came out looking like the model had simply said nothing.
+        failed = true;
         cursor.insertAdjacentText('beforebegin', '\n[' + ev.detail + ']');
       }
       scroll();
     }
   }
   cursor.remove();
-  if (!answer.trim()) body.textContent = '(no response)';
+  if (!answer.trim() && !failed) body.textContent = '(no response)';
   busy = false; sendBtn.disabled = false; q.focus();
 }
 
@@ -757,9 +847,13 @@ if __name__ == "__main__":
         import uvicorn
         if not TENANT_KEY:
             print(f"{Y}TENANT_API_KEY is unset — Shield calls will fail.{Z}")
-        if not os.getenv("OPENAI_API_KEY"):
-            print(f"{Y}OPENAI_API_KEY is unset — /chat will 500. "
-                  f"Use --attack to exercise authorization without a model.{Z}")
+        # Refuse rather than warn. A model misconfiguration surfaces as a
+        # failed answer in the browser, which reads as "the agent is broken"
+        # and sends you looking at the guardrails — the expensive wrong place.
+        problem = check_model_config()
+        if problem:
+            sys.exit(f"{R}{problem}{Z}\n{DIM}Use --attack to exercise "
+                     f"authorization without a model.{Z}")
         # Calling ourselves would produce Shield's error text from this app's
         # port, which reads as "the example is broken" rather than "the URL is
         # wrong". Refuse instead of starting.
@@ -767,5 +861,6 @@ if __name__ == "__main__":
             sys.exit(f"{R}LLM_SHIELD_URL points at this app's own port "
                      f"({APP_PORT}). Set it to your Shield deployment.{Z}")
         print(f"{DIM}app    http://{APP_HOST}:{APP_PORT}{Z}")
-        print(f"{DIM}shield {SHIELD}   model {MODEL}   agent {AGENT_KEY}{Z}")
+        print(f"{DIM}shield {SHIELD}   model {PROVIDER}/{MODEL}   "
+              f"agent {AGENT_KEY}{Z}")
         uvicorn.run(app, host=APP_HOST, port=APP_PORT, log_level="warning")
