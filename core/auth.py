@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import logging
 import os
 import time
 from collections import defaultdict
@@ -11,6 +12,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 import config.schema as _config_module
+
+logger = logging.getLogger("votal.auth")
 
 
 # ── Brute-force protection (IEMLabs VAPT finding 8.9, May 2026) ──────
@@ -310,3 +313,164 @@ def verify_tenant_path_access(request: Request, tenant_id: str | None = None) ->
     if tenant_id is None:
         return
     require_tenant_access(tenant_id, request)
+
+
+# ---------------------------------------------------------------------------
+# Registry write scope
+#
+# A tenant key resolves to a tenant and nothing else, so the credential an
+# agent must hold to be guarded is also the credential that can rewrite the
+# agent registry and grant that agent every tool. This is the enforcement half
+# of that split: `runtime` keys may be guarded, `admin` keys may write.
+#
+# Lives here rather than in a route module because six different routes across
+# three routers reach a registry write, and a control that covers five of them
+# is a bypass with a changelog entry.
+#
+# See docs/spec-registry-write-authorization.md
+# ---------------------------------------------------------------------------
+
+MODE_OFF = "off"
+MODE_WARN = "warn"
+MODE_ENFORCE = "enforce"
+REGISTRY_WRITE_MODES = (MODE_OFF, MODE_WARN, MODE_ENFORCE)
+
+_SANDBOX_TENANT_ID = "test-tenant-001"
+
+
+def registry_write_mode() -> str:
+    """off | warn | enforce, read from the PROCESS and never from the request.
+
+    An unrecognised value reads as `off`: a typo in a deploy config must not
+    silently enable a control that refuses traffic, nor silently disable one an
+    operator believes is on. `off` matches the documented default.
+    """
+    import os
+    mode = (os.environ.get("SHIELD_REGISTRY_WRITE_SCOPE", MODE_OFF) or MODE_OFF).strip().lower()
+    return mode if mode in REGISTRY_WRITE_MODES else MODE_OFF
+
+
+def _store_is_degraded() -> bool:
+    """True when Redis is configured but unreachable.
+
+    Matters because the in-memory fallback answers every scope lookup with
+    None. Without this check a Redis outage would present as "every key in your
+    estate is suddenly unscoped", which under `enforce` is a total registry
+    outage reported as an authorization failure.
+    """
+    import os
+    try:
+        from storage import tenant_store as ts
+        configured = bool(os.environ.get("REDIS_URL", "").strip()
+                          or os.environ.get("UPSTASH_REDIS_REST_URL", "").strip())
+        if not configured:
+            return False        # in-memory IS the intended store here
+        ts._get_redis()         # force lazy init so the flag means something
+        return not ts._redis_available
+    except Exception:
+        return True
+
+
+def caller_key_scope(request) -> "tuple":
+    """(scope, resolved). resolved=False means the scope could not be read.
+
+    Prefers the hash the auth middleware stashed. Falling back to the
+    X-API-Key header covers SHIELD_AUTH_ENABLED being off; it must never be
+    the only source, or every Authorization: Bearer caller is silently exempt
+    from whatever is built on this.
+    """
+    try:
+        from storage.tenant_store import key_scope, key_scope_by_hash
+        key_hash = getattr(getattr(request, "state", None), "api_key_hash", "") or ""
+        if key_hash:
+            return key_scope_by_hash(key_hash), True
+        raw = (request.headers.get("X-API-Key") or "").strip()
+        if raw:
+            return key_scope(raw), True
+        return None, True       # no credential at all; other layers 401 first
+    except Exception:
+        return None, False
+
+
+def require_registry_write(request, tenant_id: str = "",
+                           action: str = "write the agent registry") -> None:
+    """Refuse a registry write by a key that is not admin-scoped.
+
+    No-op under `off`. Under `warn` every write proceeds and a non-admin write
+    is recorded, which is the preflight: it names the callers `enforce` would
+    break before it breaks them. Under `enforce` only an admin-scoped key
+    writes — unscoped legacy keys included, which is the whole point, since
+    every key in existence today is unscoped.
+    """
+    from fastapi import HTTPException
+
+    mode = registry_write_mode()
+    if mode == MODE_OFF:
+        return
+
+    # Passed explicitly by callers that resolved it themselves: routes reached
+    # with SHIELD_AUTH_ENABLED off never have request.state.tenant_id set, and
+    # the sandbox exemption below has to work there too.
+    tenant_id = (tenant_id
+                 or getattr(getattr(request, "state", None), "tenant_id", "")
+                 or "")
+
+    # The zero-setup quickstart registers an agent in a throwaway tenant. A
+    # sandbox that requires a key-minting ceremony is a quickstart nobody
+    # finishes, and nothing of value lives in this one tenant.
+    if tenant_id == _SANDBOX_TENANT_ID:
+        return
+
+    scope, resolved = caller_key_scope(request)
+
+    if mode == MODE_ENFORCE and (not resolved or _store_is_degraded()):
+        # Fail CLOSED, and say which it is. A refused write is recoverable by
+        # retrying; a wrongly-allowed one is a permanent grant nobody revisits.
+        raise HTTPException(
+            status_code=503,
+            detail="Cannot verify API key scope (key store unavailable). "
+                   "Registry writes are refused while "
+                   "SHIELD_REGISTRY_WRITE_SCOPE=enforce.",
+        )
+
+    if scope == "admin":
+        return
+
+    if mode == MODE_WARN:
+        _record_scope_warning(request, tenant_id, scope, action)
+        return
+
+    raise HTTPException(
+        status_code=403,
+        detail=(f"This API key is scoped {scope!r} and cannot {action}. "
+                f"Use an admin-scoped key. "
+                f"(SHIELD_REGISTRY_WRITE_SCOPE=enforce)")
+        if scope else
+        (f"This API key has no scope and cannot {action} while "
+         f"SHIELD_REGISTRY_WRITE_SCOPE=enforce. Mint an admin-scoped key "
+         f"(POST /v1/admin/tenants/{{tenant}}/api-keys with scope=admin)."),
+    )
+
+
+def _record_scope_warning(request, tenant_id: str, scope, action: str) -> None:
+    """Warn mode's only output, and the thing the rollout procedure reads.
+
+    Never raises: a failure to record a warning must not fail a write that
+    `warn` has already decided to allow.
+    """
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(
+            action="registry_write_scope_warning",
+            actor=f"tenant:{tenant_id}",
+            tenant_id=tenant_id,
+            source_ip=(request.client.host if getattr(request, "client", None) else ""),
+            metadata={"scope": scope or "unscoped", "attempted": action,
+                      "path": str(getattr(request, "url", "")),
+                      "would_be_refused_under_enforce": True},
+        )
+    except Exception:
+        logger.warning(
+            "registry write by %s-scoped key for tenant %s (%s) — would be "
+            "refused under SHIELD_REGISTRY_WRITE_SCOPE=enforce",
+            scope or "un", tenant_id, action)

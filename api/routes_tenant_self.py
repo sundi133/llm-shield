@@ -596,6 +596,11 @@ async def create_my_api_key(request: Request, body: dict = None):
             detail="API key limit reached (max 10 per tenant). Revoke unused keys first.",
         )
 
+    # Minting a credential is an administrative act. Without this a runtime
+    # key mints itself a fresh key and walks around the write scope entirely.
+    from core.auth import require_registry_write
+    require_registry_write(request, tenant_id, "mint an API key")
+
     # Generate or accept a custom key
     custom_key = (body or {}).get("custom_key") if body else None
     api_key = custom_key.strip() if custom_key else _new_key(tenant_id)
@@ -603,6 +608,10 @@ async def create_my_api_key(request: Request, body: dict = None):
     if len(api_key) < 16:
         raise HTTPException(status_code=400, detail="API key must be at least 16 characters")
 
+    # Deliberately NOT passing a scope, and deliberately not reading one from
+    # the body. A caller that could choose the scope of a key it mints could
+    # mint itself an admin key, and the whole mechanism would be decorative.
+    # Scoped keys come from the admin plane.
     add_api_key(tenant_id, api_key)
 
     log_admin_action(

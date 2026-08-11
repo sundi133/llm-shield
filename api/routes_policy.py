@@ -578,6 +578,13 @@ async def import_policies(
 
     # Import agent configs
     agents_imported = 0
+    if bundle.agent_configs:
+        # Only when the bundle actually carries agents. A bundle of policies
+        # alone is not a registry write and must not start needing an admin
+        # key because this endpoint can also carry one.
+        from core.auth import require_registry_write
+        require_registry_write(request, tenant_id,
+                               "import agents in a policy bundle")
     for agent_id, agent_config in bundle.agent_configs.items():
         agent_config["agent_id"] = agent_id
         try:
