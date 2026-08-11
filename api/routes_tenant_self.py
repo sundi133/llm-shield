@@ -1061,3 +1061,44 @@ async def ingest_audit(request: Request):
 
     await audit_logger.log(record)
     return {"success": True, "event_type": "guarded_tool_call"}
+
+
+# ── API key scope ────────────────────────────────────────────────────────
+
+
+@router.get("/me/key-scope")
+async def get_my_key_scope(request: Request):
+    """What this API key is allowed to do, and whether that is being enforced.
+
+    Three fields because three different readers need this: the portal hides
+    write controls it cannot use, a developer debugging a 403 sees why, and an
+    operator mid-rollout sees whether the deployment is enforcing yet.
+
+    Reads the hash the auth middleware stashed, falling back to the header when
+    auth is disabled. It must NOT read X-API-Key alone — that would report
+    "unscoped" for every Authorization: Bearer caller regardless of their
+    actual scope.
+    """
+    _require_tenant(request)
+
+    from storage.tenant_store import key_scope, key_scope_by_hash
+
+    key_hash = getattr(request.state, "api_key_hash", "") or ""
+    if key_hash:
+        scope = key_scope_by_hash(key_hash)
+    else:
+        scope = key_scope(request.headers.get("X-API-Key", "").strip())
+
+    # Read from the process, never from the request. Enforcement itself lands
+    # in a later change; reporting it now means the portal does not need a
+    # second round trip when it does.
+    import os
+    mode = (os.environ.get("SHIELD_REGISTRY_WRITE_SCOPE", "off") or "off").strip().lower()
+    if mode not in ("off", "warn", "enforce"):
+        mode = "off"
+
+    # Unscoped keys still write while enforcement is off or warning. Saying
+    # otherwise would have the portal hide controls that in fact work.
+    registry_write = mode != "enforce" or scope == "admin"
+
+    return {"scope": scope, "registry_write": registry_write, "enforcement": mode}

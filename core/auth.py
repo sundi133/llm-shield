@@ -191,6 +191,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 # Store tenant_id in request state
                 request.state.tenant_id = tenant_id
 
+                # And the HASH of the credential that authenticated. Write
+                # routes need to know WHICH key this was, not just which
+                # tenant, and by this point only the tenant survives. A route
+                # that re-read the X-API-Key header instead would silently
+                # exempt every Authorization: Bearer caller from any check
+                # based on it.
+                #
+                # The hash, never the key: request.state can end up in an
+                # exception dump. One SHA-256 over ~40 characters, no syscall,
+                # roughly three orders of magnitude below the Redis GET that
+                # produced tenant_id above.
+                try:
+                    from storage.tenant_store import _hash_key
+                    request.state.api_key_hash = _hash_key(api_key)
+                except Exception:
+                    request.state.api_key_hash = ""
+
             except Exception:
                 _record_auth_failure(client_ip)
                 return JSONResponse(

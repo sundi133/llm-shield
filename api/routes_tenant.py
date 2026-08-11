@@ -136,16 +136,28 @@ async def add_tenant_api_key(tenant_id: str, body: dict, request: Request):
     if not api_key:
         raise HTTPException(status_code=400, detail="'api_key' is required")
 
-    add_api_key(tenant_id, api_key)
+    # Optional. Omitted means unscoped, which is exactly what every key minted
+    # before scopes existed is, so this endpoint is unchanged for every
+    # existing caller.
+    scope = body.get("scope")
+    if scope is not None and not isinstance(scope, str):
+        raise HTTPException(status_code=400, detail="scope must be a string")
+    try:
+        add_api_key(tenant_id, api_key, scope=scope)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     log_admin_action(
         action="add_api_key",
         actor=_actor_from_request(request),
         tenant_id=tenant_id,
         source_ip=_source_ip(request),
+        # Who was handed an admin key is the question this whole mechanism
+        # exists to make answerable, so it belongs in the admin audit.
+        metadata={"scope": scope or "unscoped"},
     )
 
-    return {"status": "added", "tenant_id": tenant_id}
+    return {"status": "added", "tenant_id": tenant_id, "scope": scope}
 
 
 @router.delete("/{tenant_id}/api-keys")
