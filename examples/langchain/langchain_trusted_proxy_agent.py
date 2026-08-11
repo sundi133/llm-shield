@@ -135,6 +135,13 @@ TENANT_ID = os.getenv("TENANT_ID", "")
 DEFAULT_MODEL = {"anthropic": "claude-opus-5", "openai": "gpt-4.1-mini"}
 API_KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
 
+# Claude models that reject output_config.effort. Named individually rather
+# than matched by prefix because this is a property of these two releases, not
+# of their tiers — a later haiku is expected to support it, and would silently
+# lose the setting under a "haiku" prefix rule. These are also the two someone
+# reaches for to make a demo cheap, so getting it wrong is not a rare path.
+NO_EFFORT = {"claude-haiku-4-5", "claude-sonnet-4-5"}
+
 
 def _provider_of(model: str) -> str:
     """Which vendor serves this model id, or "" if the name does not say."""
@@ -189,9 +196,11 @@ def build_llm(streaming: bool = False):
     """
     if PROVIDER == "anthropic":
         from langchain_anthropic import ChatAnthropic
+        kwargs = {}
+        if MODEL not in NO_EFFORT:
+            kwargs["output_config"] = {"effort": "low"}
         return ChatAnthropic(model=MODEL, max_tokens=8192,
-                             output_config={"effort": "low"},
-                             streaming=streaming)
+                             streaming=streaming, **kwargs)
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(model=MODEL, temperature=0, streaming=streaming)
 
