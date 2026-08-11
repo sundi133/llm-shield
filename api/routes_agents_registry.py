@@ -11,6 +11,11 @@ from storage.tenant_store import (
     kv_set,
     kv_delete,
 )
+from core.auth import (
+    require_registry_write as _require_registry_write,
+    constrain_self_registration as _constrain_self_registration,
+    registry_write_mode,
+)
 
 router = APIRouter(prefix="/v1/agents", tags=["agents-registry"])
 
@@ -541,6 +546,18 @@ async def seed_test_data():
             status_code=403,
             detail="seed-test-data is disabled in production",
         )
+    # Second, independent gate. This endpoint takes no credential at all, so
+    # the check above is the only thing standing between it and an
+    # unauthenticated registry write — and it reads ENVIRONMENT, which is now
+    # one letter of config away from SHIELD_ENVIRONMENT and means something
+    # entirely different. A deployment that enforces write scope has said it
+    # does not want unscoped registry writes; this is one.
+    if registry_write_mode() == "enforce":
+        raise HTTPException(
+            status_code=403,
+            detail="seed-test-data is disabled while "
+                   "SHIELD_REGISTRY_WRITE_SCOPE=enforce.",
+        )
     try:
         tenant_id = "test-tenant-001"
 
@@ -693,6 +710,7 @@ async def create_agent(request: Request):
     """Create a new agent."""
     try:
         tenant_id = get_tenant_from_api_key(request)
+        _require_registry_write(request, tenant_id, "register an agent")
         body = await request.json()
 
         agent_id = body.get("agent_id", "").strip()
@@ -749,6 +767,12 @@ async def create_agent(request: Request):
             "updated_at": now,
         }
 
+        # A non-admin caller may declare an agent but not grant it anything.
+        # Applied to the built entry rather than the body so it cannot be
+        # skipped by a field the construction above adds later.
+        agents[agent_id] = _constrain_self_registration(
+            request, tenant_id, agents[agent_id])
+
         _save_agents(tenant_id, agents)
 
         return {
@@ -769,6 +793,7 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
     try:
         _validate_agent_id(agent_id)
         tenant_id = get_tenant_from_api_key(request)
+        _require_registry_write(request, tenant_id, "update an agent")
         _validate_agent_body(agent_data)
 
         # Get existing agents
@@ -838,6 +863,9 @@ async def delete_agent(agent_id: str, request: Request):
     try:
         _validate_agent_id(agent_id)
         tenant_id = get_tenant_from_api_key(request)
+        # Deleting an agent removes it from governance entirely, which is the
+        # same escalation as granting one. Same gate.
+        _require_registry_write(request, tenant_id, "delete an agent")
 
         # Get existing agents
         agents_key = f"agents:{tenant_id}"

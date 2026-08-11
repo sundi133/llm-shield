@@ -446,8 +446,100 @@ def resolve_request_tenant_id(request) -> str:
     return tid
 
 
-def add_api_key(tenant_id: str, api_key: str):
-    """Add an API key for a tenant."""
+# ---------------------------------------------------------------------------
+# API key scopes
+#
+# A key resolves to a tenant and nothing else, which means the credential an
+# agent uses to be guarded is also the credential that can rewrite the agent
+# registry. Scope splits those: `runtime` for the guard path, `admin` for
+# registry writes.
+#
+# Stored in a SIDECAR key rather than inside the apikey:* value on purpose.
+# Putting it in the value would place a scope read inside
+# resolve_tenant_by_api_key(), which every guarded request calls — a new Redis
+# read on the hot path. The sidecar is read only by write routes, so the guard
+# path is untouched by construction rather than by review. It also means no
+# migration: an absent record is a legacy unscoped key, which is every key that
+# exists today.
+#
+# See docs/spec-registry-write-authorization.md
+# ---------------------------------------------------------------------------
+
+SCOPE_RUNTIME = "runtime"
+SCOPE_ADMIN = "admin"
+KEY_SCOPES = (SCOPE_RUNTIME, SCOPE_ADMIN)
+
+
+def _scope_key(key_hash: str) -> str:
+    return f"apikeyscope:{key_hash}"
+
+
+def set_key_scope(api_key: str, scope: Optional[str]) -> None:
+    """Set (or clear, with None) a key's scope.
+
+    Raises ValueError for an unknown scope. Storage must not depend on the web
+    framework; the minting route translates this to a 400.
+    """
+    if scope is not None and scope not in KEY_SCOPES:
+        raise ValueError(
+            f"scope must be one of {', '.join(KEY_SCOPES)}, or omitted")
+
+    key_hash = _hash_key(api_key)
+    k = _scope_key(key_hash)
+    r = _get_redis()
+    if scope is None:
+        if r:
+            r.delete(k)
+        else:
+            _fallback_store.pop(k, None)
+    else:
+        if r:
+            r.set(k, scope)
+        else:
+            _fallback_store[k] = scope
+
+    # Invalidate BOTH ways. A downgrade from admin to runtime that a stale
+    # cache ignores is a control that silently does not apply, which is worse
+    # than never having set it.
+    _cache_delete(k)
+
+
+def key_scope_by_hash(key_hash: str) -> Optional[str]:
+    """A key's scope from its hash, or None when unscoped.
+
+    A stored value that is neither runtime nor admin reads as unscoped rather
+    than as admin: garbage must never read as privilege.
+    """
+    if not key_hash:
+        return None
+    k = _scope_key(key_hash)
+
+    cached = _cache_get(k)
+    if cached is not None:
+        return cached.get("scope")
+
+    r = _get_redis()
+    scope = r.get(k) if r else _fallback_store.get(k)
+    if isinstance(scope, bytes):
+        scope = scope.decode()
+    if scope not in KEY_SCOPES:
+        scope = None
+
+    _cache_set(k, {"scope": scope})
+    return scope
+
+
+def key_scope(api_key: str) -> Optional[str]:
+    """A key's scope from the plaintext key, or None when unscoped."""
+    return key_scope_by_hash(_hash_key(api_key)) if api_key else None
+
+
+def add_api_key(tenant_id: str, api_key: str, scope: Optional[str] = None):
+    """Add an API key for a tenant.
+
+    scope=None keeps the pre-existing behaviour exactly: an unscoped key that
+    every code path treats as it did before scopes existed.
+    """
     key_hash = _hash_key(api_key)
 
     r = _get_redis()
@@ -456,20 +548,27 @@ def add_api_key(tenant_id: str, api_key: str):
     else:
         _fallback_store[f"apikey:{key_hash}"] = tenant_id
 
-    logger.info(f"Added API key for tenant: {tenant_id}")
+    # Set unconditionally, including the None case: minting over a hash that
+    # already carried a scope must not silently inherit the old one.
+    set_key_scope(api_key, scope)
+
+    logger.info(f"Added API key for tenant: {tenant_id} (scope={scope or 'unscoped'})")
 
 
 def remove_api_key(api_key: str):
-    """Remove an API key."""
+    """Remove an API key and any scope recorded for it."""
     key_hash = _hash_key(api_key)
 
     r = _get_redis()
     if r:
         r.delete(f"apikey:{key_hash}")
+        r.delete(_scope_key(key_hash))
     else:
         _fallback_store.pop(f"apikey:{key_hash}", None)
+        _fallback_store.pop(_scope_key(key_hash), None)
 
     _cache_delete(f"apikey:{key_hash}")
+    _cache_delete(_scope_key(key_hash))
 
 
 # ============================================================================

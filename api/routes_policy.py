@@ -578,10 +578,23 @@ async def import_policies(
 
     # Import agent configs
     agents_imported = 0
+    if bundle.agent_configs:
+        # Only when the bundle actually carries agents. A bundle of policies
+        # alone is not a registry write and must not start needing an admin
+        # key because this endpoint can also carry one.
+        from core.auth import require_registry_write
+        require_registry_write(request, tenant_id,
+                               "import agents in a policy bundle")
     for agent_id, agent_config in bundle.agent_configs.items():
         agent_config["agent_id"] = agent_id
         try:
-            register_agent(tenant_id, agent_config)
+            # Gated here too, or a bundle import is a documented way around
+            # self-registration constraints. A legitimate restore uses an
+            # admin key, which this leaves alone.
+            from core.auth import constrain_self_registration
+            register_agent(
+                tenant_id,
+                constrain_self_registration(request, tenant_id, agent_config))
         except ValueError as e:
             # Name the offending agent. A bundle can carry many, and "invalid
             # agent_id" without saying which one is not actionable.

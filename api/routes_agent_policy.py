@@ -98,6 +98,7 @@ class ToolAuthorizationRequest(BaseModel):
 @router.post("/register")
 async def register_agent_endpoint(
     agent: AgentRegistration,
+    request: Request,
     tenant_id: str = Depends(get_tenant_from_request)
 ):
     """Register a new agent with its tools and role permissions.
@@ -118,8 +119,18 @@ async def register_agent_endpoint(
     ```
     """
     try:
-        result = register_agent(tenant_id, agent.dict())
+        from core.auth import require_registry_write, constrain_self_registration
+        require_registry_write(request, tenant_id, "register an agent")
+        result = register_agent(
+            tenant_id,
+            constrain_self_registration(request, tenant_id, agent.dict()))
         return {"success": True, "agent": result}
+    except HTTPException:
+        # HTTPException IS an Exception, so without this the catch-all below
+        # turns an authorization refusal into a 500 — the control still
+        # refuses the write, but reports it as our fault and pages whoever
+        # owns the service.
+        raise
     except ValueError as e:
         # Rejected input is the caller's fault, not ours. Without this the
         # bare `except Exception` below turns a bad agent_id into a 500 and

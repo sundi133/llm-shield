@@ -230,6 +230,21 @@ absent. This spec adds one new value, `pending`, which
 
 ## 4. API / interface
 
+### The self-mint path, which must not become an escalation
+
+`POST /v1/tenant/me/api-keys` lets a tenant key mint further tenant keys, up to
+ten, calling `add_api_key()` with no scope. Today that is safe only because
+`enforce` refuses unscoped keys: a runtime key can mint a key, and the key it
+mints cannot write the registry either.
+
+That safety is incidental, not designed, and it inverts the moment anyone
+grandfathers unscoped keys. Two rules for PR 2, both tested:
+
+- this endpoint must **never** accept a `scope` parameter, or a runtime key
+  mints itself an admin key and the whole mechanism is decorative
+- under `enforce` it requires an admin-scoped caller, because minting a
+  credential is an administrative act
+
 ### Minting a scoped key
 
 `POST /v1/admin/tenants/{tenant_id}/api-keys` — platform admin plane,
