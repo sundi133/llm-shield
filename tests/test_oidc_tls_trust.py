@@ -172,3 +172,85 @@ def test_nothing_in_the_oidc_path_contacts_a_vendor_endpoint():
         src = inspect.getsource(mod)
         for host in banned:
             assert host not in src, f"{mod.__name__} references {host}"
+
+
+# ── inline PEM, for platforms with no file mounts ────────────────────────
+#
+# Railway, Fly, Heroku and a plain Kubernetes Secret hand you environment
+# variables and nothing else. A path-only setting is unusable there, which
+# would mean "works on-prem, not on the platform you deploy demos to".
+
+
+@pytest.fixture(autouse=True)
+def clean_pem(monkeypatch):
+    monkeypatch.delenv("SHIELD_OIDC_CA_PEM", raising=False)
+    tls_trust._materialized_pem = None
+
+
+def _pem_text():
+    import certifi
+    return open(certifi.where()).read()
+
+
+def test_inline_pem_is_written_and_used(monkeypatch):
+    monkeypatch.setenv("SHIELD_OIDC_CA_PEM", _pem_text())
+    path = tls_trust.httpx_verify()
+    assert isinstance(path, str) and path.endswith(".pem")
+    assert "-----BEGIN" in open(path).read()
+
+
+def test_inline_pem_builds_an_ssl_context(monkeypatch):
+    monkeypatch.setenv("SHIELD_OIDC_CA_PEM", _pem_text())
+    assert isinstance(tls_trust.ssl_context(), ssl.SSLContext)
+
+
+def test_the_temp_file_is_private(monkeypatch):
+    """A CA bundle is not secret, but a world-writable one is a trust store
+    any process on the box can edit."""
+    import os
+    import stat
+    monkeypatch.setenv("SHIELD_OIDC_CA_PEM", _pem_text())
+    mode = os.stat(tls_trust.httpx_verify()).st_mode
+    assert not (mode & stat.S_IWOTH) and not (mode & stat.S_IROTH)
+
+
+def test_the_pem_is_written_once(monkeypatch):
+    monkeypatch.setenv("SHIELD_OIDC_CA_PEM", _pem_text())
+    assert tls_trust.httpx_verify() == tls_trust.httpx_verify()
+
+
+def test_escaped_newlines_are_repaired(monkeypatch):
+    r"""A PEM pasted into a dashboard field often arrives with literal \n.
+    Left alone it becomes one long line and OpenSSL complains about the
+    certificate rather than about the formatting."""
+    monkeypatch.setenv("SHIELD_OIDC_CA_PEM", _pem_text().replace("\n", "\\n"))
+    assert "-----BEGIN" in open(tls_trust.httpx_verify()).read()
+    assert isinstance(tls_trust.ssl_context(), ssl.SSLContext)
+
+
+def test_content_that_is_not_a_pem_is_a_clear_error(monkeypatch):
+    """Pasting a fingerprint, a path, or a base64 blob is the likely mistake."""
+    monkeypatch.setenv("SHIELD_OIDC_CA_PEM", "/etc/ssl/certs/ca.pem")
+    with pytest.raises(tls_trust.CABundleError) as e:
+        tls_trust.httpx_verify()
+    assert "BEGIN" in str(e.value)
+
+
+def test_a_mounted_path_wins_over_inline(monkeypatch, ca_file):
+    """An operator who mounted a file meant it. Silently preferring an
+    inherited platform variable over an explicit mount costs a day."""
+    monkeypatch.setenv("SHIELD_OIDC_CA_BUNDLE", ca_file)
+    monkeypatch.setenv("SHIELD_OIDC_CA_PEM", _pem_text())
+    assert tls_trust.httpx_verify() == ca_file
+
+
+def test_neither_set_still_means_default_trust(monkeypatch):
+    assert tls_trust.httpx_verify() is True
+
+
+def test_inline_pem_silences_the_internal_issuer_hint(monkeypatch, caplog):
+    import logging
+    monkeypatch.setenv("SHIELD_OIDC_CA_PEM", _pem_text())
+    with caplog.at_level(logging.INFO, logger="votal.oauth.tls"):
+        tls_trust.warn_if_unset_and_issuer_is_private("https://kc.internal/x")
+    assert "SHIELD_OIDC_CA" not in caplog.text

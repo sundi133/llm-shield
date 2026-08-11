@@ -28,6 +28,15 @@ logger = logging.getLogger("votal.oauth.tls")
 
 _ENV_VAR = "SHIELD_OIDC_CA_BUNDLE"
 
+# The same CA as inline PEM, for platforms with no way to mount a file.
+# Railway, Fly, Heroku and a plain Kubernetes Secret all hand you environment
+# variables and nothing else, so a path-only setting is unusable there. The
+# content is written once to a private temp file, because both httpx and
+# ssl.SSLContext want a path.
+_ENV_VAR_PEM = "SHIELD_OIDC_CA_PEM"
+
+_materialized_pem: Optional[str] = None
+
 # ssl contexts are not cheap to build and the bundle does not change at
 # runtime. Keyed by path so a test that changes the env var is not served a
 # stale context.
@@ -43,9 +52,56 @@ def ca_bundle_path() -> str:
     return (os.environ.get(_ENV_VAR, "") or "").strip()
 
 
+def ca_bundle_pem() -> str:
+    """Inline PEM content, or "" when not configured."""
+    return (os.environ.get(_ENV_VAR_PEM, "") or "").strip()
+
+
+def _materialize_pem() -> str:
+    """Write inline PEM to a private temp file and return its path.
+
+    Cached for the process: rewriting per request would churn temp files and
+    make the path unstable underneath a cached SSLContext.
+    """
+    global _materialized_pem
+    if _materialized_pem and os.path.isfile(_materialized_pem):
+        return _materialized_pem
+
+    pem = ca_bundle_pem()
+    # Tolerate a value pasted with literal \n, which is what happens when a PEM
+    # is squeezed through a dashboard field or a shell that ate the newlines.
+    # Without this the file is one long line and OpenSSL rejects it with an
+    # error about the certificate rather than about the formatting.
+    if "\\n" in pem and "-----BEGIN" in pem:
+        pem = pem.replace("\\n", "\n")
+    if "-----BEGIN" not in pem:
+        raise CABundleError(
+            f"{_ENV_VAR_PEM} is set but does not contain a PEM certificate "
+            f"(no -----BEGIN----- line). Paste the full certificate including "
+            f"its header and footer.")
+
+    import tempfile
+    fd, path = tempfile.mkstemp(prefix="shield-oidc-ca-", suffix=".pem")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(pem if pem.endswith("\n") else pem + "\n")
+        os.chmod(path, 0o600)
+    except Exception as e:
+        raise CABundleError(f"{_ENV_VAR_PEM} could not be written to disk: {e}")
+
+    _materialized_pem = path
+    logger.info("Using inline CA bundle from %s", _ENV_VAR_PEM)
+    return path
+
+
 def _validated_path() -> str:
     path = ca_bundle_path()
     if not path:
+        # Path wins when both are set: an operator who mounted a file meant it,
+        # and silently preferring an inherited platform variable over their
+        # explicit mount is the kind of surprise that costs a day.
+        if ca_bundle_pem():
+            return _materialize_pem()
         return ""
     if not os.path.isfile(path):
         raise CABundleError(
@@ -98,7 +154,7 @@ def warn_if_unset_and_issuer_is_private(issuer: str) -> None:
     A hint, not a check. It turns the most common on-prem failure from a bare
     TLS error into a line that names the setting to change.
     """
-    if ca_bundle_path() or not issuer:
+    if ca_bundle_path() or ca_bundle_pem() or not issuer:
         return
     host = issuer.split("://")[-1].split("/")[0].split(":")[0]
     looks_internal = (
