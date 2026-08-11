@@ -2686,11 +2686,12 @@
           <div style="font-size:22px;font-weight:700;letter-spacing:-0.3px;color:var(--text);">Agent Registry</div>
           <div style="color:var(--text-dim);font-size:13px;margin-top:0.2rem;">Register AI agents, define allowed tools, and set delegation or budget defaults without changing prompt guardrails.</div>
         </div>
-        <div style="display:flex;gap:0.5rem;">
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-shrink:0;">
+          <span id="key-scope-badge"></span>
           <button class="small" onclick="downloadTenantBundle()" style="font-size:12px;">Download Config</button>
-          <button class="small" onclick="triggerTenantBundleUpload()" style="font-size:12px;">Upload Config</button>
+          <button class="small" data-registry-write onclick="triggerTenantBundleUpload()" style="font-size:12px;">Upload Config</button>
           <button class="small" onclick="loadAgentData()" style="font-size:12px;">Refresh</button>
-          <button class="primary" onclick="showAddAgentModal()" style="font-size:12px;">+ Add Agent</button>
+          <button class="primary" data-registry-write onclick="showAddAgentModal()" style="font-size:12px;">+ Add Agent</button>
         </div>
       </div>
       <div class="card" style="margin-bottom:1rem;background:linear-gradient(180deg,rgba(16,185,129,0.08),rgba(16,185,129,0.03));border-color:rgba(16,185,129,0.18);">
@@ -2706,6 +2707,7 @@
       <div style="margin-bottom:1rem;">
         <input id="agents-search" type="text" placeholder="Search agents by name, key, or tool..." oninput="filterAgents()" style="width:100%;padding:0.55rem 0.85rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
       </div>
+      <div id="agents-pending"></div>
       <div id="agents-shadow-agents"></div>
       <div id="agents-content">Loading agents...</div>
     </div>
@@ -7129,9 +7131,13 @@ function filterActivity() {
 
 async function loadAgentData() {
   try {
+    // Fetched alongside the registry rather than once at login: this page is
+    // where the answer matters, and a key swapped in another tab would
+    // otherwise leave stale controls enabled here.
     const [regResponse, unregResponse] = await Promise.all([
       apiCall('/v1/agents/registry'),
       apiCall('/v1/agents/unregistered').catch(() => null),
+      loadKeyScope(),
     ]);
     if (regResponse && regResponse.success && regResponse.agents) {
       const unreg = unregResponse && unregResponse.success ? {
@@ -7139,6 +7145,8 @@ async function loadAgentData() {
         tools: unregResponse.unregistered_tools || {},
       } : { agents: {}, tools: {} };
       displayAgents(regResponse.agents, unreg);
+      // After render: the cards this disables are built by displayAgents.
+      applyKeyScopeToControls();
     } else {
       document.getElementById('agents-content').innerHTML = `
         <div style="color: var(--text-muted); text-align: center; padding: 2rem;">
@@ -7164,6 +7172,13 @@ function displayAgents(agents, unreg) {
   unreg = unreg || { agents: {}, tools: {} };
   const shadowAgents = unreg.agents || {};
   const shadowAgentCount = Object.keys(shadowAgents).length;
+
+  // Agents that self-registered and are waiting for someone to grant them
+  // something. They are already inert — the guard blocks them — so this is a
+  // queue to work through, not an incident.
+  const pending = Object.entries(agents || {})
+    .filter(([, a]) => (a || {}).status === 'pending');
+  _renderPendingBanner(pending);
 
   window._shadowTools = unreg.tools || {};
   const shadowToolCount = Object.keys(window._shadowTools).length;
@@ -7354,7 +7369,12 @@ async function unblockAgent(agentId) {
 }
 
 function createAgentCard(agentId, agent) {
-  const isEnabled = agent.status !== 'disabled';
+  // Three states, not two. `status !== 'disabled'` rendered a pending agent as
+  // "● Active" while RBACGuard was blocking every one of its calls — the
+  // portal contradicting the guard, which is worse than showing nothing.
+  const status = agent.status || 'active';
+  const isPending = status === 'pending';
+  const isEnabled = status !== 'disabled' && !isPending;
 
   return `
     <div class="agent-card" style="background: var(--bg-2); border-radius: 8px; border: 1px solid var(--border); overflow: hidden;">
@@ -7364,14 +7384,27 @@ function createAgentCard(agentId, agent) {
           <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
             <div style="font-weight: 600; font-size: 15px;">${agent.name || agentId}</div>
             <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <span class="status-badge ${isEnabled ? 'enabled' : 'disabled'}" style="font-size: 11px; padding: 0.25rem 0.5rem; border-radius: 12px; font-weight: 500;">
-                ${isEnabled ? '● Active' : '○ Disabled'}
-              </span>
-              <label class="toggle" style="position: relative; display: inline-block; width: 44px; height: 24px;">
-                <input type="checkbox" ${isEnabled ? 'checked' : ''} onchange="toggleAgent('${agentId}', this.checked)" style="opacity: 0; width: 0; height: 0;">
-                <span class="slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: ${isEnabled ? '#10b981' : '#6b7280'}; transition: .4s; border-radius: 24px;"></span>
-                <span class="slider-dot" style="position: absolute; content: ''; height: 18px; width: 18px; left: ${isEnabled ? '23px' : '3px'}; bottom: 3px; background: white; transition: .4s; border-radius: 50%;"></span>
-              </label>
+              ${isPending
+                ? `<span title="Self-registered with no permissions. RBACGuard blocks every call until it is approved."
+                         style="font-size: 11px; padding: 0.25rem 0.5rem; border-radius: 12px; font-weight: 600;
+                                background: var(--warn-bg, #fef3c7); color: var(--warn, #92400e);">
+                     &#9203; Pending approval
+                   </span>
+                   <button onclick="approveAgent('${agentId}', ${(agent.tools || []).length})"
+                           data-registry-write
+                           class="primary" style="font-size: 11px; padding: 0.3rem 0.7rem;">Approve</button>`
+                /* No enable/disable toggle while pending. The toggle writes
+                   status=active, so flicking it off and on would approve the
+                   agent through a control labelled "enable" — an approval by
+                   accident, which is exactly what pending exists to prevent. */
+                : `<span class="status-badge ${isEnabled ? 'enabled' : 'disabled'}" style="font-size: 11px; padding: 0.25rem 0.5rem; border-radius: 12px; font-weight: 500;">
+                     ${isEnabled ? '● Active' : '○ Disabled'}
+                   </span>
+                   <label class="toggle" style="position: relative; display: inline-block; width: 44px; height: 24px;">
+                     <input type="checkbox" ${isEnabled ? 'checked' : ''} onchange="toggleAgent('${agentId}', this.checked)" style="opacity: 0; width: 0; height: 0;">
+                     <span class="slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: ${isEnabled ? '#10b981' : '#6b7280'}; transition: .4s; border-radius: 24px;"></span>
+                     <span class="slider-dot" style="position: absolute; content: ''; height: 18px; width: 18px; left: ${isEnabled ? '23px' : '3px'}; bottom: 3px; background: white; transition: .4s; border-radius: 50%;"></span>
+                   </label>`}
             </div>
           </div>
           <div style="font-size: 12px; color: var(--text-dim); margin-bottom: 0.5rem;">${agent.description || 'No description'}</div>
@@ -7399,8 +7432,8 @@ function createAgentCard(agentId, agent) {
           </div>
         </div>
         <div style="display: flex; gap: 0.5rem;">
-          <button onclick="editAgent('${agentId}')" class="secondary" style="font-size: 11px; padding: 0.4rem 0.75rem;">Edit</button>
-          <button onclick="deleteAgent('${agentId}')" class="danger" style="font-size: 11px; padding: 0.4rem 0.75rem; background: var(--danger); color: white; border: none;">Delete</button>
+          <button onclick="editAgent('${agentId}')" data-registry-write class="secondary" style="font-size: 11px; padding: 0.4rem 0.75rem;">Edit</button>
+          <button onclick="deleteAgent('${agentId}')" data-registry-write class="danger" style="font-size: 11px; padding: 0.4rem 0.75rem; background: var(--danger); color: white; border: none;">Delete</button>
         </div>
       </div>
 
@@ -7490,6 +7523,109 @@ function createAgentPermissionsMatrix(agent) {
 }
 
 // Agent Management Functions
+function _renderPendingBanner(pending) {
+  const el = document.getElementById('agents-pending');
+  if (!el) return;
+  if (!pending.length) { el.innerHTML = ''; return; }
+
+  const rows = pending.map(([id, a]) => `
+    <div style="display:flex;align-items:center;gap:0.6rem;padding:0.35rem 0;font-size:12px;">
+      <code style="background:var(--bg);padding:0.15rem 0.4rem;border-radius:4px;">${escapeHtml(id)}</code>
+      <span style="color:var(--text-muted);">${escapeHtml(a.name || '')}</span>
+      ${a.owner ? `<span style="color:var(--text-muted);">owner ${escapeHtml(a.owner)}</span>` : ''}
+      <button onclick="editAgent('${id}')" data-registry-write class="small"
+              style="font-size:11px;padding:0.2rem 0.55rem;margin-left:auto;">Review</button>
+      <button onclick="approveAgent('${id}', ${(a.tools || []).length})" data-registry-write
+              class="primary" style="font-size:11px;padding:0.2rem 0.55rem;">Approve</button>
+    </div>`).join('');
+
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:1rem;background:var(--warn-bg,#fef3c7);
+                             border-color:var(--warn,#92400e);">
+      <div style="font-weight:600;font-size:13px;color:var(--warn,#92400e);">
+        ${pending.length} agent${pending.length > 1 ? 's' : ''} awaiting approval
+      </div>
+      <div style="font-size:11px;color:var(--text-dim);margin:0.15rem 0 0.5rem;">
+        Self-registered with no permissions. Every call is blocked until approved,
+        so nothing is running unreviewed.
+      </div>
+      ${rows}
+    </div>`;
+}
+
+// What this API key may do. Populated once per page load; null until then, and
+// treated as permissive so a failed lookup never hides controls that work.
+let KEY_SCOPE = null;
+
+async function loadKeyScope() {
+  try {
+    KEY_SCOPE = await apiCall('/v1/tenant/me/key-scope');
+  } catch (e) {
+    KEY_SCOPE = null;      // older Shield, or the call failed — assume allowed
+  }
+  renderKeyScopeBadge();
+}
+
+function canWriteRegistry() {
+  return !KEY_SCOPE || KEY_SCOPE.registry_write !== false;
+}
+
+function renderKeyScopeBadge() {
+  const el = document.getElementById('key-scope-badge');
+  if (!el) return;
+  // Only worth saying when it is NOT the ordinary case. A badge on every
+  // screen for every user is noise people stop reading.
+  if (!KEY_SCOPE || (KEY_SCOPE.scope === null && KEY_SCOPE.enforcement === 'off')) {
+    el.innerHTML = '';
+    return;
+  }
+  const blocked = !canWriteRegistry();
+  // nowrap: without it "runtime key · read only" breaks across two lines and
+  // overlaps the page description sitting to its left.
+  el.innerHTML = `<span title="${blocked
+      ? 'This key cannot write the agent registry. Use an admin-scoped key.'
+      : 'Scope of the API key this session is using.'}"
+      style="font-size:11px;padding:0.25rem 0.6rem;border-radius:12px;font-weight:600;
+             white-space:nowrap;
+             background:${blocked ? 'var(--warn-bg,#fef3c7)' : 'var(--bg-3,#eef2ff)'};
+             color:${blocked ? 'var(--warn,#92400e)' : 'var(--text-dim)'};">
+      ${escapeHtml(KEY_SCOPE.scope || 'unscoped')} key${blocked ? ' &middot; read only' : ''}
+    </span>`;
+}
+
+function applyKeyScopeToControls() {
+  if (canWriteRegistry()) return;
+  // Disable rather than hide. A control that vanishes reads as a bug; one
+  // that is visibly disabled and says why reads as a policy.
+  document.querySelectorAll('[data-registry-write]').forEach(b => {
+    b.disabled = true;
+    b.style.opacity = '0.5';
+    b.style.cursor = 'not-allowed';
+    b.title = 'Requires an admin-scoped API key '
+            + '(SHIELD_REGISTRY_WRITE_SCOPE=enforce)';
+  });
+}
+
+async function approveAgent(agentId, toolCount) {
+  if (!toolCount && !confirm(
+      `"${agentId}" has no tools granted, so approving it now produces an `
+      + `active agent that can do nothing.\n\nApprove anyway? `
+      + `(Cancel to edit it first.)`)) {
+    return;
+  }
+  try {
+    await apiCall(`/v1/agents/registry/${agentId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: 'active' }),
+    });
+    showToast(`Agent "${agentId}" approved`, 'success');
+  } catch (error) {
+    showToast('Failed to approve agent: ' + error.message, 'error');
+  } finally {
+    loadAgentData();
+  }
+}
+
 async function toggleAgent(agentId, enabled) {
   const status = enabled ? 'active' : 'disabled';
   try {
