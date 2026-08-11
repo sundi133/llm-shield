@@ -411,6 +411,26 @@ def require_registry_write(request, tenant_id: str = "",
     # Passed explicitly by callers that resolved it themselves: routes reached
     # with SHIELD_AUTH_ENABLED off never have request.state.tenant_id set, and
     # the sandbox exemption below has to work there too.
+    # A signed-in human is decided by their groups, not by a key scope. Two
+    # notions of "may administer" now exist and they must not become two
+    # different answers — an administrator who signs in should be able to do
+    # what an admin-scoped key can do, and a non-administrator should be
+    # refused exactly like a runtime key.
+    principal = portal_principal(request)
+    if principal is not None:
+        if principal.get("is_admin"):
+            return
+        if mode == MODE_WARN:
+            _record_scope_warning(request, principal.get("tenant_id", ""),
+                                  "user:not-admin", action)
+            return
+        raise HTTPException(
+            status_code=403,
+            detail=(f"{principal.get('email') or principal.get('sub')} is "
+                    f"signed in but is not a portal administrator, so cannot "
+                    f"{action}."),
+        )
+
     tenant_id = (tenant_id
                  or getattr(getattr(request, "state", None), "tenant_id", "")
                  or "")
