@@ -68,6 +68,34 @@ def test_the_context_is_cached_per_path(monkeypatch, ca_file):
     assert tls_trust.ssl_context() is tls_trust.ssl_context()
 
 
+def test_a_rotated_ca_is_picked_up_without_a_restart(monkeypatch, ca_file):
+    """cert-manager, a config-map remount and an Ansible run all replace the
+    CA in place. Caching on the path alone would ignore that until restart,
+    and the symptom is TLS failures a restart "mysteriously" fixes."""
+    import os, time
+    monkeypatch.setenv("SHIELD_OIDC_CA_BUNDLE", ca_file)
+    first = tls_trust.ssl_context()
+
+    time.sleep(0.01)
+    with open(ca_file, "a") as fh:
+        fh.write("\n# rotated\n")
+    os.utime(ca_file, None)
+
+    assert tls_trust.ssl_context() is not first
+
+
+def test_the_context_cache_does_not_grow_across_rotations(monkeypatch, ca_file):
+    import os, time
+    monkeypatch.setenv("SHIELD_OIDC_CA_BUNDLE", ca_file)
+    for i in range(5):
+        with open(ca_file, "a") as fh:
+            fh.write(f"\n# rotation {i}\n")
+        os.utime(ca_file, None)
+        time.sleep(0.01)
+        tls_trust.ssl_context()
+    assert len(tls_trust._context_cache) == 1
+
+
 # ── failures must be legible ─────────────────────────────────────────────
 
 

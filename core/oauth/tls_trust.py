@@ -137,14 +137,28 @@ def ssl_context() -> Optional[ssl.SSLContext]:
     path = _validated_path()
     if not path:
         return None
-    cached = _context_cache.get(path)
+    # Keyed on the file's identity, not just its path. A CA rotated in place —
+    # which is exactly what cert-manager, a config-map remount or an Ansible
+    # run does — would otherwise be ignored until the process restarted, and
+    # the symptom is TLS failures that a restart "mysteriously" fixes.
+    try:
+        stat = os.stat(path)
+        fingerprint = (path, stat.st_mtime_ns, stat.st_size)
+    except OSError as e:
+        raise CABundleError(f"{_ENV_VAR}={path!r} could not be read: {e}")
+
+    cached = _context_cache.get(fingerprint)
     if cached is not None:
         return cached
     try:
         ctx = ssl.create_default_context(cafile=path)
     except Exception as e:
         raise CABundleError(f"{_ENV_VAR}={path!r} could not be loaded: {e}")
-    _context_cache[path] = ctx
+    # One entry per rotation, and rotations are rare — but unbounded growth in
+    # a long-lived process is still a leak, so keep only the current one.
+    _context_cache.clear()
+    _context_cache[fingerprint] = ctx
+    logger.info("Loaded CA bundle %s (%d bytes)", path, stat.st_size)
     return ctx
 
 

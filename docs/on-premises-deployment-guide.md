@@ -2523,6 +2523,161 @@ curl -w "@curl-format.txt" -s -o /dev/null \
 
 ---
 
+## Portal SSO and your internal CA
+
+The tenant portal can authenticate humans against your own IdP over OIDC. This
+section is about the part that is specific to running behind a corporate PKI,
+because that is where an otherwise-correct setup fails with an error that does
+not say why.
+
+### Do you need a CA bundle at all?
+
+Run this against your IdP from a host on the same network:
+
+```bash
+openssl s_client -connect keycloak.internal:443 -servername keycloak.internal </dev/null 2>/dev/null | grep "Verify return code"
+```
+
+`Verify return code: 0 (ok)` means **skip this entire section.** Your IdP uses
+a publicly trusted CA and Shield needs no extra configuration.
+
+Any other code (`19`, `20`, `21`) means the certificate chains to a CA that the
+default trust store does not know, which is the normal situation for an
+internal Keycloak, ADFS or an internal Entra endpoint.
+
+### Why the default does not work
+
+Shield's outbound HTTP client builds its trust store from a bundled CA list,
+not from the operating system's. A certificate your servers trust everywhere
+else will still be rejected here. Setting `SSL_CERT_FILE` is not a reliable
+workaround: Python silently ignores a missing file and falls back to the
+default store, so a typo becomes a certificate error that mentions no path.
+
+Shield therefore takes the bundle explicitly and validates it when it is read.
+
+### Getting the bundle
+
+Ask whoever runs your PKI for the internal **root** CA certificate. It is the
+same file already distributed to your servers, usually one of:
+
+```bash
+ls /usr/local/share/ca-certificates/ /etc/pki/ca-trust/source/anchors/ 2>/dev/null
+```
+
+Include the root, not only the intermediate. An intermediate alone does not
+verify, and this is the most common mistake.
+
+For a lab or a proof of concept you can take the chain from the server itself:
+
+```bash
+openssl s_client -showcerts -connect keycloak.internal:443 -servername keycloak.internal </dev/null 2>/dev/null | awk '/BEGIN CERT/,/END CERT/' > internal-ca.pem
+```
+
+Understand what that does before using it in production: you are trusting the
+certificate presented by the server you are trying to verify. Anyone able to
+intercept that connection can hand you their own CA and you will install it.
+
+### Verify the bundle before configuring Shield
+
+This separates "wrong CA file" from "Shield misconfigured", which are otherwise
+indistinguishable from the logs:
+
+```bash
+openssl s_client -connect keycloak.internal:443 -servername keycloak.internal -CAfile internal-ca.pem </dev/null 2>&1 | grep "Verify return code"
+```
+
+You need `0 (ok)`. If not, the file is the wrong CA and no amount of Shield
+configuration will help.
+
+### Configure Shield
+
+Two ways, depending on whether your platform can mount files.
+
+**A mounted file**, for Docker, Podman, Kubernetes and systemd:
+
+```bash
+docker run -p 8080:8080 \
+  -e SHIELD_OIDC_CA_BUNDLE=/etc/ssl/certs/internal-ca.pem \
+  -v /etc/pki/internal-ca.pem:/etc/ssl/certs/internal-ca.pem:ro \
+  shield-admin
+```
+
+**Inline**, for platforms that only offer environment variables:
+
+```bash
+SHIELD_OIDC_CA_PEM="-----BEGIN CERTIFICATE-----
+MIIDxTCCAq2gAwIBAgIBADANBg...
+-----END CERTIFICATE-----"
+```
+
+If both are set the mounted path wins, on the assumption that an operator who
+mounted a file meant it.
+
+### Confirm the container can read it
+
+The failure that wastes an afternoon is a bundle present on the host but
+unreadable by the container user:
+
+```bash
+docker run --rm \
+  -e SHIELD_OIDC_CA_BUNDLE=/etc/ssl/certs/internal-ca.pem \
+  -v /etc/pki/internal-ca.pem:/etc/ssl/certs/internal-ca.pem:ro \
+  shield-admin \
+  python3 -c "from core.oauth.tls_trust import httpx_verify; print('bundle OK:', httpx_verify())"
+```
+
+Printing the path means Shield will use it. Anything else names the specific
+problem: missing, a directory, or not readable.
+
+### Rotation
+
+**The CA bundle is a trust anchor, not a certificate.** It does not follow your
+server certificate's renewal cycle, and this distinction is what makes the
+operational answer simple:
+
+| Event | Update the bundle? |
+|---|---|
+| IdP's TLS certificate renewed, same CA | **No.** This is the point of a CA. |
+| IdP moved to a different hostname | No, provided the CA is unchanged |
+| Internal **intermediate** CA re-issued | **Yes** |
+| Internal **root** CA re-issued or rolled over | **Yes** |
+| Migrating the IdP to a public CA | No — remove the setting instead |
+
+Root CAs typically live 10 to 20 years; intermediates 3 to 5. The realistic
+trigger is an intermediate rotation, and the usual symptom is that logins keep
+working for existing sessions and fail for new ones, because the JWKS fetch is
+what breaks.
+
+Two things make this survivable:
+
+- **Include the root, not just the intermediate.** A bundle anchored at the
+  root keeps verifying when the intermediate is re-issued from it.
+- **Rotation in place needs no restart.** Shield keys its cached TLS context on
+  the file's identity, so replacing the file — cert-manager, a config-map
+  remount, an Ansible run — takes effect on the next outbound call. A bundle
+  supplied inline via `SHIELD_OIDC_CA_PEM` is materialised once per process, so
+  changing that variable does require a restart, which platforms that only
+  offer environment variables do anyway.
+
+Track your CA's expiry alongside your other certificates:
+
+```bash
+openssl x509 -in internal-ca.pem -noout -subject -enddate
+```
+
+### Air-gapped deployments
+
+Nothing in the OIDC path contacts a vendor endpoint. The only hosts reached are
+the issuer configured for that tenant, for discovery and JWKS. There is a test
+asserting that no module in this path references a vendor domain, because a
+hardcoded URL would break an air-gapped install and no functional test would
+catch it.
+
+Requirements are therefore only: the IdP is reachable from Shield, its CA is
+trusted as above, and clocks are within the token validation leeway.
+
+---
+
 **Document Version:** 1.0  
 **Last Updated:** April 6, 2026  
 **Author:** LLM Shield Engineering Team  
