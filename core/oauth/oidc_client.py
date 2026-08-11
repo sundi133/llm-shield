@@ -52,7 +52,12 @@ async def discover_openid_config(issuer: str) -> dict:
         The parsed JSON discovery document.
     """
     url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    # verify= explicitly: httpx builds its context from the bundled certifi
+    # CAs, not the system trust store, so an on-prem IdP behind a private CA
+    # fails here with an error that never mentions the setting that fixes it.
+    from core.oauth.tls_trust import httpx_verify, warn_if_unset_and_issuer_is_private
+    warn_if_unset_and_issuer_is_private(issuer)
+    async with httpx.AsyncClient(timeout=10.0, verify=httpx_verify()) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         return resp.json()
