@@ -360,12 +360,50 @@ async def callback(request: Request, code: str = "", state: str = "",
 
 @router.post("/logout")
 async def logout(request: Request, response: Response):
-    """Destroy the session and clear the cookie.
+    """Destroy the session, clear the cookie, and offer the IdP's logout URL.
 
     Always 200, even with no session: a logout that reports "you were not
     signed in" is noise, and the caller wanted to end up signed out.
+
+    `idp_logout_url` matters more than it looks. Destroying our session does
+    not touch the IdP's, so the next "Sign in with SSO" is answered from the
+    IdP's existing session and the same person is signed straight back in
+    without ever seeing a login form. That reads as a broken sign-out, and on
+    a shared machine it IS one: the next person at the keyboard gets the
+    previous person's account.
+
+    Returned rather than redirected to, because this is a POST from fetch(),
+    and because a deployment whose IdP has no end_session_endpoint should
+    still get a working local sign-out.
     """
+    from storage.portal_sessions import get_session
+
     session_id = request.cookies.get(COOKIE_NAME, "")
+    record = get_session(session_id) if session_id else None
     revoked = revoke_session(session_id) if session_id else False
     response.delete_cookie(COOKIE_NAME, path="/")
-    return {"success": True, "revoked": bool(revoked)}
+
+    idp_logout_url = ""
+    issuer = (record or {}).get("issuer", "")
+    if issuer:
+        try:
+            discovery = await discover_openid_config(issuer)
+            end_session = discovery.get("end_session_endpoint", "")
+            if end_session:
+                params = {"post_logout_redirect_uri": f"{portal_base_url()}/tenant"}
+                # client_id is required by Keycloak when no id_token_hint is
+                # sent. We deliberately do not store the id_token — keeping a
+                # bearer credential for the life of a session to make logout
+                # tidier is a poor trade.
+                tenant_id = (record or {}).get("tenant_id", "")
+                cfg = await oidc_registry.get_provider_by_issuer(tenant_id, issuer)
+                if cfg:
+                    params["client_id"] = cfg.client_id
+                idp_logout_url = f"{end_session}?{urlencode(params)}"
+        except Exception as e:
+            # Local sign-out already succeeded. An unreachable IdP must not
+            # turn a successful logout into an error.
+            logger.debug("could not build IdP logout URL for %s: %s", issuer, e)
+
+    return {"success": True, "revoked": bool(revoked),
+            "idp_logout_url": idp_logout_url}

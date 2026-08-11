@@ -82,8 +82,13 @@ def idp(monkeypatch, rsa_key):
     state = {"token_form": None, "id_token": None, "token_status": 200}
 
     async def _discover(issuer):
+        # end_session_endpoint included because real Keycloak advertises it.
+        # A fixture that omits what the real thing returns tests a world that
+        # does not exist — this one was caught by a logout URL coming back
+        # empty in a test while working against a live IdP.
         return {"authorization_endpoint": f"{issuer}/protocol/openid-connect/auth",
                 "token_endpoint": f"{issuer}/protocol/openid-connect/token",
+                "end_session_endpoint": f"{issuer}/protocol/openid-connect/logout",
                 "jwks_uri": f"{issuer}/protocol/openid-connect/certs"}
 
     monkeypatch.setattr(pa, "discover_openid_config", _discover)
@@ -151,7 +156,14 @@ def provider(monkeypatch):
         return providers.get(name) if tenant_id == TENANT else None
 
     monkeypatch.setattr(pa.oidc_registry, "get_providers", _get_providers)
+    async def _by_issuer(tenant_id, issuer):
+        if tenant_id != TENANT:
+            return None
+        return next((p for p in providers.values()
+                     if p.issuer.rstrip("/") == issuer.rstrip("/")), None)
+
     monkeypatch.setattr(pa.oidc_registry, "get_provider", _get_provider)
+    monkeypatch.setattr(pa.oidc_registry, "get_provider_by_issuer", _by_issuer)
     return cfg
 
 
@@ -439,3 +451,66 @@ def test_providers_does_not_enumerate_tenants(client):
                          params={"tenant": "does-not-exist"}).json()
     none = client.get("/v1/tenant/auth/providers").json()
     assert unknown == none == {"providers": [], "sso_available": False}
+
+
+# ── RP-initiated logout ──────────────────────────────────────────────────
+#
+# Destroying our session does not touch the IdP's. Without sending the user on
+# to the IdP's end_session_endpoint, the next "Sign in with SSO" is answered
+# from the IdP's existing session and the same person is signed straight back
+# in with no login form. That reads as a broken sign-out, and on a shared
+# machine it IS one: the next person at the keyboard gets the previous
+# person's account.
+
+
+def test_logout_returns_the_idp_logout_url(client, idp):
+    r = _finish(client, _state_from(_begin(client)))
+    sid = r.headers["set-cookie"].split("=")[1].split(";")[0]
+    client.cookies.set(pa.COOKIE_NAME, sid)
+    body = client.post("/v1/tenant/auth/logout").json()
+    assert body["revoked"] is True
+    assert "openid-connect/logout" in body["idp_logout_url"]
+
+
+def test_the_logout_url_comes_back_to_us(client, idp):
+    from urllib.parse import urlparse, parse_qs
+    r = _finish(client, _state_from(_begin(client)))
+    sid = r.headers["set-cookie"].split("=")[1].split(";")[0]
+    client.cookies.set(pa.COOKIE_NAME, sid)
+    url = client.post("/v1/tenant/auth/logout").json()["idp_logout_url"]
+    q = parse_qs(urlparse(url).query)
+    assert q["post_logout_redirect_uri"] == [f"{BASE_URL}/tenant"]
+    # Keycloak requires client_id when no id_token_hint is sent, and we
+    # deliberately do not keep the id_token for the life of a session.
+    assert q["client_id"] == [CLIENT_ID]
+
+
+def test_the_local_session_dies_even_if_the_idp_is_unreachable(client, idp,
+                                                               monkeypatch):
+    """Local sign-out has already succeeded by then. An unreachable IdP must
+    not turn a successful logout into an error."""
+    r = _finish(client, _state_from(_begin(client)))
+    sid = r.headers["set-cookie"].split("=")[1].split(";")[0]
+    client.cookies.set(pa.COOKIE_NAME, sid)
+
+    async def _boom(issuer):
+        raise OSError("connection refused")
+    monkeypatch.setattr(pa, "discover_openid_config", _boom)
+
+    body = client.post("/v1/tenant/auth/logout").json()
+    assert body["success"] is True and body["revoked"] is True
+    assert body["idp_logout_url"] == ""
+    assert ps.get_session(sid) is None
+
+
+def test_logout_without_a_session_offers_no_idp_url(client):
+    body = client.post("/v1/tenant/auth/logout").json()
+    assert body["revoked"] is False and body["idp_logout_url"] == ""
+
+
+def test_the_id_token_is_never_stored(client, idp):
+    """Keeping a bearer credential for the life of a session to make logout
+    tidier is a poor trade. client_id in the logout URL is the alternative."""
+    r = _finish(client, _state_from(_begin(client)))
+    sid = r.headers["set-cookie"].split("=")[1].split(";")[0]
+    assert "id_token" not in (ps.get_session(sid) or {})

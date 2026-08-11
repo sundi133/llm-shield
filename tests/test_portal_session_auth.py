@@ -298,3 +298,61 @@ def test_require_sso_does_not_reach_the_guard_path():
     import api.routes_agents_registry as reg
     for mod in (rbac_guard, reg):
         assert "REQUIRE_SSO" not in inspect.getsource(mod)
+
+
+# ── the OTHER routers ────────────────────────────────────────────────────
+#
+# get_tenant_from_api_key is the tenant resolver for the registry, governance,
+# AIBOM and OpenAPI-MCP routers. Wiring only routes_tenant_self meant a
+# signed-in human could reach the portal and every page that lists agents
+# reported "Missing X-API-Key header" — SSO that authenticates the session
+# endpoint and nothing else.
+
+
+def test_the_registry_resolver_accepts_a_session(store):
+    from types import SimpleNamespace
+    import api.routes_agents_registry as reg
+    sid = ps.create_session(TENANT, CLAIMS, is_admin=True)
+    req = SimpleNamespace(cookies={auth.PORTAL_COOKIE_NAME: sid},
+                          state=SimpleNamespace(), headers={})
+    assert reg.get_tenant_from_api_key(req) == TENANT
+
+
+def test_the_registry_resolver_still_accepts_a_key(store):
+    """Every existing caller. The session path must be additive."""
+    from types import SimpleNamespace
+    import api.routes_agents_registry as reg
+    req = SimpleNamespace(cookies={}, state=SimpleNamespace(tenant_id=TENANT),
+                          headers={})
+    assert reg.get_tenant_from_api_key(req) == TENANT
+
+
+def test_the_registry_resolver_prefers_the_session(store):
+    from types import SimpleNamespace
+    import api.routes_agents_registry as reg
+    sid = ps.create_session(OTHER, CLAIMS, is_admin=True)
+    req = SimpleNamespace(cookies={auth.PORTAL_COOKIE_NAME: sid},
+                          state=SimpleNamespace(tenant_id=TENANT), headers={})
+    assert reg.get_tenant_from_api_key(req) == OTHER
+
+
+def test_the_registry_resolver_still_401s_with_nothing(store):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    import api.routes_agents_registry as reg
+    req = SimpleNamespace(cookies={}, state=SimpleNamespace(), headers={})
+    with pytest.raises(HTTPException) as e:
+        reg.get_tenant_from_api_key(req)
+    assert e.value.status_code == 401
+
+
+def test_every_router_sharing_the_resolver_gets_sessions():
+    """Four routers import this one function. A fix applied per-router would
+    have left whichever one nobody happened to click on."""
+    import inspect
+    import api.routes_governance as gov
+    import api.routes_aibom as aibom
+    import api.routes_openapi_mcp as omcp
+    import api.routes_agents_registry as reg
+    for mod in (gov, aibom, omcp):
+        assert mod.get_tenant_from_api_key is reg.get_tenant_from_api_key

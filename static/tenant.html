@@ -6015,15 +6015,24 @@ async function logout() {
   // Destroy the server-side session first. Clearing the cookie alone would
   // leave a live session that anyone recovering the cookie could reuse, which
   // is the whole reason sessions are server-side.
+  let idpLogout = '';
   try {
-    await fetch(`${BASE_URL}/v1/tenant/auth/logout`, {
+    const r = await fetch(`${BASE_URL}/v1/tenant/auth/logout`, {
       method: 'POST', credentials: 'same-origin',
     });
+    idpLogout = (await r.json()).idp_logout_url || '';
   } catch (e) { /* sign out locally regardless */ }
   localStorage.removeItem('votal_tenant_key');
   API_KEY = '';
   TENANT_INFO = null;
   SESSION = null;
+
+  // Ending OUR session does not end the IdP's. Without this the next
+  // "Sign in with SSO" is answered from the IdP's existing session and the
+  // same person is signed straight back in with no login form — which looks
+  // like sign-out is broken, and on a shared machine it is.
+  if (idpLogout) { window.location.href = idpLogout; return; }
+
   document.getElementById('app').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
 }
