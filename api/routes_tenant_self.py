@@ -683,7 +683,17 @@ async def create_my_api_key(request: Request, body: dict = None):
     # the body. A caller that could choose the scope of a key it mints could
     # mint itself an admin key, and the whole mechanism would be decorative.
     # Scoped keys come from the admin plane.
-    add_api_key(tenant_id, api_key)
+    # Label and expiry come from the portal's create dialog. Dropping them
+    # here is why every key created through the UI listed as "unlabelled":
+    # the admin endpoint accepted them and this one, which the portal actually
+    # calls, silently did not.
+    label = (body or {}).get("label") or "" if body else ""
+    expires_in_days = (body or {}).get("expires_in_days") if body else None
+    try:
+        add_api_key(tenant_id, api_key, label=label,
+                    expires_in_days=expires_in_days)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     log_admin_action(
         action="tenant_create_api_key",

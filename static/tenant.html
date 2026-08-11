@@ -5333,6 +5333,62 @@ openssl x509 -in agent.crt -fingerprint -sha256 -noout
 </div>
 
 <!-- Agent Modal (Add/Edit) -->
+<div id="apikey-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 2rem;">
+  <div style="background: var(--bg-2); border-radius: 12px; border: 1px solid var(--border); width: 100%; max-width: 520px;">
+    <div style="padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border);">
+      <div style="font-size: 16px; font-weight: 700;" id="apikey-modal-title">New API Key</div>
+      <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;" id="apikey-modal-sub">Your existing keys keep working. Nothing is revoked by creating one.</div>
+    </div>
+
+    <!-- Step 1: describe it -->
+    <div id="apikey-form" style="padding: 1.25rem 1.5rem;">
+      <div class="field">
+        <label style="font-size: 12px; font-weight: 600;">Label</label>
+        <input type="text" id="apikey-label" placeholder="ci-pipeline-v2" style="font-size: 13px;">
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
+          What uses this key. It is the only way to tell rows apart later.
+        </div>
+      </div>
+      <div class="field" style="margin-top: 0.75rem;">
+        <label style="font-size: 12px; font-weight: 600;">Expires after</label>
+        <select id="apikey-expiry" style="font-size: 13px;">
+          <option value="">Never</option>
+          <option value="30">30 days</option>
+          <option value="90">90 days</option>
+          <option value="365">1 year</option>
+        </select>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
+          Shield never expires a key you did not set an expiry on.
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: the key, once -->
+    <div id="apikey-result" class="hidden" style="padding: 1.25rem 1.5rem;">
+      <div style="background: var(--warn-bg, #fef3c7); color: var(--warn, #92400e);
+                  padding: 0.6rem 0.8rem; border-radius: 6px; font-size: 12px; font-weight: 600;">
+        Copy this now. It is not stored and cannot be shown again.
+      </div>
+      <div style="display: flex; gap: 0.5rem; align-items: stretch; margin-top: 0.75rem;">
+        <code id="apikey-value" style="flex: 1; padding: 0.6rem 0.75rem; background: var(--bg);
+              border: 1px solid var(--border); border-radius: 6px; font-size: 12px;
+              word-break: break-all;"></code>
+        <button class="small primary" onclick="copyNewApiKey()" style="font-size: 12px; white-space: nowrap;">Copy</button>
+      </div>
+      <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.75rem; line-height: 1.6;">
+        <strong>Next:</strong> roll this out to whatever used the old key, wait until
+        the old key&rsquo;s <em>Last used</em> stops advancing, then revoke it.
+        Both keys work in the meantime, so there is no window where neither does.
+      </div>
+    </div>
+
+    <div style="padding: 1rem 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem;">
+      <button class="secondary" onclick="closeApiKeyModal()" id="apikey-cancel" style="font-size: 12px;">Cancel</button>
+      <button class="primary" onclick="submitApiKey()" id="apikey-submit" style="font-size: 12px;">Create Key</button>
+    </div>
+  </div>
+</div>
+
 <div id="agent-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 2rem;">
   <div style="background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 760px; width: 100%; box-shadow: var(--shadow-lg); max-height: 90vh; overflow-y: auto;">
 
@@ -7359,27 +7415,59 @@ async function loadApiKeys() {
   }
 }
 
-async function createApiKey() {
-  const label = prompt('Label for the new key (e.g. ci-pipeline-v2):', '');
-  if (label === null) return;
+function createApiKey() {
+  // A modal, not prompt(). The old flow asked for a label in one browser
+  // dialog and then showed the key in another, which is both ugly and a bad
+  // place to put a secret you get exactly one chance to copy.
+  document.getElementById('apikey-label').value = '';
+  document.getElementById('apikey-expiry').value = '';
+  document.getElementById('apikey-form').classList.remove('hidden');
+  document.getElementById('apikey-result').classList.add('hidden');
+  document.getElementById('apikey-submit').classList.remove('hidden');
+  document.getElementById('apikey-submit').textContent = 'Create Key';
+  document.getElementById('apikey-cancel').textContent = 'Cancel';
+  document.getElementById('apikey-modal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('apikey-label').focus(), 50);
+}
+
+function closeApiKeyModal() {
+  document.getElementById('apikey-modal').classList.add('hidden');
+  loadApiKeys();
+}
+
+function copyNewApiKey() {
+  const v = document.getElementById('apikey-value').textContent;
+  navigator.clipboard.writeText(v).then(
+    () => showToast('Key copied', 'success'),
+    () => showToast('Could not copy — select and copy manually', 'error'));
+}
+
+async function submitApiKey() {
+  const label = document.getElementById('apikey-label').value.trim();
+  const days = document.getElementById('apikey-expiry').value;
+  const btn = document.getElementById('apikey-submit');
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
   try {
+    const body = { label };
+    if (days) body.expires_in_days = parseInt(days, 10);
     const d = await apiCall('/v1/tenant/me/api-keys', {
-      method: 'POST', body: JSON.stringify({ label }),
+      method: 'POST', body: JSON.stringify(body),
     });
-    // Shown once. The plaintext is never stored, so there is no second chance
-    // and the dialog has to say so.
-    if (d.api_key) {
-      window.prompt(
-        'Copy this key now — it is not stored and cannot be shown again.\n\n'
-        + 'Your existing keys still work. Roll this one out, confirm traffic '
-        + 'has moved on the Last used column, then revoke the old key.',
-        d.api_key);
-    }
-    showToast('API key created', 'success');
+    if (!d.api_key) throw new Error('no key returned');
+
+    document.getElementById('apikey-value').textContent = d.api_key;
+    document.getElementById('apikey-form').classList.add('hidden');
+    document.getElementById('apikey-result').classList.remove('hidden');
+    btn.classList.add('hidden');
+    // Cancel becomes Done: at this point the key exists whatever the button
+    // says, and offering "Cancel" would imply it can be undone.
+    document.getElementById('apikey-cancel').textContent = 'Done';
   } catch (e) {
     showToast('Could not create key: ' + e.message, 'error');
   } finally {
-    loadApiKeys();
+    btn.disabled = false;
+    if (!btn.classList.contains('hidden')) btn.textContent = 'Create Key';
   }
 }
 
