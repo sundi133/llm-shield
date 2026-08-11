@@ -113,6 +113,10 @@ COPY storage/tenant_store.py storage/
 # silently falls back to env defaults and every tenant's IdP claim-path
 # config stops applying. Silent, and security-relevant.
 COPY storage/role_binding_config.py storage/
+# Not imported by admin_app.py yet — the portal auth router that imports it
+# lands next. Copied now so that change cannot boot-loop the admin image on a
+# forgotten line, which is what this allowlist exists to prevent.
+COPY storage/portal_sessions.py storage/
 COPY storage/tenant_models.py storage/
 COPY storage/admin_audit.py storage/
 COPY storage/custom_policies.py storage/

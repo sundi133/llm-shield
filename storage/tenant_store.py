@@ -365,16 +365,29 @@ def kv_get(key: str):
     return data
 
 
-def kv_set(key: str, value) -> None:
+def kv_set(key: str, value, ttl: Optional[int] = None) -> None:
     """Write a JSON value by raw key, Redis-or-fallback.
 
     Lets registry/policy writes succeed in local dev with no Redis instead of
     raising "Redis connection not available". The in-memory fallback holds the
     JSON string, matching how RBACGuard reads it back.
+
+    ttl is seconds, and is a best-effort reclaim hint for Redis only — the
+    in-memory fallback has no expiry at all. Anything whose correctness depends
+    on expiring must ALSO carry its own deadline in the value and check it on
+    read, or a Redis-less deployment keeps it forever. Portal sessions do both.
     """
     payload = json.dumps(value)
     r = _get_redis()
     if r:
+        if ttl and ttl > 0:
+            try:
+                r.setex(key, int(ttl), payload)
+                return
+            except Exception:
+                # Upstash REST and older clients may not expose setex. The
+                # value's own deadline still governs correctness.
+                logger.debug("setex unavailable for %s, falling back to set", key)
         r.set(key, payload)
     else:
         _fallback_store[key] = payload
