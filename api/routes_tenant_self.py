@@ -107,6 +107,16 @@ class ValidatePromptRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=2000)
 
 
+def _actor(request: Request, tenant_id: str) -> str:
+    """Who performed this action: the signed-in human, else the tenant.
+
+    Wrapper so the import stays lazy — core.auth imports storage, and a
+    module-level import here would make the dependency circular at boot.
+    """
+    from core.auth import audit_actor
+    return audit_actor(request, tenant_id)
+
+
 def _require_tenant(request: Request) -> str:
     """Ensure request has a resolved tenant, else reject.
 
@@ -306,7 +316,7 @@ async def update_my_policies(request: Request, body: TenantSelfUpdateRequest):
 
     log_admin_action(
         action="tenant_self_update_policies",
-        actor=f"tenant:{tenant_id}",
+        actor=_actor(request, tenant_id),
         tenant_id=tenant_id,
         source_ip=request.client.host if request.client else "",
         before={"input_guardrails": list((existing.get("input_guardrails") or {}).keys()),
@@ -641,7 +651,7 @@ async def create_my_api_key(request: Request, body: dict = None):
 
     log_admin_action(
         action="tenant_create_api_key",
-        actor=f"tenant:{tenant_id}",
+        actor=_actor(request, tenant_id),
         tenant_id=tenant_id,
         source_ip=request.client.host if request.client else "",
         metadata={"key_preview": _key_preview(api_key)},
@@ -691,7 +701,7 @@ async def revoke_my_api_key(request: Request, body: dict):
 
     log_admin_action(
         action="tenant_revoke_api_key",
-        actor=f"tenant:{tenant_id}",
+        actor=_actor(request, tenant_id),
         tenant_id=tenant_id,
         source_ip=request.client.host if request.client else "",
         metadata={"key_preview": _key_preview(api_key)},
@@ -757,7 +767,7 @@ async def set_my_tools(request: Request):
 
     log_admin_action(
         action="tenant_set_tool_definitions",
-        actor=f"tenant:{tenant_id}",
+        actor=_actor(request, tenant_id),
         tenant_id=tenant_id,
         source_ip=request.client.host if request.client else "",
         metadata={"tool_count": len(tools), "names": [t["function"]["name"] for t in tools]},
@@ -801,7 +811,7 @@ def _audit_log(request: Request, action: str, tenant_id: str, metadata: dict = N
     """Log admin action for audit trail."""
     log_admin_action(
         action=action,
-        actor=f"tenant:{tenant_id}",
+        actor=_actor(request, tenant_id),
         tenant_id=tenant_id,
         source_ip=request.client.host if request.client else "",
         metadata=metadata or {},

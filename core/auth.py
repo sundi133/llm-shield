@@ -655,3 +655,55 @@ def require_portal_admin(request) -> None:
         detail=f"{principal.get('email') or principal.get('sub')} is signed in "
                f"but is not a portal administrator for this tenant.",
     )
+
+
+def audit_actor(request, tenant_id: str = "") -> str:
+    """Who to record for an administrative action.
+
+    `user:{sub}` when a human is signed in, `tenant:{id}` otherwise.
+
+    The tenant form is what every record carries today, and it answers "which
+    organisation" rather than "who" — which is why an access review could not
+    say who granted an agent its tools. This upgrades that answer wherever a
+    session is present and changes nothing where one is not.
+
+    The subject, not the email: an email can be reassigned inside a directory
+    and an audit trail that says dana@acme.com years later may mean a different
+    person. The email is recorded alongside, as metadata, for legibility.
+    """
+    principal = portal_principal(request)
+    if principal and principal.get("sub"):
+        return f"user:{principal['sub']}"
+    tenant_id = (tenant_id
+                 or getattr(getattr(request, "state", None), "tenant_id", "")
+                 or "")
+    return f"tenant:{tenant_id}"
+
+
+def audit_actor_metadata(request) -> dict:
+    """Legible detail about the actor, for the audit record's metadata.
+
+    Empty for a key-authenticated caller. An empty field is honest; a guessed
+    one is not, and a reviewer cannot tell a guess from a fact after the fact.
+    """
+    principal = portal_principal(request)
+    if not principal:
+        return {"actor_kind": "api_key"}
+    return {
+        "actor_kind": "user",
+        "actor_email": principal.get("email", ""),
+        "actor_name": principal.get("name", ""),
+        "actor_issuer": principal.get("issuer", ""),
+    }
+
+
+def acting_user_sub(request) -> str:
+    """The signed-in subject, or "" when a credential is acting.
+
+    Used for created_by/updated_by on records. Deliberately empty rather than
+    falling back to the tenant: "created_by: tenant:acme" on every row looks
+    like attribution while carrying no information, and it would make the rows
+    that DO name a person harder to spot.
+    """
+    principal = portal_principal(request)
+    return f"user:{principal['sub']}" if principal and principal.get("sub") else ""

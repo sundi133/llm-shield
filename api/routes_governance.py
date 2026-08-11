@@ -107,6 +107,12 @@ async def governance_agents(request: Request):
             # [] means "runs anywhere", which is the pre-existing behaviour and
             # worth seeing at a glance once SHIELD_ENVIRONMENT is set.
             "environments": entry.get("environments", []) or [],
+            # Empty for anything registered by a credential rather than a
+            # person, which is every entry written before SSO existed. That is
+            # the honest answer, and it also makes the entries that DO name
+            # somebody stand out at review time.
+            "created_by": entry.get("created_by", "") or "",
+            "updated_by": entry.get("updated_by", "") or "",
             "granted_tools": _granted_tools(entry),
             "allowed_resources": entry.get("allowed_resources", []) or [],
             "require_resource_scope": bool(entry.get("require_resource_scope", False)),
@@ -257,11 +263,24 @@ async def create_review(request: Request):
     except Exception:
         body = {}
     name = (body.get("name") or "Access review").strip()[:_MAX_NAME_LEN]
-    created_by = (body.get("reviewer") or request.headers.get("x-user-role") or "tenant").strip()[:128]
+    # A signed-in human wins over anything the caller typed. A reviewer taken
+    # from the request body is not a reviewer — the whole value of a campaign
+    # record is that somebody accountable looked at it, and a self-declared
+    # name carries none of that. The body remains the fallback so campaigns
+    # created with an API key keep working exactly as before.
+    from core.auth import acting_user_sub
+    created_by = (acting_user_sub(request)
+                  or body.get("reviewer")
+                  or request.headers.get("x-user-role")
+                  or "tenant").strip()[:128]
+    # Whether the name is a verified identity or a self-declared string is the
+    # difference between evidence and a note, so record which it is.
+    reviewer_verified = bool(acting_user_sub(request))
     now = int(time.time())
     campaign = {
         "campaign_id": f"rev-{now}-{secrets.token_hex(3)}",
         "name": name, "created_at": now, "created_by": created_by,
+        "reviewer_verified": reviewer_verified,
         "due_at": body.get("due_at"), "status": "open",
         "items": _build_items(tenant_id),
     }
