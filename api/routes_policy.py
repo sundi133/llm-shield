@@ -588,7 +588,13 @@ async def import_policies(
     for agent_id, agent_config in bundle.agent_configs.items():
         agent_config["agent_id"] = agent_id
         try:
-            register_agent(tenant_id, agent_config)
+            # Gated here too, or a bundle import is a documented way around
+            # self-registration constraints. A legitimate restore uses an
+            # admin key, which this leaves alone.
+            from core.auth import constrain_self_registration
+            register_agent(
+                tenant_id,
+                constrain_self_registration(request, tenant_id, agent_config))
         except ValueError as e:
             # Name the offending agent. A bundle can carry many, and "invalid
             # agent_id" without saying which one is not actionable.

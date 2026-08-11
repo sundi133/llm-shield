@@ -474,3 +474,84 @@ def _record_scope_warning(request, tenant_id: str, scope, action: str) -> None:
             "registry write by %s-scoped key for tenant %s (%s) — would be "
             "refused under SHIELD_REGISTRY_WRITE_SCOPE=enforce",
             scope or "un", tenant_id, action)
+
+
+# ---------------------------------------------------------------------------
+# Constrained self-registration
+#
+# Scoping keys answers "may this credential write the registry at all". This
+# answers the softer question underneath it: a developer should be able to run
+# one command and see their agent appear, without a ticket, and without being
+# able to grant it anything.
+#
+# The enforcement already exists. _registry_agent_status() blocks any agent
+# whose status is not "active", so an entry written as "pending" is inert with
+# no new code in the guard path. What was missing was a reason for anything to
+# be written that way.
+# ---------------------------------------------------------------------------
+
+SELF_REGISTER_ON = "on"
+SELF_REGISTER_PENDING = "pending"
+SELF_REGISTER_OFF = "off"
+SELF_REGISTER_MODES = (SELF_REGISTER_ON, SELF_REGISTER_PENDING, SELF_REGISTER_OFF)
+
+# Everything a non-admin caller must not be able to give itself. Grants only —
+# name, description, owner and environments are descriptive and survive, which
+# is what makes the pending entry worth reviewing rather than an empty shell.
+_GRANT_FIELDS = {
+    "tools": list,
+    "role_permissions": dict,
+    "agent_permissions": dict,
+    "allowed_resources": list,
+}
+
+
+def self_register_mode() -> str:
+    """on | pending | off. Unrecognised reads as `on`, the documented default."""
+    import os
+    mode = (os.environ.get("SHIELD_REGISTRY_SELF_REGISTER", SELF_REGISTER_ON)
+            or SELF_REGISTER_ON).strip().lower()
+    return mode if mode in SELF_REGISTER_MODES else SELF_REGISTER_ON
+
+
+def constrain_self_registration(request, tenant_id: str, entry: dict) -> dict:
+    """Return the entry to store, stripped of self-granted permissions.
+
+    CREATION ONLY. An update to an existing agent is governed by the write
+    scope, not by this: demoting a live agent to pending because someone
+    renamed it would be an outage caused by a governance feature.
+
+    Raises 403 under `off`.
+    """
+    from fastapi import HTTPException
+
+    mode = self_register_mode()
+    if mode == SELF_REGISTER_ON:
+        return entry
+
+    tenant_id = (tenant_id
+                 or getattr(getattr(request, "state", None), "tenant_id", "")
+                 or "")
+    if tenant_id == _SANDBOX_TENANT_ID:
+        return entry
+
+    scope, _resolved = caller_key_scope(request)
+    if scope == "admin":
+        return entry
+
+    if mode == SELF_REGISTER_OFF:
+        raise HTTPException(
+            status_code=403,
+            detail="Self-registration is disabled "
+                   "(SHIELD_REGISTRY_SELF_REGISTER=off). An administrator must "
+                   "register this agent.",
+        )
+
+    # pending: the declaration is kept, every grant in it is not.
+    out = dict(entry)
+    out["status"] = "pending"
+    for field, kind in _GRANT_FIELDS.items():
+        out[field] = kind()
+    out["require_resource_scope"] = False
+    out["self_registered"] = True       # why this is pending, for the reviewer
+    return out

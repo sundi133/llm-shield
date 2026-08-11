@@ -13,6 +13,7 @@ from storage.tenant_store import (
 )
 from core.auth import (
     require_registry_write as _require_registry_write,
+    constrain_self_registration as _constrain_self_registration,
     registry_write_mode,
 )
 
@@ -765,6 +766,12 @@ async def create_agent(request: Request):
             "created_at": now,
             "updated_at": now,
         }
+
+        # A non-admin caller may declare an agent but not grant it anything.
+        # Applied to the built entry rather than the body so it cannot be
+        # skipped by a field the construction above adds later.
+        agents[agent_id] = _constrain_self_registration(
+            request, tenant_id, agents[agent_id])
 
         _save_agents(tenant_id, agents)
 

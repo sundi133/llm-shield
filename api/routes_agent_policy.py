@@ -119,9 +119,11 @@ async def register_agent_endpoint(
     ```
     """
     try:
-        from core.auth import require_registry_write
+        from core.auth import require_registry_write, constrain_self_registration
         require_registry_write(request, tenant_id, "register an agent")
-        result = register_agent(tenant_id, agent.dict())
+        result = register_agent(
+            tenant_id,
+            constrain_self_registration(request, tenant_id, agent.dict()))
         return {"success": True, "agent": result}
     except HTTPException:
         # HTTPException IS an Exception, so without this the catch-all below
