@@ -24,6 +24,11 @@ groups:
       - { title: Tool Data Policies, url: /tool-data-policies/ }
       - { title: Secret Vault, url: /prevent-secret-leakage/ }
       - { title: Policy Lifecycle, url: /policy-lifecycle/ }
+      # AIBOM sits with the policy pages, not under Operate: the inventory is
+      # what compliance mapping and drift review are computed FROM, so a reader
+      # who meets Compliance Mapping first has already missed its input. It was
+      # absent from this file entirely — the page shipped, nothing linked it.
+      - { title: AI Bill of Materials, url: /aibom/ }
       - { title: Compliance Mapping, url: /compliance-mapping/ }
 
   - title: Develop
