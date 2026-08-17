@@ -6633,12 +6633,20 @@ function _findingRow(f) {
   // showCta is explicit rather than derived from count, because the one row that
   // needs a button at zero is the "no baseline yet" prompt — a call to action,
   // not a clean result.
-  const clean = f.count === 0;
+  // count is coerced, not escaped. It is a count: anything that is not a finite
+  // number is a bug or a hostile response, and rendering it as text would put
+  // API-controlled bytes into innerHTML. Number() collapses both cases to
+  // something safe to interpolate.
+  const n = Number.isFinite(Number(f.count)) ? Number(f.count) : 0;
+  const clean = n === 0;
   const showCta = f.showCta !== undefined ? f.showCta : !clean;
+  // f.tab is a literal in this file today, so escaping it is belt and braces —
+  // but it lands inside an onclick attribute, and the day someone makes it
+  // dynamic that becomes injection rather than a bug.
   return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid var(--border);">
-    <span style="font-weight:600;min-width:2.5rem;color:${clean ? 'var(--muted)' : '#f85149'};">${clean ? '0' : f.count}</span>
+    <span style="font-weight:600;min-width:2.5rem;color:${clean ? 'var(--muted)' : '#f85149'};">${n}</span>
     <span style="flex:1;">${_esc(f.label)}</span>
-    ${showCta ? `<button class="small" onclick="_gotoTab('${f.tab}')">${_esc(f.cta || 'Review')}</button>` : ''}
+    ${showCta ? `<button class="small" onclick="_gotoTab('${_esc(f.tab)}')">${_esc(f.cta || 'Review')}</button>` : ''}
   </div>`;
 }
 
