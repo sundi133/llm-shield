@@ -117,6 +117,19 @@ def _actor(request: Request, tenant_id: str) -> str:
     return audit_actor(request, tenant_id)
 
 
+def _require_sso_enabled() -> bool:
+    """Whether this deployment refuses API-key auth on the portal routes.
+
+    One reader, two callers: the check below that enforces it, and /me/posture
+    that reports it. A second copy of this truthy set would eventually disagree
+    with this one, and a posture page that misreports enforcement is worse than
+    no posture page.
+    """
+    import os
+    return os.environ.get(
+        "SHIELD_PORTAL_REQUIRE_SSO", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _require_tenant(request: Request) -> str:
     """Ensure request has a resolved tenant, else reject.
 
@@ -141,9 +154,7 @@ def _require_tenant(request: Request) -> str:
     # closes the shared-key path on the PORTAL routes only. Deliberately not a
     # per-tenant setting — it is a deployment posture, and a tenant able to
     # switch off the requirement that they sign in has not been required to.
-    import os
-    if tenant_id and os.environ.get(
-            "SHIELD_PORTAL_REQUIRE_SSO", "").strip().lower() in ("1", "true", "yes", "on"):
+    if tenant_id and _require_sso_enabled():
         raise HTTPException(
             status_code=403,
             detail="This deployment requires signing in "
@@ -1192,6 +1203,109 @@ async def get_my_key_scope(request: Request):
     registry_write = mode != "enforce" or scope == "admin"
 
     return {"scope": scope, "registry_write": registry_write, "enforcement": mode}
+
+
+# ── Deployment posture ───────────────────────────────────────────────────
+#
+# Which controls this deployment is enforcing. Sibling to /me/key-scope rather
+# than an extension of it: key-scope answers "what may THIS CREDENTIAL do",
+# posture answers "what is THIS DEPLOYMENT enforcing". Merging them would make a
+# per-credential answer read as deployment-wide.
+#
+# Every mode comes from the module that actually decides it, never from a second
+# copy of the env parsing here. A reporting surface that re-implements the rule
+# eventually disagrees with the rule, and a posture page that says "enforcing"
+# when nothing is enforcing is worse than no posture page.
+
+# id -> (env var, ladder). Which modes count as enforcing lives in
+# _POSTURE_ENFORCING below, because it is not always the last rung.
+# The ladder is the documented rollout order; `next` is the FOLLOWING rung, never
+# a jump to the end. Offering off -> enforce in one click is how rollouts become
+# outages, and every one of these controls has a declare-then-enforce step for a
+# reason.
+_POSTURE_LADDERS = {
+    "registry_write":  ("SHIELD_REGISTRY_WRITE_SCOPE", ("off", "warn", "enforce")),
+    "auto_revoke":     ("SHIELD_ENABLE_AUTO_REVOKE", ("off", "on")),
+    "agent_token_pop": ("SHIELD_AGENT_TOKEN_POP", ("off", "optional", "required")),
+    "role_binding":    ("SHIELD_ROLE_BINDING", ("off", "prefer", "strict")),
+    "portal_sso":      ("SHIELD_PORTAL_REQUIRE_SSO", ("off", "on")),
+}
+
+_POSTURE_ENFORCING = {
+    "registry_write":  {"enforce"},
+    "auto_revoke":     {"on"},
+    "agent_token_pop": {"required"},
+    # strict_proxy enforces too: it refuses a caller with no vouched role. It is
+    # not on the ladder because it is a different trust model (the proxy vouches)
+    # rather than a further rung, but reporting it as "not enforcing" would be a
+    # lie to anyone running the trusted-proxy topology.
+    "role_binding":    {"strict", "strict_proxy"},
+    "portal_sso":      {"on"},
+}
+
+
+def _posture_modes() -> dict:
+    """Current mode per control, from the deciding module in every case."""
+    from core.auth import registry_write_mode
+    from core.agent_tokens import agent_token_pop_mode
+    from core.identity_resolution import role_binding_mode
+    from core.auto_revoke import is_enabled as auto_revoke_enabled
+
+    return {
+        "registry_write": registry_write_mode(),
+        "auto_revoke": "on" if auto_revoke_enabled() else "off",
+        "agent_token_pop": agent_token_pop_mode(),
+        "role_binding": role_binding_mode(),
+        "portal_sso": "on" if _require_sso_enabled() else "off",
+    }
+
+
+def _next_rung(control_id: str, mode: str) -> Optional[str]:
+    """The next rung up, or None at the top / for an off-ladder mode."""
+    ladder = _POSTURE_LADDERS[control_id][1]
+    if mode not in ladder:
+        # e.g. role_binding=strict_proxy — a valid enforcing mode that is not a
+        # rung. There is no "next" to recommend, and inventing one would push an
+        # operator off a topology they chose deliberately.
+        return None
+    i = ladder.index(mode)
+    return ladder[i + 1] if i + 1 < len(ladder) else None
+
+
+@router.get("/me/posture")
+async def get_my_posture(request: Request):
+    """Which enforcement controls are on, and the next rung for those that aren't.
+
+    Read-only, admin plane, no store access — the guard path is not touched.
+
+    Reports the environment of THIS process. In a split deployment the guardrail
+    server is a separate process with its own environment, so data-plane controls
+    reflect what the admin plane was configured with. `scope` names that limit
+    rather than leaving the reader to assume it is deployment-wide.
+
+    Discloses to an authenticated tenant caller which controls are off. That is a
+    real disclosure, judged acceptable because the same facts are observable by
+    testing whether actions get refused; see the spec's §5 if that changes.
+    """
+    _require_tenant(request)
+
+    modes = _posture_modes()
+    controls = []
+    for cid, (env, _ladder) in _POSTURE_LADDERS.items():
+        mode = modes[cid]
+        controls.append({
+            "id": cid,
+            "env": env,
+            "mode": mode,
+            "enforcing": mode in _POSTURE_ENFORCING[cid],
+            "next": _next_rung(cid, mode),
+        })
+
+    return {
+        "controls": controls,
+        "off_count": sum(1 for c in controls if not c["enforcing"]),
+        "scope": "process",
+    }
 
 
 @router.get("/me/session")

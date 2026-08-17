@@ -56,6 +56,10 @@ COPY core/security_headers.py core/
 COPY core/identity.py core/
 COPY core/signers.py core/
 COPY core/agent_tokens.py core/
+# Imported by routes_tenant_self's /me/posture to report the auto-revoke mode
+# from the module that decides it rather than a second copy of the env parsing.
+# Pure stdlib, so this pulls nothing else into the admin image.
+COPY core/auto_revoke.py core/
 COPY core/capabilities.py core/
 COPY core/approvals.py core/
 COPY core/nonce_store.py core/
