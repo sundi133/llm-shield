@@ -2551,6 +2551,25 @@
           </select>
         </div>
       </div>
+      <!--
+        Findings sit above the stats deliberately. Everything below this card is
+        volume — how much traffic was processed. This card is what is wrong, and
+        a reader who meets the throughput numbers first has to go looking for it.
+        Every number here is already computed elsewhere in this portal; the only
+        thing that was missing was saying it on the page people land on.
+      -->
+      <div class="card" id="overview-findings-card" style="margin-bottom:1rem;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Findings</div>
+            <div class="card-subtitle">What needs attention in this tenant</div>
+          </div>
+        </div>
+        <div id="overview-findings" style="padding:0 1rem 1rem;">
+          <div class="muted" style="font-size:12px;">Loading...</div>
+        </div>
+      </div>
+
       <div class="stats-grid" id="overview-stats"></div>
 
       <!-- Analytics row -->
@@ -6587,6 +6606,144 @@ function renderOverview() {
 
   // Fetch live analytics
   loadOverviewAnalytics();
+  loadOverviewFindings();
+}
+
+// ── Findings ─────────────────────────────────────────────────────────────
+//
+// Five reads, each already served by an endpoint this portal uses elsewhere.
+// The rule every row obeys: a row that could not be computed says so. It must
+// never render 0.
+//
+// "0 shadow agents" while the governance endpoint is down is the dangerous
+// output — it is indistinguishable from a clean tenant, and it is the reading a
+// person acts on. This is the same failure the LangChain demo shipped with,
+// where every error rendered as "(no response)" and hid three different causes
+// for weeks. Unknown and zero are different answers; only one of them is
+// reassuring, and it has to be earned.
+
+function _findingRow(f) {
+  if (f.error) {
+    return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid var(--border);">
+      <span style="color:var(--warning);font-weight:600;min-width:2.5rem;">--</span>
+      <span style="flex:1;">${_esc(f.label)}</span>
+      <span class="muted" style="font-size:12px;">could not be checked: ${_esc(f.error)}</span>
+    </div>`;
+  }
+  // showCta is explicit rather than derived from count, because the one row that
+  // needs a button at zero is the "no baseline yet" prompt — a call to action,
+  // not a clean result.
+  const clean = f.count === 0;
+  const showCta = f.showCta !== undefined ? f.showCta : !clean;
+  return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid var(--border);">
+    <span style="font-weight:600;min-width:2.5rem;color:${clean ? 'var(--muted)' : '#f85149'};">${clean ? '0' : f.count}</span>
+    <span style="flex:1;">${_esc(f.label)}</span>
+    ${showCta ? `<button class="small" onclick="_gotoTab('${f.tab}')">${_esc(f.cta || 'Review')}</button>` : ''}
+  </div>`;
+}
+
+// Clicks the nav item rather than re-implementing the switch. The delegated
+// handler already hides panes, moves the active highlight, scrolls, AND calls
+// that tab's loader — a second copy would drift from all four.
+function _gotoTab(name) {
+  const el = document.querySelector(`.nav-item[data-tab="${name}"]`);
+  if (el) el.click();
+}
+
+// Drift needs the status code, which apiCall throws away. A tenant that has
+// never approved a baseline gets 404 — that is "not set up yet", a call to
+// action, NOT a failure. Rendering it as an error would tell every new tenant
+// that something is broken on their first visit.
+async function _fetchDrift() {
+  try {
+    const r = await fetch(`${BASE_URL}/v1/tenant/me/aibom/drift`, {
+      headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 404) return { noBaseline: true };
+    if (!r.ok) return { e: new Error(data.detail || data.error || `HTTP ${r.status}`) };
+    return { d: data };
+  } catch (e) {
+    return { e };
+  }
+}
+
+async function loadOverviewFindings() {
+  const box = document.getElementById('overview-findings');
+  if (!box) return;
+
+  // Settled, not all — one failing endpoint must not blank the card. Each
+  // result carries either a count or the reason it is unknown.
+  const [gov, unowned, drift, posture] = await Promise.all([
+    apiCall('/v1/governance/agents').then(d => ({ d })).catch(e => ({ e })),
+    apiCall('/v1/governance/agents/unowned').then(d => ({ d })).catch(e => ({ e })),
+    _fetchDrift(),
+    apiCall('/v1/tenant/me/posture').then(d => ({ d })).catch(e => ({ e })),
+  ]);
+
+  const rows = [];
+
+  rows.push(gov.e
+    ? { label: 'Shadow agents — running, never registered', error: gov.e.message }
+    : { label: 'Shadow agents — running, never registered',
+        count: gov.d.shadow_count || 0, tab: 'agents', cta: 'View agents' });
+
+  rows.push(unowned.e
+    ? { label: 'Unowned agents — no one to ask at review time', error: unowned.e.message }
+    : { label: 'Unowned agents — no one to ask at review time',
+        count: unowned.d.unowned_count || 0, tab: 'governance', cta: 'Assign owners' });
+
+  // Granted-but-unused, diffed client-side from the response we already have.
+  // Deliberately not a per-agent fan-out: on a tenant with hundreds of agents
+  // that would be hundreds of requests to render one number.
+  if (gov.e) {
+    rows.push({ label: 'Unused grants — least-privilege candidates', error: gov.e.message });
+  } else {
+    let unused = 0;
+    for (const a of (gov.d.agents || [])) {
+      const used = new Set(a.recent_tools_used || []);
+      unused += (a.granted_tools || []).filter(t => !used.has(t)).length;
+    }
+    rows.push({ label: 'Unused grants — least-privilege candidates',
+                count: unused, tab: 'governance', cta: 'Review' });
+  }
+
+  // No baseline is not "no drift". Saying 0 here would report a check that was
+  // never run as a clean result.
+  if (drift.noBaseline) {
+    rows.push({ label: 'Component drift — no approved baseline yet',
+                count: 0, tab: 'aibom', cta: 'Take baseline',
+                showCta: true, noBaseline: true });
+  } else if (drift.e) {
+    rows.push({ label: 'Component drift — changed since you approved it', error: drift.e.message });
+  } else {
+    rows.push({ label: 'Component drift — changed since you approved it',
+                count: drift.d.drift_count || 0, tab: 'aibom', cta: 'View drift' });
+  }
+
+  rows.push(posture.e
+    ? { label: 'Controls not enforcing', error: posture.e.message }
+    : { label: 'Controls not enforcing', count: posture.d.off_count || 0,
+        tab: 'policies', cta: 'Review posture' });
+
+  const failed = rows.filter(r => r.error).length;
+  const found = rows.filter(r => !r.error && r.count > 0).length;
+
+  let header = '';
+  if (failed === rows.length) {
+    header = `<div style="color:var(--warning);font-size:13px;margin-bottom:0.5rem;">
+      No findings could be checked. This is a connectivity problem, not a clean tenant.</div>`;
+  } else if (found === 0 && failed === 0) {
+    header = `<div style="color:#10b981;font-size:13px;margin-bottom:0.5rem;">
+      Nothing outstanding. All five checks ran and found nothing.</div>`;
+  }
+
+  const footer = rows.some(r => r.noBaseline)
+    ? `<div class="muted" style="font-size:12px;padding-top:0.5rem;">
+         Drift needs an approved baseline before it can report anything.</div>`
+    : '';
+
+  box.innerHTML = header + rows.map(_findingRow).join('') + footer;
 }
 
 async function loadOverviewAnalytics() {
