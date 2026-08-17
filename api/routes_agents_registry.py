@@ -14,6 +14,7 @@ from storage.tenant_store import (
 from core.auth import (
     require_registry_write as _require_registry_write,
     constrain_self_registration as _constrain_self_registration,
+    acting_user_sub as _acting_user_sub,
     registry_write_mode,
 )
 
@@ -213,13 +214,29 @@ def get_tenant_from_api_key(request: Request) -> str:
       3. The ``sk-test-`` sandbox key → the auto-provisioned test tenant, so the
          zero-setup quickstart works without first minting a real key.
     """
+    # A portal session first. This function is the tenant resolver for the
+    # registry, governance, AIBOM and OpenAPI-MCP routers, so without this a
+    # signed-in human authenticates /v1/tenant/* and nothing else — they reach
+    # the portal, and every page that lists agents reports "Missing X-API-Key
+    # header". Resolving it here fixes all four routers at once, which is also
+    # why it has to be here rather than in each of them.
+    try:
+        from core.auth import portal_principal
+        principal = portal_principal(request)
+        if principal and principal.get("tenant_id"):
+            return principal["tenant_id"]
+    except Exception:
+        pass    # fall through to the key path, exactly as before
+
     state_tenant = getattr(getattr(request, "state", None), "tenant_id", None)
     if state_tenant:
         return state_tenant
 
     api_key = request.headers.get("X-API-Key", "").strip()
     if not api_key:
-        raise HTTPException(status_code=401, detail="Missing X-API-Key header")
+        raise HTTPException(
+            status_code=401,
+            detail="Sign in, or provide an X-API-Key header")
 
     tenant_id = resolve_tenant_by_api_key(api_key)
     if tenant_id:
@@ -765,6 +782,12 @@ async def create_agent(request: Request):
             "status": body.get("status", "active"),
             "created_at": now,
             "updated_at": now,
+            # Empty unless a human is signed in. Falling back to the tenant
+            # would put "created_by: tenant:acme" on every row — attribution
+            # in shape only, and it would make the rows that DO name a person
+            # harder to spot. An empty field is honest.
+            "created_by": _acting_user_sub(request),
+            "updated_by": _acting_user_sub(request),
         }
 
         # A non-admin caller may declare an agent but not grant it anything.
@@ -827,6 +850,12 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
         if "owner_contact" in sanitized:
             sanitized["owner_contact"] = _sanitize_string(
                 sanitized["owner_contact"] or "", _MAX_OWNER_CONTACT_LEN)
+        # Who last changed this, when a human did. Never overwritten with an
+        # empty string by a key-authenticated update: that would erase a real
+        # answer and replace it with nothing.
+        _by = _acting_user_sub(request)
+        if _by:
+            sanitized["updated_by"] = _by
         if "environments" in sanitized:
             sanitized["environments"] = [
                 _sanitize_string(e, _MAX_ENVIRONMENT_LEN).strip()

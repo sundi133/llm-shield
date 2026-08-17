@@ -411,6 +411,26 @@ def require_registry_write(request, tenant_id: str = "",
     # Passed explicitly by callers that resolved it themselves: routes reached
     # with SHIELD_AUTH_ENABLED off never have request.state.tenant_id set, and
     # the sandbox exemption below has to work there too.
+    # A signed-in human is decided by their groups, not by a key scope. Two
+    # notions of "may administer" now exist and they must not become two
+    # different answers — an administrator who signs in should be able to do
+    # what an admin-scoped key can do, and a non-administrator should be
+    # refused exactly like a runtime key.
+    principal = portal_principal(request)
+    if principal is not None:
+        if principal.get("is_admin"):
+            return
+        if mode == MODE_WARN:
+            _record_scope_warning(request, principal.get("tenant_id", ""),
+                                  "user:not-admin", action)
+            return
+        raise HTTPException(
+            status_code=403,
+            detail=(f"{principal.get('email') or principal.get('sub')} is "
+                    f"signed in but is not a portal administrator, so cannot "
+                    f"{action}."),
+        )
+
     tenant_id = (tenant_id
                  or getattr(getattr(request, "state", None), "tenant_id", "")
                  or "")
@@ -555,3 +575,135 @@ def constrain_self_registration(request, tenant_id: str, entry: dict) -> dict:
     out["require_resource_scope"] = False
     out["self_registered"] = True       # why this is pending, for the reviewer
     return out
+
+
+# ---------------------------------------------------------------------------
+# Portal sessions as a caller identity
+#
+# A tenant API key answers "which tenant". A portal session answers "which
+# human", which is what makes an administrative action attributable to a person
+# rather than to a shared credential.
+#
+# Admin plane only. Nothing on the guard path reads a session.
+# ---------------------------------------------------------------------------
+
+PORTAL_COOKIE_NAME = "shield_portal_session"
+
+
+def portal_principal(request):
+    """The signed-in human behind this request, or None.
+
+    Cached on request.state for the life of the request: _require_tenant is
+    called by two dozen handlers and some call it more than once, and a session
+    lookup is a store read.
+
+    Resolution is deliberately cookie-first. A browser that still holds a
+    tenant API key in localStorage from before SSO was enabled would otherwise
+    keep acting as that key after the user signs in, and every action would
+    stay attributed to the tenant — the exact problem this is here to fix.
+    """
+    state = getattr(request, "state", None)
+    if state is not None and hasattr(state, "_portal_principal"):
+        return state._portal_principal
+
+    principal = None
+    try:
+        session_id = ""
+        cookies = getattr(request, "cookies", None)
+        if cookies:
+            session_id = cookies.get(PORTAL_COOKIE_NAME, "") or ""
+        if session_id:
+            from storage.portal_sessions import get_session, touch_session
+            record = get_session(session_id)
+            if record:
+                touch_session(session_id)
+                principal = {
+                    "kind": "user",
+                    "tenant_id": record.get("tenant_id", ""),
+                    "sub": record.get("sub", ""),
+                    "email": record.get("email", ""),
+                    "name": record.get("name", ""),
+                    "is_admin": bool(record.get("is_admin")),
+                    "issuer": record.get("issuer", ""),
+                }
+    except Exception as e:
+        # A broken session store must not 500 every portal request. The API key
+        # path below is exactly as trustworthy as it was before sessions
+        # existed, so falling through to it is the safe failure.
+        logger.debug("portal session lookup failed: %s", e)
+        principal = None
+
+    if state is not None:
+        state._portal_principal = principal
+    return principal
+
+
+def require_portal_admin(request) -> None:
+    """Refuse a signed-in human who is not an administrator.
+
+    Only meaningful for a session; a key-authenticated caller is governed by
+    its scope instead. Returns quietly when there is no session at all, so
+    callers can layer this over the existing key checks.
+    """
+    from fastapi import HTTPException
+
+    principal = portal_principal(request)
+    if principal is None or principal.get("is_admin"):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=f"{principal.get('email') or principal.get('sub')} is signed in "
+               f"but is not a portal administrator for this tenant.",
+    )
+
+
+def audit_actor(request, tenant_id: str = "") -> str:
+    """Who to record for an administrative action.
+
+    `user:{sub}` when a human is signed in, `tenant:{id}` otherwise.
+
+    The tenant form is what every record carries today, and it answers "which
+    organisation" rather than "who" — which is why an access review could not
+    say who granted an agent its tools. This upgrades that answer wherever a
+    session is present and changes nothing where one is not.
+
+    The subject, not the email: an email can be reassigned inside a directory
+    and an audit trail that says dana@acme.com years later may mean a different
+    person. The email is recorded alongside, as metadata, for legibility.
+    """
+    principal = portal_principal(request)
+    if principal and principal.get("sub"):
+        return f"user:{principal['sub']}"
+    tenant_id = (tenant_id
+                 or getattr(getattr(request, "state", None), "tenant_id", "")
+                 or "")
+    return f"tenant:{tenant_id}"
+
+
+def audit_actor_metadata(request) -> dict:
+    """Legible detail about the actor, for the audit record's metadata.
+
+    Empty for a key-authenticated caller. An empty field is honest; a guessed
+    one is not, and a reviewer cannot tell a guess from a fact after the fact.
+    """
+    principal = portal_principal(request)
+    if not principal:
+        return {"actor_kind": "api_key"}
+    return {
+        "actor_kind": "user",
+        "actor_email": principal.get("email", ""),
+        "actor_name": principal.get("name", ""),
+        "actor_issuer": principal.get("issuer", ""),
+    }
+
+
+def acting_user_sub(request) -> str:
+    """The signed-in subject, or "" when a credential is acting.
+
+    Used for created_by/updated_by on records. Deliberately empty rather than
+    falling back to the tenant: "created_by: tenant:acme" on every row looks
+    like attribution while carrying no information, and it would make the rows
+    that DO name a person harder to spot.
+    """
+    principal = portal_principal(request)
+    return f"user:{principal['sub']}" if principal and principal.get("sub") else ""

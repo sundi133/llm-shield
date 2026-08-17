@@ -365,16 +365,30 @@ def kv_get(key: str):
     return data
 
 
-def kv_set(key: str, value) -> None:
+def kv_set(key: str, value, ttl: Optional[int] = None) -> None:
     """Write a JSON value by raw key, Redis-or-fallback.
 
     Lets registry/policy writes succeed in local dev with no Redis instead of
     raising "Redis connection not available". The in-memory fallback holds the
     JSON string, matching how RBACGuard reads it back.
+
+    ttl is seconds, and is a best-effort reclaim hint for Redis only — the
+    in-memory fallback has no expiry at all. Anything whose correctness depends
+    on expiring must ALSO carry its own deadline in the value and check it on
+    read, or a Redis-less deployment keeps it forever. Portal sessions and API
+    key metadata both do.
     """
     payload = json.dumps(value)
     r = _get_redis()
     if r:
+        if ttl and ttl > 0:
+            try:
+                r.setex(key, int(ttl), payload)
+                return
+            except Exception:
+                # Upstash REST and older clients may not expose setex. The
+                # value's own deadline still governs correctness.
+                logger.debug("setex unavailable for %s, falling back to set", key)
         r.set(key, payload)
     else:
         _fallback_store[key] = payload
@@ -413,6 +427,23 @@ def resolve_tenant_by_api_key(api_key: str) -> Optional[str]:
         tenant_id = _fallback_store.get(f"apikey:{key_hash}")
 
     if tenant_id:
+        # A cache MISS, and only here. Redis has already been reached, so the
+        # marginal cost is one metadata read plus at most one write, bounded by
+        # the 60-second cache to once per key per process per minute however
+        # much traffic the key carries. A cache HIT above returns without
+        # touching any of this — which is the overwhelming majority of guarded
+        # requests, and the reason this is affordable at all.
+        meta = key_metadata_by_hash(key_hash)
+        if meta:
+            # Redis TTL does the expiring where Redis exists; this covers the
+            # in-memory fallback, which has no TTL, and a Redis whose expire()
+            # call failed at mint time. Without it a Redis-less deployment
+            # would honour an expired key forever.
+            expires_at = meta.get("expires_at")
+            if isinstance(expires_at, int) and time.time() >= expires_at:
+                return None
+            _record_last_used(key_hash)
+
         _cache_set(cache_key, {"tenant_id": tenant_id})
         return tenant_id
     return None
@@ -534,7 +565,172 @@ def key_scope(api_key: str) -> Optional[str]:
     return key_scope_by_hash(_hash_key(api_key)) if api_key else None
 
 
-def add_api_key(tenant_id: str, api_key: str, scope: Optional[str] = None):
+# ---------------------------------------------------------------------------
+# API key lifecycle
+#
+# A key was a bare hash → tenant mapping: no creation date, no label, no
+# expiry, no last-used, and no way to enumerate a tenant's keys. Rotation was
+# mechanically possible and operationally impossible, because nobody could see
+# what existed or tell whether the old key was still carrying traffic.
+#
+# A SIDECAR again, for the same reason as scopes: apikey:{hash} keeps holding a
+# bare tenant id, so resolve_tenant_by_api_key — which runs on every guarded
+# request — is unchanged and there is no migration. Absent metadata is legal
+# and permanent; it describes every key that exists today.
+#
+# See docs/spec-api-key-lifecycle.md
+# ---------------------------------------------------------------------------
+
+_META_PREFIX = "apikeymeta:"
+
+# How much of a key to keep so a human can tell rows apart. Enough to recognise
+# a key you are holding, not enough to reconstruct one.
+_KEY_PREFIX_LEN = 12
+
+
+def _meta_key(key_hash: str) -> str:
+    return f"{_META_PREFIX}{key_hash}"
+
+
+def track_usage_enabled() -> bool:
+    """Whether to record last_used. On by default; see set_key_metadata."""
+    return os.environ.get("SHIELD_API_KEY_TRACK_USAGE", "1").strip().lower() \
+        not in ("0", "false", "no", "off")
+
+
+def set_key_metadata(tenant_id: str, api_key: str, *, label: str = "",
+                     expires_in_days: Optional[int] = None) -> dict:
+    """Record who this key is for and when it should stop working.
+
+    Raises ValueError for a non-positive expiry: a key that expires in the past
+    is a key that never worked, and finding that out from a 401 an hour later
+    is worse than a 400 now.
+    """
+    if expires_in_days is not None:
+        if not isinstance(expires_in_days, int) or isinstance(expires_in_days, bool):
+            raise ValueError("expires_in_days must be an integer")
+        if expires_in_days <= 0:
+            raise ValueError("expires_in_days must be greater than zero")
+
+    now = int(time.time())
+    expires_at = now + expires_in_days * 86400 if expires_in_days else None
+    record = {
+        "tenant_id": tenant_id,
+        "label": str(label or "")[:128],
+        # Prefix only. A list of bare hashes cannot be acted on, and a full key
+        # in a listing would hand back the credential.
+        "prefix": str(api_key or "")[:_KEY_PREFIX_LEN],
+        "created_at": now,
+        "expires_at": expires_at,
+        "last_used": None,
+    }
+    key_hash = _hash_key(api_key)
+    # TTL slightly beyond the deadline so the record survives long enough to
+    # explain an expiry rather than vanishing with the key it describes.
+    kv_set(_meta_key(key_hash), record,
+           ttl=(expires_in_days * 86400 + 86400) if expires_in_days else None)
+
+    # And a TTL on the credential itself. Redis then does the expiring, so the
+    # guard-path lookup is byte-identical — no deadline check, no extra read.
+    if expires_at:
+        r = _get_redis()
+        if r:
+            try:
+                r.expire(f"apikey:{key_hash}", expires_in_days * 86400)
+            except Exception:
+                # The in-memory fallback has no TTL either way; the expires_at
+                # check in resolve_tenant_by_api_key is what covers both.
+                logger.debug("could not set TTL on apikey:%s", key_hash[:8])
+    return record
+
+
+def key_metadata_by_hash(key_hash: str) -> Optional[dict]:
+    """Metadata for a key hash, or None. Absent is normal, not an error."""
+    if not key_hash:
+        return None
+    record = kv_get(_meta_key(key_hash))
+    return record if isinstance(record, dict) else None
+
+
+def key_metadata(api_key: str) -> Optional[dict]:
+    return key_metadata_by_hash(_hash_key(api_key)) if api_key else None
+
+
+def _record_last_used(key_hash: str) -> None:
+    """Stamp last_used. Called ONLY from a cache miss.
+
+    The 60-second resolution cache bounds this: at most one write per key per
+    process per minute however much traffic the key carries. Writing it per
+    request would put a Redis write on /guardrails/*, which is the bottleneck
+    the throughput work already identified — that version is a non-option, not
+    a slower alternative.
+
+    Best effort throughout. Losing a timestamp must never fail a guarded
+    request.
+    """
+    if not track_usage_enabled():
+        return
+    try:
+        record = key_metadata_by_hash(key_hash)
+        if not record:
+            return          # a key minted before this existed; nothing to stamp
+        record["last_used"] = int(time.time())
+        expires_at = record.get("expires_at")
+        ttl = (expires_at - int(time.time()) + 86400) if expires_at else None
+        if ttl is not None and ttl <= 0:
+            return
+        kv_set(_meta_key(key_hash), record, ttl=ttl)
+    except Exception as e:
+        logger.debug("last_used not recorded: %s", e)
+
+
+def list_tenant_api_keys(tenant_id: str) -> list:
+    """Every key recorded for a tenant, newest first.
+
+    Never returns a plaintext key or a full hash. Keys minted before metadata
+    existed do not appear — they cannot, since nothing recorded them — which is
+    stated in the docs rather than papered over with a scan of apikey:*.
+    """
+    if not tenant_id:
+        return []
+    out = []
+    try:
+        r = _get_redis()
+        if r:
+            cursor, seen = 0, []
+            while True:
+                cursor, keys = r.scan(cursor, match=f"{_META_PREFIX}*", count=200)
+                seen.extend(keys)
+                if cursor == 0:
+                    break
+            records = [(k, kv_get(k)) for k in seen]
+        else:
+            records = [(k, kv_get(k)) for k in list(_fallback_store)
+                       if k.startswith(_META_PREFIX)]
+    except Exception as e:
+        logger.warning("could not list API keys for %s: %s", tenant_id, e)
+        return []
+
+    for k, record in records:
+        if not isinstance(record, dict) or record.get("tenant_id") != tenant_id:
+            continue
+        key_hash = k[len(_META_PREFIX):]
+        out.append({
+            "label": record.get("label", ""),
+            "prefix": record.get("prefix", ""),
+            # A short fingerprint matches a row to a key without being one.
+            "fingerprint": key_hash[:8],
+            "scope": key_scope_by_hash(key_hash),
+            "created_at": record.get("created_at"),
+            "expires_at": record.get("expires_at"),
+            "last_used": record.get("last_used"),
+        })
+    out.sort(key=lambda e: e.get("created_at") or 0, reverse=True)
+    return out
+
+
+def add_api_key(tenant_id: str, api_key: str, scope: Optional[str] = None,
+                *, label: str = "", expires_in_days: Optional[int] = None):
     """Add an API key for a tenant.
 
     scope=None keeps the pre-existing behaviour exactly: an unscoped key that
@@ -551,6 +747,8 @@ def add_api_key(tenant_id: str, api_key: str, scope: Optional[str] = None):
     # Set unconditionally, including the None case: minting over a hash that
     # already carried a scope must not silently inherit the old one.
     set_key_scope(api_key, scope)
+    set_key_metadata(tenant_id, api_key, label=label,
+                     expires_in_days=expires_in_days)
 
     logger.info(f"Added API key for tenant: {tenant_id} (scope={scope or 'unscoped'})")
 
@@ -563,10 +761,14 @@ def remove_api_key(api_key: str):
     if r:
         r.delete(f"apikey:{key_hash}")
         r.delete(_scope_key(key_hash))
+        r.delete(_meta_key(key_hash))
     else:
         _fallback_store.pop(f"apikey:{key_hash}", None)
         _fallback_store.pop(_scope_key(key_hash), None)
+        _fallback_store.pop(_meta_key(key_hash), None)
 
+    # Metadata goes with the key. Listing credentials that no longer exist is
+    # worse than not listing them at all.
     _cache_delete(f"apikey:{key_hash}")
     _cache_delete(_scope_key(key_hash))
 

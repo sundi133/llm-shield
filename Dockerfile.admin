@@ -56,6 +56,10 @@ COPY core/security_headers.py core/
 COPY core/identity.py core/
 COPY core/signers.py core/
 COPY core/agent_tokens.py core/
+# Imported by routes_tenant_self's /me/posture to report the auto-revoke mode
+# from the module that decides it rather than a second copy of the env parsing.
+# Pure stdlib, so this pulls nothing else into the admin image.
+COPY core/auto_revoke.py core/
 COPY core/capabilities.py core/
 COPY core/approvals.py core/
 COPY core/nonce_store.py core/
@@ -94,6 +98,7 @@ COPY api/routes_agent_auth.py api/
 COPY api/routes_oauth.py api/
 COPY api/routes_oauth_registration.py api/
 COPY api/routes_oidc_admin.py api/
+COPY api/routes_portal_auth.py api/
 COPY api/routes_a2a.py api/
 COPY api/routes_agentic_control_plane.py api/
 COPY api/routes_identity_config.py api/
@@ -113,6 +118,8 @@ COPY storage/tenant_store.py storage/
 # silently falls back to env defaults and every tenant's IdP claim-path
 # config stops applying. Silent, and security-relevant.
 COPY storage/role_binding_config.py storage/
+# Portal SSO sessions, imported by api/routes_portal_auth.py.
+COPY storage/portal_sessions.py storage/
 COPY storage/tenant_models.py storage/
 COPY storage/admin_audit.py storage/
 COPY storage/custom_policies.py storage/

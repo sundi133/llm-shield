@@ -2375,6 +2375,36 @@
       <div id="hcaptcha-widget"></div>
     </div>
     <button class="primary" style="width: 100%;" onclick="login()">Sign In</button>
+
+    <!-- SSO. Collapsed behind a link so a deployment with no IdP looks exactly
+         as it did before, and so the organisation field appears ABOVE the
+         button it enables rather than below it — the first render had them the
+         other way round, which asks you to fill in a field that only shows up
+         after the action you were about to take. -->
+    <div style="text-align:center;margin-top:0.9rem;">
+      <a href="#" id="sso-toggle" onclick="revealSso(event)"
+         style="font-size:12px;color:var(--primary,#4f46e5);text-decoration:none;">
+        Sign in with SSO instead
+      </a>
+    </div>
+
+    <div id="sso-block" class="hidden">
+      <div style="display:flex;align-items:center;gap:0.6rem;margin:0.9rem 0;">
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+        <span style="font-size:11px;color:var(--text-muted);">or</span>
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+      </div>
+      <div class="field">
+        <label style="font-size:12px;">Organisation</label>
+        <input type="text" id="sso-tenant-input" placeholder="your-tenant-id"
+               autocomplete="organization" oninput="checkSso()"
+               style="font-size:13px;">
+      </div>
+      <button class="secondary hidden" style="width:100%;" id="sso-button"
+              onclick="startSso()">Sign in with SSO</button>
+      <div id="sso-hint" style="font-size:11px;color:var(--text-muted);
+                                margin-top:0.4rem;text-align:center;"></div>
+    </div>
     <div id="login-error" class="toast error hidden"></div>
     <div class="muted" style="text-align: center; margin-top: 1.25rem;">Need a key? Contact your administrator</div>
     <div style="text-align: center; margin-top: 0.75rem;"><a href="/" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">&larr; Back to home</a></div>
@@ -2509,6 +2539,7 @@
       <div class="page-header">
         <div>
           <div class="page-title" id="welcome-title">Overview</div>
+          <span id="session-badge" style="margin-left:0.75rem;"></span>
           <div class="page-desc">Your account summary and quick stats</div>
         </div>
         <div style="display:flex;gap:0.5rem;align-items:center;">
@@ -2520,6 +2551,25 @@
           </select>
         </div>
       </div>
+      <!--
+        Findings sit above the stats deliberately. Everything below this card is
+        volume — how much traffic was processed. This card is what is wrong, and
+        a reader who meets the throughput numbers first has to go looking for it.
+        Every number here is already computed elsewhere in this portal; the only
+        thing that was missing was saying it on the page people land on.
+      -->
+      <div class="card" id="overview-findings-card" style="margin-bottom:1rem;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Findings</div>
+            <div class="card-subtitle">What needs attention in this tenant</div>
+          </div>
+        </div>
+        <div id="overview-findings" style="padding:0 1rem 1rem;">
+          <div class="muted" style="font-size:12px;">Loading...</div>
+        </div>
+      </div>
+
       <div class="stats-grid" id="overview-stats"></div>
 
       <!-- Analytics row -->
@@ -3062,6 +3112,23 @@
 
       <!-- Quick Start -->
       <div id="api-tab-quick-start" class="api-tab-content">
+
+        <!-- API keys: the rotation surface. Everything needed to decide
+             whether a key is safe to revoke, on one row. -->
+        <div class="card" style="margin-bottom:1rem;">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <div class="card-title">API Keys</div>
+              <div class="card-subtitle">Rotate without downtime: create a new key, roll it out, watch traffic move, then revoke the old one.</div>
+            </div>
+            <button class="small primary" onclick="createApiKey()" style="font-size:12px;">+ New Key</button>
+          </div>
+          <div style="padding:0 1.25rem 1.25rem;">
+            <div id="api-keys-list" style="font-size:12px;color:var(--text-muted);overflow-x:auto;">Loading...</div>
+          </div>
+        </div>
+
+
         <div class="card" style="margin-bottom:1rem;border-left:4px solid var(--accent);">
           <div class="card-header"><div><div class="card-title">🚀 Votal AI Platform Access</div><div class="card-subtitle">Use X-Votal-Tenant-Key header for tenant-specific policies</div></div></div>
           <div style="padding:0 1.25rem 1.25rem;">
@@ -5285,6 +5352,62 @@ openssl x509 -in agent.crt -fingerprint -sha256 -noout
 </div>
 
 <!-- Agent Modal (Add/Edit) -->
+<div id="apikey-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 2rem;">
+  <div style="background: var(--bg-2); border-radius: 12px; border: 1px solid var(--border); width: 100%; max-width: 520px;">
+    <div style="padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border);">
+      <div style="font-size: 16px; font-weight: 700;" id="apikey-modal-title">New API Key</div>
+      <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;" id="apikey-modal-sub">Your existing keys keep working. Nothing is revoked by creating one.</div>
+    </div>
+
+    <!-- Step 1: describe it -->
+    <div id="apikey-form" style="padding: 1.25rem 1.5rem;">
+      <div class="field">
+        <label style="font-size: 12px; font-weight: 600;">Label</label>
+        <input type="text" id="apikey-label" placeholder="ci-pipeline-v2" style="font-size: 13px;">
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
+          What uses this key. It is the only way to tell rows apart later.
+        </div>
+      </div>
+      <div class="field" style="margin-top: 0.75rem;">
+        <label style="font-size: 12px; font-weight: 600;">Expires after</label>
+        <select id="apikey-expiry" style="font-size: 13px;">
+          <option value="">Never</option>
+          <option value="30">30 days</option>
+          <option value="90">90 days</option>
+          <option value="365">1 year</option>
+        </select>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
+          Shield never expires a key you did not set an expiry on.
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: the key, once -->
+    <div id="apikey-result" class="hidden" style="padding: 1.25rem 1.5rem;">
+      <div style="background: var(--warn-bg, #fef3c7); color: var(--warn, #92400e);
+                  padding: 0.6rem 0.8rem; border-radius: 6px; font-size: 12px; font-weight: 600;">
+        Copy this now. It is not stored and cannot be shown again.
+      </div>
+      <div style="display: flex; gap: 0.5rem; align-items: stretch; margin-top: 0.75rem;">
+        <code id="apikey-value" style="flex: 1; padding: 0.6rem 0.75rem; background: var(--bg);
+              border: 1px solid var(--border); border-radius: 6px; font-size: 12px;
+              word-break: break-all;"></code>
+        <button class="small primary" onclick="copyNewApiKey()" style="font-size: 12px; white-space: nowrap;">Copy</button>
+      </div>
+      <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.75rem; line-height: 1.6;">
+        <strong>Next:</strong> roll this out to whatever used the old key, wait until
+        the old key&rsquo;s <em>Last used</em> stops advancing, then revoke it.
+        Both keys work in the meantime, so there is no window where neither does.
+      </div>
+    </div>
+
+    <div style="padding: 1rem 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem;">
+      <button class="secondary" onclick="closeApiKeyModal()" id="apikey-cancel" style="font-size: 12px;">Cancel</button>
+      <button class="primary" onclick="submitApiKey()" id="apikey-submit" style="font-size: 12px;">Create Key</button>
+    </div>
+  </div>
+</div>
+
 <div id="agent-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 2rem;">
   <div style="background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 760px; width: 100%; box-shadow: var(--shadow-lg); max-height: 90vh; overflow-y: auto;">
 
@@ -5896,10 +6019,112 @@ async function login() {
 
 initCaptcha();
 
-function logout() {
+// ── SSO ────────────────────────────────────────────────────────────────
+//
+// The sign-in button is a link into /v1/tenant/auth/login. Everything else —
+// PKCE, state, the token exchange — happens server-side, so nothing secret
+// passes through this file.
+
+let SSO_DEBOUNCE = null;
+
+function revealSso(ev) {
+  if (ev) ev.preventDefault();
+  document.getElementById('sso-block').classList.remove('hidden');
+  document.getElementById('sso-toggle').classList.add('hidden');
+  document.getElementById('sso-tenant-input').focus();
+}
+
+async function checkSso() {
+  const tenant = (document.getElementById('sso-tenant-input')?.value || '').trim();
+  const block = document.getElementById('sso-block');
+  if (!block) return;
+  clearTimeout(SSO_DEBOUNCE);
+  const button = document.getElementById('sso-button');
+  if (!tenant) { button.classList.add('hidden'); return; }
+  // Debounced: this fires per keystroke and each one is a request.
+  SSO_DEBOUNCE = setTimeout(async () => {
+    try {
+      const r = await fetch(
+        `${BASE_URL}/v1/tenant/auth/providers?tenant=${encodeURIComponent(tenant)}`);
+      const d = await r.json();
+      // The BLOCK stays open once revealed — collapsing it mid-typing would
+      // yank the field out from under the cursor. Only the button reacts.
+      button.classList.toggle('hidden', !d.sso_available);
+      const hint = document.getElementById('sso-hint');
+      if (hint && d.sso_available) {
+        const p = d.providers[0] || {};
+        // An unconfigured provider still lists, so say why the button will
+        // refuse rather than letting someone hit a 503 with no explanation.
+        hint.textContent = p.configured
+          ? (p.issuer || '')
+          : 'SSO is registered but has no admin groups set yet.';
+      }
+    } catch (e) {
+      button.classList.add('hidden');   // older Shield, or offline
+    }
+  }, 250);
+}
+
+function startSso() {
+  const tenant = (document.getElementById('sso-tenant-input')?.value || '').trim();
+  if (!tenant) return showError('login-error', 'Enter your organisation first');
+  // A full navigation, not fetch: the IdP has to render its own login page,
+  // and the session cookie is set on the redirect back.
+  window.location.href =
+    `${BASE_URL}/v1/tenant/auth/login?tenant=${encodeURIComponent(tenant)}` +
+    `&next=${encodeURIComponent('/tenant')}`;
+}
+
+async function loadSession() {
+  // Populates the header. Safe to call with only an API key: the endpoint
+  // describes the credential rather than 401ing, because "not signed in" is
+  // an answer and the portal renders the same screens either way.
+  try {
+    SESSION = await apiCall('/v1/tenant/me/session');
+  } catch (e) {
+    SESSION = null;
+  }
+  renderSessionBadge();
+}
+
+let SESSION = null;
+
+function renderSessionBadge() {
+  const el = document.getElementById('session-badge');
+  if (!el) return;
+  if (!SESSION || SESSION.method !== 'sso') { el.innerHTML = ''; return; }
+  const who = SESSION.name || SESSION.email || SESSION.sub;
+  el.innerHTML = `
+    <span title="${escapeHtml(SESSION.email || '')} · ${escapeHtml(SESSION.issuer || '')}"
+          style="font-size:11px;color:var(--text-dim);display:inline-flex;
+                 align-items:center;gap:0.4rem;">
+      <span style="width:6px;height:6px;border-radius:50%;background:var(--ok,#10b981);"></span>
+      ${escapeHtml(who)}${SESSION.is_admin ? '' : ' &middot; read only'}
+    </span>`;
+}
+
+async function logout() {
+  // Destroy the server-side session first. Clearing the cookie alone would
+  // leave a live session that anyone recovering the cookie could reuse, which
+  // is the whole reason sessions are server-side.
+  let idpLogout = '';
+  try {
+    const r = await fetch(`${BASE_URL}/v1/tenant/auth/logout`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+    idpLogout = (await r.json()).idp_logout_url || '';
+  } catch (e) { /* sign out locally regardless */ }
   localStorage.removeItem('votal_tenant_key');
   API_KEY = '';
   TENANT_INFO = null;
+  SESSION = null;
+
+  // Ending OUR session does not end the IdP's. Without this the next
+  // "Sign in with SSO" is answered from the IdP's existing session and the
+  // same person is signed straight back in with no login form — which looks
+  // like sign-out is broken, and on a shared machine it is.
+  if (idpLogout) { window.location.href = idpLogout; return; }
+
   document.getElementById('app').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
 }
@@ -5907,6 +6132,7 @@ function logout() {
 function showApp() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
+  loadSession();
   document.getElementById('welcome-title').textContent = `Welcome, ${TENANT_INFO.name || TENANT_INFO.tenant_id}`;
   document.getElementById('sidebar-tenant-name').textContent = TENANT_INFO.name || TENANT_INFO.tenant_id;
   document.getElementById('sidebar-tenant-plan').innerHTML = `<span class="badge badge-${TENANT_INFO.plan}">${TENANT_INFO.plan}</span>`;
@@ -6380,6 +6606,152 @@ function renderOverview() {
 
   // Fetch live analytics
   loadOverviewAnalytics();
+  loadOverviewFindings();
+}
+
+// ── Findings ─────────────────────────────────────────────────────────────
+//
+// Five reads, each already served by an endpoint this portal uses elsewhere.
+// The rule every row obeys: a row that could not be computed says so. It must
+// never render 0.
+//
+// "0 shadow agents" while the governance endpoint is down is the dangerous
+// output — it is indistinguishable from a clean tenant, and it is the reading a
+// person acts on. This is the same failure the LangChain demo shipped with,
+// where every error rendered as "(no response)" and hid three different causes
+// for weeks. Unknown and zero are different answers; only one of them is
+// reassuring, and it has to be earned.
+
+function _findingRow(f) {
+  if (f.error) {
+    return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid var(--border);">
+      <span style="color:var(--warning);font-weight:600;min-width:2.5rem;">--</span>
+      <span style="flex:1;">${_esc(f.label)}</span>
+      <span class="muted" style="font-size:12px;">could not be checked: ${_esc(f.error)}</span>
+    </div>`;
+  }
+  // showCta is explicit rather than derived from count, because the one row that
+  // needs a button at zero is the "no baseline yet" prompt — a call to action,
+  // not a clean result.
+  // count is coerced, not escaped. It is a count: anything that is not a finite
+  // number is a bug or a hostile response, and rendering it as text would put
+  // API-controlled bytes into innerHTML. Number() collapses both cases to
+  // something safe to interpolate.
+  const n = Number.isFinite(Number(f.count)) ? Number(f.count) : 0;
+  const clean = n === 0;
+  const showCta = f.showCta !== undefined ? f.showCta : !clean;
+  // f.tab is a literal in this file today, so escaping it is belt and braces —
+  // but it lands inside an onclick attribute, and the day someone makes it
+  // dynamic that becomes injection rather than a bug.
+  return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid var(--border);">
+    <span style="font-weight:600;min-width:2.5rem;color:${clean ? 'var(--muted)' : '#f85149'};">${n}</span>
+    <span style="flex:1;">${_esc(f.label)}</span>
+    ${showCta ? `<button class="small" onclick="_gotoTab('${_esc(f.tab)}')">${_esc(f.cta || 'Review')}</button>` : ''}
+  </div>`;
+}
+
+// Clicks the nav item rather than re-implementing the switch. The delegated
+// handler already hides panes, moves the active highlight, scrolls, AND calls
+// that tab's loader — a second copy would drift from all four.
+function _gotoTab(name) {
+  const el = document.querySelector(`.nav-item[data-tab="${name}"]`);
+  if (el) el.click();
+}
+
+// Drift needs the status code, which apiCall throws away. A tenant that has
+// never approved a baseline gets 404 — that is "not set up yet", a call to
+// action, NOT a failure. Rendering it as an error would tell every new tenant
+// that something is broken on their first visit.
+async function _fetchDrift() {
+  try {
+    const r = await fetch(`${BASE_URL}/v1/tenant/me/aibom/drift`, {
+      headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 404) return { noBaseline: true };
+    if (!r.ok) return { e: new Error(data.detail || data.error || `HTTP ${r.status}`) };
+    return { d: data };
+  } catch (e) {
+    return { e };
+  }
+}
+
+async function loadOverviewFindings() {
+  const box = document.getElementById('overview-findings');
+  if (!box) return;
+
+  // Settled, not all — one failing endpoint must not blank the card. Each
+  // result carries either a count or the reason it is unknown.
+  const [gov, unowned, drift, posture] = await Promise.all([
+    apiCall('/v1/governance/agents').then(d => ({ d })).catch(e => ({ e })),
+    apiCall('/v1/governance/agents/unowned').then(d => ({ d })).catch(e => ({ e })),
+    _fetchDrift(),
+    apiCall('/v1/tenant/me/posture').then(d => ({ d })).catch(e => ({ e })),
+  ]);
+
+  const rows = [];
+
+  rows.push(gov.e
+    ? { label: 'Shadow agents — running, never registered', error: gov.e.message }
+    : { label: 'Shadow agents — running, never registered',
+        count: gov.d.shadow_count || 0, tab: 'agents', cta: 'View agents' });
+
+  rows.push(unowned.e
+    ? { label: 'Unowned agents — no one to ask at review time', error: unowned.e.message }
+    : { label: 'Unowned agents — no one to ask at review time',
+        count: unowned.d.unowned_count || 0, tab: 'governance', cta: 'Assign owners' });
+
+  // Granted-but-unused, diffed client-side from the response we already have.
+  // Deliberately not a per-agent fan-out: on a tenant with hundreds of agents
+  // that would be hundreds of requests to render one number.
+  if (gov.e) {
+    rows.push({ label: 'Unused grants — least-privilege candidates', error: gov.e.message });
+  } else {
+    let unused = 0;
+    for (const a of (gov.d.agents || [])) {
+      const used = new Set(a.recent_tools_used || []);
+      unused += (a.granted_tools || []).filter(t => !used.has(t)).length;
+    }
+    rows.push({ label: 'Unused grants — least-privilege candidates',
+                count: unused, tab: 'governance', cta: 'Review' });
+  }
+
+  // No baseline is not "no drift". Saying 0 here would report a check that was
+  // never run as a clean result.
+  if (drift.noBaseline) {
+    rows.push({ label: 'Component drift — no approved baseline yet',
+                count: 0, tab: 'aibom', cta: 'Take baseline',
+                showCta: true, noBaseline: true });
+  } else if (drift.e) {
+    rows.push({ label: 'Component drift — changed since you approved it', error: drift.e.message });
+  } else {
+    rows.push({ label: 'Component drift — changed since you approved it',
+                count: drift.d.drift_count || 0, tab: 'aibom', cta: 'View drift' });
+  }
+
+  rows.push(posture.e
+    ? { label: 'Controls not enforcing', error: posture.e.message }
+    : { label: 'Controls not enforcing', count: posture.d.off_count || 0,
+        tab: 'policies', cta: 'Review posture' });
+
+  const failed = rows.filter(r => r.error).length;
+  const found = rows.filter(r => !r.error && r.count > 0).length;
+
+  let header = '';
+  if (failed === rows.length) {
+    header = `<div style="color:var(--warning);font-size:13px;margin-bottom:0.5rem;">
+      No findings could be checked. This is a connectivity problem, not a clean tenant.</div>`;
+  } else if (found === 0 && failed === 0) {
+    header = `<div style="color:#10b981;font-size:13px;margin-bottom:0.5rem;">
+      Nothing outstanding. All five checks ran and found nothing.</div>`;
+  }
+
+  const footer = rows.some(r => r.noBaseline)
+    ? `<div class="muted" style="font-size:12px;padding-top:0.5rem;">
+         Drift needs an approved baseline before it can report anything.</div>`
+    : '';
+
+  box.innerHTML = header + rows.map(_findingRow).join('') + footer;
 }
 
 async function loadOverviewAnalytics() {
@@ -7127,6 +7499,163 @@ function filterActivity() {
   if (!q) { pre.textContent = pre._allLines; return; }
   const lines = pre._allLines.split('\n');
   pre.textContent = lines.filter(l => l.toLowerCase().includes(q)).join('\n') || 'No matching entries';
+}
+
+
+// ── API keys ───────────────────────────────────────────────────────────
+//
+// The list is the rotation surface. "Last used" is the field that turns
+// revocation from a guess into a decision, so it is the one the row is built
+// around.
+
+function _ago(ts) {
+  if (!ts) return 'never';
+  const s = Math.floor(Date.now() / 1000) - ts;
+  if (s < 0) return _ahead(-s);       // a future timestamp is not "just now"
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.floor(s / 60)}m ago`;
+  if (s < 172800) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function _ahead(s) {
+  // Expiry is the only forward-looking column, and reusing the past-tense
+  // formatter made a key expiring in 90 days read "just now" — which is
+  // exactly how it would read if it had ALREADY expired.
+  if (s < 3600) return `in ${Math.max(1, Math.floor(s / 60))}m`;
+  if (s < 172800) return `in ${Math.floor(s / 3600)}h`;
+  return `in ${Math.floor(s / 86400)}d`;
+}
+
+async function loadApiKeys() {
+  const el = document.getElementById('api-keys-list');
+  if (!el) return;
+  try {
+    const d = await apiCall('/v1/tenant/me/api-keys');
+    const keys = d.api_keys || [];
+    if (!keys.length) { el.textContent = 'No API keys found.'; return; }
+
+    el.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="text-align:left;color:var(--text-muted);">
+          <th style="padding:0.4rem 0.5rem;">Label</th>
+          <th style="padding:0.4rem 0.5rem;">Key</th>
+          <th style="padding:0.4rem 0.5rem;">Scope</th>
+          <th style="padding:0.4rem 0.5rem;">Created</th>
+          <th style="padding:0.4rem 0.5rem;">Last used</th>
+          <th style="padding:0.4rem 0.5rem;">Expires</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${keys.map(k => {
+          const stale = k.last_used && (Date.now()/1000 - k.last_used) > 604800;
+          const expired = k.expires_at && k.expires_at < Date.now()/1000;
+          return `
+          <tr style="border-top:1px solid var(--border);">
+            <td style="padding:0.5rem;">${escapeHtml(k.label || '') ||
+              '<span style="color:var(--text-muted);">unlabelled</span>'}</td>
+            <td style="padding:0.5rem;"><code style="font-size:11px;">${
+              escapeHtml(k.prefix || '')}…${escapeHtml(k.fingerprint || '')}</code></td>
+            <td style="padding:0.5rem;">${k.scope
+              ? escapeHtml(k.scope)
+              : '<span style="color:var(--text-muted);">unscoped</span>'}</td>
+            <td style="padding:0.5rem;color:var(--text-muted);">${_ago(k.created_at)}</td>
+            <td style="padding:0.5rem;${stale ? 'color:var(--warn,#92400e);font-weight:600;' : ''}">${
+              _ago(k.last_used)}</td>
+            <td style="padding:0.5rem;${expired ? 'color:var(--danger);font-weight:600;' : 'color:var(--text-muted);'}">${
+              k.expires_at ? (expired ? 'expired' : _ahead(k.expires_at - Date.now()/1000)) : '—'}</td>
+            <td style="padding:0.5rem;text-align:right;">
+              <button class="small danger" onclick="revokeApiKey('${escapeHtml(k.fingerprint)}')"
+                      style="font-size:11px;padding:0.2rem 0.5rem;">Revoke</button>
+            </td>
+          </tr>`; }).join('')}
+        </tbody>
+      </table>
+      <div style="margin-top:0.6rem;font-size:11px;color:var(--text-muted);">
+        Last used lags by up to a minute and is best effort. It answers
+        &ldquo;is this key idle&rdquo;, which is what makes revoking it safe.
+        It is not an audit trail.
+      </div>`;
+  } catch (e) {
+    el.textContent = 'Could not load API keys: ' + e.message;
+  }
+}
+
+function createApiKey() {
+  // A modal, not prompt(). The old flow asked for a label in one browser
+  // dialog and then showed the key in another, which is both ugly and a bad
+  // place to put a secret you get exactly one chance to copy.
+  document.getElementById('apikey-label').value = '';
+  document.getElementById('apikey-expiry').value = '';
+  document.getElementById('apikey-form').classList.remove('hidden');
+  document.getElementById('apikey-result').classList.add('hidden');
+  document.getElementById('apikey-submit').classList.remove('hidden');
+  document.getElementById('apikey-submit').textContent = 'Create Key';
+  document.getElementById('apikey-cancel').textContent = 'Cancel';
+  document.getElementById('apikey-modal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('apikey-label').focus(), 50);
+}
+
+function closeApiKeyModal() {
+  document.getElementById('apikey-modal').classList.add('hidden');
+  loadApiKeys();
+}
+
+function copyNewApiKey() {
+  const v = document.getElementById('apikey-value').textContent;
+  navigator.clipboard.writeText(v).then(
+    () => showToast('Key copied', 'success'),
+    () => showToast('Could not copy — select and copy manually', 'error'));
+}
+
+async function submitApiKey() {
+  const label = document.getElementById('apikey-label').value.trim();
+  const days = document.getElementById('apikey-expiry').value;
+  const btn = document.getElementById('apikey-submit');
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
+  try {
+    const body = { label };
+    if (days) body.expires_in_days = parseInt(days, 10);
+    const d = await apiCall('/v1/tenant/me/api-keys', {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    if (!d.api_key) throw new Error('no key returned');
+
+    document.getElementById('apikey-value').textContent = d.api_key;
+    document.getElementById('apikey-form').classList.add('hidden');
+    document.getElementById('apikey-result').classList.remove('hidden');
+    btn.classList.add('hidden');
+    // Cancel becomes Done: at this point the key exists whatever the button
+    // says, and offering "Cancel" would imply it can be undone.
+    document.getElementById('apikey-cancel').textContent = 'Done';
+  } catch (e) {
+    showToast('Could not create key: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    if (!btn.classList.contains('hidden')) btn.textContent = 'Create Key';
+  }
+}
+
+async function revokeApiKey(fingerprint) {
+  // Revocation needs the key itself: only its hash is stored, and a
+  // fingerprint cannot be reversed into one. Asking for it is the honest
+  // consequence of never keeping the plaintext.
+  const key = prompt(
+    `Paste the full API key ending in fingerprint ${fingerprint} to revoke it.\n\n`
+    + 'Shield stores only a hash, so it cannot look the key up for you.\n'
+    + 'Check the Last used column first — revoking a key still in use breaks it '
+    + 'immediately.');
+  if (!key) return;
+  try {
+    await apiCall('/v1/tenant/me/api-keys', {
+      method: 'DELETE', body: JSON.stringify({ api_key: key }),
+    });
+    showToast('API key revoked', 'success');
+  } catch (e) {
+    showToast('Could not revoke key: ' + e.message, 'error');
+  } finally {
+    loadApiKeys();
+  }
 }
 
 async function loadAgentData() {
@@ -12891,7 +13420,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'activity') loadActivity();
     if (tab === 'telemetry') loadTelemetry();
     if (tab === 'policies') loadPolicies();
-    if (tab === 'apis') renderAllApiTabs();
+    if (tab === 'apis') { renderAllApiTabs(); loadApiKeys(); }
     if (tab === 'playground') initPlayground();
     if (tab === 'kill-switch') loadKillSwitchTools();
     if (tab === 'agent-identity') {} // manual actions
@@ -14710,15 +15239,32 @@ async function revokeCert() {
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-if (API_KEY) {
-  document.getElementById('api-key-input').value = API_KEY;
-  // Auto-login with stored key — skip captcha (already verified in prior session)
-  fetch(`${BASE_URL}/v1/tenant/me`, { headers: { 'X-API-Key': API_KEY } })
-    .then(r => r.status === 200
-      ? r.json().then(d => { TENANT_INFO = d; showApp(); })
-      : logout())
-    .catch(() => {});
-}
+// A session cookie is tried FIRST and without a key. Coming back from the IdP
+// there is nothing in localStorage, so a key-only boot would drop the user on
+// the login screen holding a perfectly good session — the login would appear
+// to have failed at the last step.
+(async function boot() {
+  try {
+    const r = await fetch(`${BASE_URL}/v1/tenant/me`, {
+      credentials: 'same-origin',
+    });
+    if (r.status === 200) {
+      TENANT_INFO = await r.json();
+      showApp();
+      return;
+    }
+  } catch (e) { /* fall through to the key path */ }
+
+  if (API_KEY) {
+    document.getElementById('api-key-input').value = API_KEY;
+    // Auto-login with stored key — skip captcha (already verified in prior session)
+    fetch(`${BASE_URL}/v1/tenant/me`, { headers: { 'X-API-Key': API_KEY } })
+      .then(r => r.status === 200
+        ? r.json().then(d => { TENANT_INFO = d; showApp(); })
+        : logout())
+      .catch(() => {});
+  }
+})();
 
 // Custom Policies Management
 let CUSTOM_POLICIES = [];

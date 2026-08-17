@@ -9,3 +9,7 @@ mcp<2          # MCP transparent proxy (core/mcp/upstream.py) + generated MCP se
 ./packages/shield-mcp   # MCP onboarding scan (core/mcp_scan.py). Installed from the
                        # local path, not PyPI, so CI exercises this repo's scanner
                        # rather than whatever version happens to be published.
+certifi                # tests/test_oidc_tls_trust.py needs a real, parseable CA
+                       # bundle on disk. It arrives transitively via httpx, and a
+                       # transitive dep that a test imports directly is exactly
+                       # what a polluted venv hides until CI changes underneath us.

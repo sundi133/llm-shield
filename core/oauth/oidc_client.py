@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Optional
 
 import httpx
@@ -30,6 +30,17 @@ class OIDCProvider:
     client_id: str  # Shield's client_id registered at the IdP
     audience: str = ""  # Expected aud claim (defaults to client_id)
     jwks_uri: str = ""  # Auto-discovered if empty
+    # Portal login only. Empty means a PUBLIC client using PKCE, which is the
+    # recommended configuration and keeps an IdP secret out of Shield
+    # entirely. Set only for IdPs that mandate a confidential client.
+    client_secret: str = ""
+    # Group/role claim values that grant portal admin. Required before SSO can
+    # be enabled: an empty list would mean "everyone in the directory may write
+    # the agent registry", which is not a default anyone should get by accident.
+    admin_groups: list = field(default_factory=list)
+    # Which claim carries the groups. Keycloak uses "groups", Entra "roles",
+    # Okta varies by authorization server.
+    groups_claim: str = "groups"
     claim_mapping: dict = field(default_factory=dict)
     # claim_mapping maps IdP claims to Shield claims, e.g.:
     # {"sub": "user_sub", "preferred_username": "agent_id"}
@@ -52,7 +63,12 @@ async def discover_openid_config(issuer: str) -> dict:
         The parsed JSON discovery document.
     """
     url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    # verify= explicitly: httpx builds its context from the bundled certifi
+    # CAs, not the system trust store, so an on-prem IdP behind a private CA
+    # fails here with an error that never mentions the setting that fixes it.
+    from core.oauth.tls_trust import httpx_verify, warn_if_unset_and_issuer_is_private
+    warn_if_unset_and_issuer_is_private(issuer)
+    async with httpx.AsyncClient(timeout=10.0, verify=httpx_verify()) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         return resp.json()
@@ -244,8 +260,17 @@ class OIDCProviderRegistry:
                 raw = r.get(f"shield:oidc:providers:{tenant_id}")
                 if raw:
                     data = json.loads(raw)
+                    # Filter to known fields. OIDCProvider(**cfg) raises on an
+                    # unexpected key, and the except below turns that into an
+                    # empty dict — so a record written by a newer version would
+                    # make every provider silently vanish on rollback, which
+                    # presents as "SSO stopped working" with nothing in the log
+                    # that names a version.
+                    known = {f.name for f in fields(OIDCProvider)}
                     return {
-                        name: OIDCProvider(**cfg) for name, cfg in data.items()
+                        name: OIDCProvider(
+                            **{k: v for k, v in cfg.items() if k in known})
+                        for name, cfg in data.items()
                     }
         except Exception as e:
             logger.warning(f"Failed to load OIDC providers from Redis: {e}")
@@ -266,6 +291,9 @@ class OIDCProviderRegistry:
                         "client_id": p.client_id,
                         "audience": p.audience,
                         "jwks_uri": p.jwks_uri,
+                        "client_secret": p.client_secret,
+                        "admin_groups": p.admin_groups,
+                        "groups_claim": p.groups_claim,
                         "claim_mapping": p.claim_mapping,
                     }
                     for name, p in providers.items()

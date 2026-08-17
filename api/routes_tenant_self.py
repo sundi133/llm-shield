@@ -107,13 +107,66 @@ class ValidatePromptRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=2000)
 
 
+def _actor(request: Request, tenant_id: str) -> str:
+    """Who performed this action: the signed-in human, else the tenant.
+
+    Wrapper so the import stays lazy — core.auth imports storage, and a
+    module-level import here would make the dependency circular at boot.
+    """
+    from core.auth import audit_actor
+    return audit_actor(request, tenant_id)
+
+
+def _require_sso_enabled() -> bool:
+    """Whether this deployment refuses API-key auth on the portal routes.
+
+    One reader, two callers: the check below that enforces it, and /me/posture
+    that reports it. A second copy of this truthy set would eventually disagree
+    with this one, and a posture page that misreports enforcement is worse than
+    no posture page.
+    """
+    import os
+    return os.environ.get(
+        "SHIELD_PORTAL_REQUIRE_SSO", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _require_tenant(request: Request) -> str:
-    """Ensure request has a resolved tenant, else reject."""
+    """Ensure request has a resolved tenant, else reject.
+
+    A portal session takes precedence over an API key. A browser holding a
+    tenant key in localStorage from before SSO was enabled would otherwise keep
+    acting as that key after the user signs in, and every action would stay
+    attributed to the tenant rather than to them — the exact problem sessions
+    exist to solve.
+
+    Changing this one function gives every /v1/tenant/* handler session support
+    at once, which is also why it is the one place this must be correct.
+    """
+    from core.auth import portal_principal
+
+    principal = portal_principal(request)
+    if principal and principal.get("tenant_id"):
+        return principal["tenant_id"]
+
     tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
+
+    # The last rung of the ladder: once a tenant has verified SSO works, this
+    # closes the shared-key path on the PORTAL routes only. Deliberately not a
+    # per-tenant setting — it is a deployment posture, and a tenant able to
+    # switch off the requirement that they sign in has not been required to.
+    if tenant_id and _require_sso_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="This deployment requires signing in "
+                   "(SHIELD_PORTAL_REQUIRE_SSO=1). An API key cannot be used "
+                   "for portal endpoints.",
+        )
+
     if not tenant_id:
         raise HTTPException(
             status_code=401,
-            detail="Tenant API key required to access /v1/tenant/* endpoints",
+            detail="Sign in, or provide a tenant API key, to access "
+                   "/v1/tenant/* endpoints",
         )
     return tenant_id
 
@@ -130,7 +183,15 @@ async def _reject_tenant_id_spoof(request: Request, body_dict: Optional[dict] = 
     model would have silently dropped unknown fields like ``tenant_id``
     that the attacker added.
     """
-    resolved = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
+    # Resolve the same way _require_tenant does. Reading request.state alone
+    # would return early for a session-authenticated caller — no API key, so no
+    # state.tenant_id — and silently disable this IDOR defence for exactly the
+    # callers SSO introduces.
+    from core.auth import portal_principal
+
+    principal = portal_principal(request)
+    resolved = (principal or {}).get("tenant_id") or (
+        getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None)
     if not resolved:
         return  # _require_tenant() will handle the 401
 
@@ -281,7 +342,7 @@ async def update_my_policies(request: Request, body: TenantSelfUpdateRequest):
 
     log_admin_action(
         action="tenant_self_update_policies",
-        actor=f"tenant:{tenant_id}",
+        actor=_actor(request, tenant_id),
         tenant_id=tenant_id,
         source_ip=request.client.host if request.client else "",
         before={"input_guardrails": list((existing.get("input_guardrails") or {}).keys()),
@@ -512,15 +573,31 @@ def _key_preview(api_key: str) -> str:
 
 @router.get("/me/api-keys")
 async def list_my_api_keys(request: Request):
-    """List hashed API keys mapped to the current tenant.
+    """List this tenant's API keys, with what is known about each.
 
-    Returns only hash prefixes — the plaintext keys are never stored.
+    Two sources, merged, because they cover different keys:
+
+      * apikeymeta:* — label, created, expires, last used. Everything minted
+        since key lifecycle existed.
+      * a scan of apikey:* — every key, including those minted before there
+        was anywhere to record any of this.
+
+    Dropping the scan would make older keys vanish from the list, which is
+    worse than showing them with nulls: a rotation runbook that cannot see the
+    key you are trying to rotate is useless. Dropping the metadata would leave
+    "created: null" on every row, which is where this started.
+
+    Never returns a plaintext key. Prefixes and fingerprints only.
     """
     tenant_id = _require_tenant(request)
-    from storage.tenant_store import _get_redis, _fallback_store
+    from storage.tenant_store import (
+        _get_redis, _fallback_store, list_tenant_api_keys)
 
+    described = {k["fingerprint"]: k for k in list_tenant_api_keys(tenant_id)}
+
+    # Every hash this tenant owns, so a key with no metadata still appears.
+    hashes = []
     r = _get_redis()
-    results = []
     if r:
         cursor = 0
         while True:
@@ -531,23 +608,28 @@ async def list_my_api_keys(request: Request):
             for key in keys:
                 try:
                     if r.get(key) == tenant_id:
-                        hash_part = key.split(":", 1)[1] if ":" in key else key
-                        results.append({
-                            "hash_prefix": hash_part[:12] + "...",
-                            "created": None,  # not tracked per-key currently
-                        })
+                        hashes.append(key.split(":", 1)[1] if ":" in key else key)
                 except Exception:
                     continue
             if cursor == 0:
                 break
     else:
-        for k, v in _fallback_store.items():
-            if k.startswith("apikey:") and v == tenant_id:
-                hash_part = k.split(":", 1)[1]
-                results.append({
-                    "hash_prefix": hash_part[:12] + "...",
-                    "created": None,
-                })
+        hashes = [k.split(":", 1)[1] for k, v in _fallback_store.items()
+                  if k.startswith("apikey:") and not k.startswith("apikeymeta:")
+                  and not k.startswith("apikeyscope:") and v == tenant_id]
+
+    results = []
+    for h in hashes:
+        row = described.pop(h[:8], None)
+        results.append(row or {
+            # Predates key lifecycle. Honest nulls rather than invented values.
+            "label": "", "prefix": "", "fingerprint": h[:8], "scope": None,
+            "created_at": None, "expires_at": None, "last_used": None,
+            "legacy": True,
+        })
+    # Anything described but not found in the scan has been revoked out from
+    # under its metadata; do not list a credential that no longer resolves.
+    results.sort(key=lambda e: e.get("created_at") or 0, reverse=True)
 
     return {"tenant_id": tenant_id, "api_keys": results, "count": len(results)}
 
@@ -612,11 +694,21 @@ async def create_my_api_key(request: Request, body: dict = None):
     # the body. A caller that could choose the scope of a key it mints could
     # mint itself an admin key, and the whole mechanism would be decorative.
     # Scoped keys come from the admin plane.
-    add_api_key(tenant_id, api_key)
+    # Label and expiry come from the portal's create dialog. Dropping them
+    # here is why every key created through the UI listed as "unlabelled":
+    # the admin endpoint accepted them and this one, which the portal actually
+    # calls, silently did not.
+    label = (body or {}).get("label") or "" if body else ""
+    expires_in_days = (body or {}).get("expires_in_days") if body else None
+    try:
+        add_api_key(tenant_id, api_key, label=label,
+                    expires_in_days=expires_in_days)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     log_admin_action(
         action="tenant_create_api_key",
-        actor=f"tenant:{tenant_id}",
+        actor=_actor(request, tenant_id),
         tenant_id=tenant_id,
         source_ip=request.client.host if request.client else "",
         metadata={"key_preview": _key_preview(api_key)},
@@ -666,7 +758,7 @@ async def revoke_my_api_key(request: Request, body: dict):
 
     log_admin_action(
         action="tenant_revoke_api_key",
-        actor=f"tenant:{tenant_id}",
+        actor=_actor(request, tenant_id),
         tenant_id=tenant_id,
         source_ip=request.client.host if request.client else "",
         metadata={"key_preview": _key_preview(api_key)},
@@ -732,7 +824,7 @@ async def set_my_tools(request: Request):
 
     log_admin_action(
         action="tenant_set_tool_definitions",
-        actor=f"tenant:{tenant_id}",
+        actor=_actor(request, tenant_id),
         tenant_id=tenant_id,
         source_ip=request.client.host if request.client else "",
         metadata={"tool_count": len(tools), "names": [t["function"]["name"] for t in tools]},
@@ -776,7 +868,7 @@ def _audit_log(request: Request, action: str, tenant_id: str, metadata: dict = N
     """Log admin action for audit trail."""
     log_admin_action(
         action=action,
-        actor=f"tenant:{tenant_id}",
+        actor=_actor(request, tenant_id),
         tenant_id=tenant_id,
         source_ip=request.client.host if request.client else "",
         metadata=metadata or {},
@@ -1111,3 +1203,141 @@ async def get_my_key_scope(request: Request):
     registry_write = mode != "enforce" or scope == "admin"
 
     return {"scope": scope, "registry_write": registry_write, "enforcement": mode}
+
+
+# ── Deployment posture ───────────────────────────────────────────────────
+#
+# Which controls this deployment is enforcing. Sibling to /me/key-scope rather
+# than an extension of it: key-scope answers "what may THIS CREDENTIAL do",
+# posture answers "what is THIS DEPLOYMENT enforcing". Merging them would make a
+# per-credential answer read as deployment-wide.
+#
+# Every mode comes from the module that actually decides it, never from a second
+# copy of the env parsing here. A reporting surface that re-implements the rule
+# eventually disagrees with the rule, and a posture page that says "enforcing"
+# when nothing is enforcing is worse than no posture page.
+
+# id -> (env var, ladder). Which modes count as enforcing lives in
+# _POSTURE_ENFORCING below, because it is not always the last rung.
+# The ladder is the documented rollout order; `next` is the FOLLOWING rung, never
+# a jump to the end. Offering off -> enforce in one click is how rollouts become
+# outages, and every one of these controls has a declare-then-enforce step for a
+# reason.
+_POSTURE_LADDERS = {
+    "registry_write":  ("SHIELD_REGISTRY_WRITE_SCOPE", ("off", "warn", "enforce")),
+    "auto_revoke":     ("SHIELD_ENABLE_AUTO_REVOKE", ("off", "on")),
+    "agent_token_pop": ("SHIELD_AGENT_TOKEN_POP", ("off", "optional", "required")),
+    "role_binding":    ("SHIELD_ROLE_BINDING", ("off", "prefer", "strict")),
+    "portal_sso":      ("SHIELD_PORTAL_REQUIRE_SSO", ("off", "on")),
+}
+
+_POSTURE_ENFORCING = {
+    "registry_write":  {"enforce"},
+    "auto_revoke":     {"on"},
+    "agent_token_pop": {"required"},
+    # strict_proxy enforces too: it refuses a caller with no vouched role. It is
+    # not on the ladder because it is a different trust model (the proxy vouches)
+    # rather than a further rung, but reporting it as "not enforcing" would be a
+    # lie to anyone running the trusted-proxy topology.
+    "role_binding":    {"strict", "strict_proxy"},
+    "portal_sso":      {"on"},
+}
+
+
+def _posture_modes() -> dict:
+    """Current mode per control, from the deciding module in every case."""
+    from core.auth import registry_write_mode
+    from core.agent_tokens import agent_token_pop_mode
+    from core.identity_resolution import role_binding_mode
+    from core.auto_revoke import is_enabled as auto_revoke_enabled
+
+    return {
+        "registry_write": registry_write_mode(),
+        "auto_revoke": "on" if auto_revoke_enabled() else "off",
+        "agent_token_pop": agent_token_pop_mode(),
+        "role_binding": role_binding_mode(),
+        "portal_sso": "on" if _require_sso_enabled() else "off",
+    }
+
+
+def _next_rung(control_id: str, mode: str) -> Optional[str]:
+    """The next rung up, or None at the top / for an off-ladder mode."""
+    ladder = _POSTURE_LADDERS[control_id][1]
+    if mode not in ladder:
+        # e.g. role_binding=strict_proxy — a valid enforcing mode that is not a
+        # rung. There is no "next" to recommend, and inventing one would push an
+        # operator off a topology they chose deliberately.
+        return None
+    i = ladder.index(mode)
+    return ladder[i + 1] if i + 1 < len(ladder) else None
+
+
+@router.get("/me/posture")
+async def get_my_posture(request: Request):
+    """Which enforcement controls are on, and the next rung for those that aren't.
+
+    Read-only, admin plane, no store access — the guard path is not touched.
+
+    Reports the environment of THIS process. In a split deployment the guardrail
+    server is a separate process with its own environment, so data-plane controls
+    reflect what the admin plane was configured with. `scope` names that limit
+    rather than leaving the reader to assume it is deployment-wide.
+
+    Discloses to an authenticated tenant caller which controls are off. That is a
+    real disclosure, judged acceptable because the same facts are observable by
+    testing whether actions get refused; see the spec's §5 if that changes.
+    """
+    _require_tenant(request)
+
+    modes = _posture_modes()
+    controls = []
+    for cid, (env, _ladder) in _POSTURE_LADDERS.items():
+        mode = modes[cid]
+        controls.append({
+            "id": cid,
+            "env": env,
+            "mode": mode,
+            "enforcing": mode in _POSTURE_ENFORCING[cid],
+            "next": _next_rung(cid, mode),
+        })
+
+    return {
+        "controls": controls,
+        "off_count": sum(1 for c in controls if not c["enforcing"]),
+        "scope": "process",
+    }
+
+
+@router.get("/me/session")
+async def get_my_session(request: Request):
+    """Who is signed in, or which credential is acting.
+
+    The portal renders the same screens either way and only needs to know which
+    to show in the header, so a key-authenticated caller gets a 200 describing
+    the key rather than a 401 — "not signed in" is an answer, not an error.
+    """
+    from core.auth import portal_principal
+
+    tenant_id = _require_tenant(request)
+    principal = portal_principal(request)
+
+    if principal:
+        return {
+            "method": "sso",
+            "tenant_id": tenant_id,
+            "sub": principal.get("sub", ""),
+            "email": principal.get("email", ""),
+            "name": principal.get("name", ""),
+            "is_admin": principal.get("is_admin", False),
+            "issuer": principal.get("issuer", ""),
+        }
+
+    return {
+        "method": "api_key",
+        "tenant_id": tenant_id,
+        "sub": "", "email": "", "name": "",
+        # A key is not a person, so there is nobody to call an administrator.
+        # What it may do is governed by its scope; see /v1/tenant/me/key-scope.
+        "is_admin": None,
+        "issuer": "",
+    }

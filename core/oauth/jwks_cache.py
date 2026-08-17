@@ -27,8 +27,15 @@ def _issuer_hash(issuer: str) -> str:
 
 
 async def fetch_jwks(jwks_uri: str) -> dict:
-    """Fetch JWKS from a remote URI."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    """Fetch JWKS from a remote URI.
+
+    verify= explicitly, for the same reason as discovery: httpx trusts the
+    bundled certifi CAs rather than the system store, so an on-prem IdP signed
+    by a private CA fails here. Both outbound calls in this package have to
+    honour SHIELD_OIDC_CA_BUNDLE, or fixing one just moves the failure.
+    """
+    from core.oauth.tls_trust import httpx_verify
+    async with httpx.AsyncClient(timeout=10.0, verify=httpx_verify()) as client:
         resp = await client.get(jwks_uri)
         resp.raise_for_status()
         return resp.json()

@@ -103,11 +103,25 @@ async def register_provider(tenant_id: str, request: Request):
             logger.warning(f"OIDC discovery failed for {issuer}: {e}")
             # Proceed without jwks_uri -- will be discovered at validation time
 
+    # Portal login fields. Accepted here or there is no way to set them at all
+    # — the dataclass and the store both carry them, but this is the only
+    # endpoint that creates a provider, so dropping them silently made portal
+    # SSO impossible to enable. Found by running a real sign-in, not by a test.
+    admin_groups = body.get("admin_groups") or []
+    if not isinstance(admin_groups, list) or not all(
+            isinstance(g, str) for g in admin_groups):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "admin_groups must be a list of strings"})
+
     provider = OIDCProvider(
         issuer=issuer,
         client_id=client_id,
         audience=body.get("audience", ""),
         jwks_uri=jwks_uri,
+        client_secret=body.get("client_secret", "") or "",
+        admin_groups=[g.strip() for g in admin_groups if g.strip()],
+        groups_claim=(body.get("groups_claim") or "groups").strip(),
         claim_mapping=body.get("claim_mapping", {}),
     )
     await oidc_registry.register_provider(tenant_id, name, provider)
@@ -118,6 +132,13 @@ async def register_provider(tenant_id: str, request: Request):
         "name": name,
         "issuer": issuer,
         "jwks_uri": jwks_uri,
+        "admin_groups": provider.admin_groups,
+        "groups_claim": provider.groups_claim,
+        # Loud rather than buried: a provider registered without admin_groups
+        # cannot run a login, and the operator should learn that here rather
+        # than from a 503 when somebody tries to sign in.
+        "portal_login_ready": bool(provider.admin_groups),
+        # Never echo client_secret.
     }
 
 
