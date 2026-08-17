@@ -20,6 +20,12 @@ groups:
       # Identity comes before authorization: NHI is who is asking, RBAC is what
       # they may do. Reading them in that order is why it sits above RBAC.
       - { title: Non-Human Identity (NHI), url: /non-human-identity/ }
+      # The implementation behind NHI: wire formats, PoP, revocation. It sat in
+      # the repo for months as AGENT_AUTH_ARCHITECTURE.md with no front matter,
+      # so it never built as a page and nothing linked it. Concept first, then
+      # this — a reader who lands here without NHI meets the tokens before the
+      # reason they exist.
+      - { title: Agentic Identity Architecture, url: /agent-identity-architecture/ }
       - { title: Role-Based Access (RBAC), url: /rbac/ }
       - { title: Tool Data Policies, url: /tool-data-policies/ }
       - { title: Secret Vault, url: /prevent-secret-leakage/ }

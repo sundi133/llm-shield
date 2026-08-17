@@ -11,7 +11,7 @@ description: "Sign in to the tenant portal through your own IdP, so administrati
 
 The portal signs in with a shared tenant API key, so the audit records
 `tenant:acme` for every administrative action. That answers **which
-organisation**, not **who** — and "who granted this agent production
+organisation**, not **who** - and "who granted this agent production
 credentials" is the first question of an access review.
 {: .fs-6 .fw-300 }
 
@@ -35,14 +35,14 @@ credentials" is the first question of an access review.
 
 **Entirely opt-in, per tenant.** A tenant with no OIDC provider sees the same
 login screen and the same behaviour as before. API keys keep working on every
-route they work on today, including for tenants that enable SSO — turning it on
+route they work on today, including for tenants that enable SSO - turning it on
 must not lock out a CI job that has been posting to the registry for a year.
 
 ## Before you start
 
 Two things Shield needs, and one it refuses without.
 
-**`SHIELD_PORTAL_BASE_URL`** — the externally visible URL of the deployment,
+**`SHIELD_PORTAL_BASE_URL`** - the externally visible URL of the deployment,
 used to build the `redirect_uri` your IdP has registered. It is never inferred
 from the `Host` or `X-Forwarded-Proto` headers: behind Railway, an ingress or
 any TLS-terminating proxy the app sees plain HTTP while the browser sees
@@ -54,7 +54,7 @@ security-relevant URL.
 SHIELD_PORTAL_BASE_URL=https://shield.example.com
 ```
 
-**`admin_groups`** — the group or role values that grant portal administration.
+**`admin_groups`** - the group or role values that grant portal administration.
 Shield **refuses to run a login** for a provider that has none, rather than
 treating an empty list as "everybody". Connect SSO without it and every account
 in your directory could write the agent registry; refusing at login is louder
@@ -79,7 +79,7 @@ The redirect URI must match exactly, including scheme and port.
 | Web origins | `https://shield.example.com` |
 
 A public client is correct here. Shield uses PKCE, so no client secret needs to
-exist at all — one fewer credential to store, rotate and leak. Set
+exist at all - one fewer credential to store, rotate and leak. Set
 `client_secret` only if your Keycloak policy mandates a confidential client.
 
 **2. Create the admin group,** e.g. `shield-admins`, and put your
@@ -154,7 +154,7 @@ Declare first, enforce second. The same ladder as the other controls in Shield.
 in with SSO instead" link and the API key path is untouched.
 
 **2. Have your administrators sign in once.** Confirm the header shows their
-name and not `· read only` — that badge means the group claim did not match,
+name and not `· read only` - that badge means the group claim did not match,
 which is almost always the Keycloak full-path setting or a missing Okta claim.
 
 ```bash
@@ -170,7 +170,7 @@ authentication on portal routes. Do this only after step 2, and remember that
 any automation calling `/v1/tenant/*` with a key stops working.
 
 Sessions last 8 hours by default (`SHIELD_PORTAL_SESSION_TTL`). An idle timeout
-is available and off by default (`SHIELD_PORTAL_SESSION_IDLE`, seconds) — it is
+is available and off by default (`SHIELD_PORTAL_SESSION_IDLE`, seconds) - it is
 what regulated deployments are asked for, and also what logs people out
 mid-task, so it is a choice rather than a default.
 
@@ -189,7 +189,7 @@ at their next login, or immediately if you revoke their sessions. The session
 TTL bounds the window. Re-reading groups on every request would mean a
 JWKS-backed lookup on every portal call.
 
-**This is not per-user authorization.** There is one distinction — may
+**This is not per-user authorization.** There is one distinction - may
 administer, or may only read. Finer-grained portal roles are not implemented.
 
 **No SCIM.** Users are not provisioned or deprovisioned automatically. A person

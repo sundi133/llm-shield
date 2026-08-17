@@ -1,9 +1,79 @@
-# Agent AuthN / AuthZ at Runtime
+---
+title: Agentic Identity Architecture
+layout: default
+nav_order: 12
+permalink: /agent-identity-architecture/
+description: How Shield issues, sender-constrains, revokes and authorizes agent identity at runtime - agent tokens, capability tokens, proof-of-possession, and continuous revocation, with the on-the-wire formats and the code that implements each.
+---
 
-This document describes how LLM-Shield authenticates and authorizes
-agent actions at runtime. It covers the threat model, the layered design,
-the on-the-wire token formats, and how the pieces are wired together in
-the code.
+# Agentic Identity Architecture
+
+How Shield authenticates and authorizes agent actions at runtime: the threat
+model, the layered design, the on-the-wire token formats, and where each piece
+lives in the code.
+
+For the conceptual introduction, read
+[Non-Human Identity](/non-human-identity/) first. This page is the
+implementation.
+
+## 0. The four functions
+
+An agent identity provider does four things. Shield implements all four, and
+the endpoint for each is named here so the rest of this page has somewhere to
+point.
+
+| Function | What it answers | Where |
+|---|---|---|
+| **Issue** | Who is this agent, acting for which human, running which build? | `POST /v1/shield/auth/agent-token` |
+| **Sender-constrain** | Is the holder of this token the party it was issued to? | `cnf.jkt` + a proof in `X-Agent-DPoP` |
+| **Authorize** | May this action happen, on this resource, right now? | `POST /v1/shield/cap/mint` → `/cap/verify` |
+| **Revoke** | Stop it - including work already approved | `POST /v1/shield/auth/revoke`, CAEP/SSF |
+
+The separation matters. Issue and sender-constrain are **slow** properties of a
+process (≤15 minutes). Authorize is a **fast** property of a single action
+(≤60 seconds, one-shot). Collapsing them is the mistake classical IAM makes:
+a credential that proves who you are and also permits everything you may do
+gives an attacker who steals it both answers at once.
+
+```mermaid
+flowchart TB
+    subgraph AuthN["1-2. ISSUE + SENDER-CONSTRAIN - who, for ≤15 min"]
+        H["Human<br/>OIDC sub"] --> R["Agent runtime<br/>holds private key"]
+        R -->|"POST /auth/agent-token<br/>user_sub, agent_id, agent_instance_id,<br/>build_hash, model_version, session_id,<br/>agent_jwk (public)"| M["mint_agent_token()"]
+        M -->|"EdDSA JWT, kid, exp ≤15m<br/>cnf.jkt = RFC 7638 thumbprint"| T["X-Agent-Token"]
+    end
+
+    subgraph AuthZ["3. AUTHORIZE - what, for ≤60 s, once"]
+        T -->|"+ X-Agent-DPoP proof<br/>(RFC 9449: typ, jwk, jti, htm, htu, iat)"| MW["AgentIdentityMiddleware<br/>verify_agent_token()<br/>verify proof vs cnf.jkt<br/>burn jti (60 s window)"]
+        MW --> ID["IdentityTuple<br/>request.state.identity"]
+        ID --> CM["POST /cap/mint<br/>RBAC: role to tool, role to data scope,<br/>clearance ceiling, HITL grant"]
+        CM -->|"EdDSA JWT, exp ≤60 s, nonce<br/>one tool, one resource, one tenant, one user"| CAP["cap_token"]
+    end
+
+    subgraph PEP["ENFORCEMENT - at the tool, not at the agent"]
+        CAP --> TOOL["Tool / MCP server"]
+        TOOL -->|"POST /cap/verify<br/>expected_tool + expected_resource"| V["signature, exp, tool match,<br/>resource match, nonce burn,<br/>revocation check"]
+        V -->|"valid: true"| EXEC["Execute"]
+        V -->|"valid: false"| DENY["Refuse"]
+    end
+
+    subgraph REV["4. REVOKE - reaches work already approved"]
+        IDP["IdP / EDR<br/>CAEP-SSF SET"] -->|"POST /v1/shield/ssf/events"| RV["revoke by<br/>instance / user / jti"]
+        ADM["Admin<br/>POST /auth/revoke"] --> RV
+        RV -.->|"kills the token"| MW
+        RV -.->|"kills outstanding caps"| V
+    end
+
+    AUD["Audit: one row per decision,<br/>run_id, actor, cap_id"]
+    MW -.-> AUD
+    CM -.-> AUD
+    V -.-> AUD
+```
+
+The dotted lines from **REVOKE** are the property worth noticing: revocation
+reaches both the token check *and* the capability check. A revoked agent's
+already-minted capabilities stop verifying. A control that only stopped the
+next mint would leave every approved-but-unexecuted action live.
 
 ## 1. The Problem
 
@@ -27,9 +97,9 @@ an **agent token** (AuthN) and a **capability token** (AuthZ).
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  Legend:                                                                     │
-│   ░░░░  AuthN zone  — proves WHO (identity, slow-changing, ≤15m)             │
-│   ▓▓▓▓  AuthZ zone  — decides WHAT (permission, per-action, ≤60s)            │
-│   ████  Enforcement zone — verifies the AuthZ decision at the tool           │
+│   ░░░░  AuthN zone  - proves WHO (identity, slow-changing, ≤15m)             │
+│   ▓▓▓▓  AuthZ zone  - decides WHAT (permission, per-action, ≤60s)            │
+│   ████  Enforcement zone - verifies the AuthZ decision at the tool           │
 └──────────────────────────────────────────────────────────────────────────────┘
 
   Human User (OIDC + MFA) ────►  Agent Runtime
@@ -69,17 +139,17 @@ an **agent token** (AuthN) and a **capability token** (AuthZ).
 
 ## 2a. Customer integration path (no admin key needed)
 
-Customers integrate with the platform using their **tenant API key** —
-the same key they use for every other tenant endpoint. They never see
-the admin key.
+Customers integrate with the platform using their **tenant API key**, the
+same key they use for every other tenant endpoint. They never see the
+admin key.
 
 The customer-facing endpoints:
 
 | Method | Path                                            | Auth         | Purpose                          |
 |--------|-------------------------------------------------|--------------|----------------------------------|
-| POST   | `/v1/tenant/me/agent-auth/agent-token`          | `X-API-Key`  | Exchange tenant key for an agent token. `tenant_id` is auto-filled from the key — clients cannot mint tokens for other tenants. |
+| POST   | `/v1/tenant/me/agent-auth/agent-token`          | `X-API-Key`  | Exchange tenant key for an agent token. `tenant_id` is auto-filled from the key - clients cannot mint tokens for other tenants. |
 | POST   | `/v1/shield/cap/mint`                           | `X-Agent-Token` | Mint a capability for one tool call. |
-| POST   | `/v1/shield/cap/verify`                         | (none — cap is bearer)   | Tool-server side verification + nonce burn. |
+| POST   | `/v1/shield/cap/verify`                         | (none - cap is bearer)   | Tool-server side verification + nonce burn. |
 | GET    | `/v1/tenant/me/agent-auth/stats`                | `X-API-Key`  | Per-event counters for the portal. |
 | GET    | `/v1/tenant/me/agent-auth/recent`               | `X-API-Key`  | Last 50 events for the portal. |
 
@@ -90,7 +160,7 @@ A ready-to-paste customer SDK is at `examples/shield_client.py`. Wrapped
 integrations for LangChain and raw OpenAI/Anthropic tool-use are in
 `examples/langchain_shielded_tool.py` and `examples/openai_shielded_tool.py`.
 
-## 3. AuthN — Agent Tokens
+## 3. AuthN - Agent Tokens
 
 ### What an agent token proves
 
@@ -153,9 +223,75 @@ three backends, selected per token type at startup. See §10 for details.
 | `SHIELD_SIGNER_BACKEND_AGENT`      | `local` \| `pkcs11` \| `vault` (default: `local`) |
 
 If no private key is provided in `local` mode, the process generates an
-ephemeral keypair and emits a warning — dev/test only.
+ephemeral keypair and emits a warning - dev/test only.
 
-## 4. AuthZ — Capability Tokens
+### Signing-key rotation
+
+The token header carries `kid`, so more than one signing key can verify at a
+time. `_retired_kids()` reads a comma-separated list of key ids that **must
+never verify again**, checked before signature verification. Rotation is
+therefore: add the new key, move `SHIELD_AGENT_TOKEN_KID` to it, wait out the
+15-minute token lifetime, then retire the old kid.
+
+Retirement is separate from removal on purpose. Deleting a key makes old tokens
+fail as *malformed*; retiring it makes them fail as *rejected*, which is the
+difference between a confusing incident and a legible one.
+
+## 3a. Sender-constraint - proof-of-possession
+
+Everything above still describes a **bearer** token: whoever holds the bytes is
+the agent, for up to 15 minutes, and can mint capabilities for anything that
+agent's role permits. A copy in a log file, an APM trace or a proxy access log
+is a working credential.
+
+Binding closes that. It is a two-party property: the issuer puts a key
+thumbprint in the token, and the holder proves possession of the matching
+private key on every request.
+
+**At mint.** The agent generates a keypair - the private key never leaves the
+process - and sends the **public** JWK as `agent_jwk`. Shield takes its
+RFC 7638 thumbprint and embeds it as `cnf: {"jkt": "..."}`.
+
+**Per request.** The agent signs a small JWT and sends it in **`X-Agent-DPoP`**:
+
+```
+header  { "typ": "dpop+jwt", "alg": "ES256", "jwk": <public JWK> }
+claims  { "jti": "<unique>", "htm": "POST",
+          "htu": "https://shield.example.com/v1/shield/cap/mint",
+          "iat": 1770000000 }
+```
+
+All four claims are required (`core/dpop.py`, RFC 9449). `htm` must match the
+method; `htu` is compared canonically - scheme + host + path, query and fragment
+stripped. A proof whose header JWK contains private-key members is rejected
+outright.
+
+The header is deliberately **not** `DPoP`: `identity_resolution.verify_token_binding`
+already consumes that one for workload-identity binding, and with both bindings
+active on different keypairs a single header cannot satisfy two thumbprints.
+
+**Verification order.** `typ` → proof signature against its own JWK →
+thumbprint equals `cnf.jkt` *(this is the binding)* → `htm`/`htu` match →
+`iat` within skew → `jti` claimed atomically in a **60-second replay window**.
+
+**Rollout.** `SHIELD_AGENT_TOKEN_POP`:
+
+| Mode | Behaviour |
+|---|---|
+| `off` *(default)* | No header read, no crypto. Zero cost. |
+| `optional` | Verifies a proof when the token is bound, records `verified` / `failed`, **denies nothing**. The observation rung: ship keys, watch the rate reach 100%. |
+| `required` | A bound token without a valid proof is refused. |
+
+`SHIELD_AGENT_TOKEN_POP_ALLOW_UNBOUND` is the migration rung: under `required`,
+still accept tokens carrying no `cnf` at all, so clients that have not shipped a
+key keep working while those that have are strictly enforced. Going from "deny
+nothing" straight to "deny every legacy token" is where the outage lives.
+
+**Residual risk.** Binding does not help if the attacker compromises the agent
+*process* - they hold the key too. It kills the far more common case: the
+credential escaping without it.
+
+## 4. AuthZ - Capability Tokens
 
 ### What a cap token grants
 
@@ -177,7 +313,7 @@ ephemeral keypair and emits a warning — dev/test only.
 
 ### Why a separate signer from agent tokens
 
-Tool servers only need the cap public key — they never need the agent-
+Tool servers only need the cap public key - they never need the agent-
 token public key. A compromised tool can therefore only see (already
 narrowly-scoped) caps; it cannot forge identity tokens.
 
@@ -243,7 +379,40 @@ auto-clean.
 Exposed via `POST /v1/shield/auth/revoke` (admin-key gated).
 
 Revocation checks run inside `verify_agent_token` and `verify_cap`, so
-revocation propagates within one verify call — no caches to bust.
+revocation propagates within one verify call - no caches to bust.
+
+That second call site is the point. Because `verify_cap` checks revocation too,
+a revoked agent's **already-minted capabilities stop verifying**. Revocation
+that only blocked the next mint would leave every approved-but-unexecuted action
+live - which, in an agent that mints ahead of a fan-out, is most of them.
+
+### Continuous revocation - CAEP / SSF
+
+Shield speaks the OpenID Shared Signals Framework in **both** directions
+(`core/caep.py`, `api/routes_ssf.py`), so revocation is not limited to what
+Shield itself notices.
+
+| | |
+|---|---|
+| **Consume** | `POST /v1/shield/ssf/events` accepts pushed SETs. A `session-revoked`, `credential-change` or non-compliant `device-compliance-change` for a subject revokes the matching agent instance or user. |
+| **Emit** | When Shield revokes an agent, it builds a standard CAEP `session-revoked` SET (RFC 8417, signed) and pushes it to a configured receiver, so the rest of the ecosystem drops the agent too. |
+| **Discover** | `GET /v1/shield/ssf/.well-known/ssf-configuration` |
+
+Both endpoints are on the **data plane** - revocation has to reach the guard
+path, not the portal.
+
+This is what lets an IdP or EDR drive Shield: your directory detects a
+termination, your EDR flags a compromised host, the signal arrives, and the
+agent's token *and its outstanding capabilities* die mid-flight. A directory can
+stop the next sign-in; only the enforcement point can stop the action already
+underway.
+
+| Env var | Purpose |
+|---|---|
+| `SHIELD_ENABLE_AUTO_REVOKE` | Master switch - **off by default** |
+| `SHIELD_AUTO_REVOKE_GUARDRAILS` | Which guardrail hits trigger a revoke |
+| `SHIELD_SSF_PUSH_URL` / `_TOKEN` | Receiver for emitted SETs |
+| `SHIELD_SSF_PRIVATE_KEY` | Ed25519 key for signing SETs |
 
 ## 6. End-to-end Sequence
 
@@ -251,7 +420,7 @@ revocation propagates within one verify call — no caches to bust.
 1. User logs in (OIDC)                               → id_token
 2. Agent starts (workload SVID)                      → workload identity
 3. POST /v1/shield/auth/agent-token                  → agent_token (≤15m)
-   (token exchange — gated by SHIELD_ADMIN_KEY in v1)
+   (token exchange - gated by SHIELD_ADMIN_KEY in v1)
 4. Agent calls /v1/shield/cap/mint with X-Agent-Token
    - middleware verifies → IdentityTuple
    - policy decides AuthZ
@@ -275,13 +444,36 @@ revocation propagates within one verify call — no caches to bust.
 | Confused-deputy / over-broad sub-agent       | Cap carries scope intersection; downstream cannot widen |
 | Tool server trusts agent's word              | Tool verifies cap signature locally against distributed pubkey |
 | Tampered agent build / wrong model           | `build_hash` claim checked against allowlist            |
-| Compromised agent in flight                  | `revoke_instance(agent_instance_id)` — effect ≤1s       |
+| Compromised agent in flight                  | `revoke_instance(agent_instance_id)` - effect ≤1s       |
 | Cross-tenant leakage                         | `tenant_id` in every cap, checked constant-time at tool |
 | "How did this happen?" 3 weeks later         | One signed audit row per decision, replayable           |
 
 ## 8. Production Hardening
 
 This is an **on-prem** product. No cloud-managed services are required.
+
+### What is on out of the box, and what you must turn on
+
+Every control below is secure-by-default in the sense that it does not *break*
+anything on install - which also means most of them are not protecting anything
+until you enable them. Read this table as a checklist, not a feature list.
+
+| Control | Default | Enable with | Rung before enforce |
+|---|---|---|---|
+| Agent token issuance + verification | **on** | - | - |
+| Capability mint / verify | **on**, but the guard path is advisory unless tools verify | route tools through `/cap/verify` or the MCP gateway | - |
+| Sender-constraint (PoP) | **off** | `SHIELD_AGENT_TOKEN_POP` | `optional` |
+| Role binding to a real user token | **off** | `SHIELD_ROLE_BINDING` | `prefer` |
+| Auto-revoke / CAEP-driven | **off** | `SHIELD_ENABLE_AUTO_REVOKE` | - |
+| Registry write authorization | **off** | `SHIELD_REGISTRY_WRITE_SCOPE` | `warn` |
+
+Each of these has a declare-then-enforce rung for a reason: it records who
+*would* be refused before anything is. Skipping it is how a rollout becomes an
+outage.
+
+`GET /v1/tenant/me/posture` reports the live value of all of these, and the
+portal Overview surfaces the count - so "what is this deployment actually
+enforcing" is a question with an answer rather than an audit.
 
 ### Implemented
 
@@ -290,14 +482,14 @@ This is an **on-prem** product. No cloud-managed services are required.
 * **OAuth 2.1 authorization server** with PKCE, dynamic client
   registration (RFC 7591), and token exchange (RFC 8693). MCP clients
   connect via standard OAuth flows.
-* **External OIDC integration** — validate id_tokens from Keycloak,
+* **External OIDC integration** - validate id_tokens from Keycloak,
   Okta, Auth0, Azure AD. Per-tenant provider configuration.
-* **SPIFFE workload identity** — accept JWT and X.509 SVIDs as
+* **SPIFFE workload identity** - accept JWT and X.509 SVIDs as
   alternative to admin-key for automated workloads. On-prem friendly
   with local trust bundles and JWKS files.
-* **mTLS middleware** — extract client cert identity from
+* **mTLS middleware** - extract client cert identity from
   `X-Forwarded-Client-Cert` (Envoy/Istio) or direct TLS.
-* **A2A protocol** — Google Agent-to-Agent support with Agent Card
+* **A2A protocol** - Google Agent-to-Agent support with Agent Card
   discovery, task lifecycle, and SSE streaming. All messages route
   through the guardrail pipeline.
 
@@ -329,7 +521,7 @@ scales linearly. The bottlenecks are storage-layer:
 | Cap signing throughput   | Sequential HSM calls      | LocalEd25519Signer (≈30µs/sig) or envelope signing through Vault |
 | Audit fan-out            | Synchronous writes        | Async producer → Kafka           |
 
-The token formats and verify logic do not change with these — they are
+The token formats and verify logic do not change with these - they are
 storage-layer swaps behind existing interfaces.
 
 ## 10. Signing Backends
@@ -359,10 +551,10 @@ Process-resident Ed25519 keypair. Suitable for:
 Throughput: ~30µs/sign, ~50µs/verify, no I/O. One 8-core pod sustains
 ~150k verifies/sec.
 
-### `PKCS11Signer` (stub — production-ready shape)
+### `PKCS11Signer` (stub - production-ready shape)
 
 Delegates signing to an HSM via PKCS#11. Verify stays in-process using a
-public key loaded from disk at startup — no HSM round trip on the hot
+public key loaded from disk at startup - no HSM round trip on the hot
 path.
 
 Config:
@@ -382,7 +574,7 @@ Throughput: typically 1k–10k sigs/sec depending on HSM hardware. Below
 the local backend, but offers tamper-resistant key storage and FIPS
 140-2 Level 3 attestations where compliance requires.
 
-### `VaultTransitSigner` (stub — production-ready shape)
+### `VaultTransitSigner` (stub - production-ready shape)
 
 Delegates signing to HashiCorp Vault's Transit secret engine. Verify
 again stays local.
@@ -405,7 +597,7 @@ rotate every N minutes).
 ### Why public-key verify is always local
 
 The hot path is verify, not sign. Routing verify through an HSM or
-Vault would impose a network round trip on every tool call — that is
+Vault would impose a network round trip on every tool call - that is
 the wrong tradeoff. All three backends load the public key from disk
 at startup and verify with `cryptography`, keeping verify CPU-bound and
 under 100µs.
