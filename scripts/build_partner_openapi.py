@@ -209,7 +209,17 @@ Two things to call, and a few to configure:
 
 Authentication is a tenant API key in `X-API-Key`. The tenant is derived from
 the key, never from the request, so a key can only ever read and write its own
-configuration.
+configuration. `Authorization: Bearer <key>` is accepted as an alternative.
+
+**A missing or unrecognised key returns 401** with `{"error": ..., "detail": ...}`.
+`missing_tenant_key` means no key was sent; `invalid_tenant_key` means one was
+sent and did not identify a tenant.
+
+**HTTP 200 is not "allowed".** A blocked request also returns 200 - the verdict
+is in the body, never in the status code. Content guards return `safe` and
+`action`; the tool guards return `allowed` and `action`. Branch on those fields.
+A client that treats 200 as permission has built a guardrail that permits
+everything it was meant to stop.
 
 Keys carry a scope. A `runtime` key may call the guard endpoints; an `admin`
 key may additionally change configuration. Issue runtime keys to anything on
