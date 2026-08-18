@@ -15,6 +15,65 @@ directly into Postman, Insomnia, or a client generator.
 For prose and integration patterns see the
 [API Reference](/api-reference/); this page is the contract.
 
+## The two flows
+
+Everything else on this page configures or observes these two sequences.
+
+**Content path** - wrap your model call. Screen what goes in, screen what comes
+back out.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Your app
+    participant Shield
+    participant Model
+    App->>Shield: POST /guardrails/input
+    Shield-->>App: passed, or blocked with a reason
+    Note over App: stop here if blocked -<br/>the model never sees it
+    App->>Model: prompt
+    Model-->>App: response
+    App->>Shield: POST /guardrails/output
+    Shield-->>App: passed, blocked, or redacted
+    Note over App: return to the user
+```
+
+**Tool path** - wrap each tool call. Ask before it runs, screen what it
+returns. An MCP gateway sits exactly here.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Agent
+    participant Shield
+    participant Tool
+    Agent->>Shield: POST /v1/shield/tool/check
+    Shield-->>Agent: allowed, or denied with a reason
+    Note over Agent: a denied call must not run -<br/>the decision is worthless<br/>if the caller proceeds anyway
+    Agent->>Tool: execute
+    Tool-->>Agent: result
+    Agent->>Shield: POST /v1/shield/tool/output
+    Shield-->>Agent: result, sanitised
+```
+
+The two are independent. Guarding the content path stops prompt injection and
+data leaving in text; guarding the tool path stops the action. Most
+integrations want both, and starting with one is fine.
+
+## Your first integration
+
+1. **Create a runtime key** - `POST /v1/tenant/me/api-keys`. Runtime scope is
+   enough for the guard calls, and it cannot change your configuration, so it is
+   the key to put on the hot path.
+2. **Call `/guardrails/input`** with a prompt you expect to fail. Confirm you
+   get a block before you trust a pass.
+3. **Wrap the model** - add `/guardrails/output` on the way back.
+4. **Tune** - `GET /v1/tenant/me/policies` to see what ran,
+   `PUT` to change it, and `GET /v1/tenant/me/telemetry` to see the decisions.
+
+Step 2 is the one people skip. A guardrail that has never refused anything in
+your integration is indistinguishable from one that is not wired up.
+
 ## What is in it
 
 | | |
