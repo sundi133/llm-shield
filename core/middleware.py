@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import time
 import threading
 from typing import Optional
@@ -244,6 +245,34 @@ class ShieldMiddleware(BaseHTTPMiddleware):
     )
     _GUARDED_EXACT = {"/classify", "/classify_output", "/guardrails/input", "/guardrails/output", "/guardrails/file", "/v1/chat/completions"}
 
+    # Paths that must carry a resolvable tenant key when
+    # SHIELD_GUARD_REQUIRE_KEY is enforcing.
+    #
+    # An explicit list, not "everything guarded". This middleware ENRICHES a
+    # wide set of paths and rejects on almost none of them, and two of the
+    # exemptions are load-bearing rather than oversights:
+    #
+    #   /v1/shield/cap/verify   unauthenticated BY DESIGN. Tool servers verify
+    #                           capabilities on behalf of agents, and the cap
+    #                           token is itself the bearer credential. Requiring
+    #                           a tenant key here breaks every tool-side
+    #                           verification, which is the enforcement point the
+    #                           whole capability model rests on.
+    #   /v1/shield/ssf/events   carries its own credential
+    #                           (SHIELD_SSF_RECEIVER_TOKEN, closed by default,
+    #                           constant-time compared).
+    #
+    # /v1/shield/cap/mint already refuses without a verified agent token, and
+    # /v1/tenant/* already refuses in _require_tenant, so neither needs to be
+    # here. Adding a path is a deliberate act; a new route is NOT covered until
+    # someone puts it in this set.
+    _REQUIRE_TENANT_KEY = {
+        "/guardrails/input", "/guardrails/output", "/guardrails/file",
+        "/classify", "/classify_output",
+        "/v1/shield/tool/check", "/v1/shield/tool/output",
+        "/v1/chat/completions",
+    }
+
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
 
@@ -321,9 +350,20 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             # Resolve tenant from API key with caching
             request.state.tenant_id = None
             request.state.tenant_config = None
+            store_degraded = False
             api_key = _extract_api_key(request)
             if api_key:
-                tenant_id, tenant_config = _get_cached_tenant(api_key)
+                try:
+                    tenant_id, tenant_config = _get_cached_tenant(api_key)
+                except Exception:
+                    # The store is unreachable. A caller who DID present a key
+                    # must not be refused for our outage — see the fail-open
+                    # decision in the spec.
+                    tenant_id, tenant_config = None, None
+                    store_degraded = True
+                    logger.warning(
+                        "tenant lookup failed; guard-path key enforcement "
+                        "degraded to fail-open for this request")
                 if tenant_id and tenant_config:
                     request.state.tenant_id = tenant_id
                     request.state.tenant_config = tenant_config
@@ -405,7 +445,77 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                             headers={"Retry-After": "60"},
                         )
 
+            # ── Guard-path key enforcement ───────────────────────────────
+            #
+            # Last, deliberately: everything above enriches, and a refusal here
+            # must not skip the shadow-agent recording that a blocked caller
+            # should still appear in.
+            #
+            # Cheaper than the status quo in the refusal case - it returns
+            # before the guardrail pipeline rather than after 800ms of
+            # inference. It adds a dict lookup on the allowed path.
+            if path in self._REQUIRE_TENANT_KEY and request.state.tenant_id is None:
+                if not store_degraded:
+                    refusal = _guard_key_refusal(path, bool(api_key), request)
+                    if refusal is not None:
+                        return refusal
+
         return await call_next(request)
+
+
+GUARD_KEY_OFF, GUARD_KEY_WARN, GUARD_KEY_ENFORCE = "off", "warn", "enforce"
+_GUARD_KEY_MODES = (GUARD_KEY_OFF, GUARD_KEY_WARN, GUARD_KEY_ENFORCE)
+
+
+def guard_key_mode() -> str:
+    """off | warn | enforce - default off.
+
+    Same ladder as SHIELD_REGISTRY_WRITE_SCOPE, and for the same reason: the
+    rung that matters is `warn`. Anonymous guard traffic may exist today in a
+    demo, an example or an internal script, and going straight to enforce would
+    break it silently and get blamed on the guardrails rather than on the
+    missing key. warn records who would break while breaking nobody.
+
+    An unrecognised value reads as `off` - a typo must not silently start
+    refusing production traffic.
+    """
+    v = os.environ.get("SHIELD_GUARD_REQUIRE_KEY", GUARD_KEY_OFF).strip().lower()
+    return v if v in _GUARD_KEY_MODES else GUARD_KEY_OFF
+
+
+def _guard_key_refusal(path: str, key_presented: bool, request: Request):
+    """A 401 for an unauthenticated guard call, or None to allow it through.
+
+    Two distinct errors because they lead to different fixes: "you sent
+    nothing" is a wiring problem, "you sent something wrong" is a credential
+    problem, and an integrator staring at a single generic 401 cannot tell
+    which. Neither body names a tenant - a refusal must not become an oracle
+    for which keys exist.
+    """
+    mode = guard_key_mode()
+    if mode == GUARD_KEY_OFF:
+        return None
+
+    client = getattr(getattr(request, "client", None), "host", "") or "unknown"
+    if mode == GUARD_KEY_WARN:
+        # The whole point of this rung: say who would break, break nobody.
+        logger.warning(
+            "guard-path call without a resolvable tenant key: path=%s "
+            "key_presented=%s client=%s - would be refused under "
+            "SHIELD_GUARD_REQUIRE_KEY=enforce", path, key_presented, client)
+        return None
+
+    if key_presented:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "invalid_tenant_key",
+                     "detail": "The API key presented does not identify a tenant."},
+        )
+    return JSONResponse(
+        status_code=401,
+        content={"error": "missing_tenant_key",
+                 "detail": "This endpoint requires a tenant API key in X-API-Key."},
+    )
 
 
 def _extract_api_key(request: Request) -> str | None:
