@@ -49,7 +49,29 @@ added next month would be public until somebody remembered to exclude it. This
 fails closed, and exits non-zero if an allow-listed path has disappeared, so a
 rename breaks the build rather than silently shrinking what a partner can see.
 
-<div id="redoc"></div>
+<style>
+  /* Just-the-docs sizes .main-content for prose - a narrow measure, generous
+     side padding. Redoc renders its own three-column layout (nav, reference,
+     samples) inside whatever box it is given, so in a prose column it collapses
+     into an unreadable strip with the samples panel clipped. This page is a
+     spec browser, not an article, so it takes the width back. */
+  .main-content-wrap, .main-content { max-width: none !important; }
+  #redoc-container {
+    margin: 1.5rem -1rem 0;
+    border-top: 1px solid #e6e6e6;
+    /* Redoc's own sidebar is position:sticky against the viewport; without a
+       real height it collapses to nothing on first paint. */
+    min-height: 100vh;
+  }
+  /* Two sidebars side by side reads as a bug. The site nav is how you got
+     here; Redoc's is how you move inside the spec, and only one is useful at a
+     time on a narrow screen. */
+  @media (max-width: 1200px) {
+    #redoc-container .menu-content { display: none; }
+  }
+</style>
+
+<div id="redoc-container"></div>
 
 <!--
   Redoc (Redocly/redoc, MIT) pinned to an exact version with a subresource
@@ -64,7 +86,19 @@ rename breaks the build rather than silently shrinking what a partner can see.
 <script>
   Redoc.init(
     '{{ "/assets/openapi-partner.json" | relative_url }}',
-    { scrollYOffset: 0, hideDownloadButton: false, expandResponses: "200,201" },
-    document.getElementById('redoc')
+    {
+      scrollYOffset: 0,
+      hideDownloadButton: false,
+      expandResponses: "200,201",
+      // The default palette fights the site theme; these match just-the-docs.
+      theme: { colors: { primary: { main: "#5253c4" } },
+               typography: { fontSize: "15px", headings: { fontWeight: "600" } },
+               sidebar: { width: "230px" } },
+      hideHostname: false,
+      // Tag order is the reading order set in the spec: call it, configure it,
+      // watch it. Alphabetising would put "API keys" above "Guard: content".
+      sortTagsAlphabetically: false
+    },
+    document.getElementById('redoc-container')
   );
 </script>

@@ -14,9 +14,9 @@
     "/v1/shield/guardrails": {
       "get": {
         "tags": [
-          "config"
+          "Policies"
         ],
-        "summary": "List All Guardrails",
+        "summary": "List available guardrails",
         "description": "List all registered guardrails with enabled/tier/stage status.",
         "operationId": "list_all_guardrails_v1_shield_guardrails_get",
         "responses": {
@@ -33,7 +33,7 @@
     },
     "/guardrails/input": {
       "post": {
-        "summary": "Classify",
+        "summary": "Screen a prompt (pre-call)",
         "description": "Classify a message through all specified guardrails in a single call.\n\nAccepts two formats:\n\n1. Simple (backward compatible):\n   {\"message\": \"text to check\"}\n\n2. Full pipeline with per-request guardrail config:\n   {\n     \"message\": \"text to check\",\n     \"input\": {\n       \"keyword-blocklist\": {\"enabled\": true, \"action\": \"block\", \"blocklist\": [\"bomb\"]},\n       \"sentiment-analysis\": {\"enabled\": true, \"action\": \"warn\", \"threshold\": 0.7},\n       ...\n     }\n   }\n\nWhen a tenant is identified via API key, the tenant's server-side guardrail\nconfig is used (platform-enforced, tenant cannot override).\nWhen \"input\" is provided and no tenant config exists, the specified guardrails\nrun with the given settings.\nWhen neither is present, falls back to the server's default config.",
         "operationId": "classify_guardrails_input_post",
         "requestBody": {
@@ -67,12 +67,15 @@
               }
             }
           }
-        }
+        },
+        "tags": [
+          "Guard: content"
+        ]
       }
     },
     "/guardrails/output": {
       "post": {
-        "summary": "Classify Output",
+        "summary": "Screen a response (post-call)",
         "description": "Enhanced output guardrails with tool call authorization and validation.\n\nHandles both regular output guardrails and agentic tool call validation.\n\nAccepts multiple formats:\n\n1. Simple output validation:\n   {\"output\": \"LLM-generated text to check\"}\n\n2. Tool call validation (NEW):\n   {\n     \"output\": \"Tool call result or LLM response\",\n     \"context\": {\n       \"tool_name\": \"patient_lookup\",\n       \"tool_input\": {\"patient_id\": \"12345\"},\n       \"agent_id\": \"healthcare-bot\",\n       \"user_role\": \"nurse\"\n     }\n   }\n\n3. Full pipeline with guardrail config:\n   {\n     \"output\": \"LLM-generated text\",\n     \"guardrails\": {...},\n     \"context\": {\n       \"tool_name\": \"optional\",\n       \"agent_id\": \"optional\",\n       \"user_role\": \"optional\"\n     }\n   }\n\nWhen tool context is provided:\n1. Checks role-based authorization for tool use\n2. Validates tool call via LLM if configured\n3. Applies tool-specific data sanitization policies\n   - Regex rules   (mode: regex | both) \u2014 fast pre-filter\n   - AI reasoning  (mode: ai    | both) \u2014 LLM evaluates the payload\n     against the plain-English `sanitization_intent` stored on the\n     tool's data policy. Robust to obfuscation, unicode tricks,\n     paraphrased disclosures, etc.\n4. Runs standard output guardrails on the sanitized payload\n\nStage semantics:\n- context.stage = \"output\" (default): treat `output` as a tool's\n  response going back to the LLM / user. Default action is redact.\n- context.stage = \"input\": treat `output` as a tool's arguments\n  about to be executed. Default action is detect \u2014 tools need real\n  values \u2014 but critical severity / explicit block still refuse.\n\nResponse additions for tool-call sanitization:\n- `sanitization`      : full audit \u2014 mode, regex hits, AI verdict,\n                        reasoning, redactions.\n- `sanitized_output`  : present only when the pipeline modified the\n                        payload. Callers SHOULD forward this to the\n                        end user instead of the original `output`.\n\nHeaders:\n- X-User-Role: User's role (admin, nurse, patient, etc.)\n- X-Agent-ID: Agent identifier for tool call context\n- X-API-Key: Tenant API key for policy lookup",
         "operationId": "classify_output_guardrails_output_post",
         "requestBody": {
@@ -106,12 +109,15 @@
               }
             }
           }
-        }
+        },
+        "tags": [
+          "Guard: content"
+        ]
       }
     },
     "/guardrails/file": {
       "post": {
-        "summary": "Screen File",
+        "summary": "Screen a file",
         "description": "Screen a file attachment through the input guardrail pipeline.\n\nSame verdict shape as /guardrails/input plus a `file` block. The screened\ntext is \"filename: {name}\\n\\n{extracted}\" so a sensitive filename alone\ncan trip policies even when the content is not extractable.",
         "operationId": "screen_file_guardrails_file_post",
         "requestBody": {
@@ -143,15 +149,18 @@
               }
             }
           }
-        }
+        },
+        "tags": [
+          "Guard: content"
+        ]
       }
     },
     "/v1/shield/tool/check": {
       "post": {
         "tags": [
-          "tool"
+          "Guard: tools"
         ],
-        "summary": "Check Tool",
+        "summary": "Authorize a tool call (pre-execution)",
         "operationId": "check_tool_v1_shield_tool_check_post",
         "requestBody": {
           "content": {
@@ -188,9 +197,9 @@
     "/v1/shield/tool/output": {
       "post": {
         "tags": [
-          "tool"
+          "Guard: tools"
         ],
-        "summary": "Check Tool Output",
+        "summary": "Screen tool output (post-execution)",
         "operationId": "check_tool_output_v1_shield_tool_output_post",
         "requestBody": {
           "content": {
@@ -227,9 +236,9 @@
     "/v1/tenant/me": {
       "get": {
         "tags": [
-          "tenant-self"
+          "Usage and audit"
         ],
-        "summary": "Get My Tenant",
+        "summary": "Get my tenant",
         "description": "Return the current tenant's config (sanitized \u2014 no internal fields).\n\nIEMLabs VAPT finding 8.2 (IDOR, May 2026): the previous response\nenumerated every agent_key in the tenant's registry \u2014 a list of\ninternal object references the caller can then use to probe other\nendpoints. We now return a count only; callers needing the full\nlist go through /me/agents (also tenant-scoped) where each item is\nadditionally permission-checked.",
         "operationId": "get_my_tenant_v1_tenant_me_get",
         "responses": {
@@ -247,9 +256,9 @@
     "/v1/tenant/me/policies": {
       "get": {
         "tags": [
-          "tenant-self"
+          "Policies"
         ],
-        "summary": "Get My Policies",
+        "summary": "Get my policy configuration",
         "description": "Return the tenant's current input + output guardrail policies (full detail) including custom policies.",
         "operationId": "get_my_policies_v1_tenant_me_policies_get",
         "responses": {
@@ -265,9 +274,9 @@
       },
       "put": {
         "tags": [
-          "tenant-self"
+          "Policies"
         ],
-        "summary": "Update My Policies",
+        "summary": "Replace my policy configuration",
         "description": "Tenant updates their own input/output guardrail policies.\n\nTenants cannot modify RBAC, quota, plan, or API keys via this route.\nChanges are logged in the admin audit with actor=tenant:<id>.",
         "operationId": "update_my_policies_v1_tenant_me_policies_put",
         "requestBody": {
@@ -305,9 +314,9 @@
     "/v1/tenant/me/policies/limits": {
       "get": {
         "tags": [
-          "tenant-self"
+          "Policies"
         ],
-        "summary": "Get Policy Limits",
+        "summary": "Get my policy limits",
         "description": "Get information about custom policy limits and constraints.",
         "operationId": "get_policy_limits_v1_tenant_me_policies_limits_get",
         "responses": {
@@ -325,9 +334,9 @@
     "/v1/tenant/me/tools": {
       "get": {
         "tags": [
-          "tenant-self"
+          "Tool policies"
         ],
-        "summary": "Get My Tools",
+        "summary": "Get my tool policies",
         "description": "Return the tenant's registered tool definitions (full OpenAI-format schemas).\n\nThese are the tools available for agentic chat and Deep Agent integration.\nEach tool has a name, description, and parameter schema.",
         "operationId": "get_my_tools_v1_tenant_me_tools_get",
         "responses": {
@@ -343,9 +352,9 @@
       },
       "put": {
         "tags": [
-          "tenant-self"
+          "Tool policies"
         ],
-        "summary": "Set My Tools",
+        "summary": "Replace my tool policies",
         "description": "Register or replace the tenant's tool definitions.\n\nBody: { \"tools\": [ { \"type\": \"function\", \"function\": { \"name\": \"...\", ... } }, ... ] }\n\nThese are OpenAI-format tool schemas used by /v1/shield/chat/agent\nand the Deep Agent integration.",
         "operationId": "set_my_tools_v1_tenant_me_tools_put",
         "responses": {
@@ -363,9 +372,9 @@
     "/v1/tenant/me/custom-policies/": {
       "get": {
         "tags": [
-          "tenant-custom-policies"
+          "Custom policies"
         ],
-        "summary": "List Custom Policies",
+        "summary": "List custom policies",
         "description": "List all custom policies for the tenant.",
         "operationId": "list_custom_policies_v1_tenant_me_custom_policies__get",
         "parameters": [
@@ -405,9 +414,9 @@
       },
       "post": {
         "tags": [
-          "tenant-custom-policies"
+          "Custom policies"
         ],
-        "summary": "Create Custom Policy",
+        "summary": "Create a custom policy",
         "description": "Create a new custom policy.",
         "operationId": "create_custom_policy_v1_tenant_me_custom_policies__post",
         "requestBody": {
@@ -445,9 +454,9 @@
     "/v1/tenant/me/custom-policies/{policy_id}": {
       "get": {
         "tags": [
-          "tenant-custom-policies"
+          "Custom policies"
         ],
-        "summary": "Get Custom Policy By Id",
+        "summary": "Get a custom policy",
         "description": "Get a specific custom policy by ID.",
         "operationId": "get_custom_policy_by_id_v1_tenant_me_custom_policies__policy_id__get",
         "parameters": [
@@ -484,9 +493,9 @@
       },
       "put": {
         "tags": [
-          "tenant-custom-policies"
+          "Custom policies"
         ],
-        "summary": "Update Custom Policy By Id",
+        "summary": "Update a custom policy",
         "description": "Update an existing custom policy.",
         "operationId": "update_custom_policy_by_id_v1_tenant_me_custom_policies__policy_id__put",
         "parameters": [
@@ -533,9 +542,9 @@
       },
       "delete": {
         "tags": [
-          "tenant-custom-policies"
+          "Custom policies"
         ],
-        "summary": "Delete Custom Policy By Id",
+        "summary": "Delete a custom policy",
         "description": "Delete a custom policy.",
         "operationId": "delete_custom_policy_by_id_v1_tenant_me_custom_policies__policy_id__delete",
         "parameters": [
@@ -574,9 +583,9 @@
     "/v1/tenant/me/custom-policies/{policy_id}/enable": {
       "post": {
         "tags": [
-          "tenant-custom-policies"
+          "Custom policies"
         ],
-        "summary": "Enable Custom Policy By Id",
+        "summary": "Enable a custom policy",
         "description": "Enable a custom policy.",
         "operationId": "enable_custom_policy_by_id_v1_tenant_me_custom_policies__policy_id__enable_post",
         "parameters": [
@@ -615,9 +624,9 @@
     "/v1/tenant/me/custom-policies/{policy_id}/disable": {
       "post": {
         "tags": [
-          "tenant-custom-policies"
+          "Custom policies"
         ],
-        "summary": "Disable Custom Policy By Id",
+        "summary": "Disable a custom policy",
         "description": "Disable a custom policy.",
         "operationId": "disable_custom_policy_by_id_v1_tenant_me_custom_policies__policy_id__disable_post",
         "parameters": [
@@ -656,9 +665,9 @@
     "/v1/tenant/me/custom-policies/validate-prompt": {
       "post": {
         "tags": [
-          "tenant-custom-policies"
+          "Custom policies"
         ],
-        "summary": "Validate Custom Policy Prompt",
+        "summary": "Validate a policy prompt before saving",
         "description": "Validate a policy prompt before creating/updating a policy.",
         "operationId": "validate_custom_policy_prompt_v1_tenant_me_custom_policies_validate_prompt_post",
         "requestBody": {
@@ -696,9 +705,9 @@
     "/v1/tenant/me/custom-policies/limits/info": {
       "get": {
         "tags": [
-          "tenant-custom-policies"
+          "Custom policies"
         ],
-        "summary": "Get Policy Limits",
+        "summary": "Get custom-policy limits",
         "description": "Get information about custom policy limits and constraints.",
         "operationId": "get_policy_limits_v1_tenant_me_custom_policies_limits_info_get",
         "responses": {
@@ -716,9 +725,9 @@
     "/v1/tenant/me/api-keys": {
       "get": {
         "tags": [
-          "tenant-self"
+          "API keys"
         ],
-        "summary": "List My Api Keys",
+        "summary": "List my API keys",
         "description": "List this tenant's API keys, with what is known about each.\n\nTwo sources, merged, because they cover different keys:\n\n  * apikeymeta:* \u2014 label, created, expires, last used. Everything minted\n    since key lifecycle existed.\n  * a scan of apikey:* \u2014 every key, including those minted before there\n    was anywhere to record any of this.\n\nDropping the scan would make older keys vanish from the list, which is\nworse than showing them with nulls: a rotation runbook that cannot see the\nkey you are trying to rotate is useless. Dropping the metadata would leave\n\"created: null\" on every row, which is where this started.\n\nNever returns a plaintext key. Prefixes and fingerprints only.",
         "operationId": "list_my_api_keys_v1_tenant_me_api_keys_get",
         "responses": {
@@ -734,9 +743,9 @@
       },
       "post": {
         "tags": [
-          "tenant-self"
+          "API keys"
         ],
-        "summary": "Create My Api Key",
+        "summary": "Create an API key",
         "description": "Create a new API key for the current tenant.\n\nThe plaintext key is returned ONLY in this response. Store it\nimmediately \u2014 it cannot be recovered later.\n\nOptional body: {\"custom_key\": \"my-custom-value\"} to provide your\nown key value instead of generating one (discouraged \u2014 less secure).",
         "operationId": "create_my_api_key_v1_tenant_me_api_keys_post",
         "requestBody": {
@@ -773,9 +782,9 @@
       },
       "delete": {
         "tags": [
-          "tenant-self"
+          "API keys"
         ],
-        "summary": "Revoke My Api Key",
+        "summary": "Revoke an API key",
         "description": "Revoke an API key owned by the current tenant.\n\nBody: {\"api_key\": \"plaintext-key-to-revoke\"}\n\nThe caller must supply the plaintext key (not the hash) so we\ncan compute the hash and verify it maps to this tenant.",
         "operationId": "revoke_my_api_key_v1_tenant_me_api_keys_delete",
         "requestBody": {
@@ -815,9 +824,9 @@
     "/v1/tenant/me/key-scope": {
       "get": {
         "tags": [
-          "tenant-self"
+          "API keys"
         ],
-        "summary": "Get My Key Scope",
+        "summary": "What this key may do",
         "description": "What this API key is allowed to do, and whether that is being enforced.\n\nThree fields because three different readers need this: the portal hides\nwrite controls it cannot use, a developer debugging a 403 sees why, and an\noperator mid-rollout sees whether the deployment is enforcing yet.\n\nReads the hash the auth middleware stashed, falling back to the header when\nauth is disabled. It must NOT read X-API-Key alone \u2014 that would report\n\"unscoped\" for every Authorization: Bearer caller regardless of their\nactual scope.",
         "operationId": "get_my_key_scope_v1_tenant_me_key_scope_get",
         "responses": {
@@ -835,9 +844,9 @@
     "/v1/tenant/me/usage": {
       "get": {
         "tags": [
-          "tenant-self"
+          "Usage and audit"
         ],
-        "summary": "Get My Usage",
+        "summary": "Get my usage",
         "description": "Return the current tenant's usage against quota.",
         "operationId": "get_my_usage_v1_tenant_me_usage_get",
         "responses": {
@@ -855,9 +864,9 @@
     "/v1/tenant/me/telemetry": {
       "get": {
         "tags": [
-          "tenant-self"
+          "Usage and audit"
         ],
-        "summary": "Get My Telemetry",
+        "summary": "Get my telemetry",
         "description": "Return tenant-scoped agent chat telemetry with normalized tool-call status.",
         "operationId": "get_my_telemetry_v1_tenant_me_telemetry_get",
         "parameters": [
@@ -1014,9 +1023,9 @@
     "/v1/tenant/me/audit": {
       "get": {
         "tags": [
-          "tenant-self"
+          "Usage and audit"
         ],
-        "summary": "Get My Audit Log",
+        "summary": "Get my audit log",
         "description": "Return recent admin audit entries scoped to this tenant.",
         "operationId": "get_my_audit_log_v1_tenant_me_audit_get",
         "parameters": [
@@ -1056,9 +1065,9 @@
     "/v1/tenant/me/guardrails/metrics": {
       "get": {
         "tags": [
-          "guardrail-metrics"
+          "Usage and audit"
         ],
-        "summary": "All Guardrails Metrics",
+        "summary": "Get guardrail metrics",
         "description": "Get effectiveness summary for all guardrails (sorted by block count).",
         "operationId": "all_guardrails_metrics_v1_tenant_me_guardrails_metrics_get",
         "parameters": [
@@ -1096,6 +1105,36 @@
       }
     }
   },
+  "tags": [
+    {
+      "name": "Guard: content",
+      "description": "Screen prompts and responses. Call these around your model."
+    },
+    {
+      "name": "Guard: tools",
+      "description": "Authorize a tool call before it runs, and screen what it returns. An MCP gateway calls these two."
+    },
+    {
+      "name": "Policies",
+      "description": "Which guardrails run for your tenant, and how they behave."
+    },
+    {
+      "name": "Custom policies",
+      "description": "Your own policies, expressed as prompts, with validation and limits."
+    },
+    {
+      "name": "Tool policies",
+      "description": "Per-tool rules."
+    },
+    {
+      "name": "API keys",
+      "description": "Issue, label, expire and rotate the keys that authenticate the calls above."
+    },
+    {
+      "name": "Usage and audit",
+      "description": "What ran, what it decided, and what it cost."
+    }
+  ],
   "components": {
     "schemas": {
       "Body_screen_file_guardrails_file_post": {

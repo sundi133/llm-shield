@@ -66,6 +66,63 @@ ALLOW = {
     "/v1/tenant/me/guardrails/metrics": {"get"},
 }
 
+# Partner-facing names. FastAPI derives summaries from handler function names,
+# so /guardrails/input arrives titled "Classify" and carries no tag at all - the
+# two most important operations in the API render as an internal verb in an
+# unnamed bucket. The grouping is equally internal: "tenant-self" describes our
+# router layout, not anything an integrator is trying to do.
+#
+# (tag, summary) per path+method. Ordered by what a reader needs first: call it,
+# then configure it, then watch it.
+GROUPS = [
+    ("Guard: content", "Screen prompts and responses. Call these around your model."),
+    ("Guard: tools", "Authorize a tool call before it runs, and screen what it returns. "
+                     "An MCP gateway calls these two."),
+    ("Policies", "Which guardrails run for your tenant, and how they behave."),
+    ("Custom policies", "Your own policies, expressed as prompts, with validation and limits."),
+    ("Tool policies", "Per-tool rules."),
+    ("API keys", "Issue, label, expire and rotate the keys that authenticate the calls above."),
+    ("Usage and audit", "What ran, what it decided, and what it cost."),
+]
+
+OPERATIONS = {
+    ("/guardrails/input", "post"): ("Guard: content", "Screen a prompt (pre-call)"),
+    ("/guardrails/output", "post"): ("Guard: content", "Screen a response (post-call)"),
+    ("/guardrails/file", "post"): ("Guard: content", "Screen a file"),
+
+    ("/v1/shield/tool/check", "post"): ("Guard: tools", "Authorize a tool call (pre-execution)"),
+    ("/v1/shield/tool/output", "post"): ("Guard: tools", "Screen tool output (post-execution)"),
+
+    ("/v1/shield/guardrails", "get"): ("Policies", "List available guardrails"),
+    ("/v1/tenant/me/policies", "get"): ("Policies", "Get my policy configuration"),
+    ("/v1/tenant/me/policies", "put"): ("Policies", "Replace my policy configuration"),
+    ("/v1/tenant/me/policies/limits", "get"): ("Policies", "Get my policy limits"),
+
+    ("/v1/tenant/me/custom-policies/", "get"): ("Custom policies", "List custom policies"),
+    ("/v1/tenant/me/custom-policies/", "post"): ("Custom policies", "Create a custom policy"),
+    ("/v1/tenant/me/custom-policies/{policy_id}", "get"): ("Custom policies", "Get a custom policy"),
+    ("/v1/tenant/me/custom-policies/{policy_id}", "put"): ("Custom policies", "Update a custom policy"),
+    ("/v1/tenant/me/custom-policies/{policy_id}", "delete"): ("Custom policies", "Delete a custom policy"),
+    ("/v1/tenant/me/custom-policies/{policy_id}/enable", "post"): ("Custom policies", "Enable a custom policy"),
+    ("/v1/tenant/me/custom-policies/{policy_id}/disable", "post"): ("Custom policies", "Disable a custom policy"),
+    ("/v1/tenant/me/custom-policies/validate-prompt", "post"): ("Custom policies", "Validate a policy prompt before saving"),
+    ("/v1/tenant/me/custom-policies/limits/info", "get"): ("Custom policies", "Get custom-policy limits"),
+
+    ("/v1/tenant/me/tools", "get"): ("Tool policies", "Get my tool policies"),
+    ("/v1/tenant/me/tools", "put"): ("Tool policies", "Replace my tool policies"),
+
+    ("/v1/tenant/me/api-keys", "get"): ("API keys", "List my API keys"),
+    ("/v1/tenant/me/api-keys", "post"): ("API keys", "Create an API key"),
+    ("/v1/tenant/me/api-keys", "delete"): ("API keys", "Revoke an API key"),
+    ("/v1/tenant/me/key-scope", "get"): ("API keys", "What this key may do"),
+
+    ("/v1/tenant/me", "get"): ("Usage and audit", "Get my tenant"),
+    ("/v1/tenant/me/usage", "get"): ("Usage and audit", "Get my usage"),
+    ("/v1/tenant/me/telemetry", "get"): ("Usage and audit", "Get my telemetry"),
+    ("/v1/tenant/me/audit", "get"): ("Usage and audit", "Get my audit log"),
+    ("/v1/tenant/me/guardrails/metrics", "get"): ("Usage and audit", "Get guardrail metrics"),
+}
+
 DESCRIPTION = """\
 The partner-facing subset of the Votal Shield API.
 
@@ -103,15 +160,28 @@ def load_spec(url: str | None, file: str | None) -> dict:
     return create_app().openapi()
 
 
-def filter_spec(spec: dict) -> tuple[dict, list[str]]:
-    """Return (filtered spec, allow-list entries that matched nothing)."""
+def filter_spec(spec: dict) -> tuple[dict, list[str], list[str]]:
+    """Return (filtered spec, allow-listed-but-absent, published-but-unnamed)."""
     paths = spec.get("paths", {})
     kept: dict = {}
+    unnamed: list[str] = []
     for path, methods in ALLOW.items():
         ops = paths.get(path)
         if not ops:
             continue
         selected = {m: op for m, op in ops.items() if m.lower() in methods}
+        for method, op in selected.items():
+            rename = OPERATIONS.get((path, method.lower()))
+            if rename:
+                tag, summary = rename
+                op["tags"] = [tag]
+                op["summary"] = summary
+            else:
+                # Published but unnamed: it would render under whatever internal
+                # tag the router carries. Louder than a silent passthrough,
+                # because the whole point of this file is that a partner never
+                # sees our router layout.
+                unnamed.append(f"{method.upper()} {path}")
         if selected:
             kept[path] = selected
 
@@ -126,6 +196,8 @@ def filter_spec(spec: dict) -> tuple[dict, list[str]]:
         },
         "servers": [{"url": "https://api.guardrails.votal.ai"}],
         "paths": kept,
+        # Order here is the order Redoc renders the nav in.
+        "tags": [{"name": n, "description": d} for n, d in GROUPS],
     }
     # Carry only the schemas the kept operations actually reference. Copying
     # every component would leak the shape of admin request bodies through the
@@ -148,7 +220,7 @@ def filter_spec(spec: dict) -> tuple[dict, list[str]]:
         "TenantApiKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"}
     }
     out["security"] = [{"TenantApiKey": []}]
-    return out, missing
+    return out, missing, unnamed
 
 
 def main() -> int:
@@ -159,7 +231,7 @@ def main() -> int:
     args = ap.parse_args()
 
     spec = load_spec(args.url, args.file)
-    out, missing = filter_spec(spec)
+    out, missing, unnamed = filter_spec(spec)
 
     ops = sum(len(m) for m in out["paths"].values())
     total = sum(len(m) for m in spec.get("paths", {}).values())
@@ -169,6 +241,10 @@ def main() -> int:
 
     print(f"{dest}: {len(out['paths'])} paths, {ops} operations "
           f"(source had {total})")
+    if unnamed:
+        print("\nWARNING - published without a partner-facing name/tag:")
+        for o in unnamed:
+            print(f"  {o}")
     if missing:
         # Loud, because the usual cause is a route that was renamed - and a
         # silently shrinking partner spec is how you break an integrator.
@@ -176,7 +252,7 @@ def main() -> int:
         for p in missing:
             print(f"  {p}")
         return 1
-    return 0
+    return 1 if unnamed else 0
 
 
 if __name__ == "__main__":
