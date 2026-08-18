@@ -41,6 +41,11 @@ groups:
     items:
       - { title: Developer Guide — MCP & APIs, url: /developer-guide-mcp/ }
       - { title: API Reference, url: /api-reference/ }
+      # The generated contract, next to the prose that explains it. Deliberately
+      # the partner subset: the full generated spec is 211 operations including
+      # tenant provisioning and breakglass, which is the right spec for the app
+      # and the wrong one to hand an integrator.
+      - { title: API Explorer, url: /api-explorer/ }
       - { title: Connect to Your IDE, url: /connect-your-ide/ }
       - { title: MCP End-to-End Lab, url: /mcp-e2e-lab/ }
       - { title: MCP Gateway, url: /mcp-gateway/ }
