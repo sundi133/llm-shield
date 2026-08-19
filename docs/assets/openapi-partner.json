@@ -842,6 +842,313 @@
         }
       }
     },
+    "/v1/agents/registry": {
+      "get": {
+        "tags": [
+          "Agent setup"
+        ],
+        "summary": "List registered agents",
+        "description": "Get all registered agents directly from Redis for the tenant.",
+        "operationId": "get_agents_registry_v1_agents_registry_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Agent setup"
+        ],
+        "summary": "Register an agent",
+        "description": "Create a new agent.",
+        "operationId": "create_agent_v1_agents_registry_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/registry/{agent_id}": {
+      "get": {
+        "tags": [
+          "Agent setup"
+        ],
+        "summary": "Get a registered agent",
+        "description": "Get configuration for a specific agent.",
+        "operationId": "get_agent_endpoint_v1_agents_registry__agent_id__get",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Agent setup"
+        ],
+        "summary": "Update a registered agent",
+        "description": "Update an existing agent.",
+        "operationId": "update_agent_v1_agents_registry__agent_id__put",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Agent Data"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Agent setup"
+        ],
+        "summary": "Remove an agent",
+        "description": "Delete an agent.",
+        "operationId": "delete_agent_v1_agents_registry__agent_id__delete",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/roles": {
+      "get": {
+        "tags": [
+          "Agent setup"
+        ],
+        "summary": "List roles",
+        "description": "Get all roles defined across registered agents for this tenant.",
+        "operationId": "get_available_roles_v1_agents_roles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/tools/policies": {
+      "get": {
+        "tags": [
+          "Tool policies"
+        ],
+        "summary": "List role-to-tool policies",
+        "description": "Get tool policies directly from Redis for the tenant.",
+        "operationId": "get_tool_policies_v1_agents_tools_policies_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Tool policies"
+        ],
+        "summary": "Set a role-to-tool policy",
+        "description": "Replace all tool policies for the tenant.",
+        "operationId": "save_all_tool_policies_v1_agents_tools_policies_put",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/tools/policies/{tool_name}": {
+      "get": {
+        "tags": [
+          "Tool policies"
+        ],
+        "summary": "Get one tool's policy",
+        "description": "Get a single tool policy by name.",
+        "operationId": "get_single_tool_policy_v1_agents_tools_policies__tool_name__get",
+        "parameters": [
+          {
+            "name": "tool_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tool Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Tool policies"
+        ],
+        "summary": "Delete a tool's policy",
+        "description": "Delete a single tool policy.",
+        "operationId": "delete_tool_policy_v1_agents_tools_policies__tool_name__delete",
+        "parameters": [
+          {
+            "name": "tool_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tool Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tenant/me/api-keys": {
       "get": {
         "tags": [
@@ -1226,6 +1533,10 @@
     }
   },
   "tags": [
+    {
+      "name": "Agent setup",
+      "description": "Register the agent and its role before calling the tool guards. An unregistered agent is denied by RBAC, which looks like a broken API and is actually incomplete setup."
+    },
     {
       "name": "Guard: content",
       "description": "Screen prompts and responses. Call these around your model."

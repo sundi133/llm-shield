@@ -55,6 +55,20 @@ ALLOW = {
     "/v1/tenant/me/custom-policies/validate-prompt": {"post"},
     "/v1/tenant/me/custom-policies/limits/info": {"get"},
 
+    # ── Setup: the agent registry and role policy ────────────────────────
+    # Without these, tool/check denies an unregistered agent on the partner's
+    # first call and reads as "your API rejects us" rather than "setup is not
+    # finished". Publishing them turns a support thread into a step.
+    #
+    # Deliberately NOT publishing the shadow-agent triage routes
+    # (/unregistered/*) or seed-test-data: those are operator surfaces, and
+    # seed-test-data writes fixture data into a tenant.
+    "/v1/agents/registry": {"get", "post"},
+    "/v1/agents/registry/{agent_id}": {"get", "put", "delete"},
+    "/v1/agents/roles": {"get"},
+    "/v1/agents/tools/policies": {"get", "put"},
+    "/v1/agents/tools/policies/{tool_name}": {"get", "delete"},
+
     # ── Credentials ──────────────────────────────────────────────────────
     "/v1/tenant/me/api-keys": {"get", "post", "delete"},
     "/v1/tenant/me/key-scope": {"get"},
@@ -75,6 +89,9 @@ ALLOW = {
 # (tag, summary) per path+method. Ordered by what a reader needs first: call it,
 # then configure it, then watch it.
 GROUPS = [
+    ("Agent setup", "Register the agent and its role before calling the tool guards. "
+                    "An unregistered agent is denied by RBAC, which looks like a "
+                    "broken API and is actually incomplete setup."),
     ("Guard: content", "Screen prompts and responses. Call these around your model."),
     ("Guard: tools", "Authorize a tool call before it runs, and screen what it returns. "
                      "An MCP gateway calls these two."),
@@ -108,6 +125,16 @@ OPERATIONS = {
     ("/v1/tenant/me/custom-policies/validate-prompt", "post"): ("Custom policies", "Validate a policy prompt before saving"),
     ("/v1/tenant/me/custom-policies/limits/info", "get"): ("Custom policies", "Get custom-policy limits"),
 
+    ("/v1/agents/registry", "get"): ("Agent setup", "List registered agents"),
+    ("/v1/agents/registry", "post"): ("Agent setup", "Register an agent"),
+    ("/v1/agents/registry/{agent_id}", "get"): ("Agent setup", "Get a registered agent"),
+    ("/v1/agents/registry/{agent_id}", "put"): ("Agent setup", "Update a registered agent"),
+    ("/v1/agents/registry/{agent_id}", "delete"): ("Agent setup", "Remove an agent"),
+    ("/v1/agents/roles", "get"): ("Agent setup", "List roles"),
+    ("/v1/agents/tools/policies", "get"): ("Tool policies", "List role-to-tool policies"),
+    ("/v1/agents/tools/policies", "put"): ("Tool policies", "Set a role-to-tool policy"),
+    ("/v1/agents/tools/policies/{tool_name}", "get"): ("Tool policies", "Get one tool's policy"),
+    ("/v1/agents/tools/policies/{tool_name}", "delete"): ("Tool policies", "Delete a tool's policy"),
     ("/v1/tenant/me/tools", "get"): ("Tool policies", "Get my tool policies"),
     ("/v1/tenant/me/tools", "put"): ("Tool policies", "Replace my tool policies"),
 
