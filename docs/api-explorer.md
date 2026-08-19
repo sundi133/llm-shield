@@ -60,19 +60,57 @@ The two are independent. Guarding the content path stops prompt injection and
 data leaving in text; guarding the tool path stops the action. Most
 integrations want both, and starting with one is fine.
 
+## Which integration is this?
+
+Shield supports two shapes, and this page documents the first. Committing to
+one matters, because the setup and the calls differ.
+
+**Embed (this page).** Your gateway calls Shield over HTTP around each
+`tools/call`. You keep the enforcement point, the traffic path and the data
+inside your own infrastructure. This is the shape to build against.
+
+**Hosted gateway.** Your clients point at a Shield gateway route and we sit in
+the traffic path. Different setup entirely - upstream registration, identity
+headers - and not described here.
+
+If you find a third surface in older guides (`/v1/shield/mcp/check`), it
+predates this spec. Build against what is on this page.
+
 ## Your first integration
 
 1. **Create a runtime key** - `POST /v1/tenant/me/api-keys`. Runtime scope is
-   enough for the guard calls, and it cannot change your configuration, so it is
-   the key to put on the hot path.
-2. **Call `/guardrails/input`** with a prompt you expect to fail. Confirm you
+   enough for the guard calls and cannot change configuration, so it is the key
+   to put on the hot path.
+2. **Register the agent** - `POST /v1/agents/registry`, then set the
+   role-to-tool policy with `PUT /v1/agents/tools/policies`. Do this **before**
+   the first `tool/check`: an unregistered agent is denied by RBAC, which looks
+   like a broken API and is actually unfinished setup.
+3. **Call `/guardrails/input`** with a prompt you expect to fail. Confirm you
    get a block before you trust a pass.
-3. **Wrap the model** - add `/guardrails/output` on the way back.
-4. **Tune** - `GET /v1/tenant/me/policies` to see what ran,
-   `PUT` to change it, and `GET /v1/tenant/me/telemetry` to see the decisions.
+4. **Wrap the model** - add `/guardrails/output` on the way back.
+5. **Wrap the tools** - `tool/check` before execution, `tool/output` after.
+6. **Tune** - `GET /v1/tenant/me/policies` to see what ran, `PUT` to change it,
+   `GET /v1/tenant/me/telemetry` to see the decisions.
 
-Step 2 is the one people skip. A guardrail that has never refused anything in
+Step 3 is the one people skip. A guardrail that has never refused anything in
 your integration is indistinguishable from one that is not wired up.
+
+## Reading the verdict
+
+**HTTP 200 does not mean allowed.** A blocked request also returns 200 - the
+status code tells you the call succeeded, not what it decided. Branch on the
+body:
+
+| Endpoint | Verdict field | Also returns |
+|---|---|---|
+| `/guardrails/input`, `/guardrails/output` | `safe` (boolean) | `action`, `guardrail_results` |
+| `/v1/shield/tool/check`, `/tool/output` | `allowed` (boolean) | `action`, `guardrail_results` |
+
+`action` is one of `pass`, `warn`, `redact`, `block`. The two families use
+different field names today; a client should read the one belonging to the
+endpoint it called rather than assume both are present.
+
+A missing or unrecognised API key returns **401**, not a verdict.
 
 ## What is in it
 

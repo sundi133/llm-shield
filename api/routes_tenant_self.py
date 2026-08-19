@@ -809,7 +809,39 @@ async def set_my_tools(request: Request):
     import json as _json
     tenant_id = _require_tenant(request)
     body = await request.json()
-    tools = body.get("tools", [])
+
+    # This is a full replace, and it used to read `body.get("tools", [])` — an
+    # absent key defaulted to empty and the empty list was then written. So
+    # `PUT {}` returned 200 and silently cleared the catalogue. That is not a
+    # theoretical footgun: an engineer probing the published spec with an empty
+    # body deleted sixty tool definitions from a live tenant, because the spec
+    # had no example and the handler treated "you said nothing" as "delete
+    # everything".
+    #
+    # Absent and empty are now different answers. Absent is a bug in the
+    # caller; empty is a destructive intent that has to be stated.
+    if "tools" not in body:
+        raise HTTPException(
+            status_code=422,
+            detail="'tools' is required. This endpoint REPLACES the tenant's "
+                   "entire tool catalogue, so omitting the field would clear "
+                   "it. Send the full list, or pass confirm_delete_all=true "
+                   "with an empty list to clear it deliberately.",
+        )
+
+    tools = body["tools"]
+    if not isinstance(tools, list):
+        raise HTTPException(status_code=422, detail="'tools' must be a list.")
+
+    # Clearing stays possible — it is a legitimate operation — but it cannot
+    # happen by accident or by copying an example.
+    if not tools and not body.get("confirm_delete_all"):
+        raise HTTPException(
+            status_code=422,
+            detail="Refusing to clear the tool catalogue on an empty list. "
+                   "GET this endpoint first if you want a copy, then pass "
+                   "confirm_delete_all=true to proceed.",
+        )
 
     for t in tools:
         if "function" not in t or "name" not in t.get("function", {}):
