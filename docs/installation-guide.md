@@ -86,7 +86,7 @@ gpu_workers:
     cpu: "64 cores (Intel Xeon Gold 6348 or AMD EPYC 7763)"
     ram: "256GB DDR4-3200 ECC"
     storage: "2TB NVMe SSD (models + cache)"
-    gpu: "1x NVIDIA H200 80GB with MIG support"
+    gpu: "1x NVIDIA H100 80GB with MIG support"
     network: "25Gbps Ethernet or InfiniBand"
     os: "RedHat Enterprise Linux 9.3"
 ```
@@ -717,15 +717,16 @@ sudo chown -R $(whoami):$(whoami) /models
 
 ```bash
 # Install llama.cpp
-git clone https://github.com/ggerganov/llama.cpp.git
+git clone https://github.com/ggml-org/llama.cpp.git
 cd llama.cpp
 
-# Build with CUDA support
-make LLAMA_CUDA=1 -j$(nproc)
+# Build with CUDA support (the Makefile build was removed upstream)
+cmake -B build -DGGML_CUDA=ON
+cmake --build build --config Release -j$(nproc)
 
 # Install to system path
-sudo cp llama-server /usr/local/bin/
-sudo cp llama-quantize /usr/local/bin/
+sudo cp build/bin/llama-server /usr/local/bin/
+sudo cp build/bin/llama-quantize /usr/local/bin/
 
 # Verify installation
 llama-server --version

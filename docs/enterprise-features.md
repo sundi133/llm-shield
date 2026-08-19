@@ -47,7 +47,7 @@ Every enterprise feature follows these rules:
 
 **Problem**: A tool is compromised or malfunctioning. You need to disable it instantly across all agents.
 
-**Latency impact**: 0ms (Redis SET lookup, skips all guardrails if disabled)
+**Latency impact**: sub-millisecond (Redis SET lookup, skips all guardrails if disabled)
 
 ### Disable a tool
 ```bash

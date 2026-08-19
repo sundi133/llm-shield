@@ -31,7 +31,7 @@ permalink: /
     <div class="stats__label">Industry suites</div>
   </div>
   <div class="stats__item">
-    <div class="stats__number">~26K</div>
+    <div class="stats__number">~24K</div>
     <div class="stats__label">Red-team prompts</div>
   </div>
   <div class="stats__item">
@@ -46,7 +46,7 @@ permalink: /
   <div class="feature-card">
     <span class="feature-card__icon">🛡️</span>
     <h3>Defense in depth</h3>
-    <p>19 guardrails across input safety, output quality, and agentic security — composed into a two-tier parallel pipeline.</p>
+    <p>22 guardrails across input safety, output quality, and agentic security — composed into a two-tier parallel pipeline.</p>
   </div>
   <div class="feature-card">
     <span class="feature-card__icon">🏢</span>
@@ -108,7 +108,7 @@ need it; nothing is locked to a hosted control plane.
 
 ## Two container images
 
-1. **Full Shield** (`Dockerfile`) — GPU worker with llama.cpp + all guardrails + admin portals
+1. **Full Shield** (`Dockerfile`) — GPU worker with vLLM + all guardrails + admin portals
 2. **Admin-only** (`Dockerfile.admin`) — Lightweight (~150 MB) portal + tenant APIs, no GPU. Runs anywhere (Cloud Run, Fly, Render, laptop).
 
 Both share the same backend APIs and connect to the same Redis for tenant state.

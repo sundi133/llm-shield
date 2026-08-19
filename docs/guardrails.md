@@ -3,13 +3,13 @@ title: Guardrails Catalog
 layout: default
 nav_order: 4
 permalink: /guardrails/
-description: All 19 guardrails — input safety, output validation, agentic security, and enterprise controls.
+description: All 22 guardrails — input safety, output validation, agentic security, and enterprise controls.
 ---
 
 # Guardrails Catalog
 {: .no_toc }
 
-LLM Shield ships **19 guardrails** organized into a two-tier parallel pipeline: fast CPU checks first, LLM-based checks only when needed.
+LLM Shield ships **22 guardrails** organized into a two-tier parallel pipeline: fast CPU checks first, LLM-based checks only when needed.
 {: .fs-6 .fw-300 }
 
 <details open markdown="block">

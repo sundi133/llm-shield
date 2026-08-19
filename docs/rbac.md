@@ -80,6 +80,15 @@ proxy's `tools/call` path automatically.
 the agent's identity; if it is present and disagrees with `agent_key` in the
 body, the call is blocked as an impersonation attempt. Keep them consistent.
 
+**The role, by contrast, is asserted and not authenticated.** Shield accepts
+the caller's role either as `user_role` in the request body or as an
+`X-User-Role` header, and the body field wins when both are present. Shield
+enforces against whatever role it is handed; it does not verify that the caller
+is entitled to it. Resolve the role from your own authenticated session or token
+before calling Shield, and never forward a role that came from untrusted client
+input. If your callers are not fully trusted, bind access with a signed
+capability instead, as described below.
+
 ## Object-level scope (capabilities)
 
 For high-risk tools, bind access to a specific resource and clearance with a
