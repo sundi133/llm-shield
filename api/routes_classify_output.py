@@ -548,8 +548,8 @@ async def classify_output(request: Request, body: dict):
     from storage.tenant_store import resolve_request_tenant_id
     metrics_tenant_id = tenant_id or resolve_request_tenant_id(request)
     if metrics_tenant_id:
-        from storage.guardrail_metrics import record_results_batch
-        record_results_batch(metrics_tenant_id, response.get("guardrail_results", []))
+        from storage.guardrail_metrics import record_results_batch_bg
+        record_results_batch_bg(metrics_tenant_id, response.get("guardrail_results", []))
 
     # Log to audit_logger so output guardrail checks appear in tenant telemetry
     blocked = response.get("action") == "block"

@@ -578,8 +578,8 @@ async def check_tool(body: ToolCheckRequest, request: Request):
 
         # Record guardrail effectiveness metrics
         if tenant_id:
-            from storage.guardrail_metrics import record_results_batch
-            record_results_batch(tenant_id, results)
+            from storage.guardrail_metrics import record_results_batch_bg
+            record_results_batch_bg(tenant_id, results)
 
         # Log enforcement decisions for non-pass actions (enterprise feature)
         if DECISION_AUDIT_ENABLED and tenant_id and action != "pass":

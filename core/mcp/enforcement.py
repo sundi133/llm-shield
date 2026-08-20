@@ -297,8 +297,8 @@ def _record_metrics(tenant_id: Optional[str], results: list[dict]) -> None:
     if not tenant_id or not results:
         return
     try:
-        from storage.guardrail_metrics import record_results_batch
-        record_results_batch(tenant_id, results)
+        from storage.guardrail_metrics import record_results_batch_bg
+        record_results_batch_bg(tenant_id, results)
     except Exception:
         pass
 
