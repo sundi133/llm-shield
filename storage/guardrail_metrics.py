@@ -13,8 +13,10 @@ Each key is a Redis hash with fields:
     TTL: 90 days (auto-cleanup)
 """
 
+import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -219,6 +221,76 @@ def record_results_batch(tenant_id: str, guardrail_results: list) -> None:
             action=gr.get("action", "pass"),
             latency_ms=gr.get("latency_ms", 0.0),
         )
+
+
+# ---------------------------------------------------------------------------
+# Off-hot-path recording
+#
+# record_results_batch does 5-7 *blocking* Redis commands per guardrail, and
+# production Redis is Upstash (REST over HTTPS), so every command is a network
+# round trip. Called inline on the guard path that measured ~1630ms p50 of the
+# ~2400ms a keyed /guardrails/input took, all of it AFTER _build_response had
+# already stamped inference_time_ms — so the header reported ~700ms and
+# understated reality by 3x.
+#
+# admin_app.py already runs this off the response path; the guard path never
+# got the same treatment. Spec: docs/spec-metrics-off-hot-path.md
+# ---------------------------------------------------------------------------
+
+# Strong references to in-flight tasks. Without this the event loop may
+# garbage-collect a running task mid-write; asyncio only holds weak references.
+_BG_TASKS: set = set()
+
+
+def metrics_inline() -> bool:
+    """Escape hatch: SHIELD_METRICS_INLINE=1 restores synchronous recording.
+
+    Rollback is an env flip, not a rebuild. Tests that assert on counters
+    immediately after a guarded call need this, since the async path makes
+    metrics eventually consistent.
+    """
+    return os.environ.get("SHIELD_METRICS_INLINE", "").strip().lower() in (
+        "1", "true", "yes")
+
+
+def record_results_batch_bg(tenant_id: str, guardrail_results: list) -> None:
+    """Schedule a metrics batch write off the request path.
+
+    Sync-callable, so guard-path call sites change by one word. Uses a worker
+    thread rather than a bare create_task: the Redis calls are blocking, so
+    merely deferring them on the event loop would move the stall to the next
+    await and fix nothing.
+
+    Falls back to running inline when there is no event loop (sync contexts,
+    most tests) so a batch is never silently dropped.
+    """
+    if not tenant_id or not guardrail_results:
+        return
+
+    if metrics_inline():
+        record_results_batch(tenant_id, guardrail_results)
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop: a sync caller. Preserve behavior rather than drop the batch.
+        record_results_batch(tenant_id, guardrail_results)
+        return
+
+    # Copy the list: the caller's response dict may be rebuilt or mutated once
+    # we return, and the write now outlives the request.
+    batch = list(guardrail_results)
+
+    async def _run(tid=tenant_id, b=batch):
+        try:
+            await asyncio.to_thread(record_results_batch, tid, b)
+        except Exception as e:      # noqa: BLE001 - metrics must never fail a request
+            logger.debug(f"guardrail_metrics bg record failed: {e}")
+
+    task = loop.create_task(_run())
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
 
 
 def get_effectiveness(

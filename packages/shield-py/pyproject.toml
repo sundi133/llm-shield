@@ -1,0 +1,12 @@
+[project]
+name = "votalai-shield"
+version = "0.1.0"
+description = "Python client for the Votal Shield partner API"
+requires-python = ">=3.9"
+dependencies = ["httpx>=0.24"]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pytest-asyncio>=0.21"]
+
+[tool.setuptools]
+py-modules = ["shield"]

@@ -276,8 +276,8 @@ async def classify(request: Request, body: dict):
     from storage.tenant_store import resolve_request_tenant_id
     tenant_id = resolve_request_tenant_id(request)
     if tenant_id:
-        from storage.guardrail_metrics import record_results_batch
-        record_results_batch(tenant_id, result.get("guardrail_results", []))
+        from storage.guardrail_metrics import record_results_batch_bg
+        record_results_batch_bg(tenant_id, result.get("guardrail_results", []))
 
     # Log to audit_logger so input guardrail checks appear in tenant telemetry
     agent_key = (getattr(request.state, "agent_key", None) if hasattr(request, "state") else None) or body.get("agent_key", "")
@@ -565,8 +565,8 @@ async def screen_file(
     from storage.tenant_store import resolve_request_tenant_id
     tenant_id = resolve_request_tenant_id(request)
     if tenant_id:
-        from storage.guardrail_metrics import record_results_batch
-        record_results_batch(tenant_id, result.get("guardrail_results", []))
+        from storage.guardrail_metrics import record_results_batch_bg
+        record_results_batch_bg(tenant_id, result.get("guardrail_results", []))
 
     agent_key = ((getattr(request.state, "agent_key", None) if hasattr(request, "state") else None)
                  or request.headers.get("x-agent-key", ""))
