@@ -11,7 +11,8 @@ This document maps Votal Shield guardrails to industry compliance frameworks to 
 
 Frameworks covered:
 - NIST AI Risk Management Framework (AI RMF 1.0)
-- OWASP Top 10 for LLM Applications
+- OWASP Top 10 for LLM Applications (2026 edition)
+- OWASP Top 10 for Agentic Applications (2026 edition)
 - NIST SP 800-53 (Security and Privacy Controls)
 - EU AI Act (High-Risk AI Systems)
 - ISO/IEC 42001 (AI Management System)
@@ -68,22 +69,44 @@ Frameworks covered:
 | **MANAGE 4.2** | Measurable continuous improvement | Audit logs, per-guardrail metrics, Kibana dashboards |
 | **MANAGE 4.3** | Incidents and errors communicated | ES alerts on `event.kind: "alert"` + `event.severity: "critical"` |
 
-## 2. OWASP Top 10 for LLM Applications
+## 2. OWASP Top 10 for LLM Applications (2026)
+
+Mapped against the **2026 edition**. The 2023 list retired Insecure Plugin Design,
+Overreliance and Model Theft, and renumbered most of the remaining entries, so IDs
+here will not match a pre-2025 reference.
 
 | OWASP ID | Risk | Votal Shield Guardrails |
 |---|---|---|
-| **LLM01** | Prompt Injection | `adversarial_detection`, `memory_injection_detection`, `system_prompt_leak`, `chain_of_thought_monitoring` |
-| **LLM02** | Insecure Output Handling | `tool_output_sanitization`, `pii_leakage`, `role_redaction`, `regex_pattern` |
-| **LLM03** | Training Data Poisoning | (out of scope — requires model training controls) |
-| **LLM04** | Model Denial of Service | `rate_limiter`, `length_limit`, `budget_controls`, `tool_call_rate_limiting`, `loop_detection` |
-| **LLM05** | Supply Chain Vulnerabilities | `mcp_guard` with MCP server trust scoring |
-| **LLM06** | Sensitive Information Disclosure | `pii_detection`, `pii_leakage`, `memory_pii_scrubbing`, `data_access_guard`, `system_prompt_leak` |
-| **LLM07** | Insecure Plugin Design | `tool_allowlist`, `tool_use_control`, `tool_call_validation`, `mcp_guard` |
-| **LLM08** | Excessive Agency | `action_guard`, `sensitive_action_confirmation`, `scope_boundaries`, `delegation_control` |
-| **LLM09** | Overreliance | `factual_grounding`, `hallucinated_links`, `chain_of_thought_monitoring` |
-| **LLM10** | Model Theft | `rate_limiter`, `rbac_guard`, `audit_log`, `budget_controls` |
+| **LLM01** | Prompt Injection | `adversarial_detection`, `payload_risk`, `memory_injection_detection`, `chain_of_thought_monitoring` |
+| **LLM02** | Sensitive Information Disclosure | `pii_detection`, `pii_leakage`, `memory_pii_scrubbing`, `data_access_guard`, `role_redaction` |
+| **LLM03** | Excessive Agency | `action_guard`, `rbac_guard`, `sensitive_action_confirmation`, `scope_boundaries`, `delegation_control` |
+| **LLM04** | Supply Chain | `mcp_guard` with MCP server trust scoring |
+| **LLM05** | Data and Model Poisoning | (out of scope — requires model training controls) |
+| **LLM06** | Unbounded Consumption | `rate_limiter`, `length_limit`, `budget_controls`, `tool_call_rate_limiting`, `loop_detection` |
+| **LLM07** | Misinformation | `factual_grounding`, `hallucinated_links`, `chain_of_thought_monitoring` |
+| **LLM08** | Hidden Context Exposure | `system_prompt_leak`, `role_redaction`, `tool_output_sanitization` |
+| **LLM09** | Vector and Embedding Weaknesses | `data_access_guard`, `memory_access_control`, `memory_injection_detection` |
+| **LLM10** | Improper Output Handling | `tool_output_sanitization`, `pii_leakage`, `role_redaction`, `regex_pattern` |
 
-## 3. NIST SP 800-53 Rev 5 (Security and Privacy Controls)
+## 3. OWASP Top 10 for Agentic Applications (2026)
+
+The agentic taxonomy published by the OWASP GenAI Security Project. Nine of the ten
+risks have enforcement behind them; ASI09 is partially covered and noted as such.
+
+| OWASP ID | Risk | Votal Shield Guardrails |
+|---|---|---|
+| **ASI01** | Agent Goal Hijack | `adversarial_detection`, `goal_drift_detection`, `chain_of_thought_monitoring` |
+| **ASI02** | Tool Misuse and Exploitation | `tool_allowlist`, `tool_use_control`, `tool_call_validation`, `action_guard` |
+| **ASI03** | Agent Identity and Privilege Abuse | `rbac_guard`, `cert_identity`, `scope_boundaries`, `data_access_guard` |
+| **ASI04** | Agentic Supply Chain | `mcp_guard` with MCP server trust scoring |
+| **ASI05** | Unexpected Code Execution | `tool_call_validation`, `tool_output_sanitization`, `action_guard` |
+| **ASI06** | Memory and Context Poisoning | `memory_injection_detection`, `memory_pii_scrubbing`, `memory_access_control`, `memory_retention_policies` |
+| **ASI07** | Insecure Inter-Agent Communication | `delegation_control`, `cert_identity`, agent-key impersonation checks |
+| **ASI08** | Cascading Agent Failures | `loop_detection`, `budget_controls`, `tool_call_rate_limiting` |
+| **ASI09** | Human-Agent Trust Exploitation | `sensitive_action_confirmation` (partial — approval fatigue and induced over-trust are not screened) |
+| **ASI10** | Rogue Agents | `goal_drift_detection`, `action_classification`, `data_taint_tracking`, agent disable |
+
+## 4. NIST SP 800-53 Rev 5 (Security and Privacy Controls)
 
 ### Access Control (AC)
 
@@ -132,7 +155,7 @@ Frameworks covered:
 | **SI-10** | Information Input Validation | `regex_pattern`, `length_limit`, `keyword_blocklist`, `tool_call_validation` |
 | **SI-11** | Error Handling | Graceful guardrail failure handling (pipeline catches exceptions per guardrail) |
 
-## 4. EU AI Act (High-Risk AI Systems)
+## 5. EU AI Act (High-Risk AI Systems)
 
 | Article | Requirement | Votal Shield Coverage |
 |---|---|---|
@@ -145,7 +168,7 @@ Frameworks covered:
 | **Art. 17** | Quality Management System | Per-guardrail metrics, continuous monitoring via SIEM |
 | **Art. 61** | Post-Market Monitoring | Telemetry pipeline, incident alerts, Kibana dashboards |
 
-## 5. ISO/IEC 42001 (AI Management System)
+## 6. ISO/IEC 42001 (AI Management System)
 
 | Clause | Requirement | Votal Shield Coverage |
 |---|---|---|
@@ -158,7 +181,7 @@ Frameworks covered:
 | **9.2** | Internal audit | `audit_log` with query API |
 | **10** | Improvement | Runtime guardrail config updates, continuous metrics |
 
-## 6. Guardrail → Control Reverse Index
+## 7. Guardrail → Control Reverse Index
 
 Quick lookup: given a guardrail, what controls does it cover?
 
@@ -204,7 +227,7 @@ Quick lookup: given a guardrail, what controls does it cover?
 | `chain_of_thought_monitoring` | MEASURE 2.8 | LLM01, LLM09 | SI-4 |
 | `context_window_guardrails` | MEASURE 2.7 | LLM04 | SI-4 |
 
-## 7. Evidencing Compliance
+## 8. Evidencing Compliance
 
 For auditors asking "how do you demonstrate control X?", point to:
 
@@ -219,7 +242,7 @@ For auditors asking "how do you demonstrate control X?", point to:
 | **Blocked attack samples** | Query ES for `event.kind: "alert" AND event.risk_score >= 90` |
 | **RBAC enforcement** | `rbac_guard` decisions logged with `agent.key` + `votal.role_name` |
 
-## 8. Kibana Queries for Compliance Reports
+## 9. Kibana Queries for Compliance Reports
 
 ```
 # LLM01 (Prompt Injection) — all blocked attacks
@@ -241,7 +264,7 @@ agent.key: * AND event.action: "request"
 NOT url.path: ("/health" OR "/ping")
 ```
 
-## 9. Auditor evidence pack — a repeatable checklist
+## 10. Auditor evidence pack — a repeatable checklist
 
 When an auditor or customer security team asks for evidence, produce this pack. It
 maps one-to-one to the control tables above and is reproducible on demand.

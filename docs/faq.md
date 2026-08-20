@@ -38,7 +38,7 @@ Three supported shapes:
 | Mode | What it includes | When to use |
 |---|---|---|
 | **Admin-only** (`Dockerfile.admin`, ~150 MB) | Portal + tenant APIs, no GPU | UI dev, policy editing, tenant management on a laptop / Cloud Run / Fly |
-| **Full Shield** (`Dockerfile`) | GPU worker + llama.cpp + all 19 guardrails + admin portals | Production inline enforcement |
+| **Full Shield** (`Dockerfile`) | GPU worker + vLLM + all 22 guardrails + admin portals | Production inline enforcement |
 | **Gateway proxy** | `/v1/shield/chat/completions` drop-in replacement | Wraps any OpenAI-compatible upstream |
 
 Both share the same backend APIs and the same Redis for tenant state. See the [Quickstart]({{ "/quickstart/" | relative_url }}).
@@ -65,7 +65,7 @@ Yes. The on-prem stack is a Docker Compose deployment with 10 services (API gate
 
 ### How many guardrails ship with LLM Shield?
 
-**19 guardrails**, organized into a two-tier parallel pipeline:
+**22 guardrails**, organized into a two-tier parallel pipeline:
 
 - **7 input fast-tier** (CPU, <5 ms): `keyword_blocklist`, `length_limit`, `regex_pattern`, `pii_detection`, `language_detection`, `sentiment`, `rate_limiter`
 - **3 input slow-tier** (LLM-based): `adversarial_detection`, `topic_restriction`, `topic_enforcement`

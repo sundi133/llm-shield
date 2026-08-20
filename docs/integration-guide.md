@@ -282,7 +282,7 @@ console.log(result.text);
 
 ### Upstream LLM Proxying
 
-Shield can proxy to any OpenAI-compatible API (OpenAI, Anthropic via proxy, vLLM, Ollama, etc.) instead of its built-in llama.cpp backend. Set the `upstream_url` in config:
+Shield can proxy to any OpenAI-compatible API (OpenAI, Anthropic via proxy, vLLM, Ollama, etc.) instead of its built-in vLLM backend. Set the `upstream_url` in config:
 
 ```yaml
 llm_backend:
@@ -1043,7 +1043,7 @@ docker run -p 8080:80 \
 
 ### RunPod / GPU Cloud
 
-The Dockerfile includes Qwen3-8B + llama.cpp for the built-in LLM backend. Deploy to any GPU instance (NVIDIA). Shield starts the llama-server on boot and waits for it to become healthy.
+The Dockerfile builds on `vllm/vllm-openai` and serves Qwen3-8B as the built-in LLM backend. Deploy to any GPU instance (NVIDIA). Shield starts the vLLM server on boot and waits for it to become healthy.
 
 ### Using an External LLM (no GPU required)
 
@@ -1054,7 +1054,7 @@ llm_backend:
   upstream_url: "https://api.openai.com"
 ```
 
-Note: The LLM-based guardrails (adversarial detection, topic restriction, etc.) still use the built-in llama-server. To run Shield without a GPU, disable the slow-tier guardrails:
+Note: The LLM-based guardrails (adversarial detection, topic restriction, etc.) still use the built-in vLLM server. To run Shield without a GPU, disable the slow-tier guardrails:
 
 ```yaml
 guardrails:

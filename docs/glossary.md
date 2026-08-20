@@ -27,8 +27,15 @@ How Shield knows *who is acting*.
 **Tool call** — one invocation of a tool with arguments. The unit Shield
 authorizes.
 
-**Role / RBAC** — the caller's role (`X-User-Role`, e.g. `reader`, `admin`)
-gates which tools it may call. RBAC = role-based access control.
+**Role / RBAC** — the caller's role (e.g. `reader`, `admin`) gates which
+tools it may call. RBAC = role-based access control. Shield accepts the role
+either as a `user_role` field in the request body or as an `X-User-Role`
+header; the body field takes precedence when both are present.
+
+> **The role is supplied by the caller.** Shield enforces against whatever
+> role it is handed — it does not authenticate the role itself. Resolve the
+> role from your own verified session or token before calling Shield, and do
+> not pass a role that originated from untrusted client input.
 
 **Role permissions** — the map, per agent, of role → allowed tools. Set once
 when the agent is registered.
@@ -36,9 +43,12 @@ when the agent is registered.
 **Capability minting** — defining what an agent *can* do (its tools and
 role-permissions) before it runs. Done once at registration.
 
-**Guardrail** — one check Shield runs. *Fast-tier* guardrails (RBAC, kill
-switch) are CPU-only and sub-millisecond; *slow-tier* (content inspection,
-output sanitization) use an LLM.
+**Guardrail** — one check Shield runs. *Fast-tier* guardrails (keyword
+blocklist, length limit, regex, PII detection) are CPU-only and run in under
+5 ms; *slow-tier* (content inspection, output sanitization) use an LLM. See
+the Guardrails Catalog for the full list and which tier each one sits in.
+The kill switch is not a guardrail — it is an administrative block, defined
+separately below.
 
 **Risk tier** — a zero-config `low` / `medium` / `high` score Shield assigns
 every tool call from its name, HTTP method, and arguments — so dangerous calls

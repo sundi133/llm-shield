@@ -22,6 +22,20 @@ Set admin key via env var on deployment:
 export SHIELD_ADMIN_KEY="super-secret-admin-key-xyz"
 ```
 
+**Authentication is enforced only when `SHIELD_AUTH_ENABLED=true`.** It is off by
+default, which is why the Quickstart examples send no `Authorization` header. Turn
+it on before exposing Shield on any reachable address.
+
+### Request headers
+
+| Header | Required | Applies to |
+|---|---|---|
+| `Authorization: Bearer <tenant-key>` | when `SHIELD_AUTH_ENABLED=true` | `/v1/shield/*`, `/v1/tenant/*` |
+| `X-Admin-Key` | yes | `/v1/admin/*` |
+| `X-API-Key` | alternative to `Authorization: Bearer` | accepted wherever a tenant key is |
+| `X-Agent-Key` | yes for agentic and tool endpoints; optional for `/classify*` | identifies the acting agent. If it disagrees with `agent_key` in the body, the call is blocked as impersonation |
+| `X-User-Role` | optional | the caller's role. A `user_role` field in the body takes precedence. Shield enforces against the role it is handed and does not authenticate it — resolve it from your own verified session first |
+
 ## Environment Variables
 
 ```bash
@@ -134,6 +148,27 @@ curl -X PUT http://localhost/v1/shield/config \
 ---
 
 ## 2. Tenant Developer APIs (End Customers)
+
+### Data plane — direct guardrail inspection
+
+The lowest-latency path. These routes run the guardrail pipeline directly and
+return a verdict, without tenant resolution or audit logging. The Quickstart
+smoke test uses `/guardrails/input`.
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/guardrails/input` | `POST` | Screen an inbound message |
+| `/guardrails/output` | `POST` | Screen a model response |
+| `/guardrails/file` | `POST` | Screen an uploaded file |
+
+```bash
+curl -X POST http://localhost:8080/guardrails/input \
+  -H "Content-Type: application/json" \
+  -d '{"message": "How do I reset my password?"}'
+```
+
+Use `/v1/shield/classify` and `/v1/shield/classify_output` below when you want
+the same checks with tenant resolution, per-tenant policy and an audit entry.
 
 ### Core Guardrails
 

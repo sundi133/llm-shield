@@ -44,6 +44,8 @@ open http://localhost:8081/tenant   # tenant portal
 Or with local Redis via Docker Compose:
 
 ```bash
+# Note: this maps the admin portal to host port 8080, the same port Option 2 uses.
+# Running both at once? Use the `docker run` form above, which maps admin to 8081.
 docker compose -f docker-compose.admin.yml up --build
 open http://localhost:8080/admin
 ```
@@ -98,6 +100,10 @@ curl -X POST "https://YOUR_ENDPOINT.api.runpod.ai/guardrails/input" \
 ---
 
 ## Smoke test
+
+These examples send no `Authorization` header because authentication is disabled
+by default (see [Authentication](#authentication) below). Enable it before exposing
+Shield on any reachable address.
 
 ### Safety classification
 
@@ -158,7 +164,7 @@ curl -X POST http://localhost:8080/v1/shield/topic/check \
 Disabled by default. Enable with environment variables:
 
 ```bash
-export SHIELD_API_KEYS="your-secret-key-1,your-secret-key-2"
+export SHIELD_API_KEYS="your-secret-key-1,your-secret-key-2"   # replace before any non-local use
 export SHIELD_AUTH_ENABLED=true
 ```
 
@@ -182,7 +188,7 @@ python core/keygen.py
 
 ## Where to next
 
-- [Guardrails Catalog]({{ "/guardrails/" | relative_url }}) — what each of the 19 guardrails does
+- [Guardrails Catalog]({{ "/guardrails/" | relative_url }}) — what each of the 22 guardrails does
 - [API Reference]({{ "/api-reference/" | relative_url }}) — every endpoint, request/response shape
 - [Agentic Integration Guide]({{ "/agentic-integration-guide/" | relative_url }}) — wire into LangChain, CrewAI, OpenAI SDK
 - [On-Premises Deployment Guide]({{ "/on-premises-deployment-guide/" | relative_url }}) — production-grade install

@@ -273,7 +273,7 @@ If you don't pass `X-API-Key`, Shield runs in stateless mode — no tenant polic
    curl -X POST $URL/guardrails/input -d '{
      "message": "test",
      "input": {
-       "keyword-blocklist": {"enabled": true, "action": "block", "blocklist": ["bomb"]}
+       "keyword_blocklist": {"enabled": true, "action": "block", "blocklist": ["bomb"]}
      }
    }'
    ```
