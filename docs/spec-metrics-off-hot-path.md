@@ -26,25 +26,44 @@ A keyed `POST /guardrails/input` against production costs **~2.4s p50 wall**,
 but the `inference_time_ms` it reports is **~700-830ms**. The header understates
 real latency by ~3x, and the gap is not the model.
 
-Measured against `https://api.guardrails.votal.ai` on 2026-08-19, interleaved
-samples so backend load hits every component equally:
+Measured against `https://api.guardrails.votal.ai`, interleaved samples so
+backend load hits every component equally:
 
-| component | p50 | reported to the caller? |
-|---|---|---|
-| network + TLS | 50 ms | n/a |
-| guardrail pipeline | ~700 ms | yes, this is `inference_time_ms` |
-| **metrics write-back** | **~1630 ms** | **no** |
-| total wall | ~2400 ms | |
+| component | 2026-08-19 | 2026-08-20 | reported to the caller? |
+|---|---|---|---|
+| network + TLS | 50 ms | 40 ms | n/a |
+| guardrail pipeline | ~700 ms | **~2900 ms** | yes, this is `inference_time_ms` |
+| **metrics write-back** | **~1630 ms** | **~440 ms** | **no** |
+| total wall | ~2400 ms | ~3300 ms | |
 
-The controlled test that isolates it. Same endpoint, same payload, same minute:
+The controlled test that isolates it — same endpoint, same payload, same minute,
+the only variable being whether a tenant key is sent:
 
 ```
-anonymous  ->  512 ms wall,   45 ms non-pipeline overhead
-keyed      -> 2338 ms wall, 1632 ms non-pipeline overhead
+                       2026-08-19        2026-08-20
+anonymous     unreported overhead    45 ms       6-10 ms
+keyed         unreported overhead  1632 ms     340-450 ms
 ```
 
 The delta is gated on `tenant_id`, which is exactly the condition guarding the
-metrics write.
+metrics write. **The mechanism reproduces on both days; the magnitude does
+not.**
+
+> **Read the magnitude with care.** The first measurement (~1630 ms) was a
+> single day. On 2026-08-20 the same probe returned ~440 ms across three runs.
+> Store round-trip latency to Upstash varies by roughly 4x day to day, and the
+> whole point of this work is that the cost is *uncacheable and variable* — it
+> must hit the store on every request. So the honest claim is **"removes
+> 300-1600 ms of variable, store-dependent latency from the guard path,"** not
+> "removes 1.6 s." Anyone quoting a single figure to a partner will be wrong
+> half the time.
+>
+> **A larger problem surfaced while re-measuring.** On 2026-08-20 the guardrail
+> pipeline itself measured ~2900 ms keyed / ~2050 ms anonymous, against ~700 ms
+> / ~470 ms the day before — a 4x regression that now dominates total latency
+> and is *not* addressed by this spec. That belongs to
+> `docs/spec-guard-path-scale.md` and should be investigated before any latency
+> number is published. Reproduce with the probe in §8.
 
 **Root cause.** `api/routes_classify.py:280` calls `record_results_batch()`
 synchronously and un-awaited, *after* `_build_response()` already stamped
@@ -67,16 +86,27 @@ does one *blocking* Redis write per guardrail, so run it off the response path"
 — and fixes it with `asyncio.to_thread` inside a tracked background task. The
 guard path never got the same treatment.
 
-**Outcome.** Guard-path p50 drops from ~2.4s to ~750ms, and the number we
-publish becomes the number a partner observes. Observable success condition:
-`wall - inference_time_ms - network` falls below 100ms p50 on a keyed
-`/guardrails/input`, and `GET /v1/tenant/me/guardrail-metrics` returns the same
-totals it does today.
+**Outcome.** The caller stops paying for the metrics write, so the number we
+publish becomes the number a partner observes.
+
+Observable success condition, stated so it holds regardless of how slow the
+store is on the day: on a keyed `/guardrails/input`,
+`wall - inference_time_ms - network` falls to within 50ms of the same figure
+measured **anonymously** (6-45ms across both measurement days). Today keyed
+carries 340-1630ms of tenant-gated overhead that anonymous does not; after this
+change the two should be indistinguishable. `GET /v1/tenant/me/guardrail-metrics`
+must still return the same totals.
+
+Deliberately *not* stated as an absolute p50 target, because total latency is
+dominated by the pipeline, which moved 4x between measurement days for unrelated
+reasons.
 
 **Why now.** This number goes in front of JumpCloud. Their engineering memo
-already said not to present latency before capturing p50/p95. Publishing 700ms
-when the integrator will observe 2.4s is a credibility problem, and this fix
-makes the honest number a good one rather than forcing us to publish a bad one.
+already said not to present latency before capturing p50/p95, and re-measuring
+proved them right: the header understated reality by 3.0x on one day and 1.2x on
+the next. A figure that swings that much is not one to quote in a partner
+meeting. This change removes the component the caller pays for but never sees,
+so `inference_time_ms` means what its name says.
 
 ### Non-goals
 
@@ -258,9 +288,10 @@ this spec promises not to touch): `tests/test_guardrail_metrics_recording.py`,
 - Full suite green via `python -m pytest tests -q` in a **clean venv**
   (`python -m venv /tmp/x && /tmp/x/bin/pip install -r requirements-test.txt`).
 - CI `pytest` gate passes.
-- Re-run the §1 measurement against staging and record the new decomposition in
-  the PR. The claim "we removed 1.6s" is only credible with the same
-  before/after method, and the before-numbers are in §1 to compare against.
+- Re-run `scripts/guard_latency_probe.py` against staging and record the
+  decomposition in the PR. Compare the **keyed vs anonymous** unreported-overhead
+  columns, not absolute p50s — §1 shows why a single figure is not reproducible
+  across days. Success is the two rows converging.
 
 ---
 
