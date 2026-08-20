@@ -390,7 +390,7 @@ resp = requests.post(f"{SHIELD_URL}/guardrails/input",
                 "action": "block",
                 "confidence_threshold": 0.6
             },
-            "keyword-blocklist": {
+            "keyword_blocklist": {
                 "enabled": True,
                 "action": "block",
                 "keywords": ["diagnosis", "prescribe", "dosage"]
@@ -476,7 +476,7 @@ resp = requests.post(f"{SHIELD_URL}/guardrails/input",
                 "enabled": True,
                 "action": "block"
             },
-            "keyword-blocklist": {
+            "keyword_blocklist": {
                 "enabled": True,
                 "action": "block",
                 "keywords": ["bypass", "override", "ignore restrictions", "hack"]
@@ -735,7 +735,7 @@ finserv_callback = VotalTenantGuardrailCallback(
         "regex-pattern": {"enabled": True, "action": "block", "patterns": [
             {"pattern": "\\b\\d{8,17}\\b", "description": "Account number"},
         ]},
-        "keyword-blocklist": {"enabled": True, "action": "block", "keywords": ["bypass", "override"]},
+        "keyword_blocklist": {"enabled": True, "action": "block", "keywords": ["bypass", "override"]},
         "safety-check": {"enabled": True, "action": "block"},
     },
     output_guardrails={

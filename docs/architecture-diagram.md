@@ -236,7 +236,7 @@ This document provides visual diagrams of the Votal Shield multi-tenant architec
 │   │   │                   │     │                   │    │       │
 │   │   │  - FastAPI        │     │  - AOF persist.   │    │       │
 │   │   │  - Guardrails     │     │  - appendonly yes │    │       │
-│   │   │  - llama.cpp GPU  │     │                   │    │       │
+│   │   │  - vLLM GPU       │     │                   │    │       │
 │   │   │                   │     │                   │    │       │
 │   │   │  Port: 80         │     │  Port: 6379       │    │       │
 │   │   └─────────┬─────────┘     └─────────┬─────────┘    │       │
@@ -376,7 +376,7 @@ This document provides visual diagrams of the Votal Shield multi-tenant architec
 | **Redis** | Tenant configs, API keys, cache | AOF + RDB on volume | Active-replica |
 | **Elasticsearch** | Event storage, alerting, dashboards | Persistent cluster | Cluster scaling |
 | **Audit DB (SQLite)** | Compliance queries | Volume-backed | Single writer |
-| **llama.cpp server** | LLM inference for slow-tier guardrails | GPU memory | Multi-GPU |
+| **vLLM server** | LLM inference for slow-tier guardrails | GPU memory | Multi-GPU |
 
 ## 8. Key Design Principles
 

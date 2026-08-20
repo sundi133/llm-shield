@@ -5,7 +5,7 @@ no model calls, no Redis. Deterministic by construction so identical BOMs
 always yield identical mappings (tests are the contract on the weights).
 
 Threat ids follow the AIBOM v1.0 §15 taxonomy; compliance references cover
-OWASP LLM Top 10, NIST AI RMF / 800-53, ISO/IEC 42001 / 27001, SOC 2, and
+OWASP LLM Top 10 (2026), NIST AI RMF / 800-53, ISO/IEC 42001 / 27001, SOC 2, and
 the EU AI Act at the control-reference level (pointers for an auditor, not
 a certification claim).
 """
@@ -42,13 +42,13 @@ _G = {
         ("NIST AI RMF", "MANAGE 2.4"),
     ],
     "pii_detection": [
-        ("OWASP LLM Top 10", "LLM06: Sensitive Information Disclosure"),
+        ("OWASP LLM Top 10", "LLM02: Sensitive Information Disclosure"),
         ("ISO/IEC 27001", "A.8.11 (Data Masking)"),
         ("EU AI Act", "Art. 10 (Data Governance)"),
         ("SOC 2", "CC6.7"),
     ],
     "secrets_detection": [
-        ("OWASP LLM Top 10", "LLM06: Sensitive Information Disclosure"),
+        ("OWASP LLM Top 10", "LLM02: Sensitive Information Disclosure"),
         ("ISO/IEC 27001", "A.8.12 (Data Leakage Prevention)"),
     ],
     "toxicity": [
@@ -56,16 +56,16 @@ _G = {
         ("EU AI Act", "Art. 9 (Risk Management)"),
     ],
     "tool_allowlist": [
-        ("OWASP LLM Top 10", "LLM08: Excessive Agency"),
+        ("OWASP LLM Top 10", "LLM03: Excessive Agency"),
         ("NIST 800-53", "AC-6 (Least Privilege)"),
         ("ISO/IEC 42001", "B.9.4 (Use of AI Systems)"),
     ],
     "output_moderation": [
-        ("OWASP LLM Top 10", "LLM05: Improper Output Handling"),
+        ("OWASP LLM Top 10", "LLM10: Improper Output Handling"),
         ("NIST AI RMF", "MEASURE 2.7"),
     ],
     "memory_access_control": [
-        ("OWASP LLM Top 10", "LLM06: Sensitive Information Disclosure"),
+        ("OWASP LLM Top 10", "LLM02: Sensitive Information Disclosure"),
         ("NIST 800-53", "AC-3 (Access Enforcement)"),
     ],
 }
