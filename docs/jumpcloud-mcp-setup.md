@@ -94,59 +94,76 @@ Shield now serves that server at
 
 Set `isolation_ack` truthfully. See [Isolation](#isolation-is-a-real-requirement).
 
-## Step 3: create the Client ID and Client Secret
+## Step 3: register an agent and grant it the tools
 
-JumpCloud's dialog asks for these under **Advanced fields**. Shield is a full
-OAuth 2.1 authorization server, so mint a confidential client bound to your
-tenant:
+**Do not skip this.** Without it the gateway denies every call and reads as a
+broken integration. Shield resolves an agent identity for each connection and
+checks the tools that agent is granted; an unregistered agent is denied by RBAC,
+and an agent granted tool names that do not exist on this upstream is denied
+just the same.
+
+Grant exactly the tool names the upstream advertises:
 
 ```bash
-curl -s -X POST "$SHIELD/oauth/register" \
+curl -s -X POST "$SHIELD/v1/agents/registry" \
   -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
-  -d '{"client_name":"JumpCloud AI Gateway",
-       "grant_types":["client_credentials"],
-       "token_endpoint_auth_method":"client_secret_post",
-       "scope":"shield"}'
+  -d '{"agent_id":"mcp-agent",
+       "name":"JumpCloud AI Gateway connection",
+       "tools":["customer_profile_get","transaction_history",
+                "statement_generate","wire_transfer_execute","email_send"],
+       "role_permissions":{
+         "":["customer_profile_get","transaction_history","statement_generate"],
+         "support":["customer_profile_get","transaction_history","statement_generate"],
+         "admin":["customer_profile_get","transaction_history","statement_generate",
+                  "wire_transfer_execute","email_send"]}}'
 ```
 
-The response carries `client_id` and `client_secret`. **The secret is shown
-once.** Put it straight into JumpCloud rather than into a file or a chat window.
+`mcp-agent` is the identity Shield falls back to when a connection supplies a
+tenant key but no explicit agent key. The empty role `""` is what a connection
+with no user role resolves to, so give it only the safe subset: the gateway then
+works while `wire_transfer_execute` stays both invisible and unusable.
 
-If your deployment sets `SHIELD_OAUTH_REGISTRATION_TOKEN`, add
-`"initial_access_token":"<that value>"` to the body. Without it the endpoint
-returns 401, which is the closed-by-default posture and is expected.
-
-Confirm the pair works before leaving the terminal:
-
-```bash
-curl -s -X POST "$SHIELD/oauth/token" \
-  -d 'grant_type=client_credentials' \
-  -d "client_id=<client_id>" -d "client_secret=<client_secret>" \
-  -d 'scope=shield'
-```
-
-You should get an `access_token` and `token_type: Bearer`. The token carries
-your `tenant_id`, which is how Shield knows whose policies to apply. Tokens are
-short-lived (600s); JumpCloud re-fetches with the same client credentials, so
-there is nothing to rotate on a schedule.
-
-Shield advertises its own metadata at
-`GET /.well-known/oauth-authorization-server` if JumpCloud prefers discovery.
+Use `PUT /v1/agents/registry/mcp-agent` with the same body to update an existing
+agent.
 
 ## Step 4: fill in Add Server
 
 | Field | Value |
 |---|---|
 | **Name** | Anything, for example `Bank Core (guarded)` |
-| **Prefix** | See [the prefix warning](#the-prefix-field-will-break-you) first |
+| **Prefix** | Required. See [the prefix warning](#the-prefix-field-will-break-you) |
 | **URL** | `https://api.guardrails.votal.ai/gateway/bankco-prod/mcp` |
-| **MCP authentication method** | **OAuth** |
-| **Client ID** | from step 3 |
-| **Client Secret** | from step 3 |
-| **Scopes** | `shield` |
+| **MCP authentication method** | **API Token**, with your tenant key |
+| Client ID / Secret / Scopes | leave empty |
 
 The only difference from registering the server directly is the URL. Everything
 downstream of Shield is unchanged.
+
+### Why not OAuth
+
+Shield is a full OAuth 2.1 authorization server and the token exchange itself
+works, but the resulting identity cannot currently be governed. Shield derives
+the agent key from the token subject, and every available path yields a subject
+containing colons:
+
+| flow | resulting agent key |
+|---|---|
+| `client_credentials` | `oauth:client:shield-<hex>` |
+| `/oauth/authorize` with `SHIELD_OAUTH_AUTO_APPROVE` | `oauth:client:shield-<hex>` |
+| `/oauth/authorize` with a tenant key | `oauth:tenant:<tenant>` |
+
+The agent registry rejects colons (`agent_id must be 1-128 characters,
+alphanumeric, hyphens, or underscores only`), and `/gateway/` is not in
+`ShieldMiddleware._GUARDED_PREFIXES`, so gateway traffic never records a shadow
+agent either. The id can therefore be neither registered nor adopted, and every
+tool call is denied while the tools still appear in the list.
+
+Two fixes are possible, and both touch guard-path identity so both need a spec
+first. Binding an explicit `agent_key` to the OAuth client at registration is
+the cleaner one: it removes the colon problem and gives each connection a
+nameable identity to grant tools to. Recording shadow agents on the gateway path
+is smaller, since the shadow validator already accepts colons, but it leaves a
+two-pass setup whose first attempt fails.
 
 ## Step 5: verify guardrails are actually running
 
@@ -187,22 +204,35 @@ audit to see the tool name it actually received. If the prefix comes through,
 either leave Prefix empty for guarded servers, or name your tool policies with
 the prefix included.
 
-### Per-user role needs more than client credentials
+### A denial is usually configuration, and the message may misdirect you
 
-`client_credentials` is machine-to-machine. It identifies the JumpCloud gateway,
-not the person behind the request, so the token carries no user role and
-role-based filtering has nothing to act on.
+Most refusals from a fresh setup are policy working correctly, not breakage.
+Read the reason text rather than the fact of the block:
 
-Everything else still works: tool allowlisting per server, tool-poisoning scans,
-injection detection on arguments, output sanitization, rate limits, audit. That
-is a real deployment and a fine starting point.
+| message | actual cause |
+|---|---|
+| `Role 'x' is not allowed to use tool 'y'` | the agent's `role_permissions` do not grant `y` to `x` |
+| `Payload policy blocked ...: role 'x' is not in the allowed list` | a **data policy** on that tool lists other roles. See `GET /v1/data-policies/tools/{tool}/policy` |
+| `Payload policy blocked ...: role 'x' is explicitly blocked` | that data policy sets `action: block` for `x` |
+| `Output blocked by Shield data policy` | the call ran; its **output** was refused |
+| `Unknown agent key: <a registered agent>` | **misleading.** The agent exists but has no RBAC role assignment. `resolve_role` reads a role map separate from the agent registry |
 
-For per-user decisions, JumpCloud needs to forward the end user's identity.
-Since JumpCloud is itself the IdP, the role is already in a token they hold.
-Shield verifies a signed role claim and reads it from a configurable path
-(`core/identity_resolution.py` already handles Keycloak `realm_access.roles`,
-Okta `groups`, Entra `roles`). This is the one thing worth asking JumpCloud
-engineering for, and it is an upgrade rather than a blocker.
+That last one is a real defect rather than configuration. It only appears for
+roles whose data policy sets `data_classification`, since that is what activates
+`data_access_guard`, so it looks intermittent and role-specific while the agent
+key is identical throughout.
+
+### Per-user role
+
+A connection carrying only a tenant key has no user role, so it resolves to the
+empty role `""`. Role-based filtering still works (that is what step 3
+configures), but every caller shares one role.
+
+For genuine per-user decisions JumpCloud must forward the end user's identity.
+Since JumpCloud is itself the IdP the role is already in a token they hold, and
+Shield verifies a signed role claim from a configurable path
+(`core/identity_resolution.py` handles Keycloak `realm_access.roles`, Okta
+`groups`, Entra `roles`). This is the thing worth asking their engineering for.
 
 ### Isolation is a real requirement
 
