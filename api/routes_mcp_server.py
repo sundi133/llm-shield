@@ -167,6 +167,13 @@ def _oauth_claims(authorization: str) -> dict | None:
         return None
 
 
+def _bearer_token(authorization: str) -> str:
+    """The token from an `Authorization: Bearer <token>` header, else ""."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return ""
+    return authorization[7:].strip()
+
+
 def _resolve_identity(request: Request) -> tuple[str, str, str]:
     """Resolve (tenant_id, agent_key, user_role) for an MCP request.
 
@@ -205,6 +212,34 @@ def _resolve_identity(request: Request) -> tuple[str, str, str]:
             sub = claims.get("sub") or ""
             if not agent_key and sub:
                 agent_key = f"oauth:{sub}"  # per-developer identity from token subject
+
+    # A tenant API key presented as a bearer token. MCP clients send their
+    # credential in Authorization per the MCP authorization spec, and only a
+    # Shield-issued JWT resolved above — so a partner pasting a tenant key into
+    # an MCP client got no tenant, and (because the gateway answered HTTP 200)
+    # saw an empty server rather than an auth error.
+    #
+    # Not a widening: the same credential with the same authority, read from a
+    # second header. Ordering matters — a real JWT resolves via its claims
+    # above, and a JWT-shaped bearer is never probed as an API key, so a
+    # malformed or expired token fails as a token instead of being retried as
+    # something it is not. Spec: docs/spec-mcp-gateway-bearer-auth.md
+    if not tenant_id:
+        bearer = _bearer_token(h.get("authorization", ""))
+        if bearer:
+            try:
+                from core.jwt_utils import is_jwt_format
+                looks_like_jwt = is_jwt_format(bearer)
+            except Exception:
+                looks_like_jwt = False
+            if not looks_like_jwt:
+                try:
+                    from storage.tenant_store import resolve_tenant_by_api_key
+                    tenant_id = resolve_tenant_by_api_key(bearer) or ""
+                except Exception:
+                    # Fail closed: a store outage must not admit an
+                    # unauthenticated caller to a guarded route.
+                    tenant_id = ""
 
     return tenant_id, (agent_key or "mcp-agent"), user_role
 

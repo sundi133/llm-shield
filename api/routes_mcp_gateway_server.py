@@ -44,6 +44,47 @@ def _err(rpc_id: Any, code: int, message: str, data: Optional[dict] = None) -> J
     return JSONResponse({"jsonrpc": "2.0", "id": rpc_id, "error": err})
 
 
+_UNAUTHENTICATED_MSG = "unauthenticated: no tenant resolved from the connection"
+
+
+def _challenge_enabled() -> bool:
+    """SHIELD_MCP_AUTH_CHALLENGE=off restores the old HTTP 200 response."""
+    return os.environ.get(
+        "SHIELD_MCP_AUTH_CHALLENGE", "").strip().lower() not in ("0", "off", "false", "no")
+
+
+def _unauthenticated(rpc_id: Any, request: Request) -> JSONResponse:
+    """401 with an RFC 9728 challenge, so a client knows to authenticate.
+
+    This used to answer HTTP 200 carrying the JSON-RPC error, because
+    JSONResponse defaults to 200. A spec-compliant MCP client reads a 200 as
+    "the call succeeded", finds no tools in the body, and reports an EMPTY
+    SERVER rather than an auth failure - which is exactly what a partner
+    integration hit: the request arrived, Shield refused it, and the client
+    displayed a working connector with nothing in it. Nothing anywhere said
+    "authenticate first".
+
+    The resource metadata document already exists and is already served; this
+    only points clients at it. Spec: docs/spec-mcp-gateway-bearer-auth.md
+    """
+    resp = _err(rpc_id, -32001, _UNAUTHENTICATED_MSG)
+    if not _challenge_enabled():
+        return resp
+    resp.status_code = 401
+    # base_url is absent on minimal request objects (and on any caller that is
+    # not a real Starlette Request). A challenge without resource_metadata is
+    # still a valid challenge, so degrade rather than raise: failing to build a
+    # header must never turn a refusal into a 500.
+    base = os.environ.get("SHIELD_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not base:
+        base = str(getattr(request, "base_url", "") or "").rstrip("/")
+    challenge = 'Bearer realm="mcp"'
+    if base:
+        challenge += f', resource_metadata="{base}/.well-known/oauth-protected-resource"'
+    resp.headers["WWW-Authenticate"] = challenge
+    return resp
+
+
 # JSON-RPC params._meta is the spec's reserved slot for protocol-level data. The
 # confirmation token must NOT ride in `arguments`: those are forwarded verbatim
 # to the upstream tool, so a token there would show up as a real parameter and
@@ -120,7 +161,7 @@ async def _dispatch(route: str, body: dict, request: Request):
 
     tenant_id, agent_key, user_role = _resolve_identity(request)
     if not tenant_id:
-        return _err(rpc_id, -32001, "unauthenticated: no tenant resolved from the connection")
+        return _unauthenticated(rpc_id, request)
 
     if method == "initialize":
         return _ok(rpc_id, {
