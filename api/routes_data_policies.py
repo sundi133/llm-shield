@@ -107,8 +107,31 @@ class PreviewSanitizationRequest(BaseModel):
     tool_name: Optional[str] = None
 
 
+#: Reserved entry in the per-tenant policy hash holding the tenant-wide default.
+#: It shares the hash rather than living in its own Redis key so the guard path
+#: makes the SAME number of round trips it makes today: _load_data_policies
+#: already reads this hash on every guarded tool call, and a second key would
+#: add I/O to the hot path. Spec: docs/spec-global-tool-data-policy.md
+GLOBAL_POLICY_KEY = "__global__"
+
+
 def _data_policies_key(tenant_id: str) -> str:
     return f"data_policies:{tenant_id}"
+
+
+def _reject_reserved(tool_name: str) -> None:
+    """A tool may not be named __global__.
+
+    tool_name is unvalidated on the per-tool routes, so without this a caller
+    could POST /tools/__global__/policy and silently become the tenant-wide
+    default. Global policy is settable only through /global/policy.
+    """
+    if tool_name == GLOBAL_POLICY_KEY:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"'{GLOBAL_POLICY_KEY}' is reserved for the tenant-wide "
+                    f"default policy. Use /v1/data-policies/global/policy."),
+        )
 
 
 def _load_all(tenant_id: str) -> dict:
@@ -135,6 +158,7 @@ async def create_tool_data_policy(
     tenant_id: str = Depends(get_tenant_from_request)
 ):
     """Create or update data policy for a specific tool. Persisted in Redis."""
+    _reject_reserved(tool_name)
     try:
         all_policies = _load_all(tenant_id)
         entry = policy.dict()
@@ -195,11 +219,16 @@ async def get_all_data_policies(
     """Get all data policies for this tenant."""
     try:
         all_policies = _load_all(tenant_id)
+        # The global policy lives in this hash but is not a tool. Listing it as
+        # one would make it editable through the per-tool editor and countable
+        # in "how many tools are governed", both of which mislead.
+        tools_only = {k: v for k, v in all_policies.items()
+                      if k != GLOBAL_POLICY_KEY}
         return {
             "success": True,
             "tenant_id": tenant_id,
-            "policies": all_policies,
-            "count": len(all_policies),
+            "policies": tools_only,
+            "count": len(tools_only),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -211,6 +240,7 @@ async def delete_tool_data_policy(
     tenant_id: str = Depends(get_tenant_from_request)
 ):
     """Delete a tool's data policy from Redis."""
+    _reject_reserved(tool_name)
     try:
         all_policies = _load_all(tenant_id)
         if tool_name not in all_policies:
@@ -218,6 +248,93 @@ async def delete_tool_data_policy(
         del all_policies[tool_name]
         _save_all(tenant_id, all_policies)
         return {"success": True, "message": f"Data policy deleted for '{tool_name}'"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Tenant-wide default policy ────────────────────────────────────────────
+#
+# Data policies are per tool and exact-match only, so a tool nobody has written
+# a policy for is judged by nothing. That gap was opened deliberately when the
+# "apply reasonable security defaults" fallback was removed (it was an
+# instruction to the model to invent a rule). This is the declared replacement:
+# visible, attributable, and off until a tenant creates one.
+#
+# Per-tool policies are unchanged. A tool with its own policy keeps behaving
+# exactly as it does today, with the global layer added beneath it unless the
+# tool sets inherit_global: false.
+# Spec: docs/spec-global-tool-data-policy.md
+
+
+class GlobalDataPolicy(BaseModel):
+    """Same shape as a tool policy, minus the tool name, plus an on switch."""
+    sanitization_rules: List[DataSanitizationRule] = []
+    role_policies: List[RoleDataPolicy] = []
+    compliance_framework: Optional[str] = None
+    sanitization_intent: Optional[str] = None
+    sanitization_mode: str = "regex"
+    #: Author a policy and turn it off without deleting it. What an operator
+    #: wants when narrowing a false positive under time pressure.
+    enabled: bool = True
+
+
+@router.get("/global/policy")
+async def get_global_data_policy(
+    tenant_id: str = Depends(get_tenant_from_request)
+):
+    """The tenant-wide default policy, or an empty one when none is set."""
+    try:
+        entry = _load_all(tenant_id).get(GLOBAL_POLICY_KEY)
+        return {
+            "success": True,
+            "tenant_id": tenant_id,
+            "exists": entry is not None,
+            "policy": entry or {
+                "sanitization_rules": [], "role_policies": [],
+                "compliance_framework": None, "enabled": True,
+            },
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/global/policy")
+async def set_global_data_policy(
+    policy: GlobalDataPolicy,
+    tenant_id: str = Depends(get_tenant_from_request)
+):
+    """Create or replace the tenant-wide default policy."""
+    try:
+        all_policies = _load_all(tenant_id)
+        entry = policy.dict()
+        entry["tool_name"] = GLOBAL_POLICY_KEY
+        entry["updated_at"] = int(time.time())
+        existing = all_policies.get(GLOBAL_POLICY_KEY) or {}
+        entry["created_at"] = existing.get("created_at", int(time.time()))
+        all_policies[GLOBAL_POLICY_KEY] = entry
+        _save_all(tenant_id, all_policies)
+        return {"success": True,
+                "message": "Tenant-wide default data policy saved",
+                "policy": entry}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/global/policy")
+async def delete_global_data_policy(
+    tenant_id: str = Depends(get_tenant_from_request)
+):
+    """Remove the tenant-wide default policy. Per-tool policies are untouched."""
+    try:
+        all_policies = _load_all(tenant_id)
+        if GLOBAL_POLICY_KEY not in all_policies:
+            raise HTTPException(status_code=404,
+                                detail="No tenant-wide default policy is set")
+        del all_policies[GLOBAL_POLICY_KEY]
+        _save_all(tenant_id, all_policies)
+        return {"success": True, "message": "Tenant-wide default data policy deleted"}
     except HTTPException:
         raise
     except Exception as e:

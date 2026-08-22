@@ -308,13 +308,18 @@ guardrails:
 
   tool_output_sanitization:
     enabled: true
+    # Authoritative: the LLM verdict is capped at this action, never above it.
+    # It used to be advisory -- the model's verdict won, so a deployment set to
+    # warn was blocked anyway. Blocking is now opt-in, per tenant, via
+    # Tool Registry -> Data Policies.
     action: warn
     settings:
-      redaction_patterns:
-        - pattern: '\b\d{3}-\d{2}-\d{4}\b'
-          replacement: "[SSN_REDACTED]"
-        - pattern: '(?:api[_-]?key|token|secret)\s*[:=]\s*\S+'
-          replacement: "[KEY_REDACTED]"
+      # A list of regex redaction rules lived here and NOTHING read them: the
+      # only reference in the codebase was a schema description string. Config
+      # that implies a redaction floor while redacting nothing is worse than no
+      # config, because it reads as protection. Deterministic patterns belong in
+      # a tool's data policy (sanitization_rules), which is tenant-visible and
+      # actually runs.
       max_output_length: 50000
       per_tool_rules:
         execute_sql:

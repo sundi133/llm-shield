@@ -2673,6 +2673,7 @@
           <button class="small" onclick="triggerTenantBundleUpload()">Upload Config</button>
           <button class="small" onclick="loadDataPolicies()">Refresh</button>
         </div>
+        <div id="global-policy-card" style="margin-bottom:1rem;"></div>
         <div id="data-policies-content">Loading data policies...</div>
       </div>
 
@@ -9326,7 +9327,108 @@ async function saveAllToolPolicies() {
 // ── Data Policies (per-tool per-role) ─────
 let DATA_POLICIES_CACHE = {};
 
+// Tenant-wide default data policy. A tool with no policy of its own inherits
+// it, which is the gap left when the "apply reasonable security defaults"
+// fallback was removed. Per-tool policies below are unchanged and always win by
+// being additive on top. Spec: docs/spec-global-tool-data-policy.md
+async function loadGlobalDataPolicy() {
+  const el = document.getElementById('global-policy-card');
+  if (!el) return;
+  let p = { enabled: true, role_policies: [], sanitization_rules: [] }, exists = false;
+  try {
+    const res = await fetch('/v1/data-policies/global/policy', { headers: { 'X-API-Key': API_KEY } });
+    if (res.ok) { const d = await res.json(); p = d.policy || p; exists = !!d.exists; }
+  } catch (e) { /* render the empty state */ }
+
+  const on = p.enabled !== false;
+  const roles = (p.role_policies || []).length;
+  const rules = (p.sanitization_rules || []).length;
+  el.innerHTML = `
+    <div class="card" style="border-left:3px solid var(--accent-hover,#6366f1);">
+      <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+        <strong style="font-size:13px;">Default policy (all tools)</strong>
+        <span class="muted" style="font-size:11px;">
+          ${exists ? `${roles} role rule(s), ${rules} sanitization rule(s)` : 'not set'}
+        </span>
+        <span style="font-size:10px;padding:0.15rem 0.5rem;border-radius:10px;
+              background:${exists && on ? 'rgba(99,102,241,0.15)' : 'var(--bg-3)'};">
+          ${exists ? (on ? 'ACTIVE' : 'DISABLED') : 'NONE'}
+        </span>
+        <span style="margin-left:auto;display:flex;gap:0.4rem;">
+          ${exists ? `<button class="small" onclick="toggleGlobalDataPolicy(${on ? 'false' : 'true'})">${on ? 'Disable' : 'Enable'}</button>` : ''}
+          ${exists ? '<button class="small" onclick="deleteGlobalDataPolicy()">Remove</button>' : ''}
+        </span>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:0.4rem;">
+        Applies to every tool call. A tool with its own policy is judged by both;
+        the default cannot be cancelled from below. Start at
+        <code>warn</code> and escalate once Telemetry looks right.
+      </div>
+      <textarea id="global-policy-json" rows="6" style="width:100%;margin-top:0.6rem;
+        background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);
+        color:var(--text);font-family:ui-monospace,monospace;font-size:11px;padding:0.5rem;"
+        >${_esc(JSON.stringify({ enabled: on,
+            role_policies: p.role_policies || [],
+            sanitization_rules: p.sanitization_rules || [] }, null, 2))}</textarea>
+      <div style="margin-top:0.5rem;"><button class="small" onclick="saveGlobalDataPolicy()">Save default policy</button></div>
+    </div>`;
+}
+
+async function saveGlobalDataPolicy() {
+  let body;
+  try {
+    body = JSON.parse(document.getElementById('global-policy-json').value);
+  } catch (e) {
+    showToast('Not valid JSON: ' + e.message, 'error');
+    return;
+  }
+  // Blast radius is every tool call on the tenant, so a blocking default is
+  // confirmed rather than saved on a click.
+  const blocks = (body.role_policies || []).filter(r => r.action === 'block');
+  if (blocks.length && !confirm(
+      `This default blocks ${blocks.length} role(s) on EVERY tool call for this tenant. Continue?`)) return;
+  try {
+    const res = await fetch('/v1/data-policies/global/policy', {
+      method: 'POST',
+      headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    showToast('Default policy saved', 'success');
+    loadGlobalDataPolicy();
+  } catch (e) { showToast('Save failed: ' + e.message, 'error'); }
+}
+
+async function toggleGlobalDataPolicy(enable) {
+  try {
+    const cur = await (await fetch('/v1/data-policies/global/policy',
+      { headers: { 'X-API-Key': API_KEY } })).json();
+    const body = { ...(cur.policy || {}), enabled: enable };
+    delete body.created_at; delete body.updated_at; delete body.tool_name;
+    const res = await fetch('/v1/data-policies/global/policy', {
+      method: 'POST',
+      headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    showToast(enable ? 'Default policy enabled' : 'Default policy disabled', 'success');
+    loadGlobalDataPolicy();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function deleteGlobalDataPolicy() {
+  if (!confirm('Remove the tenant-wide default policy? Tools with no policy of their own will stop being judged.')) return;
+  try {
+    const res = await fetch('/v1/data-policies/global/policy',
+      { method: 'DELETE', headers: { 'X-API-Key': API_KEY } });
+    if (!res.ok) throw new Error(await res.text());
+    showToast('Default policy removed', 'success');
+    loadGlobalDataPolicy();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
 async function loadDataPolicies() {
+  loadGlobalDataPolicy();
   const container = document.getElementById('data-policies-content');
   container.innerHTML = '<div class="muted" style="padding:1rem;">Loading data policies...</div>';
 
