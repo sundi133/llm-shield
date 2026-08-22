@@ -164,6 +164,7 @@ class MCPProxy:
             }
             await self._record({"phase": "call", "tool": name, "agent_key": agent_key,
                                 "tenant_id": tenant_id, "route": self._route,
+                                "user_role": user_role, "session_id": session_id,
                                 **decision})
             return _error(f"Blocked by Shield: {barred}", decision)
 
@@ -176,6 +177,7 @@ class MCPProxy:
         )
         await self._record({"phase": "call", "tool": name, "agent_key": agent_key,
                             "tenant_id": tenant_id, "route": self._route,
+                            "user_role": user_role, "session_id": session_id,
                             **decision})
 
         if not decision["allowed"]:

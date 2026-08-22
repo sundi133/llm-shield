@@ -214,22 +214,48 @@ async def _audit_decision(event: dict) -> None:
         results = event.get("results") or []
         triggered = [r.get("guardrail", "") for r in results if not r.get("passed", True)]
         route = event.get("route") or ""
+        tool = event.get("tool", "")
+        allowed = bool(event.get("allowed", False))
+        reason = event.get("reason", "")
         from storage.audit_log import audit_logger
         await audit_logger.log({
             "agent_key": event.get("agent_key", ""),
             "endpoint": f"/gateway/{route}/mcp" if route else "/gateway/mcp",
-            "input_text": f"mcp_call:{event.get('tool', '')}",
+            "input_text": f"mcp_call:{tool}",
             "action_taken": event.get("action", ""),
             "guardrails_triggered": triggered,
             "metadata": {
-                "kind": "mcp_gateway_decision",
+                # MUST be this literal. /v1/tenant/me/telemetry drops every
+                # entry whose kind is anything else, so a more descriptive value
+                # writes a row no reader will ever surface — which is exactly
+                # what the first version of this did.
+                "kind": "agent_chat_telemetry",
                 "tenant_id": tenant_id,
+                "stage": "complete",
+                "blocked": not allowed,
+                # The reader reads block_reason, not reason.
+                "block_reason": reason,
+                "user_role": event.get("user_role") or "",
+                "session_id": event.get("session_id") or "",
+                # Renders the per-tool detail row in the console. Arguments are
+                # deliberately empty: MCP arguments carry what the vault and
+                # sanitization layers exist to keep out of durable stores.
+                "tool_calls": [{
+                    "tool_name": tool,
+                    "arguments": {},
+                    "rbac": {
+                        "allowed": allowed,
+                        "action": event.get("action", ""),
+                        "message": reason or "allowed",
+                    },
+                }],
+                "tool_call_count": 1,
+                "tool_statuses": ["allowed" if allowed else "blocked"],
+                # Extra context, ignored by the reader but present in the raw
+                # entry. A forwarded call in monitor mode is not an approved
+                # one, and a trail that cannot tell them apart misleads in
+                # exactly the situation someone reads it.
                 "route": route,
-                "blocked": not event.get("allowed", False),
-                "reason": event.get("reason", ""),
-                # A forwarded call in monitor mode is not an approved one. An
-                # audit trail that cannot tell those apart misleads in exactly
-                # the situation someone reads it.
                 "mode": event.get("mode", ""),
                 "would_block": event.get("would_block") or [],
                 "risk": event.get("risk", ""),
