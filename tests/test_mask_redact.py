@@ -550,6 +550,11 @@ class TestToolOutputSanitizationActions:
         guard.name = "tool_output_sanitization"
         guard._config = MagicMock()
         guard._config.settings = {}
+        # The configured action now CAPS the model's verdict. These tests are
+        # about the block/mask/redact branches, so pin the ceiling at block and
+        # let the verdict decide; without this they would inherit the shipped
+        # default (warn) and every verdict would cap to it.
+        guard._temp_config = {"enabled": True, "action": "block", "settings": {}}
 
         llm_response = {
             "choices": [{
@@ -561,7 +566,7 @@ class TestToolOutputSanitizationActions:
 
         with patch("guardrails.agentic.tool.tool_output_sanitization.async_llm_call",
                     new_callable=AsyncMock, return_value=llm_response):
-            with patch.object(guard, "_load_policies_text", return_value=""):
+            with patch.object(guard, "_load_policies_text", return_value="Block SSNs and card numbers."):
                 result = await guard.check(
                     "SSN: 123-45-6789",
                     context={"tenant_id": "t1", "user_role": "viewer"}
@@ -580,6 +585,11 @@ class TestToolOutputSanitizationActions:
         guard.name = "tool_output_sanitization"
         guard._config = MagicMock()
         guard._config.settings = {}
+        # The configured action now CAPS the model's verdict. These tests are
+        # about the block/mask/redact branches, so pin the ceiling at block and
+        # let the verdict decide; without this they would inherit the shipped
+        # default (warn) and every verdict would cap to it.
+        guard._temp_config = {"enabled": True, "action": "block", "settings": {}}
 
         llm_response = {
             "choices": [{
@@ -591,7 +601,7 @@ class TestToolOutputSanitizationActions:
 
         with patch("guardrails.agentic.tool.tool_output_sanitization.async_llm_call",
                     new_callable=AsyncMock, return_value=llm_response):
-            with patch.object(guard, "_load_policies_text", return_value=""):
+            with patch.object(guard, "_load_policies_text", return_value="Block SSNs and card numbers."):
                 result = await guard.check(
                     "User email: john@acme.com",
                     context={"tenant_id": "t1", "user_role": "branch_manager"}
@@ -621,7 +631,7 @@ class TestToolOutputSanitizationActions:
 
         with patch("guardrails.agentic.tool.tool_output_sanitization.async_llm_call",
                     new_callable=AsyncMock, return_value=llm_response):
-            with patch.object(guard, "_load_policies_text", return_value=""):
+            with patch.object(guard, "_load_policies_text", return_value="Block SSNs and card numbers."):
                 result = await guard.check(
                     "Account balance: $50,000",
                     context={"tenant_id": "t1", "user_role": "teller"}
@@ -638,6 +648,11 @@ class TestToolOutputSanitizationActions:
         guard.name = "tool_output_sanitization"
         guard._config = MagicMock()
         guard._config.settings = {}
+        # The configured action now CAPS the model's verdict. These tests are
+        # about the block/mask/redact branches, so pin the ceiling at block and
+        # let the verdict decide; without this they would inherit the shipped
+        # default (warn) and every verdict would cap to it.
+        guard._temp_config = {"enabled": True, "action": "block", "settings": {}}
 
         llm_response = {
             "choices": [{
@@ -649,7 +664,7 @@ class TestToolOutputSanitizationActions:
 
         with patch("guardrails.agentic.tool.tool_output_sanitization.async_llm_call",
                     new_callable=AsyncMock, return_value=llm_response):
-            with patch.object(guard, "_load_policies_text", return_value=""):
+            with patch.object(guard, "_load_policies_text", return_value="Block SSNs and card numbers."):
                 result = await guard.check(
                     "Hello world",
                     context={"tenant_id": "t1", "user_role": "viewer"}

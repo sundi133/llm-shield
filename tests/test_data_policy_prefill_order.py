@@ -24,7 +24,7 @@ def test_output_sanitization_policy_in_system_output_in_user(monkeypatch):
 
     monkeypatch.setattr(tos, "async_llm_call", fake_llm)
     monkeypatch.setattr(ToolOutputSanitizationGuardrail, "_load_policies_text",
-                        staticmethod(lambda tenant_id: "POLICY_MARKER redact ssn for employee"))
+                        staticmethod(lambda tenant_id, tool_name="": "POLICY_MARKER redact ssn for employee"))
 
     res = _run(ToolOutputSanitizationGuardrail().check(
         "", {"tool_name": "lookup_employee", "tool_output": "ssn=123-45-6789 UNIQUE_OUT",
@@ -49,7 +49,7 @@ def test_output_sanitization_fail_open_unchanged(monkeypatch):
         raise RuntimeError("backend down")
     monkeypatch.setattr(tos, "async_llm_call", boom)
     monkeypatch.setattr(ToolOutputSanitizationGuardrail, "_load_policies_text",
-                        staticmethod(lambda tenant_id: "p"))
+                        staticmethod(lambda tenant_id, tool_name="": "p"))
     res = _run(ToolOutputSanitizationGuardrail().check(
         "", {"tool_name": "x", "tool_output": "data", "tenant_id": "t1"}))
     assert res.passed is True  # still fails open
