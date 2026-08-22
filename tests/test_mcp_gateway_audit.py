@@ -78,7 +78,7 @@ def test_a_blocked_call_is_recorded(written):
     assert e["input_text"] == "mcp_call:wire_transfer"
     assert e["action_taken"] == "block"
     assert e["metadata"]["blocked"] is True
-    assert e["metadata"]["reason"] == "Role 'support' may not use this tool"
+    assert e["metadata"]["block_reason"] == "Role 'support' may not use this tool"
 
 
 def test_an_allowed_call_is_recorded(written):
@@ -113,6 +113,51 @@ def test_the_route_and_tenant_are_carried(written):
     assert e["metadata"]["tenant_id"] == TENANT
     assert e["metadata"]["route"] == ROUTE
     assert e["endpoint"] == f"/gateway/{ROUTE}/mcp"
+
+
+def test_the_entry_satisfies_the_telemetry_readers_contract(written):
+    """THE test this file was missing, and the reason the first version shipped
+    broken.
+
+    Writing to the store is not the same as being readable from it.
+    /v1/tenant/me/telemetry drops every entry whose metadata.kind is not the
+    literal "agent_chat_telemetry", and the first version used a more
+    descriptive "mcp_gateway_decision" - so entries were written and silently
+    invisible, in production, while every other test here passed.
+
+    This asserts against the fields the READER consumes
+    (api/routes_tenant_self.py get_my_telemetry), not the shape this module
+    happens to emit.
+    """
+    _run(_event())
+    e = written[0]
+    md = e["metadata"]
+
+    assert md["kind"] == "agent_chat_telemetry", (
+        "the telemetry reader drops any other kind; this row would never appear")
+    assert md["tenant_id"] == TENANT
+
+    # Exactly the keys get_my_telemetry reads off each entry.
+    for field in ("agent_key", "input_text", "action_taken"):
+        assert field in e, f"reader reads entry[{field!r}]"
+    for field in ("stage", "blocked", "block_reason", "user_role",
+                  "session_id", "tool_calls", "tool_call_count",
+                  "tool_statuses"):
+        assert field in md, f"reader reads metadata[{field!r}]"
+
+    # The per-tool detail row the console renders.
+    call = md["tool_calls"][0]
+    assert call["tool_name"] == "wire_transfer"
+    assert call["arguments"] == {}
+    assert call["rbac"]["allowed"] is False
+    assert md["tool_statuses"] == ["blocked"]
+
+
+def test_user_role_and_session_reach_the_entry(written):
+    _run(_event(user_role="support", session_id="sess-1"))
+    md = written[0]["metadata"]
+    assert md["user_role"] == "support"
+    assert md["session_id"] == "sess-1"
 
 
 def test_monitor_mode_is_distinguishable(written):
