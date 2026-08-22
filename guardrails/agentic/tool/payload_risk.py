@@ -179,6 +179,18 @@ async def evaluate_message_egress_risk_llm(
         return None  # Fail open
 
 
+#: Mirrors api.routes_data_policies.GLOBAL_POLICY_KEY. Duplicated rather than
+#: imported so a guardrail never pulls in the API layer on the hot path.
+GLOBAL_POLICY_KEY = "__global__"
+
+
+def _global_policy_enabled() -> bool:
+    """SHIELD_GLOBAL_DATA_POLICY=off ignores the default without deleting it."""
+    import os
+    return os.environ.get("SHIELD_GLOBAL_DATA_POLICY", "").strip().lower() \
+        not in ("0", "off", "false", "no")
+
+
 def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, Any]]:
     """Load tenant data policies from Redis, scoped to one tool when given.
 
@@ -200,11 +212,19 @@ def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, A
         if not raw:
             return []
         all_policies = json.loads(raw)
+
+        # The tenant-wide default shares this hash (one round trip, see the
+        # spec). It is never a tool, so it is pulled out before tool matching
+        # and re-added deliberately below.
+        # Spec: docs/spec-global-tool-data-policy.md
+        global_policy = all_policies.pop(GLOBAL_POLICY_KEY, None)
+
         if tool_name:
             # Exact match only. A near-miss is a different tool, and guessing
             # which policy "probably applies" is the behaviour being removed.
             all_policies = ({tool_name: all_policies[tool_name]}
                             if tool_name in all_policies else {})
+
         policies = []
         for name, policy in all_policies.items():
             policies.append({
@@ -212,7 +232,26 @@ def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, A
                 "sanitization_rules": policy.get("sanitization_rules", []),
                 "role_policies": policy.get("role_policies", []),
                 "compliance_framework": policy.get("compliance_framework", ""),
+                "policy_source": "tool",
             })
+
+        # The global layer sits BENEATH the tool layer: a tool policy may
+        # restrict further, but cannot cancel the default. A floor that can be
+        # cancelled from below is not a floor. The one exception is explicit:
+        # a tool declaring inherit_global: false is judged by its own rules
+        # alone, so one tool that legitimately returns an email address does not
+        # force the operator to weaken the rule for every other tool.
+        if _global_policy_enabled() and global_policy and global_policy.get("enabled", True):
+            inherits = all(p.get("inherit_global", True)
+                           for p in all_policies.values()) if all_policies else True
+            if inherits:
+                policies.insert(0, {
+                    "tool_name": "(all tools)",
+                    "sanitization_rules": global_policy.get("sanitization_rules", []),
+                    "role_policies": global_policy.get("role_policies", []),
+                    "compliance_framework": global_policy.get("compliance_framework", ""),
+                    "policy_source": "global",
+                })
         return policies
     except Exception as e:
         logger.error(f"Error loading data policies for {tenant_id}: {e}")
