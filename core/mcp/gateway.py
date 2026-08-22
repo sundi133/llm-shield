@@ -171,6 +171,74 @@ async def ensure_credential_fresh(cfg: dict, tenant_id: str) -> None:
                        tenant_id, cfg.get("route"), exc_info=True)
 
 
+# (tenant_id, route, updated_at) already warned about weak isolation. Bounded by
+# the number of routes a deployment has, and cleared when a route is edited.
+_ISOLATION_WARNED: set = set()
+
+
+def _audit_enabled() -> bool:
+    """SHIELD_MCP_AUDIT=off stops recording gateway decisions."""
+    return os.environ.get("SHIELD_MCP_AUDIT", "").strip().lower() not in (
+        "0", "off", "false", "no")
+
+
+async def _audit_decision(event: dict) -> None:
+    """Write one gateway enforcement decision to the tenant audit trail.
+
+    MCPProxy has always had this sink; the factory below never passed one, so
+    every block and allow on the MCP path was discarded. Confirmed live: two
+    tool calls through the gateway (one blocked, one allowed) produced no entry
+    in /v1/tenant/me/audit or /v1/tenant/me/telemetry, while the comparable
+    /v1/shield/tool/check path records normally.
+
+    audit_logger.log is already fire-and-forget (run_in_executor, not awaited),
+    so this adds no measurable latency to the guard path. That matters here:
+    guardrail metrics were being written synchronously on this same path and
+    cost ~1.6s p50 (docs/spec-metrics-off-hot-path.md).
+
+    Records the tool NAME only, never arguments. MCP tool arguments routinely
+    carry exactly what the vault and sanitization layers exist to keep out of
+    durable stores, and an audit trail is a durable store.
+
+    Never raises: a logging outage must not fail a guarded call.
+    Spec: docs/spec-mcp-gateway-audit.md
+    """
+    if not _audit_enabled():
+        return
+    try:
+        tenant_id = event.get("tenant_id") or ""
+        if not tenant_id:
+            # An entry with no tenant is unreadable and would pollute a shared
+            # key. Dropping it is better than filing it where nobody looks.
+            return
+        results = event.get("results") or []
+        triggered = [r.get("guardrail", "") for r in results if not r.get("passed", True)]
+        route = event.get("route") or ""
+        from storage.audit_log import audit_logger
+        await audit_logger.log({
+            "agent_key": event.get("agent_key", ""),
+            "endpoint": f"/gateway/{route}/mcp" if route else "/gateway/mcp",
+            "input_text": f"mcp_call:{event.get('tool', '')}",
+            "action_taken": event.get("action", ""),
+            "guardrails_triggered": triggered,
+            "metadata": {
+                "kind": "mcp_gateway_decision",
+                "tenant_id": tenant_id,
+                "route": route,
+                "blocked": not event.get("allowed", False),
+                "reason": event.get("reason", ""),
+                # A forwarded call in monitor mode is not an approved one. An
+                # audit trail that cannot tell those apart misleads in exactly
+                # the situation someone reads it.
+                "mode": event.get("mode", ""),
+                "would_block": event.get("would_block") or [],
+                "risk": event.get("risk", ""),
+            },
+        })
+    except Exception as e:      # noqa: BLE001 - audit must never fail a call
+        logger.debug("mcp gateway audit write failed: %s", e)
+
+
 async def _default_proxy_factory(cfg: dict, tenant_id: str):
     """Connect to the real upstream and wrap it in an enforced MCPProxy."""
     from core.mcp.proxy_server import proxy_for  # imports the mcp SDK transport
@@ -184,6 +252,9 @@ async def _default_proxy_factory(cfg: dict, tenant_id: str):
         # absent on an unbound route, which then behaves exactly as before.
         policy=cfg.get("effective_policy"),
         route=cfg.get("route"),
+        # Without this the proxy's decision sink is None and every enforcement
+        # decision on the MCP path is discarded.
+        on_decision=_audit_decision,
     )
 
 
@@ -227,12 +298,24 @@ class MCPGatewayRouter:
             )
         if not cfg.get("isolation_ack"):
             # Non-bypassability is a deployment property: if the upstream is
-            # directly reachable, agents can skip Shield. Surface it loudly.
-            logger.warning(
-                "mcp-gateway: route %s/%s has isolation_ack=false — enforcement is "
-                "only effective if the upstream accepts connections ONLY from this gateway",
-                tenant_id, route,
-            )
+            # directly reachable, agents can skip Shield. Surface it loudly --
+            # but ONCE per route config, not per request.
+            #
+            # This is the one choke point every gateway method funnels through,
+            # so warning here logged on every tools/list, tools/call and
+            # notification. That is I/O on the guard path, and repetition is how
+            # a real warning becomes background noise nobody reads.
+            #
+            # Re-armed on updated_at so a route edited without fixing isolation
+            # warns again rather than staying silent forever.
+            stamp = (tenant_id, route, cfg.get("updated_at"))
+            if stamp not in _ISOLATION_WARNED:
+                _ISOLATION_WARNED.add(stamp)
+                logger.warning(
+                    "mcp-gateway: route %s/%s has isolation_ack=false — enforcement is "
+                    "only effective if the upstream accepts connections ONLY from this gateway",
+                    tenant_id, route,
+                )
         return cfg
 
     async def _pooled_proxy(self, tenant_id: str, route: str, cfg: dict):

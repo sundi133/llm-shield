@@ -123,3 +123,25 @@ def mock_config():
 
     with patch("config.schema.config", test_config):
         yield test_config
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_guardrail_metrics(monkeypatch):
+    """Record guardrail metrics inline for the whole suite.
+
+    record_results_batch_bg moved the metrics write off the request path onto a
+    worker thread (docs/spec-metrics-off-hot-path.md), which made metrics
+    EVENTUALLY consistent. Any test that makes a request and then asserts on
+    guardrail:metrics:* is racing that thread.
+
+    The race is invisible locally - the write wins on a fast idle machine - and
+    lost in CI, where tests/test_file_guard.py::test_audit_and_metrics_side_effects
+    failed with "metrics hash should be written" while passing 8/8 here. A test
+    that only fails on someone else's machine is worse than one that always
+    fails.
+
+    SHIELD_METRICS_INLINE=1 is the documented escape hatch for exactly this, so
+    the suite takes it by default. tests/test_metrics_off_hot_path.py unsets it
+    per-test to exercise the async path it is there to verify.
+    """
+    monkeypatch.setenv("SHIELD_METRICS_INLINE", "1")
