@@ -86,7 +86,10 @@ def main() -> None:
     p.add_argument("--route", required=True, help="gateway route name")
     p.add_argument("--agent", default="mcp-agent", help="agent_id to grant to")
     p.add_argument("--prefix", default="",
-                   help="prepended to every name, e.g. DEMO_ for JumpCloud")
+                   help="prepend to every granted name. NOT for JumpCloud: it "
+                        "strips its own prefix before calling Shield, so a "
+                        "prefixed grant matches nothing and shows an empty "
+                        "connector. Only for clients that truly rename tools.")
     p.add_argument("--deny", action="append", default=[], metavar="TOOL",
                    help="withhold from non-admin roles (repeatable, unprefixed name)")
     p.add_argument("--role", action="append", default=[], metavar="ROLE",
