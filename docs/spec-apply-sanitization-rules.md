@@ -185,15 +185,26 @@ content.
   documented as unsafe rather than as a supported mode, because the behaviour it
   restores is the bug.
 
-**The residual weakness, stated plainly.** Redaction is now a model's output,
-which means it is not deterministic. Two identical calls may mask the same
-values with slightly different surrounding text, and a sufficiently adversarial
-payload could induce an imperfect redaction. This is acceptable for the same
-reason the rest of the product accepts it, but it has a consequence worth
-writing down:
+**The residual weakness, stated plainly — and how far it goes.** Redaction is a
+model's output, so its exactness is not guaranteed the way a regex substitution
+would be: a sufficiently adversarial payload could induce an imperfect mask.
 
-> Model-produced redaction is high recall, not a guarantee. It should not be
-> described to a customer as a deterministic masking control.
+But the *whether* — redact vs block — turned out to be controllable by policy
+wording, not luck. A rule phrased as a pure prohibition ("never return a card
+number") defaults to block and flips to redact only sometimes; a rule phrased as
+a transform with an explicit action ("use action=redact, do NOT block; mask the
+card to its last 4 as `**** **** **** NNNN`") redacts on every call. Verified
+deterministic (4/4 and 5/5) live against a tenant. So:
+
+> The block-vs-redact CHOICE is deterministic when the rule is written as a
+> transform-with-explicit-action rather than a prohibition. The exact masking of
+> a given value is high recall, not bit-exact. A tenant that wants reliable
+> masking can have it; it should still not be described as a bit-exact
+> deterministic control the way a regex would be.
+
+This wording pattern is documented for operators in
+`docs/tool-data-policies.md` ("Redact reliably: write a transform, not a
+prohibition").
 
 `sanitization_rules[].regex` remains in the schema and remains unused. Leaving a
 field that reads as a deterministic pattern while nothing executes it is the
