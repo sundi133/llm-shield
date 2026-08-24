@@ -161,7 +161,7 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             tool_output = tool_output[:max_len] + "... [TRUNCATED]"
             truncated = True
 
-        policies_text = self._load_policies_text(tenant_id, tool_name)
+        policies_text = self._load_policies_text(tenant_id, tool_name, user_role)
 
         # No policy for THIS tool means nothing to enforce. The judge used to be
         # handed "No specific data policies configured. Apply reasonable
@@ -327,7 +327,8 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
         )
 
     @staticmethod
-    def _load_policies_text(tenant_id: str, tool_name: str = "") -> str:
+    def _load_policies_text(tenant_id: str, tool_name: str = "",
+                            user_role: str = "") -> str:
         """Policy text for THIS tool, or "" when none applies.
 
         Two changes from the original, both deliberate.
@@ -352,7 +353,7 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             policies = _load_data_policies(tenant_id, tool_name)
             if not policies:
                 return ""
-            return _format_data_policies(policies, tenant_id)
+            return _format_data_policies(policies, tenant_id, tool_name, user_role)
         except Exception:
             # A load failure is not "no policy" -- it is unknown. Returning ""
             # here would skip the judge on a storage blip, so fail closed by

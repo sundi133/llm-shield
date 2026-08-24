@@ -63,7 +63,7 @@ async def evaluate_payload_policy_llm(
     if not payload and not tool_name:
         return None
 
-    policies_text = _format_data_policies(data_policies, tenant_id, tool_name)
+    policies_text = _format_data_policies(data_policies, tenant_id, tool_name, user_role)
 
     # Prefill optimization: the static instruction, the tenant policy text, and
     # the static "check for" guidance are stable across requests, so they go in
@@ -130,7 +130,7 @@ async def evaluate_message_egress_risk_llm(
     if not message:
         return None
 
-    policies_text = _format_data_policies(data_policies, tenant_id)
+    policies_text = _format_data_policies(data_policies, tenant_id, "", user_role)
     tools_text = ", ".join(available_tools) if available_tools else "not specified"
 
     prompt = (
@@ -258,9 +258,58 @@ def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, A
         return []
 
 
+#: A role_policies entry with this role applies to every caller. Resolved HERE,
+#: in code, so the model is told the caller's real role and never has to
+#: interpret an asterisk. Distinct from "" which means "caller with no role" and
+#: which existing policies rely on.
+WILDCARD_ROLE = "*"
+
+
+def _wildcard_enabled() -> bool:
+    """SHIELD_WILDCARD_ROLE_POLICY=off treats "*" as a literal role name."""
+    import os
+    return os.environ.get("SHIELD_WILDCARD_ROLE_POLICY", "").strip().lower() \
+        not in ("0", "off", "false", "no")
+
+
+def _resolve_role_policies(role_policies: list, user_role: str) -> list:
+    """The entries that govern `user_role`, with the wildcard resolved.
+
+    An exact match wins and DISCARDS the wildcard, including when the exact
+    entry is more permissive: {"*": block} + {"admin": allow} reads as "everyone
+    blocked except admin", which is what an operator writing those two lines
+    means. Most-restrictive-wins was rejected because it makes the exception
+    unwritable, and an operator who cannot express an exception writes no
+    wildcard at all and goes back to enumerating every role.
+
+    Each returned entry carries `_role_match` so telemetry can say which one
+    decided the call. The precedence rule above is obvious when written down and
+    invisible at 2am.
+    """
+    if not role_policies:
+        return []
+    if not _wildcard_enabled():
+        return [dict(rp, _role_match="exact") for rp in role_policies]
+
+    exact = [rp for rp in role_policies if rp.get("role") == user_role]
+    if exact:
+        return [dict(rp, _role_match="exact") for rp in exact]
+
+    for rp in role_policies:
+        if rp.get("role") == WILDCARD_ROLE:
+            # Render as the caller's real role. An empty role would print as
+            # Role '', which is indistinguishable from the existing no-role rule.
+            shown = user_role or "any role"
+            return [dict(rp, role=shown, _role_match="wildcard")]
+
+    # No exact match and no wildcard: nothing governs this caller, as today.
+    return [dict(rp, _role_match="exact") for rp in role_policies
+            if rp.get("role") != WILDCARD_ROLE]
+
+
 def _format_data_policies(
     data_policies: list[dict[str, Any]] | None, tenant_id: str = "",
-    tool_name: str = "",
+    tool_name: str = "", user_role: str = "",
 ) -> str:
     """Format data policies for inclusion in an LLM prompt."""
     policies = (data_policies if data_policies is not None
@@ -290,7 +339,7 @@ def _format_data_policies(
             repl = rule.get("replacement")
             lines.append(f"  - Sanitize: {what}"
                          + (f" -> replace with {repl}" if repl else ""))
-        for rp in p.get("role_policies", []):
+        for rp in _resolve_role_policies(p.get("role_policies", []), user_role):
             role = rp.get("role", "any")
             action = rp.get("action", "allow")
             scope = ", ".join(rp.get("data_scope", []))
