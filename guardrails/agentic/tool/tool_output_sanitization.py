@@ -15,7 +15,9 @@ from core.llm_backend import async_llm_call, parse_csv_response
 
 logger = logging.getLogger("votal.tool_output_sanitization")
 
-_CSV_FIELDS = ["has_sensitive", "action", "confidence", "findings"]
+# `sanitized` is LAST on purpose: it carries free text that will contain
+# commas, so everything after the fourth comma is content.
+_CSV_FIELDS = ["has_sensitive", "action", "confidence", "findings", "sanitized"]
 
 # The ladder already canonical in this repo (api/routes_classify.py:629).
 # `mask` sits level with `redact`: both return modified content without refusing
@@ -52,14 +54,76 @@ def _cap_action(action: str, configured: str) -> str:
         return configured
     return action
 
+def _redaction_enabled() -> bool:
+    """SHIELD_LLM_REDACTION=off restores the old behaviour.
+
+    UNSAFE. The behaviour it restores is the bug: `redact` returned the original
+    text unchanged. Present for rollback only, not as a supported mode.
+    """
+    import os
+    return os.environ.get("SHIELD_LLM_REDACTION", "").strip().lower() \
+        not in ("0", "off", "false", "no")
+
+
+def _extract_sanitized(raw: str) -> str:
+    """The 5th CSV field, verbatim, commas included.
+
+    parse_csv_response splits on EVERY comma and indexes, so a redacted payload
+    containing a comma would be truncated at the first one. Redacted content is
+    free text and will contain commas, so take the remainder after the fourth
+    separator instead. Mirrors the shared parser's preprocessing so both see the
+    same line.
+    """
+    line = (raw or "").strip()
+    if "\n" in line:
+        line = line.split("\n")[-1].strip()
+    if line.startswith('"') and line.endswith('"'):
+        line = line[1:-1]
+    parts = line.split(",", 4)
+    return parts[4].strip() if len(parts) == 5 else ""
+
+
+#: A redaction wildly longer than its input is a rewrite, not a redaction.
+_REDACTION_GROWTH_LIMIT = 1.5
+
+
+def _usable_redaction(sanitized: str, original: str) -> tuple[bool, str]:
+    """Whether the model actually produced a redaction. (ok, why_not).
+
+    Every rejection here escalates to block. That is the whole point: the defect
+    being fixed is "we said redact and returned the original", so a lenient
+    fallback would reintroduce it under a new name. If redaction was required
+    and could not be produced, withholding is the only safe answer.
+    """
+    if not sanitized or not sanitized.strip():
+        return False, "empty"
+    if sanitized.strip() == original.strip():
+        # Claimed a redaction, changed nothing. Exactly the old bug.
+        return False, "unchanged"
+    if len(sanitized) > len(original) * _REDACTION_GROWTH_LIMIT:
+        # Returning invented content as tool output is worse than withholding.
+        return False, "rewritten"
+    return True, ""
+
+
 _SYSTEM = (
     "You are a data protection engine. Analyze tool output for sensitive data "
     "that should be blocked or redacted before showing to the user.\n"
     "Check for: PII, secrets, role-restricted data, regulated data, internal system data.\n"
-    "Respond with ONLY one CSV line: has_sensitive,action,confidence,findings\n"
+    "Respond with ONLY one CSV line: has_sensitive,action,confidence,findings,sanitized\n"
     "action is one of: allow, redact, block\n"
-    "Example: true,block,0.95,SSN and credit card numbers found\n"
-    "Example: false,allow,0.90,no sensitive data detected"
+    # Without this the model returns a verdict and nothing else, which is how
+    # `redact` came to return the original text unchanged.
+    "When action is redact you MUST fill `sanitized`: reproduce the tool output "
+    "EXACTLY, changing ONLY the values the policy forbids. Replace each with the "
+    "replacement the policy gives, or [REDACTED] when it gives none. Keep every "
+    "other character identical. Never summarise, reformat, or invent content.\n"
+    "When action is allow or block, leave `sanitized` empty.\n"
+    "`sanitized` is the last field, so it may contain commas.\n"
+    "Example: true,block,0.95,SSN and credit card numbers found,\n"
+    "Example: false,allow,0.90,no sensitive data detected,\n"
+    "Example: true,redact,0.95,passport number found,"
+    "name=Jane Doe passport=[REDACTED] tier=gold"
 )
 
 
@@ -135,7 +199,10 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                     {"role": "system", "content": system_content},
                     {"role": "user", "content": user_content},
                 ],
-                max_tokens=60,
+                # Was 60: enough for a verdict, not for returned content. The
+                # input is already capped by max_output_length, so this bounds
+                # the redacted rendering of it.
+                max_tokens=1200,
                 temperature=0,
                 guardrail_name="tool_output_sanitization",
             )
@@ -179,6 +246,53 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                     "user_role": user_role,
                     "confidence": confidence,
                 },
+            )
+
+        # `redact`/`mask` promise modified content. Produce it or withhold.
+        if action in ("mask", "redact") and _redaction_enabled():
+            sanitized = _extract_sanitized(raw)
+            ok, why = _usable_redaction(sanitized, tool_output)
+            if not ok:
+                escalated = _cap_action("block", self.configured_action)
+                logger.warning(
+                    "tool_output_sanitization: %s redaction unusable (%s) for %s; "
+                    "escalating to %s", action, why, tool_name, escalated)
+                return GuardrailResult(
+                    passed=False, action=escalated, guardrail_name=self.name,
+                    message=f"Redaction required but not produced ({why}): {findings}",
+                    details={
+                        "findings": findings,
+                        # ALWAYS withhold, whatever the capped action label says.
+                        # The cap governs how severe the result is reported to
+                        # be; it must never decide whether we leak. Returning
+                        # the original here under a capped `redact` label would
+                        # be precisely the bug this change exists to fix.
+                        "sanitized_output": "[CONTENT BLOCKED DUE TO DATA POLICY]",
+                        "truncated": truncated,
+                        "tenant_id": tenant_id,
+                        "user_role": user_role,
+                        "confidence": confidence,
+                        "redaction_failed": why,
+                    },
+                )
+            details = {
+                "findings": findings,
+                "sanitized_output": sanitized,
+                "truncated": truncated,
+                "tenant_id": tenant_id,
+                "user_role": user_role,
+                "confidence": confidence,
+                "redacted": True,
+            }
+            if action == "mask":
+                details["mask_level"] = "partial"
+            # mask and redact are different promises; keep the wording
+            # distinct so an operator reading a log can tell which was applied.
+            verb = ("partially masked" if action == "mask" else "redacted")
+            return GuardrailResult(
+                passed=False, action=action, guardrail_name=self.name,
+                message=f"Sensitive data {verb} in tool output: {findings}",
+                details=details,
             )
 
         if action in ("mask", "redact", "warn", "log"):
