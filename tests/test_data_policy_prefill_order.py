@@ -24,7 +24,7 @@ def test_output_sanitization_policy_in_system_output_in_user(monkeypatch):
 
     monkeypatch.setattr(tos, "async_llm_call", fake_llm)
     monkeypatch.setattr(ToolOutputSanitizationGuardrail, "_load_policies_text",
-                        staticmethod(lambda tenant_id, tool_name="": "POLICY_MARKER redact ssn for employee"))
+                        staticmethod(lambda tenant_id, tool_name="", user_role="": "POLICY_MARKER redact ssn for employee"))
 
     res = _run(ToolOutputSanitizationGuardrail().check(
         "", {"tool_name": "lookup_employee", "tool_output": "ssn=123-45-6789 UNIQUE_OUT",
@@ -49,7 +49,7 @@ def test_output_sanitization_fail_open_unchanged(monkeypatch):
         raise RuntimeError("backend down")
     monkeypatch.setattr(tos, "async_llm_call", boom)
     monkeypatch.setattr(ToolOutputSanitizationGuardrail, "_load_policies_text",
-                        staticmethod(lambda tenant_id, tool_name="": "p"))
+                        staticmethod(lambda tenant_id, tool_name="", user_role="": "p"))
     res = _run(ToolOutputSanitizationGuardrail().check(
         "", {"tool_name": "x", "tool_output": "data", "tenant_id": "t1"}))
     assert res.passed is True  # still fails open
@@ -66,7 +66,7 @@ def test_payload_risk_policy_in_system_params_in_user(monkeypatch):
 
     monkeypatch.setattr(pr, "async_llm_call", fake_llm)
     # pin the rendered policy text so we can assert it lands in the system prefix
-    monkeypatch.setattr(pr, "_format_data_policies", lambda dp, tid, tool_name="": "POLICY_MARKER no external")
+    monkeypatch.setattr(pr, "_format_data_policies", lambda dp, tid, tool_name="", user_role="": "POLICY_MARKER no external")
 
     out = _run(pr.evaluate_payload_policy_llm(
         tool_name="send_payment",

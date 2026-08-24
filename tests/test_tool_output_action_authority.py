@@ -61,7 +61,7 @@ def _run(monkeypatch, guard, *, verdict="block",
     monkeypatch.setattr(tos, "async_llm_call", _llm)
     monkeypatch.setattr(tos.ToolOutputSanitizationGuardrail,
                         "_load_policies_text",
-                        staticmethod(lambda tenant_id, tool_name="": policy))
+                        staticmethod(lambda tenant_id, tool_name="", user_role="": policy))
     return asyncio.run(guard.check("", {
         "tool_name": "customer_profile_get", "tool_output": PII,
         "tenant_id": "bankco", "user_role": "user",
