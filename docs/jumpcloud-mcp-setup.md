@@ -131,7 +131,7 @@ agent.
 | Field | Value |
 |---|---|
 | **Name** | Anything, for example `Bank Core (guarded)` |
-| **Prefix** | Required. See [the prefix warning](#the-prefix-field-will-break-you) |
+| **Prefix** | Required by JumpCloud, but cosmetic. Grant Shield the UNPREFIXED names. See [Grant tools by their real names](#grant-tools-by-their-real-names-not-the-prefix) |
 | **URL** | `https://api.guardrails.votal.ai/gateway/bankco-prod/mcp` |
 | **MCP authentication method** | **API Token**, with your tenant key |
 | Client ID / Secret / Scopes | leave empty |
@@ -184,25 +184,37 @@ different people, and the MCP server knows nothing about it.
 
 ## Three things that will bite you
 
-### The prefix field will break you
+### Grant tools by their real names, NOT the prefix
 
-JumpCloud prepends **Prefix** to MCP tool names. Shield's policies match on tool
-name, so if the prefixed name is what reaches Shield, nothing matches and
-**every call is denied**:
+The Prefix field is cosmetic. JumpCloud handles it entirely on its own side:
+it prepends the prefix to the tool names it **displays**, and strips it again
+before **calling** Shield. Shield therefore only ever sees the upstream's real,
+unprefixed names, at both `tools/list` and `tools/call` time.
+
+So grant, and write policies against, the unprefixed names. Verified end to end
+on a tenant whose route serves nine tools:
 
 ```
-get_balance      -> allowed,  reaches upstream
-BA_get_balance   -> BLOCKED:  "Role 'support' is not allowed to use tool 'BA_get_balance'"
+agent granted "customer_profile_get"        -> 6 tools visible, calls work
+agent granted "DEMO_customer_profile_get"   -> 0 tools visible, empty connector
 ```
 
-That failure looks like Shield is broken rather than like a naming mismatch,
-which is exactly how it will be reported to you.
+The prefixed grant is the trap, and its failure is silent: `tools/list` filters
+the upstream's unprefixed names against a grant that only contains prefixed
+ones, nothing matches, and JumpCloud shows an empty connector with no error.
 
-Before rolling out, establish whether JumpCloud strips the prefix before
-forwarding the call, or sends it through. Test with a real call and read Shield's
-audit to see the tool name it actually received. If the prefix comes through,
-either leave Prefix empty for guarded servers, or name your tool policies with
-the prefix included.
+Use `scripts/grant_agent_tools.py` **without** `--prefix` (the flag exists for
+non-JumpCloud clients that genuinely rename tools; JumpCloud is not one). It
+discovers the current tools from the upstream, so it cannot miss a tool you
+added:
+
+```bash
+python scripts/grant_agent_tools.py --route <route> \
+    --deny wire_transfer_execute --deny credential_reset
+```
+
+`--deny` withholds a tool from non-admin roles, so it stays filtered out of the
+agent's list entirely rather than merely refused on call.
 
 ### A denial is usually configuration, and the message may misdirect you
 
