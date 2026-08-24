@@ -594,7 +594,7 @@ class TestToolOutputSanitizationActions:
         llm_response = {
             "choices": [{
                 "message": {
-                    "content": "true,mask,0.90,contains PII,User email: [REDACTED]"
+                    "content": "true,mask,0.90,contains PII\nSANITIZED:User email: [REDACTED]"
                 }
             }]
         }
@@ -624,7 +624,7 @@ class TestToolOutputSanitizationActions:
         llm_response = {
             "choices": [{
                 "message": {
-                    "content": "true,redact,0.88,contains financial data,Account balance: [REDACTED]"
+                    "content": "true,redact,0.88,contains financial data\nSANITIZED:Account balance: [REDACTED]"
                 }
             }]
         }

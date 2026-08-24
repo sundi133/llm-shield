@@ -15,9 +15,11 @@ from core.llm_backend import async_llm_call, parse_csv_response
 
 logger = logging.getLogger("votal.tool_output_sanitization")
 
-# `sanitized` is LAST on purpose: it carries free text that will contain
-# commas, so everything after the fourth comma is content.
-_CSV_FIELDS = ["has_sensitive", "action", "confidence", "findings", "sanitized"]
+# The verdict line only. `findings` is last so its commas fall in the final
+# field. The redacted content is NOT here -- it is a separate marker line, see
+# _split_verdict_and_sanitized, because two comma-bearing free-text fields on
+# one CSV line cannot be separated positionally.
+_CSV_FIELDS = ["has_sensitive", "action", "confidence", "findings"]
 
 # The ladder already canonical in this repo (api/routes_classify.py:629).
 # `mask` sits level with `redact`: both return modified content without refusing
@@ -65,22 +67,28 @@ def _redaction_enabled() -> bool:
         not in ("0", "off", "false", "no")
 
 
-def _extract_sanitized(raw: str) -> str:
-    """The 5th CSV field, verbatim, commas included.
+def _split_verdict_and_sanitized(raw: str) -> tuple[str, str]:
+    """(verdict_line, sanitized_content).
 
-    parse_csv_response splits on EVERY comma and indexes, so a redacted payload
-    containing a comma would be truncated at the first one. Redacted content is
-    free text and will contain commas, so take the remainder after the fourth
-    separator instead. Mirrors the shared parser's preprocessing so both see the
-    same line.
+    The model returns a CSV verdict line and, when redacting, a second line
+    beginning with SANITIZED: carrying the redacted content verbatim. The two
+    are on separate lines ON PURPOSE: `findings` and the redacted record BOTH
+    contain commas, and an earlier single-line CSV design let the tail of
+    `findings` bleed into the content, returning garbled output (the customer's
+    name replaced by a fragment of the finding).
+
+    Everything after the marker is content, commas and newlines included.
     """
-    line = (raw or "").strip()
-    if "\n" in line:
-        line = line.split("\n")[-1].strip()
-    if line.startswith('"') and line.endswith('"'):
-        line = line[1:-1]
-    parts = line.split(",", 4)
-    return parts[4].strip() if len(parts) == 5 else ""
+    text = (raw or "").strip()
+    idx = text.find(_SANITIZED_MARKER)
+    if idx == -1:
+        return text, ""
+    verdict = text[:idx].strip()
+    sanitized = text[idx + len(_SANITIZED_MARKER):].strip()
+    # The verdict is the last non-empty line before the marker (handles a header
+    # echo, same as parse_csv_response does).
+    lines = [l for l in verdict.splitlines() if l.strip()]
+    return (lines[-1] if lines else verdict), sanitized
 
 
 #: A redaction wildly longer than its input is a rewrite, not a redaction.
@@ -106,24 +114,28 @@ def _usable_redaction(sanitized: str, original: str) -> tuple[bool, str]:
     return True, ""
 
 
+_SANITIZED_MARKER = "SANITIZED:"
+
 _SYSTEM = (
     "You are a data protection engine. Analyze tool output for sensitive data "
     "that should be blocked or redacted before showing to the user.\n"
     "Check for: PII, secrets, role-restricted data, regulated data, internal system data.\n"
-    "Respond with ONLY one CSV line: has_sensitive,action,confidence,findings,sanitized\n"
+    "Respond with a CSV verdict line: has_sensitive,action,confidence,findings\n"
     "action is one of: allow, redact, block\n"
-    # Without this the model returns a verdict and nothing else, which is how
-    # `redact` came to return the original text unchanged.
-    "When action is redact you MUST fill `sanitized`: reproduce the tool output "
-    "EXACTLY, changing ONLY the values the policy forbids. Replace each with the "
-    "replacement the policy gives, or [REDACTED] when it gives none. Keep every "
-    "other character identical. Never summarise, reformat, or invent content.\n"
-    "When action is allow or block, leave `sanitized` empty.\n"
-    "`sanitized` is the last field, so it may contain commas.\n"
-    "Example: true,block,0.95,SSN and credit card numbers found,\n"
-    "Example: false,allow,0.90,no sensitive data detected,\n"
-    "Example: true,redact,0.95,passport number found,"
-    "name=Jane Doe passport=[REDACTED] tier=gold"
+    # The redacted content goes on its OWN line after a marker, never in the CSV.
+    # findings is free text and contains commas; a redacted record contains
+    # commas; two comma-bearing fields on one CSV line cannot be separated
+    # positionally, which produced garbled output. Keep them on different lines.
+    "When action is redact, add a SECOND line beginning with 'SANITIZED:' "
+    "followed by the tool output reproduced EXACTLY, changing ONLY the values "
+    "the policy forbids. Replace each with the replacement the policy gives, or "
+    "[REDACTED] when it gives none. Keep every other character identical. Never "
+    "summarise, reformat, or invent content.\n"
+    "When action is allow or block, output only the CSV line.\n"
+    "Example:\ntrue,block,0.95,SSN and credit card numbers found\n"
+    "Example:\nfalse,allow,0.90,no sensitive data detected\n"
+    "Example:\ntrue,redact,0.95,passport, national ID found\n"
+    "SANITIZED:name=Jane Doe passport=[REDACTED] tier=gold"
 )
 
 
@@ -208,7 +220,8 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             )
 
             raw = (llm_response.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
-            result = parse_csv_response(raw, _CSV_FIELDS)
+            verdict_line, sanitized_content = _split_verdict_and_sanitized(raw)
+            result = parse_csv_response(verdict_line, _CSV_FIELDS)
 
         except Exception as e:
             logger.error(f"LLM output sanitization error: {e}")
@@ -250,7 +263,7 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
 
         # `redact`/`mask` promise modified content. Produce it or withhold.
         if action in ("mask", "redact") and _redaction_enabled():
-            sanitized = _extract_sanitized(raw)
+            sanitized = sanitized_content
             ok, why = _usable_redaction(sanitized, tool_output)
             if not ok:
                 escalated = _cap_action("block", self.configured_action)
