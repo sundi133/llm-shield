@@ -280,7 +280,16 @@ def _format_data_policies(
         tool = p.get("tool_name", "general")
         lines.append(f"Tool: {tool}")
         for rule in p.get("sanitization_rules", []):
-            lines.append(f"  - Sanitize: {rule.get('description', rule.get('field', ''))}")
+            if rule.get("enabled") is False:
+                continue
+            # The replacement must reach the model. Rendering only the
+            # description left it inventing a placeholder per call, so the same
+            # rule produced [REDACTED], *** and [ID REMOVED] across identical
+            # requests and no caller could parse the result.
+            what = rule.get("description") or rule.get("field") or rule.get("pattern_id", "")
+            repl = rule.get("replacement")
+            lines.append(f"  - Sanitize: {what}"
+                         + (f" -> replace with {repl}" if repl else ""))
         for rp in p.get("role_policies", []):
             role = rp.get("role", "any")
             action = rp.get("action", "allow")

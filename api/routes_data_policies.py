@@ -34,6 +34,13 @@ router = APIRouter(prefix="/v1/data-policies", tags=["data-policies"])
 
 class DataSanitizationRule(BaseModel):
     pattern_id: str
+    #: DEPRECATED and NOT ENFORCED. Nothing executes this pattern on the guard
+    #: path: sanitization is performed by the LLM against `description` and
+    #: `replacement`. The only code that ever ran it is POST /validate, which no
+    #: guarded request touches. Kept so stored policies still load; a field that
+    #: reads as a deterministic pattern while nothing applies it is the same
+    #: defect this schema note exists to stop repeating.
+    #: Spec: docs/spec-apply-sanitization-rules.md
     regex: str
     replacement: str
     description: str
