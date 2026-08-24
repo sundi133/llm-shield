@@ -1,0 +1,61 @@
+{
+  "_comment": "Sample dataset for the bank demo MCP server. Contains deliberately sensitive fields (national IDs, passports, full card numbers, IBANs, DOB, address) so Shield's data policies have something to catch. Not real data.",
+  "customers": {
+    "C1001": {
+      "name": "Aisha Khan", "email": "aisha@example.com", "phone": "+971-50-1234567",
+      "dob": "1990-04-12", "nationality": "UAE", "city": "Abu Dhabi",
+      "address": "Villa 14, Al Bateen, Abu Dhabi",
+      "passport": "P1234567", "national_id": "784-1990-1234567-1",
+      "tier": "gold", "kyc_status": "verified"
+    },
+    "C1002": {
+      "name": "Omar Farouk", "email": "omar@example.com", "phone": "+971-55-7654321",
+      "dob": "1985-11-03", "nationality": "Egypt", "city": "Dubai",
+      "address": "Apt 802, Marina Gate, Dubai",
+      "passport": "P7654321", "national_id": "784-1985-7654321-2",
+      "tier": "silver", "kyc_status": "verified"
+    },
+    "C1003": {
+      "name": "Mariam Nasser", "email": "mariam@example.com", "phone": "+971-52-2468013",
+      "dob": "1992-07-21", "nationality": "UAE", "city": "Abu Dhabi",
+      "address": "Villa 3, Saadiyat Island, Abu Dhabi",
+      "passport": "P2468013", "national_id": "784-1992-2468013-3",
+      "tier": "gold", "kyc_status": "pending_review"
+    },
+    "C1004": {
+      "name": "David Chen", "email": "david@example.com", "phone": "+971-56-9081726",
+      "dob": "1979-01-30", "nationality": "Singapore", "city": "Dubai",
+      "address": "Office 21, DIFC, Dubai",
+      "passport": "P9081726", "national_id": "784-1979-9081726-4",
+      "tier": "platinum", "kyc_status": "verified"
+    }
+  },
+  "accounts": {
+    "C1001": [{"account_no": "0011234501", "type": "current", "balance": 5400.0, "currency": "AED", "iban": "AE070331234567890123456"}],
+    "C1002": [{"account_no": "0017654302", "type": "savings", "balance": 120.5, "currency": "AED", "iban": "AE120332468013567890123"}],
+    "C1003": [{"account_no": "0012468013", "type": "current", "balance": 88200.0, "currency": "AED", "iban": "AE550339081726123456789"}],
+    "C1004": [{"account_no": "0019081726", "type": "current", "balance": 412000.0, "currency": "AED", "iban": "AE990331234509876543210"}]
+  },
+  "cards": {
+    "C1001": [{"card_no": "4111 1111 1111 1111", "cvv": "312", "expiry": "11/27", "type": "visa", "status": "active"}],
+    "C1002": [{"card_no": "5500 0000 0000 0004", "cvv": "889", "expiry": "03/26", "type": "mastercard", "status": "active"}],
+    "C1003": [{"card_no": "4000 1234 5678 9010", "cvv": "204", "expiry": "08/28", "type": "visa", "status": "active"}],
+    "C1004": [{"card_no": "3782 822463 10005", "cvv": "7712", "expiry": "01/29", "type": "amex", "status": "blocked"}]
+  },
+  "transactions": {
+    "C1001": [{"id": "t1", "date": "2026-06-02", "amt": -42.0, "desc": "coffee", "merchant": "Blue Bottle"}, {"id": "t2", "date": "2026-06-25", "amt": 5000.0, "desc": "salary", "merchant": "ACME LLC"}],
+    "C1002": [{"id": "t3", "date": "2026-06-11", "amt": -9.99, "desc": "streaming", "merchant": "Netflix"}],
+    "C1003": [{"id": "t4", "date": "2026-06-05", "amt": 88000.0, "desc": "property sale", "merchant": "Aldar"}, {"id": "t5", "date": "2026-06-18", "amt": -200.0, "desc": "dining", "merchant": "Zuma"}],
+    "C1004": [{"id": "t6", "date": "2026-06-09", "amt": -12000.0, "desc": "watch", "merchant": "Rolex"}, {"id": "t7", "date": "2026-06-28", "amt": 400000.0, "desc": "dividend", "merchant": "Holdings SA"}]
+  },
+  "loans": {
+    "C1001": [{"loan_id": "L-8801", "type": "auto", "principal": 90000.0, "outstanding": 41250.0, "rate": 3.2, "status": "current"}],
+    "C1003": [{"loan_id": "L-8802", "type": "mortgage", "principal": 1800000.0, "outstanding": 1620000.0, "rate": 4.1, "status": "current"}],
+    "C1004": [{"loan_id": "L-8803", "type": "business", "principal": 500000.0, "outstanding": 0.0, "rate": 5.0, "status": "paid_off"}]
+  },
+  "beneficiaries": {
+    "C1001": [{"name": "Hassan Khan", "account_no": "0025500011", "bank": "ADCB", "relationship": "family"}],
+    "C1003": [{"name": "Aldar Properties", "account_no": "0031200099", "bank": "FAB", "relationship": "vendor"}, {"name": "Nasser Trust", "account_no": "0031200100", "bank": "ENBD", "relationship": "self"}],
+    "C1004": [{"name": "Holdings SA", "account_no": "0049081700", "bank": "HSBC", "relationship": "corporate"}]
+  }
+}
