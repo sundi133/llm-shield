@@ -2,7 +2,7 @@
 title: Tool Data Policies
 layout: default
 permalink: /tool-data-policies/
-description: How to add a per-tool data policy — control what each role can see in a tool's inputs and outputs, via the Tenant Portal or the API.
+description: How to add a per-tool data policy: control what each role can see in a tool's inputs and outputs, via the Tenant Portal or the API.
 ---
 
 # Tool Data Policies
@@ -20,11 +20,11 @@ DLP layer that runs around agentic tool calls.
 Each policy is attached to one tool (e.g. `lookup_employee`, `check_vitals`) and
 holds:
 
-- **Role policies** — for each role, an action and the rules that govern it.
-- **Sanitization rules** — optional regex redactions (fast, no LLM).
-- **`sanitization_intent`** — an optional natural-language description of what
+- **Role policies**: for each role, an action and the rules that govern it.
+- **Sanitization rules**: optional regex redactions (fast, no LLM).
+- **`sanitization_intent`**: an optional natural-language description of what
   must never leave the tool (evaluated by the LLM).
-- **Scope mappings, compliance framework, audit/retention** — optional metadata.
+- **Scope mappings, compliance framework, audit/retention**: optional metadata.
 
 Per-role action:
 
@@ -42,11 +42,11 @@ Per-role action:
 - **Output rules** are checked against the tool's **result** before the agent
   uses it (`tool_output_sanitization`).
 
-Both are evaluated by the guardrail model (vLLM) against your rule text — write
+Both are evaluated by the guardrail model (vLLM) against your rule text. Write
 the rules in plain English, one per line. Regex `sanitization_rules` run first
 as a fast path; the LLM handles everything else.
 
-## Option 1 — Tenant Portal (UI)
+## Option 1: Tenant Portal (UI)
 
 1. Open the **Tenant Portal → Tool Policies**.
 2. Click the tool (e.g. `check_vitals`).
@@ -55,7 +55,7 @@ as a fast path; the LLM handles everything else.
    **Input rules** / **Output rules** (one per line).
 4. **Save data policy.** Nothing is saved until you click save.
 
-## Option 2 — API
+## Option 2: API
 
 Create or update a tool's policy:
 
@@ -127,10 +127,52 @@ curl -X POST "$SHIELD/v1/data-policies/preview-sanitization" \
 `both`), `scope_mappings[]`, `compliance_framework` (`hipaa` · `pci_dss` ·
 `gdpr`), `audit_required`, `retention_days`.
 
+## Redact reliably: write a transform, not a prohibition
+
+`tool_output_sanitization` lets the model choose the action (allow / redact /
+block) against your rules. For sensitive data it **defaults to block**, and a
+rule phrased as a pure prohibition makes that non-deterministic: the same call
+blocks most of the time and redacts occasionally. If you want a masked result on
+every call, the rule wording is the control, not luck, and not a code change.
+
+**A prohibition tends to block:**
+
+```
+"Never return a card number."
+"Never return a national ID, passport, or SSN."
+```
+
+**A transform with an explicit action redacts deterministically:**
+
+```
+"When a card number is present you MUST use action=redact (do NOT block).
+ Return the record unchanged EXCEPT mask the card to its last 4 digits as
+ **** **** **** NNNN, and remove the CVV."
+
+"Mask any national ID, passport number, or SSN as [REDACTED] using
+ action=redact."
+```
+
+Two things make the difference, and both are needed: say **how** to mask, and
+say **`use action=redact, do NOT block`** explicitly. With that, a
+`card_details` tool returns `**** **** **** 1111  cvv=[REDACTED]` on every call:
+the agent can confirm the card without ever seeing the number.
+
+Reserve a bare prohibition for data that should be withheld **entirely** (a
+full KYC dossier, a raw secret) where blocking is the intended outcome.
+
+> The MCP gateway reads this guardrail's ceiling from the route's bound **policy
+> profile**, not from `/v1/tenant/me/policies`. If a `redact` rule still blocks,
+> confirm the route is bound to a profile whose `output_guardrails`
+> `tool_output_sanitization.action` is `redact`. The ceiling caps the verdict,
+> and a `warn` ceiling can never redact. See the MCP gateway profile docs.
+
 ## Tips
 
 - Start in **monitor** mode (see [Policy Lifecycle](/policy-lifecycle/)) to watch
   what *would* block before enforcing.
-- Keep `output_rules` specific — list the fields a role **may** see, then block
+- Keep `output_rules` specific: list the fields a role **may** see, then block
   the rest. Vague rules let the model over- or under-redact.
+- To mask rather than block, phrase the rule as a transform with an explicit
+  `action=redact` (see above).
 - `severity: "critical"` on a sanitization rule always escalates to **block**.
