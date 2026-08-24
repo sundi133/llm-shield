@@ -1,9 +1,19 @@
-"""Unmodified 'bank' upstream MCP server matching the customer-service-agent tools.
+"""Unmodified 'bank' upstream MCP server for the Shield gateway demo.
 
-Exposes the five tools your tenant already governs (customer_profile_get,
-transaction_history, statement_generate, wire_transfer_execute, email_send) over
-an in-memory dataset. Zero Shield code — protection is added by fronting it with
-the gateway. Returns PII in customer_profile_get so output sanitization is visible.
+A vendor/legacy MCP server: a handful of banking tools over an in-memory
+dataset. Zero Shield code — protection is added entirely by fronting it with the
+gateway. Deliberately returns PII (passport, national ID, full card number) so
+output sanitization is visible, and offers bulk/high-risk tools so input rules
+and RBAC filtering have something to act on.
+
+Each tool notes which guardrail it exercises so the demo maps cleanly:
+  read, low-risk        account_balance_get, statement_generate, transaction_history
+  read, PII (output)    customer_profile_get, card_details_get
+  bulk (input rule)     search_customers
+  high-risk (RBAC)      wire_transfer_execute, email_send, credential_reset
+
+Adding a tool here does NOT expose it through Shield on its own: the agent must
+be granted it. See examples/scripts/grant_agent_tools.py / the runbook.
 
 Run (streamable-HTTP on :9100):
     pip install mcp
@@ -16,13 +26,22 @@ from mcp.server.fastmcp import FastMCP
 
 CUSTOMERS = {
     "C1001": {"name": "Aisha Khan", "email": "aisha@example.com",
-              "passport": "P1234567", "ssn": "784-1990-1234567-1", "tier": "gold"},
+              "passport": "P1234567", "ssn": "784-1990-1234567-1", "tier": "gold",
+              "card": "4111 1111 1111 1111", "cvv": "312", "balance": 5400.0,
+              "city": "Abu Dhabi"},
     "C1002": {"name": "Omar Farouk", "email": "omar@example.com",
-              "passport": "P7654321", "ssn": "784-1985-7654321-2", "tier": "silver"},
+              "passport": "P7654321", "ssn": "784-1985-7654321-2", "tier": "silver",
+              "card": "5500 0000 0000 0004", "cvv": "889", "balance": 120.5,
+              "city": "Dubai"},
+    "C1003": {"name": "Mariam Nasser", "email": "mariam@example.com",
+              "passport": "P2468013", "ssn": "784-1992-2468013-3", "tier": "gold",
+              "card": "4000 1234 5678 9010", "cvv": "204", "balance": 88200.0,
+              "city": "Abu Dhabi"},
 }
 TXNS = {
     "C1001": [{"id": "t1", "amt": -42.0, "desc": "coffee"}, {"id": "t2", "amt": 5000.0, "desc": "salary"}],
     "C1002": [{"id": "t3", "amt": -9.99, "desc": "streaming"}],
+    "C1003": [{"id": "t4", "amt": 88000.0, "desc": "property sale"}, {"id": "t5", "amt": -200.0, "desc": "dining"}],
 }
 
 mcp = FastMCP("bank-core", host="0.0.0.0", port=int(os.environ.get("PORT", "9100")),
@@ -62,6 +81,50 @@ async def wire_transfer_execute(from_account: str, amount: float, to: str) -> st
 async def email_send(to: str, subject: str, body: str) -> str:
     """Send an email."""
     return f"[sent] to={to} subject={subject!r}"
+
+
+# ── added tools ────────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def account_balance_get(customer_id: str) -> str:
+    """Return a customer's current account balance. Low-risk read."""
+    c = CUSTOMERS.get(customer_id)
+    return f"{customer_id}: balance AED {c['balance']:.2f}" if c else f"{customer_id}: not found"
+
+
+@mcp.tool()
+async def card_details_get(customer_id: str) -> str:
+    """Return a customer's card details (contains a full card number and CVV)."""
+    c = CUSTOMERS.get(customer_id)
+    if not c:
+        return f"{customer_id}: not found"
+    # A full PAN + CVV: a stronger output-sanitization target than the profile.
+    return f"name={c['name']} card={c['card']} cvv={c['cvv']} tier={c['tier']}"
+
+
+@mcp.tool()
+async def search_customers(query: str) -> str:
+    """Search customers by name, city, or tier. Supports broad/bulk queries.
+
+    A wildcard or segment query ("all", "gold", "Abu Dhabi") returns many rows,
+    which is what the tenant's INPUT rule ("block wildcard search / bulk
+    retrieval") is written to catch before this tool ever runs.
+    """
+    q = (query or "").strip().lower()
+    hits = [f"{cid} {c['name']} ({c['tier']}, {c['city']})"
+            for cid, c in CUSTOMERS.items()
+            if q in ("all", "*") or q in c["name"].lower()
+            or q == c["tier"].lower() or q == c["city"].lower()]
+    return "\n".join(hits) if hits else f"no matches for {query!r}"
+
+
+@mcp.tool()
+async def credential_reset(customer_id: str) -> str:
+    """Reset a customer's online-banking credentials. High-risk admin action."""
+    c = CUSTOMERS.get(customer_id)
+    return (f"[reset] temporary password issued for {customer_id} ({c['name']})"
+            if c else f"{customer_id}: not found")
 
 
 if __name__ == "__main__":
