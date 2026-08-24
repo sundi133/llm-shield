@@ -43,13 +43,23 @@ def _guard(action="block"):
     return g
 
 
-def _run(monkeypatch, guard, csv_line, *, output=RAW,
+def _verdict(action, sanitized="", *, has="true", conf="0.95",
+             findings="passport, national ID found"):
+    """Build a model response in the verdict-line + SANITIZED-marker format.
+
+    findings deliberately contains a comma in the default: the bug this format
+    fixes was findings' commas bleeding into the redacted content."""
+    line = f"{has},{action},{conf},{findings}"
+    return line + (f"\nSANITIZED:{sanitized}" if sanitized else "")
+
+
+def _run(monkeypatch, guard, model_response, *, output=RAW,
          policy="Never return a national ID or passport number."):
     captured = {}
 
     async def _llm(**kw):
         captured.update(kw)
-        return {"choices": [{"message": {"content": csv_line}}]}
+        return {"choices": [{"message": {"content": model_response}}]}
 
     monkeypatch.setattr(tos, "async_llm_call", _llm)
     monkeypatch.setattr(tos.ToolOutputSanitizationGuardrail, "_load_policies_text",
@@ -67,7 +77,7 @@ def _run(monkeypatch, guard, csv_line, *, output=RAW,
 def test_a_redact_verdict_returns_redacted_text(monkeypatch):
     """THE headline. The reproduction from the spec."""
     r, _ = _run(monkeypatch, _guard(),
-                f"true,redact,0.95,passport and national ID found,{MASKED}")
+                _verdict("redact", MASKED, findings="passport and national ID found"))
     assert r.action == "redact"
     assert r.details["sanitized_output"] == MASKED
     assert "P1234567" not in r.details["sanitized_output"]
@@ -77,7 +87,7 @@ def test_a_redact_verdict_returns_redacted_text(monkeypatch):
 def test_non_sensitive_fields_survive(monkeypatch):
     """Redaction, not destruction. A caller still needs the usable fields."""
     r, _ = _run(monkeypatch, _guard(),
-                f"true,redact,0.95,ids found,{MASKED}")
+                _verdict("redact", MASKED))
     out = r.details["sanitized_output"]
     assert "Aisha Khan" in out and "tier=gold" in out
 
@@ -85,25 +95,41 @@ def test_non_sensitive_fields_survive(monkeypatch):
 def test_sanitized_output_is_no_longer_the_input(monkeypatch):
     """Direct regression guard on lines 191 and 208."""
     r, _ = _run(monkeypatch, _guard(),
-                f"true,redact,0.95,ids found,{MASKED}")
+                _verdict("redact", MASKED))
     assert r.details["sanitized_output"] != RAW
 
 
 def test_mask_also_redacts(monkeypatch):
     r, _ = _run(monkeypatch, _guard(),
-                f"true,mask,0.95,ids found,{MASKED}")
+                _verdict("mask", MASKED))
     assert r.action == "mask"
     assert r.details["sanitized_output"] == MASKED
     assert r.details["mask_level"] == "partial"
 
 
 def test_commas_in_the_redacted_text_survive_parsing(monkeypatch):
-    """`sanitized` is the last CSV field precisely so content may contain
-    commas."""
+    """The redacted content is on its own marker line, so its commas are safe."""
     masked = "Khan, Aisha; passport=[REDACTED], tier=gold"
     r, _ = _run(monkeypatch, _guard(),
-                f"true,redact,0.95,ids found,{masked}")
+                _verdict("redact", masked))
     assert r.details["sanitized_output"] == masked
+
+
+def test_commas_in_findings_do_not_bleed_into_the_content(monkeypatch):
+    """THE production bug. The model returned findings with internal commas --
+    'national ID, passport number, and PII found' -- and the single-line CSV
+    design let that tail overwrite the redacted record, so the caller got a
+    fragment of the finding instead of the customer's masked profile.
+
+    findings and the content are now on separate lines; findings' commas stay
+    in findings.
+    """
+    r, _ = _run(monkeypatch, _guard(),
+                _verdict("redact", MASKED,
+                         findings="national ID, passport number, and PII found"))
+    assert r.details["sanitized_output"] == MASKED
+    assert "Aisha Khan" in r.details["sanitized_output"]
+    assert "PII found" not in r.details["sanitized_output"]
 
 
 # ── the load-bearing failure mode ────────────────────────────────────────
@@ -118,7 +144,7 @@ def test_an_unusable_redaction_escalates_to_block(monkeypatch, csv_tail, why):
     """THE test. A lenient fallback would reintroduce the original bug: claimed
     redaction, original returned."""
     r, _ = _run(monkeypatch, _guard("block"),
-                f"true,redact,0.95,ids found,{csv_tail}")
+                _verdict("redact", csv_tail))
     assert r.action == "block"
     assert r.details["redaction_failed"] == why
     assert r.details["sanitized_output"] == "[CONTENT BLOCKED DUE TO DATA POLICY]"
@@ -134,7 +160,7 @@ def test_a_failed_redaction_never_returns_the_original(monkeypatch):
     original under a capped label would be exactly the bug being fixed, wearing
     a different name.
     """
-    r, _ = _run(monkeypatch, _guard("redact"), "true,redact,0.95,ids found,")
+    r, _ = _run(monkeypatch, _guard("redact"), _verdict("redact", ""))
     assert r.details["redaction_failed"] == "empty"
     assert r.details["sanitized_output"] == "[CONTENT BLOCKED DUE TO DATA POLICY]"
     assert RAW not in str(r.details["sanitized_output"])
@@ -144,7 +170,7 @@ def test_a_warn_ceiling_never_reaches_the_redaction_path(monkeypatch):
     """Configured `warn` caps a redact verdict to warn before the redaction
     branch. warn promises no modified content, so there is no redaction
     obligation to fail - the original is returned, flagged."""
-    r, _ = _run(monkeypatch, _guard("warn"), "true,redact,0.95,ids found,")
+    r, _ = _run(monkeypatch, _guard("warn"), _verdict("redact", ""))
     assert r.action == "warn"
     assert r.details["sanitized_output"] == RAW
     assert "redaction_failed" not in r.details
@@ -166,13 +192,13 @@ def test_usable_redaction_matrix(sanitized, original, ok):
 
 
 def test_allow_is_unchanged(monkeypatch):
-    r, _ = _run(monkeypatch, _guard(), "false,allow,0.95,nothing found,")
+    r, _ = _run(monkeypatch, _guard(), _verdict("allow", has="false"))
     assert r.passed is True and r.action == "pass"
     assert r.details["sanitized_output"] == RAW
 
 
 def test_block_is_unchanged(monkeypatch):
-    r, _ = _run(monkeypatch, _guard("block"), "true,block,0.99,ids found,")
+    r, _ = _run(monkeypatch, _guard("block"), _verdict("block"))
     assert r.action == "block"
     assert r.details["sanitized_output"] == "[CONTENT BLOCKED DUE TO DATA POLICY]"
 
@@ -181,7 +207,7 @@ def test_the_escape_hatch_restores_the_old_behaviour(monkeypatch):
     """Rollback only. What it restores IS the bug, which is why the flag is
     documented as unsafe rather than as a mode."""
     monkeypatch.setenv("SHIELD_LLM_REDACTION", "off")
-    r, _ = _run(monkeypatch, _guard(), "true,redact,0.95,ids found,")
+    r, _ = _run(monkeypatch, _guard(), _verdict("redact", ""))
     assert r.details["sanitized_output"] == RAW
 
 
@@ -190,16 +216,16 @@ def test_the_escape_hatch_restores_the_old_behaviour(monkeypatch):
 
 def test_the_prompt_asks_for_the_redacted_rendering(monkeypatch):
     _, captured = _run(monkeypatch, _guard(),
-                       f"true,redact,0.95,ids found,{MASKED}")
+                       _verdict("redact", MASKED))
     system = captured["messages"][0]["content"]
-    assert "sanitized" in system
+    assert "SANITIZED:" in system
     assert "[REDACTED]" in system
 
 
 def test_max_tokens_allows_returning_content(monkeypatch):
     """Was 60: enough for a verdict, not for a redacted payload."""
     _, captured = _run(monkeypatch, _guard(),
-                       f"true,redact,0.95,ids found,{MASKED}")
+                       _verdict("redact", MASKED))
     assert captured["max_tokens"] >= 512
 
 
