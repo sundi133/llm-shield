@@ -14,11 +14,13 @@ Architecture:
 import asyncio
 import base64
 import codecs
+import math
 import os
 import re
 import time
 import unicodedata
 import urllib.parse
+from collections import Counter
 from typing import Optional
 
 from guardrails.base import BaseGuardrail
@@ -140,6 +142,128 @@ def _revealed_hidden_payload(content: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Scheme-agnostic encoded-blob heuristic
+#
+# The four decoders above cover ROT13/base64/hex/URL. An attack encoded in
+# base32, base85, binary, decimal char-codes, or a nested scheme is never
+# decoded and never announced -- the classifier sees a bare opaque blob. Rather
+# than grow the decoder list (the infinite-pattern game this module rejects, and
+# a new false-positive surface each time), this heuristic notices a high-entropy
+# opaque token the decoders did NOT handle and appends ONE advisory annotation
+# for the main classifier to weigh.
+#
+# It only INFORMS; it never DECIDES. It cannot block, cannot set an action, and
+# cannot route to the biased fast-check (routing stays gated on
+# _revealed_hidden_payload). The worst case of a false positive is the FP-
+# validated main classifier reading one extra line next to a benign token and
+# still returning safe. Spec: docs/spec-adversarial-entropy-blob-heuristic.md
+# ---------------------------------------------------------------------------
+
+_BLOB_ENV = "SHIELD_ADVERSARIAL_BLOB_HEURISTIC"
+_BLOB_MIN_LEN_ENV = "SHIELD_ADVERSARIAL_BLOB_MIN_LEN"
+_BLOB_MIN_ENTROPY_ENV = "SHIELD_ADVERSARIAL_BLOB_MIN_ENTROPY"
+
+# Chars an encoder emits: base32/64/85 alphabets, url-safe variants, padding.
+# Deliberately excludes '.' , ',' , ':' and quotes so URLs, JWT-with-dots, and
+# ordinary punctuated prose do not read as one dense token.
+_ENC_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    "+/=_-!#$%&()*;<>?@^~{|}"
+)
+# Punctuation trimmed from a token's edges before it is judged.
+_BLOB_STRIP = ".,;:!?\"'()[]{}<>"
+
+# Benign high-entropy shapes: annotating these on every request would train the
+# model to ignore the annotation. Skipping only suppresses the HINT -- the main
+# classifier still reads the raw token and judges it. Not a trust boundary.
+_BLOB_SKIP_PATTERNS = (
+    re.compile(r"^[0-9a-fA-F]{40}$"),                     # git SHA-1
+    re.compile(r"^[0-9a-fA-F]{64}$"),                     # SHA-256 / git SHA-256
+    re.compile(                                           # UUID
+        r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+        r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    re.compile(                                           # JWT (3 base64url segs)
+        r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"),
+)
+
+
+def _blob_heuristic_enabled() -> bool:
+    """Default ON; only an explicit falsy value disables the annotation."""
+    return os.getenv(_BLOB_ENV, "1").strip().lower() not in _FALSY
+
+
+def _blob_min_len() -> int:
+    try:
+        return max(1, int(os.getenv(_BLOB_MIN_LEN_ENV, "24")))
+    except ValueError:
+        return 24
+
+
+def _blob_min_entropy() -> float:
+    try:
+        return float(os.getenv(_BLOB_MIN_ENTROPY_ENV, "3.0"))
+    except ValueError:
+        return 3.0
+
+
+def _shannon_bits_per_char(s: str) -> float:
+    """Absolute Shannon entropy (bits/char) of a token's character distribution.
+    Random encoded data over a large alphabet scores high (base64 ~5.5, base32
+    ~4.8, hex ~4.0); a natural-language word scores low."""
+    n = len(s)
+    if n == 0:
+        return 0.0
+    return -sum((c / n) * math.log2(c / n) for c in Counter(s).values())
+
+
+def _is_benign_blob_shape(token: str) -> bool:
+    low = token.lower()
+    if low.startswith(("data:", "http://", "https://")):
+        return True
+    return any(p.match(token) for p in _BLOB_SKIP_PATTERNS)
+
+
+def _suspicious_blob_annotation(content: str, already_decoded: bool = False) -> Optional[str]:
+    """One advisory line if the input carries an undecoded high-entropy blob.
+
+    Returns None otherwise. Never raises: an advisory signal must not fail the
+    guard path, so any error is swallowed and treated as "no blob".
+    """
+    try:
+        min_len = _blob_min_len()
+        min_entropy = _blob_min_entropy()
+        for run in content.split():
+            token = run.strip(_BLOB_STRIP)
+            if len(token) < min_len:
+                continue
+            dense = sum(1 for ch in token if ch in _ENC_ALPHABET) / len(token)
+            if dense < 0.90:
+                continue
+            if _is_benign_blob_shape(token):
+                continue
+            has_alpha = any(ch.isalpha() for ch in token)
+            has_digit = any(ch.isdigit() for ch in token)
+            # A digit-only run (binary/decimal/octal) is low-entropy but plainly
+            # encoded; a mixed alnum run must clear the entropy bar so prose and
+            # code identifiers (no digits, or low entropy) do not trip it.
+            pure_digit_run = token.isdigit()
+            mixed_encoded = (
+                has_alpha and has_digit
+                and _shannon_bits_per_char(token) >= min_entropy
+            )
+            if not (pure_digit_run or mixed_encoded):
+                continue
+            # Already handled by a real decoder this request? Don't double-flag.
+            if already_decoded and _revealed_hidden_payload(token):
+                continue
+            preview = token[:24] + ("…" if len(token) > 24 else "")
+            return f"[SUSPICIOUS ENCODED CONTENT (scheme not decoded): {preview}]"
+        return None
+    except Exception:
+        return None
+
+
 def preprocess_content(content: str) -> str:
     """Decode actually-encoded content so the LLM can read the real payload.
 
@@ -158,6 +282,15 @@ def preprocess_content(content: str) -> str:
         result = decoder(content)
         if result and result != content:
             annotations.append(f"[DECODED {label}]: {result}")
+
+    # Advisory hint about an UNDECODED high-entropy blob (base32/base85/binary/
+    # nested). Same annotation channel as [DECODED ...]; it informs the main
+    # classifier and never routes to the fast-check. Spec:
+    # docs/spec-adversarial-entropy-blob-heuristic.md
+    if _blob_heuristic_enabled():
+        blob = _suspicious_blob_annotation(content, already_decoded=bool(annotations))
+        if blob:
+            annotations.append(blob)
 
     if annotations:
         return content + "\n" + "\n".join(annotations)
