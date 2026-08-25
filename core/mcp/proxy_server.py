@@ -175,12 +175,23 @@ class MCPProxy:
             confirmation_token=confirmation_token, route=self._route,
             policy=self._policy,
         )
-        await self._record({"phase": "call", "tool": name, "agent_key": agent_key,
-                            "tenant_id": tenant_id, "route": self._route,
-                            "user_role": user_role, "session_id": session_id,
-                            **decision})
+        audit_base = {"phase": "call", "tool": name, "agent_key": agent_key,
+                      "tenant_id": tenant_id, "route": self._route,
+                      "user_role": user_role, "session_id": session_id}
+
+        # Default: defer the audit record to AFTER sanitization so redact/mask
+        # and output-level blocks are reflected (they used to record as PASS).
+        # Legacy (escape hatch): record the input decision here, pre-sanitize.
+        # Spec: docs/spec-gateway-telemetry-output-decisions.md
+        audit_after_output = _audit_output_enabled()
+        if not audit_after_output:
+            await self._record({**audit_base, **decision})
 
         if not decision["allowed"]:
+            # An input block never reaches sanitization; record it here on the
+            # deferred path so the block is not lost.
+            if audit_after_output:
+                await self._record({**audit_base, **decision})
             return _error(f"Blocked by Shield: {decision['reason']}", decision)
 
         # Materialize any vault secret references in the arguments, bound to this
@@ -196,13 +207,21 @@ class MCPProxy:
             name, raw, agent_key=agent_key, tenant_id=tenant_id, user_role=user_role,
             policy=self._policy,
         )
+
+        # On the deferred path, fold the output action (redact/mask/block) into
+        # the decision and record ONE row that tells the truth about the output.
+        effective = decision
+        if audit_after_output:
+            effective = _merge_output_decision(decision, san)
+            await self._record({**audit_base, **effective})
+
         if san["blocked"]:
-            return _error("Output blocked by Shield data policy", decision)
+            return _error("Output blocked by Shield data policy", effective)
 
         return {
             "content": [{"type": "text", "text": _as_text(san["sanitized_output"])}],
             "isError": False,
-            "shield": decision,
+            "shield": effective,
         }
 
     # ── resources ────────────────────────────────────────────────────
@@ -324,6 +343,64 @@ def _as_text(value) -> str:
         return json.dumps(value, ensure_ascii=False)
     except Exception:
         return str(value)
+
+
+# Severity ladder for reconciling the input tool-call action with the output
+# sanitization action. Mirrors api/routes_classify.py; kept local so the hot
+# path takes no cross-module import.
+_ACTION_RANK = {"pass": 0, "allow": 0, "log": 1, "warn": 2,
+                "redact": 3, "mask": 3, "block": 4}
+
+
+def _audit_output_enabled() -> bool:
+    """Whether to record the OUTPUT-sanitization outcome in gateway telemetry.
+
+    Default ON: the audit row reflects redact/mask and output-level blocks.
+    SHIELD_GATEWAY_AUDIT_OUTPUT=off restores the legacy behavior (record the
+    input tool-call decision before sanitization, leaving the output stage
+    unrecorded). Rollback only; the legacy behavior under-reports.
+    Spec: docs/spec-gateway-telemetry-output-decisions.md
+    """
+    import os
+    return os.environ.get(
+        "SHIELD_GATEWAY_AUDIT_OUTPUT", "").strip().lower() not in (
+        "0", "false", "no", "off")
+
+
+def _merge_output_decision(decision: dict, san: dict) -> dict:
+    """Fold the output-sanitization outcome into the tool-call decision so the
+    audit row reflects what actually happened to the OUTPUT.
+
+    The strongest action on pass<warn<redact/mask<block wins; an output block
+    flips ``allowed`` to False. Appends a ``tool_output_sanitization`` result
+    (so ``guardrails_triggered`` surfaces it) carrying the action and a short
+    label only -- NEVER the redacted values or the arguments.
+    Spec: docs/spec-gateway-telemetry-output-decisions.md
+    """
+    out_action = (san.get("action") or "pass").lower()
+    out_blocked = bool(san.get("blocked"))
+    in_action = (decision.get("action") or "pass").lower()
+
+    merged = dict(decision)
+    if _ACTION_RANK.get(out_action, 0) > _ACTION_RANK.get(in_action, 0):
+        merged["action"] = out_action
+    if out_blocked:
+        merged["allowed"] = False
+        merged["action"] = "block"
+        merged["reason"] = decision.get("reason") or "Output blocked by Shield data policy"
+
+    if out_blocked or out_action not in ("pass", "allow"):
+        results = list(decision.get("results") or [])
+        results.append({
+            "guardrail": "tool_output_sanitization",
+            "passed": False,
+            "action": "block" if out_blocked else out_action,
+            # Label only: MCP output values are exactly what the sanitizer keeps
+            # out of durable stores, so the audit row names the action, not it.
+            "message": "output blocked" if out_blocked else f"output {out_action}",
+        })
+        merged["results"] = results
+    return merged
 
 
 # ─────────────────────────────────────────────────────────────────────
