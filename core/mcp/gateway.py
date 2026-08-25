@@ -182,6 +182,51 @@ def _audit_enabled() -> bool:
         "0", "off", "false", "no")
 
 
+# Non-sensitive words for the telemetry MESSAGE label. An MCP request has no
+# prompt text (the tool call IS the message) and its arguments are deliberately
+# never stored, so the label is built only from the tool name, route, and the
+# enforcement outcome -- all already present on the audit event.
+_DECISION_WORDS = {
+    "block": "blocked",
+    "redact": "redacted",
+    "mask": "masked",
+    "warn": "warned",
+    "pass": "allowed",
+    "allow": "allowed",
+    "log": "allowed",
+}
+
+
+def _decision_label(event: dict) -> str:
+    """One short, non-sensitive word describing the enforcement outcome.
+
+    Derived only from fields already on the event (mode, allowed, action) --
+    never from arguments or content. Monitor mode is a dry-run that forwards the
+    call, so it is called out distinctly rather than as 'allowed'.
+    """
+    if str(event.get("mode", "")).strip().lower() == "monitor":
+        return "monitored"
+    if not bool(event.get("allowed", False)):
+        return "blocked"
+    action = str(event.get("action", "")).strip().lower()
+    return _DECISION_WORDS.get(action, action or "allowed")
+
+
+def _audit_message(event: dict) -> str:
+    """The MESSAGE label for a gateway row: ``mcp_call:<tool>`` (prefix kept for
+    backward compatibility with prefix-based readers), plus the route and the
+    decision word when present. Single-line: the tenant console shows the last
+    line of the message, so no newlines are introduced.
+    """
+    tool = event.get("tool", "")
+    parts = [f"mcp_call:{tool}"]
+    route = event.get("route") or ""
+    if route:
+        parts.append(str(route))
+    parts.append(_decision_label(event))
+    return " · ".join(parts)
+
+
 async def _audit_decision(event: dict) -> None:
     """Write one gateway enforcement decision to the tenant audit trail.
 
@@ -221,7 +266,9 @@ async def _audit_decision(event: dict) -> None:
         await audit_logger.log({
             "agent_key": event.get("agent_key", ""),
             "endpoint": f"/gateway/{route}/mcp" if route else "/gateway/mcp",
-            "input_text": f"mcp_call:{tool}",
+            # tool name + route + decision word (all non-sensitive, already on
+            # the event). Never arguments/content. See _audit_message.
+            "input_text": _audit_message(event),
             "action_taken": event.get("action", ""),
             "guardrails_triggered": triggered,
             "metadata": {
