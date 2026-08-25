@@ -448,7 +448,7 @@ async def get_my_telemetry(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     agent_key: Optional[str] = Query(None),
-    status: Optional[str] = Query(None, description="pass, warn, or block"),
+    status: Optional[str] = Query(None, description="pass, warn, redact, mask, or block"),
     tool_name: Optional[str] = Query(None),
     q: Optional[str] = Query(None, description="Free-text search across message, tool, and reason"),
     since: Optional[str] = Query(None, description="ISO timestamp — only return entries after this time (e.g. 2026-05-25T00:00:00Z)"),
