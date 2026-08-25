@@ -2,7 +2,7 @@
 title: Tool Data Policies
 layout: default
 permalink: /tool-data-policies/
-description: How to add a per-tool data policy: control what each role can see in a tool's inputs and outputs, via the Tenant Portal or the API.
+description: "How to add a per-tool data policy: control what each role can see in a tool's inputs and outputs, via the Tenant Portal or the API."
 ---
 
 # Tool Data Policies
