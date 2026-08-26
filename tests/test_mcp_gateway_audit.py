@@ -75,7 +75,7 @@ def test_a_blocked_call_is_recorded(written):
     _run(_event())
     assert len(written) == 1
     e = written[0]
-    assert e["input_text"] == "mcp_call:wire_transfer"
+    assert e["input_text"] == "mcp_call:wire_transfer · bank · blocked"
     assert e["action_taken"] == "block"
     assert e["metadata"]["blocked"] is True
     assert e["metadata"]["block_reason"] == "Role 'support' may not use this tool"
@@ -86,7 +86,7 @@ def test_an_allowed_call_is_recorded(written):
                 results=[{"guardrail": "rbac_guard", "passed": True,
                           "action": "pass", "message": "ok"}]))
     e = written[0]
-    assert e["input_text"] == "mcp_call:get_balance"
+    assert e["input_text"] == "mcp_call:get_balance · bank · allowed"
     assert e["metadata"]["blocked"] is False
     assert e["guardrails_triggered"] == []
 
@@ -168,6 +168,48 @@ def test_monitor_mode_is_distinguishable(written):
     md = written[0]["metadata"]
     assert md["mode"] == "monitor"
     assert md["would_block"] == ["tool_use_control"]
+
+
+# ── the MESSAGE label (tool + route + decision) ──────────────────────────
+# Spec: docs/spec-gateway-telemetry-label.md. The label enriches the console
+# MESSAGE column with non-sensitive context; it must NEVER carry arguments.
+
+
+def test_label_carries_route_and_decision(written):
+    _run(_event())      # blocked wire_transfer on route "bank"
+    assert written[0]["input_text"] == "mcp_call:wire_transfer · bank · blocked"
+
+
+def test_label_maps_output_actions_to_words(written):
+    for action, word in (("redact", "redacted"), ("mask", "masked"),
+                         ("warn", "warned")):
+        written.clear()
+        _run(_event(allowed=True, action=action, tool="customer_profile_get"))
+        assert written[0]["input_text"] == (
+            f"mcp_call:customer_profile_get · bank · {word}")
+
+
+def test_label_allowed_pass_reads_allowed(written):
+    _run(_event(allowed=True, action="pass", tool="get_balance"))
+    assert written[0]["input_text"] == "mcp_call:get_balance · bank · allowed"
+
+
+def test_label_monitor_mode_reads_monitored(written):
+    """Monitor mode forwards the call; the label must not read 'allowed'."""
+    _run(_event(allowed=True, action="pass", mode="monitor",
+                would_block=["tool_use_control"]))
+    assert written[0]["input_text"] == "mcp_call:wire_transfer · bank · monitored"
+
+
+def test_label_without_route_omits_the_route_segment(written):
+    _run(_event(route="", allowed=True, action="pass", tool="get_balance"))
+    assert written[0]["input_text"] == "mcp_call:get_balance · allowed"
+
+
+def test_label_always_keeps_the_backward_compatible_prefix(written):
+    """A prefix-based reader keying off 'mcp_call:<tool>' must still match."""
+    _run(_event(tool="wire_transfer"))
+    assert written[0]["input_text"].startswith("mcp_call:wire_transfer")
 
 
 # ── what must NOT be recorded ────────────────────────────────────────────
