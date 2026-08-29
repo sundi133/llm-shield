@@ -1,0 +1,5 @@
+# Example-local only. Deliberately NOT in the root requirements.txt: nothing in
+# the product imports mavsdk, and adding it would put a drone SDK in the
+# guardrail server image. The test suite stubs it.
+mavsdk>=2.0.0
+requests>=2.31.0
