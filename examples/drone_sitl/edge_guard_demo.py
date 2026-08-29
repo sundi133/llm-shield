@@ -136,9 +136,32 @@ def run(policy: EdgePolicy, stream, verbose: bool) -> dict[str, Any]:
             "elapsed": elapsed, "n": len(stream)}
 
 
+def mavsdk_or_none():
+    """Import mavsdk, or return None with the reason printed.
+
+    Enforcement is the point of this demo and needs no aircraft; flying is the
+    optional half. Missing mavsdk must therefore read as "that half is
+    unavailable", not as a stack trace after 2000 successful decisions. It is
+    absent from the repo venv on purpose: tests/test_drone_demo_guard.py proves
+    the suite runs without it, so installing it there to make --fly work would
+    quietly remove that guarantee.
+    """
+    try:
+        from mavsdk import System
+        return System
+    except ModuleNotFoundError:
+        print("\n  --fly needs mavsdk, which this interpreter does not have.")
+        print("  It is deliberately not in the repo venv. Use one that has it:")
+        print("      pip install -r requirements.txt      # into a venv of your own")
+        print("  The enforcement above ran fine and needs no aircraft.")
+        return None
+
+
 async def fly_allowed(allowed, limit: int = 3) -> None:
     """Send a few of the permitted commands to a real PX4, to close the loop."""
-    from mavsdk import System
+    System = mavsdk_or_none()
+    if System is None:
+        return
 
     drone = System()
     print(f"\nConnecting to PX4 on {CONNECTION_URL}")
@@ -164,7 +187,17 @@ async def fly_allowed(allowed, limit: int = 3) -> None:
     await asyncio.sleep(10)
 
     import math
-    for tool, params, _label, _v in allowed[:limit]:
+
+    # Only commands that actually move the aircraft. The allowed list also
+    # holds camera_capture, gimbal_point, upload_media and friends; flying
+    # those as waypoints produced "FLY camera_capture -> 29m", which is
+    # nonsense to anyone who reads it and undermines everything above it.
+    FLIGHT_COMMANDS = {"goto_location", "orbit", "set_altitude", "hold_position"}
+    flyable = [a for a in allowed if a[0].split(".", 1)[1] in FLIGHT_COMMANDS]
+    if not flyable:
+        print("  no flight commands among the allowed set")
+
+    for tool, params, _label, _v in flyable[:limit]:
         alt = min(float(params["altitude_m"]), 30.0)
         north = float(params["distance_from_home_m"]) / 20.0
         lat = home_lat + north / 111_111.0
