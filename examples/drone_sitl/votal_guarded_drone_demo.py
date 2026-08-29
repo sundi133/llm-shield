@@ -53,6 +53,13 @@ ZONES = {
 }
 
 
+#: How long to wait for a supervisor, and how often to look. The authoritative
+#: deadline is `expires_at` on the request itself; this only bounds the demo so
+#: an unattended run ends instead of hanging.
+APPROVAL_WAIT_SECONDS = 120
+APPROVAL_POLL_SECONDS = 3
+
+
 class ShieldRefused(Exception):
     """Shield did not authorize the action. Carries the operator-facing reason."""
 
@@ -69,12 +76,22 @@ class MissionGuard:
         self.session_id = session_id
         self.decisions: list[dict[str, Any]] = []
 
-    def authorize(self, action: str, params: dict[str, Any]) -> ToolDecision:
+    def authorize(
+        self,
+        action: str,
+        params: dict[str, Any],
+        *,
+        grant: Optional[str] = None,
+    ) -> ToolDecision:
         """Return the decision, or raise. Never returns on a refusal.
 
         One bounded retry on transport failure: a transient blip should not end
         a mission, but a second failure means authorization is genuinely unknown
         and the caller must treat that as unsafe.
+
+        `grant` travels as its own field, never inside `params`. The grant is
+        bound to a hash of the params, so folding it in would change the very
+        thing it attests to and the verification would fail.
         """
         last: Optional[Exception] = None
         for _ in range(2):
@@ -86,6 +103,7 @@ class MissionGuard:
                     session_id=self.session_id,
                     workflow=WORKFLOW,
                     tool_params=params,
+                    approval_grant=grant,
                 )
                 break
             except Exception as exc:  # transport, timeout, 5xx
@@ -102,6 +120,57 @@ class MissionGuard:
         if decision.allowed or decision.held:
             return decision
         raise ShieldRefused(decision.reason)
+
+    async def authorize_with_approval(
+        self, action: str, params: dict[str, Any]
+    ) -> ToolDecision:
+        """Authorize an action that needs a human, waiting for the decision.
+
+        A held action is not a failure and not permission. It is a question put
+        to a supervisor, and the aircraft waits on the ground for the answer.
+
+        The re-submission carries the signed grant rather than the request id.
+        Both are accepted, but the id is a status flag that anyone able to write
+        Redis could set, while the grant is verified against this exact tool,
+        these exact params, and this session. `params` is therefore passed back
+        unchanged: the grant is bound to a hash of it, so a planner that
+        "improved" the waypoint between asking and flying would be refused.
+        """
+        decision = self.authorize(action, params)
+        if not decision.held:
+            return decision
+
+        request_id = decision.request_id
+        print(f"           held for a supervisor, request {request_id}")
+        print(f"           approve it in the ops console within "
+              f"{APPROVAL_WAIT_SECONDS}s")
+
+        waited = 0
+        while waited < APPROVAL_WAIT_SECONDS:
+            await asyncio.sleep(APPROVAL_POLL_SECONDS)
+            waited += APPROVAL_POLL_SECONDS
+
+            record = self.client.get_approval(request_id)
+            if record is None:
+                raise ShieldRefused("approval request disappeared")
+
+            status = record.get("status")
+            if status == "denied":
+                raise ShieldRefused("a supervisor denied this action")
+            if status in ("expired", "consumed"):
+                raise ShieldRefused(f"approval {status} before the action ran")
+            grant = record.get("approval_grant")
+            if status == "approved" and grant:
+                approvers = ", ".join(
+                    a.get("approver", "?") for a in record.get("approvals", [])
+                ) or "unknown"
+                print(f"           approved by {approvers}")
+                # Identical params, grant alongside them. Both matter.
+                return self.authorize(action, params, grant=grant)
+
+        raise ShieldRefused(
+            f"no supervisor answered within {APPROVAL_WAIT_SECONDS}s"
+        )
 
     def print_log(self) -> None:
         print("\nShield decision log")
@@ -224,6 +293,32 @@ class GuardedDrone:
         print(f"  ALLOWED  fly_to_zone({zone}, {altitude_m:.0f}m)")
         await self.px4.fly_offset(north_m, east_m, altitude_m)
 
+    async def transit_over_people(self, zone: str, altitude_m: float) -> None:
+        """Fly a leg that crosses a populated area.
+
+        Modelled as its own action rather than a flag on fly_to_zone, for two
+        reasons. Approval rules match on tool name, not on argument values, so
+        "hold this only when over_people is true" is not expressible as a rule.
+        And it matches how aviation already treats this: operations over people
+        is a distinct authorization a supervisor grants, not a parameter a
+        planner sets on an ordinary waypoint.
+        """
+        north_m, east_m = ZONES.get(zone, (0.0, 0.0))
+        params = {
+            "zone": zone,
+            "altitude_m": altitude_m,
+            "over_people": True,
+            "round_trip_m": 2.0 * (abs(north_m) + abs(east_m)),
+            "battery_pct": await self.px4.battery_pct(),
+        }
+
+        decision = await self.guard.authorize_with_approval("transit_over_people", params)
+        if not decision.allowed:
+            raise ShieldRefused(decision.reason)
+
+        print(f"  ALLOWED  transit_over_people({zone}) after supervisor approval")
+        await self.px4.fly_offset(north_m, east_m, altitude_m)
+
     async def stream_video(self, destination: str) -> None:
         self.guard.authorize("stream_video", {"destination": destination})
         print(f"  ALLOWED  stream_video -> {destination}")
@@ -273,8 +368,8 @@ async def run_mission(px4: Px4Drone, guard: MissionGuard) -> None:
         drone.fly_to_zone("zone-b", 8.0, battery_pct_override=9.0),
     )
     await attempt(
-        "6. Kinetic risk: transit over people",
-        drone.fly_to_zone("zone-b", 8.0, over_people=True),
+        "6. Kinetic risk: transit over people, held for a supervisor",
+        drone.transit_over_people("zone-b", 8.0),
     )
     await attempt(
         "7. Injection: a placard the aircraft photographed",

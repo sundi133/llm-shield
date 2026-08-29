@@ -173,6 +173,107 @@ def test_missing_configuration_exits_rather_than_flying(demo, monkeypatch):
         demo.build_client()
 
 
+# ── the approval loop: a held action waits for a named human ───────────────
+
+class ApprovalClient(FakeClient):
+    """Holds the first call, then answers polls with whatever the test sets."""
+
+    def __init__(self, record):
+        super().__init__("pending_confirmation", request_id="apr_1")
+        self.record = record
+        self.grants_seen: list = []
+        self.params_seen: list = []
+
+    def check_tool(self, **kwargs):
+        self.params_seen.append(kwargs.get("tool_params"))
+        grant = kwargs.get("approval_grant")
+        if grant:
+            self.grants_seen.append(grant)
+            self.action = "pass"       # the grant satisfies the hold
+        return FakeClient.check_tool(self, **kwargs)
+
+    def get_approval(self, request_id):
+        return self.record
+
+
+@pytest.fixture(autouse=True)
+def _no_waiting(monkeypatch, demo):
+    """Collapse the poll interval so the tests do not sleep."""
+    monkeypatch.setattr(demo, "APPROVAL_POLL_SECONDS", 0)
+
+
+@pytest.mark.asyncio
+async def test_an_approved_action_flies(demo):
+    client = ApprovalClient({
+        "request_id": "apr_1", "status": "approved",
+        "approval_grant": "signed.grant.token",
+        "approvals": [{"approver": "ops-supervisor@example.com"}],
+    })
+    px4 = FakePx4()
+    guard = demo.MissionGuard(client, session_id="s")
+
+    await demo.GuardedDrone(px4=px4, guard=guard).transit_over_people("zone-b", 8.0)
+
+    assert px4.sent and px4.sent[0][0] == "fly_offset"
+    assert client.grants_seen == ["signed.grant.token"]
+
+
+@pytest.mark.asyncio
+async def test_a_denied_action_does_not_fly(demo):
+    client = ApprovalClient({"request_id": "apr_1", "status": "denied"})
+    px4 = FakePx4()
+    guard = demo.MissionGuard(client, session_id="s")
+
+    with pytest.raises(demo.ShieldRefused, match="denied"):
+        await demo.GuardedDrone(px4=px4, guard=guard).transit_over_people("zone-b", 8.0)
+    assert px4.sent == []
+
+
+@pytest.mark.asyncio
+async def test_an_expired_approval_does_not_fly(demo):
+    """An unanswered hold is not an allow."""
+    client = ApprovalClient({"request_id": "apr_1", "status": "expired"})
+    px4 = FakePx4()
+    guard = demo.MissionGuard(client, session_id="s")
+
+    with pytest.raises(demo.ShieldRefused, match="expired"):
+        await demo.GuardedDrone(px4=px4, guard=guard).transit_over_people("zone-b", 8.0)
+    assert px4.sent == []
+
+
+@pytest.mark.asyncio
+async def test_no_answer_times_out_rather_than_flying(demo, monkeypatch):
+    monkeypatch.setattr(demo, "APPROVAL_WAIT_SECONDS", 0)
+    client = ApprovalClient({"request_id": "apr_1", "status": "pending"})
+    px4 = FakePx4()
+    guard = demo.MissionGuard(client, session_id="s")
+
+    with pytest.raises(demo.ShieldRefused, match="no supervisor answered"):
+        await demo.GuardedDrone(px4=px4, guard=guard).transit_over_people("zone-b", 8.0)
+    assert px4.sent == []
+
+
+@pytest.mark.asyncio
+async def test_the_resubmission_carries_identical_params(demo):
+    """The grant is bound to a hash of the params it was issued for.
+
+    A planner that "improved" the waypoint between asking and flying would be
+    re-submitting different arguments under a grant that never covered them.
+    Shield would refuse it, so the bug would surface as a confusing denial
+    rather than as unauthorized flight, but it is still worth pinning here.
+    """
+    client = ApprovalClient({
+        "request_id": "apr_1", "status": "approved",
+        "approval_grant": "signed.grant.token", "approvals": [],
+    })
+    guard = demo.MissionGuard(client, session_id="s")
+    await demo.GuardedDrone(px4=FakePx4(), guard=guard).transit_over_people("zone-b", 8.0)
+
+    assert len(client.params_seen) == 2
+    assert client.params_seen[0] == client.params_seen[1]
+    assert "_grant" not in client.params_seen[1], "grant must not ride inside params"
+
+
 # ── the longitude bug the previous demo shipped ────────────────────────────
 
 def test_longitude_scales_with_latitude(demo):

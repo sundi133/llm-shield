@@ -271,6 +271,7 @@ class ShieldClient:
         session_id: Optional[str] = None,
         workflow: Optional[str] = None,
         tool_params: Optional[dict] = None,
+        approval_grant: Optional[str] = None,
     ) -> "ToolDecision":
         """Authorize one tool call before it runs.
 
@@ -299,4 +300,26 @@ class ShieldClient:
             body["workflow"] = workflow
         if tool_params is not None:
             body["tool_params"] = tool_params
+        if approval_grant is not None:
+            # The signed grant, not the request id. Both are accepted, but the
+            # id is a status flag anyone with Redis access could set, while the
+            # grant is verified against this exact tool, params, and session.
+            body["approval_grant"] = approval_grant
         return ToolDecision(self._post("/v1/shield/tool/check", body))
+
+    def get_approval(self, request_id: str) -> Optional[dict]:
+        """Fetch one approval request, or None if it is gone.
+
+        Returns the stored record, which carries `status` and, once a human has
+        approved it, the signed `approval_grant` to pass back to check_tool.
+        """
+        r = requests.get(
+            f"{self.base_url}/v1/tenant/me/agentic/approvals",
+            headers=self._headers(), timeout=self.timeout,
+        )
+        if not r.ok:
+            raise ShieldError(f"{r.status_code} /approvals: {r.text[:200]}")
+        for item in r.json().get("approvals") or []:
+            if item.get("request_id") == request_id:
+                return item
+        return None
