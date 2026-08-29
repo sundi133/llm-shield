@@ -110,6 +110,38 @@ aircraft; this shows you why it is or is not moving.
 | Nobody answers | Times out and refuses. An unanswered hold is not an allow. |
 | PX4 not running | Exits with the `make px4_sitl` command, rather than hanging on connect. |
 
+## Two deployment modes
+
+The same architecture, deployed two ways. Which one you want depends on whether
+the aircraft has a link.
+
+| | `votal_guarded_drone_demo.py` | `edge_guard_demo.py` |
+|---|---|---|
+| Enforcement | hosted Shield, per action | on the aircraft, from a cached bundle |
+| Needs network | yes | **no** |
+| Judged rules (injection, mission scope) | yes | no, refused instead of guessed |
+| Deterministic rules | yes | yes |
+| Decision cost | one network hop | ~3 us |
+| Held actions | wait for a supervisor | refused, since nobody is reachable |
+
+Connected operations get everything. Disconnected operations keep the rules that
+can be evaluated without a model: geofence, ceilings, speed, battery reserve,
+time windows, egress allowlists. That is the honest split, and the edge
+evaluator is prevented from pretending otherwise by
+`tests/test_edge_policy_parity.py`.
+
+### Running the edge mode
+
+```bash
+python generate_policies.py      # 696 policies across 12 airframes
+python edge_guard_demo.py        # 2000 commands, no aircraft needed
+python edge_guard_demo.py --fly  # + PX4 SITL, flies what is allowed
+```
+
+Typical output: **10,000 decisions in 33 ms, 3.3 us each**, against a 696-policy
+bundle. Bundle size does not affect decision cost, because lookup is by tool
+name and a decision reads exactly one policy.
+
 ## Files
 
 | File | Purpose |
@@ -117,6 +149,9 @@ aircraft; this shows you why it is or is not moving.
 | `votal_guarded_drone_demo.py` | The planner. Calls Shield, then MAVSDK. No policy. |
 | `mission_policy.json` | The rules. Installed on the tenant, not read from disk at run time. |
 | `setup_mission.py` | Installs the policy and the approval rule. Run once. |
+| `edge_guard_demo.py` | On-device enforcement. Loads the bundle, blocks locally, no network. |
+| `edge_policy.py` | The deterministic evaluator. Six rule families, nothing judged. |
+| `generate_policies.py` | Generates the fleet bundle. Documents what is NOT a policy. |
 | `mavsdk_move_demo.py` | Unguarded MAVSDK movement, for comparison. |
 
 ## Spec
