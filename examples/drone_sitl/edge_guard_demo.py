@@ -35,7 +35,21 @@ CONNECTION_URL = "udpin://0.0.0.0:14540"
 #: most are ordinary, some violate one rule each, a few violate several. The
 #: interesting property is that the aircraft does not need to know which is
 #: which until it checks.
-def command_stream(n: int, seed: int = 7) -> list[tuple[str, dict[str, Any]]]:
+def command_stream(n: int, seed: int = 7, policy: "EdgePolicy | None" = None
+                   ) -> list[tuple[str, dict[str, Any], str]]:
+    """Commands a planner might issue, labelled with whether they SHOULD be blocked.
+
+    The label is ground truth, and it is what makes scoring possible. Getting it
+    right matters more than it sounds: the first version applied every violation
+    to a randomly chosen tool, including tools whose policy has no rule for the
+    field being corrupted. Injecting destination=evil into `orbit` is not an
+    attack that policy failed to catch, because `orbit` does not take a
+    destination. That mislabelling produced a recall of 0.66 and 430 phantom
+    "misses" that were nothing of the kind.
+
+    Passing `policy` lets each violation be aimed at a tool that actually
+    constrains the field, so a miss in the score is a real miss.
+    """
     rng = random.Random(seed)
     ok_zones = ["base", "zone-a", "zone-b", "substation-1", "pipeline-seg-2"]
     bad_zones = ["public-road", "school-grounds", "airport-ctr", "prison-airspace"]
@@ -63,27 +77,40 @@ def command_stream(n: int, seed: int = 7) -> list[tuple[str, dict[str, Any]]]:
             "payload_mb": rng.randint(1, 500),
         }
 
-    #: Each violation is a single realistic mistake or attack, not a scramble.
+    #: (label, field it corrupts, mutation). The field is what lets a violation
+    #: be aimed at a tool whose policy actually constrains it.
     violations = [
-        ("restricted zone",        lambda p: p.update(zone=rng.choice(bad_zones))),
-        ("above ceiling",          lambda p: p.update(altitude_m=rng.randint(130, 400))),
-        ("over speed",             lambda p: p.update(ground_speed_ms=rng.randint(16, 40))),
-        ("battery under reserve",  lambda p: p.update(battery_pct=rng.randint(5, 29))),
-        ("outside hours",          lambda p: p.update(local_hour=rng.choice([2, 3, 22, 23]))),
-        ("too far from home",      lambda p: p.update(distance_from_home_m=rng.randint(600, 3000))),
-        ("wind over limit",        lambda p: p.update(wind_ms=rng.randint(11, 25))),
-        ("unapproved sink",        lambda p: p.update(destination="https://evil.example/upload")),
-        ("unapproved endpoint",    lambda p: p.update(endpoint="203.0.113.9:5760")),
-        ("no return reserve",      lambda p: p.update(reserve_pct_on_arrival=rng.randint(0, 24))),
-        ("malformed aircraft id",  lambda p: p.update(aircraft_id="rogue-1")),
-        ("geofence bypass flag",   lambda p: p.update(bypass_geofence=True)),
-        ("raw mavlink passthrough",lambda p: p.update(raw_mavlink="COMMAND_LONG(400,...)")),
-        ("unknown role",           lambda p: p.update(operator_role="root")),
-        ("payload armed in flight",lambda p: p.update(payload_state="hot")),
-        ("gimbal past stop",       lambda p: p.update(gimbal_pitch_deg=95)),
-        ("missing mission id",     lambda p: p.update(mission_id=None)),
-        ("oversized export",       lambda p: p.update(payload_mb=9000)),
+        ("restricted zone",        "zone",                   lambda p: p.update(zone=rng.choice(bad_zones))),
+        ("above ceiling",          "altitude_m",             lambda p: p.update(altitude_m=rng.randint(130, 400))),
+        ("over speed",             "ground_speed_ms",        lambda p: p.update(ground_speed_ms=rng.randint(16, 40))),
+        ("battery under reserve",  "battery_pct",            lambda p: p.update(battery_pct=rng.randint(5, 29))),
+        ("outside hours",          "local_hour",             lambda p: p.update(local_hour=rng.choice([2, 3, 22, 23]))),
+        ("too far from home",      "distance_from_home_m",   lambda p: p.update(distance_from_home_m=rng.randint(600, 3000))),
+        ("wind over limit",        "wind_ms",                lambda p: p.update(wind_ms=rng.randint(11, 25))),
+        ("unapproved sink",        "destination",            lambda p: p.update(destination="https://evil.example/upload")),
+        ("unapproved endpoint",    "endpoint",               lambda p: p.update(endpoint="203.0.113.9:5760")),
+        ("no return reserve",      "reserve_pct_on_arrival", lambda p: p.update(reserve_pct_on_arrival=rng.randint(0, 24))),
+        ("malformed aircraft id",  "aircraft_id",            lambda p: p.update(aircraft_id="rogue-1")),
+        ("geofence bypass flag",   "bypass_geofence",        lambda p: p.update(bypass_geofence=True)),
+        ("raw mavlink passthrough","raw_mavlink",            lambda p: p.update(raw_mavlink="COMMAND_LONG(400,...)")),
+        ("unknown role",           "operator_role",          lambda p: p.update(operator_role="root")),
+        ("payload armed in flight","payload_state",          lambda p: p.update(payload_state="hot")),
+        ("gimbal past stop",       "gimbal_pitch_deg",       lambda p: p.update(gimbal_pitch_deg=95)),
+        ("missing mission id",     "mission_id",             lambda p: p.update(mission_id=None)),
+        ("oversized export",       "payload_mb",             lambda p: p.update(payload_mb=9000)),
     ]
+
+    def constrains(tool: str, field: str) -> bool:
+        """Does this tool's policy have any rule touching `field`?"""
+        if policy is None:
+            return True
+        pol = policy.parameter_policies.get(f"{AIRFRAME}.{tool}") or {}
+        return (field in (pol.get("required_fields") or [])
+                or field in (pol.get("forbidden_fields") or [])
+                or field in (pol.get("allowed_values") or {})
+                or field in (pol.get("numeric_limits") or {})
+                or field in (pol.get("regex_rules") or {})
+                or field in (pol.get("max_string_lengths") or {}))
 
     #: Actions that need a human. Offline they are refused, not queued, so the
     #: stream includes them to show that path rather than leaving it at zero.
@@ -106,9 +133,16 @@ def command_stream(n: int, seed: int = 7) -> list[tuple[str, dict[str, Any]]]:
             tool = rng.choice(held_tools)
             label = "needs approval"
         elif i % 3 == 1:                             # roughly a third violate
-            label, mutate = violations[violation_index % len(violations)]
+            label, field, mutate = violations[violation_index % len(violations)]
             violation_index += 1
-            mutate(params)
+            # Aim it at a tool that actually constrains the field. Corrupting a
+            # field the tool's policy never examines is not a missed block.
+            candidates = [t for t in tools if constrains(t, field)]
+            if candidates:
+                tool = rng.choice(candidates)
+                mutate(params)
+            else:
+                label = "ok"       # nothing constrains it; leave the request clean
 
         out.append((f"{AIRFRAME}.{tool}", params, label))
     return out
@@ -214,9 +248,71 @@ async def fly_allowed(allowed, limit: int = 3) -> None:
     await asyncio.sleep(8)
 
 
+def score(policy: EdgePolicy, stream) -> dict[str, Any]:
+    """Grade the guardrails against ground truth.
+
+    "It blocked something" is not evidence. The two numbers that matter are the
+    ones a block count cannot show:
+
+        false negatives  an attack flew. The security failure.
+        false positives  legitimate work refused. The reason guardrails get
+                         turned off in production, which is a security failure
+                         by a slower route.
+
+    Held actions are excluded: refusing them offline is correct, not a block.
+    """
+    tp = tn = fp = fn = 0
+    misses: list[tuple[str, str]] = []
+    false_alarms: list[tuple[str, str, str]] = []
+
+    for tool, params, label in stream:
+        if policy.requires_human(tool):
+            continue
+        should_block = label != "ok"
+        verdict = policy.check(tool, params)
+        blocked = not verdict.allowed
+
+        if should_block and blocked:
+            tp += 1
+        elif not should_block and not blocked:
+            tn += 1
+        elif not should_block and blocked:
+            fp += 1
+            false_alarms.append((tool, verdict.rule, verdict.reason))
+        else:
+            fn += 1
+            misses.append((tool, label))
+
+    return {"tp": tp, "tn": tn, "fp": fp, "fn": fn,
+            "misses": misses, "false_alarms": false_alarms,
+            "precision": tp / (tp + fp) if tp + fp else 1.0,
+            "recall": tp / (tp + fn) if tp + fn else 1.0}
+
+
+def print_score(s: dict[str, Any]) -> None:
+    print("\n  Scored against ground truth:")
+    print(f"    correctly blocked   {s['tp']}")
+    print(f"    correctly allowed   {s['tn']}")
+    print(f"    FALSE NEGATIVES     {s['fn']}   attacks that flew")
+    print(f"    FALSE POSITIVES     {s['fp']}   legitimate work refused")
+    print(f"    precision {s['precision']:.4f}   recall {s['recall']:.4f}")
+
+    for tool, label in s["misses"][:8]:
+        print(f"      MISS  {tool.split('.',1)[1]:16} {label}")
+    for tool, rule, reason in s["false_alarms"][:8]:
+        print(f"      FALSE ALARM  {tool.split('.',1)[1]:16} {rule}: {reason}")
+
+    if s["fn"] == 0 and s["fp"] == 0:
+        print("\n    Every attack blocked, no legitimate command refused.")
+    elif s["fn"]:
+        print(f"\n    {s['fn']} attacks were not caught. A block count would have hidden this.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--commands", type=int, default=2000)
+    ap.add_argument("--score", action="store_true",
+                    help="grade against ground truth: false negatives and false positives")
     ap.add_argument("--fly", action="store_true", help="also fly allowed commands on PX4 SITL")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
@@ -233,7 +329,7 @@ def main() -> int:
     print(f"{len(policy.held_tools)} actions require a human and are refused offline.")
     print(f"\nEvaluating {args.commands} commands locally, no network:\n")
 
-    stream = command_stream(args.commands)
+    stream = command_stream(args.commands, policy=policy)
     r = run(policy, stream, verbose=not args.quiet)
 
     n, el = r["n"], r["elapsed"]
@@ -250,6 +346,9 @@ def main() -> int:
     print("\n  blocks by rule family:")
     for rule, count in sorted(by_rule.items(), key=lambda kv: -kv[1]):
         print(f"    {rule:16} {count}")
+
+    if args.score:
+        print_score(score(policy, stream))
 
     if args.fly:
         asyncio.run(fly_allowed(r["allowed"]))
