@@ -32,6 +32,35 @@ Seven attacks, executed rather than described, with no network:
 
 Every one is reproducible by hand in the temp directory the script prints.
 
+## Show it with and without
+
+```bash
+python packages/shield-mavlink/scenarios.py
+```
+
+Ten operational failures, each run against the shipped policy, each stating what
+it costs when nothing refuses it. A refusal on its own proves nothing: the
+audience cannot tell whether the action would have succeeded, so the block reads
+as a script printing the word blocked. The WITHOUT column is what makes the WITH
+column mean something.
+
+| Scenario | Requires | Without the guard |
+|---|---|---|
+| Certificate lapsed over the weekend | no attacker | an uninsured, possibly unlawful sortie |
+| Planner believed a placard | someone who can hang a sign | a route nobody approved, perfectly well formed |
+| Footage to an unapproved host | a misconfiguration | site imagery on somebody else's storage |
+| Redaction silently skipped | a library that failed to load | identifiable faces and plates leave the aircraft |
+| Release over a car park | no attacker | the one on this list that injures somebody |
+| Gusts outside release limits | weather | payload lands somewhere other than the pad |
+| 2D GPS fix | no attacker | every vertical limit becomes unenforceable |
+| Detector floor raised to 0.99 | a model update | a blind aircraft that reports a clean site |
+| Logs cleared after an incident | an insider | the only record of what happened |
+| Ceiling edited in the hangar | filesystem access | reports that say compliant while it is not |
+
+`--only <id>` runs one with its full narration, `--list` shows the ids. Every
+scenario is pinned by a test, because a demo that keeps printing its story after
+the policy stops covering it is worse than no demo.
+
 ## Grade the policy, then grade the corpus
 
 `prove.py` shows the policy cannot be tampered with. This shows it does what its

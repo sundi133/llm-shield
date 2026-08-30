@@ -2,9 +2,9 @@
   "header": {
     "tenant_id": "bankco",
     "fleet_id": "inspection-north",
-    "bundle_version": 70345,
-    "issued_at": 1788070345,
-    "expires_at": 1788156745,
+    "bundle_version": 1270,
+    "issued_at": 1788101270,
+    "expires_at": 1788187670,
     "kid": "bundle-v1"
   },
   "policy": {
@@ -30,5 +30,5 @@
       }
     }
   },
-  "signature": "l+QoDLPe3Bt3Gd4RpDpLZNGLKZjJ5u9uzHUDEekXRxR61EXQtOYyHJt/UWfp1WElbpe+BquldENSpQzMMjHnCQ=="
+  "signature": "cAe85UPqRD8CQO/twMM1xHm3nnkIQkRQQYJP0kTxA25pCRpfrLQj4QHh0HjPAPhYwfanpNd1NIhzMC2tPTvMAQ=="
 }
