@@ -19,8 +19,9 @@ if PKG not in sys.path:
     sys.path.insert(0, PKG)
 
 from shield_mavlink.policy import LocalPolicy  # noqa: E402
-from verify_policy import (CORPUS, coverage, declared_rules,  # noqa: E402
-                           load_corpus, load_policy, mutations, score)
+from verify_policy import (CORPUS, all_cases, coverage,  # noqa: E402
+                           declared_rules, load_corpus, load_policy,
+                           load_subsystems, mutations, score)
 
 
 POLICY = load_policy()
@@ -80,11 +81,32 @@ def test_the_corpus_states_ground_truth_not_current_behaviour(corpus):
     and the cheapest way for that to happen is an expectation that was never
     written down in the first place.
     """
-    for case in corpus["cases"]:
-        assert case.get("expect") in ("allow", "deny"), case.get("id")
+    for tool, case in all_cases(corpus):
+        assert case.get("expect") in ("allow", "deny"), f"{tool}.{case.get('id')}"
         if case["expect"] == "deny":
             assert case.get("rule"), (
-                f"{case['id']} expects a denial but does not say which rule "
-                "should produce it, so it cannot detect being refused for the "
-                "wrong reason"
+                f"{tool}.{case['id']} expects a denial but does not say which "
+                "rule should produce it, so it cannot detect being refused for "
+                "the wrong reason"
             )
+
+
+def test_every_subsystem_has_rules():
+    """The question an operator asks is "is the camera governed", not "how many
+    rules are there". A subsystem declared in the map with nothing behind it is
+    a coverage claim with no coverage."""
+    policy = load_policy()
+    subsystems = load_subsystems()
+    fields = {f for _t, _fam, f in declared_rules(policy)}
+    for sub, members in subsystems.items():
+        governed = [m for m in members if m in fields]
+        assert governed, f"subsystem {sub!r} is declared but no rule references it"
+
+
+def test_every_rule_is_attributed_to_a_subsystem():
+    """An unattributed rule cannot be reported on, so it is invisible to the
+    person deciding whether their fleet is covered."""
+    policy = load_policy()
+    mapped = {f for members in load_subsystems().values() for f in members}
+    orphans = sorted({f for _t, _fam, f in declared_rules(policy) if f not in mapped})
+    assert not orphans, f"rules on fields with no subsystem: {orphans}"

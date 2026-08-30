@@ -49,8 +49,8 @@ Three passes, and the third is the one that matters:
 | **Coverage** | which declared rules does the corpus actually exercise? A rule nothing tests can be deleted in a refactor with a green suite. |
 | **Mutation** | weaken each rule on purpose. If the corpus does not notice, that rule was never defended, and the score was telling you nothing about it. |
 
-Run against the shipped corpus it reports 67/67 cases, 55/55 rules covered,
-55/55 weakenings caught. That third number is the claim: **delete any single rule from
+Run against the shipped corpus it reports 119/119 cases, 103/103 rules
+covered, 103/103 weakenings caught, across 17 subsystems. That third number is the claim: **delete any single rule from
 this policy and a case fails.**
 
 It found two real gaps the first time it ran, on a corpus already scoring 100
@@ -62,14 +62,41 @@ Rules and cases are both data, so the policy grows without touching code:
 
 | File | Holds |
 |---|---|
-| `corpus/arm_policy.json` | 55 pre-flight rules across 7 families |
-| `corpus/arm.json` | 67 labelled cases, each naming the rule that should refuse |
+| `corpus/arm_policy.json` | 103 rules over 5 tools, each field tagged to a subsystem |
+| `corpus/arm.json` | 119 labelled cases, each naming the rule that should refuse |
 
-The rules cover identity and attribution, the flags that exist only to defeat a
-guard, pre-flight vehicle state (GPS fix quality, EKF, compass, RC link),
-energy including per-cell voltage, geometry including RTL altitude, navigation
-quality, weather, airframe service state, and operator certification. Every one
-has a case, and weakening any one of them breaks that case.
+### Why five tools and not one
+
+Arming checks subsystem **state** at a single moment. Camera capture, payload
+release, upload and log erase all happen *after* that gate is finished, so an
+arm check structurally cannot govern them. Each gets its own policy, on the same
+engine, keyed by tool.
+
+That distinction is what makes the subsystem report meaningful: the camera is
+covered at arm time (is it working, is there storage) **and** at capture time
+(is redaction on, are we over people).
+
+Coverage is reported per subsystem, because "103 of 103 rules" answers a
+question nobody asked and "is the camera governed" is the one they do:
+
+| Subsystem | Rules | Governed at |
+|---|---|---|
+| route_planner | 12 | arm |
+| camera | 11 | arm, camera_capture |
+| logs_storage | 10 | arm, log_erase |
+| network | 8 | arm, upload_media |
+| payload | 8 | arm, payload_release |
+| identity | 8 | all five tools |
+| operator, weather, guard_defeat | 7 each | arm and the runtime tools |
+| object_detector | 5 | arm |
+| flight_controller, airspace, energy | 4 each | arm |
+| gps | 3 | arm |
+| airframe, annotation | 2 each | arm |
+| radio_link | 1 | arm |
+
+Every rule is attributed to a subsystem, and a test fails if one is not: an
+unattributed rule cannot be reported on, so it is invisible to whoever is
+deciding whether their fleet is covered.
 
 `--bundle` grades a signed bundle rather than the shipped policy.
 

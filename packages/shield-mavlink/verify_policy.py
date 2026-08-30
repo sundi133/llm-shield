@@ -59,6 +59,15 @@ def load_policy(path: Path = POLICY_FILE) -> dict[str, Any]:
     return {"parameter_policies": d["parameter_policies"]}
 
 
+def load_subsystems(path: Path = POLICY_FILE) -> dict[str, list[str]]:
+    """field -> subsystem, so coverage can be reported the way an operator thinks.
+
+    "55 of 55 rules" answers a question nobody asked. "Is the camera governed"
+    is the question, and a rule count cannot answer it.
+    """
+    return json.loads(path.read_text()).get("subsystems", {})
+
+
 @dataclass
 class Score:
     passed: int = 0
@@ -75,6 +84,10 @@ def load_corpus(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
+def tools_in(corpus: dict) -> list[str]:
+    return list(corpus["tools"].keys())
+
+
 def case_params(corpus: dict, case: dict) -> dict[str, Any]:
     """Baseline with the case applied.
 
@@ -83,17 +96,26 @@ def case_params(corpus: dict, case: dict) -> dict[str, Any]:
     field whose value legitimately is null, and made "missing required field"
     cases silently depend on which fields the loader special-cased.
     """
-    params = dict(corpus["baseline"])
+    params = dict(case["_baseline"])
     for k in case.get("unset", []):
         params.pop(k, None)
     params.update(case.get("set", {}))
     return params
 
 
+def all_cases(corpus: dict) -> list[tuple[str, dict]]:
+    """(tool, case) across every tool, with its baseline attached."""
+    out = []
+    for tool, block in corpus["tools"].items():
+        for case in block["cases"]:
+            out.append((tool, {**case, "_baseline": block["baseline"]}))
+    return out
+
+
 def score(policy: LocalPolicy, corpus: dict) -> Score:
     s = Score()
-    for case in corpus["cases"]:
-        v = policy.check("arm", case_params(corpus, case))
+    for tool, case in all_cases(corpus):
+        v = policy.check(tool, case_params(corpus, case))
         expected_deny = case["expect"] == "deny"
 
         if expected_deny and v.blocked:
@@ -113,41 +135,51 @@ def score(policy: LocalPolicy, corpus: dict) -> Score:
     return s
 
 
-def declared_rules(policy_dict: dict, tool: str = "arm") -> list[tuple[str, str]]:
-    """Every (family, field) the policy declares. The denominator for coverage."""
+def declared_rules(policy_dict: dict, tool: str = None) -> list[tuple[str, str, str]]:
+    """Every (tool, family, field) declared. The denominator for coverage."""
+    if tool is None:
+        out = []
+        for t in policy_dict["parameter_policies"]:
+            out += declared_rules(policy_dict, t)
+        return out
     p = policy_dict["parameter_policies"][tool]
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str]] = []
     for f in p.get("required_fields", []):
-        out.append(("required", f))
+        out.append((tool, "required", f))
     for f in p.get("forbidden_fields", []):
-        out.append(("forbidden", f))
+        out.append((tool, "forbidden", f))
     for f in p.get("allowed_values", {}):
-        out.append(("allowed_values", f))
+        out.append((tool, "allowed_values", f))
     for f, lim in p.get("numeric_limits", {}).items():
         if lim.get("min") is not None:
-            out.append(("min", f))
+            out.append((tool, "min", f))
         if lim.get("max") is not None:
-            out.append(("max", f))
+            out.append((tool, "max", f))
     for f in p.get("regex_rules", {}):
-        out.append(("regex", f))
+        out.append((tool, "regex", f))
     for f in p.get("max_string_lengths", {}):
-        out.append(("max_length", f))
+        out.append((tool, "max_length", f))
     return out
 
 
 def coverage(policy: LocalPolicy, policy_dict: dict, corpus: dict
              ) -> tuple[set[tuple[str, str]], list[tuple[str, str]]]:
     """Which declared rules does any case actually trip?"""
-    hit: set[tuple[str, str]] = set()
-    for case in corpus["cases"]:
-        v = policy.check("arm", case_params(corpus, case))
+    hit: set[tuple[str, str, str]] = set()
+    for tool, case in all_cases(corpus):
+        v = policy.check(tool, case_params(corpus, case))
         if v.blocked:
-            hit.add((v.rule, v.field))
+            hit.add((tool, v.rule, v.field))
     declared = declared_rules(policy_dict)
     return hit, [r for r in declared if r not in hit]
 
 
-def mutations(policy_dict: dict, tool: str = "arm") -> Iterator[tuple[str, dict]]:
+def mutations(policy_dict: dict, tool: str = None) -> Iterator[tuple[str, dict]]:
+    if tool is None:
+        for t in policy_dict["parameter_policies"]:
+            for label, m in mutations(policy_dict, t):
+                yield f"{t}: {label}", m
+        return
     """Weaken one rule at a time, the way a careless edit or refactor would.
 
     Every mutation makes the policy MORE permissive. A corpus that does not
@@ -202,6 +234,7 @@ def main() -> int:
     args = ap.parse_args()
 
     corpus = load_corpus(Path(args.corpus))
+    subsystems = load_subsystems()
 
     if args.bundle:
         if not args.pubkey:
@@ -221,13 +254,15 @@ def main() -> int:
     policy = LocalPolicy(policy_dict)
     rules = declared_rules(policy_dict)
 
-    print(f"corpus  {corpus['corpus']}: {len(corpus['cases'])} cases")
+    ncases = len(all_cases(corpus))
+    print(f"corpus  {corpus['corpus']}: {ncases} cases over "
+          f"{len(tools_in(corpus))} tools")
     print(f"policy  {len(rules)} declared rules across "
-          f"{len({r[0] for r in rules})} families\n")
+          f"{len(policy_dict['parameter_policies'])} tools\n")
 
     # ── 1. score ───────────────────────────────────────────────────────────
     s = score(policy, corpus)
-    print(f"SCORE      {s.passed}/{len(corpus['cases'])} cases correct")
+    print(f"SCORE      {s.passed}/{ncases} cases correct")
     for cid in s.false_negatives:
         print(f"  MISS         {cid}: expected a refusal, the request was allowed")
     for cid, why in s.false_positives:
@@ -241,11 +276,32 @@ def main() -> int:
     # ── 2. coverage ────────────────────────────────────────────────────────
     hit, untested = coverage(policy, policy_dict, corpus)
     print(f"\nCOVERAGE   {len(rules) - len(untested)}/{len(rules)} declared rules exercised")
-    for family, fieldname in untested:
-        print(f"  UNTESTED     {family}.{fieldname}: no case trips this. It could be "
-              f"deleted and the suite stays green")
+    for tool, family, fieldname in untested:
+        print(f"  UNTESTED     {tool}.{family}.{fieldname}: no case trips this. It "
+              f"could be deleted and the suite stays green")
     if not untested:
         print("           every declared rule is exercised by at least one case")
+
+    # ── 2b. by subsystem, which is how the question is actually asked ─────
+    if subsystems:
+        field_to_sub = {f: sub for sub, fields in subsystems.items() for f in fields}
+        per: dict[str, list] = {sub: [] for sub in subsystems}
+        unmapped = []
+        for tool, family, fieldname in rules:
+            sub = field_to_sub.get(fieldname)
+            (per[sub] if sub else unmapped).append((tool, family, fieldname))
+        untested_set = set(untested)
+        print("\nSUBSYSTEMS")
+        for sub in sorted(per):
+            rs = per[sub]
+            gaps = [r for r in rs if r in untested_set]
+            tools_covering = sorted({t for t, _, _ in rs})
+            mark = "  " if rs and not gaps else "!!"
+            print(f"  {mark} {sub:18} {len(rs):3} rules  "
+                  f"{'via ' + ', '.join(tools_covering) if rs else 'NO RULES'}")
+        if unmapped:
+            print(f"     {'(unmapped)':18} {len(unmapped):3} rules  "
+                  f"not attributed to a subsystem")
 
     # ── 3. mutation ────────────────────────────────────────────────────────
     if args.no_mutation:
