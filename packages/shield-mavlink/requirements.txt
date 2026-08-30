@@ -1,0 +1,9 @@
+# Component-local. Deliberately NOT in the root requirements.txt: nothing in the
+# data or admin plane imports mavsdk, and a drone SDK has no business in the
+# guardrail server image.
+#
+# cryptography is a root dependency already, so bundle verification adds no new
+# crypto library. It is listed here so this package installs standalone on a
+# companion computer with no Shield checkout.
+cryptography>=42
+mavsdk>=2.0.0      # only needed for the authorizer, not for bundle/audit
