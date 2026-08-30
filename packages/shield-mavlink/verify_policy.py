@@ -59,6 +59,19 @@ def load_policy(path: Path = POLICY_FILE) -> dict[str, Any]:
     return {"parameter_policies": d["parameter_policies"]}
 
 
+def load_hazards(path: Path = POLICY_FILE) -> dict[str, Any]:
+    """The hazard register, the rule mapping, and the admitted gaps.
+
+    Documentation, never read at decision time. It is stripped from the bundle
+    an aircraft receives, because anything the evaluator can read is something
+    that could one day influence a decision, and a hazard note is a comment.
+    """
+    d = json.loads(path.read_text())
+    return {"hazards": d.get("hazards", {}),
+            "rule_hazards": d.get("rule_hazards", {}),
+            "accepted_gaps": d.get("accepted_gaps", {})}
+
+
 def load_subsystems(path: Path = POLICY_FILE) -> dict[str, list[str]]:
     """field -> subsystem, so coverage can be reported the way an operator thinks.
 
@@ -225,12 +238,26 @@ def mutations(policy_dict: dict, tool: str = None) -> Iterator[tuple[str, dict]]
         yield f"max_string_lengths.{f} removed", m
 
 
+def _wrap_text(text: str, width: int) -> list[str]:
+    out, line = [], ""
+    for w in text.split():
+        if len(line) + len(w) + 1 > width:
+            out.append(line); line = w
+        else:
+            line = f"{line} {w}".strip()
+    if line:
+        out.append(line)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--bundle", help="signed bundle to grade instead of the default")
     ap.add_argument("--pubkey", help="pinned key, required with --bundle")
     ap.add_argument("--corpus", default=str(CORPUS))
     ap.add_argument("--no-mutation", action="store_true")
+    ap.add_argument("--hazards", action="store_true",
+                    help="coverage by hazard, both directions")
     args = ap.parse_args()
 
     corpus = load_corpus(Path(args.corpus))
@@ -302,6 +329,33 @@ def main() -> int:
         if unmapped:
             print(f"     {'(unmapped)':18} {len(unmapped):3} rules  "
                   f"not attributed to a subsystem")
+
+    # ── 2c. by hazard, which is the question a safety assessor asks ──────
+    hz = load_hazards()
+    if hz["hazards"]:
+        by_hazard: dict[str, list[str]] = {h: [] for h in hz["hazards"]}
+        for key, hazards in hz["rule_hazards"].items():
+            for h in hazards:
+                by_hazard.setdefault(h, []).append(key)
+        print("\nHAZARDS")
+        for h in sorted(hz["hazards"]):
+            meta = hz["hazards"][h]
+            keys = by_hazard.get(h, [])
+            gap = h in hz["accepted_gaps"]
+            mark = "!!" if (not keys and not gap) else "  "
+            state = "ACCEPTED GAP" if (not keys and gap) else f"{len(keys)} rules"
+            print(f"  {mark} {h}  {meta['title'][:44]:46} {state}")
+            if args.hazards:
+                gates = sorted({k.split('.')[0] for k in keys})
+                if gates:
+                    print(f"        at: {', '.join(gates)}")
+                for line in _wrap_text(f"residual: {meta['residual']}", 66):
+                    print(f"        {line}")
+        if args.hazards:
+            print("\n  Every rule states the hazard it mitigates, and every")
+            print("  hazard names what covers it. Residual risk is stated, "
+                  "including")
+            print("  where nothing here helps.")
 
     # ── 3. mutation ────────────────────────────────────────────────────────
     if args.no_mutation:

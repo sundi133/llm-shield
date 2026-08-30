@@ -129,6 +129,38 @@ deciding whether their fleet is covered.
 
 `--bundle` grades a signed bundle rather than the shipped policy.
 
+## Which hazard does this mitigate
+
+```bash
+python packages/shield-mavlink/verify_policy.py --hazards
+```
+
+Seventeen hazards, 103 rules, mapped in both directions and machine-checked.
+Every rule names the hazard it mitigates; every hazard names what covers it, at
+which gate, with the residual risk stated.
+
+The residual is the part worth reading, because it says what is still uncovered:
+
+> **H-01 Loss of containment of payload over people** (12 rules, at arm,
+> camera_capture, payload_release)
+> Shield refuses the release command when the arguments say people are below.
+> It cannot detect people the detector missed, so this reduces the chance of an
+> AUTHORIZED release over people, not the chance of people being present.
+
+> **H-09 Degraded or spoofed navigation** (5 rules, at arm)
+> Refuses on fix type, satellite count, HDOP and EKF status, which catches
+> degradation. It CANNOT detect a well-formed spoofed fix: that is
+> estimator-level and outside anything Shield can see.
+
+Every hazard also lists what else mitigates it, because claiming sole mitigation
+of something PX4 covers too is a false claim by omission.
+
+Tests fail the build rather than warn. A rule with no hazard, a hazard with no
+rules, a mapping for a rule that was renamed, a residual under forty characters,
+or hazard metadata leaking into a signed bundle: all are build failures. This is
+the artefact most likely to be quoted at a regulator, and its value is entirely
+in being complete.
+
 ## What it does not prove
 
 Stated because a proof that overclaims is worth less than a narrow one.

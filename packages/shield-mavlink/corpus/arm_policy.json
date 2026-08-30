@@ -400,5 +400,515 @@
       "note",
       "deviation_reason"
     ]
-  }
+  },
+  "hazards": {
+    "H-01": {
+      "title": "Loss of containment of payload over people",
+      "description": "An object leaves the aircraft above an area occupied by people not under the operator's control.",
+      "severity_class": "catastrophic",
+      "mitigated_by_others": [
+        "operational site survey",
+        "ground crew cordon"
+      ],
+      "residual": "Shield refuses the release command when the arguments say people are below. It cannot detect people the detector missed, so this reduces the chance of an AUTHORIZED release over people, not the chance of people being present."
+    },
+    "H-02": {
+      "title": "Flight into a prohibited or unapproved area",
+      "description": "The aircraft enters airspace or ground area it was not cleared for.",
+      "severity_class": "hazardous",
+      "mitigated_by_others": [
+        "PX4 geofence",
+        "airspace clearance process"
+      ],
+      "residual": "Refuses a mission whose declared envelope breaches the limits, before arming. It does not track the aircraft in flight; a mission that stays within declared bounds and then deviates is PX4's fence to catch."
+    },
+    "H-03": {
+      "title": "Loss of the aircraft through energy exhaustion downrange",
+      "description": "The aircraft cannot return to a landing site with usable reserve.",
+      "severity_class": "major",
+      "mitigated_by_others": [
+        "PX4 low-battery failsafe",
+        "RTL"
+      ],
+      "residual": "Refuses to arm when the declared reserve or cell voltage is insufficient. The reserve figure is supplied by the planner; Shield does not model energy itself and cannot detect an optimistic estimate."
+    },
+    "H-04": {
+      "title": "Operation outside environmental limits",
+      "description": "Flight or payload release in wind, gusts, visibility, precipitation or temperature outside the airframe's envelope.",
+      "severity_class": "major",
+      "mitigated_by_others": [
+        "operator go/no-go procedure"
+      ],
+      "residual": "Refuses on the conditions reported to it. A wrong or stale weather reading produces a wrong decision, and nothing here validates the source."
+    },
+    "H-05": {
+      "title": "Unauthorized egress of operational data",
+      "description": "Imagery, telemetry or logs leave the aircraft to a destination nobody approved.",
+      "severity_class": "hazardous",
+      "mitigated_by_others": [
+        "network segmentation",
+        "egress firewall"
+      ],
+      "residual": "Refuses uploads to unapproved destinations and while the network posture is offline. It governs the upload ACTION; it cannot prevent a process on the companion computer opening its own socket."
+    },
+    "H-06": {
+      "title": "Disclosure of personal data in captured imagery",
+      "description": "Faces, plates, badges or addresses leave the aircraft unmasked.",
+      "severity_class": "hazardous",
+      "mitigated_by_others": [
+        "redaction pipeline",
+        "data retention policy"
+      ],
+      "residual": "Refuses capture over people and refuses upload when redaction was not applied. It trusts the redaction_applied flag; it does not inspect pixels and cannot confirm redaction actually worked."
+    },
+    "H-07": {
+      "title": "Operation by an unqualified or unauthorized person",
+      "description": "Someone arms or commands the aircraft without a current certificate or the required role.",
+      "severity_class": "hazardous",
+      "mitigated_by_others": [
+        "crew rostering",
+        "physical access control"
+      ],
+      "residual": "Refuses on the identity and certificate state presented. It does not authenticate the person: an operator id is asserted, not proven, and unsigned MAVLink means the assertion is not even bound to a verified session."
+    },
+    "H-08": {
+      "title": "Operation on an unapproved or unverified mission",
+      "description": "The aircraft flies a mission nobody signed off, or one whose fence was never uploaded.",
+      "severity_class": "hazardous",
+      "mitigated_by_others": [
+        "mission planning approval workflow"
+      ],
+      "residual": "Refuses when the mission is not marked authorized or not uploaded. Those are flags supplied by the planner, so a compromised planner can assert them."
+    },
+    "H-09": {
+      "title": "Degraded or spoofed navigation acted upon as valid",
+      "description": "The aircraft flies on a position solution that is wrong, whether through degradation or deliberate spoofing.",
+      "severity_class": "hazardous",
+      "mitigated_by_others": [
+        "EKF innovation gates",
+        "RAIM",
+        "multi-constellation receivers"
+      ],
+      "residual": "Refuses on fix type, satellite count, HDOP and EKF status, which catches degradation. It CANNOT detect a well-formed spoofed fix: that is estimator-level and outside anything Shield can see."
+    },
+    "H-10": {
+      "title": "Loss of the record of what the aircraft was told and decided",
+      "description": "The decision log is missing, full, unwritable, broken, or erased before it was preserved.",
+      "severity_class": "major",
+      "mitigated_by_others": [
+        "central audit sync",
+        "operational log retention"
+      ],
+      "residual": "Refuses to arm without writable storage and an intact chain, and refuses erase before sync. It cannot prove the aircraft wrote a record for every decision it made: a compromised process could decide and stay silent."
+    },
+    "H-11": {
+      "title": "Operation with unverified or unknown software",
+      "description": "The airframe is running firmware, or the aircraft a detector model, that nobody identified.",
+      "severity_class": "major",
+      "mitigated_by_others": [
+        "build and release process",
+        "secure boot where fitted"
+      ],
+      "residual": "Refuses when the firmware or model hash is absent or malformed. It records what was declared; it does not attest that the running software matches the hash. That needs measured boot."
+    },
+    "H-12": {
+      "title": "Undetected sensing failure",
+      "description": "The camera or detector is degraded or misconfigured, and the sortie reports a clean site rather than a blind aircraft.",
+      "severity_class": "major",
+      "mitigated_by_others": [
+        "periodic detector validation against known targets"
+      ],
+      "residual": "Refuses on camera and detector status, storage headroom, and a confidence floor bounded at both ends. It cannot tell a working detector from one that is silently wrong on this particular site."
+    },
+    "H-13": {
+      "title": "Collision with terrain or obstacle",
+      "description": "The aircraft or its return path passes below the obstacle environment.",
+      "severity_class": "catastrophic",
+      "mitigated_by_others": [
+        "PX4 terrain following where fitted",
+        "site survey"
+      ],
+      "residual": "Refuses missions with an RTL altitude below the surveyed obstacle environment, and capture below a minimum AGL. It has no terrain model and cannot assess a specific route."
+    },
+    "H-14": {
+      "title": "Loss of control link without a safe fallback",
+      "description": "The RC or command link is absent or degraded at arm time.",
+      "severity_class": "major",
+      "mitigated_by_others": [
+        "PX4 link-loss failsafe",
+        "RTL on link loss"
+      ],
+      "residual": "Refuses to arm on a lost link, and permits an explicit not_required for BVLOS operations. In-flight link loss is entirely PX4's, and this contributes nothing to it."
+    },
+    "H-15": {
+      "title": "Deliberate defeat of the guardrail",
+      "description": "A caller attempts to bypass, disable, or override policy enforcement or its audit.",
+      "severity_class": "hazardous",
+      "mitigated_by_others": [
+        "signed policy bundles",
+        "hash-chained audit"
+      ],
+      "residual": "Refuses arguments carrying bypass, override, force and audit-disable flags, and refuses to run at all on a bundle that fails signature verification. It does not authenticate the MAVLink peer, so a spoofed authorizer on the same network is not addressed here."
+    },
+    "H-16": {
+      "title": "Operation of an airframe outside its maintenance state",
+      "description": "The aircraft flies overdue for service, or carrying more than it is rated for.",
+      "severity_class": "major",
+      "mitigated_by_others": [
+        "maintenance management system"
+      ],
+      "residual": "Refuses on declared service hours and payload mass. Both are asserted by the caller and not measured."
+    },
+    "H-17": {
+      "title": "Actions that cannot be attributed or reconstructed",
+      "description": "A decision or command cannot be tied to an aircraft, mission, operator or asset after the fact.",
+      "severity_class": "minor",
+      "mitigated_by_others": [
+        "central audit",
+        "flight logs"
+      ],
+      "residual": "Refuses actions missing identity fields, and enforces their shape. Identifiers are asserted rather than authenticated, so this supports reconstruction rather than proving identity."
+    }
+  },
+  "rule_hazards": {
+    "payload_release.allowed_values.over_people": [
+      "H-01"
+    ],
+    "camera_capture.allowed_values.over_people": [
+      "H-01",
+      "H-06"
+    ],
+    "payload_release.allowed_values.payload_state": [
+      "H-01"
+    ],
+    "payload_release.allowed_values.release_authorization": [
+      "H-01",
+      "H-07"
+    ],
+    "payload_release.required.release_authorization": [
+      "H-01",
+      "H-07"
+    ],
+    "payload_release.forbidden.force_release": [
+      "H-01",
+      "H-15"
+    ],
+    "payload_release.max.agl_m": [
+      "H-01"
+    ],
+    "payload_release.min.agl_m": [
+      "H-01"
+    ],
+    "payload_release.max.ground_speed_ms": [
+      "H-01"
+    ],
+    "payload_release.max.wind_ms": [
+      "H-01",
+      "H-04"
+    ],
+    "arm.allowed_values.payload_state": [
+      "H-01"
+    ],
+    "arm.allowed_values.gimbal_state": [
+      "H-01",
+      "H-16"
+    ],
+    "arm.max.max_relative_altitude_m": [
+      "H-02",
+      "H-13"
+    ],
+    "arm.min.max_relative_altitude_m": [
+      "H-02"
+    ],
+    "arm.max.distance_from_home_m": [
+      "H-02",
+      "H-03"
+    ],
+    "arm.min.distance_from_home_m": [
+      "H-02"
+    ],
+    "arm.allowed_values.geofence_uploaded": [
+      "H-02"
+    ],
+    "arm.required.geofence_uploaded": [
+      "H-02"
+    ],
+    "arm.allowed_values.airspace_clearance": [
+      "H-02"
+    ],
+    "arm.max.local_hour": [
+      "H-02"
+    ],
+    "arm.min.local_hour": [
+      "H-02"
+    ],
+    "arm.allowed_values.flight_category": [
+      "H-02",
+      "H-08"
+    ],
+    "arm.forbidden.bypass_geofence": [
+      "H-02",
+      "H-15"
+    ],
+    "arm.min.battery_pct": [
+      "H-03"
+    ],
+    "arm.min.battery_cell_v": [
+      "H-03"
+    ],
+    "arm.max.battery_cell_v": [
+      "H-03",
+      "H-16"
+    ],
+    "arm.min.reserve_pct_on_arrival": [
+      "H-03"
+    ],
+    "arm.max.wind_ms": [
+      "H-04"
+    ],
+    "arm.max.gust_ms": [
+      "H-04"
+    ],
+    "arm.min.visibility_m": [
+      "H-04"
+    ],
+    "arm.max.precipitation_mmh": [
+      "H-04"
+    ],
+    "arm.max.temperature_c": [
+      "H-04",
+      "H-03"
+    ],
+    "arm.min.temperature_c": [
+      "H-04",
+      "H-03"
+    ],
+    "upload_media.allowed_values.destination": [
+      "H-05"
+    ],
+    "upload_media.required.destination": [
+      "H-05"
+    ],
+    "upload_media.allowed_values.network_posture": [
+      "H-05"
+    ],
+    "arm.allowed_values.network_posture": [
+      "H-05"
+    ],
+    "upload_media.max.payload_mb": [
+      "H-05"
+    ],
+    "camera_capture.forbidden.raw_frame_export": [
+      "H-05",
+      "H-06"
+    ],
+    "upload_media.allowed_values.redaction_applied": [
+      "H-06"
+    ],
+    "upload_media.forbidden.disable_redaction": [
+      "H-06",
+      "H-15"
+    ],
+    "camera_capture.forbidden.disable_redaction": [
+      "H-06",
+      "H-15"
+    ],
+    "arm.allowed_values.operator_role": [
+      "H-07"
+    ],
+    "arm.allowed_values.operator_cert_valid": [
+      "H-07"
+    ],
+    "arm.min.operator_cert_days_remaining": [
+      "H-07"
+    ],
+    "arm.required.operator_id": [
+      "H-07",
+      "H-17"
+    ],
+    "arm.regex.operator_id": [
+      "H-07",
+      "H-17"
+    ],
+    "log_erase.required.operator_id": [
+      "H-07",
+      "H-10",
+      "H-17"
+    ],
+    "arm.allowed_values.mission_authorized": [
+      "H-08"
+    ],
+    "arm.allowed_values.mission_uploaded": [
+      "H-08"
+    ],
+    "arm.required.mission_uploaded": [
+      "H-08"
+    ],
+    "arm.max.mission_waypoints": [
+      "H-08"
+    ],
+    "arm.min.mission_waypoints": [
+      "H-08"
+    ],
+    "arm.allowed_values.gps_fix_type": [
+      "H-09",
+      "H-02"
+    ],
+    "arm.min.gps_satellites": [
+      "H-09"
+    ],
+    "arm.max.gps_hdop": [
+      "H-09"
+    ],
+    "arm.allowed_values.ekf_status": [
+      "H-09"
+    ],
+    "arm.allowed_values.compass_calibrated": [
+      "H-09"
+    ],
+    "arm.allowed_values.log_storage_state": [
+      "H-10"
+    ],
+    "arm.min.log_storage_free_pct": [
+      "H-10"
+    ],
+    "arm.allowed_values.log_chain_state": [
+      "H-10"
+    ],
+    "arm.max.unsynced_log_records": [
+      "H-10"
+    ],
+    "arm.forbidden.disable_audit": [
+      "H-10",
+      "H-15"
+    ],
+    "log_erase.allowed_values.log_sync_state": [
+      "H-10"
+    ],
+    "log_erase.allowed_values.log_chain_state": [
+      "H-10"
+    ],
+    "log_erase.max.unsynced_log_records": [
+      "H-10"
+    ],
+    "log_erase.allowed_values.erase_authorization": [
+      "H-10",
+      "H-07"
+    ],
+    "log_erase.required.erase_authorization": [
+      "H-10"
+    ],
+    "log_erase.forbidden.force_erase": [
+      "H-10",
+      "H-15"
+    ],
+    "log_erase.forbidden.skip_sync": [
+      "H-10",
+      "H-15"
+    ],
+    "arm.required.firmware_hash": [
+      "H-11"
+    ],
+    "arm.regex.firmware_hash": [
+      "H-11"
+    ],
+    "arm.required.detector_model_hash": [
+      "H-11",
+      "H-12"
+    ],
+    "arm.regex.detector_model_hash": [
+      "H-11",
+      "H-12"
+    ],
+    "arm.allowed_values.camera_status": [
+      "H-12"
+    ],
+    "arm.allowed_values.camera_storage_state": [
+      "H-12"
+    ],
+    "arm.min.camera_storage_free_pct": [
+      "H-12"
+    ],
+    "arm.allowed_values.detector_status": [
+      "H-12"
+    ],
+    "arm.min.detector_confidence_floor": [
+      "H-12"
+    ],
+    "arm.max.detector_confidence_floor": [
+      "H-12"
+    ],
+    "camera_capture.allowed_values.camera_status": [
+      "H-12"
+    ],
+    "camera_capture.min.camera_storage_free_pct": [
+      "H-12"
+    ],
+    "arm.min.rtl_altitude_m": [
+      "H-13"
+    ],
+    "arm.max.rtl_altitude_m": [
+      "H-13",
+      "H-02"
+    ],
+    "camera_capture.min.agl_m": [
+      "H-13"
+    ],
+    "arm.allowed_values.rc_link": [
+      "H-14"
+    ],
+    "arm.forbidden.override_policy": [
+      "H-15"
+    ],
+    "arm.forbidden.raw_mavlink": [
+      "H-15"
+    ],
+    "arm.forbidden.force_arm": [
+      "H-15"
+    ],
+    "arm.max.hours_since_service": [
+      "H-16"
+    ],
+    "arm.max.payload_mass_kg": [
+      "H-16",
+      "H-03"
+    ],
+    "arm.required.aircraft_id": [
+      "H-17"
+    ],
+    "arm.regex.aircraft_id": [
+      "H-17"
+    ],
+    "arm.required.mission_id": [
+      "H-17"
+    ],
+    "arm.regex.mission_id": [
+      "H-17"
+    ],
+    "arm.max_length.note": [
+      "H-17"
+    ],
+    "arm.max_length.deviation_reason": [
+      "H-17"
+    ],
+    "camera_capture.required.mission_id": [
+      "H-17"
+    ],
+    "camera_capture.required.asset_tag": [
+      "H-17"
+    ],
+    "camera_capture.regex.asset_tag": [
+      "H-17"
+    ],
+    "payload_release.required.mission_id": [
+      "H-17"
+    ],
+    "upload_media.required.mission_id": [
+      "H-17"
+    ],
+    "log_erase.required.mission_id": [
+      "H-17"
+    ]
+  },
+  "accepted_gaps": {}
 }
