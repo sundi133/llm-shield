@@ -19,8 +19,11 @@ if PKG not in sys.path:
     sys.path.insert(0, PKG)
 
 from shield_mavlink.policy import LocalPolicy  # noqa: E402
-from verify_policy import (CORPUS, DEFAULT_POLICY, coverage,  # noqa: E402
-                           declared_rules, load_corpus, mutations, score)
+from verify_policy import (CORPUS, coverage, declared_rules,  # noqa: E402
+                           load_corpus, load_policy, mutations, score)
+
+
+POLICY = load_policy()
 
 
 @pytest.fixture
@@ -29,7 +32,7 @@ def corpus():
 
 
 def test_the_corpus_passes(corpus):
-    s = score(LocalPolicy(DEFAULT_POLICY), corpus)
+    s = score(LocalPolicy(POLICY), corpus)
     assert not s.false_negatives, f"attacks that got through: {s.false_negatives}"
     assert not s.false_positives, f"legitimate work refused: {s.false_positives}"
 
@@ -40,13 +43,13 @@ def test_every_refusal_is_for_the_stated_reason(corpus):
     The operator gets a misleading message, and the case is not testing the rule
     its author thought it was.
     """
-    s = score(LocalPolicy(DEFAULT_POLICY), corpus)
+    s = score(LocalPolicy(POLICY), corpus)
     assert not s.wrong_rule, f"refused by the wrong rule: {s.wrong_rule}"
 
 
 def test_every_declared_rule_is_exercised(corpus):
     """A rule nothing tests can be deleted in a refactor with the suite green."""
-    _hit, untested = coverage(LocalPolicy(DEFAULT_POLICY), DEFAULT_POLICY, corpus)
+    _hit, untested = coverage(LocalPolicy(POLICY), POLICY, corpus)
     assert not untested, (
         f"declared but never exercised: {untested}. "
         "Add a case, or delete the rule and stop claiming it."
@@ -61,7 +64,7 @@ def test_weakening_any_rule_breaks_a_case(corpus):
     trip a rule incidentally while not actually depending on it.
     """
     survived = []
-    for label, mutated in mutations(DEFAULT_POLICY):
+    for label, mutated in mutations(POLICY):
         if score(LocalPolicy(mutated), corpus).clean:
             survived.append(label)
     assert not survived, (

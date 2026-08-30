@@ -51,24 +51,12 @@ from shield_mavlink.policy import LocalPolicy  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 CORPUS = HERE / "corpus" / "arm.json"
+POLICY_FILE = HERE / "corpus" / "arm_policy.json"
 
-#: The policy the shipped corpus is written against. A real deployment passes
-#: --bundle and grades the policy it actually flies.
-DEFAULT_POLICY = {"parameter_policies": {"arm": {
-    "required_fields": ["aircraft_id", "mission_id"],
-    "forbidden_fields": ["bypass_geofence", "raw_mavlink", "override_policy"],
-    "allowed_values": {"operator_role": ["pilot", "pilot_in_command"]},
-    "numeric_limits": {
-        "max_relative_altitude_m": {"min": 0, "max": 120},
-        "battery_pct": {"min": 30},
-        "wind_ms": {"max": 10},
-        "local_hour": {"min": 7, "max": 19},
-        "reserve_pct_on_arrival": {"min": 25},
-        "distance_from_home_m": {"min": 0, "max": 500},
-    },
-    "regex_rules": {"aircraft_id": r"^[A-Z]{2}-[0-9]{4}$"},
-    "max_string_lengths": {"note": 64},
-}}}
+def load_policy(path: Path = POLICY_FILE) -> dict[str, Any]:
+    """Rules are data. The policy an aircraft flies is a file, not a literal."""
+    d = json.loads(path.read_text())
+    return {"parameter_policies": d["parameter_policies"]}
 
 
 @dataclass
@@ -88,14 +76,17 @@ def load_corpus(path: Path) -> dict[str, Any]:
 
 
 def case_params(corpus: dict, case: dict) -> dict[str, Any]:
+    """Baseline with the case applied.
+
+    `set` assigns values, `unset` removes fields. They are separate because
+    overloading null to mean "absent" made it impossible to write a case for a
+    field whose value legitimately is null, and made "missing required field"
+    cases silently depend on which fields the loader special-cased.
+    """
     params = dict(corpus["baseline"])
-    for k, v in case.get("set", {}).items():
-        if v is None:
-            params.pop(k, None)          # None means absent, not literal null
-            if k in ("mission_id", "aircraft_id"):
-                params[k] = None         # unless it is required: then absent IS the case
-        else:
-            params[k] = v
+    for k in case.get("unset", []):
+        params.pop(k, None)
+    params.update(case.get("set", {}))
     return params
 
 
@@ -225,7 +216,7 @@ def main() -> int:
             print(f"bundle rejected: {e}")
             return 3
     else:
-        policy_dict = DEFAULT_POLICY
+        policy_dict = load_policy()
 
     policy = LocalPolicy(policy_dict)
     rules = declared_rules(policy_dict)

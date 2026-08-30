@@ -1,0 +1,68 @@
+{
+  "policy": "arm-authorization",
+  "note": "Pre-flight rules, as data. Everything here is decidable on the aircraft with no model and no link: set membership, comparison, presence, shape. Airworthiness stays with PX4; these are the checks PX4 has no opinion about, plus a few it does have an opinion about where an operator wants refusal BEFORE the aircraft is armed rather than a failsafe afterwards.",
+  "parameter_policies": {
+    "arm": {
+      "required_fields": [
+        "aircraft_id",
+        "mission_id",
+        "operator_id",
+        "firmware_hash",
+        "geofence_uploaded",
+        "mission_uploaded"
+      ],
+      "forbidden_fields": [
+        "bypass_geofence",
+        "override_policy",
+        "raw_mavlink",
+        "disable_audit",
+        "force_arm"
+      ],
+      "allowed_values": {
+        "operator_role": ["pilot", "pilot_in_command"],
+        "operator_cert_valid": [true],
+        "mission_authorized": [true],
+        "geofence_uploaded": [true],
+        "mission_uploaded": [true],
+        "gps_fix_type": ["3d_fix", "rtk_fixed", "rtk_float"],
+        "ekf_status": ["healthy"],
+        "compass_calibrated": [true],
+        "rc_link": ["ok", "not_required"],
+        "payload_state": ["safed", "none"],
+        "gimbal_state": ["stowed", "none"],
+        "airspace_clearance": ["granted", "not_required"],
+        "flight_category": ["routine", "training", "emergency"]
+      },
+      "numeric_limits": {
+        "max_relative_altitude_m": {"min": 0, "max": 120},
+        "battery_pct": {"min": 30},
+        "battery_cell_v": {"min": 3.6, "max": 4.25},
+        "reserve_pct_on_arrival": {"min": 25},
+        "distance_from_home_m": {"min": 0, "max": 500},
+        "rtl_altitude_m": {"min": 20, "max": 120},
+        "mission_waypoints": {"min": 1, "max": 200},
+        "gps_satellites": {"min": 8},
+        "gps_hdop": {"max": 1.5},
+        "wind_ms": {"max": 10},
+        "gust_ms": {"max": 14},
+        "visibility_m": {"min": 1000},
+        "precipitation_mmh": {"max": 2},
+        "temperature_c": {"min": -10, "max": 45},
+        "local_hour": {"min": 7, "max": 19},
+        "payload_mass_kg": {"max": 2.5},
+        "hours_since_service": {"max": 100},
+        "operator_cert_days_remaining": {"min": 1}
+      },
+      "regex_rules": {
+        "aircraft_id": "^[A-Z]{2}-[0-9]{4}$",
+        "mission_id": "^[a-z0-9][a-z0-9-]{2,63}$",
+        "operator_id": "^OP-[0-9]{5}$",
+        "firmware_hash": "^[a-f0-9]{64}$"
+      },
+      "max_string_lengths": {
+        "note": 64,
+        "deviation_reason": 256
+      }
+    }
+  }
+}
