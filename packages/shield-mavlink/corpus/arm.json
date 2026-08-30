@@ -1,0 +1,238 @@
+{
+  "corpus": "arm-authorization",
+  "note": "Labelled cases. `expect` is ground truth, not what the engine currently does: a case whose expectation was edited to match a regression stops being a test. `rule` names the family that should refuse, so coverage can be measured per rule rather than only in aggregate.",
+  "baseline": {
+    "aircraft_id": "AB-1234",
+    "mission_id": "perimeter-001",
+    "operator_role": "pilot_in_command",
+    "max_relative_altitude_m": 95,
+    "battery_pct": 72,
+    "wind_ms": 5,
+    "local_hour": 13,
+    "reserve_pct_on_arrival": 40,
+    "distance_from_home_m": 220,
+    "note": "routine"
+  },
+  "cases": [
+    {
+      "id": "clean",
+      "expect": "allow",
+      "set": {},
+      "why": "an ordinary sortie must not be refused; false positives are how guardrails get switched off"
+    },
+    {
+      "id": "ceiling-exceeded",
+      "expect": "deny",
+      "rule": "max",
+      "set": {
+        "max_relative_altitude_m": 400
+      }
+    },
+    {
+      "id": "ceiling-exact",
+      "expect": "allow",
+      "set": {
+        "max_relative_altitude_m": 120
+      },
+      "why": "boundary: at the limit is inside it, and an off-by-one here grounds legitimate flights"
+    },
+    {
+      "id": "ceiling-one-over",
+      "expect": "deny",
+      "rule": "max",
+      "set": {
+        "max_relative_altitude_m": 121
+      },
+      "why": "the other side of the same boundary"
+    },
+    {
+      "id": "altitude-negative",
+      "expect": "deny",
+      "rule": "min",
+      "set": {
+        "max_relative_altitude_m": -5
+      }
+    },
+    {
+      "id": "altitude-non-numeric",
+      "expect": "deny",
+      "rule": "numeric",
+      "set": {
+        "max_relative_altitude_m": "high"
+      },
+      "why": "a string where a number belongs must refuse, not coerce"
+    },
+    {
+      "id": "battery-under-reserve",
+      "expect": "deny",
+      "rule": "min",
+      "set": {
+        "battery_pct": 11
+      }
+    },
+    {
+      "id": "battery-exact-reserve",
+      "expect": "allow",
+      "set": {
+        "battery_pct": 30
+      }
+    },
+    {
+      "id": "wind-over-limit",
+      "expect": "deny",
+      "rule": "max",
+      "set": {
+        "wind_ms": 24
+      }
+    },
+    {
+      "id": "outside-hours-early",
+      "expect": "deny",
+      "rule": "min",
+      "set": {
+        "local_hour": 4
+      }
+    },
+    {
+      "id": "outside-hours-late",
+      "expect": "deny",
+      "rule": "max",
+      "set": {
+        "local_hour": 23
+      }
+    },
+    {
+      "id": "role-not-permitted",
+      "expect": "deny",
+      "rule": "allowed_values",
+      "set": {
+        "operator_role": "observer"
+      }
+    },
+    {
+      "id": "role-escalated",
+      "expect": "deny",
+      "rule": "allowed_values",
+      "set": {
+        "operator_role": "root"
+      }
+    },
+    {
+      "id": "missing-mission-id",
+      "expect": "deny",
+      "rule": "required",
+      "set": {
+        "mission_id": null
+      }
+    },
+    {
+      "id": "empty-mission-id",
+      "expect": "deny",
+      "rule": "required",
+      "set": {
+        "mission_id": ""
+      },
+      "why": "empty is absent; treating '' as present is a classic gap"
+    },
+    {
+      "id": "missing-aircraft-id",
+      "expect": "deny",
+      "rule": "required",
+      "set": {
+        "aircraft_id": null
+      }
+    },
+    {
+      "id": "malformed-aircraft-id",
+      "expect": "deny",
+      "rule": "regex",
+      "set": {
+        "aircraft_id": "rogue-1"
+      }
+    },
+    {
+      "id": "aircraft-id-lowercase",
+      "expect": "deny",
+      "rule": "regex",
+      "set": {
+        "aircraft_id": "ab-1234"
+      },
+      "why": "anchored pattern, so case matters"
+    },
+    {
+      "id": "aircraft-id-with-suffix",
+      "expect": "deny",
+      "rule": "regex",
+      "set": {
+        "aircraft_id": "AB-1234x"
+      },
+      "why": "fullmatch, not search: a valid prefix is not a valid id"
+    },
+    {
+      "id": "geofence-bypass-flag",
+      "expect": "deny",
+      "rule": "forbidden",
+      "set": {
+        "bypass_geofence": true
+      }
+    },
+    {
+      "id": "raw-mavlink-passthrough",
+      "expect": "deny",
+      "rule": "forbidden",
+      "set": {
+        "raw_mavlink": "COMMAND_LONG(400,1,0,0,0,0,0,0)"
+      }
+    },
+    {
+      "id": "note-too-long",
+      "expect": "deny",
+      "rule": "max_length",
+      "set": {
+        "note": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "id": "note-absent",
+      "expect": "allow",
+      "set": {
+        "note": null
+      },
+      "why": "an optional field being absent is not a violation"
+    },
+    {
+      "id": "reserve-insufficient",
+      "expect": "deny",
+      "rule": "min",
+      "set": {
+        "reserve_pct_on_arrival": 8
+      }
+    },
+    {
+      "id": "too-far-from-home",
+      "expect": "deny",
+      "rule": "max",
+      "set": {
+        "distance_from_home_m": 4000
+      }
+    },
+    {
+      "id": "override-policy-flag",
+      "expect": "deny",
+      "rule": "forbidden",
+      "set": {
+        "override_policy": true
+      },
+      "why": "found by mutation: forbidden_fields.override_policy could be deleted with the suite green"
+    },
+    {
+      "id": "negative-distance",
+      "expect": "deny",
+      "rule": "min",
+      "set": {
+        "distance_from_home_m": -50
+      },
+      "why": "found by mutation: the lower bound was declared but never defended"
+    }
+  ]
+}

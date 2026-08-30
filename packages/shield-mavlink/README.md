@@ -32,6 +32,35 @@ Seven attacks, executed rather than described, with no network:
 
 Every one is reproducible by hand in the temp directory the script prints.
 
+## Grade the policy, then grade the corpus
+
+`prove.py` shows the policy cannot be tampered with. This shows it does what its
+authors believe, and that somebody would notice if it stopped.
+
+```bash
+python packages/shield-mavlink/verify_policy.py
+```
+
+Three passes, and the third is the one that matters:
+
+| Pass | Answers |
+|---|---|
+| **Score** | false negatives (attacks that flew) and false positives (legitimate work refused). A block count shows neither. |
+| **Coverage** | which declared rules does the corpus actually exercise? A rule nothing tests can be deleted in a refactor with a green suite. |
+| **Mutation** | weaken each rule on purpose. If the corpus does not notice, that rule was never defended, and the score was telling you nothing about it. |
+
+Run against the shipped corpus it reports 27/27, 17/17 rules covered, 17/17
+weakenings caught. That third number is the claim: **delete any single rule from
+this policy and a case fails.**
+
+It found two real gaps the first time it ran, on a corpus already scoring 100
+percent: `forbidden_fields.override_policy` and the lower bound on
+`distance_from_home_m` were both declared and neither was defended. Both are now
+covered, and the cases say in the file that mutation is what found them.
+
+Rules and cases are data (`corpus/arm.json`), so the corpus grows without code
+changes, and `--bundle` grades a signed bundle rather than the default policy.
+
 ## What it does not prove
 
 Stated because a proof that overclaims is worth less than a narrow one.

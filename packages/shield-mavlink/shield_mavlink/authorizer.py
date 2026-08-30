@@ -170,10 +170,12 @@ class ArmAuthorizer:
                 logger.info("arm REJECTED (%s, temporary=%s): %s",
                             rejection.reason, rejection.temporarily, rejection.text)
                 # The enum tells PX4 what happened; the sentence tells the person
-                # standing next to the aircraft. Both are needed.
+                # standing next to the aircraft, in QGC's message panel. Both
+                # are needed, and only the enum is load-bearing.
                 try:
-                    await drone.server_utility.send_status_text_severity_warning(
-                        rejection.text)
+                    from mavsdk.server_utility import StatusTextType
+                    await drone.server_utility.send_status_text(
+                        StatusTextType.WARNING, rejection.text[:150])
                 except Exception:
                     pass  # STATUSTEXT is a courtesy, never a precondition
 
