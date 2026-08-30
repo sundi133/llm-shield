@@ -13,9 +13,11 @@ Spec: [docs/spec-mavlink-arm-authorization.md](../../docs/spec-mavlink-arm-autho
 ## Prove it rather than believe it
 
 ```bash
-cd packages/shield-mavlink
-PYTHONPATH=. python prove.py
+python packages/shield-mavlink/prove.py
 ```
+
+Runs from anywhere, by absolute path, with no `PYTHONPATH`. The only requirement
+is `cryptography`; if it is missing the script says so rather than raising.
 
 Seven attacks, executed rather than described, with no network:
 

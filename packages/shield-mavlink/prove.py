@@ -20,11 +20,25 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+# Run from anywhere, including by absolute path, without setting PYTHONPATH.
+# A proof script that needs an incantation to start is one people do not run.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+except ModuleNotFoundError:
+    sys.exit(
+        "This needs `cryptography`, which this interpreter does not have.\n"
+        "\n"
+        "    pip install cryptography\n"
+        "\n"
+        "Nothing else is required: no drone, no network, no mavsdk."
+    )
 
 from shield_mavlink.audit import OfflineAuditChain
 from shield_mavlink.bundle import (BundleError, load_and_verify, policy_digest,
