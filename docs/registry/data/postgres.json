@@ -1,0 +1,33 @@
+{
+  "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres",
+  "name": "PostgreSQL MCP Server",
+  "pinned": "",
+  "rating": {
+    "band": "clean",
+    "rating_version": "1",
+    "reasons": [
+      "no findings"
+    ],
+    "score": 100
+  },
+  "repo": "modelcontextprotocol/servers",
+  "scan": {
+    "counts": {
+      "prompts": 0,
+      "resources": 0,
+      "tools": 1
+    },
+    "findings": [],
+    "scanned_at": "2026-08-31T12:30:05.294218+00:00",
+    "severity_counts": {
+      "critical": 0,
+      "high": 0,
+      "info": 0,
+      "low": 0,
+      "medium": 0
+    },
+    "verdict": "pass"
+  },
+  "slug": "postgres",
+  "target": "stdio:npx -y @modelcontextprotocol/server-postgres postgresql://localhost/postgres"
+}

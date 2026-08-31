@@ -1,0 +1,33 @@
+{
+  "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch",
+  "name": "Fetch MCP Server",
+  "pinned": "",
+  "rating": {
+    "band": "clean",
+    "rating_version": "1",
+    "reasons": [
+      "no findings"
+    ],
+    "score": 100
+  },
+  "repo": "modelcontextprotocol/servers",
+  "scan": {
+    "counts": {
+      "prompts": 1,
+      "resources": 0,
+      "tools": 1
+    },
+    "findings": [],
+    "scanned_at": "2026-08-31T12:30:13.450659+00:00",
+    "severity_counts": {
+      "critical": 0,
+      "high": 0,
+      "info": 0,
+      "low": 0,
+      "medium": 0
+    },
+    "verdict": "pass"
+  },
+  "slug": "fetch",
+  "target": "stdio:uvx mcp-server-fetch"
+}

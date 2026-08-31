@@ -1,0 +1,64 @@
+{
+  "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/memory",
+  "name": "Memory MCP Server",
+  "pinned": "",
+  "rating": {
+    "band": "high-risk",
+    "rating_version": "1",
+    "reasons": [
+      "3 high findings"
+    ],
+    "score": 25
+  },
+  "repo": "modelcontextprotocol/servers",
+  "scan": {
+    "counts": {
+      "prompts": 0,
+      "resources": 1,
+      "tools": 9
+    },
+    "findings": [
+      {
+        "category": "over-broad-permission",
+        "confidence": null,
+        "detail": "Tool name implies a dangerous capability (delete).",
+        "evidence": "delete_entities",
+        "severity": "high",
+        "source": "heuristic",
+        "subject_kind": "tool",
+        "subject_name": "delete_entities"
+      },
+      {
+        "category": "over-broad-permission",
+        "confidence": null,
+        "detail": "Tool name implies a dangerous capability (delete).",
+        "evidence": "delete_observations",
+        "severity": "high",
+        "source": "heuristic",
+        "subject_kind": "tool",
+        "subject_name": "delete_observations"
+      },
+      {
+        "category": "over-broad-permission",
+        "confidence": null,
+        "detail": "Tool name implies a dangerous capability (delete).",
+        "evidence": "delete_relations",
+        "severity": "high",
+        "source": "heuristic",
+        "subject_kind": "tool",
+        "subject_name": "delete_relations"
+      }
+    ],
+    "scanned_at": "2026-08-31T12:30:16.615150+00:00",
+    "severity_counts": {
+      "critical": 0,
+      "high": 3,
+      "info": 0,
+      "low": 0,
+      "medium": 0
+    },
+    "verdict": "pass"
+  },
+  "slug": "memory",
+  "target": "stdio:npx -y @modelcontextprotocol/server-memory"
+}

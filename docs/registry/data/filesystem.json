@@ -1,0 +1,44 @@
+{
+  "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
+  "name": "Filesystem MCP Server",
+  "pinned": "",
+  "rating": {
+    "band": "minor",
+    "rating_version": "1",
+    "reasons": [
+      "1 high finding"
+    ],
+    "score": 75
+  },
+  "repo": "modelcontextprotocol/servers",
+  "scan": {
+    "counts": {
+      "prompts": 0,
+      "resources": 0,
+      "tools": 14
+    },
+    "findings": [
+      {
+        "category": "over-broad-permission",
+        "confidence": null,
+        "detail": "Tool name implies a dangerous capability (write_file).",
+        "evidence": "write_file",
+        "severity": "high",
+        "source": "heuristic",
+        "subject_kind": "tool",
+        "subject_name": "write_file"
+      }
+    ],
+    "scanned_at": "2026-08-31T12:29:52.469766+00:00",
+    "severity_counts": {
+      "critical": 0,
+      "high": 1,
+      "info": 0,
+      "low": 0,
+      "medium": 0
+    },
+    "verdict": "pass"
+  },
+  "slug": "filesystem",
+  "target": "stdio:npx -y @modelcontextprotocol/server-filesystem /tmp"
+}
