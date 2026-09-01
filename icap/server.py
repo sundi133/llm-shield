@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
 from icap.config import IcapConfig
+from icap.extract import Extracted, extract
 
 log = logging.getLogger("shield.icap")
 
@@ -56,6 +57,18 @@ class IcapRequest:
     http_uri: str = ""
     http_headers: dict[str, str] = field(default_factory=dict)
     txn_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    _extracted: Optional[Extracted] = field(default=None, repr=False, compare=False)
+
+    @property
+    def prompt(self) -> Extracted:
+        """The screenable text in this request, parsed once and memoized.
+
+        The seam the policy layer (PR 3) and the Shield client (PR 4) both read
+        from, so neither has to know a provider's body shape.
+        """
+        if self._extracted is None:
+            self._extracted = extract(self.body, self.host, self.path)
+        return self._extracted
 
     @property
     def host(self) -> str:
