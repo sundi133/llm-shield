@@ -15,6 +15,7 @@ import signal
 from icap.config import IcapConfig
 from icap.policy import PolicyCache, Tier1Screener
 from icap.server import IcapServer
+from icap.shield import ScreenPipeline, ShieldClient
 
 log = logging.getLogger("shield.icap")
 
@@ -24,6 +25,7 @@ async def _health(
     writer: asyncio.StreamWriter,
     cfg: IcapConfig,
     cache: PolicyCache,
+    shield: ShieldClient,
 ) -> None:
     try:
         await reader.readline()  # request line is all we need
@@ -33,10 +35,13 @@ async def _health(
                 "ok": True,
                 "version": cfg.version,
                 "mode": cfg.mode,
+                "screen": "sync" if cfg.sync_screen else "async",
                 "bundle_version": bundle.version or None,
                 "rules": len(bundle.rules),
                 "blocklists": len(bundle.blocklists),
                 "shield_reachable": cache.reachable,
+                "telemetry_submitted": shield.submitted,
+                "telemetry_dropped": shield.dropped,
             }
         ).encode()
         writer.write(
@@ -58,7 +63,9 @@ async def main() -> None:
     )
     cfg = IcapConfig.from_env()
     cache = PolicyCache(cfg)
-    icap = IcapServer(cfg, Tier1Screener(cache, cfg), version_fn=lambda: cache.version)
+    shield = ShieldClient(cfg)
+    pipeline = ScreenPipeline(Tier1Screener(cache, cfg), shield, cfg)
+    icap = IcapServer(cfg, pipeline, version_fn=lambda: cache.version)
 
     icap_port = int(os.environ.get("SHIELD_ICAP_PORT", "1344"))
     health_port = int(os.environ.get("SHIELD_ICAP_HEALTH_PORT", "8081"))
@@ -68,17 +75,19 @@ async def main() -> None:
     # an empty bundle allows everything and the refresh loop keeps retrying.
     await cache.refresh()
     refresher = cache.start()
+    shield.start()
 
     servers = [
         await icap.serve("0.0.0.0", icap_port),
         await asyncio.start_server(
-            lambda r, w: _health(r, w, cfg, cache), "0.0.0.0", health_port
+            lambda r, w: _health(r, w, cfg, cache, shield), "0.0.0.0", health_port
         ),
     ]
     log.info(
-        "shield-icap listening icap=:%d health=:%d mode=%s hosts=%d bundle=%s rules=%d",
-        icap_port, health_port, cfg.mode, len(cfg.ai_hosts),
-        cache.bundle.version or "none", len(cache.bundle.rules),
+        "shield-icap listening icap=:%d health=:%d mode=%s screen=%s hosts=%d bundle=%s rules=%d",
+        icap_port, health_port, cfg.mode,
+        "sync" if cfg.sync_screen else "async",
+        len(cfg.ai_hosts), cache.bundle.version or "none", len(cache.bundle.rules),
     )
 
     stop = asyncio.Event()
@@ -91,6 +100,7 @@ async def main() -> None:
     await stop.wait()
 
     refresher.cancel()
+    await shield.aclose()
     for srv in servers:
         srv.close()
         await srv.wait_closed()

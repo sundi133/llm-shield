@@ -8,8 +8,8 @@ description: Inline prompt and DLP enforcement for enterprise web traffic via an
 
 # Spec: SWG ICAP adapter (`shield-icap`)
 
-Status: APPROVED. Tasks 1-3 implemented on
-`feat/swg-icap-adapter`; tasks 4-5 pending.
+Status: APPROVED. Tasks 1-4 implemented on
+`feat/swg-icap-adapter`; task 5 pending.
 
 ---
 

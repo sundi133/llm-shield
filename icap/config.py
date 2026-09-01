@@ -114,6 +114,17 @@ class IcapConfig:
     # this on an already-capped body is a broken pattern, not a verdict.
     scan_timeout_ms: int = 250
 
+    # Tier 2. Off the request path by default: a cloud screen measures 14-20s,
+    # which no ICAP transaction can absorb.
+    sync_screen: bool = False
+    screen_timeout_s: float = 30.0
+    telemetry_queue: int = 1000
+    telemetry_workers: int = 4
+    # Only has teeth in sync mode, where the operator has deliberately put
+    # Shield on the request path. In the default async mode, Shield being
+    # unreachable degrades Tier 2 to nothing and never blocks browsing.
+    fail_open: bool = False
+
     @classmethod
     def from_env(cls) -> "IcapConfig":
         hosts_raw = os.environ.get("SHIELD_ICAP_AI_HOSTS", "")
@@ -136,6 +147,11 @@ class IcapConfig:
                 else "pass"
             ),
             scan_timeout_ms=_env_int("SHIELD_ICAP_SCAN_TIMEOUT_MS", 250),
+            sync_screen=_env_bool("SHIELD_ICAP_SYNC_SCREEN", False),
+            screen_timeout_s=float(_env_int("SHIELD_ICAP_SCREEN_TIMEOUT_S", 30)),
+            telemetry_queue=_env_int("SHIELD_ICAP_TELEMETRY_QUEUE", 1000),
+            telemetry_workers=max(1, _env_int("SHIELD_ICAP_TELEMETRY_WORKERS", 4)),
+            fail_open=_env_bool("SHIELD_ICAP_FAIL_OPEN", False),
         )
 
     @property
