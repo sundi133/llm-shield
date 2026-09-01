@@ -1,7 +1,6 @@
 """Configuration for the ICAP adapter, read once from the environment.
 
-Env flags are the operator's only interface (§6 of the spec). Nothing here
-touches Shield; PR 1 is protocol-only.
+Env flags are the operator's only interface (§6 of the spec).
 """
 from __future__ import annotations
 
@@ -29,6 +28,22 @@ DEFAULT_AI_HOSTS: tuple[str, ...] = (
     "openrouter.ai",
 )
 
+# Never inspected, and never even routed to the proxy. Categories where
+# decryption is a legal problem rather than a technical one, plus the client
+# certificate endpoints that break outright under interception. Operators
+# extend this list; they should not have to think of it first.
+DEFAULT_BYPASS_HOSTS: tuple[str, ...] = (
+    "chase.com",
+    "bankofamerica.com",
+    "wellsfargo.com",
+    "paypal.com",
+    "workday.com",
+    "adp.com",
+    "okta.com",
+    "onelogin.com",
+    "duosecurity.com",
+)
+
 # Bodies above this are not screened (spec §7: "do not block what we did not
 # read"). Bodies above HARD_BODY_CAP are not even drained -- the connection is
 # closed, because a client streaming gigabytes at an inspection service is
@@ -52,6 +67,12 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _host_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.environ.get(name, "")
+    parsed = tuple(h.strip().lower() for h in raw.split(",") if h.strip())
+    return parsed or default
 
 
 def _read_secret(name: str) -> str:
@@ -94,12 +115,11 @@ class IcapConfig:
     options_ttl: int = 300
     ai_hosts: tuple[str, ...] = DEFAULT_AI_HOSTS
     allowed_clients: tuple = field(default_factory=lambda: _parse_cidrs("0.0.0.0/0,::/0"))
-    # Payload of the ISTag header. Becomes the policy bundle version in PR 3;
-    # until then it identifies the build, which is still what ISTag is for:
-    # telling the SWG its cached verdicts are stale.
+    # Fallback payload for the ISTag header, used until a policy bundle
+    # loads. Once one has, PolicyCache.version supplies the bundle version.
     version: str = "pr1"
 
-    # Shield data plane. Tier 1 pulls its rule bundle from here; Tier 2 (PR 4)
+    # Shield data plane. Tier 1 pulls its rule bundle from here; Tier 2
     # screens against it.
     api_base: str = "https://api.guardrails.votal.ai"
     api_key: str = ""
@@ -125,16 +145,19 @@ class IcapConfig:
     # unreachable degrades Tier 2 to nothing and never blocks browsing.
     fail_open: bool = False
 
+    # PAC generation (mode A, bundled Squid). `pac_proxy` is Squid's address as
+    # the BROWSER sees it, not the ICAP port.
+    pac_proxy: str = "127.0.0.1:3128"
+    bypass_hosts: tuple[str, ...] = DEFAULT_BYPASS_HOSTS
+
     @classmethod
     def from_env(cls) -> "IcapConfig":
-        hosts_raw = os.environ.get("SHIELD_ICAP_AI_HOSTS", "")
-        hosts = tuple(h.strip().lower() for h in hosts_raw.split(",") if h.strip()) or DEFAULT_AI_HOSTS
         return cls(
             mode="enforce" if os.environ.get("SHIELD_ICAP_MODE", "monitor").strip().lower() == "enforce" else "monitor",
             preview=_env_int("SHIELD_ICAP_PREVIEW", 4096),
             max_body=_env_int("SHIELD_ICAP_MAX_BODY", DEFAULT_MAX_BODY),
             options_ttl=_env_int("SHIELD_ICAP_OPTIONS_TTL", 300),
-            ai_hosts=hosts,
+            ai_hosts=_host_list("SHIELD_ICAP_AI_HOSTS", DEFAULT_AI_HOSTS),
             allowed_clients=_parse_cidrs(os.environ.get("SHIELD_ICAP_ALLOWED_CLIENTS", "0.0.0.0/0,::/0")),
             version=os.environ.get("SHIELD_ICAP_VERSION", "pr1"),
             api_base=os.environ.get("SHIELD_API_BASE", "https://api.guardrails.votal.ai").strip(),
@@ -152,6 +175,8 @@ class IcapConfig:
             telemetry_queue=_env_int("SHIELD_ICAP_TELEMETRY_QUEUE", 1000),
             telemetry_workers=max(1, _env_int("SHIELD_ICAP_TELEMETRY_WORKERS", 4)),
             fail_open=_env_bool("SHIELD_ICAP_FAIL_OPEN", False),
+            pac_proxy=os.environ.get("SHIELD_ICAP_PAC_PROXY", "127.0.0.1:3128").strip(),
+            bypass_hosts=_host_list("SHIELD_ICAP_BYPASS_HOSTS", DEFAULT_BYPASS_HOSTS),
         )
 
     @property

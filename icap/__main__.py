@@ -12,7 +12,10 @@ import logging
 import os
 import signal
 
+import sys
+
 from icap.config import IcapConfig
+from icap.pac import render_pac
 from icap.policy import PolicyCache, Tier1Screener
 from icap.server import IcapServer
 from icap.shield import ScreenPipeline, ShieldClient
@@ -28,7 +31,24 @@ async def _health(
     shield: ShieldClient,
 ) -> None:
     try:
-        await reader.readline()  # request line is all we need
+        line = await reader.readline()
+        target = line.decode("latin-1", "replace").split(" ")[1] if b" " in line else "/"
+
+        if target.startswith("/proxy.pac"):
+            # Served from the adapter so a policy change re-routes traffic
+            # without an MDM push. Mode A only; behind an existing SWG the
+            # gateway already decides what reaches us.
+            pac = render_pac(cfg).encode()
+            writer.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/x-ns-proxy-autoconfig\r\n"
+                b"Cache-Control: no-cache\r\n"
+                b"Content-Length: %d\r\nConnection: close\r\n\r\n" % len(pac)
+                + pac
+            )
+            await writer.drain()
+            return
+
         bundle = cache.bundle
         payload = json.dumps(
             {
@@ -106,5 +126,25 @@ async def main() -> None:
         await srv.wait_closed()
 
 
-if __name__ == "__main__":
+def cli() -> int:
+    """`python -m icap [serve|preflight|pac]`. Defaults to serve."""
+    command = sys.argv[1] if len(sys.argv) > 1 else "serve"
+
+    if command == "preflight":
+        from icap.preflight import main as preflight_main
+
+        return preflight_main()
+    if command == "pac":
+        # So an operator can diff what the fleet will receive before pushing it.
+        print(render_pac(IcapConfig.from_env()))
+        return 0
+    if command not in ("serve", ""):
+        print(f"unknown command: {command}\nusage: python -m icap [serve|preflight|pac]")
+        return 2
+
     asyncio.run(main())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(cli())

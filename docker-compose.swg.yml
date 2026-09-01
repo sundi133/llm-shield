@@ -1,0 +1,65 @@
+# Mode A: a minimal SWG for sites that do not already have one.
+#
+#   docker compose -f docker-compose.swg.yml up -d
+#
+# Browser --PAC--> squid :3128 --ICAP--> shield-icap :1344 --> api.guardrails.votal.ai
+#
+# If the site ALREADY runs Zscaler, Netskope, Blue Coat or similar, do not use
+# this file. Run `docker run --rm shield-icap preflight` and follow Mode B:
+# the shield-icap service alone, with the existing gateway pointed at it. A
+# second root CA on the fleet is a cost with no benefit.
+#
+# See docs/swg-deployment.md.
+services:
+  shield-icap:
+    build:
+      context: .
+      dockerfile: Dockerfile.icap
+    image: shield-icap
+    restart: unless-stopped
+    read_only: true
+    ports:
+      # 8081 serves /healthz and /proxy.pac. 1344 is ICAP and should NOT be
+      # published to a routable interface in production -- the SWG reaches it
+      # on the internal network.
+      - "127.0.0.1:8081:8081"
+    environment:
+      SHIELD_API_BASE: https://api.guardrails.votal.ai
+      SHIELD_API_KEY_FILE: /run/secrets/shield_api_key
+      # Start in monitor. Flip to enforce only after reviewing what would have
+      # blocked (docs: /policy-lifecycle/).
+      SHIELD_ICAP_MODE: monitor
+      SHIELD_ICAP_ALLOWED_CLIENTS: 172.16.0.0/12,10.0.0.0/8,127.0.0.0/8
+      SHIELD_ICAP_PAC_PROXY: "127.0.0.1:3128"
+      # SHIELD_ICAP_SYNC_SCREEN: "1"   # inline Tier 2; adds 14-20s per prompt
+      # SHIELD_ICAP_FAIL_OPEN: "1"     # only affects sync mode
+    secrets:
+      - shield_api_key
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/healthz',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  squid:
+    image: ubuntu/squid:latest
+    restart: unless-stopped
+    depends_on:
+      - shield-icap
+    ports:
+      - "3128:3128"
+    volumes:
+      - ./deploy/swg/squid.conf:/etc/squid/squid.conf:ro
+      # The CA private key lives here and never leaves the customer. Generate
+      # it once (see docs/swg-deployment.md); do not bake one into an image.
+      - squid-ssl:/etc/squid/ssl
+      - squid-ssldb:/var/spool/squid/ssl_db
+
+secrets:
+  shield_api_key:
+    file: ./deploy/swg/shield_api_key.txt
+
+volumes:
+  squid-ssl:
+  squid-ssldb:

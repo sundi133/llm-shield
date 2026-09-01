@@ -8,8 +8,9 @@ description: Inline prompt and DLP enforcement for enterprise web traffic via an
 
 # Spec: SWG ICAP adapter (`shield-icap`)
 
-Status: APPROVED. Tasks 1-4 implemented on
-`feat/swg-icap-adapter`; task 5 pending.
+Status: APPROVED. Tasks 1-5 implemented on `feat/swg-icap-adapter`.
+Operator-facing guide: [swg-deployment](/swg-deployment/). Task 6 (redaction,
+multipart, RESPMOD, extension/ICAP de-duplication) remains a separate spec.
 
 ---
 
