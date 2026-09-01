@@ -1,0 +1,13 @@
+# Dependencies for the shield-icap adapter image (Dockerfile.icap).
+#
+# Deliberately NOT `-r requirements.txt`: this container is customer-hosted on
+# decrypted corporate traffic, so its dependency surface is kept to the minimum
+# that the code actually imports. It must never inherit torch / vLLM / redis.
+#
+# PR 1 (ICAP protocol core) imports the standard library only. ICAP is
+# implemented directly on asyncio rather than via a third-party library -- the
+# available ones are unmaintained, and the subset needed here is small.
+#
+# PR 4 adds `httpx` for the /guardrails/input and /v1/edge/policy-bundle calls.
+# It is declared in that PR, with the code that imports it, per the repo's
+# "declare dependencies" and "self-contained PRs" invariants.

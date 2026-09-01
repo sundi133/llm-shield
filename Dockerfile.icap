@@ -1,0 +1,35 @@
+# shield-icap: ICAP (RFC 3507) adapter for enterprise Secure Web Gateways.
+#
+# Customer-hosted. Speaks ICAP REQMOD to the customer's SWG (Squid, Blue Coat,
+# Cisco WSA, Forcepoint, Netskope) and enforces Shield policy on prompts leaving
+# the enterprise for AI services. See docs/spec-swg-icap-adapter.md.
+#
+# This image contains ONLY the icap/ package. It imports nothing from core/ or
+# admin_app.py, so Dockerfile.admin's COPY allowlist is unaffected.
+#
+# Build:  docker build -f Dockerfile.icap -t shield-icap .
+# Run:    docker run -p 1344:1344 -p 8081:8081 \
+#           -e SHIELD_ICAP_ALLOWED_CLIENTS=10.0.0.0/8 shield-icap
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements-icap.txt .
+RUN pip install --no-cache-dir -r requirements-icap.txt
+
+COPY icap/ icap/
+
+# Runs on decrypted corporate traffic, so: non-root, no writable filesystem
+# needed (the adapter never writes to disk), and no shell tooling beyond the
+# slim base. Pair with `--read-only` at run time.
+RUN useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin shield
+USER 65532
+
+ENV PYTHONUNBUFFERED=1 \
+    SHIELD_ICAP_MODE=monitor \
+    SHIELD_ICAP_PORT=1344 \
+    SHIELD_ICAP_HEALTH_PORT=8081
+
+EXPOSE 1344 8081
+
+CMD ["python", "-m", "icap"]
