@@ -54,6 +54,22 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _read_secret(name: str) -> str:
+    """Read a credential from `<NAME>_FILE` if present, else `<NAME>`.
+
+    The file form is what a Docker or Kubernetes secret mount gives you, and it
+    keeps the tenant key out of `docker inspect` and the process environment.
+    """
+    path = os.environ.get(name + "_FILE")
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                return fh.read().strip()
+        except OSError:
+            return ""
+    return os.environ.get(name, "").strip()
+
+
 def _parse_cidrs(raw: str) -> tuple:
     nets = []
     for part in raw.split(","):
@@ -83,6 +99,21 @@ class IcapConfig:
     # telling the SWG its cached verdicts are stale.
     version: str = "pr1"
 
+    # Shield data plane. Tier 1 pulls its rule bundle from here; Tier 2 (PR 4)
+    # screens against it.
+    api_base: str = "https://api.guardrails.votal.ai"
+    api_key: str = ""
+    proxy_token: str = ""          # bearer for a fronting proxy (RunPod topology)
+    bundle_poll_s: int = 300
+    bundle_timeout_s: float = 10.0
+    # v1 cannot rewrite request bodies (spec §5), so a `redact` rule resolves to
+    # one of these. Default `pass`: a redact rule was not written to block, and
+    # silently upgrading it to a block would surprise the operator.
+    redact_fallback: str = "pass"
+    # Ceiling on local rule evaluation. A tenant regex that cannot finish inside
+    # this on an already-capped body is a broken pattern, not a verdict.
+    scan_timeout_ms: int = 250
+
     @classmethod
     def from_env(cls) -> "IcapConfig":
         hosts_raw = os.environ.get("SHIELD_ICAP_AI_HOSTS", "")
@@ -95,6 +126,16 @@ class IcapConfig:
             ai_hosts=hosts,
             allowed_clients=_parse_cidrs(os.environ.get("SHIELD_ICAP_ALLOWED_CLIENTS", "0.0.0.0/0,::/0")),
             version=os.environ.get("SHIELD_ICAP_VERSION", "pr1"),
+            api_base=os.environ.get("SHIELD_API_BASE", "https://api.guardrails.votal.ai").strip(),
+            api_key=_read_secret("SHIELD_API_KEY"),
+            proxy_token=_read_secret("SHIELD_PROXY_TOKEN"),
+            bundle_poll_s=_env_int("SHIELD_ICAP_BUNDLE_POLL_S", 300),
+            redact_fallback=(
+                "block"
+                if os.environ.get("SHIELD_ICAP_REDACT_FALLBACK", "pass").strip().lower() == "block"
+                else "pass"
+            ),
+            scan_timeout_ms=_env_int("SHIELD_ICAP_SCAN_TIMEOUT_MS", 250),
         )
 
     @property

@@ -8,8 +8,8 @@ description: Inline prompt and DLP enforcement for enterprise web traffic via an
 
 # Spec: SWG ICAP adapter (`shield-icap`)
 
-Status: APPROVED. Task 1 (ICAP protocol core) implemented on
-`feat/swg-icap-adapter`; tasks 2-5 pending.
+Status: APPROVED. Tasks 1-3 implemented on
+`feat/swg-icap-adapter`; tasks 4-5 pending.
 
 ---
 
@@ -95,7 +95,7 @@ In-process state only:
 | Item | Shape | TTL / invalidation |
 |---|---|---|
 | `bundle` | `{version, rules:[{id, regex, action, severity, replacement}], blocklists:[str]}` | refreshed every `SHIELD_ICAP_BUNDLE_POLL_S` (default 300s) via `GET /v1/edge/policy-bundle` with `If-None-Match`; 304 keeps the cached copy |
-| `compiled` | `list[re.Pattern]` compiled once per bundle version | replaced atomically on version change |
+| `compiled` | `tuple[Rule, ...]` of compiled `regex` patterns, built once per bundle version | replaced atomically on version change |
 | `istag` | `ISTag: "<bundle.version>"` returned on every ICAP response | changes when the bundle version changes, invalidating SWG-side caching |
 
 **Tenant scoping.** One `shield-icap` deployment serves exactly one tenant. The
@@ -265,15 +265,28 @@ New files, none of them touching an existing image:
 | `deploy/swg/pac.js.tmpl` | PAC template rendered from the AI-host list |
 | `tests/test_icap_*.py` | see §8 |
 
-**Dependency declaration.** The adapter needs only `httpx` (already in
-`requirements.txt`) and the standard library. ICAP is implemented directly on
-`asyncio` rather than pulling a third-party ICAP library, because the available
-ones are unmaintained and the subset we need (OPTIONS, REQMOD, Preview, 204) is
-small. `requirements-icap.txt` pins `httpx` explicitly so the image does not
-inherit the full runtime set.
+**Dependency declaration.** The adapter needs `httpx` and `regex`, and nothing
+else. ICAP itself is implemented directly on `asyncio` rather than pulling a
+third-party ICAP library, because the available ones are unmaintained and the
+subset we need (OPTIONS, REQMOD, Preview, 204) is small.
+`requirements-icap.txt` lists both explicitly so the image does not inherit the
+full runtime set.
 
-Tests import from `icap/`, so `requirements-test.txt` gains nothing new. This
-must be verified in a clean venv per the invariant.
+`regex` is not a style preference over stdlib `re`. Tier 1 evaluates
+tenant-authored patterns inline on employee browsing, so a catastrophic pattern
+has to be *bounded*, not merely noticed. Measured during task 3:
+
+- stdlib `re` has no match timeout and holds the GIL for the whole match, so an
+  `asyncio.wait_for` around it cannot fire until the match it was meant to bound
+  has already completed. The guard reads as protection and is not.
+- `regex` supports a per-match `timeout=` that self-terminates, and releases the
+  GIL while matching, so other in-flight transactions keep running.
+
+`tests/test_icap_policy.py` imports `icap.policy`, so `regex` is declared in
+`requirements-test.txt` as well. It had been reaching the local venv only
+transitively, which is the exact drift the "declare dependencies" invariant
+exists for. Verified in a clean venv that the image's whole dependency set is
+`httpx` and `regex` plus their transitives.
 
 **`Dockerfile.admin` is not modified.** No new module is imported by
 `admin_app.py`. Called out explicitly because the invariant exists.
@@ -316,6 +329,8 @@ must be verified in a clean venv per the invariant.
 | Malformed ICAP framing | `ICAP/1.0 400 Bad Request`, connection closed, never a hang |
 | Concurrency | stateless per transaction; bundle swap is a single atomic reference assignment |
 | Duplicate telemetry when the browser extension is also deployed | both taps report the same prompt. Adapter sets `X-Shield-Source: icap` so telemetry can de-duplicate. Deduplication itself is a follow-up. |
+| A tenant regex that will not compile | dropped at bundle load with a warning, the rest of the policy still arms. One bad pattern typed into the portal must not disarm everything else. |
+| A tenant regex that backtracks catastrophically | the scan carries a `SHIELD_ICAP_SCAN_TIMEOUT_MS` budget (default 250ms) spanning the whole rule set, enforced inside `regex` so the match terminates. On expiry: allow, and log loudly enough for the operator to find the pattern. A pattern that cannot finish is not a verdict. |
 | Redis down | not applicable, the adapter never touches Redis |
 
 **Fail-open vs fail-closed, stated:** the adapter is **fail-open on

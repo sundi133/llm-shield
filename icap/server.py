@@ -181,9 +181,17 @@ def _service_path(target: str) -> str:
 
 
 class IcapServer:
-    def __init__(self, config: Optional[IcapConfig] = None, screener: Optional[Screener] = None):
+    def __init__(
+        self,
+        config: Optional[IcapConfig] = None,
+        screener: Optional[Screener] = None,
+        version_fn: Optional[Callable[[], str]] = None,
+    ):
         self.cfg = config or IcapConfig()
         self.screener: Screener = screener or allow_all
+        # ISTag tells the SWG when its cached verdicts are stale, so it has to
+        # track the policy version once one is loaded, not the build id.
+        self.version_fn: Callable[[], str] = version_fn or (lambda: self.cfg.version)
 
     async def serve(self, host: str = "0.0.0.0", port: int = 1344) -> asyncio.AbstractServer:
         return await asyncio.start_server(self.handle, host, port)
@@ -408,7 +416,8 @@ class IcapServer:
 
     @property
     def _istag(self) -> bytes:
-        return b'ISTag: "' + self.cfg.version.encode("latin-1") + b'"' + CRLF
+        version = (self.version_fn() or self.cfg.version).encode("latin-1", "replace")
+        return b'ISTag: "' + version + b'"' + CRLF
 
     def _simple(self, code: int, reason: str) -> bytes:
         return (
