@@ -200,6 +200,13 @@ class IcapConfig:
     # unreachable degrades Tier 2 to nothing and never blocks browsing.
     fail_open: bool = False
 
+    # The tenant this deployment is FOR, as SecOps understands it. Optional,
+    # and never used to select a tenant -- the API key does that, server-side.
+    # Setting it turns an assumption into a check: if the key resolves to a
+    # different tenant, that fleet is about to be governed by someone else's
+    # policy, and the adapter refuses the bundle instead of applying it.
+    expect_tenant: str = ""
+
     # ICAPS. Plain ICAP is cleartext, which is fine on a gateway's own subnet
     # and indefensible anywhere else: the payload is decrypted employee
     # prompts. Any deployment where the gateway reaches this over a network
@@ -241,6 +248,7 @@ class IcapConfig:
             telemetry_queue=_env_int("SHIELD_ICAP_TELEMETRY_QUEUE", 1000),
             telemetry_workers=max(1, _env_int("SHIELD_ICAP_TELEMETRY_WORKERS", 4)),
             fail_open=_env_bool("SHIELD_ICAP_FAIL_OPEN", False),
+            expect_tenant=os.environ.get("SHIELD_ICAP_EXPECT_TENANT", "").strip(),
             tls_cert=os.environ.get("SHIELD_ICAP_TLS_CERT", "").strip(),
             tls_key=os.environ.get("SHIELD_ICAP_TLS_KEY", "").strip(),
             tls_client_ca=os.environ.get("SHIELD_ICAP_TLS_CLIENT_CA", "").strip(),

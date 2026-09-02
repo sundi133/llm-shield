@@ -56,6 +56,12 @@ async def _health(
                 "version": cfg.version,
                 "mode": cfg.mode,
                 "screen": "sync" if cfg.sync_screen else "async",
+                # Which tenant this deployment is actually governing. Policy
+                # differs per tenant, so an operator must be able to see it
+                # rather than infer it from which key file they think is
+                # mounted.
+                "tenant_id": bundle.tenant_id or None,
+                "expect_tenant": cfg.expect_tenant or None,
                 "bundle_version": bundle.version or None,
                 "rules": len(bundle.rules),
                 # The number that matters. A `redact` rule is a rule the

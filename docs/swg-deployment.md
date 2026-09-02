@@ -349,6 +349,7 @@ reference, so a help desk can find the decision from one string.
 |---|---|---|
 | `SHIELD_API_KEY` / `_FILE` | required | Tenant key. Prefer the file form. |
 | `SHIELD_ICAP_MODE` | `monitor` | `monitor` or `enforce` |
+| `SHIELD_ICAP_EXPECT_TENANT` | unset | The tenant this deployment is for. A mismatch refuses the policy rather than applying it |
 | `SHIELD_ICAP_ALLOWED_CLIENTS` | all | CIDRs allowed to reach port 1344 |
 | `SHIELD_ICAP_AI_HOSTS` | built in | Destinations to inspect |
 | `SHIELD_ICAP_BYPASS_HOSTS` | built in | Never inspected |
