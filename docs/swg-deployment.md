@@ -438,6 +438,130 @@ has decided to exfiltrate.
 
 ---
 
+## Covering every browser
+
+There is one policy, in the Shield portal, and it is browser-independent. The
+inspection happens at the gateway, so nothing about a rule is specific to
+Chrome or Firefox. What differs per browser is only two settings: where it
+sends traffic, and whether it trusts the inspection CA.
+
+Two of those settings have an OS-level form that most software inherits, and a
+browser-specific form that locks it. Do both: the OS setting gets you Safari,
+Edge and the Electron apps for free, and the browser policy is what a user
+cannot switch off.
+
+### Step 1. Trust the CA at the OS level
+
+| | |
+|---|---|
+| macOS | MDM Certificate payload, System keychain |
+| Windows | Intune Trusted Certificate profile, Local Machine / Trusted Root |
+
+This one setting covers Chrome, Edge, Safari, Brave, Arc, Electron apps and
+anything else using the platform trust store. Firefox is the exception, in
+step 4.
+
+### Step 2. Set the OS proxy
+
+macOS, per network service, delivered by MDM or a script:
+
+```bash
+networksetup -setautoproxyurl "Wi-Fi" "http://swg.corp.example:8081/proxy.pac"
+networksetup -setautoproxystate "Wi-Fi" on
+```
+
+Windows, machine-wide:
+
+```
+netsh winhttp set proxy proxy-server="http://swg.corp.example:3128"
+```
+
+Plus the GPO **Configure proxy settings** for the per-user WinINET settings
+that browsers read.
+
+This is what catches Safari, which has no proxy setting of its own, and the
+desktop AI apps, which mostly follow the system proxy.
+
+### Step 3. Chrome and Edge policy
+
+Same keys for both, different namespace.
+
+macOS, `com.google.Chrome` and `com.microsoft.Edge`:
+
+```xml
+<key>ProxyMode</key>    <string>pac_script</string>
+<key>ProxyPacUrl</key>  <string>http://swg.corp.example:8081/proxy.pac</string>
+<key>QuicAllowed</key>  <false/>
+```
+
+Windows, `HKLM\SOFTWARE\Policies\Google\Chrome` and `...\Microsoft\Edge`:
+
+```
+ProxySettings = {"ProxyMode":"pac_script",
+                 "ProxyPacUrl":"http://swg.corp.example:8081/proxy.pac"}
+QuicAllowed  = 0
+```
+
+`QuicAllowed=false` is not optional. Chrome prefers HTTP/3, which ignores an
+HTTP proxy entirely, and the bypass is silent: no error, no traffic, nothing
+inspected.
+
+### Step 4. Firefox, which shares nothing
+
+Firefox uses neither the OS trust store nor the OS proxy, so it needs both
+settings again in its own format. `policies.json`, or the `org.mozilla.firefox`
+plist on macOS:
+
+```json
+{"policies": {
+  "Certificates": {"ImportEnterpriseRoots": true},
+  "Proxy": {"Mode": "autoConfig",
+            "AutoConfigURL": "http://swg.corp.example:8081/proxy.pac",
+            "Locked": true}}}
+```
+
+Skip this and Firefox is the hole in the fleet: certificate errors on every AI
+site, and no inspection.
+
+### Step 5. Command line runtimes
+
+Python and Node ship their own CA bundles and ignore the system store:
+
+```
+REQUESTS_CA_BUNDLE=/path/ca.pem
+SSL_CERT_FILE=/path/ca.pem
+NODE_EXTRA_CA_CERTS=/path/ca.pem
+```
+
+Push these with everything else. Miss them and every script on the fleet
+starts failing TLS, which is the change people notice first.
+
+### Step 6. Verify on a device
+
+| Browser | Check |
+|---|---|
+| Chrome, Edge | `chrome://policy` / `edge://policy` shows ProxySettings and QuicAllowed as applied |
+| Firefox | `about:policies` shows Proxy and Certificates |
+| Safari | System Settings, Network, Proxies shows the PAC URL and greyed out |
+| Any | Load an AI site, then confirm the request in the adapter log |
+
+### What this still does not cover
+
+| Not covered | Why |
+|---|---|
+| Arc, and other browsers with no enterprise policy channel | Nothing to push. They do follow the OS proxy, so step 2 catches them |
+| Personal browsers a user installs | Your policy applies to managed software |
+| Personal devices, phones, tethering | Never touches your configuration profile |
+| Certificate-pinned native apps | Interception fails rather than inspecting; bypass them and report the gap |
+
+Steps 1 to 5 make the gateway the default path for everything a managed device
+runs. They do not make it the only path. If the traffic must not escape, pair
+this with egress control: deny outbound 443 to AI destinations from anything
+except the proxy. Then bypassing the proxy yields no access rather than
+unfiltered access.
+
+---
+
 ## Scaling
 
 The adapter is stateless, so run two or more replicas behind whatever your
