@@ -33,8 +33,13 @@ services:
       SHIELD_ICAP_MODE: ${SHIELD_ICAP_MODE:-monitor}
       SHIELD_ICAP_ALLOWED_CLIENTS: 172.16.0.0/12,10.0.0.0/8,127.0.0.0/8
       SHIELD_ICAP_PAC_PROXY: "127.0.0.1:3128"
-      # SHIELD_ICAP_SYNC_SCREEN: "1"   # inline Tier 2; adds 14-20s per prompt
-      # SHIELD_ICAP_FAIL_OPEN: "1"     # only affects sync mode
+      # Tier 2 inline. Off by default: it puts a network round trip on every
+      # prompt (measured 1.5-1.9s against the deployed data plane). Turn it on
+      # when you want the server's guardrails to BLOCK rather than just report,
+      # which is what the browser extension does.
+      SHIELD_ICAP_SYNC_SCREEN: ${SHIELD_ICAP_SYNC_SCREEN:-0}
+      # Only affects sync mode. A timeout is not an approval.
+      SHIELD_ICAP_FAIL_OPEN: ${SHIELD_ICAP_FAIL_OPEN:-0}
     secrets:
       - shield_api_key
     healthcheck:

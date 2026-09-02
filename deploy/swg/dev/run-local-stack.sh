@@ -32,11 +32,20 @@ start_stub() {
 
 case "${1:-start}" in
 start)
-    echo "== stub Shield =="
-    start_stub
+    # Production by default. The stub is opt-in, because a test rig that
+    # quietly points somewhere other than the real data plane is how a console
+    # ends up showing nothing while everything looks healthy.
+    if [ "${2:-}" = "--stub" ]; then
+        echo "== stub Shield (NOT production) =="
+        start_stub
+        BASE=http://host.docker.internal:9099
+    else
+        BASE=https://api.guardrails.votal.ai
+        echo "== data plane: $BASE =="
+    fi
 
     echo "== stack =="
-    SHIELD_API_BASE=http://host.docker.internal:9099 \
+    SHIELD_API_BASE="$BASE" \
     SHIELD_ICAP_MODE=enforce \
         $COMPOSE up -d --build >/dev/null
     sleep 6
@@ -50,6 +59,7 @@ if d.get("policy_error"):
     print("  POLICY ERROR: %s" % d["policy_error"])
 if not d["enforcing_anything"]:
     print("  WARNING: zero rules loaded. Nothing will be blocked.")
+    print("  Telemetry still flows; only Tier 1 enforcement is dead.")
     sys.exit(1)
 '
     echo
@@ -161,7 +171,7 @@ browser)
     ;;
 
 *)
-    echo "usage: $0 [start|stop|check|browser]" >&2
+    echo "usage: $0 [start [--stub]|stop|check|browser]" >&2
     exit 2
     ;;
 esac

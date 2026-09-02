@@ -286,3 +286,12 @@ def test_public_api_base_is_upgraded_to_tls():
 
     assert _api_base("http://api.guardrails.votal.ai") == "https://api.guardrails.votal.ai"
     assert _api_base("http://example.com/x") == "https://example.com/x"
+
+
+def test_compose_sync_screen_is_off_by_default():
+    """Inline Tier 2 puts a network round trip on every prompt. Overridable,
+    but an operator who sets nothing must not get it."""
+    compose = yaml.safe_load(COMPOSE.read_text())
+    env = compose["services"]["shield-icap"]["environment"]
+    assert _effective_default(env["SHIELD_ICAP_SYNC_SCREEN"]) == "0"
+    assert _effective_default(env["SHIELD_ICAP_FAIL_OPEN"]) == "0"
