@@ -53,12 +53,34 @@ if not d["enforcing_anything"]:
     sys.exit(1)
 '
     echo
-    echo "Browser test (macOS). Chrome must NOT already be running with this profile:"
-    echo "  open -a 'Google Chrome' --args \\"
-    echo "    --proxy-server='http://127.0.0.1:3128' \\"
-    echo "    --user-data-dir=/tmp/shield-test-profile"
-    echo
-    echo "Then run '$0 check' to confirm traffic is actually reaching the proxy."
+    cat <<'BROWSER'
+
+Browser test (macOS):
+
+  1. Quit Chrome COMPLETELY (Cmd-Q, not just closing the window). `open -a`
+     is ignored while Chrome is running, which is the usual reason a test
+     "does not block": the tab opens in the old, unproxied window.
+
+  2. Relaunch YOUR NORMAL profile with the PAC file:
+
+       open -a "Google Chrome" --args \
+         --proxy-pac-url="http://127.0.0.1:8081/proxy.pac"
+
+     Your normal profile, on purpose. A fresh --user-data-dir is not signed
+     into ChatGPT, so there is nothing to type a prompt into, and you end up
+     back in the unproxied window without noticing.
+
+     The PAC sends ONLY AI hosts to the proxy. Everything else, banking
+     included, returns DIRECT and never reaches it.
+
+  3. Confirm the browser is really proxied BEFORE typing anything:
+
+       ./deploy/swg/dev/run-local-stack.sh check
+
+  4. Then in ChatGPT, send something your policy blocks, e.g.
+     "our margin on this handbag is 62% and the supplier cost is 400 AED"
+
+BROWSER
     ;;
 
 stop)
@@ -70,19 +92,35 @@ stop)
     ;;
 
 check)
-    echo "== requests Squid has proxied =="
-    n=$($COMPOSE logs squid 2>&1 | grep -cE "CONNECT [a-z0-9.-]+:443" || true)
-    echo "  CONNECT requests seen: $n"
+    # Only recent activity. Counting the whole log is how this check reported
+    # "2 CONNECT requests" that were actually curl tests from five minutes
+    # earlier, which is worse than no check at all.
+    WINDOW=${WINDOW:-180}
+    now=$(date +%s)
+    echo "== Squid CONNECTs in the last ${WINDOW}s =="
+    recent=$($COMPOSE logs --since "${WINDOW}s" squid 2>&1 \
+             | grep -E "CONNECT [a-z0-9.-]+:443" || true)
+    n=$(printf '%s' "$recent" | grep -c . || true)
+    echo "  count: $n"
+    [ -n "$recent" ] && printf '%s\n' "$recent" | sed 's/^/    /' | tail -5
+
     if [ "$n" = "0" ]; then
-        echo "  -> The browser is NOT using the proxy. Nothing can be inspected."
-        echo "     Most common cause: Chrome was already running, so --args was"
-        echo "     ignored and the existing unproxied window opened the tab."
-        echo "     Quit Chrome entirely, then relaunch with the flags above."
+        cat <<'NOPROXY'
+  -> The browser is NOT sending traffic through the proxy, so nothing can be
+     inspected and nothing will ever block. Two usual causes:
+       * Chrome was already running, so `open -a --args` was ignored.
+         Quit it completely (Cmd-Q) and relaunch.
+       * You typed into a different window than the proxied one. A fresh
+         --user-data-dir profile is not signed into ChatGPT; use your normal
+         profile with --proxy-pac-url instead.
+NOPROXY
     fi
+
     echo
-    echo "== prompts the adapter screened =="
-    $COMPOSE logs shield-icap 2>&1 | grep "icap txn" | grep -v "method=CONNECT" | tail -10 \
-        || echo "  none yet"
+    echo "== prompts the adapter screened in the last ${WINDOW}s =="
+    $COMPOSE logs --since "${WINDOW}s" shield-icap 2>&1 \
+        | grep "icap txn" | grep -v "method=CONNECT" | tail -10 \
+        || echo "  none"
     ;;
 *)
     echo "usage: $0 [start|stop|check]" >&2
