@@ -150,7 +150,9 @@ class ShieldClient:
                 block=True,
                 rule_id="shield_unavailable",
                 payload={
-                    "error": "blocked_by_votal_shield",
+                    "error": "Blocked: the screening service is unavailable and "
+                             "policy is set to fail closed.",
+                    "code": "blocked_by_votal_shield",
                     "reason": "Screening service unavailable and policy is fail-closed.",
                     "rule_id": "shield_unavailable",
                     "severity": "high",
@@ -171,7 +173,9 @@ class ShieldClient:
             block=True,
             rule_id=names[0],
             payload={
-                "error": "blocked_by_votal_shield",
+                "error": "Blocked by your organization's AI policy. "
+                         + ("; ".join(reasons) or f"Triggered guardrail: {names[0]}"),
+                "code": "blocked_by_votal_shield",
                 "reason": "; ".join(reasons) or f"Blocked by guardrail: {names[0]}",
                 "rule_id": names[0],
                 "guardrails": names,

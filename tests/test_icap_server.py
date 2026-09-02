@@ -391,7 +391,7 @@ def test_block_response_framing_in_enforce_mode():
     assert resp.startswith(b"ICAP/1.0 200 OK")
     assert b"Encapsulated: res-hdr=0, res-body=" in resp
     assert b"HTTP/1.1 403 Forbidden" in resp
-    assert b"blocked_by_votal_shield" in resp
+    assert b"blocked_by_votal_shield" in resp  # the machine code
     assert b'"rule_id":"aws-secret-key"' in resp
     # The operator-facing correlation id and destination are always present.
     assert b'"reference":"' in resp

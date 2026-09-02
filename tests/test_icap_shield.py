@@ -130,6 +130,7 @@ def test_block_verdict_carries_the_guardrail_names():
 
     assert verdict.block is True
     assert verdict.rule_id == "prompt-injection"
+    assert verdict.payload["code"] == "blocked_by_votal_shield"
     assert verdict.payload["guardrails"] == ["prompt-injection"]
     assert "override attempt" in verdict.payload["reason"]
 

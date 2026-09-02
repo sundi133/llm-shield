@@ -360,6 +360,84 @@ reference, so a help desk can find the decision from one string.
 
 ---
 
+## Rolling it out to a fleet
+
+Nothing is installed on a laptop. Squid and `shield-icap` run centrally, in
+your datacentre or VPC; endpoints receive **configuration**, pushed by MDM.
+For Mode B, endpoints receive nothing at all, because the gateway you already
+run is doing the interception.
+
+### What lands on each device
+
+| Item | Why it is needed | Consequence of skipping it |
+|---|---|---|
+| Root CA in the system trust store | Squid presents a forged certificate for inspected hosts | Every AI site shows a certificate error |
+| Proxy configuration (the PAC URL) | Routes AI hosts to the proxy | Traffic goes direct, nothing is inspected |
+| `QuicAllowed=false` | Chrome prefers HTTP/3, which ignores an HTTP proxy | Silent bypass, no error, no traffic |
+| Firefox `security.enterprise_roots.enabled` | Firefox ignores the OS trust store | Certificate errors in Firefox only |
+| `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` | Python and Node ship their own CA bundles | Every script on the fleet fails TLS |
+
+The last row is the one that generates the support tickets. Push it with
+everything else, not after the complaints start.
+
+### macOS (Jamf, Kandji, Intune)
+
+One configuration profile with three payloads:
+
+```
+Certificate payload      ca-cert.pem, System keychain
+Proxies payload          com.apple.SystemConfiguration
+                           ProxyAutoConfigEnable = 1
+                           ProxyAutoConfigURLString = http://<host>:8081/proxy.pac
+Managed preferences      com.google.Chrome
+                           QuicAllowed = false
+                           ProxyMode = pac_script
+                           ProxyPacUrl = http://<host>:8081/proxy.pac
+```
+
+Mark the profile non-removable. The environment variables for CLI tools go in
+a separate launchd plist, since macOS has no per-machine environment file that
+GUI and shell sessions both read.
+
+### Windows (Intune or GPO)
+
+```
+Trusted Certificate profile   ca-cert.cer -> Local Machine / Trusted Root
+Chrome ADMX policy            ProxySettings = {"ProxyMode":"pac_script",
+                                               "ProxyPacUrl":"http://<host>:8081/proxy.pac"}
+                              QuicAllowed = false
+Environment variables         REQUESTS_CA_BUNDLE, SSL_CERT_FILE, NODE_EXTRA_CA_CERTS
+```
+
+### Verify on a device, not in the console
+
+```
+chrome://policy          the proxy and QUIC policies show as applied
+curl -s http://<host>:8081/healthz     rules > 0, policy_error null
+```
+
+Then send a canary prompt containing a planted fake credential while still in
+monitor mode, and confirm it appears as `would_block`.
+
+### The limit of all of this
+
+MDM makes the proxy the **default** path. It does not make it the only one. A
+user can install a personal browser, run a VM, or tether to their phone, and
+none of that touches your configuration profile.
+
+If the traffic must not escape, the enforcement has to be on the network:
+**deny outbound 443 to AI destinations from anything except the proxy's source
+address.** Then bypassing the proxy does not yield unfiltered access, it
+yields no access. Everything above is what makes the proxy convenient; egress
+control is what makes it mandatory.
+
+Be straight with buyers about this. A browser proxy pushed by MDM is a
+sensible control for accidental leaks by ordinary employees, which is the
+actual threat model for AI data loss. It is not a control against someone who
+has decided to exfiltrate.
+
+---
+
 ## Scaling
 
 The adapter is stateless, so run two or more replicas behind whatever your

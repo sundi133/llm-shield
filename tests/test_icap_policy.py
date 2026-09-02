@@ -271,7 +271,12 @@ def test_tier1_blocks_on_a_critical_rule():
 
     assert verdict.block is True
     assert verdict.rule_id == "aws-secret-key"
-    assert verdict.payload["error"] == "blocked_by_votal_shield"
+    # `error` is the sentence, because that is the field AI web apps render
+    # and it is the only message a blocked employee ever sees. The machine
+    # value moved to `code`.
+    assert verdict.payload["code"] == "blocked_by_votal_shield"
+    assert "aws-secret-key" in verdict.payload["error"]
+    assert verdict.payload["error"].startswith("Blocked by your organization")
     assert verdict.payload["severity"] == "critical"
     assert verdict.payload["policy_version"] == "v1"
     assert "aws-secret-key" in verdict.payload["reason"]

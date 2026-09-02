@@ -319,7 +319,14 @@ class Tier1Screener:
             block=True,
             rule_id=hit.rule_id,
             payload={
-                "error": "blocked_by_votal_shield",
+                # `error` carries the SENTENCE, not the code. AI web apps render
+                # whichever field they happen to parse, and ChatGPT renders this
+                # one -- an employee was shown the bare string
+                # "blocked_by_votal_shield" and told nothing about why. This is
+                # the only message a blocked user ever sees, so it has to say
+                # what happened and give them the reference to quote.
+                "error": f"Blocked by your organization's AI policy. {reason}.",
+                "code": "blocked_by_votal_shield",
                 "reason": reason,
                 "rule_id": hit.rule_id,
                 "severity": hit.severity,
