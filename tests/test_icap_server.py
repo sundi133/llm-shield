@@ -462,3 +462,53 @@ def test_no_body_logging(caplog):
     assert "decision=block" in caplog.text
     assert "host=api.anthropic.com" in caplog.text
     assert "rule=aws-secret-key" in caplog.text
+
+
+# ── never drop a connection without answering ────────────────────────────────
+
+
+class ExplodingScreener:
+    """Stands in for any unexpected bug in the screening path."""
+
+    async def __call__(self, req: IcapRequest) -> Verdict:
+        raise RuntimeError("boom")
+
+
+def test_a_crashing_screener_still_answers():
+    """A silent connection close reaches Squid as
+    `transaction-end-before-headers`. Eleven of those suspend the ICAP service
+    outright, and with bypass=off that takes every AI site on the fleet down
+    because of a bug in one request. Answer, always.
+    """
+    with Harness(IcapConfig(), ExplodingScreener()) as h:
+        sock = h.connect()
+        sock.sendall(build_reqmod())
+        resp = recv_head(sock)
+        sock.close()
+
+    assert resp, "the connection was closed without any response at all"
+    assert resp.startswith(b"ICAP/1.0 500"), resp[:60]
+
+
+def test_the_service_survives_a_crashing_request():
+    """One bad request must not poison the connection for the next one."""
+    calls = {"n": 0}
+
+    async def flaky(req: IcapRequest) -> Verdict:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        return Verdict()
+
+    with Harness(IcapConfig(), flaky) as h:
+        first = h.connect()
+        first.sendall(build_reqmod())
+        assert recv_head(first).startswith(b"ICAP/1.0 500")
+        first.close()
+
+        second = h.connect()
+        second.sendall(build_reqmod())
+        assert recv_head(second).startswith(b"ICAP/1.0 204")
+        second.close()
+
+    assert calls["n"] == 2

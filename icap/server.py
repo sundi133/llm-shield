@@ -233,15 +233,31 @@ class IcapServer:
                 await writer.drain()
         except IcapError as exc:
             log.warning("icap framing error: %s", exc)
-            try:
-                writer.write(self._simple(400, "Bad Request"))
-                await writer.drain()
-            except Exception:
-                pass
-        except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
-            pass
+            self._try_send(writer, self._simple(400, "Bad Request"))
+        except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError) as exc:
+            # The peer went away mid-transaction. Squid records a connection
+            # that ended before headers as a service failure, and eleven of
+            # those suspend the service outright -- so answer if the socket is
+            # still writable rather than just closing.
+            log.warning("icap connection lost mid-transaction: %s", type(exc).__name__)
+            self._try_send(writer, self._simple(500, "Server Error"))
+        except Exception:
+            # Never close an ICAP connection without answering. A silent drop
+            # reaches Squid as `transaction-end-before-headers`, and with
+            # bypass=off eleven of them take down every AI site on the fleet
+            # for a bug in one request. Answer, log the traceback, keep serving.
+            log.exception("icap handler crashed; answering 500 rather than dropping")
+            self._try_send(writer, self._simple(500, "Server Error"))
         finally:
             self._close(writer)
+
+    @staticmethod
+    def _try_send(writer: asyncio.StreamWriter, payload: bytes) -> None:
+        """Best-effort write on a socket that may already be gone."""
+        try:
+            writer.write(payload)
+        except Exception:
+            pass
 
     @staticmethod
     def _close(writer: asyncio.StreamWriter) -> None:
