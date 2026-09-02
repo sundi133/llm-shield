@@ -105,12 +105,30 @@ def test_squid_does_not_cache_or_log_decrypted_traffic():
     assert "strip_query_terms on" in conf
 
 
+def _effective_default(value: str) -> str:
+    """Resolve `${VAR:-default}` to its default, or return a literal as-is.
+
+    The compose values are overridable so a test rig can point the stack at a
+    local stub; what must not drift is what happens when nobody overrides them.
+    """
+    m = re.fullmatch(r"\$\{[A-Z_]+:-(.*)\}", value.strip())
+    return m.group(1) if m else value.strip()
+
+
 def test_compose_starts_in_monitor_mode():
     """Enforce-by-default on inline browser traffic is how this gets
-    uninstalled (spec §5)."""
+    uninstalled (spec §5). Overridable, but never enforcing by default."""
     compose = yaml.safe_load(COMPOSE.read_text())
     env = compose["services"]["shield-icap"]["environment"]
-    assert env["SHIELD_ICAP_MODE"] == "monitor"
+    assert _effective_default(env["SHIELD_ICAP_MODE"]) == "monitor"
+
+
+def test_compose_defaults_to_the_production_data_plane():
+    """Overridable for local testing, but an operator who sets nothing must
+    reach production, not a stub."""
+    compose = yaml.safe_load(COMPOSE.read_text())
+    env = compose["services"]["shield-icap"]["environment"]
+    assert _effective_default(env["SHIELD_API_BASE"]) == "https://api.guardrails.votal.ai"
 
 
 def test_compose_uses_a_secret_not_an_inline_key():
@@ -210,3 +228,61 @@ def test_chatgpt_dot_com_is_covered():
     assert IcapConfig().is_ai_host("chatgpt.com")
     assert ".chatgpt.com" in SQUID_CONF.read_text()
     assert "chatgpt.com" in render_pac(IcapConfig())
+
+
+# ── things that only failed when the stack was actually run ──────────────────
+
+
+def test_squid_declares_the_at_step_acls():
+    """`step1` is not built in. Referencing it undeclared kills Squid at parse
+    with "ACL not found: step1", which is a dead proxy, not a degraded one."""
+    conf = SQUID_CONF.read_text()
+    for n in (1, 2, 3):
+        assert f"acl step{n} at_step SslBump{n}" in conf
+    assert conf.index("acl step1 at_step") < conf.index("ssl_bump peek")
+
+
+def test_squid_image_is_built_not_pulled():
+    """The common Squid images are compiled --with-gnutls and ship no
+    security_file_certgen, so ssl_bump does not exist and Squid refuses this
+    config at startup. Debian's squid-openssl package is what has it."""
+    compose = yaml.safe_load(COMPOSE.read_text())
+    squid = compose["services"]["squid"]
+    assert "image" not in squid or "build" in squid, "must build, not pull a gnutls squid"
+    assert squid["build"]["dockerfile"].endswith("Dockerfile.squid")
+    assert "squid-openssl" in (REPO / "deploy" / "swg" / "Dockerfile.squid").read_text()
+
+
+def test_squid_entrypoint_makes_stdout_writable():
+    """Squid drops to the proxy user and then cannot open the container's
+    stdout, dying at startup. Logs are how an operator sees what is inspected,
+    so this is not cosmetic."""
+    entry = (REPO / "deploy" / "swg" / "squid-entrypoint.sh").read_text()
+    assert "chmod a+w /dev/stdout" in entry
+    assert "squid -k parse" in entry, "a bad config must fail loudly, not half-start"
+
+
+def test_compose_ca_is_bind_mounted_read_only():
+    """The CA private key is the operator's, generated on the host. A named
+    volume hides it somewhere they cannot rotate or destroy it."""
+    compose = yaml.safe_load(COMPOSE.read_text())
+    mounts = compose["services"]["squid"]["volumes"]
+    assert any(m.startswith("./deploy/swg/ssl:") and m.endswith(":ro") for m in mounts)
+
+
+def test_local_api_base_is_not_upgraded_to_tls():
+    """Secure by default has to stop short of unusable on a laptop: upgrading
+    a loopback stub to https yields WRONG_VERSION_NUMBER, which says nothing
+    about the cause."""
+    from icap.config import _api_base
+
+    for local in ("http://localhost:9099", "http://127.0.0.1:9099",
+                  "http://host.docker.internal:9099", "http://10.0.0.5:8080"):
+        assert _api_base(local) == local, f"{local} must stay plaintext"
+
+
+def test_public_api_base_is_upgraded_to_tls():
+    from icap.config import _api_base
+
+    assert _api_base("http://api.guardrails.votal.ai") == "https://api.guardrails.votal.ai"
+    assert _api_base("http://example.com/x") == "https://example.com/x"

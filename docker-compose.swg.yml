@@ -24,11 +24,13 @@ services:
       # on the internal network.
       - "127.0.0.1:8081:8081"
     environment:
-      SHIELD_API_BASE: https://api.guardrails.votal.ai
+      # Overridable so the stack can be pointed at deploy/swg/dev/fake_shield.py
+      # for a local end-to-end test without a tenant key.
+      SHIELD_API_BASE: ${SHIELD_API_BASE:-https://api.guardrails.votal.ai}
       SHIELD_API_KEY_FILE: /run/secrets/shield_api_key
       # Start in monitor. Flip to enforce only after reviewing what would have
       # blocked (docs: /policy-lifecycle/).
-      SHIELD_ICAP_MODE: monitor
+      SHIELD_ICAP_MODE: ${SHIELD_ICAP_MODE:-monitor}
       SHIELD_ICAP_ALLOWED_CLIENTS: 172.16.0.0/12,10.0.0.0/8,127.0.0.0/8
       SHIELD_ICAP_PAC_PROXY: "127.0.0.1:3128"
       # SHIELD_ICAP_SYNC_SCREEN: "1"   # inline Tier 2; adds 14-20s per prompt
@@ -43,7 +45,13 @@ services:
       retries: 3
 
   squid:
-    image: ubuntu/squid:latest
+    # Built, not pulled: the common Squid images (ubuntu/squid included) are
+    # compiled --with-gnutls and ship no security_file_certgen, so ssl_bump
+    # does not exist and Squid refuses this config at startup.
+    build:
+      context: .
+      dockerfile: deploy/swg/Dockerfile.squid
+    image: shield-squid
     restart: unless-stopped
     depends_on:
       - shield-icap
@@ -51,15 +59,15 @@ services:
       - "3128:3128"
     volumes:
       - ./deploy/swg/squid.conf:/etc/squid/squid.conf:ro
-      # The CA private key lives here and never leaves the customer. Generate
-      # it once (see docs/swg-deployment.md); do not bake one into an image.
-      - squid-ssl:/etc/squid/ssl
-      - squid-ssldb:/var/spool/squid/ssl_db
+      # Bind-mounted read-only, not a named volume: the CA private key is the
+      # operator's, generated on the host (docs/swg-deployment.md), and it
+      # stays somewhere they can see, rotate and destroy it. Never in an image.
+      - ./deploy/swg/ssl:/etc/squid/ssl:ro
+      - squid-ssldb:/var/spool/squid
 
 secrets:
   shield_api_key:
     file: ./deploy/swg/shield_api_key.txt
 
 volumes:
-  squid-ssl:
   squid-ssldb:

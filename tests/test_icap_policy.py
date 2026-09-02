@@ -403,3 +403,39 @@ def test_monitor_mode_forwards_the_same_request():
     resp = _served(cfg(mode="monitor"), compile_bundle(bundle_json()), "key AKIAIOSFODNN7EXAMPLE")
     assert resp.startswith(b"ICAP/1.0 204 No Content")
     assert b"403" not in resp
+
+
+def test_rejected_key_is_reported_not_swallowed():
+    """"Reachable but refused" is the failure that looks healthiest: an
+    operator sees ok=true, shield_reachable=true, and misses rules=0."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"detail": "No valid tenant API key provided."})
+
+    async def go():
+        cache = PolicyCache(cfg(), transport(handler))
+        await cache.refresh()
+        return cache
+
+    cache = asyncio.run(go())
+    assert cache.reachable is True, "the server answered, so it is reachable"
+    assert "401" in cache.last_error, "but the refusal must be visible"
+    assert cache.bundle.empty
+
+
+def test_successful_refresh_clears_a_previous_error():
+    state = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state["n"] += 1
+        if state["n"] == 1:
+            return httpx.Response(401, json={})
+        return httpx.Response(200, json=bundle_json())
+
+    async def go():
+        cache = PolicyCache(cfg(), transport(handler))
+        await cache.refresh()
+        assert cache.last_error
+        await cache.refresh()
+        return cache
+
+    assert asyncio.run(go()).last_error == ""

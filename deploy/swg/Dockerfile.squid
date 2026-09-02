@@ -1,0 +1,22 @@
+# Squid with TLS interception, for Mode A.
+#
+# NOT ubuntu/squid or the usual squid packages: those are built --with-gnutls
+# and ship no security_file_certgen, so `ssl_bump` does not exist and Squid
+# refuses this config at startup. On Debian the feature lives in a separate
+# package, `squid-openssl`. This is the single most common way a Mode A
+# deployment fails, and it fails at boot with a config error rather than by
+# quietly not inspecting anything.
+#
+# Verify in any image you substitute:
+#   squid -v | tr ' ' '\n' | grep with-openssl
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends squid-openssl openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY deploy/swg/squid-entrypoint.sh /usr/local/bin/squid-entrypoint.sh
+RUN chmod +x /usr/local/bin/squid-entrypoint.sh
+
+EXPOSE 3128
+ENTRYPOINT ["/usr/local/bin/squid-entrypoint.sh"]

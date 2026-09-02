@@ -60,6 +60,10 @@ async def _health(
                 "rules": len(bundle.rules),
                 "blocklists": len(bundle.blocklists),
                 "shield_reachable": cache.reachable,
+                "policy_error": cache.last_error or None,
+                # The one an operator should read first: monitor or enforce,
+                # zero rules means zero blocking.
+                "enforcing_anything": bool(cache.bundle.rules or cache.bundle.blocklists),
                 "telemetry_submitted": shield.submitted,
                 "telemetry_dropped": shield.dropped,
             }

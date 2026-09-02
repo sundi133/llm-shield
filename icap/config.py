@@ -84,25 +84,50 @@ def _host_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return parsed or default
 
 
+_LOCAL_HOSTS = frozenset({"localhost", "host.docker.internal", "host.containers.internal"})
+
+
+def _is_local(host: str) -> bool:
+    """True for addresses where plaintext carries no meaningful exposure."""
+    host = host.split("@")[-1].split(":")[0].strip("[]").lower()
+    if host in _LOCAL_HOSTS or host.endswith(".local") or host.endswith(".internal"):
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return addr.is_loopback or addr.is_private or addr.is_link_local
+
+
 def _api_base(raw: str) -> str:
-    """Normalise the data plane URL, upgrading plaintext to TLS.
+    """Normalise the data plane URL, upgrading public plaintext to TLS.
 
     `http://api.guardrails.votal.ai` answers 301 to https. Following that
     redirect would mean putting the tenant key on the wire in plaintext first,
-    and httpx does not follow redirects by default anyway, so the bundle fetch
-    would fail with a confusing parse error. Upgrade it here and say so.
+    and httpx does not follow redirects by default anyway, so the fetch would
+    fail with a confusing parse error instead.
+
+    Loopback and private addresses are left alone. Upgrading those breaks
+    every local test rig against a plaintext stub, and produces a TLS error
+    ("WRONG_VERSION_NUMBER") that says nothing about the cause. Secure by
+    default has to stop short of unusable on a laptop.
     """
     base = (raw or "").strip().rstrip("/")
-    if base.startswith("http://"):
-        upgraded = "https://" + base[len("http://"):]
-        import logging
+    if not base.startswith("http://"):
+        return base
 
-        logging.getLogger("shield.icap").warning(
-            "SHIELD_API_BASE was http://; using %s instead. The tenant key must "
-            "never traverse plaintext.", upgraded,
-        )
-        return upgraded
-    return base
+    host = base[len("http://"):].split("/", 1)[0]
+    if _is_local(host):
+        return base
+
+    upgraded = "https://" + base[len("http://"):]
+    import logging
+
+    logging.getLogger("shield.icap").warning(
+        "SHIELD_API_BASE was http://; using %s instead. The tenant key must "
+        "never traverse plaintext.", upgraded,
+    )
+    return upgraded
 
 
 def _read_secret(name: str) -> str:

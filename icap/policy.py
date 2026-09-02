@@ -2,9 +2,10 @@
 
 Task 3 of docs/spec-swg-icap-adapter.md.
 
-Tier 1 exists because of a latency fact: a cloud text screen measures 14 to 20
-seconds, and an ICAP transaction cannot wait that long without taking the
-gateway's worker with it. So the rules that must block inline -- secrets, PII,
+Tier 1 exists because of a latency fact: a cloud text screen is a network
+round trip (measured at 1.5-1.9s against the deployed data plane, and
+documented elsewhere as far worse), which no ICAP transaction should carry on
+every prompt. So the rules that must block inline -- secrets, PII,
 keyword blocklists -- are evaluated here from a cached bundle, in under a
 millisecond, with no network call on the request path at all.
 
@@ -123,6 +124,7 @@ class PolicyCache:
         self._bundle: Bundle = EMPTY
         self._etag: str = ""
         self._reachable: Optional[bool] = None
+        self._last_error: str = ""
         self._task: Optional[asyncio.Task] = None
 
     @property
@@ -138,6 +140,15 @@ class PolicyCache:
     @property
     def reachable(self) -> Optional[bool]:
         return self._reachable
+
+    @property
+    def last_error(self) -> str:
+        """Why the most recent refresh did not land, empty when it did.
+
+        Surfaced on /healthz because "reachable but refused" is the failure
+        that looks healthiest: an operator sees ok=true and misses rules=0.
+        """
+        return self._last_error
 
     def _headers(self) -> dict[str, str]:
         headers = {"X-API-Key": self.cfg.api_key}
@@ -166,7 +177,21 @@ class PolicyCache:
             self._reachable = True
             if resp.status_code == 304:
                 return False
+            if resp.status_code in (401, 403):
+                # Reachable but refused. Distinct from unreachable, and worth
+                # its own state: healthz would otherwise read ok/reachable
+                # while rules stayed 0, which looks healthy and enforces
+                # nothing.
+                self._last_error = f"http {resp.status_code}: tenant key rejected"
+                log.error(
+                    "icap bundle refresh REJECTED http=%s -- check SHIELD_API_KEY, and "
+                    "that the data plane routes /v1/edge through its auth middleware. "
+                    "No rules loaded means nothing will be blocked.",
+                    resp.status_code,
+                )
+                return False
             if resp.status_code >= 400:
+                self._last_error = f"http {resp.status_code}"
                 log.warning("icap bundle refresh http=%s (serving cached)", resp.status_code)
                 return False
             bundle = compile_bundle(resp.json(), self.cfg.redact_fallback)
@@ -176,6 +201,7 @@ class PolicyCache:
                 return False
             self._bundle = bundle
             self._etag = etag or f'"{bundle.version}"'
+            self._last_error = ""
             log.info(
                 "icap bundle loaded version=%s rules=%d blocklists=%d skipped=%d",
                 bundle.version, len(bundle.rules), len(bundle.blocklists), bundle.skipped,
@@ -183,6 +209,7 @@ class PolicyCache:
             return True
         except Exception as exc:  # network, TLS, malformed JSON
             self._reachable = False
+            self._last_error = str(exc)[:200]
             log.warning(
                 "icap bundle refresh failed: %s (serving cached version=%s)",
                 exc, self._bundle.version or "none",

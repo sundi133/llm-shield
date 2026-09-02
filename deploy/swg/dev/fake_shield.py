@@ -55,5 +55,11 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("fake shield on http://127.0.0.1:9099")
-    HTTPServer(("127.0.0.1", 9099), H).serve_forever()
+    import os
+    # 0.0.0.0 when the caller is a container (host.docker.internal on
+    # macOS/Windows); loopback otherwise, which is the safer default for a
+    # stub that authenticates nothing.
+    host = os.environ.get("FAKE_SHIELD_HOST", "127.0.0.1")
+    port = int(os.environ.get("FAKE_SHIELD_PORT", "9099"))
+    print(f"fake shield on http://{host}:{port}", flush=True)
+    HTTPServer((host, port), H).serve_forever()
