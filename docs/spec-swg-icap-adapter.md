@@ -65,6 +65,20 @@ constraint of this spec:
 > timeout, and even if it does not, it adds 14 seconds to every prompt the user
 > sends.
 
+**Measured against the deployed data plane** (2026-09-02, five samples,
+`api.guardrails.votal.ai`): **1.47s to 1.85s**, not 14 to 20. The documented
+figure appears to be stale or to describe a different backend.
+
+That does not change the two-tier design, but it does change the advice.
+Adding 1.5s to every prompt in an enterprise is still a poor default when
+Tier 1 already covers what must block inline, and this is a network round trip
+that can spike (absolute latency on this pipeline has been observed to swing
+several-fold between days, so one session's numbers are not a budget). But
+`SHIELD_ICAP_SYNC_SCREEN=1` is a reasonable choice for a site that wants
+injection detection inline and can absorb a second or two, rather than the
+non-starter the 14 to 20 second figure implies. Re-measure before recommending
+it to a specific customer.
+
 This is the single biggest risk in the feature, and it drives the two-tier
 design:
 
