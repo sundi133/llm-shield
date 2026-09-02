@@ -657,6 +657,55 @@ availability is AI availability for that customer's whole fleet.
 
 ---
 
+## Hosting the ICAP service on GCP
+
+`deploy/swg/gcp/deploy.sh` stands it up behind an internal load balancer.
+
+```bash
+cd deploy/swg/gcp
+./deploy.sh my-project us-central1 my-vpc 10.20.0.0/16
+printf %s 'tenant_key' | gcloud secrets versions add shield-api-key --data-file=-
+```
+
+Then point the gateway at the forwarding rule's address, which the script
+prints.
+
+Three GCP-specific choices worth understanding, because each has an obvious
+wrong alternative:
+
+**Cloud Run cannot host this.** ICAP is its own protocol on its own port and
+Cloud Run only accepts HTTP. The same is true of Squid, for the same reason.
+
+**Internal passthrough load balancer, not an application load balancer.** An
+application load balancer parses HTTP, and would reject ICAP as malformed.
+Passthrough hands the TCP connection through untouched, which is also what
+lets the adapter terminate its own TLS when ICAPS is enabled.
+
+**Internal, not external.** Port 1344 answers "is this blocked?", so anyone
+who can reach it can map the tenant's DLP patterns by asking. The firewall
+allows it only from the gateway's own subnet, and health checks only from
+Google's probe ranges.
+
+The tenant key comes from Secret Manager at boot rather than an environment
+variable or an image layer, both of which are readable by anyone with
+`compute.instances.get`. Rotating it is a new secret version and a rolling
+restart.
+
+Run two instances minimum. The gateway is configured `bypass=off`, so adapter
+availability is AI availability for the whole fleet behind it.
+
+### A GCP product that looks right and is not
+
+GCP **Secure Web Proxy** is a managed TLS-inspecting proxy where you supply
+the CA through Certificate Manager. For a GCP-native customer it looks like
+exactly the right way to replace Squid.
+
+It has no ICAP support. Its policy engine is its own URL and TLS rules, with
+no callout to an external screening service, so it cannot talk to this
+adapter. Worth knowing before it comes up in a design review.
+
+---
+
 ## Scaling
 
 The adapter is stateless, so run two or more replicas behind whatever your
