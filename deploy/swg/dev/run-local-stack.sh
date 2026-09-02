@@ -122,8 +122,46 @@ NOPROXY
         | grep "icap txn" | grep -v "method=CONNECT" | tail -10 \
         || echo "  none"
     ;;
+browser)
+    # Chrome ignores --args entirely when it is already running, and gives no
+    # sign of it: the window looks the same, the flags are simply dropped. The
+    # only reliable sequence is quit, wait for the process to actually go, then
+    # launch with the flag AND the URL.
+    if pgrep -x "Google Chrome" >/dev/null; then
+        echo "This will QUIT Google Chrome (tabs are restored on relaunch)."
+        printf "Continue? [y/N] "
+        read -r reply
+        case "$reply" in [yY]*) ;; *) echo "aborted"; exit 1 ;; esac
+        osascript -e 'quit app "Google Chrome"' || true
+        for _ in $(seq 1 20); do
+            pgrep -x "Google Chrome" >/dev/null || break
+            sleep 0.5
+        done
+    fi
+    if pgrep -x "Google Chrome" >/dev/null; then
+        echo "Chrome did not quit. Close it by hand, then run this again." >&2
+        exit 1
+    fi
+
+    open -a "Google Chrome" --args \
+        --proxy-pac-url="http://127.0.0.1:8081/proxy.pac" \
+        "https://chatgpt.com"
+    echo "  launched with the PAC; verifying the flag actually took..."
+    sleep 5
+    if ps -Ao command | grep "^/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+        | grep -q "proxy-pac-url"; then
+        echo "  OK: the browser process carries the PAC flag."
+    else
+        echo "  FAILED: no PAC flag on the browser process. Chrome was probably" >&2
+        echo "  still running. Quit it fully and retry." >&2
+        exit 1
+    fi
+    echo
+    echo "Now send a blocked prompt in ChatGPT, then: $0 check"
+    ;;
+
 *)
-    echo "usage: $0 [start|stop|check]" >&2
+    echo "usage: $0 [start|stop|check|browser]" >&2
     exit 2
     ;;
 esac
