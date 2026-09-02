@@ -1,0 +1,24 @@
+# Dependencies for the shield-icap adapter image (Dockerfile.icap).
+#
+# Deliberately NOT `-r requirements.txt`: this container is customer-hosted on
+# decrypted corporate traffic, so its dependency surface is kept to the minimum
+# that the code actually imports. It must never inherit torch / vLLM / redis.
+#
+# ICAP itself is implemented directly on asyncio rather than via a third-party
+# library -- the available ones are unmaintained, and the subset needed here
+# (OPTIONS, REQMOD, Preview, 204) is small enough to own.
+#
+# httpx: the only runtime dependency. Fetches the tenant's policy bundle from
+# /v1/edge/policy-bundle (icap/policy.py) and, from task 4, screens against
+# /guardrails/input. Already a dependency of the main runtime, so it is not new
+# surface for the project -- only for this image.
+httpx
+
+# regex: NOT interchangeable with stdlib `re` here. Tier 1 evaluates
+# tenant-authored patterns inline on employee browsing, so a catastrophic
+# pattern must be bounded rather than merely noticed. `regex` supports a real
+# per-match timeout= and releases the GIL while matching; stdlib `re` does
+# neither, which means an asyncio deadline around it cannot fire until the
+# match it was meant to bound has already completed. Measured, not assumed:
+# tests/test_icap_policy.py::test_scan_timeout_allows_rather_than_stalls.
+regex

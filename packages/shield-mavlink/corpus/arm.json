@@ -1,0 +1,1078 @@
+{
+  "corpus": "drone-guardrails",
+  "note": "Labelled cases. `expect` is ground truth, not what the engine currently does: a case whose expectation was edited to match a regression stops being a test. `rule` names the family that should refuse, so a refusal for the wrong reason is caught. `set` assigns, `unset` removes.",
+  "tools": {
+    "arm": {
+      "baseline": {
+        "aircraft_id": "AB-1234",
+        "mission_id": "perimeter-001",
+        "operator_id": "OP-01234",
+        "firmware_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "geofence_uploaded": true,
+        "mission_uploaded": true,
+        "operator_role": "pilot_in_command",
+        "operator_cert_valid": true,
+        "mission_authorized": true,
+        "gps_fix_type": "3d_fix",
+        "ekf_status": "healthy",
+        "compass_calibrated": true,
+        "rc_link": "ok",
+        "payload_state": "safed",
+        "gimbal_state": "stowed",
+        "airspace_clearance": "granted",
+        "flight_category": "routine",
+        "max_relative_altitude_m": 95,
+        "battery_pct": 72,
+        "battery_cell_v": 4.0,
+        "reserve_pct_on_arrival": 40,
+        "distance_from_home_m": 220,
+        "rtl_altitude_m": 40,
+        "mission_waypoints": 12,
+        "gps_satellites": 14,
+        "gps_hdop": 0.8,
+        "wind_ms": 5,
+        "gust_ms": 8,
+        "visibility_m": 5000,
+        "precipitation_mmh": 0.0,
+        "temperature_c": 18,
+        "local_hour": 13,
+        "payload_mass_kg": 1.2,
+        "hours_since_service": 40,
+        "operator_cert_days_remaining": 90,
+        "note": "routine",
+        "detector_model_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "camera_status": "ok",
+        "camera_storage_state": "ok",
+        "camera_storage_free_pct": 60,
+        "detector_status": "ok",
+        "detector_confidence_floor": 0.7,
+        "network_posture": "offline",
+        "log_storage_state": "ok",
+        "log_storage_free_pct": 70,
+        "log_chain_state": "intact",
+        "unsynced_log_records": 120
+      },
+      "cases": [
+        {
+          "id": "clean",
+          "expect": "allow",
+          "why": "an ordinary sortie must not be refused; false positives are how guardrails get switched off"
+        },
+        {
+          "id": "no-aircraft-id",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "aircraft_id"
+          ]
+        },
+        {
+          "id": "no-mission-id",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "mission_id"
+          ]
+        },
+        {
+          "id": "no-operator-id",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "operator_id"
+          ],
+          "why": "an unattributed arm is not auditable, which defeats the record"
+        },
+        {
+          "id": "no-firmware-hash",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "firmware_hash"
+          ],
+          "why": "unknown software on the airframe; PX4 will fly it, policy should not authorize it"
+        },
+        {
+          "id": "no-geofence-flag",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "geofence_uploaded"
+          ]
+        },
+        {
+          "id": "no-mission-flag",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "mission_uploaded"
+          ]
+        },
+        {
+          "id": "empty-mission-id",
+          "expect": "deny",
+          "rule": "required",
+          "set": {
+            "mission_id": ""
+          },
+          "why": "empty is absent; treating '' as present is a classic gap"
+        },
+        {
+          "id": "bypass-geofence",
+          "expect": "deny",
+          "rule": "forbidden",
+          "set": {
+            "bypass_geofence": true
+          }
+        },
+        {
+          "id": "override-policy",
+          "expect": "deny",
+          "rule": "forbidden",
+          "set": {
+            "override_policy": true
+          }
+        },
+        {
+          "id": "raw-mavlink",
+          "expect": "deny",
+          "rule": "forbidden",
+          "set": {
+            "raw_mavlink": "COMMAND_LONG(400,1,0,0,0,0,0,0)"
+          }
+        },
+        {
+          "id": "disable-audit",
+          "expect": "deny",
+          "rule": "forbidden",
+          "set": {
+            "disable_audit": true
+          },
+          "why": "a request to stop recording is itself the thing most worth recording"
+        },
+        {
+          "id": "force-arm",
+          "expect": "deny",
+          "rule": "forbidden",
+          "set": {
+            "force_arm": true
+          }
+        },
+        {
+          "id": "role-observer",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "operator_role": "observer"
+          }
+        },
+        {
+          "id": "role-escalated",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "operator_role": "root"
+          }
+        },
+        {
+          "id": "cert-invalid",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "operator_cert_valid": false
+          }
+        },
+        {
+          "id": "mission-unauthorized",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "mission_authorized": false
+          },
+          "why": "a well-formed mission nobody signed off is still unauthorized"
+        },
+        {
+          "id": "geofence-not-uploaded",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "geofence_uploaded": false
+          },
+          "why": "the fence must be ON the aircraft, not merely drawn in the office"
+        },
+        {
+          "id": "mission-not-uploaded",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "mission_uploaded": false
+          }
+        },
+        {
+          "id": "gps-no-fix",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "gps_fix_type": "no_fix"
+          }
+        },
+        {
+          "id": "gps-2d-only",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "gps_fix_type": "2d_fix"
+          },
+          "why": "2D has no altitude, so every vertical limit becomes unenforceable"
+        },
+        {
+          "id": "ekf-unhealthy",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "ekf_status": "degraded"
+          }
+        },
+        {
+          "id": "compass-uncalibrated",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "compass_calibrated": false
+          }
+        },
+        {
+          "id": "rc-link-lost",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "rc_link": "lost"
+          }
+        },
+        {
+          "id": "rc-not-required-ok",
+          "expect": "allow",
+          "set": {
+            "rc_link": "not_required"
+          },
+          "why": "BVLOS operations legitimately fly without an RC link"
+        },
+        {
+          "id": "payload-armed",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "payload_state": "armed"
+          },
+          "why": "a live payload on the ground is a different risk class"
+        },
+        {
+          "id": "gimbal-deployed",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "gimbal_state": "deployed"
+          }
+        },
+        {
+          "id": "no-airspace-clearance",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "airspace_clearance": "denied"
+          }
+        },
+        {
+          "id": "unknown-flight-category",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "flight_category": "test"
+          }
+        },
+        {
+          "id": "ceiling-exceeded",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "max_relative_altitude_m": 400
+          }
+        },
+        {
+          "id": "ceiling-exact",
+          "expect": "allow",
+          "set": {
+            "max_relative_altitude_m": 120
+          },
+          "why": "boundary: at the limit is inside it, and an off-by-one grounds legitimate flights"
+        },
+        {
+          "id": "ceiling-one-over",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "max_relative_altitude_m": 121
+          }
+        },
+        {
+          "id": "altitude-negative",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "max_relative_altitude_m": -5
+          }
+        },
+        {
+          "id": "altitude-non-numeric",
+          "expect": "deny",
+          "rule": "numeric",
+          "set": {
+            "max_relative_altitude_m": "high"
+          },
+          "why": "a string where a number belongs must refuse, not coerce"
+        },
+        {
+          "id": "battery-low",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "battery_pct": 11
+          }
+        },
+        {
+          "id": "battery-exact",
+          "expect": "allow",
+          "set": {
+            "battery_pct": 30
+          }
+        },
+        {
+          "id": "cell-undervolt",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "battery_cell_v": 3.2
+          },
+          "why": "pack percentage can look fine while one cell is sagging"
+        },
+        {
+          "id": "cell-overvolt",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "battery_cell_v": 4.4
+          }
+        },
+        {
+          "id": "reserve-insufficient",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "reserve_pct_on_arrival": 8
+          }
+        },
+        {
+          "id": "too-far",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "distance_from_home_m": 4000
+          }
+        },
+        {
+          "id": "negative-distance",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "distance_from_home_m": -50
+          }
+        },
+        {
+          "id": "rtl-too-low",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "rtl_altitude_m": 5
+          },
+          "why": "an RTL below the obstacle environment returns the aircraft through it"
+        },
+        {
+          "id": "rtl-too-high",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "rtl_altitude_m": 200
+          }
+        },
+        {
+          "id": "no-waypoints",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "mission_waypoints": 0
+          }
+        },
+        {
+          "id": "too-many-waypoints",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "mission_waypoints": 900
+          }
+        },
+        {
+          "id": "few-satellites",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "gps_satellites": 4
+          }
+        },
+        {
+          "id": "poor-hdop",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "gps_hdop": 4.0
+          },
+          "why": "a 3D fix with bad geometry is a fix that will not hold position"
+        },
+        {
+          "id": "wind-over-limit",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "wind_ms": 24
+          }
+        },
+        {
+          "id": "gusts-over-limit",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "gust_ms": 22
+          },
+          "why": "mean wind within limits while gusts are not is the usual shape of a bad day"
+        },
+        {
+          "id": "poor-visibility",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "visibility_m": 200
+          }
+        },
+        {
+          "id": "heavy-rain",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "precipitation_mmh": 9.0
+          }
+        },
+        {
+          "id": "too-cold",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "temperature_c": -25
+          },
+          "why": "cold collapses usable battery capacity, so the reserve calculation stops holding"
+        },
+        {
+          "id": "too-hot",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "temperature_c": 52
+          }
+        },
+        {
+          "id": "outside-hours-early",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "local_hour": 4
+          }
+        },
+        {
+          "id": "outside-hours-late",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "local_hour": 23
+          }
+        },
+        {
+          "id": "payload-too-heavy",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "payload_mass_kg": 6.0
+          }
+        },
+        {
+          "id": "service-overdue",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "hours_since_service": 260
+          }
+        },
+        {
+          "id": "cert-expired",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "operator_cert_days_remaining": 0
+          },
+          "why": "a certificate that lapses today lapses mid-sortie"
+        },
+        {
+          "id": "aircraft-id-malformed",
+          "expect": "deny",
+          "rule": "regex",
+          "set": {
+            "aircraft_id": "rogue-1"
+          }
+        },
+        {
+          "id": "aircraft-id-lowercase",
+          "expect": "deny",
+          "rule": "regex",
+          "set": {
+            "aircraft_id": "ab-1234"
+          },
+          "why": "anchored pattern, so case matters"
+        },
+        {
+          "id": "aircraft-id-suffixed",
+          "expect": "deny",
+          "rule": "regex",
+          "set": {
+            "aircraft_id": "AB-1234x"
+          },
+          "why": "fullmatch, not search: a valid prefix is not a valid id"
+        },
+        {
+          "id": "mission-id-malformed",
+          "expect": "deny",
+          "rule": "regex",
+          "set": {
+            "mission_id": "Perimeter 001!"
+          }
+        },
+        {
+          "id": "operator-id-malformed",
+          "expect": "deny",
+          "rule": "regex",
+          "set": {
+            "operator_id": "alice"
+          }
+        },
+        {
+          "id": "firmware-hash-short",
+          "expect": "deny",
+          "rule": "regex",
+          "set": {
+            "firmware_hash": "abc123"
+          },
+          "why": "a truncated hash is an unverifiable one"
+        },
+        {
+          "id": "note-too-long",
+          "expect": "deny",
+          "rule": "max_length",
+          "set": {
+            "note": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        },
+        {
+          "id": "note-absent",
+          "expect": "allow",
+          "unset": [
+            "note"
+          ],
+          "why": "an optional field being absent is not a violation"
+        },
+        {
+          "id": "deviation-reason-too-long",
+          "expect": "deny",
+          "rule": "max_length",
+          "set": {
+            "deviation_reason": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+          }
+        },
+        {
+          "id": "no-detector-model",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "detector_model_hash"
+          ],
+          "why": "an unidentified detector model is an ungoverned one; its outputs steer the planner"
+        },
+        {
+          "id": "detector-model-malformed",
+          "expect": "deny",
+          "rule": "regex",
+          "set": {
+            "detector_model_hash": "v2"
+          }
+        },
+        {
+          "id": "camera-faulty",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "camera_status": "fault"
+          }
+        },
+        {
+          "id": "camera-storage-bad",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "camera_storage_state": "corrupt"
+          }
+        },
+        {
+          "id": "camera-storage-full",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "camera_storage_free_pct": 3
+          },
+          "why": "an inspection that cannot record its evidence is a sortie flown for nothing"
+        },
+        {
+          "id": "detector-faulty",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "detector_status": "fault"
+          }
+        },
+        {
+          "id": "detector-threshold-too-low",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "detector_confidence_floor": 0.1
+          },
+          "why": "a floor near zero turns every shadow into a detection the planner acts on"
+        },
+        {
+          "id": "detector-threshold-too-high",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "detector_confidence_floor": 0.999
+          },
+          "why": "a floor near one detects nothing, which fails silently rather than loudly"
+        },
+        {
+          "id": "network-unapproved",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "network_posture": "open_uplink"
+          },
+          "why": "an uplink nobody approved is an exfiltration path already open at takeoff"
+        },
+        {
+          "id": "log-storage-bad",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "log_storage_state": "readonly"
+          }
+        },
+        {
+          "id": "log-storage-full",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "log_storage_free_pct": 2
+          },
+          "why": "no room to record is no ability to review; refusing is the honest response"
+        },
+        {
+          "id": "log-chain-broken",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "log_chain_state": "broken"
+          },
+          "why": "a chain that already fails verification means the aircraft cannot account for its last sortie"
+        },
+        {
+          "id": "log-backlog-huge",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "unsynced_log_records": 900000
+          }
+        }
+      ]
+    },
+    "camera_capture": {
+      "baseline": {
+        "mission_id": "perimeter-001",
+        "asset_tag": "TX-4471",
+        "camera_status": "ok",
+        "over_people": false,
+        "agl_m": 25,
+        "camera_storage_free_pct": 60
+      },
+      "cases": [
+        {
+          "id": "clean",
+          "expect": "allow"
+        },
+        {
+          "id": "no-mission",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "mission_id"
+          ]
+        },
+        {
+          "id": "no-asset-tag",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "asset_tag"
+          ],
+          "why": "an image with no asset it belongs to cannot be filed or audited"
+        },
+        {
+          "id": "asset-tag-malformed",
+          "expect": "deny",
+          "rule": "regex",
+          "set": {
+            "asset_tag": "transformer 4"
+          }
+        },
+        {
+          "id": "redaction-disabled",
+          "expect": "deny",
+          "rule": "forbidden",
+          "set": {
+            "disable_redaction": true
+          },
+          "why": "faces and plates are in frame whether or not the operator wants them redacted"
+        },
+        {
+          "id": "raw-frame-export",
+          "expect": "deny",
+          "rule": "forbidden",
+          "set": {
+            "raw_frame_export": true
+          }
+        },
+        {
+          "id": "camera-fault",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "camera_status": "fault"
+          }
+        },
+        {
+          "id": "over-people",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "over_people": true
+          },
+          "why": "imaging over people is a privacy decision, not a camera setting"
+        },
+        {
+          "id": "too-low",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "agl_m": 2
+          }
+        },
+        {
+          "id": "storage-exhausted",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "camera_storage_free_pct": 1
+          }
+        }
+      ]
+    },
+    "payload_release": {
+      "baseline": {
+        "mission_id": "perimeter-001",
+        "release_authorization": true,
+        "payload_state": "armed_for_release",
+        "over_people": false,
+        "agl_m": 30,
+        "ground_speed_ms": 1.5,
+        "wind_ms": 4
+      },
+      "cases": [
+        {
+          "id": "clean",
+          "expect": "allow"
+        },
+        {
+          "id": "no-mission",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "mission_id"
+          ]
+        },
+        {
+          "id": "no-authorization-field",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "release_authorization"
+          ]
+        },
+        {
+          "id": "force-release",
+          "expect": "deny",
+          "rule": "forbidden",
+          "set": {
+            "force_release": true
+          }
+        },
+        {
+          "id": "payload-safed",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "payload_state": "safed"
+          },
+          "why": "releasing a safed payload means the state machine and the command disagree"
+        },
+        {
+          "id": "over-people",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "over_people": true
+          },
+          "why": "the one that matters: a dropped object over people is the worst outcome on this list"
+        },
+        {
+          "id": "authorization-false",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "release_authorization": false
+          }
+        },
+        {
+          "id": "too-low",
+          "expect": "deny",
+          "rule": "min",
+          "set": {
+            "agl_m": 4
+          }
+        },
+        {
+          "id": "too-high",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "agl_m": 200
+          },
+          "why": "an object released from height drifts unpredictably and lands outside the surveyed area"
+        },
+        {
+          "id": "moving-too-fast",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "ground_speed_ms": 12
+          }
+        },
+        {
+          "id": "too-windy",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "wind_ms": 15
+          },
+          "why": "release limits are tighter than flight limits; the aircraft can fly in wind that ruins a drop"
+        }
+      ]
+    },
+    "upload_media": {
+      "baseline": {
+        "mission_id": "perimeter-001",
+        "destination": "https://evidence.votal.example",
+        "network_posture": "approved_uplink",
+        "redaction_applied": true,
+        "payload_mb": 400
+      },
+      "cases": [
+        {
+          "id": "clean",
+          "expect": "allow"
+        },
+        {
+          "id": "no-mission",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "mission_id"
+          ]
+        },
+        {
+          "id": "no-destination",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "destination"
+          ]
+        },
+        {
+          "id": "redaction-disabled",
+          "expect": "deny",
+          "rule": "forbidden",
+          "set": {
+            "disable_redaction": true
+          }
+        },
+        {
+          "id": "unapproved-sink",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "destination": "https://asset-archive.example/upload"
+          },
+          "why": "the exfiltration path: a plausible hostname nobody approved"
+        },
+        {
+          "id": "offline-posture",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "network_posture": "offline"
+          },
+          "why": "uploading while the posture says offline means something opened a link nobody expected"
+        },
+        {
+          "id": "unredacted",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "redaction_applied": false
+          },
+          "why": "footage leaves the aircraft once; redacting afterwards is not redacting"
+        },
+        {
+          "id": "oversized",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "payload_mb": 9000
+          }
+        }
+      ]
+    },
+    "log_erase": {
+      "baseline": {
+        "mission_id": "perimeter-001",
+        "operator_id": "OP-01234",
+        "erase_authorization": true,
+        "log_sync_state": "synced",
+        "log_chain_state": "intact",
+        "unsynced_log_records": 0
+      },
+      "cases": [
+        {
+          "id": "clean",
+          "expect": "allow",
+          "why": "erasing a synced, intact, authorized log is legitimate housekeeping"
+        },
+        {
+          "id": "no-mission",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "mission_id"
+          ]
+        },
+        {
+          "id": "no-operator",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "operator_id"
+          ],
+          "why": "an unattributed erase is the one that matters most to attribute"
+        },
+        {
+          "id": "no-authorization-field",
+          "expect": "deny",
+          "rule": "required",
+          "unset": [
+            "erase_authorization"
+          ]
+        },
+        {
+          "id": "force-erase",
+          "expect": "deny",
+          "rule": "forbidden",
+          "set": {
+            "force_erase": true
+          }
+        },
+        {
+          "id": "skip-sync",
+          "expect": "deny",
+          "rule": "forbidden",
+          "set": {
+            "skip_sync": true
+          },
+          "why": "skipping sync before erase destroys the only copy of the record"
+        },
+        {
+          "id": "authorization-false",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "erase_authorization": false
+          }
+        },
+        {
+          "id": "not-synced",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "log_sync_state": "pending"
+          }
+        },
+        {
+          "id": "chain-broken",
+          "expect": "deny",
+          "rule": "allowed_values",
+          "set": {
+            "log_chain_state": "broken"
+          },
+          "why": "erasing a log that already fails verification destroys the evidence of that failure"
+        },
+        {
+          "id": "unsynced-records-remain",
+          "expect": "deny",
+          "rule": "max",
+          "set": {
+            "unsynced_log_records": 40
+          }
+        }
+      ]
+    }
+  }
+}

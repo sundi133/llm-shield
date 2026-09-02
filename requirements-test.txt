@@ -9,6 +9,13 @@ mcp<2          # MCP transparent proxy (core/mcp/upstream.py) + generated MCP se
 ./packages/shield-mcp   # MCP onboarding scan (core/mcp_scan.py). Installed from the
                        # local path, not PyPI, so CI exercises this repo's scanner
                        # rather than whatever version happens to be published.
+regex                  # tests/test_icap_policy.py imports icap.policy, which needs
+                       # `regex` for its bounded pattern matching (see
+                       # requirements-icap.txt for why stdlib `re` will not do).
+                       # It is NOT part of the main runtime -- only the shield-icap
+                       # image and this test gate use it -- but it currently arrives
+                       # here only transitively, which is exactly the kind of
+                       # accident that breaks CI with no change on our side.
 certifi                # tests/test_oidc_tls_trust.py needs a real, parseable CA
                        # bundle on disk. It arrives transitively via httpx, and a
                        # transitive dep that a test imports directly is exactly

@@ -64,6 +64,46 @@ class Capability:
     decision: dict  # {allowed, reasons, agent_id, role, tool, resource}
 
 
+class ToolDecision:
+    """The verdict on one tool call, from /v1/shield/tool/check.
+
+    Wraps the raw response so callers branch on named properties instead of
+    re-deriving the three-way outcome from `action` at each call site, which
+    is where the pending_confirmation case gets dropped.
+    """
+
+    def __init__(self, raw: dict):
+        self.raw = raw
+        self.action: str = raw.get("action", "block")
+        self.results: list = raw.get("guardrail_results") or []
+
+    @property
+    def allowed(self) -> bool:
+        return self.action == "pass"
+
+    @property
+    def held(self) -> bool:
+        """A human must approve before this may run."""
+        return self.action == "pending_confirmation"
+
+    @property
+    def request_id(self) -> Optional[str]:
+        """The approval request to poll, when held."""
+        for r in self.results:
+            details = r.get("details") or {}
+            if details.get("request_id"):
+                return details["request_id"]
+        return None
+
+    @property
+    def reason(self) -> str:
+        """First blocking message, for logs and operator display."""
+        for r in self.results:
+            if not r.get("passed") and r.get("message"):
+                return r["message"]
+        return "allowed" if self.allowed else "no reason given"
+
+
 class ShieldClient:
     """Talks to a Shield deployment with the tenant API key.
 
@@ -221,3 +261,65 @@ class ShieldClient:
         if data.get("valid"):
             return True, data.get("claims") or {}
         return False, {"error": data.get("error", "unknown")}
+
+    def check_tool(
+        self,
+        *,
+        agent_key: str,
+        tool_name: str,
+        user_role: Optional[str] = None,
+        session_id: Optional[str] = None,
+        workflow: Optional[str] = None,
+        tool_params: Optional[dict] = None,
+        approval_grant: Optional[str] = None,
+    ) -> "ToolDecision":
+        """Authorize one tool call before it runs.
+
+        The cooperative counterpart to mint_cap: no agent token, no cap to
+        carry to the tool server. The caller asks whether an action may run
+        and honours the answer. Use it when the tool is code you control, so
+        an unforgeable cap buys nothing over an honest check.
+
+        THREE outcomes, not two. `allowed` alone is not the decision:
+
+            pass                  -> run it
+            block                 -> do not run it
+            pending_confirmation  -> a human must approve first; poll
+                                     /v1/tenant/me/agentic/approvals
+                                     and run it only once approved
+
+        Treating pending_confirmation as a denial silently discards the
+        approval workflow; treating it as permission defeats it entirely.
+        """
+        body: dict = {"agent_key": agent_key, "tool_name": tool_name}
+        if user_role is not None:
+            body["user_role"] = user_role
+        if session_id is not None:
+            body["session_id"] = session_id
+        if workflow is not None:
+            body["workflow"] = workflow
+        if tool_params is not None:
+            body["tool_params"] = tool_params
+        if approval_grant is not None:
+            # The signed grant, not the request id. Both are accepted, but the
+            # id is a status flag anyone with Redis access could set, while the
+            # grant is verified against this exact tool, params, and session.
+            body["approval_grant"] = approval_grant
+        return ToolDecision(self._post("/v1/shield/tool/check", body))
+
+    def get_approval(self, request_id: str) -> Optional[dict]:
+        """Fetch one approval request, or None if it is gone.
+
+        Returns the stored record, which carries `status` and, once a human has
+        approved it, the signed `approval_grant` to pass back to check_tool.
+        """
+        r = requests.get(
+            f"{self.base_url}/v1/tenant/me/agentic/approvals",
+            headers=self._headers(), timeout=self.timeout,
+        )
+        if not r.ok:
+            raise ShieldError(f"{r.status_code} /approvals: {r.text[:200]}")
+        for item in r.json().get("approvals") or []:
+            if item.get("request_id") == request_id:
+                return item
+        return None

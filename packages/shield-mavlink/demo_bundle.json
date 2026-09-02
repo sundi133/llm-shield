@@ -1,0 +1,34 @@
+{
+  "header": {
+    "tenant_id": "bankco",
+    "fleet_id": "inspection-north",
+    "bundle_version": 1270,
+    "issued_at": 1788101270,
+    "expires_at": 1788187670,
+    "kid": "bundle-v1"
+  },
+  "policy": {
+    "parameter_policies": {
+      "arm": {
+        "required_fields": [
+          "aircraft_id",
+          "mission_id"
+        ],
+        "allowed_values": {
+          "operator_role": [
+            "pilot_in_command"
+          ]
+        },
+        "numeric_limits": {
+          "max_relative_altitude_m": {
+            "max": 30
+          },
+          "battery_pct": {
+            "min": 30
+          }
+        }
+      }
+    }
+  },
+  "signature": "cAe85UPqRD8CQO/twMM1xHm3nnkIQkRQQYJP0kTxA25pCRpfrLQj4QHh0HjPAPhYwfanpNd1NIhzMC2tPTvMAQ=="
+}

@@ -1,0 +1,78 @@
+# Mode A: a minimal SWG for sites that do not already have one.
+#
+#   docker compose -f docker-compose.swg.yml up -d
+#
+# Browser --PAC--> squid :3128 --ICAP--> shield-icap :1344 --> api.guardrails.votal.ai
+#
+# If the site ALREADY runs Zscaler, Netskope, Blue Coat or similar, do not use
+# this file. Run `docker run --rm shield-icap preflight` and follow Mode B:
+# the shield-icap service alone, with the existing gateway pointed at it. A
+# second root CA on the fleet is a cost with no benefit.
+#
+# See docs/swg-deployment.md.
+services:
+  shield-icap:
+    build:
+      context: .
+      dockerfile: Dockerfile.icap
+    image: shield-icap
+    restart: unless-stopped
+    read_only: true
+    ports:
+      # 8081 serves /healthz and /proxy.pac. 1344 is ICAP and should NOT be
+      # published to a routable interface in production -- the SWG reaches it
+      # on the internal network.
+      - "127.0.0.1:8081:8081"
+    environment:
+      # Overridable so the stack can be pointed at deploy/swg/dev/fake_shield.py
+      # for a local end-to-end test without a tenant key.
+      SHIELD_API_BASE: ${SHIELD_API_BASE:-https://api.guardrails.votal.ai}
+      SHIELD_API_KEY_FILE: /run/secrets/shield_api_key
+      # Start in monitor. Flip to enforce only after reviewing what would have
+      # blocked (docs: /policy-lifecycle/).
+      SHIELD_ICAP_MODE: ${SHIELD_ICAP_MODE:-monitor}
+      SHIELD_ICAP_ALLOWED_CLIENTS: 172.16.0.0/12,10.0.0.0/8,127.0.0.0/8
+      SHIELD_ICAP_PAC_PROXY: "127.0.0.1:3128"
+      # Tier 2 inline. Off by default: it puts a network round trip on every
+      # prompt (measured 1.5-1.9s against the deployed data plane). Turn it on
+      # when you want the server's guardrails to BLOCK rather than just report,
+      # which is what the browser extension does.
+      SHIELD_ICAP_SYNC_SCREEN: ${SHIELD_ICAP_SYNC_SCREEN:-0}
+      # Only affects sync mode. A timeout is not an approval.
+      SHIELD_ICAP_FAIL_OPEN: ${SHIELD_ICAP_FAIL_OPEN:-0}
+    secrets:
+      - shield_api_key
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/healthz',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  squid:
+    # Built, not pulled: the common Squid images (ubuntu/squid included) are
+    # compiled --with-gnutls and ship no security_file_certgen, so ssl_bump
+    # does not exist and Squid refuses this config at startup.
+    build:
+      context: .
+      dockerfile: deploy/swg/Dockerfile.squid
+    image: shield-squid
+    restart: unless-stopped
+    depends_on:
+      - shield-icap
+    ports:
+      - "3128:3128"
+    volumes:
+      - ./deploy/swg/squid.conf:/etc/squid/squid.conf:ro
+      # Bind-mounted read-only, not a named volume: the CA private key is the
+      # operator's, generated on the host (docs/swg-deployment.md), and it
+      # stays somewhere they can see, rotate and destroy it. Never in an image.
+      - ./deploy/swg/ssl:/etc/squid/ssl:ro
+      - squid-ssldb:/var/spool/squid
+
+secrets:
+  shield_api_key:
+    file: ./deploy/swg/shield_api_key.txt
+
+volumes:
+  squid-ssldb:

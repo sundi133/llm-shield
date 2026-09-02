@@ -49,3 +49,8 @@ tf/*.tfvars
 
 # Scripts
 git_loc_by_author.sh
+
+# shield-icap local deployment secrets. The tenant key and the interception
+# CA's private key are per-site material and must never be committed.
+deploy/swg/shield_api_key.txt
+deploy/swg/ssl/
