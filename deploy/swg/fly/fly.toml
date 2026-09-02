@@ -1,0 +1,69 @@
+# shield-icap on Fly.io.
+#
+# Hosts the ICAP screening service only. Squid is NOT here and should not be:
+# a proxy on a public port is an open relay, and it is the one box in this
+# design that holds the TLS interception CA private key. That stays inside the
+# customer's network.
+#
+#   fly launch --no-deploy --copy-config --name shield-icap-<tenant>
+#   fly secrets set SHIELD_API_KEY=...
+#   fly certs create icap.example.com          # or bring your own pair
+#   fly deploy
+#
+# The payload on port 1344 is decrypted employee prompts. Over any network you
+# do not control that MUST be ICAPS: set SHIELD_ICAP_TLS_CERT and
+# SHIELD_ICAP_TLS_KEY, and point the gateway at icaps:// rather than icap://.
+# The service refuses to advertise otherwise (see the deploy guide).
+app = "shield-icap"
+primary_region = "iad"          # put this near the customer's gateway; ICAP is
+                                # inline, so every millisecond is on every prompt
+
+[build]
+  dockerfile = "../../../Dockerfile.icap"
+
+[env]
+  SHIELD_API_BASE = "https://api.guardrails.votal.ai"
+  SHIELD_ICAP_MODE = "monitor"          # flip to enforce after a monitor period
+  SHIELD_ICAP_PORT = "1344"
+  SHIELD_ICAP_HEALTH_PORT = "8081"
+  # Tenant gateways only. Fly gives every app a public address, so this is the
+  # difference between an endpoint and an open oracle for the DLP patterns.
+  SHIELD_ICAP_ALLOWED_CLIENTS = "203.0.113.0/24"
+
+# ICAP. A raw TCP handler, NOT http: ICAP is its own protocol and Fly's HTTP
+# handler would try to parse it as HTTP. TLS is terminated by the adapter
+# rather than by Fly, because with mTLS the client certificate is how the
+# tenant is identified and a proxy that terminates TLS destroys it.
+[[services]]
+  internal_port = 1344
+  protocol = "tcp"
+  auto_stop_machines = false      # inline path: a cold start is a stalled prompt
+  auto_start_machines = true
+  min_machines_running = 2        # bypass=off at the gateway means adapter
+                                  # availability is AI availability
+
+  [[services.ports]]
+    port = 1344
+    handlers = []                 # deliberately empty: no Fly-side TLS
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 150
+
+# Health and the PAC file. Ordinary HTTPS, so Fly's handler is right here.
+[[services]]
+  internal_port = 8081
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "2s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

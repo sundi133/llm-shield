@@ -194,7 +194,12 @@ class IcapServer:
         self.version_fn: Callable[[], str] = version_fn or (lambda: self.cfg.version)
 
     async def serve(self, host: str = "0.0.0.0", port: int = 1344) -> asyncio.AbstractServer:
-        return await asyncio.start_server(self.handle, host, port)
+        # ssl_context() is None for plain ICAP, which is correct on a gateway's
+        # own subnet and wrong anywhere the payload crosses a network you do
+        # not control -- it is decrypted employee prompts.
+        return await asyncio.start_server(
+            self.handle, host, port, ssl=self.cfg.ssl_context()
+        )
 
     # -- connection ----------------------------------------------------------
 

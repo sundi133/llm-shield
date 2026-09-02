@@ -592,6 +592,71 @@ unfiltered access.
 
 ---
 
+## Hosting the ICAP service on Fly.io
+
+For customers who want no infrastructure: they keep their own gateway and
+their own decryption, and only the screening service is hosted. Config in
+`deploy/swg/fly/`.
+
+**Squid is not part of this and should not be.** A proxy on a public port is
+an open relay, and it is the one box in the design holding the interception
+CA's private key. That stays inside the customer's network. What moves to the
+cloud is the part that only ever sees already-decrypted requests.
+
+### Deploy
+
+```bash
+cd deploy/swg/fly
+fly launch --no-deploy --copy-config --name shield-icap-acme
+fly secrets set SHIELD_API_KEY=...
+fly deploy
+```
+
+Then point the customer's gateway at it:
+
+```
+icap_service shield_req reqmod_precache icaps://icap.acme.example:1344/screen bypass=off
+```
+
+### ICAPS is not optional here
+
+Plain ICAP is cleartext, and the payload is decrypted employee prompts. On a
+gateway's own subnet that is fine. Across the public internet it is
+indefensible, so a hosted endpoint must set:
+
+```
+SHIELD_ICAP_TLS_CERT=/certs/server.pem
+SHIELD_ICAP_TLS_KEY=/certs/server-key.pem
+SHIELD_ICAP_TLS_CLIENT_CA=/certs/tenant-ca.pem     # mutual TLS
+```
+
+With `SHIELD_ICAP_TLS_CLIENT_CA` set, a gateway must present a certificate
+signed by that CA. Without it the channel is encrypted but anyone can connect,
+which for a service that answers "is this blocked?" is an oracle for the
+tenant's DLP patterns.
+
+Note the Fly service declares `handlers = []` on port 1344, so Fly passes raw
+TCP and the adapter terminates TLS itself. That is deliberate: with mutual TLS
+the client certificate is how the caller is identified, and a proxy that
+terminates TLS on your behalf destroys the thing you need.
+
+### What this does not yet do
+
+One deployment serves **one tenant**. The API key is fixed at boot, so a
+hosted endpoint means one app per customer. Serving several tenants from one
+endpoint means resolving the tenant from the client certificate per
+connection, and that is a security boundary rather than a feature: a bug there
+crosses tenants. It wants its own spec before anyone writes it.
+
+### Placement
+
+ICAP is synchronous, so the gateway waits on every request. Set
+`primary_region` near the customer's gateway, not near you, and keep
+`min_machines_running` at 2 or more: with `bypass=off` at the gateway, adapter
+availability is AI availability for that customer's whole fleet.
+
+---
+
 ## Scaling
 
 The adapter is stateless, so run two or more replicas behind whatever your
