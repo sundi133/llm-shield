@@ -56,6 +56,7 @@ class Rule:
 
 @dataclass(frozen=True)
 class Bundle:
+    tenant_id: str = ""
     version: str = ""
     rules: tuple[Rule, ...] = ()
     blocklists: tuple[str, ...] = ()
@@ -65,6 +66,21 @@ class Bundle:
     @property
     def empty(self) -> bool:
         return not self.rules and not self.blocklists
+
+    @property
+    def blocking_rules(self) -> int:
+        """Rules that can actually block.
+
+        Distinct from len(rules) on purpose. A tenant whose only rule is
+        `redact` has a policy, and this adapter cannot act on it (v1 does not
+        rewrite bodies), so counting it as enforcement would tell an operator
+        they are protected when nothing can fire.
+        """
+        return sum(1 for r in self.rules if r.blocks)
+
+    @property
+    def can_block(self) -> bool:
+        return bool(self.blocking_rules or self.blocklists)
 
 
 EMPTY = Bundle()
@@ -103,6 +119,7 @@ def compile_bundle(data: dict, redact_fallback: str = "pass") -> Bundle:
         w.lower() for w in (data.get("blocklists") or []) if isinstance(w, str) and w.strip()
     )
     return Bundle(
+        tenant_id=str(data.get("tenant_id") or ""),
         version=str(data.get("version") or ""),
         rules=tuple(rules),
         blocklists=blocklists,
@@ -195,6 +212,33 @@ class PolicyCache:
                 log.warning("icap bundle refresh http=%s (serving cached)", resp.status_code)
                 return False
             bundle = compile_bundle(resp.json(), self.cfg.redact_fallback)
+
+            # Policy differs per tenant, so loading the wrong one governs a
+            # fleet by another organisation's rules. When SecOps has declared
+            # which tenant this deployment is for, a mismatch is refused
+            # rather than applied: no policy is a visible failure, the wrong
+            # policy is an invisible one.
+            expected = self.cfg.expect_tenant
+            if expected and bundle.tenant_id and bundle.tenant_id != expected:
+                self._last_error = (
+                    f"tenant mismatch: key resolves to '{bundle.tenant_id}', "
+                    f"SHIELD_ICAP_EXPECT_TENANT is '{expected}'"
+                )
+                log.error(
+                    "icap REFUSING policy: the API key belongs to tenant '%s' but this "
+                    "deployment declares '%s'. Check SHIELD_API_KEY. No policy loaded.",
+                    bundle.tenant_id, expected,
+                )
+                # Drop what is already loaded, unlike a fetch failure. A failed
+                # fetch means "cannot refresh, keep what we know is right"; a
+                # tenant mismatch means the key itself is not the one this
+                # deployment is for, so confidence in the cached policy is gone
+                # too. Enforcing nothing is visible; enforcing another
+                # organisation's rules is not.
+                self._bundle = EMPTY
+                self._etag = ""
+                return False
+
             etag = resp.headers.get("etag", "")
             if bundle.version and bundle.version == self._bundle.version:
                 self._etag = etag or self._etag
@@ -203,8 +247,9 @@ class PolicyCache:
             self._etag = etag or f'"{bundle.version}"'
             self._last_error = ""
             log.info(
-                "icap bundle loaded version=%s rules=%d blocklists=%d skipped=%d",
-                bundle.version, len(bundle.rules), len(bundle.blocklists), bundle.skipped,
+                "icap bundle loaded tenant=%s version=%s rules=%d blocklists=%d skipped=%d",
+                bundle.tenant_id or "?", bundle.version, len(bundle.rules),
+                len(bundle.blocklists), bundle.skipped,
             )
             return True
         except Exception as exc:  # network, TLS, malformed JSON

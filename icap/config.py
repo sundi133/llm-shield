@@ -200,6 +200,24 @@ class IcapConfig:
     # unreachable degrades Tier 2 to nothing and never blocks browsing.
     fail_open: bool = False
 
+    # The tenant this deployment is FOR, as SecOps understands it. Optional,
+    # and never used to select a tenant -- the API key does that, server-side.
+    # Setting it turns an assumption into a check: if the key resolves to a
+    # different tenant, that fleet is about to be governed by someone else's
+    # policy, and the adapter refuses the bundle instead of applying it.
+    expect_tenant: str = ""
+
+    # ICAPS. Plain ICAP is cleartext, which is fine on a gateway's own subnet
+    # and indefensible anywhere else: the payload is decrypted employee
+    # prompts. Any deployment where the gateway reaches this over a network
+    # you do not control must set these. Squid speaks it as `icaps://`.
+    tls_cert: str = ""
+    tls_key: str = ""
+    # Client certificate CA. When set, a gateway must present a certificate
+    # signed by it, which is what makes a hosted endpoint authenticated rather
+    # than merely encrypted.
+    tls_client_ca: str = ""
+
     # PAC generation (mode A, bundled Squid). `pac_proxy` is Squid's address as
     # the BROWSER sees it, not the ICAP port.
     pac_proxy: str = "127.0.0.1:3128"
@@ -230,6 +248,10 @@ class IcapConfig:
             telemetry_queue=_env_int("SHIELD_ICAP_TELEMETRY_QUEUE", 1000),
             telemetry_workers=max(1, _env_int("SHIELD_ICAP_TELEMETRY_WORKERS", 4)),
             fail_open=_env_bool("SHIELD_ICAP_FAIL_OPEN", False),
+            expect_tenant=os.environ.get("SHIELD_ICAP_EXPECT_TENANT", "").strip(),
+            tls_cert=os.environ.get("SHIELD_ICAP_TLS_CERT", "").strip(),
+            tls_key=os.environ.get("SHIELD_ICAP_TLS_KEY", "").strip(),
+            tls_client_ca=os.environ.get("SHIELD_ICAP_TLS_CLIENT_CA", "").strip(),
             pac_proxy=os.environ.get("SHIELD_ICAP_PAC_PROXY", "127.0.0.1:3128").strip(),
             bypass_hosts=_host_list("SHIELD_ICAP_BYPASS_HOSTS", DEFAULT_BYPASS_HOSTS),
         )
@@ -237,6 +259,27 @@ class IcapConfig:
     @property
     def enforcing(self) -> bool:
         return self.mode == "enforce"
+
+    @property
+    def tls_enabled(self) -> bool:
+        return bool(self.tls_cert and self.tls_key)
+
+    def ssl_context(self):
+        """Server-side TLS for the ICAP listener, or None for plain ICAP."""
+        if not self.tls_enabled:
+            return None
+        import ssl
+
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(self.tls_cert, self.tls_key)
+        if self.tls_client_ca:
+            # A hosted endpoint must know WHICH gateway is calling, not just
+            # that the channel is encrypted. Required, not optional: an
+            # optional client certificate authenticates nobody.
+            ctx.verify_mode = ssl.CERT_REQUIRED
+            ctx.load_verify_locations(self.tls_client_ca)
+        return ctx
 
     def client_allowed(self, ip: str | None) -> bool:
         """Defense in depth for §5: port 1344 must only be reachable by the SWG.

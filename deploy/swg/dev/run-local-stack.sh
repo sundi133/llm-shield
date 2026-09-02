@@ -56,7 +56,8 @@ import json, sys
 d = json.load(sys.stdin)
 sync = d["screen"] == "sync"
 tier1 = d["enforcing_anything"]
-print("  mode=%s  screen=%s  rules=%s" % (d["mode"], d["screen"], d["rules"]))
+print("  mode=%s  screen=%s  rules=%s (%s can block)"
+      % (d["mode"], d["screen"], d["rules"], d.get("blocking_rules", "?")))
 if d.get("policy_error"):
     print("  POLICY ERROR: %s" % d["policy_error"])
 
@@ -69,7 +70,11 @@ elif tier1:
     print("  blocking: Tier 1 rules only (server verdicts are reported, not enforced)")
 elif sync:
     print("  blocking: inline server screening only")
-    print("  NOTE: zero Tier 1 rules, so your tenant DLP patterns are NOT enforced.")
+    print("  NOTE: no Tier 1 rule can block, so your tenant DLP patterns are NOT enforced.")
+    if d["rules"]:
+        print("  Your policy has %s rule(s), but none of them block. A `redact` rule\n"
+              "  cannot be actioned in v1; set SHIELD_ICAP_REDACT_FALLBACK=block, or add\n"
+              "  a blocking rule in the portal." % d["rules"])
 else:
     print("  BLOCKING NOTHING: no Tier 1 rules and sync screening is off.")
     print("  Telemetry still flows. Fix the policy error above, or start with")
@@ -81,27 +86,21 @@ else:
 
 Browser test (macOS):
 
-  1. Quit Chrome COMPLETELY (Cmd-Q, not just closing the window). `open -a`
-     is ignored while Chrome is running, which is the usual reason a test
-     "does not block": the tab opens in the old, unproxied window.
+  1. ./deploy/swg/dev/run-local-stack.sh browser
 
-  2. Relaunch YOUR NORMAL profile with the PAC file:
+     Use this rather than `open -a ... --args` by hand. Chrome silently drops
+     --args when it is already running, and a Chrome that has been up across a
+     proxy restart keeps stale proxy state even when the flag IS on the
+     process. Both look identical from the browser and both end with "it did
+     not block". The subcommand quits Chrome, relaunches, and verifies the
+     flag actually took.
 
-       open -a "Google Chrome" --args \
-         --proxy-pac-url="http://127.0.0.1:8081/proxy.pac"
+  2. ./deploy/swg/dev/run-local-stack.sh check
 
-     Your normal profile, on purpose. A fresh --user-data-dir is not signed
-     into ChatGPT, so there is nothing to type a prompt into, and you end up
-     back in the unproxied window without noticing.
+     Confirm traffic is reaching the proxy BEFORE typing anything. A zero
+     count means nothing you send can possibly be inspected.
 
-     The PAC sends ONLY AI hosts to the proxy. Everything else, banking
-     included, returns DIRECT and never reaches it.
-
-  3. Confirm the browser is really proxied BEFORE typing anything:
-
-       ./deploy/swg/dev/run-local-stack.sh check
-
-  4. Then in ChatGPT, send something your policy blocks, e.g.
+  3. Then in ChatGPT, send something your policy blocks, e.g.
      "our margin on this handbag is 62% and the supplier cost is 400 AED"
 
 BROWSER

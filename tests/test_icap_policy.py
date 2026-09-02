@@ -444,3 +444,116 @@ def test_successful_refresh_clears_a_previous_error():
         return cache
 
     assert asyncio.run(go()).last_error == ""
+
+
+def test_a_policy_of_only_redact_rules_is_not_enforcement():
+    """The state a real tenant was actually in: one rule, action=redact.
+
+    v1 cannot rewrite bodies, so that rule resolves to pass and nothing can
+    fire. Reporting it as enforcement tells an operator they are protected
+    when they are not, which is the worst thing a security status line can do.
+    """
+    bundle = compile_bundle(bundle_json(rules=[EMAIL_RULE]), redact_fallback="pass")
+
+    assert len(bundle.rules) == 1, "the rule is loaded"
+    assert bundle.blocking_rules == 0, "but it cannot block"
+    assert bundle.can_block is False
+    assert bundle.empty is False, "a loaded-but-inert policy is not an empty one"
+
+
+def test_redact_fallback_block_makes_it_enforcement():
+    bundle = compile_bundle(bundle_json(rules=[EMAIL_RULE]), redact_fallback="block")
+    assert bundle.blocking_rules == 1
+    assert bundle.can_block is True
+
+
+def test_blocklists_alone_count_as_enforcement():
+    bundle = compile_bundle(bundle_json(rules=[], blocklists=["project titan"]))
+    assert bundle.blocking_rules == 0
+    assert bundle.can_block is True
+
+
+# ── which tenant is this deployment actually governing ───────────────────────
+
+
+def test_bundle_carries_the_tenant_it_came_from():
+    """An operator must be able to SEE the tenant, not infer it from which key
+    file they believe is mounted."""
+    bundle = compile_bundle(bundle_json())
+    assert bundle.tenant_id == "acme"
+
+
+def test_wrong_tenant_is_refused_not_applied():
+    """Policy differs per tenant, so loading the wrong one governs a fleet by
+    another organisation's rules. No policy is a visible failure; the wrong
+    policy is an invisible one."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=bundle_json())      # tenant "acme"
+
+    async def go():
+        cache = PolicyCache(cfg(expect_tenant="bankco"), transport(handler))
+        loaded = await cache.refresh()
+        return loaded, cache
+
+    loaded, cache = asyncio.run(go())
+
+    assert loaded is False
+    assert cache.bundle.empty, "a mismatched policy must not be applied"
+    assert "tenant mismatch" in cache.last_error
+    assert "acme" in cache.last_error and "bankco" in cache.last_error
+
+
+def test_matching_tenant_loads_normally():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=bundle_json())
+
+    async def go():
+        cache = PolicyCache(cfg(expect_tenant="acme"), transport(handler))
+        await cache.refresh()
+        return cache
+
+    cache = asyncio.run(go())
+    assert cache.bundle.tenant_id == "acme"
+    assert cache.last_error == ""
+
+
+def test_no_expectation_declared_accepts_whatever_the_key_resolves_to():
+    """The check is opt-in. Without it the adapter behaves exactly as before,
+    because the key has always been the thing that selects the tenant."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=bundle_json())
+
+    async def go():
+        cache = PolicyCache(cfg(), transport(handler))
+        await cache.refresh()
+        return cache
+
+    assert asyncio.run(go()).bundle.tenant_id == "acme"
+
+
+def test_tenant_mismatch_also_drops_the_cached_policy():
+    """Unlike a fetch failure, which keeps the last known good bundle.
+
+    A failed fetch means "cannot refresh, keep what is right". A tenant
+    mismatch means the key is not the one this deployment is for, so the
+    cached policy is no longer trustworthy either. Enforcing nothing is
+    visible; enforcing another organisation's rules is not.
+    """
+    state = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state["n"] += 1
+        if state["n"] == 1:
+            return httpx.Response(200, json=bundle_json("v1"))          # acme
+        return httpx.Response(200, json={**bundle_json("v2"), "tenant_id": "other"})
+
+    async def go():
+        cache = PolicyCache(cfg(expect_tenant="acme"), transport(handler))
+        await cache.refresh()
+        assert cache.bundle.rules, "first load is the right tenant"
+        await cache.refresh()
+        return cache
+
+    cache = asyncio.run(go())
+    assert cache.bundle.empty, "the stale policy must not survive a tenant mismatch"
+    assert "tenant mismatch" in cache.last_error

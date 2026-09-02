@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
 from icap.config import IcapConfig
+from icap.decompress import decode
 from icap.extract import Extracted, extract
 
 log = logging.getLogger("shield.icap")
@@ -58,6 +59,7 @@ class IcapRequest:
     http_headers: dict[str, str] = field(default_factory=dict)
     txn_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     _extracted: Optional[Extracted] = field(default=None, repr=False, compare=False)
+    encoding: str = ""      # the content-encoding actually undone, "" if none
 
     @property
     def prompt(self) -> Extracted:
@@ -67,7 +69,14 @@ class IcapRequest:
         from, so neither has to know a provider's body shape.
         """
         if self._extracted is None:
-            self._extracted = extract(self.body, self.host, self.path)
+            # Decompress first. A compressed body is not JSON, so without this
+            # every provider that compresses its requests parses as `raw`,
+            # skips Tier 2, and presents Tier 1 with bytes no rule can match --
+            # while logging decision=allow like a clean prompt.
+            body, self.encoding = decode(
+                self.body, self.http_headers.get("content-encoding", "")
+            )
+            self._extracted = extract(body, self.host, self.path)
         return self._extracted
 
     @property
@@ -194,7 +203,12 @@ class IcapServer:
         self.version_fn: Callable[[], str] = version_fn or (lambda: self.cfg.version)
 
     async def serve(self, host: str = "0.0.0.0", port: int = 1344) -> asyncio.AbstractServer:
-        return await asyncio.start_server(self.handle, host, port)
+        # ssl_context() is None for plain ICAP, which is correct on a gateway's
+        # own subnet and wrong anywhere the payload crosses a network you do
+        # not control -- it is decrypted employee prompts.
+        return await asyncio.start_server(
+            self.handle, host, port, ssl=self.cfg.ssl_context()
+        )
 
     # -- connection ----------------------------------------------------------
 
@@ -346,6 +360,12 @@ class IcapServer:
             self._log(req, "skip", reason=self._skip_reason(req, has_body))
             writer.write(self._pass_response(req, may_204))
             return
+
+        # What we could READ out of the body, before what we decided about it.
+        # "allow" alone cannot distinguish "screened and clean" from "could not
+        # read a word of it", and those need opposite fixes. Counts and labels
+        # only; never content.
+        extracted = req.prompt
 
         verdict = await self.screener(req)
 
@@ -505,14 +525,22 @@ class IcapServer:
         service that logs what it inspects is a breach waiting to happen.
         """
         fields = " ".join(f"{k}={v}" for k, v in extra.items() if v)
+        # `read=` is the field that answers "why did this not block?". A large
+        # body with read=0 is an unparsed provider shape, not a clean prompt.
+        got = req._extracted
         log.info(
-            "icap txn=%s decision=%s host=%s method=%s path=%s bytes=%d truncated=%s %s",
+            "icap txn=%s decision=%s host=%s method=%s path=%s bytes=%d read=%d "
+            "provider=%s parsed=%s enc=%s truncated=%s %s",
             req.txn_id,
             decision,
             req.host or "-",
             req.http_method or "-",
             req.path or "-",
             len(req.body),
+            len(got.text) if got else -1,
+            got.provider if got else "-",
+            got.parsed if got else "-",
+            req.encoding or "none",
             req.body_truncated,
             fields,
         )

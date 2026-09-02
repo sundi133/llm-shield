@@ -349,6 +349,7 @@ reference, so a help desk can find the decision from one string.
 |---|---|---|
 | `SHIELD_API_KEY` / `_FILE` | required | Tenant key. Prefer the file form. |
 | `SHIELD_ICAP_MODE` | `monitor` | `monitor` or `enforce` |
+| `SHIELD_ICAP_EXPECT_TENANT` | unset | The tenant this deployment is for. A mismatch refuses the policy rather than applying it |
 | `SHIELD_ICAP_ALLOWED_CLIENTS` | all | CIDRs allowed to reach port 1344 |
 | `SHIELD_ICAP_AI_HOSTS` | built in | Destinations to inspect |
 | `SHIELD_ICAP_BYPASS_HOSTS` | built in | Never inspected |
@@ -435,6 +436,274 @@ Be straight with buyers about this. A browser proxy pushed by MDM is a
 sensible control for accidental leaks by ordinary employees, which is the
 actual threat model for AI data loss. It is not a control against someone who
 has decided to exfiltrate.
+
+---
+
+## Covering every browser
+
+There is one policy, in the Shield portal, and it is browser-independent. The
+inspection happens at the gateway, so nothing about a rule is specific to
+Chrome or Firefox. What differs per browser is only two settings: where it
+sends traffic, and whether it trusts the inspection CA.
+
+Two of those settings have an OS-level form that most software inherits, and a
+browser-specific form that locks it. Do both: the OS setting gets you Safari,
+Edge and the Electron apps for free, and the browser policy is what a user
+cannot switch off.
+
+### Step 1. Trust the CA at the OS level
+
+| | |
+|---|---|
+| macOS | MDM Certificate payload, System keychain |
+| Windows | Intune Trusted Certificate profile, Local Machine / Trusted Root |
+
+This one setting covers Chrome, Edge, Safari, Brave, Arc, Electron apps and
+anything else using the platform trust store. Firefox is the exception, in
+step 4.
+
+### Step 2. Set the OS proxy
+
+macOS, per network service, delivered by MDM or a script:
+
+```bash
+networksetup -setautoproxyurl "Wi-Fi" "http://swg.corp.example:8081/proxy.pac"
+networksetup -setautoproxystate "Wi-Fi" on
+```
+
+Windows, machine-wide:
+
+```
+netsh winhttp set proxy proxy-server="http://swg.corp.example:3128"
+```
+
+Plus the GPO **Configure proxy settings** for the per-user WinINET settings
+that browsers read.
+
+This is what catches Safari, which has no proxy setting of its own, and the
+desktop AI apps, which mostly follow the system proxy.
+
+### Step 3. Chrome and Edge policy
+
+Same keys for both, different namespace.
+
+macOS, `com.google.Chrome` and `com.microsoft.Edge`:
+
+```xml
+<key>ProxyMode</key>    <string>pac_script</string>
+<key>ProxyPacUrl</key>  <string>http://swg.corp.example:8081/proxy.pac</string>
+<key>QuicAllowed</key>  <false/>
+```
+
+Windows, `HKLM\SOFTWARE\Policies\Google\Chrome` and `...\Microsoft\Edge`:
+
+```
+ProxySettings = {"ProxyMode":"pac_script",
+                 "ProxyPacUrl":"http://swg.corp.example:8081/proxy.pac"}
+QuicAllowed  = 0
+```
+
+`QuicAllowed=false` is not optional. Chrome prefers HTTP/3, which ignores an
+HTTP proxy entirely, and the bypass is silent: no error, no traffic, nothing
+inspected.
+
+### Step 4. Firefox, which shares nothing
+
+Firefox uses neither the OS trust store nor the OS proxy, so it needs both
+settings again in its own format. `policies.json`, or the `org.mozilla.firefox`
+plist on macOS:
+
+```json
+{"policies": {
+  "Certificates": {"ImportEnterpriseRoots": true},
+  "Proxy": {"Mode": "autoConfig",
+            "AutoConfigURL": "http://swg.corp.example:8081/proxy.pac",
+            "Locked": true}}}
+```
+
+Skip this and Firefox is the hole in the fleet: certificate errors on every AI
+site, and no inspection.
+
+### Step 5. Command line runtimes
+
+Python and Node ship their own CA bundles and ignore the system store:
+
+```
+REQUESTS_CA_BUNDLE=/path/ca.pem
+SSL_CERT_FILE=/path/ca.pem
+NODE_EXTRA_CA_CERTS=/path/ca.pem
+```
+
+Push these with everything else. Miss them and every script on the fleet
+starts failing TLS, which is the change people notice first.
+
+
+### Pushing it with a script
+
+Configuration profiles and Group Policy are the better vehicle for the
+certificate and the browser settings, because those can be marked
+non-removable and a script cannot. Two things a profile does not reach,
+though: Firefox keeps its own trust store, and Python and Node ship their own
+CA bundles. `deploy/swg/mdm/` has a script per platform that does all of it in
+one artefact.
+
+macOS, via a Jamf script policy, Kandji custom script, or an Intune shell
+script with "run as signed-in user" set to No:
+
+```bash
+sudo ./install-macos.sh "http://swg.corp.example:8081/proxy.pac" ./ca-cert.pem
+```
+
+Windows, via an Intune platform script running as SYSTEM, or a GPO startup
+script:
+
+```powershell
+.\install-windows.ps1 -PacUrl "http://swg.corp.example:8081/proxy.pac" `
+                      -CaCertPath "\\share\shield\ca-cert.cer"
+```
+
+Both are idempotent, so they can run on every check-in. Both do the same five
+things in the same order: trust the CA, set the OS proxy, apply Chrome and
+Edge policy with QUIC disabled, configure Firefox separately, and set the CA
+bundle variables for command line runtimes.
+
+### Step 6. Verify on a device
+
+| Browser | Check |
+|---|---|
+| Chrome, Edge | `chrome://policy` / `edge://policy` shows ProxySettings and QuicAllowed as applied |
+| Firefox | `about:policies` shows Proxy and Certificates |
+| Safari | System Settings, Network, Proxies shows the PAC URL and greyed out |
+| Any | Load an AI site, then confirm the request in the adapter log |
+
+### What this still does not cover
+
+| Not covered | Why |
+|---|---|
+| Arc, and other browsers with no enterprise policy channel | Nothing to push. They do follow the OS proxy, so step 2 catches them |
+| Personal browsers a user installs | Your policy applies to managed software |
+| Personal devices, phones, tethering | Never touches your configuration profile |
+| Certificate-pinned native apps | Interception fails rather than inspecting; bypass them and report the gap |
+
+Steps 1 to 5 make the gateway the default path for everything a managed device
+runs. They do not make it the only path. If the traffic must not escape, pair
+this with egress control: deny outbound 443 to AI destinations from anything
+except the proxy. Then bypassing the proxy yields no access rather than
+unfiltered access.
+
+---
+
+## Hosting the ICAP service on Fly.io
+
+For customers who want no infrastructure: they keep their own gateway and
+their own decryption, and only the screening service is hosted. Config in
+`deploy/swg/fly/`.
+
+**Squid is not part of this and should not be.** A proxy on a public port is
+an open relay, and it is the one box in the design holding the interception
+CA's private key. That stays inside the customer's network. What moves to the
+cloud is the part that only ever sees already-decrypted requests.
+
+### Deploy
+
+```bash
+cd deploy/swg/fly
+fly launch --no-deploy --copy-config --name shield-icap-acme
+fly secrets set SHIELD_API_KEY=...
+fly deploy
+```
+
+Then point the customer's gateway at it:
+
+```
+icap_service shield_req reqmod_precache icaps://icap.acme.example:1344/screen bypass=off
+```
+
+### ICAPS is not optional here
+
+Plain ICAP is cleartext, and the payload is decrypted employee prompts. On a
+gateway's own subnet that is fine. Across the public internet it is
+indefensible, so a hosted endpoint must set:
+
+```
+SHIELD_ICAP_TLS_CERT=/certs/server.pem
+SHIELD_ICAP_TLS_KEY=/certs/server-key.pem
+SHIELD_ICAP_TLS_CLIENT_CA=/certs/tenant-ca.pem     # mutual TLS
+```
+
+With `SHIELD_ICAP_TLS_CLIENT_CA` set, a gateway must present a certificate
+signed by that CA. Without it the channel is encrypted but anyone can connect,
+which for a service that answers "is this blocked?" is an oracle for the
+tenant's DLP patterns.
+
+Note the Fly service declares `handlers = []` on port 1344, so Fly passes raw
+TCP and the adapter terminates TLS itself. That is deliberate: with mutual TLS
+the client certificate is how the caller is identified, and a proxy that
+terminates TLS on your behalf destroys the thing you need.
+
+### What this does not yet do
+
+One deployment serves **one tenant**. The API key is fixed at boot, so a
+hosted endpoint means one app per customer. Serving several tenants from one
+endpoint means resolving the tenant from the client certificate per
+connection, and that is a security boundary rather than a feature: a bug there
+crosses tenants. It wants its own spec before anyone writes it.
+
+### Placement
+
+ICAP is synchronous, so the gateway waits on every request. Set
+`primary_region` near the customer's gateway, not near you, and keep
+`min_machines_running` at 2 or more: with `bypass=off` at the gateway, adapter
+availability is AI availability for that customer's whole fleet.
+
+---
+
+## Hosting the ICAP service on GCP
+
+`deploy/swg/gcp/deploy.sh` stands it up behind an internal load balancer.
+
+```bash
+cd deploy/swg/gcp
+./deploy.sh my-project us-central1 my-vpc 10.20.0.0/16
+printf %s 'tenant_key' | gcloud secrets versions add shield-api-key --data-file=-
+```
+
+Then point the gateway at the forwarding rule's address, which the script
+prints.
+
+Three GCP-specific choices worth understanding, because each has an obvious
+wrong alternative:
+
+**Cloud Run cannot host this.** ICAP is its own protocol on its own port and
+Cloud Run only accepts HTTP. The same is true of Squid, for the same reason.
+
+**Internal passthrough load balancer, not an application load balancer.** An
+application load balancer parses HTTP, and would reject ICAP as malformed.
+Passthrough hands the TCP connection through untouched, which is also what
+lets the adapter terminate its own TLS when ICAPS is enabled.
+
+**Internal, not external.** Port 1344 answers "is this blocked?", so anyone
+who can reach it can map the tenant's DLP patterns by asking. The firewall
+allows it only from the gateway's own subnet, and health checks only from
+Google's probe ranges.
+
+The tenant key comes from Secret Manager at boot rather than an environment
+variable or an image layer, both of which are readable by anyone with
+`compute.instances.get`. Rotating it is a new secret version and a rolling
+restart.
+
+Run two instances minimum. The gateway is configured `bypass=off`, so adapter
+availability is AI availability for the whole fleet behind it.
+
+### A GCP product that looks right and is not
+
+GCP **Secure Web Proxy** is a managed TLS-inspecting proxy where you supply
+the CA through Certificate Manager. For a GCP-native customer it looks like
+exactly the right way to replace Squid.
+
+It has no ICAP support. Its policy engine is its own URL and TLS rules, with
+no callout to an external screening service, so it cannot talk to this
+adapter. Worth knowing before it comes up in a design review.
 
 ---
 

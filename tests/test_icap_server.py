@@ -512,3 +512,61 @@ def test_the_service_survives_a_crashing_request():
         second.close()
 
     assert calls["n"] == 2
+
+
+# ── ICAPS ────────────────────────────────────────────────────────────────────
+
+
+def _selfsigned(tmp_path):
+    """A throwaway server certificate."""
+    import subprocess
+
+    cert, key = tmp_path / "c.pem", tmp_path / "k.pem"
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "1",
+         "-nodes", "-keyout", str(key), "-out", str(cert), "-subj", "/CN=localhost"],
+        check=True, capture_output=True,
+    )
+    return str(cert), str(key)
+
+
+def test_plain_icap_has_no_tls_context():
+    """The default. Correct on a gateway's own subnet, and the reason
+    tls_enabled has to be explicit rather than inferred."""
+    cfg = IcapConfig()
+    assert cfg.tls_enabled is False
+    assert cfg.ssl_context() is None
+
+
+def test_icaps_serves_over_tls(tmp_path):
+    """The payload here is decrypted employee prompts, so any deployment where
+    the gateway reaches this across a network you do not control must be able
+    to encrypt the channel. Squid speaks it as `icaps://`."""
+    import ssl as _ssl
+
+    cert, key = _selfsigned(tmp_path)
+    cfg = IcapConfig(tls_cert=cert, tls_key=key)
+    assert cfg.tls_enabled is True
+
+    with Harness(cfg) as h:
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
+        with ctx.wrap_socket(h.connect()) as tls:
+            tls.sendall(b"OPTIONS icap://127.0.0.1/screen ICAP/1.0\r\n\r\n")
+            resp = tls.recv(65536)
+
+    assert resp.startswith(b"ICAP/1.0 200 OK")
+    assert b"Methods: REQMOD" in resp
+
+
+def test_client_ca_makes_the_certificate_required(tmp_path):
+    """Optional client certificates authenticate nobody. When a client CA is
+    configured the gateway must present one, which is what turns a hosted
+    endpoint from merely encrypted into authenticated."""
+    import ssl as _ssl
+
+    cert, key = _selfsigned(tmp_path)
+    ctx = IcapConfig(tls_cert=cert, tls_key=key, tls_client_ca=cert).ssl_context()
+
+    assert ctx.verify_mode == _ssl.CERT_REQUIRED

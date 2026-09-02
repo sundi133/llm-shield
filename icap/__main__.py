@@ -56,14 +56,23 @@ async def _health(
                 "version": cfg.version,
                 "mode": cfg.mode,
                 "screen": "sync" if cfg.sync_screen else "async",
+                # Which tenant this deployment is actually governing. Policy
+                # differs per tenant, so an operator must be able to see it
+                # rather than infer it from which key file they think is
+                # mounted.
+                "tenant_id": bundle.tenant_id or None,
+                "expect_tenant": cfg.expect_tenant or None,
                 "bundle_version": bundle.version or None,
                 "rules": len(bundle.rules),
+                # The number that matters. A `redact` rule is a rule the
+                # adapter cannot act on in v1, so it is not enforcement.
+                "blocking_rules": bundle.blocking_rules,
                 "blocklists": len(bundle.blocklists),
                 "shield_reachable": cache.reachable,
                 "policy_error": cache.last_error or None,
-                # The one an operator should read first: monitor or enforce,
-                # zero rules means zero blocking.
-                "enforcing_anything": bool(cache.bundle.rules or cache.bundle.blocklists),
+                # The one an operator should read first: a loaded policy whose
+                # every rule resolves to pass enforces exactly nothing.
+                "enforcing_anything": cache.bundle.can_block,
                 "telemetry_submitted": shield.submitted,
                 "telemetry_dropped": shield.dropped,
             }
