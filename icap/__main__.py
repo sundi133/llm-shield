@@ -134,6 +134,36 @@ def cli() -> int:
         from icap.preflight import main as preflight_main
 
         return preflight_main()
+    if command == "extract":
+        # Onboarding aid: paste a body captured from a provider's web app and
+        # see exactly what the adapter can read out of it. `parsed: False` or an
+        # empty `text` means Tier 1 has no haystack for that provider.
+        #   python -m icap extract body.json chatgpt.com /backend-api/conversation
+        from icap.extract import extract as _extract
+
+        path = sys.argv[2] if len(sys.argv) > 2 else ""
+        host = sys.argv[3] if len(sys.argv) > 3 else ""
+        uri = sys.argv[4] if len(sys.argv) > 4 else ""
+        raw = open(path, "rb").read() if path else sys.stdin.buffer.read()
+        got = _extract(raw, host=host, path=uri)
+        print(f"  provider   : {got.provider}")
+        print(f"  parsed     : {got.parsed}   (False means Tier 2 is skipped)")
+        print(f"  turns      : {got.turns}")
+        print(f"  non-text   : {', '.join(got.non_text_kinds) or '-'}")
+        print(f"  last_user  : {got.last_user[:200]!r}")
+        print(f"  text       : {got.text[:400]!r}")
+        unread = [k for k in got.non_text_kinds if k.startswith("unread-shape:")]
+        if not got.text:
+            print("\n  FAIL: nothing extracted. Tier 1 would sweep an empty string "
+                  "and this request would read as clean.")
+            return 1
+        if unread:
+            print("\n  FAIL: this shape was recognised but could not be read, so only "
+                  "salvaged\n        string leaves reach DLP and Tier 2 is skipped. "
+                  "Add a case in icap/extract.py.")
+            return 1
+        return 0
+
     if command == "pac":
         # So an operator can diff what the fleet will receive before pushing it.
         print(render_pac(IcapConfig.from_env()))

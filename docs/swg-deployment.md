@@ -93,6 +93,76 @@ reference, and never the prompt.
 
 ---
 
+## Point it at the real data plane
+
+Drop `SHIELD_API_BASE` (the default is already correct) and supply a real
+tenant key:
+
+```bash
+SHIELD_API_KEY=<your tenant key> SHIELD_ICAP_MODE=monitor python -m icap
+```
+
+Confirm policy loaded from production, not from a stub:
+
+```bash
+curl -s http://127.0.0.1:8081/healthz
+```
+
+`bundle_version` should be a hash and `rules` should be non-zero. If `rules` is
+0 the tenant has no sanitization rules configured yet, and the adapter will
+block nothing no matter what mode it is in.
+
+Use `https`. The endpoint answers 301 on plain HTTP, and a tenant key must
+never traverse plaintext, so `SHIELD_API_BASE=http://...` is upgraded to
+`https://` with a warning rather than followed.
+
+---
+
+## Testing chatgpt.com
+
+`chatgpt.com` is a separate domain from `openai.com`, and it is where most
+ChatGPT usage in an enterprise actually happens. It is inspected by default,
+and it needs no special configuration, but its request body is shaped
+differently from the OpenAI API: roles live under `author`, and text lives
+under `content.parts`.
+
+To see a real prompt blocked in a browser you need the full Mode A stack,
+because the traffic is TLS and the adapter only ever receives what Squid
+decrypts for it:
+
+1. Bring up the stack and trust the CA on your test machine (below).
+2. Point the browser at the PAC file.
+3. Open `chatgpt.com`, send a prompt containing a value your policy blocks.
+
+To check the parsing alone, without any of that, capture the request body from
+your browser's dev tools (Network tab, the POST to `/backend-api/conversation`,
+Copy as `Request payload`) and feed it in:
+
+```bash
+python -m icap extract body.json chatgpt.com /backend-api/conversation
+```
+
+```
+  provider   : openai
+  parsed     : True   (False means Tier 2 is skipped)
+  turns      : 1
+  last_user  : 'my key is AKIAIOSFODNN7EXAMPLE'
+```
+
+This is the fastest way to onboard any provider not listed here. The command
+exits non-zero, so it can go in a check, when either the body yields no text
+at all or the shape was recognised but unreadable. The second case is the one
+that matters: DLP still sweeps whatever string leaves it can salvage, but the
+extraction needs a case adding in `icap/extract.py`.
+
+Two hosts to add if your fleet uses them, since neither shares a domain with
+its vendor's API: `copilot.microsoft.com` and `githubcopilot.com` are covered,
+but Copilot embedded in Microsoft 365 rides on `*.office.com` and is not.
+Inspecting all of Microsoft 365 is a much larger decision than inspecting an
+AI vendor, which is why it is not on by default.
+
+---
+
 ## Which mode do you need?
 
 Run the pre-flight first. It takes a few seconds and it decides everything

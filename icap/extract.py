@@ -116,10 +116,17 @@ def _block_text(node: Any, sink: _Collector) -> str:
         if isinstance(kind, str) and kind in _NON_TEXT_TYPES:
             sink.non_text.add(kind)
             return ""
-        if "inline_data" in node or "inlineData" in node or "source" in node:
+        if (
+            "inline_data" in node
+            or "inlineData" in node
+            or "source" in node
+            or "asset_pointer" in node
+        ):
             sink.non_text.add(kind if isinstance(kind, str) else "inline_data")
             return ""
-        for key in ("text", "input_text", "content"):
+        # "parts" covers both Google (`{"parts":[{"text":...}]}`) and the
+        # ChatGPT web app (`{"content_type":"text","parts":["..."]}`).
+        for key in ("text", "input_text", "content", "parts"):
             if key in node:
                 return _block_text(node[key], sink)
         return ""
@@ -141,7 +148,9 @@ def _messages_shape(obj: dict, sink: _Collector) -> tuple[str, int]:
             continue
         turns += 1
         text = _block_text(msg.get("content"), sink)
-        if msg.get("role") == "user" and text:
+        # The ChatGPT web app nests the role under `author`, unlike the API.
+        role = msg.get("role") or (msg.get("author") or {}).get("role")
+        if role == "user" and text:
             last_user = text
     return last_user, turns
 
@@ -259,8 +268,8 @@ def extract(
         _block_text(obj.get("instructions"), sink)
         last_user = _block_text(obj.get("input"), sink)
         turns = 1
-    elif "prompt" in obj:  # legacy completions
-        provider = PROVIDER_OPENAI
+    elif "prompt" in obj:  # legacy completions, and the claude.ai web app
+        provider = hint or PROVIDER_OPENAI
         last_user = _block_text(obj.get("prompt"), sink)
         turns = 1
     else:
@@ -273,6 +282,32 @@ def extract(
             non_text_kinds=tuple(sorted(sink.non_text)),
             parsed=False,
         )
+
+    if not sink.parts:
+        # We recognised the shape and got no text out of it. That means the
+        # provider changed, or this is a web app whose body only superficially
+        # resembles the API. Either way the dangerous outcome is reporting
+        # success with an empty haystack, because then Tier 1 sweeps nothing
+        # and the request reads as clean. Fall back to string leaves so DLP
+        # still has something, and mark it unparsed so Tier 2 does not screen
+        # a guess.
+        #
+        # This is how chatgpt.com behaved before its shape was handled: a
+        # `messages` array whose roles live under `author` and whose text lives
+        # under `content.parts`, extracting to "" while claiming parsed=True.
+        salvage = _Collector(max_chars)
+        _leaves(obj, salvage)
+        if salvage.parts:
+            log_hint = f"{provider}:{host or '?'}"
+            return Extracted(
+                provider=provider,
+                text=salvage.text,
+                turns=turns,
+                has_non_text=bool(sink.non_text),
+                non_text_kinds=tuple(sorted(sink.non_text)) or (f"unread-shape:{log_hint}",),
+                truncated=salvage.truncated,
+                parsed=False,
+            )
 
     return Extracted(
         provider=provider,

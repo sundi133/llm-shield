@@ -257,3 +257,79 @@ def test_icap_request_prompt_property_is_memoized():
     first = req.prompt
     assert first.last_user == "seam check"
     assert req.prompt is first, "extraction must run once per transaction"
+
+
+# ── web apps, which are not the same as the vendors' APIs ────────────────────
+
+
+def test_chatgpt_web_app_body():
+    """chatgpt.com nests role under `author` and text under `content.parts`.
+
+    Before this was handled the extractor returned parsed=True with an empty
+    string: the request read as clean, Tier 1 swept nothing, and the most
+    common ChatGPT surface in an enterprise was silently invisible.
+    """
+    body = json.dumps(
+        {
+            "action": "next",
+            "model": "gpt-4o",
+            "messages": [
+                {
+                    "id": "aaa",
+                    "author": {"role": "user"},
+                    "content": {"content_type": "text", "parts": ["my key is AKIAIOSFODNN7EXAMPLE"]},
+                }
+            ],
+        }
+    ).encode()
+    got = extract(body, host="chatgpt.com", path="/backend-api/conversation")
+
+    assert got.parsed is True
+    assert got.last_user == "my key is AKIAIOSFODNN7EXAMPLE"
+    assert "AKIAIOSFODNN7EXAMPLE" in got.text
+
+
+def test_chatgpt_web_multimodal_asset_is_not_text():
+    body = json.dumps(
+        {
+            "messages": [
+                {
+                    "author": {"role": "user"},
+                    "content": {
+                        "content_type": "multimodal_text",
+                        "parts": [{"asset_pointer": "file-service://BLOB"}, "describe it"],
+                    },
+                }
+            ]
+        }
+    ).encode()
+    got = extract(body, host="chatgpt.com")
+
+    assert got.last_user == "describe it"
+    assert got.has_non_text is True
+    assert "BLOB" not in got.text
+
+
+def test_claude_web_app_body():
+    body = json.dumps({"prompt": "secret AKIAIOSFODNN7EXAMPLE", "attachments": [], "files": []}).encode()
+    got = extract(body, host="claude.ai", path="/api/organizations/x/chat_conversations/y/completion")
+
+    assert got.provider == PROVIDER_ANTHROPIC
+    assert got.last_user == "secret AKIAIOSFODNN7EXAMPLE"
+
+
+def test_recognised_shape_with_no_readable_text_is_salvaged():
+    """The general guard behind the chatgpt.com fix.
+
+    If a provider changes its body shape, the failure must be loud and must
+    still feed DLP. Reporting success on an empty haystack is the one outcome
+    that reads as safe while being blind.
+    """
+    body = json.dumps(
+        {"messages": [{"unknown": "shape", "buried": "AKIAIOSFODNN7EXAMPLE"}]}
+    ).encode()
+    got = extract(body, host="api.openai.com")
+
+    assert got.parsed is False, "an unreadable shape must not claim to be screened"
+    assert "AKIAIOSFODNN7EXAMPLE" in got.text, "DLP must still get the body"
+    assert any(k.startswith("unread-shape:") for k in got.non_text_kinds)

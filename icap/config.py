@@ -13,16 +13,25 @@ from dataclasses import dataclass, field
 # rather than "everything": traffic we never see is traffic we can never leak,
 # and this list is the sentence a works council reads.
 DEFAULT_AI_HOSTS: tuple[str, ...] = (
+    # Web apps. These are where employees actually paste things, and several
+    # do not share a domain with the vendor's API: chatgpt.com is not
+    # openai.com, and missing it means missing most ChatGPT usage.
+    "chatgpt.com",
+    "claude.ai",
+    "gemini.google.com",
+    "copilot.microsoft.com",
+    "perplexity.ai",
+    "grok.com",
+    "deepseek.com",
+    "meta.ai",
+    "poe.com",
+    # APIs.
     "openai.com",
     "anthropic.com",
-    "claude.ai",
-    "perplexity.ai",
-    "gemini.google.com",
     "generativelanguage.googleapis.com",
-    "copilot.microsoft.com",
     "githubcopilot.com",
     "api.cohere.ai",
-    "api.mistral.ai",
+    "mistral.ai",
     "api.groq.com",
     "api.x.ai",
     "openrouter.ai",
@@ -73,6 +82,27 @@ def _host_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     raw = os.environ.get(name, "")
     parsed = tuple(h.strip().lower() for h in raw.split(",") if h.strip())
     return parsed or default
+
+
+def _api_base(raw: str) -> str:
+    """Normalise the data plane URL, upgrading plaintext to TLS.
+
+    `http://api.guardrails.votal.ai` answers 301 to https. Following that
+    redirect would mean putting the tenant key on the wire in plaintext first,
+    and httpx does not follow redirects by default anyway, so the bundle fetch
+    would fail with a confusing parse error. Upgrade it here and say so.
+    """
+    base = (raw or "").strip().rstrip("/")
+    if base.startswith("http://"):
+        upgraded = "https://" + base[len("http://"):]
+        import logging
+
+        logging.getLogger("shield.icap").warning(
+            "SHIELD_API_BASE was http://; using %s instead. The tenant key must "
+            "never traverse plaintext.", upgraded,
+        )
+        return upgraded
+    return base
 
 
 def _read_secret(name: str) -> str:
@@ -160,7 +190,7 @@ class IcapConfig:
             ai_hosts=_host_list("SHIELD_ICAP_AI_HOSTS", DEFAULT_AI_HOSTS),
             allowed_clients=_parse_cidrs(os.environ.get("SHIELD_ICAP_ALLOWED_CLIENTS", "0.0.0.0/0,::/0")),
             version=os.environ.get("SHIELD_ICAP_VERSION", "pr1"),
-            api_base=os.environ.get("SHIELD_API_BASE", "https://api.guardrails.votal.ai").strip(),
+            api_base=_api_base(os.environ.get("SHIELD_API_BASE", "https://api.guardrails.votal.ai")),
             api_key=_read_secret("SHIELD_API_KEY"),
             proxy_token=_read_secret("SHIELD_PROXY_TOKEN"),
             bundle_poll_s=_env_int("SHIELD_ICAP_BUNDLE_POLL_S", 300),

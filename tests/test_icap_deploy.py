@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from icap.config import DEFAULT_BYPASS_HOSTS, IcapConfig
+from icap.config import DEFAULT_AI_HOSTS, DEFAULT_BYPASS_HOSTS, IcapConfig
 from icap.pac import render_pac
 from icap.preflight import Finding, Preflight, identify, report, run
 
@@ -190,3 +190,23 @@ def test_preflight_probe_error_does_not_claim_a_clean_chain():
     result = Preflight(findings=[Finding(probed="x", error="boom")])
     assert result.already_inspecting is False
     assert "looks publicly issued" not in report(result)
+
+
+def test_squid_ai_host_list_matches_the_adapter_default():
+    """The drift that hides an entire provider.
+
+    chatgpt.com is not a subdomain of openai.com, so a list that covers the API
+    can miss the web app that most employees actually use. If the adapter
+    inspects a host, Squid has to decrypt it, or the adapter never sees it.
+    """
+    conf = SQUID_CONF.read_text()
+    ai_block = conf[conf.index("acl ai_hosts"):conf.index("acl never_bump")]
+    for host in DEFAULT_AI_HOSTS:
+        assert f".{host}" in ai_block, f"{host} is inspected by the adapter but not bumped by Squid"
+
+
+def test_chatgpt_dot_com_is_covered():
+    """Named explicitly: it is the single most likely omission in this list."""
+    assert IcapConfig().is_ai_host("chatgpt.com")
+    assert ".chatgpt.com" in SQUID_CONF.read_text()
+    assert "chatgpt.com" in render_pac(IcapConfig())
