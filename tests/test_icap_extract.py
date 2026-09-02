@@ -333,3 +333,69 @@ def test_recognised_shape_with_no_readable_text_is_salvaged():
     assert got.parsed is False, "an unreadable shape must not claim to be screened"
     assert "AKIAIOSFODNN7EXAMPLE" in got.text, "DLP must still get the body"
     assert any(k.startswith("unread-shape:") for k in got.non_text_kinds)
+
+
+# ── compressed request bodies ────────────────────────────────────────────────
+
+
+def test_compressed_body_is_decoded_before_extraction():
+    """The claude.ai failure, in one test.
+
+    Browsers compress REQUEST bodies, not just responses. Without decoding,
+    the body is not JSON, so it extracts as `raw`, skips the server screen,
+    and hands the DLP sweep compressed bytes that match no rule -- while the
+    transaction logs decision=allow like a clean prompt. chatgpt.com blocked
+    correctly and claude.ai did not, with identical policy.
+    """
+    import gzip as _gzip
+
+    from icap.decompress import decode
+
+    body = json.dumps({"prompt": "our margin is 62% and supplier cost 400 AED"}).encode()
+    blob = _gzip.compress(body)
+
+    # Undecoded, this is what the adapter used to see.
+    assert extract(blob, host="claude.ai").provider == PROVIDER_RAW
+
+    decoded, enc = decode(blob, "gzip")
+    assert enc == "gzip"
+    got = extract(decoded, host="claude.ai")
+    assert got.parsed is True
+    assert "margin" in got.last_user
+
+
+def test_encoding_detected_without_a_header():
+    """Content-Encoding is a declaration, and requests do not always carry a
+    correct one. Magic bytes are the fallback."""
+    import gzip as _gzip
+
+    from icap.decompress import decode, sniff
+
+    blob = _gzip.compress(b'{"prompt":"hello"}')
+    assert sniff(blob) == "gzip"
+    decoded, enc = decode(blob, "")          # no header at all
+    assert enc == "gzip" and b"hello" in decoded
+
+
+def test_undecodable_body_is_passed_through_not_dropped():
+    """A body we cannot read must still reach the DLP sweep. Unreadable is a
+    coverage gap to report, not a reason to fail an employee's request."""
+    from icap.decompress import decode
+
+    junk = b"\x1f\x8b" + b"not actually gzip"
+    out, enc = decode(junk, "gzip")
+    assert out == junk
+    assert enc == ""
+
+
+def test_decompression_is_bounded():
+    """A small body that expands to gigabytes is a zip bomb, and this runs
+    inline on a gateway."""
+    import gzip as _gzip
+
+    from icap.decompress import MAX_DECOMPRESSED, decode
+
+    bomb = _gzip.compress(b"A" * (MAX_DECOMPRESSED + 5_000_000))
+    out, enc = decode(bomb, "gzip")
+    assert enc == "gzip"
+    assert len(out) == MAX_DECOMPRESSED

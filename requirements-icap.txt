@@ -22,3 +22,12 @@ httpx
 # match it was meant to bound has already completed. Measured, not assumed:
 # tests/test_icap_policy.py::test_scan_timeout_allows_rather_than_stalls.
 regex
+
+# brotli / zstandard: browsers compress REQUEST bodies, not just responses.
+# claude.ai does; chatgpt.com does not. Without a decoder the body is not JSON,
+# so it parses as `raw`, skips the server screen, and presents the DLP sweep
+# with compressed bytes that match no rule -- an entire provider silently
+# uninspected while the log says decision=allow. gzip and deflate are stdlib;
+# these two are not.
+brotli
+zstandard
