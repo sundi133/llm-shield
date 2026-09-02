@@ -536,6 +536,36 @@ NODE_EXTRA_CA_CERTS=/path/ca.pem
 Push these with everything else. Miss them and every script on the fleet
 starts failing TLS, which is the change people notice first.
 
+
+### Pushing it with a script
+
+Configuration profiles and Group Policy are the better vehicle for the
+certificate and the browser settings, because those can be marked
+non-removable and a script cannot. Two things a profile does not reach,
+though: Firefox keeps its own trust store, and Python and Node ship their own
+CA bundles. `deploy/swg/mdm/` has a script per platform that does all of it in
+one artefact.
+
+macOS, via a Jamf script policy, Kandji custom script, or an Intune shell
+script with "run as signed-in user" set to No:
+
+```bash
+sudo ./install-macos.sh "http://swg.corp.example:8081/proxy.pac" ./ca-cert.pem
+```
+
+Windows, via an Intune platform script running as SYSTEM, or a GPO startup
+script:
+
+```powershell
+.\install-windows.ps1 -PacUrl "http://swg.corp.example:8081/proxy.pac" `
+                      -CaCertPath "\\share\shield\ca-cert.cer"
+```
+
+Both are idempotent, so they can run on every check-in. Both do the same five
+things in the same order: trust the CA, set the OS proxy, apply Chrome and
+Edge policy with QUIC disabled, configure Firefox separately, and set the CA
+bundle variables for command line runtimes.
+
 ### Step 6. Verify on a device
 
 | Browser | Check |
