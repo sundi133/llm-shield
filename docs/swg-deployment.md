@@ -25,6 +25,74 @@ than asking you to install a second one.
 
 ---
 
+## Try it locally first
+
+Before touching a gateway, prove the adapter blocks what you expect. This
+needs no tenant key, no CA and no Squid: a stub stands in for Shield, and a
+probe script sends ICAP requests the way a gateway would.
+
+**Terminal 1**, the stub Shield. It serves a policy bundle with one secret
+pattern and one blocked term:
+
+```bash
+python -u deploy/swg/dev/fake_shield.py
+```
+
+**Terminal 2**, the adapter, pointed at the stub and set to enforce:
+
+```bash
+SHIELD_API_BASE=http://127.0.0.1:9099 SHIELD_API_KEY=dev-key \
+SHIELD_ICAP_MODE=enforce SHIELD_ICAP_ALLOWED_CLIENTS=127.0.0.0/8 \
+python -m icap
+```
+
+Confirm it loaded policy. `rules: 0` means it did not, and an adapter with no
+rules blocks nothing:
+
+```bash
+curl -s http://127.0.0.1:8081/healthz
+```
+
+**Terminal 3**, send prompts:
+
+```bash
+python deploy/swg/dev/icap_probe.py 1344 "what is the weather in Paris"
+python deploy/swg/dev/icap_probe.py 1344 "deploy with AKIAIOSFODNN7EXAMPLE please"
+python deploy/swg/dev/icap_probe.py 1344 "summarise Project Titan for me"
+python deploy/swg/dev/icap_probe.py 1344 "AKIAIOSFODNN7EXAMPLE" www.wikipedia.org
+```
+
+Expected:
+
+```
+  prompt : 'what is the weather in Paris'
+  verdict: ICAP/1.0 204 No Content            <- forwarded
+
+  prompt : 'deploy with AKIAIOSFODNN7EXAMPLE please'
+  verdict: ICAP/1.0 200 OK                    <- blocked
+  reason : Prompt contained data matching policy: aws-secret-key
+  ref    : 88caea55-f7de-4a21-99e2-e90c1bb8bf5e
+
+  prompt : 'summarise Project Titan for me'
+  verdict: ICAP/1.0 200 OK
+  reason : Prompt contained a blocked term: project titan
+
+  prompt : 'AKIAIOSFODNN7EXAMPLE'             <- same secret, non-AI host
+  verdict: ICAP/1.0 204 No Content            <- never inspected
+```
+
+The last one is the important one. The same credential is forwarded untouched
+because Wikipedia is not on the inspected list. Traffic outside that list is
+never read.
+
+Two things to check while you are here. Set `SHIELD_ICAP_MODE=monitor` and
+re-run the blocking cases: they should all return 204 while still logging
+`decision=would_block`, which is what a real rollout looks like on day one.
+And read the adapter's log: it records the destination, the rule and a
+reference, and never the prompt.
+
+---
+
 ## Which mode do you need?
 
 Run the pre-flight first. It takes a few seconds and it decides everything
