@@ -58,12 +58,15 @@ async def _health(
                 "screen": "sync" if cfg.sync_screen else "async",
                 "bundle_version": bundle.version or None,
                 "rules": len(bundle.rules),
+                # The number that matters. A `redact` rule is a rule the
+                # adapter cannot act on in v1, so it is not enforcement.
+                "blocking_rules": bundle.blocking_rules,
                 "blocklists": len(bundle.blocklists),
                 "shield_reachable": cache.reachable,
                 "policy_error": cache.last_error or None,
-                # The one an operator should read first: monitor or enforce,
-                # zero rules means zero blocking.
-                "enforcing_anything": bool(cache.bundle.rules or cache.bundle.blocklists),
+                # The one an operator should read first: a loaded policy whose
+                # every rule resolves to pass enforces exactly nothing.
+                "enforcing_anything": cache.bundle.can_block,
                 "telemetry_submitted": shield.submitted,
                 "telemetry_dropped": shield.dropped,
             }

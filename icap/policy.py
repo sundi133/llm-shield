@@ -66,6 +66,21 @@ class Bundle:
     def empty(self) -> bool:
         return not self.rules and not self.blocklists
 
+    @property
+    def blocking_rules(self) -> int:
+        """Rules that can actually block.
+
+        Distinct from len(rules) on purpose. A tenant whose only rule is
+        `redact` has a policy, and this adapter cannot act on it (v1 does not
+        rewrite bodies), so counting it as enforcement would tell an operator
+        they are protected when nothing can fire.
+        """
+        return sum(1 for r in self.rules if r.blocks)
+
+    @property
+    def can_block(self) -> bool:
+        return bool(self.blocking_rules or self.blocklists)
+
 
 EMPTY = Bundle()
 

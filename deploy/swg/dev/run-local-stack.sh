@@ -56,7 +56,8 @@ import json, sys
 d = json.load(sys.stdin)
 sync = d["screen"] == "sync"
 tier1 = d["enforcing_anything"]
-print("  mode=%s  screen=%s  rules=%s" % (d["mode"], d["screen"], d["rules"]))
+print("  mode=%s  screen=%s  rules=%s (%s can block)"
+      % (d["mode"], d["screen"], d["rules"], d.get("blocking_rules", "?")))
 if d.get("policy_error"):
     print("  POLICY ERROR: %s" % d["policy_error"])
 
@@ -69,7 +70,11 @@ elif tier1:
     print("  blocking: Tier 1 rules only (server verdicts are reported, not enforced)")
 elif sync:
     print("  blocking: inline server screening only")
-    print("  NOTE: zero Tier 1 rules, so your tenant DLP patterns are NOT enforced.")
+    print("  NOTE: no Tier 1 rule can block, so your tenant DLP patterns are NOT enforced.")
+    if d["rules"]:
+        print("  Your policy has %s rule(s), but none of them block. A `redact` rule\n"
+              "  cannot be actioned in v1; set SHIELD_ICAP_REDACT_FALLBACK=block, or add\n"
+              "  a blocking rule in the portal." % d["rules"])
 else:
     print("  BLOCKING NOTHING: no Tier 1 rules and sync screening is off.")
     print("  Telemetry still flows. Fix the policy error above, or start with")

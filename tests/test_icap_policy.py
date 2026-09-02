@@ -444,3 +444,30 @@ def test_successful_refresh_clears_a_previous_error():
         return cache
 
     assert asyncio.run(go()).last_error == ""
+
+
+def test_a_policy_of_only_redact_rules_is_not_enforcement():
+    """The state a real tenant was actually in: one rule, action=redact.
+
+    v1 cannot rewrite bodies, so that rule resolves to pass and nothing can
+    fire. Reporting it as enforcement tells an operator they are protected
+    when they are not, which is the worst thing a security status line can do.
+    """
+    bundle = compile_bundle(bundle_json(rules=[EMAIL_RULE]), redact_fallback="pass")
+
+    assert len(bundle.rules) == 1, "the rule is loaded"
+    assert bundle.blocking_rules == 0, "but it cannot block"
+    assert bundle.can_block is False
+    assert bundle.empty is False, "a loaded-but-inert policy is not an empty one"
+
+
+def test_redact_fallback_block_makes_it_enforcement():
+    bundle = compile_bundle(bundle_json(rules=[EMAIL_RULE]), redact_fallback="block")
+    assert bundle.blocking_rules == 1
+    assert bundle.can_block is True
+
+
+def test_blocklists_alone_count_as_enforcement():
+    bundle = compile_bundle(bundle_json(rules=[], blocklists=["project titan"]))
+    assert bundle.blocking_rules == 0
+    assert bundle.can_block is True
