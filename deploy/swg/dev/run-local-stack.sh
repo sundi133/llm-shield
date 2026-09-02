@@ -54,12 +54,26 @@ start)
     curl -s -m 10 http://127.0.0.1:8081/healthz | "$PY" -c '
 import json, sys
 d = json.load(sys.stdin)
-print("  mode=%s  rules=%s  enforcing=%s" % (d["mode"], d["rules"], d["enforcing_anything"]))
+sync = d["screen"] == "sync"
+tier1 = d["enforcing_anything"]
+print("  mode=%s  screen=%s  rules=%s" % (d["mode"], d["screen"], d["rules"]))
 if d.get("policy_error"):
     print("  POLICY ERROR: %s" % d["policy_error"])
-if not d["enforcing_anything"]:
-    print("  WARNING: zero rules loaded. Nothing will be blocked.")
-    print("  Telemetry still flows; only Tier 1 enforcement is dead.")
+
+# Two independent ways to block. Reporting "nothing will be blocked" while
+# sync screening is on would be a status line that contradicts the system,
+# which is the failure this whole rig keeps hitting.
+if tier1 and sync:
+    print("  blocking: Tier 1 rules AND inline server screening")
+elif tier1:
+    print("  blocking: Tier 1 rules only (server verdicts are reported, not enforced)")
+elif sync:
+    print("  blocking: inline server screening only")
+    print("  NOTE: zero Tier 1 rules, so your tenant DLP patterns are NOT enforced.")
+else:
+    print("  BLOCKING NOTHING: no Tier 1 rules and sync screening is off.")
+    print("  Telemetry still flows. Fix the policy error above, or start with")
+    print("  SHIELD_ICAP_SYNC_SCREEN=1 to let the server verdict block inline.")
     sys.exit(1)
 '
     echo
