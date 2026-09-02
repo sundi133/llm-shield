@@ -242,6 +242,15 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         "/v1/tenant",
         "/v1/agents",
         "/v1/data-policies",
+        # /v1/edge/* resolves its tenant through get_tenant_from_request, which
+        # reads request.state.tenant_id -- and only this middleware sets that.
+        # Without the prefix the endpoint answered 401 to every caller,
+        # including a valid tenant key, so the edge fast-path bundle could not
+        # be fetched by the browser extension or the ICAP adapter at all.
+        # Enrichment only: it is deliberately NOT in _REQUIRE_TENANT_KEY, so
+        # rejection behaviour is unchanged and the route's own dependency
+        # remains what refuses an anonymous caller.
+        "/v1/edge",
     )
     _GUARDED_EXACT = {"/classify", "/classify_output", "/guardrails/input", "/guardrails/output", "/guardrails/file", "/v1/chat/completions"}
 
