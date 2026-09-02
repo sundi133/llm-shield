@@ -18,7 +18,14 @@ BUNDLE = {
     "tenant_id": "dev",
     "version": "dev-1",
     "rules": [
+        # Credentials.
         {"id": "aws-secret-key", "regex": r"AKIA[0-9A-Z]{16}", "action": "block", "severity": "critical"},
+        {"id": "private-key", "regex": r"-----BEGIN [A-Z ]*PRIVATE KEY-----", "action": "block", "severity": "critical"},
+        # Commercially sensitive. The realistic case for a retailer: nobody
+        # pastes an AWS key into ChatGPT, but plenty of people paste their
+        # margin and supplier cost while asking for negotiation help.
+        {"id": "gross-margin", "regex": r"(?i)\b(gross\s+)?margin\b[^.\n]{0,40}?\d{1,3}\s*%", "action": "block", "severity": "high"},
+        {"id": "supplier-cost", "regex": r"(?i)\bsupplier\s+(cost|price)\b[^.\n]{0,40}?\d", "action": "block", "severity": "high"},
         {"id": "email", "regex": r"[\w.]+@[\w.]+\.\w+", "action": "redact", "severity": "medium"},
     ],
     "blocklists": ["project titan"],
