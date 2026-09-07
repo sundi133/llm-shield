@@ -31,4 +31,15 @@ Ratings are generated from real scans of a curated, version-pinned list and are 
 
 ## Rated servers
 
-No servers have been scanned yet. Ratings appear here after the first scan run.
+| server | score | band |
+|---|---|---|
+| [Brave Search MCP Server](/registry/brave-search/) | unrated | unrated |
+| [Fetch MCP Server](/registry/fetch/) | 100/100 | clean |
+| [Filesystem MCP Server](/registry/filesystem/) | 75/100 | minor |
+| [GitHub MCP Server](/registry/github/) | 100/100 | clean |
+| [GitLab MCP Server](/registry/gitlab/) | unrated | unrated |
+| [Google Maps MCP Server](/registry/google-maps/) | unrated | unrated |
+| [Memory MCP Server](/registry/memory/) | 25/100 | high-risk |
+| [PostgreSQL MCP Server](/registry/postgres/) | 100/100 | clean |
+| [Slack MCP Server](/registry/slack/) | unrated | unrated |
+| [SQLite MCP Server](/registry/sqlite/) | unrated | unrated |

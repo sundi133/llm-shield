@@ -1,0 +1,17 @@
+{
+  "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/sqlite",
+  "name": "SQLite MCP Server",
+  "pinned": "",
+  "rating": {
+    "band": "unrated",
+    "rating_version": "1",
+    "reasons": [
+      "scan failed or produced no report"
+    ],
+    "score": null
+  },
+  "repo": "modelcontextprotocol/servers",
+  "scan": {},
+  "slug": "sqlite",
+  "target": "stdio:uvx mcp-server-sqlite --db-path /tmp/test.db"
+}
