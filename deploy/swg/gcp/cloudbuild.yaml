@@ -1,0 +1,21 @@
+# Build one SWG image from the repo root.
+#
+# `gcloud builds submit --tag` can only build a Dockerfile literally named
+# `Dockerfile` at the root of the build context. Both images here are built
+# from a named file (`Dockerfile.icap`, `deploy/swg/Dockerfile.squid`) against
+# the repo root as context, so the dockerfile path is a substitution and the
+# docker builder is invoked directly.
+#
+#   gcloud builds submit --config=cloudbuild.yaml \
+#     --substitutions=_IMAGE=...,_DOCKERFILE=Dockerfile.icap ../../..
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', '${_DOCKERFILE}', '-t', '${_IMAGE}', '.']
+
+images:
+  - '${_IMAGE}'
+
+options:
+  # Without this the build needs a logs bucket in the project. Cloud Logging is
+  # already there and is where an operator will look anyway.
+  logging: CLOUD_LOGGING_ONLY

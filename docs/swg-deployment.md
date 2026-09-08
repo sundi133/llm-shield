@@ -671,6 +671,14 @@ printf %s 'tenant_key' | gcloud secrets versions add shield-api-key --data-file=
 Then point the gateway at the forwarding rule's address, which the script
 prints.
 
+That script is Mode B: the adapter alone, for a site whose own gateway already
+does the decrypting. If the traffic you want to screen comes from **GCP
+workloads** and nothing intercepts it today, use
+`deploy/swg/gcp/deploy-mode-a.sh` instead, which deploys Squid and the adapter
+together inside the VPC. See `deploy/swg/gcp/README.md` and
+[spec-swg-gcp-mode-a](/spec-swg-gcp-mode-a/). Neither script covers remote
+laptops proxying in over the internet.
+
 Three GCP-specific choices worth understanding, because each has an obvious
 wrong alternative:
 
