@@ -103,6 +103,18 @@ async def main() -> None:
     icap_port = int(os.environ.get("SHIELD_ICAP_PORT", "1344"))
     health_port = int(os.environ.get("SHIELD_ICAP_HEALTH_PORT", "8081"))
 
+    # Which address to bind. Defaults to IPv4, which is what a docker bridge and
+    # a GCP subnet give you.
+    #
+    # It has to be settable because some platforms route service-to-service
+    # traffic over IPv6 only. Railway is one: with the IPv4 default, Squid
+    # reaches the adapter's hostname, resolves it to fd12::/8, connects to
+    # nothing, and reports
+    #   essential ICAP service is down after an options fetch failure
+    # while the adapter's own log says it is listening perfectly happily. Set
+    # SHIELD_ICAP_BIND=:: there, which on Linux accepts both families.
+    bind = os.environ.get("SHIELD_ICAP_BIND", "0.0.0.0").strip() or "0.0.0.0"
+
     # Load policy before accepting traffic, so a healthy boot does not serve a
     # window of requests against an empty ruleset. A failure here is not fatal:
     # an empty bundle allows everything and the refresh loop keeps retrying.
@@ -111,14 +123,14 @@ async def main() -> None:
     shield.start()
 
     servers = [
-        await icap.serve("0.0.0.0", icap_port),
+        await icap.serve(bind, icap_port),
         await asyncio.start_server(
-            lambda r, w: _health(r, w, cfg, cache, shield), "0.0.0.0", health_port
+            lambda r, w: _health(r, w, cfg, cache, shield), bind, health_port
         ),
     ]
     log.info(
-        "shield-icap listening icap=:%d health=:%d mode=%s screen=%s hosts=%d bundle=%s rules=%d",
-        icap_port, health_port, cfg.mode,
+        "shield-icap listening bind=%s icap=:%d health=:%d mode=%s screen=%s hosts=%d bundle=%s rules=%d",
+        bind, icap_port, health_port, cfg.mode,
         "sync" if cfg.sync_screen else "async",
         len(cfg.ai_hosts), cache.bundle.version or "none", len(cache.bundle.rules),
     )
