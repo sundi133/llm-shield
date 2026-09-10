@@ -112,7 +112,12 @@ async def main() -> None:
     # nothing, and reports
     #   essential ICAP service is down after an options fetch failure
     # while the adapter's own log says it is listening perfectly happily. Set
-    # SHIELD_ICAP_BIND=:: there, which on Linux accepts both families.
+    # SHIELD_ICAP_BIND=:: there.
+    #
+    # Note that :: here is IPv6-ONLY, not dual-stack: asyncio leaves IPV6_V6ONLY
+    # at the system default and this binds AF_INET6 alone, so 127.0.0.1 is
+    # refused. Anything probing over IPv4 loopback, a container healthcheck for
+    # one, has to use [::1] instead. Verified on Railway.
     bind = os.environ.get("SHIELD_ICAP_BIND", "0.0.0.0").strip() or "0.0.0.0"
 
     # Load policy before accepting traffic, so a healthy boot does not serve a

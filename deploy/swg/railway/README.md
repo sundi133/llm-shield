@@ -174,14 +174,31 @@ every request then failed closed with HTTP 500, so it presents as a total
 outage rather than a bind mismatch. The startup line now prints `bind=`, so
 this is visible at a glance.
 
+**`::` is IPv6-only, not dual-stack.** A consequence of the above worth knowing
+separately: with `SHIELD_ICAP_BIND=::` the adapter refuses `127.0.0.1`. Health
+probes and any in-container check must use `[::1]` instead.
+
+**A loaded policy is not an enforcing one.** The first real tenant tried here
+reported `rules=4` with `blocking_rules=0` and `enforcing_anything=False`, in
+enforce mode, because every rule was a `redact` action and v1 cannot rewrite
+bodies. It blocked nothing while looking correct. Read `enforcing_anything` on
+`/healthz`, not `rules`, and set `SHIELD_ICAP_REDACT_FALLBACK=block` if the
+tenant's policy is redaction-only.
+
 **What worked unchanged:** `acl localnet src ... fc00::/7` on line 23 of
 `squid.conf` already covers Railway's private range (addresses are `fd12::/8`),
 so internal clients match `localnet` with no edit.
 
-Verified end to end from inside the project: a POST to `api.anthropic.com`
-through `squid.railway.internal:3128` reaches the adapter, which logs
-`decision=allow provider=anthropic parsed=True`, and Squid then forwards it
-`HIER_DIRECT` to Anthropic.
+Verified end to end from inside the project, against real production policy:
+
+```
+benign         HTTP 401  (forwarded, reached the provider)
+email + pii    HTTP 403  BLOCKED: Prompt contained data matching policy: email-mask
+```
+
+Squid intercepts the TLS, the adapter parses the prompt
+(`provider=anthropic parsed=True`), policy is applied, and a violating prompt
+never reaches the provider.
 
 ---
 
