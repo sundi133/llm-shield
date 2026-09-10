@@ -18,5 +18,18 @@ RUN apt-get update \
 COPY deploy/swg/squid-entrypoint.sh /usr/local/bin/squid-entrypoint.sh
 RUN chmod +x /usr/local/bin/squid-entrypoint.sh
 
+# The config ships IN the image, so the image is correct on its own.
+#
+# It used to arrive only as a bind mount (docker-compose) or written by a
+# startup script (GCP). On a platform with neither, Squid silently fell back to
+# Debian's default squid.conf and came up with "Adaptation support is off" and
+# a plain, unbumped listener: a proxy that inspects nothing, looking healthy.
+# That is the worst possible failure for this component, so the default is now
+# the real config.
+#
+# A bind mount still wins at runtime, so compose and GCP are unchanged and an
+# operator can still supply their own.
+COPY deploy/swg/squid.conf /etc/squid/squid.conf
+
 EXPOSE 3128
 ENTRYPOINT ["/usr/local/bin/squid-entrypoint.sh"]

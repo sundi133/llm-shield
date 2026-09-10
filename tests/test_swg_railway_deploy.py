@@ -196,3 +196,21 @@ def test_the_readme_warns_about_the_open_relay():
     rather than implied."""
     assert "open relay" in README.lower()
     assert "auth_param" in README
+
+
+# ── the image must be correct without a bind mount ───────────────────────────
+
+
+def test_the_image_ships_the_real_squid_conf():
+    """Without this, Squid falls back to Debian's default config on any platform
+    with no bind mount: "Adaptation support is off" and an unbumped listener, so
+    it inspects nothing while looking perfectly healthy. Observed on Railway."""
+    dockerfile = (REPO / "deploy" / "swg" / "Dockerfile.squid").read_text(encoding="utf-8")
+    assert "COPY deploy/swg/squid.conf /etc/squid/squid.conf" in dockerfile
+
+
+def test_compose_can_still_override_the_baked_config():
+    """A bind mount must keep winning, so compose and GCP behave as before and
+    an operator can supply their own config."""
+    compose = (REPO / "docker-compose.swg.yml").read_text(encoding="utf-8")
+    assert "./deploy/swg/squid.conf:/etc/squid/squid.conf:ro" in compose
