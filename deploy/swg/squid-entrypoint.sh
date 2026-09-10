@@ -31,7 +31,26 @@ chown -R proxy:proxy /var/log/squid /var/spool/squid 2>/dev/null || true
 # sees what is being inspected, so this is not optional.
 chmod a+w /dev/stdout /dev/stderr 2>/dev/null || true
 
-# Fail loudly on a bad config rather than half-starting.
-squid -k parse -f /etc/squid/squid.conf
+# Where the adapter lives. Defaults to the compose service name, so nothing
+# changes for an existing deployment: docker-compose and the GCP instances both
+# resolve `shield-icap` by container name on a user-defined bridge.
+#
+# It has to be overridable because not every platform gives you that name.
+# Railway's private networking, for one, addresses services as
+# <service>.railway.internal over IPv6, so `shield-icap` does not resolve and
+# Squid fails every request with bypass=off, which looks like an outage rather
+# than a misconfiguration.
+ICAP_ENDPOINT="${SHIELD_ICAP_ENDPOINT:-shield-icap:1344}"
+RENDERED=/tmp/squid.rendered.conf
 
-exec squid -N -d1 -f /etc/squid/squid.conf
+sed "s|icap://shield-icap:1344/screen|icap://${ICAP_ENDPOINT}/screen|" \
+    /etc/squid/squid.conf > "$RENDERED"
+
+if [ "$ICAP_ENDPOINT" != "shield-icap:1344" ]; then
+    echo "shield-icap endpoint: ${ICAP_ENDPOINT}" >&2
+fi
+
+# Fail loudly on a bad config rather than half-starting.
+squid -k parse -f "$RENDERED"
+
+exec squid -N -d1 -f "$RENDERED"

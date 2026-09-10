@@ -1,0 +1,22 @@
+# Files that are consumed by Linux containers must be checked out with LF, on
+# every platform.
+#
+# Git on Windows defaults to core.autocrlf=true, which rewrites these to CRLF in
+# the working tree. Docker then COPYs them into an image verbatim, and the
+# shebang becomes `#!/bin/sh\r`. The kernel looks for an interpreter literally
+# named "/bin/sh\r", does not find one, and the container dies with:
+#
+#   exec /usr/local/bin/squid-entrypoint.sh: no such file or directory
+#
+# naming a file that is plainly there and plainly executable. It cost a
+# debugging session on the SWG stack, which builds fine on Linux and macOS and
+# crash-loops on Windows.
+# Deliberately narrow. YAML and JSON are read by parsers that do not care about
+# CRLF, and adding them here renormalises unrelated files across the repo for no
+# benefit. Only what a Linux kernel or shell has to interpret literally.
+*.sh        text eol=lf
+*.conf      text eol=lf
+Dockerfile* text eol=lf
+
+# PowerShell stays CRLF: it is consumed by Windows, not by a container.
+*.ps1       text eol=crlf
