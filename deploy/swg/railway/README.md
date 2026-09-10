@@ -77,23 +77,33 @@ docker-compose and on the GCP instances but not here, because Railway addresses
 services as `<service>.railway.internal`. The entrypoint substitutes it at boot
 and defaults to the old value, so nothing else changes.
 
-Squid also needs the CA and a volume:
+Squid also needs the CA and a volume.
 
-- **CA**: mount or write the operator-generated `ca.pem` to
-  `/etc/squid/ssl/ca.pem`. The entrypoint exits with `FATAL: no CA` without it,
-  which is correct: a proxy that starts without a CA cannot bump anything and
-  would pass everything through unread.
-- **Volume**: mount one at `/var/spool/squid`. That holds `ssl_db`, the forged
-  certificate database. Without it, every restart regenerates every
-  certificate.
+**Volume**: mount one at `/var/spool/squid`. That holds `ssl_db`, the forged
+certificate database. Without it every restart regenerates every certificate.
 
-For this testbed the CA is a throwaway. Generate it, use it, delete it:
+**CA**: Railway has no bind mounts, and a volume cannot solve this either,
+because populating one needs a shell in a container that refuses to start
+without the CA. So the entrypoint takes it from `SHIELD_SWG_CA_PEM` as
+base64 when no file is present:
 
 ```bash
 openssl req -new -newkey rsa:4096 -sha256 -days 30 -nodes -x509 \
   -extensions v3_ca -keyout ca.pem -out ca.pem \
   -subj "/CN=Votal SWG Railway testbed (throwaway)"
+
+base64 -w0 ca.pem        # paste this as SHIELD_SWG_CA_PEM
 ```
+
+The file must contain **both** the certificate and its private key, which is
+what that command produces. `openssl x509` on it would drop the key, and Squid's
+failure for a keyless cert is obscure, so the entrypoint checks and refuses.
+
+> **Testbed only.** Anyone who can read the service's variables gets the
+> interception CA's private key. That is precisely what
+> `deploy/swg/gcp/deploy-mode-a.sh` uses Secret Manager to avoid. Use a
+> throwaway CA here, keep its lifetime short, and destroy it afterwards. Never
+> put a CA your fleet trusts into an environment variable.
 
 ---
 

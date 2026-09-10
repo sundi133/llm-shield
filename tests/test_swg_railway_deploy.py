@@ -108,6 +108,57 @@ def test_squid_still_refuses_to_start_without_a_ca():
     assert "FATAL: no CA" in ENTRY_SRC
 
 
+# ── getting the CA in on a platform with no bind mounts ──────────────────────
+
+
+def test_the_ca_can_arrive_as_an_environment_variable():
+    """Railway has no bind mounts, and a volume cannot help because populating
+    one needs a shell in a container that will not start without the CA."""
+    assert "SHIELD_SWG_CA_PEM" in ENTRY_SRC
+    assert "base64 -d" in ENTRY_SRC
+
+
+def test_the_env_ca_is_a_fallback_not_a_default():
+    """A mounted file must always win, so the GCP and compose deployments keep
+    taking the CA from Secret Manager and the host respectively."""
+    idx = ENTRY_SRC.index("SHIELD_SWG_CA_PEM")
+    guard = ENTRY_SRC[:idx].rsplit("if ", 1)[-1]
+    assert '! -f "$CA"' in guard, "env CA must only apply when no file is present"
+
+
+def test_the_env_ca_route_is_marked_testbed_only():
+    """Anyone who can read the service variables gets the interception CA's
+    private key. That is the thing deploy-mode-a.sh uses Secret Manager to
+    avoid, so the downgrade has to be stated where someone will see it."""
+    assert "TESTBEDS ONLY" in ENTRY_SRC
+    assert "throwaway" in ENTRY_SRC.lower()
+    assert "throwaway" in README.lower()
+
+
+def test_a_ca_without_its_private_key_is_rejected():
+    """`openssl x509` on the combined file silently drops the key, and Squid's
+    failure for a keyless cert is obscure. Fail with a readable reason."""
+    assert "has no private key" in ENTRY_SRC
+
+
+@needs_bash
+def test_the_env_ca_round_trips(tmp_path):
+    """Behavioural, not textual: base64 in, identical bytes out."""
+    pem = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"
+    import base64
+
+    encoded = base64.b64encode(pem.encode()).decode()
+    out = tmp_path / "ca.pem"
+    proc = subprocess.run(
+        [bash(), "-c", 'printf %s "$SHIELD_SWG_CA_PEM" | base64 -d > "$1"', "_", str(out)],
+        env={"PATH": "/usr/bin:/bin", "SHIELD_SWG_CA_PEM": encoded},
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert out.read_text() == pem
+
+
 def test_the_config_is_still_parsed_before_squid_runs():
     assert "squid -k parse" in ENTRY_SRC
 
