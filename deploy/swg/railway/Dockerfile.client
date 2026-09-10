@@ -1,0 +1,19 @@
+# A shell inside the project, for trying the gateway by hand.
+#
+# The adapter image is python:3.12-slim and the proxy image is a Debian with
+# Squid on it. Neither has curl, so demonstrating the gateway from inside meant
+# writing Python, which reads like a script rather than someone using a proxy.
+#
+# This exists so `railway ssh -s demo-client` gives you a shell where
+#
+#   curl -x http://squid.railway.internal:3128 https://api.anthropic.com/...
+#
+# is the actual command. It holds no secrets and no CA, and it is not part of
+# the gateway: delete the service and nothing else changes.
+FROM alpine:3.20
+
+RUN apk add --no-cache curl bind-tools openssl bash
+
+# Railway restarts a service whose process exits, so this has to stay up. There
+# is nothing to serve: the point is the shell you get with `railway ssh`.
+CMD ["sleep", "infinity"]
