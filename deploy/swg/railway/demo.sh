@@ -7,6 +7,7 @@
 #   ./demo.sh 3        a prompt with customer data is blocked
 #   ./demo.sh 4        what we decrypt, and what we cannot read
 #   ./demo.sh 5        what was recorded, and what was not
+#   ./demo.sh 6        the proxy's own log: forwarded vs blocked vs never read
 #   ./demo.sh          all of them, back to back
 #
 # Everything runs inside the container, because nothing in this project is
@@ -111,6 +112,22 @@ step_5() {
     [ "$n" = "0" ] && echo "   Destination, rule and a reference. Never the prompt."
 }
 
+step_6() {
+    sleep 8
+    say "6. The proxy's own record of the same three requests"
+    railway logs -s squid 2>&1 | grep -E "NONE_NONE|TCP_MISS|TCP_TUNNEL" | tail -6         | sed -E 's/^[0-9]+\.[0-9]+ +[0-9]+ +[^ ]+ +//' | sed 's/^/   /'
+    cat <<'NOTE'
+
+   Read the last column.
+     HIER_DIRECT  went to the provider
+     HIER_NONE    never left this network
+
+   And note what is missing: for wikipedia there is only a CONNECT line and a
+   byte count, no URL. The proxy never decrypted it, so it has nothing to log.
+   For the AI provider it logs the full path, because that request was screened.
+NOTE
+}
+
 case "${1:-all}" in
     check) step_check ;;
     1) step_1 ;;
@@ -118,6 +135,7 @@ case "${1:-all}" in
     3) step_3 ;;
     4) step_4 ;;
     5) step_5 ;;
-    all) step_1; step_2; step_3; step_4; step_5 ;;
-    *) echo "usage: $0 [check|1|2|3|4|5]" >&2; exit 2 ;;
+    6) step_6 ;;
+    all) step_1; step_2; step_3; step_4; step_5; step_6 ;;
+    *) echo "usage: $0 [check|1|2|3|4|5|6]" >&2; exit 2 ;;
 esac
