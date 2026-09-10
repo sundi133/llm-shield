@@ -56,7 +56,12 @@ SHIELD_API_KEY          = <tenant key>        # Railway secret, not plaintext
 SHIELD_ICAP_MODE        = monitor
 SHIELD_ICAP_PORT        = 1344
 SHIELD_ICAP_HEALTH_PORT = 8081
+SHIELD_ICAP_BIND        = ::           # REQUIRED on Railway, see below
 ```
+
+`SHIELD_ICAP_BIND` is not optional here. The default binds IPv4 only, Railway
+routes between services over IPv6, and the failure looks like a total outage
+rather than a bind mismatch.
 
 Leave `SHIELD_ICAP_ALLOWED_CLIENTS` unset. On a private network it adds
 nothing, and setting it to a plausible-looking CIDR invites the belief that it
@@ -140,21 +145,43 @@ curl -x http://squid.railway.internal:3128 https://www.wikipedia.org/ -o /dev/nu
 
 ---
 
-## Known unknowns
+## What the first deployment found
 
-Two things this configuration assumes and does not prove. Check them on the
-first run rather than trusting them:
+All of this is now verified on Railway rather than assumed. Three things bit,
+in order:
 
-**Railway private networking is IPv6-only.** Squid supports IPv6, and line 23
-of `squid.conf` already covers IPv6 private space with `fc00::/7`, so internal
-clients should match `localnet` unchanged. Not verified.
+**Squid ran Debian's default config.** `Dockerfile.squid` copied only the
+entrypoint, so `squid.conf` arrived solely from the compose bind mount. With no
+mount, Squid started clean and reported `Adaptation support is off` on a plain
+unbumped listener: a proxy inspecting nothing while looking healthy. The config
+now ships in the image, and a bind mount still overrides it.
 
-**ICAP over that network.** `icap_service` pointing at an IPv6
-`.railway.internal` name is the specific combination that has never been run
-here. If Squid cannot reach the adapter it will fail closed, because
-`squid.conf` ships `bypass=off`. That is the correct failure, and it looks like
-total AI outage for anything behind the proxy, so recognise it: check the Squid
-logs for the ICAP service being marked down before assuming a policy problem.
+**The CA could not get in either**, for the same reason. Hence
+`SHIELD_SWG_CA_PEM` above.
+
+**`SHIELD_ICAP_BIND=::` is required.** This is the one that costs an afternoon.
+The adapter binds `0.0.0.0` by default, which is right everywhere else and
+wrong here: Railway routes service-to-service traffic over IPv6 only. Squid
+resolved the adapter, connected to nothing, and reported
+
+```
+essential ICAP service is down after an options fetch failure:
+icap://shield-icap.railway.internal:1344/screen [down,!opt]
+```
+
+while the adapter's own log cheerfully said it was listening. With `bypass=off`
+every request then failed closed with HTTP 500, so it presents as a total
+outage rather than a bind mismatch. The startup line now prints `bind=`, so
+this is visible at a glance.
+
+**What worked unchanged:** `acl localnet src ... fc00::/7` on line 23 of
+`squid.conf` already covers Railway's private range (addresses are `fd12::/8`),
+so internal clients match `localnet` with no edit.
+
+Verified end to end from inside the project: a POST to `api.anthropic.com`
+through `squid.railway.internal:3128` reaches the adapter, which logs
+`decision=allow provider=anthropic parsed=True`, and Squid then forwards it
+`HIER_DIRECT` to Anthropic.
 
 ---
 
