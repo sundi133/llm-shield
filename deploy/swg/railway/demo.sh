@@ -1,104 +1,123 @@
 #!/usr/bin/env bash
-# Live demo of the Railway testbed. Three minutes, four beats.
+# Live demo of the Railway testbed, one step at a time.
 #
-#   ./deploy/swg/railway/demo.sh
+#   ./demo.sh check    before the meeting: is everything healthy
+#   ./demo.sh 1        the policy is real and it is armed
+#   ./demo.sh 2        a harmless prompt goes through
+#   ./demo.sh 3        a prompt with customer data is blocked
+#   ./demo.sh 4        what we decrypt, and what we cannot read
+#   ./demo.sh 5        what was recorded, and what was not
+#   ./demo.sh          all of them, back to back
 #
-# Everything in the project is private, so every check runs inside the adapter
-# container over `railway ssh`. Nothing here is reachable from your laptop
-# directly, which is the point.
+# Everything runs inside the container, because nothing in this project is
+# reachable from outside. That is the design, not an inconvenience, and it is
+# worth saying out loud.
 #
-# Run it once before the meeting. It is read-only apart from the prompts it
-# sends, so running it twice costs nothing.
+# Narration for each step: deploy/swg/railway/demo-manual.md
 set -uo pipefail
 
 SVC=shield-icap
+PROXY=squid.railway.internal:3128
 say() { printf '\n\033[1m%s\033[0m\n' "$1"; }
+ssh_py() { railway ssh -s "$SVC" "python -c \"$1\"" 2>&1 | grep -v "^Using SSH key"; }
 
-if ! railway status >/dev/null 2>&1; then
-    echo "Not linked to a Railway project. Run: railway link" >&2
-    exit 1
-fi
+prompt_through_proxy() {  # $1 = prompt text
+    ssh_py "
+import http.client, ssl, json
+c = http.client.HTTPSConnection('${PROXY%:*}', ${PROXY#*:}, context=ssl._create_unverified_context(), timeout=45)
+c.set_tunnel('api.anthropic.com', 443)
+c.request('POST', '/v1/messages', json.dumps({'model':'claude-opus-4','messages':[{'role':'user','content':'$1'}]}), {'content-type':'application/json'})
+r = c.getresponse(); raw = r.read()
+if r.status == 403:
+    d = json.loads(raw)
+    print('   HTTP 403  BLOCKED')
+    print('   reason : %s' % d.get('reason'))
+    print('   ref    : %s' % d.get('reference'))
+elif r.status == 401:
+    print('   HTTP 401  forwarded. 401 is Anthropic answering, so it arrived.')
+elif r.status == 500:
+    print('   HTTP 500  *** SQUID ERROR, NOT A VERDICT ***')
+    print('   Squid lost the screening service. Fix: railway redeploy -s squid -y')
+else:
+    print('   HTTP %s  unexpected' % r.status)
+"
+}
 
-# ── 1. real policy, and is it actually enforcing ─────────────────────────────
-say "1. Policy loaded from production"
-railway ssh --service "$SVC" "python -c \"
+step_check() {
+    say "Pre-flight"
+    railway status >/dev/null 2>&1 || { echo "   Not linked. Run: railway link" >&2; exit 1; }
+    echo "   project linked"
+    if railway logs -s squid 2>&1 | tail -40 | grep -q "ICAP service is down"; then
+        echo "   WARNING: Squid recently lost the screening service."
+        echo "   Run: railway redeploy -s squid -y   then re-run this check."
+    fi
+    prompt_through_proxy "ping"
+    echo
+    echo "   A 401 above means you are ready. A 500 means fix Squid first."
+}
+
+step_1() {
+    say "1. The policy is real, and it is armed"
+    ssh_py "
 import urllib.request, json
 d = json.load(urllib.request.urlopen('http://[::1]:8081/healthz', timeout=10))
-print('   tenant            : %s' % d['tenant_id'])
-print('   policy version    : %s' % d['bundle_version'])
-print('   rules             : %s' % d['rules'])
-print('   rules that block  : %s' % d['blocking_rules'])
-print('   enforcing         : %s   <- the number that matters' % d['enforcing_anything'])
-print('   mode              : %s' % d['mode'])
-\"" 2>&1 | grep -v "^Using SSH key"
+print('   tenant           : %s' % d['tenant_id'])
+print('   policy version   : %s' % d['bundle_version'])
+print('   rules loaded     : %s' % d['rules'])
+print('   rules that block : %s' % d['blocking_rules'])
+print('   ENFORCING        : %s' % d['enforcing_anything'])
+print('   mode             : %s' % d['mode'])
+"
+    echo "   ^ read ENFORCING, not rules. A policy can load rules and enforce none."
+}
 
-# Squid marks the ICAP service down if the adapter restarts under it, and with
-# bypass=off every request then fails closed with a 500. That reads as a total
-# outage mid-demo, so check for it here and say what to do.
-if railway logs --service squid 2>&1 | tail -40 | grep -q "ICAP service is down"; then
+step_2() {
+    say "2. A harmless prompt goes straight through"
+    echo "   prompt: 'what is the weather in Paris'"
+    prompt_through_proxy "what is the weather in Paris"
+}
+
+step_3() {
+    say "3. The same request, with a customer email in it"
+    echo "   prompt: 'email john.doe@bankco.com about his account'"
+    prompt_through_proxy "email john.doe@bankco.com about his account"
+    echo "   Nothing about the route changed. Only the content."
+}
+
+step_4() {
+    say "4. What we decrypt, and what we cannot read"
+    for h in api.anthropic.com www.wikipedia.org; do
+        issuer=$(railway ssh -s "$SVC" \
+            "sh -c 'echo | openssl s_client -proxy $PROXY -connect $h:443 -servername $h 2>/dev/null | grep ^issuer='" \
+            2>&1 | grep -v "^Using SSH key" | tr -d '\r')
+        printf '   %-22s %s\n' "$h" "$issuer"
+    done
     echo
-    echo "   WARNING: Squid recently reported the ICAP service down. If step 2"
-    echo "   returns 500, restart Squid and re-run:  railway redeploy -s squid -y"
-fi
+    echo "   Our certificate on the AI provider: we decrypt and screen it."
+    echo "   The real certificate on everything else: a blind tunnel."
+}
 
-# ── 2 and 3. benign passes, violating is blocked ────────────────────────────
-say "2. A normal prompt goes through. A prompt with customer data does not."
-PY=$(cat <<'EOF'
-import http.client, ssl, json
-ctx = ssl._create_unverified_context()
-tests = [("normal prompt", "what is the weather in Paris"),
-         ("customer email", "email john.doe@bankco.com about his account")]
-for name, prompt in tests:
-    body = json.dumps({"model": "claude-opus-4",
-                       "messages": [{"role": "user", "content": prompt}]})
-    c = http.client.HTTPSConnection("squid.railway.internal", 3128, context=ctx, timeout=45)
-    c.set_tunnel("api.anthropic.com", 443)
-    c.request("POST", "/v1/messages", body, {"content-type": "application/json"})
-    r = c.getresponse(); raw = r.read(); c.close()
-    if r.status == 403:
-        d = json.loads(raw)
-        print("   %-15s HTTP %s  BLOCKED" % (name, r.status))
-        print("   %-15s reason : %s" % ("", d.get("reason")))
-        print("   %-15s ref    : %s" % ("", d.get("reference")))
-    elif r.status == 401:
-        # 401 is the provider answering: we have no API key on this testbed, so
-        # reaching Anthropic at all is the proof the request was forwarded.
-        print("   %-15s HTTP %s  forwarded, reached the provider" % (name, r.status))
-    elif r.status == 500:
-        print("   %-15s HTTP %s  *** SQUID ERROR, NOT A VERDICT ***" % (name, r.status))
-        print("   %-15s Squid could not reach the screening service, so it failed" % "")
-        print("   %-15s closed. Fix before demoing: railway redeploy -s squid -y" % "")
-    else:
-        print("   %-15s HTTP %s  unexpected, investigate before demoing" % (name, r.status))
-EOF
-)
-railway ssh --service "$SVC" \
-  "python -c \"import base64;exec(base64.b64decode('$(printf %s "$PY" | base64 -w0)').decode())\"" \
-  2>&1 | grep -v "^Using SSH key"
+step_5() {
+    # Railway's log API lags the request, so give it a moment or this looks
+    # like nothing was recorded.
+    sleep 8
+    say "5. What was recorded"
+    railway logs -s "$SVC" 2>&1 | grep "icap txn" | grep -v "method=CONNECT" \
+        | tail -2 | sed 's/^/   /'
+    echo
+    echo "   And the prompt itself:"
+    n=$(railway logs -s "$SVC" 2>&1 | grep -c "john.doe@bankco.com")
+    echo "   occurrences of the blocked email address in the log: $n"
+    [ "$n" = "0" ] && echo "   Destination, rule and a reference. Never the prompt."
+}
 
-# ── 4. what it recorded, and what it did not ────────────────────────────────
-say "3. What was recorded"
-railway logs --service "$SVC" 2>&1 | grep "icap txn" | grep -v "method=CONNECT" \
-  | tail -2 | sed 's/^/   /'
-
-say "4. The prompt itself was never logged"
-if railway logs --service "$SVC" 2>&1 | tail -80 | grep -qi "john.doe@bankco.com"; then
-    echo "   FAIL: prompt content found in the log. That is a bug, report it."
-else
-    echo "   The blocked address does not appear anywhere in the log."
-    echo "   Only destination, rule, and a reference the help desk can trace."
-fi
-
-cat <<'CLOSING'
-
-   ── what this shows ─────────────────────────────────────────────────
-   Squid decrypted the request, handed it to Shield for screening, and
-   Shield blocked it against the tenant's real policy before it reached
-   the AI provider. The user gets a readable reason, support gets a
-   reference, and the prompt itself is never stored.
-
-   Traffic to non-AI sites is never decrypted at all. Banking, payroll
-   and identity providers are on a bypass list applied before any
-   decryption happens.
-   ────────────────────────────────────────────────────────────────────
-CLOSING
+case "${1:-all}" in
+    check) step_check ;;
+    1) step_1 ;;
+    2) step_2 ;;
+    3) step_3 ;;
+    4) step_4 ;;
+    5) step_5 ;;
+    all) step_1; step_2; step_3; step_4; step_5 ;;
+    *) echo "usage: $0 [check|1|2|3|4|5]" >&2; exit 2 ;;
+esac
