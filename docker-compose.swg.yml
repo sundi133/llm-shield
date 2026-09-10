@@ -44,6 +44,12 @@ services:
       SHIELD_ICAP_SYNC_SCREEN: ${SHIELD_ICAP_SYNC_SCREEN:-0}
       # Only affects sync mode. A timeout is not an approval.
       SHIELD_ICAP_FAIL_OPEN: ${SHIELD_ICAP_FAIL_OPEN:-0}
+      # What to do with a `redact` rule, since v1 cannot rewrite bodies.
+      # Default `pass` is deliberate, but it means a tenant whose policy is
+      # entirely redaction rules enforces nothing while /healthz still reports
+      # its rule count. Check `enforcing_anything`, and set this to `block` if
+      # you want those rules to stop the prompt instead.
+      SHIELD_ICAP_REDACT_FALLBACK: ${SHIELD_ICAP_REDACT_FALLBACK:-pass}
     secrets:
       - shield_api_key
     healthcheck:
