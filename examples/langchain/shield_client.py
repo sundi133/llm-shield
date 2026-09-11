@@ -46,6 +46,22 @@ from langchain_core.tools import tool as langchain_tool
 
 __all__ = ["ShieldClient", "ShieldSession", "Stage"]
 
+# Fetch a new agent token this long before the old one expires, so a token
+# that is valid when read cannot expire in flight. Same margin as
+# langchain_e2e.py.
+TOKEN_REFRESH_MARGIN_S = 60
+
+
+def _not_run(reason: str) -> str:
+    """The refusal for a fault, as opposed to a policy decision.
+
+    Deliberately not "DENIED": the demo prompts tell the model that DENIED
+    means the user lacks permission, and a fault is not that.
+    """
+    return (f"NOT RUN: {reason}. This is a Shield system error, not a "
+            "permission decision. Tell the user the action did not run because "
+            "of a system error and that they can try again.")
+
 
 class Stage(dict):
     """One step of the pipeline, for tracing. A dict so it is trivially JSON."""
@@ -79,6 +95,7 @@ class ShieldClient:
         self.instance_id = "inst-" + uuid.uuid4().hex[:8]
         self._registry: list = []      # [(fn, name)]
         self._agent_token = ""
+        self._agent_token_exp = 0.0    # time.time() at which it expires
 
     @classmethod
     def from_env(cls) -> "ShieldClient":
@@ -220,9 +237,16 @@ class ShieldSession:
                                  "no capability minted — the check gates the mint"))
         return allowed, (why or "allowed")
 
-    def _agent_token(self) -> Optional[str]:
+    def _agent_token(self, *, refresh: bool = False) -> Optional[str]:
+        """The process-wide agent token, fetched again before it expires.
+
+        The client is one per process, so a token cached without its expiry
+        works for 15 minutes and then fails every mint, for every user, until
+        the process restarts.
+        """
         c = self.client
-        if c._agent_token:
+        if (c._agent_token and not refresh
+                and time.time() < c._agent_token_exp - TOKEN_REFRESH_MARGIN_S):
             return c._agent_token
         d, ms, err = c.post("/v1/shield/auth/agent-token",
                             {"user_sub": "app-session", "agent_id": c.agent_id,
@@ -235,6 +259,7 @@ class ShieldSession:
             self._emit(Stage("authn", "fail", "no agent token", err, ms))
             return None
         c._agent_token = d["agent_token"]
+        c._agent_token_exp = time.time() + int(d.get("expires_in") or 0)
         self._emit(Stage("authn", "ok", "agent token",
                          f"instance={c.instance_id}", ms))
         return c._agent_token
@@ -244,20 +269,40 @@ class ShieldSession:
         c = self.client
         token = self._agent_token()
         if not token:
-            return "DENIED — no agent identity could be established."
+            return _not_run("no agent identity could be established")
 
         resource = (f"service/{params['service']}" if params.get("service")
                     else f"secret/{params['name']}" if params.get("name")
                     else f"{tool_name}/any")
-        d, mint_ms, err = c.post("/v1/shield/cap/mint",
-                                 {"tool": tool_name, "resource": resource,
-                                  "ttl_seconds": 30,
-                                  "session_id": c.instance_id,
-                                  "tool_params": params}, self.role,
-                                 extra={"X-Agent-Token": token})
+
+        def mint(agent_token: str):
+            return c.post("/v1/shield/cap/mint",
+                          {"tool": tool_name, "resource": resource,
+                           "ttl_seconds": 30,
+                           "session_id": c.instance_id,
+                           "tool_params": params}, self.role,
+                          extra={"X-Agent-Token": agent_token})
+
+        d, mint_ms, err = mint(token)
+        if err and err.startswith("401") and "invalid_agent_token" in err:
+            # Expired, revoked, or signed by a rotated key. The cached token
+            # was wrong, not the request: replace it and try exactly once more.
+            self._emit(Stage("", "detail", "",
+                             "agent token rejected, fetching a new one"))
+            token = self._agent_token(refresh=True)
+            if not token:
+                return _not_run("no agent identity could be established")
+            d, mint_ms, err = mint(token)
         if err:
-            self._emit(Stage("cap", "deny", f"NO MINT {tool_name}", err, mint_ms))
-            return f"DENIED by policy: {err}"
+            # Only a 403 is Shield deciding against the action. Anything else
+            # is a fault, and reporting it as a denial tells the user they
+            # lack a permission that the rbac stage just granted.
+            if err.startswith("403"):
+                self._emit(Stage("cap", "deny", f"NO MINT {tool_name}",
+                                 err, mint_ms))
+                return f"DENIED by policy: {err}"
+            self._emit(Stage("cap", "fail", f"NO MINT {tool_name}", err, mint_ms))
+            return _not_run(f"Shield could not issue a capability ({err})")
 
         v, verify_ms, verr = c.post("/v1/shield/cap/verify",
                                     {"cap_token": d["cap_token"],
