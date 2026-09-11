@@ -268,14 +268,28 @@ The live run changed the design; these are the findings in the order they surfac
 | 5 | `/guardrails/output` returned HTTP 400 `"error parsing the body"`. An em dash in the test payload is mangled by Git Bash on Windows, producing invalid JSON. | Payloads kept ASCII; troubleshooting entry added |
 | 6 | Model-ready gate exited before running any assertion, so the documented negative test ("stop the model, expect red") reported a timeout instead of exercising the trap it exists for. | Gate downgraded to a warning; assertions always run |
 | 7 | `pii_leakage` blocked an SSN in 0.17ms with `"source": "regex"` - it never called the model. The assertion was labelled slow-tier and proved nothing about it. | Step relabelled "Output path (fast tier: regex PII)"; tier table corrected |
-| 8 | Hugging Face throttles a single connection from ~8MB/s to ~0.4MB/s after a few hundred MB. A fresh connection is immediately fast again, so it is per-connection, not per-client. First diagnosis (Docker's network stack) was wrong and was corrected. | Troubleshooting entry recommending `aria2c -x 16` or `hf_transfer`: 0.4MB/s to ~13MB/s |
+| 8 | Hugging Face throttles a single connection from ~8MB/s to ~0.4MB/s after a few hundred MB. A fresh connection is immediately fast again, so it is per-connection, not per-client. First diagnosis (Docker's network stack) was wrong and was corrected. | Troubleshooting entry recommending `hf_transfer`: 0.4MB/s to ~13MB/s |
+| 9 | **A corrupt model does not fail, it fails open.** A hand-rolled parallel byte-range download produced a file of exactly the right length (5,629,108,640 bytes) with a valid `GGUF` header whose sha256 did not match. llama.cpp loaded and served it without complaint; `adversarial_detection` returned `{"is_adversarial": "GGGGGGGGGGGGGGGGGGGG", "confidence": ""}`, which Shield read as "not adversarial" and passed the injection through. Nothing anywhere reported an error. | Doc now recommends only the checksum-verifying `huggingface-cli` path, publishes the expected sha256, and adds a troubleshooting entry for garbage verdict details. The earlier hand-rolled advice was removed as unsafe |
+| 10 | Related: the chunk validator checked only byte *length*, so a ranged request answered with a different offset could pass validation. Length is not integrity. | Checksum verification is the only accepted check |
 
 **Verified green:** stack builds and boots; both planes healthy; tenant seeding via
 the admin plane; fast-tier enforcement; output-path enforcement; the negative test
 (model down) correctly exits 1 naming the fallen-back guardrail; fast-tier-only
 mode (`FAST_ONLY=1`, 3 passed, exit 0, no model, all checks under 3ms).
 
-**Still to verify:** the positive slow-tier assertion, i.e. the real model
-returning a `block` verdict for `adversarial_detection`. Blocked only on the
-download completing. The sample both-tiers output in the doc is therefore
-illustrative, and the doc says so.
+**Verified green (second pass, model loaded):** llama.cpp loads the GGUF and
+serves it; the data plane reaches it over the in-network OpenAI-compatible path;
+guardrail calls take real model time (15s to 108s per LLM-tier check on 12 CPU
+threads) with no fallback reported. The `LLM_BACKEND_TYPE=vllm` -> llama.cpp
+wiring is therefore proven end to end.
+
+**Still to verify:** the positive slow-tier assertion, i.e. `adversarial_detection`
+returning `block`. The first attempt failed against a corrupt model (finding 9) and
+is being re-run against a checksum-verified copy. Note the smoke script behaved
+correctly throughout: it failed that assertion rather than reporting green, which
+is exactly what it exists to do. The sample both-tiers output in the doc is
+illustrative until this passes, and the doc says so.
+
+**Performance note for the doc's non-goals:** a single LLM-tier check took 15s,
+and the full-pipeline baseline 108s, on 12 CPU threads. This reinforces that the
+stack is for correctness, never latency.

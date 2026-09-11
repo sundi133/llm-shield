@@ -430,15 +430,8 @@ curl -sL --max-time 30 -o /dev/null -w '%{speed_download} B/s\n' \
   https://huggingface.co/votal-ai/Qwen3.5-9B-guardrailed-v3-GGUF/resolve/main/Qwen3.5-9B-guardrailed-Q4_K_M.gguf
 ```
 
-So the fix is more connections, not more patience. Any parallel-chunk downloader
-restores full speed. With `aria2c`:
-
-```bash
-aria2c -x 16 -s 16 \
-  https://huggingface.co/votal-ai/Qwen3.5-9B-guardrailed-v3-GGUF/resolve/main/Qwen3.5-9B-guardrailed-Q4_K_M.gguf
-```
-
-or with the Hugging Face CLI, which parallelizes for you:
+So the fix is more connections, not more patience. **Use a downloader that
+verifies the checksum**, which for this file means the Hugging Face CLI:
 
 ```bash
 pip install -U "huggingface_hub[hf_transfer]"
@@ -447,13 +440,33 @@ HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli download \
   --local-dir .
 ```
 
-That took the download from 0.4 MB/s to roughly 13 MB/s in testing, turning hours
-into minutes. Then hand the file to the container:
+That took the download from 0.4 MB/s to roughly 13 MB/s in testing, hours into
+minutes, and it checks what it fetched.
+
+**Do not hand-roll parallel byte-range chunks unless you verify the result.** We
+tried, and it produced a file of exactly the right length, with a valid `GGUF`
+header, that was silently corrupt. Nothing failed: llama.cpp loaded it, served it,
+and answered every guardrail query with garbage:
+
+```json
+"details": {"is_adversarial": "GGGGGGGGGGGGGGGGGGGG", "confidence": ""}
+```
+
+Which Shield read as "not adversarial" and let straight through. A corrupt model
+does not announce itself, it quietly degrades every verdict to a pass. If you do
+download by any means other than the CLI above, check it:
 
 ```bash
-# 1. Download it (see above if this crawls)
-curl -L -C - -o Qwen3.5-9B-guardrailed-Q4_K_M.gguf \
-  https://huggingface.co/votal-ai/Qwen3.5-9B-guardrailed-v3-GGUF/resolve/main/Qwen3.5-9B-guardrailed-Q4_K_M.gguf
+sha256sum Qwen3.5-9B-guardrailed-Q4_K_M.gguf
+# must be d6dab50d1d36680782922f72d3f089a57063d964f99ff8d473dbf1a60f7112cf
+```
+
+Then hand the file to the container:
+
+```bash
+# 1. Download it (see above), then confirm it is intact before using it
+sha256sum Qwen3.5-9B-guardrailed-Q4_K_M.gguf
+# d6dab50d1d36680782922f72d3f089a57063d964f99ff8d473dbf1a60f7112cf
 
 # 2. Copy it into the cache volume the llama service already mounts
 docker run --rm -v shield-guardrails-local_llama-models:/cache \
@@ -480,6 +493,29 @@ docker compose --profile model -f docker-compose.guardrails.yml logs --tail 50 l
 
 Most often it is still downloading or loading weights. If it OOMs, lower
 `LLAMA_CTX_SIZE` and `LLAMA_PARALLEL`, or free memory.
+
+### Everything passes, and the verdict details look like nonsense
+
+The model server is up, calls take a realistic number of seconds, no guardrail
+reports a fallback, and yet nothing is ever blocked. Look at `details`:
+
+```json
+"details": {"is_adversarial": "GGGGGGGGGGGGGGGGGGGG", "attack_type": "", "confidence": ""}
+```
+
+Repeated characters or empty fields where a boolean and a number belong mean the
+weights are corrupt. The file can be exactly the right size and still be wrong,
+and llama.cpp will load and serve it without complaint. Verify it:
+
+```bash
+docker compose --profile model -f docker-compose.guardrails.yml exec llama \
+  sha256sum /root/.cache/Qwen3.5-9B-guardrailed-Q4_K_M.gguf
+# must be d6dab50d1d36680782922f72d3f089a57063d964f99ff8d473dbf1a60f7112cf
+```
+
+If it does not match, re-download with the Hugging Face CLI (above), which checks
+for you. This is the one failure the smoke script catches for free: a corrupt
+model cannot block the injection prompt, so `adversarial_detection blocks` fails.
 
 ### "Tenant already exists" and the script exits
 
