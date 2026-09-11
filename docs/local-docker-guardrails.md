@@ -47,9 +47,10 @@ every slow-tier guardrail there fails open on every call while reporting success
 
 ### What it does not give you
 
-**Latency numbers.** CPU inference on a 9B model is one to two orders of magnitude
-slower than the GPU data plane. Expect seconds per LLM-tier call here versus
-milliseconds in production. Real figures are in `BENCHMARKS.md` at the repo root.
+**Latency numbers.** CPU inference on a 9B model is orders of magnitude slower
+than the GPU data plane: measured here, a single LLM-tier check took 48 seconds
+against milliseconds in production. Real figures are in `BENCHMARKS.md` at the
+repo root.
 
 **A deployment path.** This is a testbed. For installing Shield properly see the
 [On-Premises Deployment Guide]({{ "/on-premises-deployment-guide/" | relative_url }}).
@@ -79,7 +80,7 @@ Pick based on whether you want to download a 5.2GB model.
 |---|---|---|
 | Download | None beyond the images | 5.2GB model, once |
 | Ready in | About a minute | Model download, then a minute |
-| Per check | Under 3ms | Seconds, on CPU |
+| Per check | Under 3ms | 48 to 98 seconds, measured on 12 CPU threads |
 | Proves | Guard path, tenant policy, deterministic guardrails | All of that, plus content judgement |
 | Cannot test | Prompt injection, toxicity, topic, bias | Nothing in scope |
 
@@ -170,16 +171,16 @@ budget), seeds a tenant with an explicit policy, and asserts four things:
 
 ```text
 ==> Baseline (full configured pipeline)
-  PASS  benign prompt passes              action=pass 7043ms
+  PASS  benign prompt passes               action=pass 97685.68ms
 
 ==> Fast tier (CPU, deterministic)
-  PASS  keyword_blocklist blocks          action=block 0.2ms
+  PASS  keyword_blocklist blocks           action=block 0.21ms
 
 ==> Slow tier (LLM - expect seconds per call on CPU)
-  PASS  adversarial_detection blocks      action=block 8231ms
+  PASS  adversarial_detection blocks       action=block 47791.32ms
 
 ==> Output path (fast tier: regex PII)
-  PASS  pii_leakage blocks SSN            action=block 0.2ms
+  PASS  pii_leakage blocks SSN             action=block 0.84ms
 
 ==> Summary
   4 passed, 0 failed
@@ -188,15 +189,19 @@ All checks passed. Both guardrail tiers are enforcing tenant policy.
 
   Tenant portal:  http://127.0.0.1:8080/tenant   (admin key: local-dev-admin-key)
   Tenant ID:      local-guardrails-test
-  Runtime key:    local-1757...
+  Runtime key:    local-1789...
 ```
 
 Keep that runtime key. It is the `X-API-Key` for everything below, and it is also
 cached in `.shield-local-seed` (gitignored).
 
-The timings above are illustrative, not a promise. What they show is the shape to
-expect: fast-tier checks in single-digit milliseconds, LLM-tier checks in seconds.
-Your numbers will depend on your CPU and how much RAM you can spare.
+**Those timings are real, measured on 12 CPU threads, and they are the point of
+the warning above about latency.** An LLM-tier check took 48 seconds; the
+full-pipeline baseline took 98. Budget one to two minutes per model-backed check
+and do not be alarmed by it. The deterministic checks in the same run took under a
+millisecond. Your numbers will vary with core count and available RAM, but the
+ratio will not: this stack is for deciding whether a verdict is *correct*, never
+how fast it arrives.
 
 ---
 
@@ -542,7 +547,8 @@ editing: the smoke script reads the same file.
 
 ### LLM-tier calls time out
 
-Expected on slower machines. Raise the ceiling:
+Expected. A single check took 48 seconds on 12 CPU threads, and the default
+ceiling is 600. On fewer cores, raise it:
 
 ```bash
 LLM_TIMEOUT=600 ./scripts/smoke_local_guardrails.sh

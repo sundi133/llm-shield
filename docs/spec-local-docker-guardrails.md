@@ -283,13 +283,28 @@ guardrail calls take real model time (15s to 108s per LLM-tier check on 12 CPU
 threads) with no fallback reported. The `LLM_BACKEND_TYPE=vllm` -> llama.cpp
 wiring is therefore proven end to end.
 
-**Still to verify:** the positive slow-tier assertion, i.e. `adversarial_detection`
-returning `block`. The first attempt failed against a corrupt model (finding 9) and
-is being re-run against a checksum-verified copy. Note the smoke script behaved
-correctly throughout: it failed that assertion rather than reporting green, which
-is exactly what it exists to do. The sample both-tiers output in the doc is
-illustrative until this passes, and the doc says so.
+**Fully verified (third pass, checksum-verified weights).** `4 passed, 0 failed`,
+exit 0:
 
-**Performance note for the doc's non-goals:** a single LLM-tier check took 15s,
-and the full-pipeline baseline 108s, on 12 CPU threads. This reinforces that the
+```
+==> Baseline (full configured pipeline)
+  PASS  benign prompt passes               action=pass 97685.68ms
+==> Fast tier (CPU, deterministic)
+  PASS  keyword_blocklist blocks           action=block 0.21ms
+==> Slow tier (LLM - expect seconds per call on CPU)
+  PASS  adversarial_detection blocks       action=block 47791.32ms
+==> Output path (fast tier: regex PII)
+  PASS  pii_leakage blocks SSN             action=block 0.84ms
+```
+
+The corrupt model returned `pass` on that same injection prompt and the verified
+one returns `block`, so the assertion discriminates on exactly what it claims to.
+Every number in the doc is now measured rather than illustrative.
+
+`huggingface-cli` with `hf_transfer` fetched the 5.2GB in about six minutes and
+the sha256 matched, which is the download path the doc now recommends.
+
+**Performance note for the doc's non-goals:** 48s for a single LLM-tier check and
+98s for the full-pipeline baseline, on 12 CPU threads. The script's default
+`LLM_TIMEOUT` was raised from 300s to 600s as a result. This reinforces that the
 stack is for correctness, never latency.

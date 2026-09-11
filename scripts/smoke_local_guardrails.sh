@@ -87,8 +87,9 @@ if [ "$FAST_ONLY" = "1" ]; then
 fi
 
 # CPU inference on a 9B model is slow. This is not a latency budget, it is a
-# "something is genuinely wrong" ceiling.
-LLM_TIMEOUT=${LLM_TIMEOUT:-300}
+# "something is genuinely wrong" ceiling. Measured: 48s for one LLM-tier check
+# and 98s for the full-pipeline baseline on 12 threads, so 300 was too tight.
+LLM_TIMEOUT=${LLM_TIMEOUT:-600}
 # First boot downloads ~5.2GB of weights, then loads them into RAM.
 READY_TIMEOUT=${READY_TIMEOUT:-1800}
 
