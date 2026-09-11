@@ -90,7 +90,7 @@ model when you need to test what the model decides.
 **Fast tier only:**
 
 ```bash
-git clone <the repo> && cd llm-shield
+git clone https://github.com/sundi133/llm-shield.git && cd llm-shield
 cp .env.guardrails.example .env.guardrails
 
 docker compose -f docker-compose.guardrails.yml --env-file .env.guardrails up -d
