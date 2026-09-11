@@ -1,0 +1,29 @@
+# Line-ending policy.
+#
+# Without this file, a Windows clone with core.autocrlf=true (Git for Windows'
+# default) checks every shell script out with CRLF. Docker then copies those
+# scripts into the image verbatim, and the kernel tries to exec the interpreter
+# named on the shebang line -- including the trailing carriage return. The
+# result is a crash loop whose only message is:
+#
+#     exec /start-services.sh: no such file or directory
+#
+# which names a file that is demonstrably present. Both Dockerfile and
+# Dockerfile.cloud install scripts/start_vllm.sh as their entrypoint, so on a
+# Windows host neither image can boot without this.
+#
+# Git already stores these files with LF; this only pins how they are checked
+# out, so adding it changes no file's content.
+
+# Anything executed by a shebang inside a container must stay LF.
+*.sh            text eol=lf
+
+# Sourced by scripts/smoke_local_guardrails.sh. CRLF here would put a trailing
+# carriage return on every value, so a port becomes "8000\r" and the URL built
+# from it silently fails to connect.
+.env*           text eol=lf
+
+# Read by tooling inside containers, where CRLF is at best noise.
+Dockerfile*     text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
