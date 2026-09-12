@@ -80,6 +80,7 @@ permalink: /
 | If you want to… | Go to |
 |---|---|
 | Spin it up in 5 minutes | [Quickstart]({{ "/quickstart/" | relative_url }}) |
+| Try it on a laptop with no GPU | [Test the guardrails container locally]({{ "/local-test-remote-model/" | relative_url }}) |
 | Understand how it answers common buyer questions | [FAQ]({{ "/faq/" | relative_url }}) |
 | See every endpoint | [API Reference]({{ "/api-reference/" | relative_url }}) |
 | Pick the right deployment shape | [Installation Guide]({{ "/installation-guide/" | relative_url }}) |
