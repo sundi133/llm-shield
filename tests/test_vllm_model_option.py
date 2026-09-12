@@ -101,6 +101,8 @@ def _resolved_args(extra_env):
         "VLLM_PERFORMANCE_MODE",
         "VLLM_DTYPE",
         "SERVED_MODEL_NAME",
+        "SHIELD_GUARDRAIL_FAMILY",
+        "SHIELD_ALLOW_FAMILY_MISMATCH",
     ):
         env.pop(k, None)
     env.update(
@@ -137,6 +139,10 @@ def test_nemotron_env_overrides_omit_qwen_era_flags():
     args = _resolved_args(
         {
             "MODEL_NAME": "nvidia/Nemotron-3.5-Content-Safety",
+            # Serving Nemotron under the vai family is refused at boot — the
+            # family selects the verdict parser, and the wrong one passes
+            # everything. See the guard in scripts/start_vllm.sh.
+            "SHIELD_GUARDRAIL_FAMILY": "nemo",
             "VLLM_QUANTIZATION": "none",
             "VLLM_KV_CACHE_DTYPE": "none",
             "VLLM_PERFORMANCE_MODE": "none",
