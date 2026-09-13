@@ -1,0 +1,153 @@
+# Local guardrails testing stack - both tiers, no GPU.
+#
+# Runs the REAL guard path (Dockerfile.cloud, the slim CPU data-plane image)
+# against the REAL Votal guardrail model (votal-ai/Qwen3.5-9B-guardrailed-v3-GGUF
+# on llama.cpp), plus the admin portal so you can configure tenant policy in the
+# UI and watch it enforce.
+#
+# Usage:
+#   cp .env.guardrails.example .env.guardrails
+#   docker compose -f docker-compose.guardrails.yml --env-file .env.guardrails up -d
+#   ./scripts/smoke_local_guardrails.sh
+#
+# First `up` downloads ~5.2GB of model weights into a named volume. See
+# docs/local-docker-guardrails.md for the full walkthrough.
+#
+# NOT a benchmark rig: CPU inference on a 9B model is one to two orders of
+# magnitude slower than the GPU data plane. See BENCHMARKS.md for real numbers.
+
+name: shield-guardrails-local
+
+services:
+  # ── Redis ────────────────────────────────────────────────────────────────
+  # Tenants, API keys, guardrail metrics. Same store the deployed planes use.
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --dir /data
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Guardrail model server ───────────────────────────────────────────────
+  # llama.cpp serving the shipped Votal guardrail GGUF over an OpenAI-compatible
+  # API. This is the same pairing docs/installation-guide.md Phase 7 documents
+  # for on-prem, minus the GPU offload flags.
+  #
+  # No healthcheck on purpose: the upstream image is minimal and may not carry a
+  # curl/wget CLI, and a failing healthcheck here would block the whole stack
+  # during the multi-minute first-boot model download. The smoke script polls
+  # this service's /health from the host instead, where tooling is guaranteed.
+  llama:
+    # Behind a profile so the stack has two honest modes:
+    #
+    #   docker compose -f ... up -d                    fast tier only, no model,
+    #                                                  no 5.2GB download
+    #   docker compose --profile model -f ... up -d    both tiers
+    #
+    # Opt-in rather than opt-out because the alternative is worse: a `llama`
+    # service that always starts but has no weights yet answers nothing, and the
+    # LLM guardrails then fail open and report every prompt clean. Someone
+    # skipping the download should get a stack that cannot pretend to judge
+    # content, not one that pretends badly.
+    profiles: ["model"]
+    image: ghcr.io/ggml-org/llama.cpp:server
+    command: >
+      -hf ${LLAMA_HF_REPO:-votal-ai/Qwen3.5-9B-guardrailed-v3-GGUF}
+      --hf-file ${LLAMA_HF_FILE:-Qwen3.5-9B-guardrailed-Q4_K_M.gguf}
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size ${LLAMA_CTX_SIZE:-8192}
+      --parallel ${LLAMA_PARALLEL:-2}
+      --threads ${LLAMA_THREADS:-0}
+    ports:
+      - "127.0.0.1:${LLAMA_PORT:-8081}:8080"
+    volumes:
+      # Cache the weights so `down` / `up` does not re-download 5.2GB.
+      #
+      # Mounted at /root/.cache rather than a more specific path because
+      # llama.cpp does not have one stable download location: `-hf` writes into
+      # the Hugging Face cache layout (/root/.cache/huggingface/hub/...) on this
+      # image, while older builds used /root/.cache/llama.cpp. Mounting the
+      # parent covers both, and the only thing under it is cache by definition.
+      #
+      # Getting this wrong does not fail loudly: the model downloads fine, the
+      # stack works, and the 5.2GB is simply gone on the next `up`.
+      - llama-models:/root/.cache
+    restart: unless-stopped
+
+  # ── Data plane (the guard path) ──────────────────────────────────────────
+  # Dockerfile.cloud is the slim CPU image: no vLLM, no GPU. The guard path
+  # inside it is byte-identical to what ships - that is the whole point.
+  shield:
+    build:
+      context: .
+      dockerfile: Dockerfile.cloud
+    ports:
+      - "127.0.0.1:${SHIELD_PORT:-8000}:80"
+    environment:
+      # Dockerfile.cloud:62 bakes LLM_BACKEND_TYPE=ollama. Override it: `vllm`
+      # is the DEFAULT branch in core/llm_backend.py, and it posts plain
+      # OpenAI-compatible /v1/chat/completions - exactly what a single-model
+      # llama.cpp server expects. Leaving it on `ollama` would both take a
+      # different code path than production and trip the LLM_MODEL_NAME guard
+      # in scripts/start_vllm.sh:20-23.
+      - LLM_BACKEND_TYPE=vllm
+      # Must be the in-network service name. `localhost` here is the SHIELD
+      # container's own loopback, not the model server - the same trap already
+      # called out in examples/langchain/docker-compose.local.yml.
+      - LLM_BACKEND_URL=http://llama:8080
+      # Already baked into Dockerfile.cloud; repeated so the intent is readable
+      # without cross-referencing the image.
+      - SKIP_VLLM=true
+      - REDIS_URL=redis://redis:6379/0
+      # Dockerfile.cloud defaults this to true. A local testbed must not try to
+      # ship telemetry to a SIEM that is not there.
+      - VOTAL_ES_ENABLED=false
+      - SHIELD_AUTH_ENABLED=true
+      # core/auth.py:146-150 rejects EVERY request with HTTP 500 when auth is on
+      # and this is empty - before any tenant lookup. Throwaway, local only.
+      - SHIELD_API_KEYS=${SHIELD_BOOTSTRAP_API_KEY:-local-bootstrap-key}
+      - SHIELD_ADMIN_KEY=${SHIELD_ADMIN_KEY:-local-dev-admin-key}
+      # handler.py defaults PORT=80, which matches Dockerfile.cloud's EXPOSE and
+      # the port mapping above. Stated explicitly so a future remap is one edit.
+      - PORT=80
+      # handler.py defaults to 32 workers. Server default, wrong for a laptop.
+      - WORKERS=${SHIELD_WORKERS:-4}
+    depends_on:
+      redis:
+        condition: service_healthy
+      # Deliberately NO depends_on for llama. It sits behind the `model` profile,
+      # and a dependency on a profile-gated service either drags it in or fails
+      # the run depending on the Compose version. Nothing is lost: Shield boots
+      # fine without its backend (scripts/start_vllm.sh warns rather than
+      # blocking), and the smoke script is what gates on real model readiness.
+    restart: unless-stopped
+
+  # ── Admin plane (the portal) ─────────────────────────────────────────────
+  # Owns tenant CRUD, so seeding never touches the guard path. Serves
+  # static/tenant.html.
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-8080}:8080"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - SHIELD_ADMIN_KEY=${SHIELD_ADMIN_KEY:-local-dev-admin-key}
+      - VOTAL_ES_ENABLED=false
+      - PORT=8080
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  llama-models:
