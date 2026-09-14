@@ -51,6 +51,10 @@ groups:
       - { title: MCP Gateway, url: /mcp-gateway/ }
       - { title: Agent Sandbox (OpenShell), url: /openshell-sandbox/ }
       - { title: Integrations, url: /integration-guide/ }
+      # Named-vendor page: the Foundry surfaces (Models, Agent Service MCP
+      # tools) map onto different Shield planes, so a customer asking "how do
+      # we integrate Foundry" needs the mapping, not the generic gateway page.
+      - { title: Microsoft Foundry, url: /microsoft-foundry-integration/ }
 
   - title: Deploy & Operate
     items:

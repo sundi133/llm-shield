@@ -68,6 +68,12 @@ over-claim:
 > confirm it against your deployment. The Shield API contract (section 3) is the
 > same for all of them.
 
+{: .note }
+> **Microsoft Foundry** (formerly Azure AI Foundry) is not a gateway, so it gets
+> its own page: model calls, Agent Service MCP tools, and APIM each map to a
+> different Shield surface. See
+> [Microsoft Foundry Integration](/microsoft-foundry-integration/).
+
 ## 3. The building block — Shield's guardrail HTTP API
 
 Every integration below is just a gateway calling these **stateless** endpoints
