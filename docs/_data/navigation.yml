@@ -62,12 +62,18 @@ groups:
       # integration, then what it protects, then the payoff. Hand this to the
       # buyer; the integration page is for whoever implements it.
       - { title: Shield on Foundry, url: /shield-on-foundry/ }
+      # Standards-anchored whitepaper: every control carries the framework ID it
+      # implements, so a security reviewer can check it rather than take it.
+      - { title: Whitepaper, url: /whitepaper-guardrail-layer/ }
 
   - title: Deploy & Operate
     items:
       - { title: Installation, url: /installation-guide/ }
       - { title: Deployment (MCP Servers), url: /deployment-guide/ }
       - { title: On-Premises, url: /on-premises-deployment-guide/ }
+      # Unifies the two endpoint paths (managed extension, gateway over ICAP)
+      # that were previously split across enterprise-install and swg-deployment.
+      - { title: Endpoint Enforcement, url: /endpoint-enforcement/ }
       - { title: Workload Identity (SPIRE), url: /workload-identity-bundle/ }
       - { title: Multi-Tenant Architecture, url: /multi-tenant-architecture/ }
       - { title: Architecture, url: /architecture-diagram/ }
