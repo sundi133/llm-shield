@@ -58,6 +58,10 @@ groups:
       # The sales-facing companion. Same subject, different reader: it routes a
       # call to a pattern and flags the claims that need a POC first.
       - { title: Foundry Sales Guide, url: /foundry-sales-guide/ }
+      # The customer-facing one of the three Foundry pages: mechanism, then
+      # integration, then what it protects, then the payoff. Hand this to the
+      # buyer; the integration page is for whoever implements it.
+      - { title: Shield on Foundry, url: /shield-on-foundry/ }
 
   - title: Deploy & Operate
     items:
