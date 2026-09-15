@@ -33,15 +33,16 @@ one your threat model actually calls for.
 |---|---|---|
 | Installed on the device | Yes, an extension | No, configuration only |
 | Sees prompt text | Before it is sent, in the page | After TLS interception at the proxy |
-| Can redact in place | **Yes**, rewrites the prompt before send | No, blocks or allows the request |
+| Screens attachments before upload | **Yes**, file picker, drag-and-drop, paste | Request body only |
 | Covers non-browser traffic | No | **Yes**, any client through the proxy |
 | Covers unmanaged devices | No | Only if they use the proxy |
 | Needs TLS interception | No | **Yes**, plus a CA on every device |
-| Works offline of Shield | Local rule tier still runs | Fails per your configured posture |
+| If Shield is unreachable | `failOpen` decides: block (default) or send unscreened | Fails per your configured posture |
 | Typical time to deploy | Hours | Weeks, mostly legal and works council |
 
-**The short version.** The extension is the better user experience and the only
-one that can redact rather than block. The gateway is the broader net and the
+**The short version.** The extension is the better user experience. It is the
+only path that stops a prompt inside the page before it is sent, and the only
+one that screens attachments before the site receives them. The gateway is the broader net and the
 only one that sees traffic outside the browser. Most enterprises that are
 serious about this run **both**: the extension for the everyday accidental
 paste, the gateway so that turning the extension off does not turn enforcement
@@ -61,19 +62,23 @@ off.
 
 ### What it enforces
 
-The extension runs two tiers at submit time:
+When the user submits a prompt or attaches a file, the extension sends it to
+Shield from its background service worker before the site receives it. In
+`enforce` mode a block verdict stops the send and the text stays in the
+composer. In `warn` mode the prompt is flagged with a banner and still sent.
+The extension does not run rules locally and does not rewrite the prompt.
 
-- **Local tier, offline.** Your tenant's regex rules and blocklists run on the
-  typed prompt before anything leaves. A clear hit **blocks** or **redacts**,
-  replacing the matched span in place.
-- **Server tier, authoritative.** Locally clean prompts are escalated to Shield,
-  which can still stop the send.
+Supported sites today: Claude (claude.ai), ChatGPT (chatgpt.com,
+chat.openai.com), Gemini (gemini.google.com) and Microsoft Copilot
+(copilot.microsoft.com). Adding a site is a few lines in the content script.
+Coverage is browser tabs only, not desktop apps, mobile, or direct API use.
 
-The edge blocks the obvious. The server stays the source of truth.
-
-Supported surfaces today are the major web AI tools: ChatGPT, Gemini, Claude,
-Microsoft 365 Copilot, Copilot, and Perplexity. Coverage is browser tabs only,
-not desktop apps, mobile, or direct API use.
+{: .note }
+> **A second build exists.** `extension/` is an edge build that runs tenant
+> rules locally first and can redact in place before escalating to Shield. It
+> does not yet support managed configuration, so it is not the build MDM
+> deploys. This page describes the managed build in
+> `examples/browser-extension/` only.
 
 ### Step 1: package and host
 
@@ -317,7 +322,7 @@ because they enforce at different points against the same tenant policy.
 
 | Scenario | What catches it |
 |---|---|
-| Employee pastes a customer list into ChatGPT in a managed browser | Extension redacts in place, no block, no ticket |
+| Employee pastes a customer list into ChatGPT in a managed browser | Extension blocks before send; in warn mode it flags and allows |
 | Same employee uses a desktop AI app | Gateway, the extension never sees it |
 | A script on a build agent calls an AI API directly | Gateway, if the agent egresses through the proxy |
 | Extension disabled or removed | Gateway still inspects |

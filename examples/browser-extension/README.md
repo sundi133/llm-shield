@@ -29,11 +29,13 @@ chance of working.
   bearer + tenant `X-API-Key` headers).
 - **monitor** mode: flags (yellow banner) but always sends. **enforce** mode:
   blocks on a Shield block verdict (red banner). **off**: does nothing.
-- **Fail-open**: if Shield is unreachable/slow (12s timeout for text; 12s +
-  2s/MB up to 30s for files) the content sends unscreened with a "Shield
-  unreachable" banner — it never traps your chat. Attachments over **10 MB**
-  are not screened (banner notes it); size cap is `SHIELD_FILE_MAX_BYTES`
-  server-side.
+- **Unreachable Shield**: in `warn` mode the content always sends, with a
+  "Shield unreachable" banner. In `enforce` mode the default is **fail closed**:
+  the prompt is held with "Blocked by Shield: guardrails unavailable"
+  (`failOpen: false`). Set `failOpen: true` to send unscreened instead. The
+  screening deadline is `timeoutMs` (default 45000, clamped 1000..120000; files
+  get extra headroom per MB). Attachments over **10 MB** are not screened
+  (banner notes it); size cap is `SHIELD_FILE_MAX_BYTES` server-side.
 
 ## Install (Load unpacked)
 1. Chrome → `chrome://extensions` → toggle **Developer mode** (top right).
@@ -42,7 +44,7 @@ chance of working.
    - **Shield URL** — default `https://api.guardrails.votal.ai`
    - **Tenant API key** — e.g. `bank-co-key`
    - **Proxy bearer token** — optional, only if behind a gateway
-   - **Mode** — start on `monitor`.
+   - **Mode** — start on `warn` (monitor: flags but never blocks).
 4. Extension popup → **Test connection** → expect `✓ Reached Shield`.
 5. Open claude.ai, type a prompt, hit Enter — watch for the banner. Try a
    jailbreak-style prompt in `enforce` mode to see a block.
