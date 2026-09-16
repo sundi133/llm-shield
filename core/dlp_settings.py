@@ -55,6 +55,41 @@ def dlp_llm_timeout_s(settings: Optional[dict] = None) -> Optional[float]:
     return value if value > 0 else None
 
 
+def dlp_echo_check() -> bool:
+    """SHIELD_DLP_ECHO_CHECK=off disables the verdict-echo check.
+
+    On by default. A judged payload that contains the judge's own verdict
+    line verbatim is a payload that wrote the verdict, and is withheld.
+    """
+    return os.environ.get("SHIELD_DLP_ECHO_CHECK", "").strip().lower() \
+        not in ("0", "off", "false", "no")
+
+
+def payload_delimiters(kind: str = "PAYLOAD") -> tuple[str, str]:
+    """(begin, end) markers carrying a per-call nonce.
+
+    The judged payload is wrapped in these so the model can tell where the
+    data stops and the instructions resume. A fixed marker could be closed
+    early by a payload that contains the marker text; a nonce the payload
+    cannot know makes that impossible without altering the payload, which
+    matters because the model must reproduce the payload exactly when it
+    redacts.
+    """
+    import secrets
+    nonce = secrets.token_hex(4)
+    return f"<<<BEGIN {kind} {nonce}", f"END {kind} {nonce}>>>"
+
+
+def verdict_echoed(verdict: str, payload: str) -> bool:
+    """Whether the model's verdict text appears verbatim inside the payload.
+
+    A short verdict such as `allow` would match by accident, so anything
+    under 12 characters is never treated as an echo.
+    """
+    v = (verdict or "").strip()
+    return len(v) >= 12 and v in (payload or "")
+
+
 def confidence_floor(settings: Optional[dict] = None) -> float:
     """Verdicts below this confidence become `allow`.
 

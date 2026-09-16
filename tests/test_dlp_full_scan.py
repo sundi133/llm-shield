@@ -10,6 +10,7 @@ past `max_chunks` is withheld; and a redaction the backend reports as
 finish_reason=length is withheld, never delivered.
 """
 import asyncio
+import re
 
 import pytest
 
@@ -48,7 +49,9 @@ def _model(monkeypatch, *, finish_reason="stop", verdict_for_clean="false,allow,
 
     async def fake(**kw):
         user = kw["messages"][-1]["content"]
-        chunk = user.split("Tool output", 1)[1].split(":\n", 1)[1]
+        # The chunk sits between per-call nonce markers (PR 4); take exactly it.
+        chunk = re.search(r"<<<BEGIN TOOL OUTPUT [0-9a-f]+\n(.*)\nEND TOOL OUTPUT [0-9a-f]+>>>",
+                          user, re.S).group(1)
         prompts.append(chunk)
         if SSN in chunk:
             return {"choices": [{"message": {"content":
