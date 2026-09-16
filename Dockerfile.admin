@@ -48,6 +48,8 @@ COPY core/text_utils.py core/
 # Data-policy tier knobs (timeout, fail-closed, confidence floor); reached at
 # module load by api/routes_data_policies.py. Stdlib only.
 COPY core/dlp_settings.py core/
+# Deterministic DLP floor, imported at module load by admin_app.py.
+COPY core/dlp/ core/dlp/
 # Onboarding scan (admin plane only; the scanner import is optional).
 COPY core/mcp_scan.py core/
 # OAuth brokering for upstream MCP servers (admin plane only).

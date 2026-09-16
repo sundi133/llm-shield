@@ -336,6 +336,13 @@ guardrails:
       # On a model error or timeout the original is delivered as `warn`;
       # SHIELD_DLP_FAIL_CLOSED=on blocks instead.
       confidence_floor: 0.75
+      # The tenant's regex rules, allowlist, thresholds and exact-match lists
+      # (core/dlp/floor.py) run BEFORE the model on every tool result. With
+      # this on, a clean floor and a policy that has no sanitization_intent
+      # or role rules skips the model call. Off by default: on this path the
+      # model also judges the rules' descriptions, so skipping narrows what
+      # is caught. Turn on to trade that for one fewer call per tool result.
+      skip_llm_when_floor_clean: false
       per_tool_rules:
         execute_sql:
           redact_columns:

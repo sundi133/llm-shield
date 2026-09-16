@@ -192,6 +192,19 @@ def _global_policy_enabled() -> bool:
         not in ("0", "off", "false", "no")
 
 
+def _floor_fields(policy: dict) -> dict:
+    """The deterministic-floor fields and the model-facing intent, carried
+    alongside the rules so core.dlp.floor and the sanitizer see the same
+    policy the API stored. Spec: docs/spec-runtime-dlp-gaps.md, PR 5."""
+    return {
+        "allowlist": policy.get("allowlist") or [],
+        "thresholds": policy.get("thresholds") or [],
+        "exact_match": policy.get("exact_match") or [],
+        "sanitization_intent": policy.get("sanitization_intent") or "",
+        "sanitization_mode": policy.get("sanitization_mode") or "regex",
+    }
+
+
 def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, Any]]:
     """Load tenant data policies from Redis, scoped to one tool when given.
 
@@ -234,6 +247,7 @@ def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, A
                 "role_policies": policy.get("role_policies", []),
                 "compliance_framework": policy.get("compliance_framework", ""),
                 "policy_source": "tool",
+                **_floor_fields(policy),
             })
 
         # The global layer sits BENEATH the tool layer: a tool policy may
@@ -252,6 +266,7 @@ def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, A
                     "role_policies": global_policy.get("role_policies", []),
                     "compliance_framework": global_policy.get("compliance_framework", ""),
                     "policy_source": "global",
+                    **_floor_fields(global_policy),
                 })
         return policies
     except Exception as e:

@@ -6,6 +6,7 @@ token cost.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 from typing import Optional, Any
@@ -17,6 +18,7 @@ from core.dlp_settings import (
     confidence_floor, dlp_echo_check, dlp_fail_closed, dlp_llm_timeout_s,
     payload_delimiters, verdict_echoed,
 )
+from core.dlp import floor as _floor
 from core.text_utils import (
     REDACTION_GROWTH_LIMIT, SANITIZED_MARKER, split_marker, usable_redaction,
 )
@@ -88,6 +90,13 @@ def _full_scan_enabled() -> bool:
     return os.environ.get("SHIELD_DLP_FULL_SCAN", "").strip().lower() \
         in ("1", "on", "true", "yes")
 
+
+#: The policies check() loaded for the current call, so _load_policies_text can
+#: format them without a second store round trip. A contextvar rather than a
+#: parameter because tests (and any deployment) stub _load_policies_text with
+#: its historic three-argument shape.
+_loaded_policies: contextvars.ContextVar[Optional[list]] = contextvars.ContextVar(
+    "tos_loaded_policies", default=None)
 
 #: The slice the judge used to see, hard-coded as `tool_output[:4000]`.
 _DEFAULT_CHUNK_CHARS = 4000
@@ -240,7 +249,59 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             tool_output = tool_output[:max_len] + "... [TRUNCATED]"
             truncated = True
 
-        policies_text = self._load_policies_text(tenant_id, tool_name, user_role)
+        policies = self._load_policies(tenant_id, tool_name)
+        token = _loaded_policies.set(policies)
+        try:
+            policies_text = self._load_policies_text(tenant_id, tool_name, user_role)
+        finally:
+            _loaded_policies.reset(token)
+
+        # ── Deterministic floor, before any model call ────────────────────
+        # The tenant's regex rules, allowlist, thresholds and exact-match lists
+        # run first, from one shared engine. A block here never reaches the
+        # model; a redaction here is what the model then judges.
+        floor_result = self._run_floor(tool_output, policies)
+        floor_details = {}
+        if floor_result is not None and floor_result.applied:
+            floor_details = {
+                "floor_violations": floor_result.violations,
+                "floor_allowlisted": len(floor_result.allowlisted),
+                "floor_skipped_patterns": floor_result.skipped_patterns,
+                "floor_thresholds_exceeded": floor_result.thresholds_exceeded,
+            }
+            if floor_result.had_block:
+                offenders = [v["pattern_id"] for v in floor_result.violations
+                             if v.get("action") == "block"]
+                return GuardrailResult(
+                    passed=False, action="block", guardrail_name=self.name,
+                    message=f"Tool output blocked by data policy rule(s): {', '.join(offenders)}",
+                    details={
+                        "findings": ", ".join(offenders),
+                        "sanitized_output": "[CONTENT BLOCKED DUE TO DATA POLICY]",
+                        "truncated": truncated, "tenant_id": tenant_id,
+                        "user_role": user_role, "source": "floor",
+                        **floor_details,
+                    },
+                )
+            tool_output = floor_result.sanitized
+        elif floor_result is not None and floor_result.skipped_patterns:
+            floor_details = {"floor_skipped_patterns": floor_result.skipped_patterns}
+
+        # Opt-in: a clean floor with nothing for a model to reason about
+        # (no sanitization_intent, no role rules) skips the model call.
+        # Off by default because on this path the model also judges the
+        # rules' descriptions, so skipping it narrows what is caught.
+        if (policies_text and policies is not None      # None = load failed: unknown, never skip
+                and self.settings.get("skip_llm_when_floor_clean", False)
+                and (floor_result is None or not floor_result.applied)
+                and not self._model_has_work(policies)):
+            return GuardrailResult(
+                passed=True, action="pass", guardrail_name=self.name,
+                message="Tool output clean (deterministic floor; model skipped)",
+                details={"sanitized_output": tool_output, "truncated": truncated,
+                         "tenant_id": tenant_id, "user_role": user_role,
+                         "skipped": "floor_clean_no_intent", **floor_details},
+            )
 
         # No policy for THIS tool means nothing to enforce. The judge used to be
         # handed "No specific data policies configured. Apply reasonable
@@ -280,6 +341,7 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             "unjudged_chars": unjudged_chars,
             "chunks": len(chunks),
             "tail_withheld": tail_withheld,
+            **floor_details,
         }
 
         try:
@@ -497,6 +559,46 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
         }
 
     @staticmethod
+    def _load_policies(tenant_id: str, tool_name: str = "") -> Optional[list]:
+        """The tool's effective policies (tool layer plus the global floor), or
+        None when they could not be loaded. None is not "no policy": the
+        caller runs the model with no floor rather than skipping it."""
+        if not tenant_id:
+            return []
+        try:
+            from guardrails.agentic.tool.payload_risk import _load_data_policies
+            return _load_data_policies(tenant_id, tool_name)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _run_floor(tool_output: str, policies: Optional[list]):
+        """Every policy layer's floor over the output, tool layer last so a
+        tool's own redaction wins the overlap. None when nothing to run."""
+        if not policies:
+            return None
+        combined = {"sanitization_rules": [], "allowlist": [], "thresholds": [], "exact_match": []}
+        for p in policies:
+            mode = (p.get("sanitization_mode") or "regex").lower()
+            if mode not in ("regex", "both"):
+                continue
+            for key in combined:
+                combined[key].extend(p.get(key) or [])
+        if not (combined["sanitization_rules"] or combined["exact_match"]):
+            return None
+        return _floor.evaluate(tool_output, combined, default_action="redact")
+
+    @staticmethod
+    def _model_has_work(policies: Optional[list]) -> bool:
+        """Whether any policy carries something only a model can judge."""
+        for p in policies or []:
+            if (p.get("sanitization_intent") or "").strip():
+                return True
+            if p.get("role_policies"):
+                return True
+        return False
+
+    @staticmethod
     def _load_policies_text(tenant_id: str, tool_name: str = "",
                             user_role: str = "") -> str:
         """Policy text for THIS tool, or "" when none applies.
@@ -520,7 +622,9 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             return ""
         try:
             from guardrails.agentic.tool.payload_risk import _load_data_policies, _format_data_policies
-            policies = _load_data_policies(tenant_id, tool_name)
+            policies = _loaded_policies.get()
+            if policies is None:
+                policies = _load_data_policies(tenant_id, tool_name)
             if not policies:
                 return ""
             return _format_data_policies(policies, tenant_id, tool_name, user_role)

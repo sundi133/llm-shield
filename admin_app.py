@@ -78,6 +78,7 @@ except ImportError:
     pass
 from core.auth import AuthMiddleware
 from core.middleware import ShieldMiddleware
+from core.dlp import floor as _floor
 from storage.audit_log import audit_logger
 
 # Enterprise feature routers (graceful import — admin image may lack some deps)
@@ -332,77 +333,38 @@ def _load_data_policies(tenant_id: str | None) -> dict:
 # records the violation and leaves the payload untouched so the tool still
 # functions; "block" records the violation and signals the caller to refuse.
 
-_VALID_ACTIONS = {"detect", "redact", "mask", "block"}
+_VALID_ACTIONS = _floor.VALID_ACTIONS
 
 
 def _resolve_action(rule: dict, default_action: str) -> str:
-    severity = (rule.get("severity") or "medium").lower()
-    if severity == "critical":
-        return "block"
-    explicit = (rule.get("action") or "").strip().lower()
-    if explicit in _VALID_ACTIONS:
-        return explicit
-    return default_action if default_action in _VALID_ACTIONS else "detect"
+    return _floor.resolve_action(rule, default_action)
 
 
 def _apply_sanitization(text: str, rules: list[dict],
-                        default_action: str = "redact") -> tuple[str, list[dict]]:
-    """Run enabled regex rules over `text`.
+                        default_action: str = "redact",
+                        policy: dict | None = None) -> tuple[str, list[dict]]:
+    """Run the deterministic floor over `text`: the enabled regex rules plus,
+    when `policy` is given, its allowlist, thresholds and exact_match lists.
 
     `default_action` controls what a rule without an explicit `action` does.
     Typical usage:
       - tool-input  context → default_action="detect" (tool gets raw args)
       - tool-output context → default_action="redact" (LLM/user see sanitized)
 
-    Returns (maybe_sanitized_text, violations). Invalid regexes are skipped.
-    Each violation records the effective action that was taken so callers
-    know whether to block, show a "redacted" pill, or just surface detection.
+    Returns (maybe_sanitized_text, violations). The engine is
+    core.dlp.floor, shared with classify-output and the tool-result
+    sanitizer, so a rule fires identically whichever door a request comes
+    through. Invalid regexes are skipped; a pattern that exceeds its time
+    budget is skipped for that payload and logged.
     """
-    import re as _re
-
     if not text or not rules:
         return text, []
-
-    sanitized = text
-    violations: list[dict] = []
-    for rule in rules:
-        if not isinstance(rule, dict) or not rule.get("enabled", True):
-            continue
-        pattern = rule.get("regex")
-        if not pattern:
-            continue
-        try:
-            compiled = _re.compile(pattern)
-        except _re.error:
-            continue
-        matches = compiled.findall(sanitized)
-        if not matches:
-            continue
-
-        effective = _resolve_action(rule, default_action)
-        if effective == "redact":
-            replacement = rule.get("replacement", "[REDACTED]")
-            sanitized = compiled.sub(replacement, sanitized)
-        elif effective == "mask":
-            # Partial mask: keep first and last chars, mask the middle
-            def _partial_mask(m):
-                val = m.group(0)
-                if len(val) <= 4:
-                    return "*" * len(val)
-                return val[0] + "*" * (len(val) - 2) + val[-1]
-            sanitized = compiled.sub(_partial_mask, sanitized)
-
-        violations.append({
-            "pattern_id": rule.get("pattern_id", "unknown"),
-            "description": rule.get("description", ""),
-            "severity": rule.get("severity", "medium"),
-            "count": len(matches),
-            "action": effective,
-        })
+    sanitized, violations, _ = _floor.sanitize(text, rules, default_action, policy)
     return sanitized, violations
 
 
-def _sanitize_json(payload, rules: list[dict], default_action: str = "redact"):
+def _sanitize_json(payload, rules: list[dict], default_action: str = "redact",
+                   policy: dict | None = None):
     """Sanitize a JSON-serializable `payload` by serializing → running rules →
     re-parsing. If re-parse fails (e.g. replacement contains a quote),
     returns the sanitized string. Returns (payload_or_sanitized, violations).
@@ -416,7 +378,7 @@ def _sanitize_json(payload, rules: list[dict], default_action: str = "redact"):
         serialized = json.dumps(payload, default=str)
     except Exception:
         return payload, []
-    sanitized, violations = _apply_sanitization(serialized, rules, default_action)
+    sanitized, violations = _apply_sanitization(serialized, rules, default_action, policy)
     if not violations:
         return payload, []
     if sanitized == serialized:
@@ -1553,6 +1515,7 @@ def create_admin_app() -> FastAPI:
             if regex_enabled:
                 sanitized_args, input_violations = _sanitize_json(
                     args, tool_sanitization_rules, default_action="detect",
+                    policy=tool_data_policy_raw,
                 )
             else:
                 sanitized_args, input_violations = args, []
@@ -1625,6 +1588,7 @@ def create_admin_app() -> FastAPI:
                 if regex_enabled:
                     sanitized_output, output_violations = _sanitize_json(
                         simulated, tool_sanitization_rules, default_action="redact",
+                        policy=tool_data_policy_raw,
                     )
                 else:
                     sanitized_output, output_violations = simulated, []

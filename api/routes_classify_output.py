@@ -1,7 +1,7 @@
 """Classify-output endpoint — runs output guardrails on LLM-generated content."""
 
 import json
-import re as _re
+from core.dlp import floor as _floor
 from datetime import datetime
 from typing import Optional
 
@@ -29,69 +29,26 @@ router = APIRouter()
 # Shield LLM reasons about (robust to obfuscation). Both need to run here,
 # or the whole feature is just a playground toy.
 
-_VALID_ACTIONS = {"detect", "redact", "mask", "block"}
+_VALID_ACTIONS = _floor.VALID_ACTIONS
 
 
 def _resolve_rule_action(rule: dict, default_action: str) -> str:
-    severity = (rule.get("severity") or "medium").lower()
-    if severity == "critical":
-        return "block"
-    explicit = (rule.get("action") or "").strip().lower()
-    if explicit in _VALID_ACTIONS:
-        return explicit
-    return default_action if default_action in _VALID_ACTIONS else "detect"
+    return _floor.resolve_action(rule, default_action)
 
 
 def _apply_regex_sanitization(text: str, rules: list[dict],
-                              default_action: str = "redact") -> tuple[str, list[dict], bool]:
-    """Run the tenant's regex rules over `text`.
+                              default_action: str = "redact",
+                              policy: Optional[dict] = None) -> tuple[str, list[dict], bool]:
+    """Run the tenant's deterministic floor over `text`.
 
-    Mirrors the helper in admin_app.py so we don't create a circular
-    import between admin_app and the API routers. Returns
-    (sanitized_text, violations, had_block).
+    The engine is core.dlp.floor, shared with admin_app and the tool-result
+    sanitizer, so a rule fires identically whichever door a request comes
+    through. `policy` supplies the allowlist, thresholds and exact_match
+    lists. Returns (sanitized_text, violations, had_block).
     """
     if not text or not rules:
         return text, [], False
-
-    sanitized = text
-    violations: list[dict] = []
-    had_block = False
-    for rule in rules:
-        if not isinstance(rule, dict) or not rule.get("enabled", True):
-            continue
-        pattern = rule.get("regex")
-        if not pattern:
-            continue
-        try:
-            compiled = _re.compile(pattern)
-        except _re.error:
-            continue
-        matches = compiled.findall(sanitized)
-        if not matches:
-            continue
-
-        effective = _resolve_rule_action(rule, default_action)
-        if effective == "redact":
-            replacement = rule.get("replacement", "[REDACTED]")
-            sanitized = compiled.sub(replacement, sanitized)
-        elif effective == "mask":
-            def _partial_mask(m):
-                val = m.group(0)
-                if len(val) <= 4:
-                    return "*" * len(val)
-                return val[0] + "*" * (len(val) - 2) + val[-1]
-            sanitized = compiled.sub(_partial_mask, sanitized)
-        if effective == "block":
-            had_block = True
-
-        violations.append({
-            "pattern_id": rule.get("pattern_id", "unknown"),
-            "description": rule.get("description", ""),
-            "severity": rule.get("severity", "medium"),
-            "count": len(matches),
-            "action": effective,
-        })
-    return sanitized, violations, had_block
+    return _floor.sanitize(text, rules, default_action, policy)
 
 
 def _load_tool_data_policy(tenant_id: str, tool_name: str) -> dict:
@@ -156,7 +113,7 @@ async def _apply_tool_sanitization(
     # ---- Regex fast-path ----------------------------------------------
     if regex_enabled and rules:
         sanitized, regex_violations, had_block = _apply_regex_sanitization(
-            sanitized, rules, default_action=default_action,
+            sanitized, rules, default_action=default_action, policy=policy,
         )
         meta["regex_violations"] = regex_violations
         if regex_violations:

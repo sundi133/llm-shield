@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from typing import Dict, List, Optional
 
 from core.auth import get_tenant_from_request
+from core.dlp import floor
 from core.dlp_settings import (
     dlp_echo_check, dlp_fail_closed, dlp_llm_timeout_s, payload_delimiters, verdict_echoed,
 )
@@ -37,13 +38,12 @@ router = APIRouter(prefix="/v1/data-policies", tags=["data-policies"])
 
 class DataSanitizationRule(BaseModel):
     pattern_id: str
-    #: DEPRECATED and NOT ENFORCED. Nothing executes this pattern on the guard
-    #: path: sanitization is performed by the LLM against `description` and
-    #: `replacement`. The only code that ever ran it is POST /validate, which no
-    #: guarded request touches. Kept so stored policies still load; a field that
-    #: reads as a deterministic pattern while nothing applies it is the same
-    #: defect this schema note exists to stop repeating.
-    #: Spec: docs/spec-apply-sanitization-rules.md
+    #: ENFORCED on every entry point (agent chat, classify-output, the
+    #: tool-result sanitizer, the edge bundle) by the shared engine in
+    #: core/dlp/floor.py, with a per-pattern time budget. An earlier note here
+    #: called this field deprecated and unenforced while four copies of a
+    #: regex loop executed it, so whether a rule fired depended on which door
+    #: the request came through. Spec: docs/spec-runtime-dlp-gaps.md, G8.
     regex: str
     replacement: str
     description: str
@@ -78,9 +78,42 @@ class ScopeMapping(BaseModel):
     default_scope: Optional[str] = None     # scope when value not in map (None = skip)
 
 
+class AllowlistEntry(BaseModel):
+    """A value or pattern that a rule match may not act on: a test card
+    number, a corporate email domain. Either `value` (literal) or `regex`."""
+    value: Optional[str] = None
+    regex: Optional[str] = None
+    reason: str = ""
+
+
+class CountThreshold(BaseModel):
+    """More than `max_count` matches of `pattern_id` in one payload escalates
+    that rule to block: five SSNs in a record is bulk exfiltration, not a
+    lookup."""
+    pattern_id: str
+    max_count: int
+    scope: str = "payload"
+
+
+class ExactMatchList(BaseModel):
+    """Salted SHA-256 digests of values the tenant never stores in clear.
+    Build them with POST /v1/data-policies/exact-match/hash."""
+    list_id: str
+    algorithm: str = "sha256"
+    salt: str
+    normalized: str = "strip_lower"   # strip_lower | strip | digits
+    hashes: List[str]
+    action: str = "redact"            # redact | block
+    replacement: str = "[REDACTED]"
+
+
 class ToolDataPolicy(BaseModel):
     tool_name: str
     sanitization_rules: List[DataSanitizationRule] = []
+    # ── Deterministic floor (core/dlp/floor.py) ────────────────────────────
+    allowlist: List[AllowlistEntry] = []
+    thresholds: List[CountThreshold] = []
+    exact_match: List[ExactMatchList] = []
     role_policies: List[RoleDataPolicy] = []
     scope_mappings: List[ScopeMapping] = []  # fast-tier parameter → scope resolution
     compliance_framework: Optional[str] = None  # hipaa, pci_dss, gdpr
@@ -144,6 +177,42 @@ def _reject_reserved(tool_name: str) -> None:
         )
 
 
+def _reject_invalid_floor(policy: dict) -> None:
+    """400 with every problem named, so a bad allowlist regex, an oversize
+    exact-match list or a threshold naming no rule never reaches storage."""
+    problems = floor.validate_policy_floor(policy)
+    if problems:
+        raise HTTPException(status_code=400, detail={"errors": problems})
+
+
+class HashValuesRequest(BaseModel):
+    salt: str
+    values: List[str]
+    normalized: str = "strip_lower"
+    algorithm: str = "sha256"
+
+
+@router.post("/exact-match/hash")
+async def hash_exact_match_values(
+    body: HashValuesRequest,
+    tenant_id: str = Depends(get_tenant_from_request),
+):
+    """Digest values for an exact_match list. Stores nothing; the portal calls
+    this so raw values never sit in the saved policy. Off the hot path."""
+    if not body.salt:
+        raise HTTPException(status_code=400, detail="salt is required")
+    if len(body.values) > floor.MAX_EXACT_MATCH_HASHES:
+        raise HTTPException(status_code=400,
+                            detail=f"at most {floor.MAX_EXACT_MATCH_HASHES} values per call")
+    try:
+        hashes = [floor.hash_value(v, body.salt, body.normalized, body.algorithm)
+                  for v in body.values]
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"hashes": hashes, "count": len(hashes), "normalized": body.normalized,
+            "algorithm": body.algorithm}
+
+
 def _load_all(tenant_id: str) -> dict:
     r = _get_redis()
     if not r:
@@ -169,6 +238,7 @@ async def create_tool_data_policy(
 ):
     """Create or update data policy for a specific tool. Persisted in Redis."""
     _reject_reserved(tool_name)
+    _reject_invalid_floor(policy.dict())
     try:
         all_policies = _load_all(tenant_id)
         entry = policy.dict()
@@ -281,6 +351,9 @@ async def delete_tool_data_policy(
 class GlobalDataPolicy(BaseModel):
     """Same shape as a tool policy, minus the tool name, plus an on switch."""
     sanitization_rules: List[DataSanitizationRule] = []
+    allowlist: List[AllowlistEntry] = []
+    thresholds: List[CountThreshold] = []
+    exact_match: List[ExactMatchList] = []
     role_policies: List[RoleDataPolicy] = []
     compliance_framework: Optional[str] = None
     sanitization_intent: Optional[str] = None
@@ -316,6 +389,7 @@ async def set_global_data_policy(
     tenant_id: str = Depends(get_tenant_from_request)
 ):
     """Create or replace the tenant-wide default policy."""
+    _reject_invalid_floor(policy.dict())
     try:
         all_policies = _load_all(tenant_id)
         entry = policy.dict()
