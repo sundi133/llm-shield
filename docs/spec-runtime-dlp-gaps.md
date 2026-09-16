@@ -7,7 +7,16 @@ description: "The LLM-backed data-policy sanitizer is open-vocabulary, so entity
 ---
 
 # Spec: runtime DLP, what the LLM sanitizer covers and the exact gaps
-Status: DRAFT, awaiting approval. No code written.
+Status: IMPLEMENTED on `claude/busy-pasteur-rjpr2u`, one commit per PR below.
+Deviations from the draft, each deliberate: `skip_llm_when_floor_clean` ships
+OFF (the draft said on) because on the tool-result path the model also judges
+the rules' descriptions, so skipping narrows what is caught and the
+secure-by-default invariant wins; PR 5 landed as two commits (engine plus
+schema, then the portal); the hash endpoint is documented in
+`docs/tool-data-policies.md` rather than `API_SPEC.md`, which does not cover
+the data-policy API at all; and the portal's tool-policy modal turned out to
+be missing its whole sanitization section (rules, intent, mode) before this
+series started, which is out of scope here and tracked separately.
 {: .fs-6 .fw-300 }
 
 <details open markdown="block">

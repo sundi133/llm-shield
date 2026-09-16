@@ -68,7 +68,7 @@ LLM Shield ships **22 guardrails** organized into a two-tier parallel pipeline: 
 | `data_access_guard` | Clearance level enforcement |
 | `mcp_guard` | MCP server validation and trust scoring |
 | `action_guard` | Per-session action limits and approval gates |
-| `data_taint_tracking` | Track sensitive data flow across tool chains; block unauthorized propagation |
+| `data_taint_tracking` | Track sensitive data flow across tool chains; block unauthorized propagation. Labels are recorded by `tool_output_sanitization` under the call's `session_id` and `tool_call_id` |
 | `goal_drift_detection` | Detect when agents deviate from assigned goals (LLM-based) |
 | `cert_identity` | Certificate-based agent identity with trust-level gated tool access |
 
