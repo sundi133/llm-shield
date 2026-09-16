@@ -276,6 +276,10 @@ def test_tool_result_sanitizer_runs_the_floor_before_the_model(monkeypatch):
     assert r.details["sanitized_output"] == EXPECTED
     assert [v["pattern_id"] for v in r.details["floor_violations"]] == ["ssn", "card"]
     assert r.details["floor_allowlisted"] == 1
+    # A floor redaction is a redaction even when the model clears the
+    # already-redacted text: never reported as a clean pass.
+    assert r.passed is False and r.action == "redact"
+    assert r.details["redacted"] is True
 
 
 def test_a_floor_block_never_reaches_the_model(monkeypatch):

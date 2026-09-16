@@ -674,11 +674,15 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
     # Same seam as /tool/check. Defaults to "user" when absent, as before.
     user_role = resolve_identity(request, body_agent_key=body.agent_key).user_role or "user"
 
+    # The id a later call names in input_sources to inherit this output's
+    # taint. Generated when the caller did not supply one and returned below.
+    tool_call_id = body.tool_call_id or f"tc_{uuid.uuid4().hex[:12]}"
     context = {
         "tool_name": body.tool_name,
         "tool_output": body.tool_output,
         "agent_key": body.agent_key,
         "session_id": body.session_id,
+        "tool_call_id": tool_call_id,
         "tenant_id": tenant_id,
         "user_role": user_role,
         "X-Tenant-ID": tenant_id,  # Alternative format for backward compatibility
@@ -728,6 +732,7 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
         "action": r.action,
         "sanitized_output": sanitized,
         "guardrail_results": [result],
+        "tool_call_id": tool_call_id,
     }
 
 

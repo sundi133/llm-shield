@@ -343,12 +343,6 @@ guardrails:
       # model also judges the rules' descriptions, so skipping narrows what
       # is caught. Turn on to trade that for one fewer call per tool result.
       skip_llm_when_floor_clean: false
-      per_tool_rules:
-        execute_sql:
-          redact_columns:
-            - ssn
-            - password_hash
-            - credit_card
 
   sensitive_action_confirmation:
     enabled: true

@@ -28,7 +28,7 @@ LLM Shield ships **22 guardrails** organized into a two-tier parallel pipeline: 
 | `keyword_blocklist` | Aho-Corasick keyword matching |
 | `length_limit` | Character and token count limits |
 | `regex_pattern` | Configurable regex rules (SSN, passwords, etc.) |
-| `pii_detection` | Detects PII via Presidio (phone, email, SSN, credit card) |
+| `pii_detection` | LLM classifier for PII (phone, email, SSN, credit card, IP, names, addresses); fails open on a model error |
 | `language_detection` | Blocks non-allowed languages |
 | `sentiment` | Flags extremely negative input |
 | `rate_limiter` | Per-client sliding window rate limiting |

@@ -161,6 +161,101 @@ def _edge_whitespace(chunk: str) -> tuple[str, str]:
     return lead, trail
 
 
+# ── Taint recording ─────────────────────────────────────────────────────────
+#
+# The taint store (guardrails/agentic/taint) and its guardrail have existed
+# since data_taint_tracking shipped, but record_taint had no production caller:
+# nothing on the guard path ever wrote a label, so the clearance check could
+# never fire. This hook records one after any non-clean verdict here, when the
+# call is addressable (a session_id and a tool_call_id in the context). A later
+# tool call that lists that tool_call_id in input_sources is then judged by the
+# existing guardrail. Spec: docs/spec-runtime-dlp-gaps.md, PR 6.
+
+def _taint_record_enabled() -> bool:
+    """SHIELD_TAINT_RECORD=off stops writing labels (the guardrail still reads)."""
+    import os
+    return os.environ.get("SHIELD_TAINT_RECORD", "").strip().lower() \
+        not in ("0", "off", "false", "no")
+
+
+_TAINT_TAG_HINTS = (
+    (("ssn", "social"), "SSN"),
+    (("card", "pan", "cvv"), "credit_card"),
+    (("key", "secret", "password", "token", "credential"), "secret"),
+)
+
+
+def taint_tags_for(details: dict, findings: str = "") -> list[str]:
+    """Sensitivity tags for a sanitizer verdict.
+
+    Floor violations contribute their pattern_id, normalised onto the tags
+    the default taint_sensitivity_map knows (SSN, credit_card, secret); the
+    model's free-text findings are scanned for the same hints. Anything
+    non-clean also carries PII, the map's catch-all. Tenants extend the map
+    with their own pattern ids if they want finer clearances.
+    """
+    tags: list[str] = []
+
+    def _add(tag: str) -> None:
+        if tag and tag not in tags:
+            tags.append(tag)
+
+    for v in details.get("floor_violations") or []:
+        pid = str(v.get("pattern_id") or "")
+        low = pid.lower()
+        hit = next((tag for hints, tag in _TAINT_TAG_HINTS if any(h in low for h in hints)), None)
+        _add(hit or pid)
+    low = (findings or "").lower()
+    for hints, tag in _TAINT_TAG_HINTS:
+        if any(h in low for h in hints):
+            _add(tag)
+    if tags or findings or details.get("floor_violations"):
+        _add("PII")
+    return tags
+
+
+_taint_tasks: set = set()
+
+
+def _record_taint_for(ctx: dict, result: GuardrailResult) -> None:
+    """Schedule a taint write for a non-clean verdict. Never raises, never
+    blocks the response: the write runs in a worker thread and its failure
+    is logged at debug."""
+    if result.passed and result.action == "pass":
+        return
+    if not _taint_record_enabled():
+        return
+    session_id = ctx.get("session_id")
+    tool_call_id = ctx.get("tool_call_id")
+    if not session_id or not tool_call_id:
+        return
+    details = result.details or {}
+    tags = taint_tags_for(details, str(details.get("findings") or ""))
+    if not tags:
+        return
+    try:
+        from guardrails.agentic.taint.taint_store import record_taint
+    except Exception:
+        return
+    tenant_id = ctx.get("tenant_id") or ctx.get("X-Tenant-ID") or ""
+    tool_name = ctx.get("tool_name", "")
+
+    def _write() -> None:
+        try:
+            record_taint(session_id, tool_call_id, tool_name, tags, tenant_id=tenant_id)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug("taint record failed for %s/%s: %s", session_id, tool_call_id, e)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _write()
+        return
+    task = loop.create_task(asyncio.to_thread(_write))
+    _taint_tasks.add(task)
+    task.add_done_callback(_taint_tasks.discard)
+
+
 def _split_verdict_and_sanitized(raw: str) -> tuple[str, str]:
     """(verdict_line, sanitized_content). Shared with the chat-output path;
     the implementation lives in core.text_utils.split_marker."""
@@ -230,6 +325,32 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             return str(value)
 
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
+        result = await self._check_inner(content, context)
+        _record_taint_for(context or {}, result)
+        return result
+
+    @staticmethod
+    def _lift_for_floor(result: GuardrailResult, floor_result) -> GuardrailResult:
+        """A floor redaction is a redaction, whatever the model then said about
+        the already-redacted text. Without this a payload the floor rewrote
+        and the model cleared reported `pass`, which telemetry counted as
+        clean and taint recording ignored."""
+        if floor_result is None or not floor_result.modified:
+            return result
+        if _SEVERITY.get(result.action, 0) >= _SEVERITY["redact"]:
+            return result
+        pids = ", ".join(sorted({s.pattern_id for s in floor_result.spans
+                                 if s.action in ("redact", "mask")}))
+        result.passed = False
+        result.action = "redact"
+        result.message = f"Sensitive data redacted by data policy rule(s) ({pids}); {result.message}"
+        details = dict(result.details or {})
+        details["redacted"] = True
+        details.setdefault("findings", pids)
+        result.details = details
+        return result
+
+    async def _check_inner(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         ctx = context or {}
         tool_output = self._normalize_output(ctx.get("tool_output", content))
         tool_name = ctx.get("tool_name", "")
@@ -496,24 +617,24 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             }
             if action == "mask":
                 details["mask_level"] = "partial"
-            return GuardrailResult(
+            return self._lift_for_floor(GuardrailResult(
                 passed=False, action=action, guardrail_name=self.name,
                 message=f"{noun}: {findings}", details=details,
-            )
+            ), floor_result)
 
         if tail_withheld:
-            return GuardrailResult(
+            return self._lift_for_floor(GuardrailResult(
                 passed=False, action="warn", guardrail_name=self.name,
                 message=(f"Tool output clean in the {len(chunks)} judged chunk(s); "
                          f"{unjudged_chars} unjudged character(s) withheld"),
                 details={"sanitized_output": delivered, **base_details},
-            )
+            ), floor_result)
 
-        return GuardrailResult(
+        return self._lift_for_floor(GuardrailResult(
             passed=True, action="pass", guardrail_name=self.name,
             message="Tool output clean",
             details={"sanitized_output": tool_output, **base_details},
-        )
+        ), floor_result)
 
     async def _judge_chunk(self, system_content: str, tool_name: str,
                            user_role: str, chunk: str, index: int, total: int) -> dict:
