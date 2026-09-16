@@ -409,3 +409,37 @@ def test_hash_endpoint_digests_and_stores_nothing(client):
                   json={"salt": "", "values": ["x"]}).status_code == 400
     assert c.post("/v1/data-policies/exact-match/hash",
                   json={"salt": "s", "values": ["x"], "algorithm": "md5"}).status_code == 400
+
+
+# ── the portal ─────────────────────────────────────────────────────────────
+
+
+def _portal() -> str:
+    import pathlib
+    return (pathlib.Path(__file__).resolve().parent.parent / "static" / "tenant.html").read_text()
+
+
+def test_the_portal_edits_and_round_trips_the_floor_fields():
+    """A save that omits the fields wipes them (absent means empty to the
+    API), so the modal must read them back out of the editor on every save."""
+    html = _portal()
+    assert 'id="dp-floor-json"' in html
+    save = html.split("async function saveDataPolicy(")[1].split("\n}\n")[0]
+    assert "dp-floor-json" in save
+    for key in ("allowlist", "thresholds", "exact_match"):
+        assert key in save
+    assert "...floorFields" in save
+
+
+def test_the_portal_hash_helper_calls_the_endpoint_and_is_defined():
+    html = _portal()
+    assert "'/v1/data-policies/exact-match/hash'" in html
+    assert "async function dpHashExactMatch" in html
+    assert "function dpFloorHasContent" in html
+
+
+def test_the_global_card_round_trips_the_floor_fields():
+    html = _portal()
+    card = html.split("async function loadGlobalDataPolicy()")[1].split("async function saveGlobalDataPolicy")[0]
+    for key in ("allowlist", "thresholds", "exact_match"):
+        assert key in card
