@@ -12,6 +12,9 @@ from typing import Optional, Any
 from guardrails.base import BaseGuardrail, safe_float
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
+from core.text_utils import (
+    REDACTION_GROWTH_LIMIT, SANITIZED_MARKER, split_marker, usable_redaction,
+)
 
 logger = logging.getLogger("votal.tool_output_sanitization")
 
@@ -68,53 +71,28 @@ def _redaction_enabled() -> bool:
 
 
 def _split_verdict_and_sanitized(raw: str) -> tuple[str, str]:
-    """(verdict_line, sanitized_content).
-
-    The model returns a CSV verdict line and, when redacting, a second line
-    beginning with SANITIZED: carrying the redacted content verbatim. The two
-    are on separate lines ON PURPOSE: `findings` and the redacted record BOTH
-    contain commas, and an earlier single-line CSV design let the tail of
-    `findings` bleed into the content, returning garbled output (the customer's
-    name replaced by a fragment of the finding).
-
-    Everything after the marker is content, commas and newlines included.
-    """
-    text = (raw or "").strip()
-    idx = text.find(_SANITIZED_MARKER)
-    if idx == -1:
-        return text, ""
-    verdict = text[:idx].strip()
-    sanitized = text[idx + len(_SANITIZED_MARKER):].strip()
-    # The verdict is the last non-empty line before the marker (handles a header
-    # echo, same as parse_csv_response does).
-    lines = [l for l in verdict.splitlines() if l.strip()]
-    return (lines[-1] if lines else verdict), sanitized
+    """(verdict_line, sanitized_content). Shared with the chat-output path;
+    the implementation lives in core.text_utils.split_marker."""
+    return split_marker(raw, _SANITIZED_MARKER)
 
 
 #: A redaction wildly longer than its input is a rewrite, not a redaction.
-_REDACTION_GROWTH_LIMIT = 1.5
+_REDACTION_GROWTH_LIMIT = REDACTION_GROWTH_LIMIT
 
 
 def _usable_redaction(sanitized: str, original: str) -> tuple[bool, str]:
-    """Whether the model actually produced a redaction. (ok, why_not).
+    """Whether a model-produced redaction may replace the original.
 
     Every rejection here escalates to block. That is the whole point: the defect
     being fixed is "we said redact and returned the original", so a lenient
     fallback would reintroduce it under a new name. If redaction was required
     and could not be produced, withholding is the only safe answer.
+    Implementation shared with the chat-output path: core.text_utils.usable_redaction.
     """
-    if not sanitized or not sanitized.strip():
-        return False, "empty"
-    if sanitized.strip() == original.strip():
-        # Claimed a redaction, changed nothing. Exactly the old bug.
-        return False, "unchanged"
-    if len(sanitized) > len(original) * _REDACTION_GROWTH_LIMIT:
-        # Returning invented content as tool output is worse than withholding.
-        return False, "rewritten"
-    return True, ""
+    return usable_redaction(sanitized, original)
 
 
-_SANITIZED_MARKER = "SANITIZED:"
+_SANITIZED_MARKER = SANITIZED_MARKER
 
 _SYSTEM = (
     "You are a data protection engine. Analyze tool output for sensitive data "

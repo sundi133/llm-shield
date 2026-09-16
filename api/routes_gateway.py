@@ -15,6 +15,7 @@ from core.models import ChatRequest, ShieldResponse
 from core.pipeline import run_pipeline
 from core.policy_mode import MONITOR, resolve_mode
 from core.run_context import resolve_run_id
+from core.text_utils import modified_text
 from core.tenant_pipeline import (
     apply_mode_to_pipeline_result,
     resolve_proxy_guardrails,
@@ -697,10 +698,10 @@ async def shield_chat_completions(request: Request):
             },
         )
 
-    # Check if any output guardrail modified the text (e.g., redaction)
-    for r in output_result.results:
-        if r.details and "redacted_text" in r.details:
-            llm_response_text = r.details["redacted_text"]
+    # Apply any redaction an output guardrail produced.
+    modified = modified_text(output_result.results)
+    if modified is not None:
+        llm_response_text = modified
 
     # Log request
     triggered = [

@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 import config.schema as _config_module
 from core.llm_backend import get_server_url, _get_shared_client, _ensure_no_think
 from core.policy_mode import resolve_mode
+from core.text_utils import modified_text
 from core.tenant_pipeline import (
     apply_mode_to_pipeline_result,
     run_proxy_input_pipeline,
@@ -507,9 +508,9 @@ async def agent_chat(request: Request):
                 "tool_calls": tool_results,
                 "guardrail_results": output_result.model_dump(),
             })
-        for r in output_result.results:
-            if r.details and "redacted_text" in r.details:
-                content = r.details["redacted_text"]
+        modified = modified_text(output_result.results)
+        if modified is not None:
+            content = modified
 
     has_blocked = any(not t["rbac"]["allowed"] for t in tool_results)
     latency_ms = (datetime.now() - start).total_seconds() * 1000

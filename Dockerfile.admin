@@ -41,6 +41,10 @@ COPY core/policy_inheritance.py core/
 # their absence crash-loops the admin container at boot.
 COPY core/policy_mode.py core/
 COPY core/run_context.py core/
+# Shared redaction contract (modified_text / usable_redaction), imported at
+# module load by guardrails/agentic/tool/tool_output_sanitization.py via
+# api/routes_tool.py. Stdlib-only, no model or GPU dependency.
+COPY core/text_utils.py core/
 # Onboarding scan (admin plane only; the scanner import is optional).
 COPY core/mcp_scan.py core/
 # OAuth brokering for upstream MCP servers (admin plane only).
