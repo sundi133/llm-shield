@@ -5,6 +5,7 @@ data policies. No hardcoded regex patterns. Uses CSV output for minimal
 token cost.
 """
 
+import asyncio
 import json
 import logging
 from typing import Optional, Any
@@ -68,6 +69,83 @@ def _redaction_enabled() -> bool:
     import os
     return os.environ.get("SHIELD_LLM_REDACTION", "").strip().lower() \
         not in ("0", "off", "false", "no")
+
+
+def _full_scan_enabled() -> bool:
+    """SHIELD_DLP_FULL_SCAN=on judges the WHOLE payload in chunks.
+
+    Off by default because it changes cost: one model call per
+    `judge_chunk_chars` of payload instead of one call that sees only the first
+    chunk. With it off the behaviour is exactly the historic single slice, and
+    the result reports `unjudged_chars` so the blind spot is at least visible.
+    Spec: docs/spec-runtime-dlp-gaps.md, G4.
+    """
+    import os
+    return os.environ.get("SHIELD_DLP_FULL_SCAN", "").strip().lower() \
+        in ("1", "on", "true", "yes")
+
+
+#: The slice the judge used to see, hard-coded as `tool_output[:4000]`.
+_DEFAULT_CHUNK_CHARS = 4000
+#: Chunks judged per payload under full scan. Beyond this the tail is withheld,
+#: not leaked: 8 x 4000 = 32 KB judged, which covers a large SQL result.
+_DEFAULT_MAX_CHUNKS = 8
+_TAIL_WITHHELD = "[TAIL WITHHELD: exceeds scan budget]"
+
+
+def _split_chunks(text: str, chunk_chars: int) -> list[str]:
+    """Non-overlapping chunks of at most `chunk_chars`, cut at whitespace.
+
+    Chunks are reassembled by plain concatenation after redaction, so they
+    must not overlap. Cutting at the last whitespace in the final fifth of
+    the window means a token such as `784-1990-1234567-1` is never split
+    across two chunks, which is what would let it evade both. Concatenating
+    the chunks yields the original text exactly.
+    """
+    chunk_chars = max(1, int(chunk_chars))
+    if len(text) <= chunk_chars:
+        return [text]
+    chunks: list[str] = []
+    pos = 0
+    n = len(text)
+    while pos < n:
+        end = pos + chunk_chars
+        if end >= n:
+            chunks.append(text[pos:])
+            break
+        cut = -1
+        floor = pos + (chunk_chars * 4) // 5
+        for i in range(end, floor, -1):
+            if text[i - 1].isspace():
+                cut = i
+                break
+        if cut == -1:
+            cut = end
+        chunks.append(text[pos:cut])
+        pos = cut
+    return chunks
+
+
+def _plan_chunks(text: str, chunk_chars: int, max_chunks: int,
+                 full_scan: bool) -> tuple[list[str], int, bool]:
+    """(chunks_to_judge, unjudged_chars, tail_withheld)."""
+    if not full_scan:
+        head = text[:chunk_chars]
+        return [head], len(text) - len(head), False
+    chunks = _split_chunks(text, chunk_chars)
+    tail_withheld = False
+    if len(chunks) > max(1, int(max_chunks)):
+        chunks = chunks[:max(1, int(max_chunks))]
+        tail_withheld = True
+    judged = sum(len(c) for c in chunks)
+    return chunks, len(text) - judged, tail_withheld
+
+
+def _edge_whitespace(chunk: str) -> tuple[str, str]:
+    """The chunk's leading and trailing whitespace, which the model strips."""
+    lead = chunk[:len(chunk) - len(chunk.lstrip())]
+    trail = chunk[len(chunk.rstrip()):]
+    return lead, trail
 
 
 def _split_verdict_and_sanitized(raw: str) -> tuple[str, str]:
@@ -171,52 +249,53 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                          "skipped": "no_policy_for_tool"},
             )
 
+        settings = self.settings
+        chunk_chars = int(settings.get("judge_chunk_chars") or _DEFAULT_CHUNK_CHARS)
+        max_chunks = int(settings.get("max_chunks") or _DEFAULT_MAX_CHUNKS)
+        chunks, unjudged_chars, tail_withheld = _plan_chunks(
+            tool_output, chunk_chars, max_chunks, _full_scan_enabled())
+
+        # Prefill optimization: the static instruction + the tenant policy
+        # text are stable across requests, so they go in the SYSTEM message
+        # (vLLM prefix-caches it); only the variable tool output goes in the
+        # user message. Same information, reordered so the policy block isn't
+        # re-prefilled on every call. (Stable-prefix-first; see APC.)
+        system_content = f"{_SYSTEM}\n\nData policies:\n{policies_text}"
+
+        base_details = {
+            "truncated": truncated,
+            "tenant_id": tenant_id,
+            "user_role": user_role,
+            "unjudged_chars": unjudged_chars,
+            "chunks": len(chunks),
+            "tail_withheld": tail_withheld,
+        }
+
         try:
-            # Prefill optimization: the static instruction + the tenant policy
-            # text are stable across requests, so they go in the SYSTEM message
-            # (vLLM prefix-caches it); only the variable tool output goes in the
-            # user message. Same information, reordered so the policy block isn't
-            # re-prefilled on every call. (Stable-prefix-first; see APC.)
-            system_content = f"{_SYSTEM}\n\nData policies:\n{policies_text}"
-            user_content = (
-                f"Tool: {tool_name}\n"
-                f"User role: {user_role}\n\n"
-                f"Tool output:\n{tool_output[:4000]}"
-            )
-
-            llm_response = await async_llm_call(
-                messages=[
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": user_content},
-                ],
-                # Was 60: enough for a verdict, not for returned content. The
-                # input is already capped by max_output_length, so this bounds
-                # the redacted rendering of it.
-                max_tokens=1200,
-                temperature=0,
-                guardrail_name="tool_output_sanitization",
-            )
-
-            raw = (llm_response.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
-            verdict_line, sanitized_content = _split_verdict_and_sanitized(raw)
-            result = parse_csv_response(verdict_line, _CSV_FIELDS)
-
+            verdicts = await asyncio.gather(*[
+                self._judge_chunk(system_content, tool_name, user_role,
+                                  chunk, i, len(chunks))
+                for i, chunk in enumerate(chunks)
+            ])
         except Exception as e:
             logger.error(f"LLM output sanitization error: {e}")
             return GuardrailResult(
                 passed=True, action="pass", guardrail_name=self.name,
                 message=f"Output sanitization error: {e}",
-                details={"error": str(e), "sanitized_output": tool_output, "truncated": truncated},
+                details={"error": str(e), "sanitized_output": tool_output, **base_details},
             )
 
-        action = result.get("action", "allow")
-        if isinstance(action, str):
-            action = action.lower().strip()
-        findings = result.get("findings", "")
-        confidence = safe_float(result.get("confidence"), 0.5)
-
-        if confidence < 0.75:
-            action = "allow"
+        # Per-chunk confidence floor, then worst chunk wins, then the cap.
+        # Same order the single-slice version applied to its one verdict.
+        for v in verdicts:
+            if v["confidence"] < 0.75:
+                v["action"] = "allow"
+        worst = max(verdicts, key=lambda v: _SEVERITY.get(v["action"], 0))
+        action = worst["action"]
+        confidence = worst["confidence"]
+        flagged = [v["findings"] for v in verdicts
+                   if v["findings"] and v["action"] != "allow"]
+        findings = "; ".join(dict.fromkeys(flagged)) if flagged else worst["findings"]
 
         action = _cap_action(action, self.configured_action)
 
@@ -232,18 +311,25 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                 details={
                     "findings": findings,
                     "sanitized_output": "[CONTENT BLOCKED DUE TO DATA POLICY]",
-                    "truncated": truncated,
-                    "tenant_id": tenant_id,
-                    "user_role": user_role,
                     "confidence": confidence,
+                    **base_details,
                 },
             )
 
         # `redact`/`mask` promise modified content. Produce it or withhold.
         if action in ("mask", "redact") and _redaction_enabled():
-            sanitized = sanitized_content
-            ok, why = _usable_redaction(sanitized, tool_output)
-            if not ok:
+            parts: list[str] = []
+            why = ""
+            for v, chunk in zip(verdicts, chunks):
+                if v["action"] in ("mask", "redact"):
+                    ok, why = usable_redaction(v["sanitized"], chunk, v["finish_reason"])
+                    if not ok:
+                        break
+                    lead, trail = _edge_whitespace(chunk)
+                    parts.append(lead + v["sanitized"] + trail)
+                else:
+                    parts.append(chunk)
+            if why:
                 escalated = _cap_action("block", self.configured_action)
                 logger.warning(
                     "tool_output_sanitization: %s redaction unusable (%s) for %s; "
@@ -259,21 +345,19 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                         # the original here under a capped `redact` label would
                         # be precisely the bug this change exists to fix.
                         "sanitized_output": "[CONTENT BLOCKED DUE TO DATA POLICY]",
-                        "truncated": truncated,
-                        "tenant_id": tenant_id,
-                        "user_role": user_role,
                         "confidence": confidence,
                         "redaction_failed": why,
+                        **base_details,
                     },
                 )
+            if tail_withheld:
+                parts.append("\n" + _TAIL_WITHHELD)
             details = {
                 "findings": findings,
-                "sanitized_output": sanitized,
-                "truncated": truncated,
-                "tenant_id": tenant_id,
-                "user_role": user_role,
+                "sanitized_output": "".join(parts),
                 "confidence": confidence,
                 "redacted": True,
+                **base_details,
             }
             if action == "mask":
                 details["mask_level"] = "partial"
@@ -286,6 +370,13 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                 details=details,
             )
 
+        # An unjudged tail past the scan budget is withheld even when every
+        # judged chunk was clean: returning it would deliver text no policy
+        # ever saw.
+        delivered = tool_output
+        if tail_withheld:
+            delivered = "".join(chunks) + "\n" + _TAIL_WITHHELD
+
         if action in ("mask", "redact", "warn", "log"):
             noun = {"mask": "Sensitive data partially masked in tool output",
                     "redact": "Sensitive data found in tool output",
@@ -293,11 +384,9 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                     "log": "Sensitive data found in tool output (logged)"}[action]
             details = {
                 "findings": findings,
-                "sanitized_output": tool_output,
-                "truncated": truncated,
-                "tenant_id": tenant_id,
-                "user_role": user_role,
+                "sanitized_output": delivered,
                 "confidence": confidence,
+                **base_details,
             }
             if action == "mask":
                 details["mask_level"] = "partial"
@@ -306,16 +395,57 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                 message=f"{noun}: {findings}", details=details,
             )
 
+        if tail_withheld:
+            return GuardrailResult(
+                passed=False, action="warn", guardrail_name=self.name,
+                message=(f"Tool output clean in the {len(chunks)} judged chunk(s); "
+                         f"{unjudged_chars} unjudged character(s) withheld"),
+                details={"sanitized_output": delivered, **base_details},
+            )
+
         return GuardrailResult(
             passed=True, action="pass", guardrail_name=self.name,
             message="Tool output clean",
-            details={
-                "sanitized_output": tool_output,
-                "truncated": truncated,
-                "tenant_id": tenant_id,
-                "user_role": user_role,
-            },
+            details={"sanitized_output": tool_output, **base_details},
         )
+
+    async def _judge_chunk(self, system_content: str, tool_name: str,
+                           user_role: str, chunk: str, index: int, total: int) -> dict:
+        """One model call over one chunk. Raises on transport or parse error;
+        the caller decides what an error means for the whole payload."""
+        part = f" (part {index + 1} of {total})" if total > 1 else ""
+        user_content = (
+            f"Tool: {tool_name}\n"
+            f"User role: {user_role}\n\n"
+            f"Tool output{part}:\n{chunk}"
+        )
+        llm_response = await async_llm_call(
+            messages=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content},
+            ],
+            # Was 60: enough for a verdict, not for returned content. The
+            # chunk is bounded by judge_chunk_chars, so this bounds the
+            # redacted rendering of it.
+            max_tokens=1200,
+            temperature=0,
+            guardrail_name="tool_output_sanitization",
+        )
+        choice = (llm_response.get("choices") or [{}])[0]
+        raw = ((choice.get("message") or {}).get("content") or "").strip()
+        verdict_line, sanitized_content = _split_verdict_and_sanitized(raw)
+        result = parse_csv_response(verdict_line, _CSV_FIELDS)
+        action = result.get("action", "allow")
+        action = action.lower().strip() if isinstance(action, str) else "allow"
+        return {
+            "action": action,
+            "confidence": safe_float(result.get("confidence"), 0.5),
+            "findings": result.get("findings", "") or "",
+            "sanitized": sanitized_content,
+            # finish_reason=length means the SANITIZED line was cut, not
+            # redacted; usable_redaction refuses it.
+            "finish_reason": choice.get("finish_reason"),
+        }
 
     @staticmethod
     def _load_policies_text(tenant_id: str, tool_name: str = "",

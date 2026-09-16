@@ -321,6 +321,13 @@ guardrails:
       # a tool's data policy (sanitization_rules), which is tenant-visible and
       # actually runs.
       max_output_length: 50000
+      # The judge sees `judge_chunk_chars` of the payload per model call. By
+      # default only the FIRST chunk is judged (the historic behaviour) and the
+      # result reports `unjudged_chars`. Set SHIELD_DLP_FULL_SCAN=on to judge
+      # the whole payload in chunks, up to `max_chunks`; anything past that is
+      # withheld, never delivered unjudged. Spec: docs/spec-runtime-dlp-gaps.md
+      judge_chunk_chars: 4000
+      max_chunks: 8
       per_tool_rules:
         execute_sql:
           redact_columns:
