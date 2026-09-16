@@ -50,9 +50,15 @@ def test_output_sanitization_fail_open_unchanged(monkeypatch):
     monkeypatch.setattr(tos, "async_llm_call", boom)
     monkeypatch.setattr(ToolOutputSanitizationGuardrail, "_load_policies_text",
                         staticmethod(lambda tenant_id, tool_name="", user_role="": "p"))
+    monkeypatch.delenv("SHIELD_DLP_FAIL_CLOSED", raising=False)
     res = _run(ToolOutputSanitizationGuardrail().check(
         "", {"tool_name": "x", "tool_output": "data", "tenant_id": "t1"}))
-    assert res.passed is True  # still fails open
+    # Still fails open: the original is delivered. It is no longer labelled a
+    # clean `pass`, though; an unjudged payload reports as `warn` with the
+    # error attached (docs/spec-runtime-dlp-gaps.md, PR 3).
+    assert res.details["sanitized_output"] == "data"
+    assert res.action == "warn" and res.passed is False
+    assert "backend down" in res.details["error"]
 
 
 # --- payload_risk (INPUT/params DLP, also used by tool_call_validation) ---

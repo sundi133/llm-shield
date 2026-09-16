@@ -328,6 +328,14 @@ guardrails:
       # withheld, never delivered unjudged. Spec: docs/spec-runtime-dlp-gaps.md
       judge_chunk_chars: 4000
       max_chunks: 8
+      # Seconds one judge call may take (was the client's 300). 0 = unbounded.
+      # SHIELD_DLP_LLM_TIMEOUT_S sets the tier-wide default when unset here.
+      llm_timeout_s: 20
+      # Verdicts below this confidence become allow (was hard-coded 0.75).
+      # SHIELD_DLP_CONFIDENCE_FLOOR sets the tier-wide default when unset here.
+      # On a model error or timeout the original is delivered as `warn`;
+      # SHIELD_DLP_FAIL_CLOSED=on blocks instead.
+      confidence_floor: 0.75
       per_tool_rules:
         execute_sql:
           redact_columns:

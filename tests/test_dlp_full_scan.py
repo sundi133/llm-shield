@@ -199,6 +199,7 @@ def test_withheld_tail_is_appended_after_a_redaction_too(monkeypatch):
 
 def test_a_chunk_error_fails_open_with_the_error_recorded(monkeypatch):
     monkeypatch.setenv("SHIELD_DLP_FULL_SCAN", "on")
+    monkeypatch.delenv("SHIELD_DLP_FAIL_CLOSED", raising=False)
     n = {"calls": 0}
 
     async def flaky(**kw):
@@ -212,7 +213,8 @@ def test_a_chunk_error_fails_open_with_the_error_recorded(monkeypatch):
                         staticmethod(lambda t, tool_name="", user_role="": "policy"))
     out = (FILLER * 200)[:9000]
     r = _run(_guard(), out)
-    assert r.passed is True
+    # Delivered (fail-open) but as a warn, not a pass: unjudged is not clean.
+    assert r.passed is False and r.action == "warn"
     assert "model down" in r.details["error"]
     assert r.details["sanitized_output"] == out
 

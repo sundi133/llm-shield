@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Any, Optional
 
+from core.dlp_settings import confidence_floor
 from core.llm_backend import async_llm_call, parse_csv_response
 from guardrails.base import safe_float
 
@@ -100,7 +101,7 @@ async def evaluate_payload_policy_llm(
             return None
 
         confidence = safe_float(result.get("confidence"), 0.5)
-        if confidence < 0.75:
+        if confidence < confidence_floor():
             return None
 
         return {
@@ -161,7 +162,7 @@ async def evaluate_message_egress_risk_llm(
             return None
 
         confidence = safe_float(result.get("confidence"), 0.5)
-        if confidence < 0.75:
+        if confidence < confidence_floor():
             return None
 
         return {

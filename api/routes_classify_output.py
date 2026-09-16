@@ -216,10 +216,12 @@ async def _apply_tool_sanitization(
             "redactions": ai_result.get("redactions", []),
             "error":      ai_result.get("error"),
         }
-        if ai_result.get("error"):
+        if ai_result.get("error") and not ai_result.get("blocked"):
             # Fail-open for infra errors (Shield LLM unreachable, etc.):
             # we surface the failure in the response so operators can
             # alert on it, rather than silently break every tool call.
+            # With SHIELD_DLP_FAIL_CLOSED=on the helper returns the error
+            # AND blocked=True, which the next branch honours.
             meta["ai"]["fail_open"] = True
         elif ai_result.get("blocked"):
             meta["applied"] = True

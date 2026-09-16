@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from typing import Dict, List, Optional
 
 from core.auth import get_tenant_from_request
+from core.dlp_settings import dlp_fail_closed, dlp_llm_timeout_s
 from storage.tenant_store import _get_redis
 
 # Dual-mode LLM dispatch. In the full monolith image we use the same
@@ -481,10 +482,19 @@ async def _run_ai_sanitization(
     api_key: Optional[str] = None,
     shield_token: Optional[str] = None,
     model: Optional[str] = None,
-    timeout: float = 30.0,
+    timeout: Optional[float] = None,
 ) -> dict:
     """Reason about `payload` against a plain-English `intent` using the
-    Shield LLM. Dual-mode dispatch:
+    Shield LLM.
+
+    ``timeout`` defaults to core.dlp_settings.dlp_llm_timeout_s() (20 s unless
+    overridden) on BOTH dispatch paths; it used to be 30 s on the HTTP path and
+    the client's 300 s in-process. On any error, SHIELD_DLP_FAIL_CLOSED=on
+    turns the fail-open `{error: ...}` into a block so every caller
+    (agent chat, classify-output, the MCP gateway) withholds the payload
+    instead of delivering it unjudged.
+
+    Dual-mode dispatch:
 
       * Monolith image  → `core.llm_backend.async_llm_call` (in-process,
                           same path as topic_restriction / toxicity / …).
@@ -517,7 +527,25 @@ async def _run_ai_sanitization(
         {"role": "system", "content": _AI_SAN_SYSTEM},
         {"role": "user",   "content": _build_ai_san_prompt(payload, intent, stage, tool_name)},
     ]
+    if timeout is None:
+        timeout = dlp_llm_timeout_s()
 
+    result = await _dispatch_ai_sanitization(
+        payload, messages, empty, shield_endpoint, api_key, shield_token, model, timeout)
+    if result.get("error") and dlp_fail_closed():
+        return {
+            **result,
+            "verdict": "block",
+            "blocked": True,
+            "reasoning": ("AI sanitization unavailable and SHIELD_DLP_FAIL_CLOSED=on: "
+                          f"{result['error']}"),
+            "fail_closed": True,
+        }
+    return result
+
+
+async def _dispatch_ai_sanitization(payload, messages, empty, shield_endpoint,
+                                    api_key, shield_token, model, timeout) -> dict:
     raw: str = ""
 
     # ── Path 1: in-process (monolith) ────────────────────────────────
@@ -529,6 +557,7 @@ async def _run_ai_sanitization(
                 temperature=0,
                 response_format={"type": "json_object"},
                 guardrail_name=_AI_SAN_GUARDRAIL_NAME,
+                timeout=timeout,
             )
             try:
                 raw = (response.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
@@ -569,7 +598,7 @@ async def _run_ai_sanitization(
         }
 
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(timeout=timeout or 300) as client:
                 resp = await client.post(
                     f"{endpoint.rstrip('/')}/v1/chat/completions",
                     json=body, headers=headers,

@@ -13,6 +13,7 @@ from typing import Optional, Any
 from guardrails.base import BaseGuardrail, safe_float
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
+from core.dlp_settings import confidence_floor, dlp_fail_closed, dlp_llm_timeout_s
 from core.text_utils import (
     REDACTION_GROWTH_LIMIT, SANITIZED_MARKER, split_marker, usable_redaction,
 )
@@ -279,16 +280,30 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             ])
         except Exception as e:
             logger.error(f"LLM output sanitization error: {e}")
+            if dlp_fail_closed():
+                return GuardrailResult(
+                    passed=False, action="block", guardrail_name=self.name,
+                    message=f"Output sanitization unavailable and SHIELD_DLP_FAIL_CLOSED=on: {e}",
+                    details={"error": str(e), "fail_closed": True,
+                             "sanitized_output": "[CONTENT BLOCKED DUE TO DATA POLICY]",
+                             **base_details},
+                )
+            # Fail-open (the default): the original is delivered, but as a
+            # `warn`, not a `pass`. "The model found nothing" and "the model
+            # was never asked" used to be the same response; an operator
+            # alerting on unjudged traffic needs to tell them apart.
             return GuardrailResult(
-                passed=True, action="pass", guardrail_name=self.name,
-                message=f"Output sanitization error: {e}",
-                details={"error": str(e), "sanitized_output": tool_output, **base_details},
+                passed=False, action="warn", guardrail_name=self.name,
+                message=f"Output sanitization error (delivered unjudged): {e}",
+                details={"error": str(e), "fail_closed": False,
+                         "sanitized_output": tool_output, **base_details},
             )
 
         # Per-chunk confidence floor, then worst chunk wins, then the cap.
         # Same order the single-slice version applied to its one verdict.
+        floor = confidence_floor(settings)
         for v in verdicts:
-            if v["confidence"] < 0.75:
+            if v["confidence"] < floor:
                 v["action"] = "allow"
         worst = max(verdicts, key=lambda v: _SEVERITY.get(v["action"], 0))
         action = worst["action"]
@@ -430,6 +445,7 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             max_tokens=1200,
             temperature=0,
             guardrail_name="tool_output_sanitization",
+            timeout=dlp_llm_timeout_s(self.settings),
         )
         choice = (llm_response.get("choices") or [{}])[0]
         raw = ((choice.get("message") or {}).get("content") or "").strip()
