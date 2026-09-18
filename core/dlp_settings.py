@@ -4,7 +4,7 @@ Three things every judge on that tier (tool_output_sanitization, the
 data_sanitization_ai reasoner, payload_risk) used to hard-code:
 
 * the HTTP timeout of the model call: the shared client's 300 s, so a stalled
-  model held the guard path for five minutes;
+  model held the guard path for five minutes (now 60 s by default);
 * what an error means: always fail-open, returning the original, with no way
   for an operator whose data policies ARE the control to choose otherwise;
 * the confidence floor below which a verdict becomes `allow`: 0.75, in three
@@ -18,7 +18,7 @@ Spec: docs/spec-runtime-dlp-gaps.md, PR 3 (G6).
 import os
 from typing import Optional
 
-DEFAULT_LLM_TIMEOUT_S = 20.0
+DEFAULT_LLM_TIMEOUT_S = 60.0
 DEFAULT_CONFIDENCE_FLOOR = 0.75
 
 _TRUE = ("1", "on", "true", "yes")
@@ -38,7 +38,9 @@ def dlp_llm_timeout_s(settings: Optional[dict] = None) -> Optional[float]:
     """Seconds a data-policy model call may take. None means no bound.
 
     Precedence: the guardrail's `llm_timeout_s` setting, then the
-    SHIELD_DLP_LLM_TIMEOUT_S env var, then DEFAULT_LLM_TIMEOUT_S. A value of
+    SHIELD_DLP_LLM_TIMEOUT_S env var, then DEFAULT_LLM_TIMEOUT_S (60 s: fail-open
+    is the default, so a bound a slow guard model routinely exceeds would
+    deliver unjudged output; the old bound was the client's 300 s). A value of
     0 or below disables the bound and falls back to the client default.
     """
     raw = None

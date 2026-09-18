@@ -57,7 +57,7 @@ def test_output_sanitization_fail_open_unchanged(monkeypatch):
     # clean `pass`, though; an unjudged payload reports as `warn` with the
     # error attached (docs/spec-runtime-dlp-gaps.md, PR 3).
     assert res.details["sanitized_output"] == "data"
-    assert res.action == "warn" and res.passed is False
+    assert res.action == "warn" and res.passed is True   # delivered, still allowed
     assert "backend down" in res.details["error"]
 
 

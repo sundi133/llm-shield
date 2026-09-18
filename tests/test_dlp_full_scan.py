@@ -216,8 +216,9 @@ def test_a_chunk_error_fails_open_with_the_error_recorded(monkeypatch):
                         staticmethod(lambda t, tool_name="", user_role="": "policy"))
     out = (FILLER * 200)[:9000]
     r = _run(_guard(), out)
-    # Delivered (fail-open) but as a warn, not a pass: unjudged is not clean.
-    assert r.passed is False and r.action == "warn"
+    # Delivered (fail-open) and still allowed, but as a warn, not a pass:
+    # unjudged is not clean.
+    assert r.passed is True and r.action == "warn"
     assert "model down" in r.details["error"]
     assert r.details["sanitized_output"] == out
 

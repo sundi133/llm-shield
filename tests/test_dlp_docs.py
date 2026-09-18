@@ -33,6 +33,6 @@ def test_every_documented_flag_exists_in_code():
 def test_the_yaml_carries_the_settings_with_the_documented_defaults():
     yaml = (ROOT / "config" / "default.yaml").read_text()
     block = yaml.split("tool_output_sanitization:")[1].split("\n  sensitive_action_confirmation:")[0]
-    for key, val in (("judge_chunk_chars", "4000"), ("max_chunks", "8"), ("llm_timeout_s", "20"),
+    for key, val in (("judge_chunk_chars", "4000"), ("max_chunks", "8"), ("llm_timeout_s", "60"),
                      ("confidence_floor", "0.75"), ("skip_llm_when_floor_clean", "false")):
         assert re.search(rf"^\s+{key}:\s*{re.escape(val)}\s*$", block, re.M), key

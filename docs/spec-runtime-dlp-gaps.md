@@ -12,7 +12,10 @@ Deviations from the draft, each deliberate: `skip_llm_when_floor_clean` ships
 OFF (the draft said on) because on the tool-result path the model also judges
 the rules' descriptions, so skipping narrows what is caught and the
 secure-by-default invariant wins; PR 5 landed as two commits (engine plus
-schema, then the portal); the hash endpoint is documented in
+schema, then the portal); the sanitizer timeout default is 60 s, not 20,
+because fail-open is the default and a bound a slow model exceeds delivers
+unjudged output; a fail-open error keeps `passed=True` (clients gate on
+`allowed`) with `action=warn`; the hash endpoint is documented in
 `docs/tool-data-policies.md` rather than `API_SPEC.md`, which does not cover
 the data-policy API at all; and the portal's tool-policy modal turned out to
 be missing its whole sanitization section (rules, intent, mode) before this

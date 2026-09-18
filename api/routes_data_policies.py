@@ -570,7 +570,7 @@ async def _run_ai_sanitization(
     """Reason about `payload` against a plain-English `intent` using the
     Shield LLM.
 
-    ``timeout`` defaults to core.dlp_settings.dlp_llm_timeout_s() (20 s unless
+    ``timeout`` defaults to core.dlp_settings.dlp_llm_timeout_s() (60 s unless
     overridden) on BOTH dispatch paths; it used to be 30 s on the HTTP path and
     the client's 300 s in-process. On any error, SHIELD_DLP_FAIL_CLOSED=on
     turns the fail-open `{error: ...}` into a block so every caller

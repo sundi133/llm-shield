@@ -481,12 +481,13 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                              "sanitized_output": "[CONTENT BLOCKED DUE TO DATA POLICY]",
                              **base_details},
                 )
-            # Fail-open (the default): the original is delivered, but as a
-            # `warn`, not a `pass`. "The model found nothing" and "the model
-            # was never asked" used to be the same response; an operator
-            # alerting on unjudged traffic needs to tell them apart.
+            # Fail-open (the default): the original is delivered, so `passed`
+            # stays True (clients gate on `allowed`, e.g. the CrewAI example),
+            # but the action is `warn`, not `pass`: "the model found nothing"
+            # and "the model was never asked" used to be the same response,
+            # and an operator alerting on unjudged traffic must tell them apart.
             return GuardrailResult(
-                passed=False, action="warn", guardrail_name=self.name,
+                passed=True, action="warn", guardrail_name=self.name,
                 message=f"Output sanitization error (delivered unjudged): {e}",
                 details={"error": str(e), "fail_closed": False,
                          "sanitized_output": tool_output, **base_details},

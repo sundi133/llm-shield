@@ -236,8 +236,8 @@ per-guardrail settings live under `tool_output_sanitization.settings` in
 | `judge_chunk_chars` (setting) | `4000` | characters of a tool result the judge sees per model call |
 | `SHIELD_DLP_FULL_SCAN` | `off` | `on` judges the whole result in chunks (one call per chunk). Off keeps the historic single slice; the result then reports `unjudged_chars` so the unscanned tail is visible |
 | `max_chunks` (setting) | `8` | under full scan, the tail past this many chunks is withheld with a marker, never delivered unjudged |
-| `llm_timeout_s` (setting) / `SHIELD_DLP_LLM_TIMEOUT_S` | `20` | seconds one judge call may take (was the client's 300). `0` removes the bound |
-| `SHIELD_DLP_FAIL_CLOSED` | `off` | on a model error or timeout: `off` delivers the original as `warn` (never as a clean `pass`); `on` blocks |
+| `llm_timeout_s` (setting) / `SHIELD_DLP_LLM_TIMEOUT_S` | `60` | seconds one judge call may take (was the client's 300). `0` removes the bound. On timeout the original is delivered as `warn` unless fail-closed is on, so keep it above the model's real p99 |
+| `SHIELD_DLP_FAIL_CLOSED` | `off` | on a model error or timeout: `off` delivers the original (`allowed: true`, `action: warn`, never a clean `pass`); `on` blocks |
 | `confidence_floor` (setting) / `SHIELD_DLP_CONFIDENCE_FLOOR` | `0.75` | verdicts below this confidence become `allow` |
 | `SHIELD_DLP_ECHO_CHECK` | `on` | a tool result that contains the judge's own verdict line verbatim is withheld as suspected prompt injection (`injection_suspected: true`) |
 | `SHIELD_DLP_REGEX_TIMEOUT_MS` | `50` | per-pattern budget for tenant regexes on the floor. `0` removes the bound |

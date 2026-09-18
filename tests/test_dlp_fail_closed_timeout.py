@@ -151,7 +151,8 @@ def test_a_timeout_fails_open_as_warn_by_default(monkeypatch):
     import httpx
     _model(monkeypatch, exc=httpx.ReadTimeout("slow model"))
     r = _run(_guard())
-    assert r.passed is False and r.action == "warn"
+    # Delivered, so still allowed; the action says it was never judged.
+    assert r.passed is True and r.action == "warn"
     assert r.details["sanitized_output"] == RAW
     assert r.details["fail_closed"] is False
     assert "slow model" in r.details["error"]
