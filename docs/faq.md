@@ -79,7 +79,7 @@ Full table at [Guardrails Catalog]({{ "/guardrails/" | relative_url }}).
 
 Yes — two complementary layers:
 
-- **Input**: `pii_detection` uses [Presidio](https://github.com/microsoft/presidio) to detect SSN, phone, email, credit card, and other PII patterns *before* the request reaches the LLM.
+- **Input**: `pii_detection` asks the guard model to classify SSN, phone, email, credit card, and other PII *before* the request reaches the upstream LLM. It is not Presidio; Presidio is used only by the output-side `pii_leakage` guardrail, and only if you install it yourself (it is not a declared dependency).
 - **Output**: `role_redaction` strips PII from responses based on the calling agent's clearance level (e.g., a `member` role never sees raw SSNs even if the model emits them).
 
 ### Does it stop prompt injection and jailbreaks?

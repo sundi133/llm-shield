@@ -186,6 +186,26 @@ policy that failed to evaluate. The default lets it pass, which is the historic
 behavior. Set it to `0` when your custom policies are the control rather than
 defense in depth, and an unevaluated policy will block instead.
 
+### A `redact` policy on output returns redacted text
+
+When an output policy's action is `redact`, the guardrail makes one extra model
+call to reproduce the response with only the violating spans replaced by
+`[REDACTED]`, and the gateway, the OpenAI-compatible route, and agent chat
+return that text instead of the original. The response carries
+`redacted_text` and `redacted: true`. If the model cannot produce a usable
+redaction (nothing returned, text unchanged, cut off, or the call failed) the
+response is withheld with `action: block` and `redaction_failed` naming the
+reason. A redaction is never silently replaced by the original.
+
+Before this change a `redact` verdict returned the original response under a
+`redact` label. Tenants who relied on that for detection only should set the
+policy action to `warn`. **`SHIELD_CHAT_REDACTION=off`** restores the old
+verdict-only behavior for rollback; it is not a supported mode.
+
+The same rule holds for `pii_leakage` with `auto_redact: true`, which now writes
+its masked text to `redacted_text` (it used to write `redacted_output`, which
+nothing read).
+
 ## Where to next
 
 - [Guardrails Catalog]({{ "/guardrails/" | relative_url }}) — what each guardrail in a template does

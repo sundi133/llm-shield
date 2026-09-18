@@ -11,6 +11,8 @@ aiosqlite
 cryptography>=42
 PyJWT[crypto]>=2.8
 python-multipart
+# Deterministic DLP floor (core/dlp/floor.py), reached by admin_app and routes_data_policies
+regex
 
 # Onboarding scan for registered MCP servers (api/routes_mcp_admin.py).
 # Imported behind a guard: without it the console reports

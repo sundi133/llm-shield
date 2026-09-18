@@ -7,6 +7,7 @@ from typing import Optional
 
 from core.models import GuardrailResult
 from guardrails.base import BaseGuardrail
+from core.text_utils import REDACTED_TEXT_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +201,11 @@ class PIILeakageGuardrail(BaseGuardrail):
                 "auto_redact": auto_redact,
             }
             if redacted_output is not None:
-                details["redacted_output"] = redacted_output
+                # `redacted_text` is the one key every consumer reads (see
+                # core.text_utils.modified_text). This used to be written as
+                # `redacted_output`, which nothing read, so auto_redact never
+                # changed the response the caller received.
+                details[REDACTED_TEXT_KEY] = redacted_output
 
             return GuardrailResult(
                 passed=False,

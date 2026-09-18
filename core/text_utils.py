@@ -170,3 +170,82 @@ def build_policy_messages(
     available = max(0, slot_context - reserved)
     history, _ = trim_history_to_budget(history, available)
     return history + base
+
+
+# ── Redaction contract shared by every output guardrail ─────────────────────
+#
+# One key for modified content. `pii_leakage` used to write `redacted_output`
+# while every consumer (gateway, OpenAI-compatible route, agent chat) read
+# `redacted_text`, so `auto_redact: true` detected, logged, and changed nothing
+# the caller received. The consumers now go through `modified_text` so the key
+# name is spelled in exactly one place. Spec: docs/spec-runtime-dlp-gaps.md, G2/G3.
+
+REDACTED_TEXT_KEY = "redacted_text"
+
+#: A model that is asked to redact puts the redacted content on its own line
+#: after this marker, never inside the CSV verdict: `findings` and a redacted
+#: record BOTH contain commas, and two comma-bearing free-text fields on one
+#: CSV line cannot be separated positionally.
+SANITIZED_MARKER = "SANITIZED:"
+
+#: A redaction wildly longer than its input is a rewrite, not a redaction.
+REDACTION_GROWTH_LIMIT = 1.5
+
+
+def modified_text(results) -> Optional[str]:
+    """The modified content the output pipeline produced, or None.
+
+    When more than one guardrail modified the text, the LAST one in pipeline
+    order wins. Each guardrail redacts the original independently, so this
+    is not a composition; it is the same last-wins rule the three consumer
+    routes each hand-rolled before this helper existed.
+    """
+    text: Optional[str] = None
+    for r in results or ():
+        details = getattr(r, "details", None)
+        if isinstance(details, dict) and isinstance(details.get(REDACTED_TEXT_KEY), str):
+            text = details[REDACTED_TEXT_KEY]
+    return text
+
+
+def split_marker(raw: str, marker: str = SANITIZED_MARKER) -> tuple[str, str]:
+    """(verdict_text, content_after_marker).
+
+    Everything after the marker is content, commas and newlines included. The
+    verdict is the last non-empty line before the marker, which tolerates a
+    header echo the same way parse_csv_response does.
+    """
+    text = (raw or "").strip()
+    idx = text.find(marker)
+    if idx == -1:
+        return text, ""
+    verdict = text[:idx].strip()
+    content = text[idx + len(marker):].strip()
+    lines = [ln for ln in verdict.splitlines() if ln.strip()]
+    return (lines[-1] if lines else verdict), content
+
+
+def usable_redaction(
+    sanitized: str, original: str, finish_reason: Optional[str] = None,
+) -> tuple[bool, str]:
+    """Whether a model-produced redaction can be returned in place of the original.
+
+    Every rejection here must escalate to a withhold. The defect this guards
+    against is "we said redact and returned the original", so a lenient
+    fallback would reintroduce it under a new name. Reasons:
+
+    * ``empty``      nothing came back
+    * ``unchanged``  claimed a redaction, changed nothing (exactly the old bug)
+    * ``rewritten``  grew past REDACTION_GROWTH_LIMIT: invented content
+    * ``truncated``  the backend reported finish_reason=length, so the tail of
+                     the original was cut, not redacted
+    """
+    if not sanitized or not sanitized.strip():
+        return False, "empty"
+    if finish_reason == "length":
+        return False, "truncated"
+    if sanitized.strip() == original.strip():
+        return False, "unchanged"
+    if len(sanitized) > len(original) * REDACTION_GROWTH_LIMIT:
+        return False, "rewritten"
+    return True, ""

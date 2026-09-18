@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse
 
 from core.llm_backend import async_llm_call
 from core.policy_mode import resolve_mode
+from core.text_utils import modified_text
 from core.tenant_pipeline import (
     apply_mode_to_pipeline_result,
     run_proxy_input_pipeline,
@@ -382,11 +383,10 @@ async def openai_chat_completions(request: Request):
         )
 
     # Apply any redaction/sanitization the output pipeline produced.
-    sanitized = False
-    for r in output_result.results:
-        if r.details and "redacted_text" in r.details:
-            llm_response_text = r.details["redacted_text"]
-            sanitized = True
+    modified = modified_text(output_result.results)
+    sanitized = modified is not None
+    if sanitized:
+        llm_response_text = modified
 
     finish_reason = "tool_calls" if allowed_tool_calls else "stop"
     x_shield = {

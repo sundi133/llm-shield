@@ -9374,7 +9374,10 @@ async function loadGlobalDataPolicy() {
         color:var(--text);font-family:ui-monospace,monospace;font-size:11px;padding:0.5rem;"
         >${_esc(JSON.stringify({ enabled: on,
             role_policies: p.role_policies || [],
-            sanitization_rules: p.sanitization_rules || [] }, null, 2))}</textarea>
+            sanitization_rules: p.sanitization_rules || [],
+            allowlist: p.allowlist || [],
+            thresholds: p.thresholds || [],
+            exact_match: p.exact_match || [] }, null, 2))}</textarea>
       <div style="margin-top:0.5rem;"><button class="small" onclick="saveGlobalDataPolicy()">Save default policy</button></div>
     </div>`;
 }
@@ -9698,6 +9701,38 @@ function openDataPolicyModal(toolName) {
           <div id="dp-roles-body">${rolesHtml}</div>
         </section>
 
+        <!-- Section 2b — Deterministic floor: allowlist, thresholds, exact match -->
+        <section class="dp-section">
+          <details class="dp-advanced-wrap" id="dp-floor-block" ${dpFloorHasContent(dp) ? 'open' : ''}>
+            <summary>
+              <span>Allowlist, thresholds &amp; exact match</span>
+              <span class="dp-advanced-copy">Optional. Deterministic checks that run before any model, on every path.</span>
+            </summary>
+            <div class="dp-advanced-body">
+              <div class="muted" style="font-size:11px;line-height:1.6;margin-bottom:0.5rem;">
+                <code>allowlist</code> — values or patterns a rule match may not act on (a test card number, your own email domain).
+                <code>thresholds</code> — more than <code>max_count</code> matches of a rule's <code>pattern_id</code> in one payload escalates it to block.
+                <code>exact_match</code> — salted SHA-256 digests of known values (customer IDs, account numbers). Build them with the helper below so raw values are never stored.
+              </div>
+              <textarea id="dp-floor-json" rows="9" spellcheck="false"
+                style="width:100%;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:ui-monospace,monospace;font-size:11px;padding:0.5rem;resize:vertical;"
+                >${_esc(JSON.stringify({
+                  allowlist:   dp.allowlist   || [],
+                  thresholds:  dp.thresholds  || [],
+                  exact_match: dp.exact_match || [] }, null, 2))}</textarea>
+              <div style="display:flex;gap:0.4rem;align-items:center;margin-top:0.5rem;flex-wrap:wrap;">
+                <input type="text" id="dp-floor-hash-list" placeholder="list_id (e.g. customers)" style="font-size:11px;padding:0.3rem 0.5rem;width:11rem;">
+                <input type="text" id="dp-floor-hash-salt" placeholder="salt" autocomplete="off" style="font-size:11px;padding:0.3rem 0.5rem;width:9rem;">
+                <input type="text" id="dp-floor-hash-values" placeholder="values, comma-separated (never stored)" style="font-size:11px;padding:0.3rem 0.5rem;flex:1;min-width:14rem;">
+                <button type="button" class="small" onclick="dpHashExactMatch()">Hash &amp; add list</button>
+              </div>
+              <div class="muted" style="font-size:10.5px;margin-top:0.3rem;">
+                Values are sent once to <code>/v1/data-policies/exact-match/hash</code>, which returns digests and stores nothing. Keep the salt: you need it to add values to the same list later.
+              </div>
+            </div>
+          </details>
+        </section>
+
         <!-- Section 3 — Compliance -->
         <section class="dp-section">
           <details class="dp-advanced-wrap">
@@ -9784,6 +9819,55 @@ function openDataPolicyModal(toolName) {
 }
 
 let _dpSanIdx = 0;
+
+function dpFloorHasContent(dp) {
+  return !!((dp.allowlist && dp.allowlist.length) ||
+            (dp.thresholds && dp.thresholds.length) ||
+            (dp.exact_match && dp.exact_match.length));
+}
+
+// Hash values for an exact_match list via the API (which stores nothing) and
+// append the resulting list to the floor JSON in the modal. Raw values never
+// leave this function except in that one request.
+async function dpHashExactMatch() {
+  const listId = (document.getElementById('dp-floor-hash-list')?.value || '').trim();
+  const salt   = (document.getElementById('dp-floor-hash-salt')?.value || '').trim();
+  const raw    = (document.getElementById('dp-floor-hash-values')?.value || '');
+  const values = raw.split(',').map(v => v.trim()).filter(Boolean);
+  if (!listId || !salt || !values.length) {
+    showToast('list_id, salt and at least one value are needed', 'error');
+    return;
+  }
+  const floorEl = document.getElementById('dp-floor-json');
+  let current = { allowlist: [], thresholds: [], exact_match: [] };
+  if (floorEl && floorEl.value.trim()) {
+    try { current = Object.assign(current, JSON.parse(floorEl.value)); }
+    catch (e) { showToast('Fix the JSON first: ' + e.message, 'error'); return; }
+  }
+  try {
+    const res = await fetch('/v1/data-policies/exact-match/hash', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+      body: JSON.stringify({ salt, values, normalized: 'strip_lower' }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail));
+    const lists = Array.isArray(current.exact_match) ? current.exact_match : [];
+    const existing = lists.find(l => l && l.list_id === listId && l.salt === salt);
+    if (existing) {
+      existing.hashes = Array.from(new Set([...(existing.hashes || []), ...data.hashes]));
+    } else {
+      lists.push({ list_id: listId, algorithm: 'sha256', salt, normalized: 'strip_lower',
+                   hashes: data.hashes, action: 'redact', replacement: '[REDACTED]' });
+    }
+    current.exact_match = lists;
+    floorEl.value = JSON.stringify(current, null, 2);
+    document.getElementById('dp-floor-hash-values').value = '';
+    showToast(`${data.count} value(s) hashed into "${listId}". Save the policy to keep it.`, 'success');
+  } catch (e) {
+    showToast('Hashing failed: ' + e.message, 'error');
+  }
+}
 
 function _dpEffectiveKinds(action, severity) {
   // Mirrors the server-side resolution: critical always blocks; otherwise
@@ -10616,6 +10700,25 @@ async function saveDataPolicy(toolName) {
     sanRules.push(rule);
   });
 
+  // Deterministic floor fields (allowlist / thresholds / exact_match). A
+  // textarea that fails to parse must stop the save: posting without the
+  // fields would wipe what is stored, since the API treats absent as empty.
+  let floorFields = { allowlist: [], thresholds: [], exact_match: [] };
+  const floorEl = document.getElementById('dp-floor-json');
+  if (floorEl && floorEl.value.trim()) {
+    try {
+      const parsed = JSON.parse(floorEl.value);
+      floorFields = {
+        allowlist:   Array.isArray(parsed.allowlist)   ? parsed.allowlist   : [],
+        thresholds:  Array.isArray(parsed.thresholds)  ? parsed.thresholds  : [],
+        exact_match: Array.isArray(parsed.exact_match) ? parsed.exact_match : [],
+      };
+    } catch (e) {
+      showToast('Allowlist / thresholds / exact match is not valid JSON: ' + e.message, 'error');
+      return;
+    }
+  }
+
   const policy = {
     tool_name: toolName,
     sanitization_rules: sanRules,
@@ -10625,6 +10728,7 @@ async function saveDataPolicy(toolName) {
     retention_days: retention,
     sanitization_intent: intent,
     sanitization_mode: mode,
+    ...floorFields,
   };
 
   try {
@@ -10640,7 +10744,9 @@ async function saveDataPolicy(toolName) {
       DATA_POLICIES_CACHE[toolName] = policy;
       displayDataPolicies();
     } else {
-      showToast(data.detail || 'Failed to save', 'error');
+      // 400 from the floor validator carries {errors: [...]}: name every one.
+      const errs = data && data.detail && Array.isArray(data.detail.errors) ? data.detail.errors : null;
+      showToast(errs ? errs.join('; ') : (typeof data.detail === 'string' ? data.detail : 'Failed to save'), 'error');
     }
   } catch (e) {
     showToast('Network error: ' + e.message, 'error');

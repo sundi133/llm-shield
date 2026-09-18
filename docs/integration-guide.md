@@ -923,7 +923,7 @@ These run first, in parallel. If any blocks, the slow tier is skipped entirely.
 | Keyword Blocklist | `keyword_blocklist` | Aho-Corasick keyword matching |
 | Length Limit | `length_limit` | Max character and token count |
 | Regex Pattern | `regex_pattern` | Configurable regex rules (SSN, passwords, etc.) |
-| PII Detection | `pii_detection` | Detects phone, email, SSN, credit card, IP (presidio) |
+| PII Detection | `pii_detection` | LLM classifier for phone, email, SSN, credit card, IP |
 | Language Detection | `language_detection` | Blocks non-allowed languages |
 | Sentiment | `sentiment` | Flags extremely negative input |
 | Rate Limiter | `rate_limiter` | Per-client sliding window rate limiting |
