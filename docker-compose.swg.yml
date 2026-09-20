@@ -74,6 +74,43 @@ services:
       - ./deploy/swg/ssl:/etc/squid/ssl:ro
       - squid-ssldb:/var/spool/squid
 
+  # WebSocket screening. Opt-in via a profile, because it is a second
+  # interception point and most deployments should decide to run it rather
+  # than discover it running:
+  #
+  #   docker compose -f docker-compose.swg.yml --profile ws up -d
+  #
+  # Why it exists: ICAP adapts HTTP messages, so once a client upgrades to a
+  # WebSocket the adapter sees nothing, and Squid cannot even carry the upgrade
+  # on a bumped connection. Codex CLI puts its whole conversation in a socket,
+  # so without this it breaks AND goes unscreened. Route its hosts here with
+  # SHIELD_WS_HOSTS; everything else keeps going through Squid.
+  shield-ws:
+    profiles: ["ws"]
+    build:
+      context: .
+      dockerfile: Dockerfile.wsproxy
+    image: shield-ws
+    restart: unless-stopped
+    ports:
+      # Loopback only: this terminates TLS for AI hosts, so it is not something
+      # to expose on an interface by accident.
+      - "127.0.0.1:3129:3129"
+    environment:
+      SHIELD_API_BASE: ${SHIELD_API_BASE:-https://api.guardrails.votal.ai}
+      SHIELD_API_KEY_FILE: /run/secrets/shield_api_key
+      # monitor reports what would have blocked and closes nothing.
+      SHIELD_WS_MODE: ${SHIELD_WS_MODE:-monitor}
+      # A message we could not judge is not a message we approved.
+      SHIELD_WS_FAIL_OPEN: ${SHIELD_WS_FAIL_OPEN:-0}
+      SHIELD_WS_MAX_MESSAGE: ${SHIELD_WS_MAX_MESSAGE:-1048576}
+      # Same host list the adapter uses, so one answer to "is this inspected".
+      SHIELD_ICAP_AI_HOSTS: ${SHIELD_ICAP_AI_HOSTS:-}
+    secrets:
+      - shield_api_key
+    volumes:
+      - ./deploy/swg/ssl/ca.pem:/ca/ca.pem:ro
+
 secrets:
   shield_api_key:
     file: ./deploy/swg/shield_api_key.txt

@@ -1,0 +1,51 @@
+# shield-ws: WebSocket-aware screening proxy.
+#
+# Why this exists as a separate image and process: ICAP adapts HTTP messages,
+# and after a 101 the connection is an opaque tunnel, so the ICAP adapter can
+# never see what a WebSocket carries. Squid cannot carry one on a bumped
+# connection either (it drops the hop-by-hop upgrade headers and the origin
+# answers 405), so a client like Codex CLI breaks AND goes unscreened. This
+# terminates the upgrade, screens client-to-server messages with the same
+# tenant policy, and forwards what passes.
+#
+# Build:  docker build -f Dockerfile.wsproxy -t shield-ws .
+# Run:    docker run -p 3129:3129 -e SHIELD_API_KEY_FILE=/run/secrets/key \
+#           -v ./deploy/swg/ssl:/certs:ro shield-ws
+#
+# See docs/spec-websocket-inspection.md.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# mitmproxy only. The screening logic it calls has no dependency of its own.
+COPY requirements-ws.txt .
+RUN pip install --no-cache-dir -r requirements-ws.txt
+
+# The same package the ICAP adapter uses, so both transports share one policy
+# implementation rather than drifting into two.
+COPY icap/ icap/
+
+# Runs on decrypted corporate traffic: non-root, and no web UI. `--no-web`
+# matters: mitmproxy's default tooling would otherwise expose an admin surface
+# next to a process that sees every prompt.
+RUN useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin shield \
+    && mkdir -p /home/shield/.mitmproxy && chown -R 65532 /home/shield /app
+USER 65532
+ENV HOME=/home/shield
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    SHIELD_WS_PORT=3129 \
+    SHIELD_WS_MODE=monitor \
+    SHIELD_WS_MAX_MESSAGE=1048576 \
+    SHIELD_WS_FAIL_OPEN=0
+
+EXPOSE 3129
+
+# The CA is mounted read-only at /ca/ca.pem, not baked: it is the operator's
+# key and belongs somewhere they can rotate and destroy it. mitmproxy wants it
+# as `mitmproxy-ca.pem` (certificate and key in one file, the same shape Squid's
+# tls-cert/tls-key already uses) inside a confdir it can also WRITE to, so the
+# file is copied into the container's own confdir at boot rather than the mount
+# being made writable.
+CMD ["sh", "-c", "set -e; mkdir -p \"$HOME/.mitmproxy\"; cp /ca/ca.pem \"$HOME/.mitmproxy/mitmproxy-ca.pem\"; exec mitmdump --no-web --listen-host 0.0.0.0 --listen-port ${SHIELD_WS_PORT} --set termlog_verbosity=warn --set flow_detail=0 -s icap/ws_addon.py"]
