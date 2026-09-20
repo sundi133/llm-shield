@@ -149,6 +149,14 @@ surface:
 | Code | `4403` (private-use range, chosen to mirror HTTP 403) |
 | Reason | `Blocked by your organization's AI policy: <rule> (ref <txn>)` |
 
+**Known gap, measured on 2026-09-20.** The code and reason are set on the flow
+and recorded, but `flow.kill()` tears the connection down without guaranteeing
+a close frame reaches the client. In the live test the client observed a
+timeout rather than `4403`, so today the user sees "connection lost" and the
+reference exists only in the operator's log. Task 6 injects a real close frame;
+until then the block is enforced but not explained, which is precisely the
+complaint this spec makes about the 405.
+
 **RFC 6455 caps the close reason at 123 bytes**, so the reason is built
 reference-first and truncated on a character boundary, never mid-UTF-8.
 
@@ -295,6 +303,9 @@ One branch, `feat/websocket-inspection`, a commit per task.
    block, logging, counters. The unit tests above.
 5. **Routing and docs.** PAC learns `SHIELD_WS_HOSTS`; operator documentation;
    the Codex acceptance run.
+6. **A close the user can read.** Inject a real close frame carrying 4403 and
+   the reference, so a blocked employee sees a policy message rather than a
+   dropped connection. Verified against a live client, not only in unit tests.
 
 **Flagged, not in this branch:** server-to-client screening, provider-shaped
 error injection, HTTP/2 Extended CONNECT, frame-level redaction.

@@ -17,17 +17,21 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# mitmproxy only. The screening logic it calls has no dependency of its own.
-COPY requirements-ws.txt .
-RUN pip install --no-cache-dir -r requirements-ws.txt
+# mitmproxy for the transport, plus the adapter's own runtime: this image
+# screens with the SAME icap/ package, so it needs what that package imports
+# (httpx for the policy bundle, regex for bounded pattern matching, brotli and
+# zstandard for compressed payloads). Installing only mitmproxy builds a clean
+# image that then dies at boot on `No module named httpx`.
+COPY requirements-ws.txt requirements-icap.txt ./
+RUN pip install --no-cache-dir -r requirements-ws.txt -r requirements-icap.txt
 
 # The same package the ICAP adapter uses, so both transports share one policy
 # implementation rather than drifting into two.
 COPY icap/ icap/
 
-# Runs on decrypted corporate traffic: non-root, and no web UI. `--no-web`
-# matters: mitmproxy's default tooling would otherwise expose an admin surface
-# next to a process that sees every prompt.
+# Runs on decrypted corporate traffic, so: non-root, and `mitmdump` rather than
+# `mitmweb`. mitmdump has no web UI at all, which is the point: nothing should
+# expose an admin surface next to a process that sees every prompt.
 RUN useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin shield \
     && mkdir -p /home/shield/.mitmproxy && chown -R 65532 /home/shield /app
 USER 65532
@@ -48,4 +52,4 @@ EXPOSE 3129
 # tls-cert/tls-key already uses) inside a confdir it can also WRITE to, so the
 # file is copied into the container's own confdir at boot rather than the mount
 # being made writable.
-CMD ["sh", "-c", "set -e; mkdir -p \"$HOME/.mitmproxy\"; cp /ca/ca.pem \"$HOME/.mitmproxy/mitmproxy-ca.pem\"; exec mitmdump --no-web --listen-host 0.0.0.0 --listen-port ${SHIELD_WS_PORT} --set termlog_verbosity=warn --set flow_detail=0 -s icap/ws_addon.py"]
+CMD ["sh", "-c", "set -e; mkdir -p \"$HOME/.mitmproxy\"; cp /ca/ca.pem \"$HOME/.mitmproxy/mitmproxy-ca.pem\"; exec mitmdump --listen-host 0.0.0.0 --listen-port ${SHIELD_WS_PORT} --set termlog_verbosity=info --set flow_detail=0 -s icap/ws_addon.py"]
