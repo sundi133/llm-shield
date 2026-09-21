@@ -19,6 +19,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import parse_qs, unquote_plus
+
+from icap import protowire
 
 # Bodies are already capped at SHIELD_ICAP_MAX_BODY (1 MiB) before we get here.
 # This second cap bounds the *extracted* text, which matters because a
@@ -46,6 +49,7 @@ _NON_TEXT_TYPES = frozenset(
 PROVIDER_OPENAI = "openai"
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_GOOGLE = "google"
+PROVIDER_COPILOT = "copilot"
 PROVIDER_JSON = "json"
 PROVIDER_RAW = "raw"
 
@@ -217,6 +221,145 @@ def _provider_hint(host: str, path: str) -> str:
     return ""
 
 
+# claude.ai's web app sends each chat turn to this Connect-RPC method with the
+# binary protobuf codec. Measured against a real request (16,776 bytes):
+#
+#   1        session and conversation ids
+#   2        the action
+#     2.1    message id
+#     2.2    parent message id
+#     2.3    the text the user typed           <- the turn
+#     2.7.2  model name
+#     2.8    ~16 KB: the names of every enabled tool and connector
+#
+# Matched on the service and method, not the package, because the package
+# carries a version (`v1alpha`) that will move before the method does.
+_CLAUDE_TURN_METHOD = "conversationservice/performaction"
+_CLAUDE_TURN_FIELD = (2, 3)
+
+
+# gemini.google.com posts each chat turn as a URL-encoded form. The field that
+# matters, `f.req`, holds JSON whose second element is MORE JSON, as a string.
+# Measured against a real request:
+#
+#   f.req = [null, "<inner>"]
+#   inner[0][0]   the text the user typed           <- the turn
+#   inner[1][0]   UI language
+#   inner[2]      conversation ids
+#   inner[3]      ~2.7 KB anti-abuse attestation token (starts with "!")
+#   inner[4]      request id
+#
+# The form also carries `at`, an anti-forgery token bound to the Google login.
+# Neither token is ever part of the turn.
+_GEMINI_TURN_METHOD = "bardfrontendservice/streamgenerate"
+
+
+def _method_is(path: str, suffix: str) -> bool:
+    # Service and method, not the package: packages carry versions (`v1alpha`)
+    # and internal names (`assistant.lamda`) that move before the method does.
+    return (path or "").split("?", 1)[0].lower().endswith(suffix)
+
+
+def _turn(provider: str, turn: str, body_text: str, max_chars: int) -> Extracted:
+    """`last_user` is the turn alone, so Tier 2 is asked about what was typed
+    and nothing riding along with it. `text` carries the turn AND the whole
+    body, so Tier 1 still sweeps everything it swept before."""
+    sink = _Collector(max_chars)
+    sink.add(turn)
+    sink.add(body_text)
+    return Extracted(
+        provider=provider,
+        text=sink.text,
+        last_user=turn,
+        turns=1,
+        truncated=sink.truncated,
+        parsed=True,
+    )
+
+
+def _claude_rpc(body: bytes, host: str, path: str, max_chars: int) -> Extracted | None:
+    """The claude.ai turn, or None to let the generic path handle the body."""
+    if "claude.ai" not in (host or "").lower() or not _method_is(path, _CLAUDE_TURN_METHOD):
+        return None
+    turn = "\n".join(s for s in protowire.strings_at(body, _CLAUDE_TURN_FIELD) if s.strip())
+    if not turn:
+        # PerformAction also carries actions with no typed text (the 98-byte
+        # ones seen alongside each turn). Nothing to screen as a turn.
+        return None
+    return _turn(PROVIDER_ANTHROPIC, turn, body.decode("utf-8", errors="replace"), max_chars)
+
+
+def _gemini_web(body: bytes, host: str, path: str, max_chars: int) -> Extracted | None:
+    """The gemini.google.com turn, or None to let the generic path handle it."""
+    if "gemini.google.com" not in (host or "").lower() or not _method_is(path, _GEMINI_TURN_METHOD):
+        return None
+    try:
+        form = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        outer = json.loads(form["f.req"][0])
+        inner = json.loads(outer[1])
+        turn = inner[0][0]
+    except (UnicodeDecodeError, KeyError, IndexError, TypeError, ValueError, RecursionError):
+        return None
+    if not isinstance(turn, str) or not turn.strip():
+        return None
+    # Decoded for Tier 1 as well. The raw fallback used to hand the regexes the
+    # URL-ENCODED body, so an address typed into Gemini arrived as
+    # `name%40bank.com` and no email pattern could match it.
+    return _turn(PROVIDER_GOOGLE, turn, unquote_plus(body.decode("utf-8", errors="replace")), max_chars)
+
+
+#: SignalR's JSON hub protocol frames a message with this record separator, and
+#: a buffer can hold several (the turn, then a Metrics frame). Splitting on it is
+#: the whole "parser" -- no signalr client library.
+_SIGNALR_RS = b"\x1e"
+_COPILOT_HOSTS = ("copilot.microsoft.com", "substrate.office.com")
+
+
+def _copilot_signalr(body: bytes, host: str, path: str, max_chars: int) -> Extracted | None:
+    """A Microsoft Copilot chat turn, or None to let the generic path run.
+
+    Both consumer Copilot and Microsoft 365 Copilot carry the turn over a
+    WebSocket in SignalR's JSON hub protocol. Measured from a real M365 frame:
+
+        {"arguments":[{...,"message":{"author":"user","text":"<turn>",
+          "messageType":"Chat",...}}],"target":"chat","type":4}
+
+    keyed on host AND a chat-hub path, so a mail or calendar call to
+    substrate.office.com (the same host) is never mistaken for a turn.
+    """
+    h = (host or "").lower()
+    if not any(h == d or h.endswith("." + d) for d in _COPILOT_HOSTS):
+        return None
+    if "chathub" not in (path or "").lower() and "/chat" not in (path or "").lower():
+        return None
+    turn = ""
+    for record in body.split(_SIGNALR_RS):
+        record = record.strip()
+        if not record:
+            continue
+        try:
+            obj = json.loads(record)
+        except (ValueError, RecursionError):
+            continue
+        # type 4 is a streamed invocation; the Metrics frame is type 1.
+        if not isinstance(obj, dict) or obj.get("type") != 4:
+            continue
+        args = obj.get("arguments")
+        msg = args[0].get("message") if isinstance(args, list) and args and isinstance(args[0], dict) else None
+        if isinstance(msg, dict) and msg.get("author") == "user":
+            text = msg.get("text")
+            if isinstance(text, str) and text.strip():
+                turn = text
+                break
+    if not turn:
+        return None
+    return _turn(PROVIDER_COPILOT, turn, body.decode("utf-8", errors="replace"), max_chars)
+
+
+# Web apps whose turn is not JSON at the top level, tried before the JSON path.
+_WEB_APP_TURNS = (_claude_rpc, _gemini_web, _copilot_signalr)
+
+
 def extract(
     body: bytes | str,
     host: str = "",
@@ -225,6 +368,10 @@ def extract(
 ) -> Extracted:
     """Extract screenable text from one AI request body. Never raises."""
     if isinstance(body, bytes):
+        for web_app in _WEB_APP_TURNS:
+            got = web_app(body, host, path, max_chars)
+            if got is not None:
+                return got
         raw = body.decode("utf-8", errors="replace")
     else:
         raw = body or ""
