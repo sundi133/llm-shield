@@ -344,6 +344,38 @@ def test_claude_web_turn_reaches_tier_2_as_only_the_typed_text():
     assert [s["message"] for s in seen] == [PRICING_PROMPT]
 
 
+def test_gemini_web_turn_reaches_tier_2_without_its_tokens():
+    """Same break as claude.ai, different wire format. The policy engine must
+    be asked about the typed sentence, and must never be handed the login's
+    anti-forgery token or the attestation token from the same form."""
+    from tests.test_icap_extract import (
+        FAKE_ATTESTATION, FAKE_XSRF, GEMINI_TURN_PATH, PRICING_PROMPT, gemini_turn,
+    )
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.content.decode())
+        return httpx.Response(200, json=PASS)
+
+    async def go():
+        client = ShieldClient(cfg(), transport(handler))
+        client.start()
+        req = IcapRequest(
+            method="REQMOD", service="/screen", headers={},
+            body=gemini_turn(PRICING_PROMPT),
+            http_uri=GEMINI_TURN_PATH, http_headers={"host": "gemini.google.com"},
+        )
+        assert client.screenable(req) is True
+        await ScreenPipeline(_allow_tier1, client, cfg())(req)
+        await client.drain()
+        await client.aclose()
+
+    asyncio.run(go())
+    assert [json.loads(s)["message"] for s in seen] == [PRICING_PROMPT]
+    assert not any(FAKE_XSRF in s or FAKE_ATTESTATION in s for s in seen)
+
+
 def test_missing_api_key_makes_nothing_screenable():
     async def go():
         client = ShieldClient(cfg(api_key=""))

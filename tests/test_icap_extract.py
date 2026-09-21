@@ -427,6 +427,83 @@ def test_claude_rpc_shape_is_not_claimed_on_another_host():
     assert got.parsed is False
 
 
+# ── gemini.google.com (form-encoded, JSON inside a JSON string) ─────────────
+#
+# Structural twin of a real StreamGenerate request with fake tokens. The
+# original carries a Google anti-abuse attestation token and is not committed.
+
+GEMINI_TURN_PATH = "/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate"
+FAKE_ATTESTATION = "!FAKE-attestation-" + "x" * 64
+FAKE_XSRF = "FAKE_XSRF_TOKEN:1789000000000"
+
+
+def gemini_turn(prompt, at: str = FAKE_XSRF) -> bytes:
+    from urllib.parse import urlencode
+
+    inner = [None] * 30
+    inner[0] = [prompt, 0, None, None, None, None, 0]
+    inner[1] = ["en"]
+    inner[2] = ["", "", "", None, None, None, None, None, None, ""]
+    inner[3] = FAKE_ATTESTATION
+    inner[4] = "0" * 32
+    inner[6], inner[7] = [0], 1
+    freq = json.dumps([None, json.dumps(inner)])
+    return (urlencode({"f.req": freq, "at": at}) + "&").encode()
+
+
+def test_gemini_turn_is_exactly_what_was_typed():
+    """Gemini's form body failed json.loads, parsed as raw, and skipped Tier 2:
+    the margin prompt blocked on ChatGPT and was answered on Gemini."""
+    got = extract(gemini_turn(PRICING_PROMPT), host="gemini.google.com", path=GEMINI_TURN_PATH)
+
+    assert got.provider == PROVIDER_GOOGLE
+    assert got.parsed is True
+    assert got.last_user == PRICING_PROMPT
+
+
+def test_gemini_tokens_never_reach_the_turn():
+    """The form carries a login-bound anti-forgery token and a ~2.7 KB
+    attestation token. Neither is something the user said."""
+    got = extract(gemini_turn(PRICING_PROMPT), host="gemini.google.com", path=GEMINI_TURN_PATH)
+
+    assert FAKE_XSRF not in got.last_user
+    assert FAKE_ATTESTATION not in got.last_user
+
+
+def test_gemini_tier_1_sees_decoded_text():
+    """The raw fallback handed the regexes the URL-ENCODED body, so an address
+    typed into Gemini arrived as `name%40bank.com` and no email rule matched.
+    Tier 1 gets the decoded turn now."""
+    got = extract(gemini_turn("email john.doe@bankco.com about his account"),
+                  host="gemini.google.com", path=GEMINI_TURN_PATH)
+
+    assert "john.doe@bankco.com" in got.text
+
+
+@pytest.mark.parametrize("body", [
+    b"at=only-a-token&",                                      # no f.req
+    b"f.req=not%20json&",                                     # f.req is not JSON
+    b"f.req=%5Bnull%2C%22not%20json%20either%22%5D&",         # inner is not JSON
+    b"f.req=%5Bnull%2C%22%5B%5B42%5D%5D%22%5D&",              # turn is not a string
+    b"f.req=%5Bnull%5D&",                                     # outer too short
+    b"\xff\xfe binary",
+])
+def test_gemini_unexpected_body_falls_back_and_never_raises(body):
+    got = extract(body, host="gemini.google.com", path=GEMINI_TURN_PATH)
+
+    assert got.parsed is False
+
+
+def test_gemini_empty_turn_is_not_claimed():
+    assert extract(gemini_turn("   "), host="gemini.google.com", path=GEMINI_TURN_PATH).parsed is False
+
+
+def test_gemini_shape_is_not_claimed_on_another_host():
+    got = extract(gemini_turn(PRICING_PROMPT), host="example.com", path=GEMINI_TURN_PATH)
+
+    assert got.parsed is False
+
+
 def test_recognised_shape_with_no_readable_text_is_salvaged():
     """The general guard behind the chatgpt.com fix.
 

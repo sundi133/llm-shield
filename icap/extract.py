@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import parse_qs, unquote_plus
 
 from icap import protowire
 
@@ -236,33 +237,78 @@ _CLAUDE_TURN_METHOD = "conversationservice/performaction"
 _CLAUDE_TURN_FIELD = (2, 3)
 
 
-def _claude_rpc(body: bytes, host: str, path: str, max_chars: int) -> Extracted | None:
-    """The claude.ai turn, or None to let the generic path handle the body.
+# gemini.google.com posts each chat turn as a URL-encoded form. The field that
+# matters, `f.req`, holds JSON whose second element is MORE JSON, as a string.
+# Measured against a real request:
+#
+#   f.req = [null, "<inner>"]
+#   inner[0][0]   the text the user typed           <- the turn
+#   inner[1][0]   UI language
+#   inner[2]      conversation ids
+#   inner[3]      ~2.7 KB anti-abuse attestation token (starts with "!")
+#   inner[4]      request id
+#
+# The form also carries `at`, an anti-forgery token bound to the Google login.
+# Neither token is ever part of the turn.
+_GEMINI_TURN_METHOD = "bardfrontendservice/streamgenerate"
 
-    `last_user` gets field 2.3 alone, so Tier 2 is sent what was typed and not
-    the tool inventory riding along with it. `text` still carries the whole
-    body, so Tier 1 sweeps exactly what it swept before this handler existed.
-    """
-    if "claude.ai" not in (host or "").lower():
-        return None
-    if not (path or "").split("?", 1)[0].lower().endswith(_CLAUDE_TURN_METHOD):
-        return None
-    turn = "\n".join(s for s in protowire.strings_at(body, _CLAUDE_TURN_FIELD) if s.strip())
-    if not turn:
-        # PerformAction also carries actions with no typed text (the 98-byte
-        # ones seen alongside each turn). Nothing to screen as a turn.
-        return None
+
+def _method_is(path: str, suffix: str) -> bool:
+    # Service and method, not the package: packages carry versions (`v1alpha`)
+    # and internal names (`assistant.lamda`) that move before the method does.
+    return (path or "").split("?", 1)[0].lower().endswith(suffix)
+
+
+def _turn(provider: str, turn: str, body_text: str, max_chars: int) -> Extracted:
+    """`last_user` is the turn alone, so Tier 2 is asked about what was typed
+    and nothing riding along with it. `text` carries the turn AND the whole
+    body, so Tier 1 still sweeps everything it swept before."""
     sink = _Collector(max_chars)
     sink.add(turn)
-    sink.add(body.decode("utf-8", errors="replace"))
+    sink.add(body_text)
     return Extracted(
-        provider=PROVIDER_ANTHROPIC,
+        provider=provider,
         text=sink.text,
         last_user=turn,
         turns=1,
         truncated=sink.truncated,
         parsed=True,
     )
+
+
+def _claude_rpc(body: bytes, host: str, path: str, max_chars: int) -> Extracted | None:
+    """The claude.ai turn, or None to let the generic path handle the body."""
+    if "claude.ai" not in (host or "").lower() or not _method_is(path, _CLAUDE_TURN_METHOD):
+        return None
+    turn = "\n".join(s for s in protowire.strings_at(body, _CLAUDE_TURN_FIELD) if s.strip())
+    if not turn:
+        # PerformAction also carries actions with no typed text (the 98-byte
+        # ones seen alongside each turn). Nothing to screen as a turn.
+        return None
+    return _turn(PROVIDER_ANTHROPIC, turn, body.decode("utf-8", errors="replace"), max_chars)
+
+
+def _gemini_web(body: bytes, host: str, path: str, max_chars: int) -> Extracted | None:
+    """The gemini.google.com turn, or None to let the generic path handle it."""
+    if "gemini.google.com" not in (host or "").lower() or not _method_is(path, _GEMINI_TURN_METHOD):
+        return None
+    try:
+        form = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        outer = json.loads(form["f.req"][0])
+        inner = json.loads(outer[1])
+        turn = inner[0][0]
+    except (UnicodeDecodeError, KeyError, IndexError, TypeError, ValueError, RecursionError):
+        return None
+    if not isinstance(turn, str) or not turn.strip():
+        return None
+    # Decoded for Tier 1 as well. The raw fallback used to hand the regexes the
+    # URL-ENCODED body, so an address typed into Gemini arrived as
+    # `name%40bank.com` and no email pattern could match it.
+    return _turn(PROVIDER_GOOGLE, turn, unquote_plus(body.decode("utf-8", errors="replace")), max_chars)
+
+
+# Web apps whose turn is not JSON at the top level, tried before the JSON path.
+_WEB_APP_TURNS = (_claude_rpc, _gemini_web)
 
 
 def extract(
@@ -273,9 +319,10 @@ def extract(
 ) -> Extracted:
     """Extract screenable text from one AI request body. Never raises."""
     if isinstance(body, bytes):
-        rpc = _claude_rpc(body, host, path, max_chars)
-        if rpc is not None:
-            return rpc
+        for web_app in _WEB_APP_TURNS:
+            got = web_app(body, host, path, max_chars)
+            if got is not None:
+                return got
         raw = body.decode("utf-8", errors="replace")
     else:
         raw = body or ""
