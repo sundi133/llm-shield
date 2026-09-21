@@ -23,7 +23,7 @@ import uuid
 
 from mitmproxy import ctx
 
-from icap.config import IcapConfig
+from icap.config import IcapConfig, redact_path
 from icap.policy import PolicyCache
 from icap.ws_screen import (
     ALLOW,
@@ -163,7 +163,7 @@ class ShieldWebSocketScreen:
         log.info(
             "icap txn=%s transport=ws decision=%s host=%s path=%s opcode=%s "
             "frames=%d msg_bytes=%d provider=%s parsed=%s truncated=%s rule=%s reason=%s",
-            txn, d.action, host, path,
+            txn, d.action, host, redact_path(path),
             "text" if d.reason != "ws_binary" else "binary",
             d.frames, d.msg_bytes, d.provider or "-", d.parsed, d.truncated,
             d.rule_id or "-", d.reason if d.action in (SKIP, ALLOW) else "-",

@@ -464,6 +464,40 @@ def test_no_body_logging(caplog):
     assert "rule=aws-secret-key" in caplog.text
 
 
+@pytest.mark.parametrize("path,expected", [
+    ("/v1/messages", "/v1/messages"),
+    ("/cl/collect?access_token=secret", "/cl/collect?<redacted>"),
+    ("/a?b=1?c=2", "/a?<redacted>"),          # only the first ? splits
+    ("", "-"),
+    ("/x?", "/x?<redacted>"),                  # empty query is still a query
+])
+def test_redact_path(path, expected):
+    from icap.config import redact_path
+    assert redact_path(path) == expected
+
+
+def test_query_string_is_not_logged(caplog):
+    """AI providers put credentials in the query: claude.ai's telemetry carries
+    dd-api-key, M365 Copilot's socket carries a full Entra access_token. Squid
+    strips these; this path must too, or the log becomes the leak."""
+    token = "eyJ0eXAiOiJKV1QiLIVE-BEARER-TOKEN"
+    path = f"/cl/collect?access_token={token}&dd-api-key=pub_secret"
+
+    with caplog.at_level(logging.DEBUG, logger="shield.icap"):
+        with Harness(IcapConfig(mode="enforce"), CountingScreener(BLOCK)) as h:
+            sock = h.connect()
+            sock.sendall(build_reqmod(path=path))
+            recv_head(sock)
+            sock.close()
+
+    assert token not in caplog.text
+    assert "dd-api-key" not in caplog.text
+    assert "pub_secret" not in caplog.text
+    # The path minus its query is still there: a truncated path with no query
+    # is exactly what an operator needs to see which endpoint this was.
+    assert "path=/cl/collect?<redacted>" in caplog.text
+
+
 # ── never drop a connection without answering ────────────────────────────────
 
 

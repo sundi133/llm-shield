@@ -130,6 +130,22 @@ def _api_base(raw: str) -> str:
     return upgraded
 
 
+def redact_path(path: str) -> str:
+    """A request path safe to log: the query string dropped, not recorded.
+
+    Squid strips these with `strip_query_terms`; our services must match it,
+    because AI providers routinely put credentials in the query. Measured:
+    claude.ai's telemetry carries `?dd-api-key=...`, and Microsoft 365 Copilot's
+    chat socket carries a full Entra `access_token=...` in the URL. A log line
+    is not a place either belongs, so the whole query is replaced rather than
+    filtered by key name -- a filter is a list of the leaks you already know.
+    """
+    if not path:
+        return "-"
+    base, sep, _ = path.partition("?")
+    return base + "?<redacted>" if sep else base
+
+
 def _read_secret(name: str) -> str:
     """Read a credential from `<NAME>_FILE` if present, else `<NAME>`.
 
