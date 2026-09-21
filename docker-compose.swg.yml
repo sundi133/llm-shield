@@ -31,7 +31,15 @@ services:
       # Start in monitor. Flip to enforce only after reviewing what would have
       # blocked (docs: /policy-lifecycle/).
       SHIELD_ICAP_MODE: ${SHIELD_ICAP_MODE:-monitor}
-      SHIELD_ICAP_ALLOWED_CLIENTS: 172.16.0.0/12,10.0.0.0/8,127.0.0.0/8
+      # Who may use the ICAP service. All three RFC1918 blocks, not just the
+      # one Docker usually picks: compose networks come out of 172.17.0.0/16
+      # upward until that pool is exhausted, and then Docker falls back to
+      # 192.168.0.0/16. On a machine with enough networks the proxy lands there,
+      # every REQMOD is refused, and with bypass=off Squid answers 500
+      # ERR_ICAP_FAILURE -- which looks like the adapter is broken rather than
+      # like it does not recognise its own proxy. squid.conf's localnet ACL has
+      # always listed all three; these two lists must agree.
+      SHIELD_ICAP_ALLOWED_CLIENTS: ${SHIELD_ICAP_ALLOWED_CLIENTS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8}
       # The tenant this deployment is FOR. Optional, and never selects a
       # tenant -- the API key does that. Setting it makes a wrong key a loud
       # refusal instead of a fleet quietly governed by someone else's policy.

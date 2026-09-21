@@ -139,6 +139,35 @@ def test_compose_uses_a_secret_not_an_inline_key():
     assert svc["read_only"] is True
 
 
+def test_compose_admits_every_rfc1918_block():
+    """Docker allocates compose networks from 172.17.0.0/16 upward and falls
+    back to 192.168.0.0/16 once that pool is used up. An allowlist missing one
+    block works on a clean machine and refuses the proxy on a busy one, where
+    bypass=off turns the refusal into 500 ERR_ICAP_FAILURE -- which reads as a
+    broken adapter rather than one that does not recognise its own gateway.
+    Measured: swg-rollout_default came up on 192.168.0.0/20.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text())
+    env = compose["services"]["shield-icap"]["environment"]
+    allowed = _effective_default(env["SHIELD_ICAP_ALLOWED_CLIENTS"])
+    for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"):
+        assert block in allowed, f"{block} is a private network the proxy can land on"
+
+
+def test_compose_allowlist_agrees_with_squids_own():
+    """Two lists answering "who may use this proxy" that disagree is a bug
+    waiting for whichever range the next machine happens to pick."""
+    compose = yaml.safe_load(COMPOSE.read_text())
+    allowed = _effective_default(
+        compose["services"]["shield-icap"]["environment"]["SHIELD_ICAP_ALLOWED_CLIENTS"]
+    )
+    localnet = next(
+        l for l in SQUID_CONF.read_text().splitlines() if l.startswith("acl localnet src")
+    )
+    for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"):
+        assert (block in allowed) == (block in localnet), f"{block} is in one list but not the other"
+
+
 def test_compose_does_not_publish_icap_publicly():
     """Port 1344 answers with a verdict, so exposing it leaks the DLP patterns
     by oracle."""
