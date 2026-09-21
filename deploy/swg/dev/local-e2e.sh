@@ -54,6 +54,19 @@ bad()  { printf '  %sFAIL%s %s\n' "$R" "$Z" "$1"; FAILED=1; }
 note() { printf '  %s..%s   %s\n' "$Y" "$Z" "$1"; }
 FAILED=0
 
+# ── do not build through the proxy we are building ──────────────────────────
+# Docker and BuildKit read these from the environment, and compose forwards
+# them into the build. Testing this gateway means exporting exactly these
+# variables, so the shell that runs this script very often already points at
+# a proxy -- frequently this stack, or the one it just replaced. Then the
+# image pull dials 127.0.0.1 and fails with "connection refused", which reads
+# like a Docker or a network fault rather than "you proxied your own build".
+# The client tests set their own proxy later; nothing before that wants one.
+if [ -n "${https_proxy:-}${http_proxy:-}${HTTPS_PROXY:-}${HTTP_PROXY:-}${all_proxy:-}${ALL_PROXY:-}" ]; then
+    note "this shell points docker at ${https_proxy:-${HTTPS_PROXY:-${http_proxy:-${HTTP_PROXY:-${all_proxy:-$ALL_PROXY}}}}}; ignoring it for builds"
+    unset https_proxy http_proxy HTTPS_PROXY HTTP_PROXY all_proxy ALL_PROXY
+fi
+
 # ── teardown ────────────────────────────────────────────────────────────────
 if [ "${1:-up}" = "down" ]; then
     echo "Stopping and removing the gateway"
