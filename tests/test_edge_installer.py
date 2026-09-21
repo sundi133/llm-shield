@@ -118,6 +118,20 @@ def test_websocket_screening_is_included_by_default():
     assert "--profile ws" in TEXT
 
 
+def test_it_refuses_a_ref_that_has_no_websocket_screener():
+    """`--profile ws` against a ref without the service is not an error:
+    compose starts everything else silently. The box then reports healthy
+    while every socket prompt walks out unread."""
+    assert "shield-ws:" in TEXT
+    assert "--no-websocket to say out loud" in TEXT
+
+
+def test_the_websocket_port_is_published_off_loopback():
+    """shield-ws binds 127.0.0.1 in the shipped compose, so opening 3129 in the
+    firewall without this override advertises an address that never answers."""
+    assert '"3129:3129"' in TEXT
+
+
 def test_secrets_are_not_world_readable():
     assert "chmod 600" in TEXT
 

@@ -177,6 +177,19 @@ else
     run git clone --quiet --branch "$REPO_REF" "$REPO_URL" "$INSTALL_DIR"
 fi
 
+# `docker compose --profile ws` against a ref that has no shield-ws service is
+# not an error: compose starts everything else and says nothing. The box then
+# comes up green, --verify passes, the operator is told websockets are screened
+# on 3129, and Codex carries its prompt out through a socket nobody is reading.
+# Refuse instead, and name the two ways out.
+if [ "$WITH_WS" = "1" ] && [ "$ACTION" != "dry-run" ] \
+   && ! grep -q '^[[:space:]]*shield-ws:' "$INSTALL_DIR/docker-compose.swg.yml"; then
+    die "ref '$REPO_REF' has no shield-ws service, so WebSocket prompts would go
+       unscreened while everything reported healthy. Either install a ref that
+       has it (--ref feat/websocket-inspection until that merges), or pass
+       --no-websocket to say out loud that sockets are not covered here."
+fi
+
 echo "==> 5/9 interception CA"
 # Generated HERE, never shipped: the private key is the customer's, and a CA
 # minted by a vendor's build pipeline is a conversation no security review
@@ -253,6 +266,17 @@ services:
     ports:
       - "8081:8081"
 OVR
+    # shield-ws ships bound to 127.0.0.1 on purpose, so it cannot be exposed on
+    # an interface by accident. On this box the clients are remote by
+    # definition, so it has to be published -- and UFW below is what keeps that
+    # honest, admitting 3129 on tailscale0 and nowhere else.
+    if [ "$WITH_WS" = "1" ]; then
+        cat >> "$INSTALL_DIR/docker-compose.override.yml" <<OVRWS
+  shield-ws:
+    ports:
+      - "3129:3129"
+OVRWS
+    fi
 else
     echo "  would: write $ENV_FILE and the compose port override (PAC on 8081)"
 fi
