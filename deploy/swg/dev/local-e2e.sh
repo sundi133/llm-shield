@@ -192,8 +192,36 @@ else
     $COMPOSE down -v --remove-orphans >/dev/null 2>&1
     printf %s "$FP" > "$FP_FILE"
 fi
-SHIELD_ICAP_MODE="$MODE" SHIELD_ICAP_SYNC_SCREEN="$SYNC" SHIELD_ICAP_REDACT_FALLBACK="$FALLBACK" \
-    $COMPOSE up -d --build 2>&1 | grep -E "Started|Error|error" | sed 's/^/  /'
+UP=$(SHIELD_ICAP_MODE="$MODE" SHIELD_ICAP_SYNC_SCREEN="$SYNC" SHIELD_ICAP_REDACT_FALLBACK="$FALLBACK" \
+    $COMPOSE up -d --build 2>&1)
+UP_RC=$?
+echo "$UP" | grep -E "Started|Error|error" | sed 's/^/  /'
+
+# Everything below talks to 127.0.0.1, so it will happily test whatever else is
+# listening there. That is not hypothetical: a stack left running from another
+# checkout answered the health check, passed the traffic tests with ITS CA, and
+# the only visible symptom was Python and Node failing TLS while curl did not.
+# So a failed `up` is fatal here, not a warning.
+if [ "$UP_RC" -ne 0 ]; then
+    bad "the gateway did not start"
+    if echo "$UP" | grep -qi "port is already allocated"; then
+        cat <<'HINT'
+
+  Another copy of this stack already holds 3128 or 8081. Compose names a
+  project after its directory, so a stack started from a different checkout
+  does not collide by name -- only by port. Find it:
+
+      docker ps --format '{{.Names}}\t{{.Ports}}'
+
+  Stop that one, then re-run. Continuing would test ITS containers, with ITS
+  CA, and report the result as this branch's.
+HINT
+    fi
+    exit 1
+fi
+
+CID=$($COMPOSE ps -q shield-icap)
+[ -n "$CID" ] || { bad "shield-icap is not running in this project, so nothing below would be testing it"; exit 1; }
 
 H=$(curl -s --retry 45 --retry-all-errors --retry-delay 2 -m 5 "$HEALTH")
 [ -n "$H" ] || { bad "the adapter never became healthy"; $COMPOSE logs shield-icap | tail -20; exit 1; }
@@ -210,7 +238,7 @@ sys.exit(0 if d["shield_reachable"] and d["rules"] else 1)' || \
 # only the variables it names, so a file missing one drops it silently and the
 # stack looks healthy while enforcing less than you asked for.
 for want in "SHIELD_ICAP_MODE=$MODE" "SHIELD_ICAP_SYNC_SCREEN=$SYNC" "SHIELD_ICAP_REDACT_FALLBACK=$FALLBACK"; do
-    if docker inspect "$($COMPOSE ps -q shield-icap)" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -qx "$want"; then
+    if docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep -qx "$want"; then
         ok "$want reached the adapter"
     else
         bad "$want did NOT reach the adapter — docker-compose.swg.yml does not forward ${want%%=*}"
