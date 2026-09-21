@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -110,6 +111,11 @@ def test_dry_run_exists_and_quotes_what_it_prints():
     assert "printf ' %q'" in TEXT
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="reads Chrome policy via `defaults`, which only exists on macOS; the "
+           "CI runner is Linux and the script itself only runs on managed Macs",
+)
 def test_dry_run_changes_nothing_on_this_machine(tmp_path):
     """The rehearsal must be safe to run on a production laptop."""
     ca = tmp_path / "ca.pem"
