@@ -204,6 +204,11 @@ echo "$UP" | grep -E "Started|Error|error" | sed 's/^/  /'
 # So a failed `up` is fatal here, not a warning.
 if [ "$UP_RC" -ne 0 ]; then
     bad "the gateway did not start"
+    # Print what compose actually said. The filtered line above matches
+    # "Started|Error|error", and a failure whose wording contains none of those
+    # printed nothing at all -- leaving a bare "the gateway did not start" and
+    # no way to tell a build failure from a port clash from a daemon hiccup.
+    echo "$UP" | tail -25 | sed 's/^/  | /'
     if echo "$UP" | grep -qi "port is already allocated"; then
         cat <<'HINT'
 
