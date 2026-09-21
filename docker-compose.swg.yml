@@ -44,6 +44,12 @@ services:
       SHIELD_ICAP_SYNC_SCREEN: ${SHIELD_ICAP_SYNC_SCREEN:-0}
       # Only affects sync mode. A timeout is not an approval.
       SHIELD_ICAP_FAIL_OPEN: ${SHIELD_ICAP_FAIL_OPEN:-0}
+      # What to do with a rule whose action is redact or mask, which this
+      # version cannot perform. `pass` forwards the prompt untouched, so a
+      # tenant whose rules are ALL redactions enforces nothing and reports
+      # enforcing_anything=false. `block` denies instead: a visible refusal
+      # rather than a silent pass. Neither is redaction; see the policy bundle.
+      SHIELD_ICAP_REDACT_FALLBACK: ${SHIELD_ICAP_REDACT_FALLBACK:-pass}
     secrets:
       - shield_api_key
     healthcheck:
