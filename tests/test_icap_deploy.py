@@ -75,6 +75,80 @@ def test_pac_with_no_bypass_hosts_still_compiles():
     assert not re.search(r"if \(\s*\)", out)
 
 
+# ── WebSocket routing (Copilot / Codex) ─────────────────────────────────────
+
+
+def test_pac_has_no_ws_branch_when_no_ws_hosts():
+    """Off by default: an empty ws_hosts must not add a branch or a second
+    proxy, so the PAC is byte-for-byte what it was before this feature."""
+    assert ":3129" not in pac()
+    assert "shield-ws" not in pac()
+
+
+def test_pac_routes_ws_hosts_to_the_ws_proxy():
+    out = pac(ws_hosts=("copilot.microsoft.com",), ws_pac_proxy="10.0.0.5:3129")
+    assert 'shExpMatch(host, "copilot.microsoft.com")' in out
+    assert "10.0.0.5:3129" in out
+
+
+def test_ws_branch_is_checked_before_the_ai_branch():
+    """A host in both sets must reach shield-ws, not Squid: a PAC selects by
+    host and cannot split socket from REST, so the socket screener wins."""
+    out = pac(ws_hosts=("copilot.microsoft.com",), ai_hosts=("copilot.microsoft.com",),
+              ws_pac_proxy="edge:3129", pac_proxy="edge:3128")
+    assert out.index("edge:3129") < out.index("edge:3128")
+
+
+def test_ws_branch_honours_enforce_fallback():
+    assert "; DIRECT" not in pac(ws_hosts=("copilot.microsoft.com",), mode="enforce").split("// 2.")[0]
+    assert "PROXY 127.0.0.1:3129; DIRECT" in pac(ws_hosts=("copilot.microsoft.com",), mode="monitor")
+
+
+def test_pac_stays_syntactically_plausible_with_ws_branch():
+    out = pac(ws_hosts=("copilot.microsoft.com", "substrate.office.com"))
+    assert out.count("{") == out.count("}")
+    assert out.count("(") == out.count(")")
+    assert not re.search(r"\|\|\s*\)", out)
+
+
+# ── the M365 Copilot opt-in ─────────────────────────────────────────────────
+
+
+def test_m365_opt_in_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("SHIELD_M365_COPILOT", raising=False)
+    monkeypatch.delenv("SHIELD_WS_HOSTS", raising=False)
+    cfg = IcapConfig.from_env()
+    assert cfg.ws_hosts == ()
+    assert "substrate.office.com" not in render_pac(cfg)
+
+
+def test_m365_opt_in_routes_substrate_to_shield_ws(monkeypatch):
+    monkeypatch.setenv("SHIELD_M365_COPILOT", "1")
+    monkeypatch.delenv("SHIELD_WS_HOSTS", raising=False)
+    cfg = IcapConfig.from_env()
+    assert "substrate.office.com" in cfg.ws_hosts
+    assert cfg.screens_host("substrate.office.com") is True
+    out = render_pac(cfg)
+    assert 'shExpMatch(host, "substrate.office.com")' in out
+
+
+def test_m365_opt_in_does_not_bump_substrate_in_squid(monkeypatch):
+    """substrate is handled entirely by shield-ws. It must NOT join the ICAP AI
+    list, or Squid would decrypt the whole mail-bearing host."""
+    monkeypatch.setenv("SHIELD_M365_COPILOT", "1")
+    cfg = IcapConfig.from_env()
+    assert cfg.is_ai_host("substrate.office.com") is False
+    assert "substrate.office.com" not in SQUID_CONF.read_text()
+
+
+def test_ws_hosts_env_is_additive_to_the_opt_in(monkeypatch):
+    monkeypatch.setenv("SHIELD_M365_COPILOT", "1")
+    monkeypatch.setenv("SHIELD_WS_HOSTS", "copilot.microsoft.com")
+    cfg = IcapConfig.from_env()
+    assert "copilot.microsoft.com" in cfg.ws_hosts
+    assert "substrate.office.com" in cfg.ws_hosts
+
+
 # ── deployment files ─────────────────────────────────────────────────────────
 
 

@@ -115,7 +115,7 @@ class ShieldWebSocketScreen:
 
         host = flow.request.pretty_host if flow.request else ""
         path = flow.request.path if flow.request else ""
-        if not self.cfg.is_ai_host(host):
+        if not self.cfg.screens_host(host):
             return
 
         assembler = self.sessions.setdefault(id(flow), MessageAssembler(cap=self.cap))

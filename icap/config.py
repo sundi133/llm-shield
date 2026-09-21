@@ -84,6 +84,30 @@ def _host_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return parsed or default
 
 
+#: The host Microsoft 365 Copilot puts its chat socket on. Not an AI host: it is
+#: Microsoft 365's shared backend and also carries Outlook, calendar and
+#: people-search APIs, so screening it is opt-in (SHIELD_M365_COPILOT) and off
+#: by default. See docs/spec-copilot-coverage.md §5.
+M365_COPILOT_HOST = "substrate.office.com"
+
+
+def _copilot_env() -> dict:
+    """WebSocket routing, plus the M365 Copilot opt-in.
+
+    `SHIELD_WS_HOSTS` is the explicit routed set. `SHIELD_M365_COPILOT=1` adds
+    substrate.office.com to it -- routing M365 Copilot's socket to shield-ws
+    without decrypting substrate's mail traffic through Squid, because
+    shield-ws terminates it directly.
+    """
+    ws_hosts = list(_host_list("SHIELD_WS_HOSTS", ()))
+    if _env_bool("SHIELD_M365_COPILOT", False) and M365_COPILOT_HOST not in ws_hosts:
+        ws_hosts.append(M365_COPILOT_HOST)
+    return {
+        "ws_hosts": tuple(ws_hosts),
+        "ws_pac_proxy": os.environ.get("SHIELD_WS_PAC_PROXY", "127.0.0.1:3129").strip(),
+    }
+
+
 _LOCAL_HOSTS = frozenset({"localhost", "host.docker.internal", "host.containers.internal"})
 
 
@@ -239,6 +263,15 @@ class IcapConfig:
     pac_proxy: str = "127.0.0.1:3128"
     bypass_hosts: tuple[str, ...] = DEFAULT_BYPASS_HOSTS
 
+    # WebSocket screening routing (docs/spec-websocket-inspection.md task 5, and
+    # docs/spec-copilot-coverage.md). Hosts in `ws_hosts` are sent by the PAC to
+    # `ws_pac_proxy` (shield-ws on 3129) instead of Squid, because a socket
+    # prompt is invisible to the ICAP path. A host routed there gets BOTH its
+    # REST and its socket traffic screened by shield-ws, since a PAC selects by
+    # host and cannot split by path.
+    ws_hosts: tuple[str, ...] = ()
+    ws_pac_proxy: str = "127.0.0.1:3129"
+
     @classmethod
     def from_env(cls) -> "IcapConfig":
         return cls(
@@ -270,6 +303,7 @@ class IcapConfig:
             tls_client_ca=os.environ.get("SHIELD_ICAP_TLS_CLIENT_CA", "").strip(),
             pac_proxy=os.environ.get("SHIELD_ICAP_PAC_PROXY", "127.0.0.1:3128").strip(),
             bypass_hosts=_host_list("SHIELD_ICAP_BYPASS_HOSTS", DEFAULT_BYPASS_HOSTS),
+            **_copilot_env(),
         )
 
     @property
@@ -313,8 +347,8 @@ class IcapConfig:
             return False
         return any(addr in net for net in self.allowed_clients)
 
-    def is_ai_host(self, host: str | None) -> bool:
-        """Suffix match on the inspected Host header, port stripped."""
+    @staticmethod
+    def _host_matches(host: str | None, entries: tuple[str, ...]) -> bool:
         if not host:
             return False
         h = host.strip().lower()
@@ -323,4 +357,17 @@ class IcapConfig:
             h = h[1:].split("]", 1)[0]
         elif h.count(":") == 1:
             h = h.split(":", 1)[0]
-        return any(h == entry or h.endswith("." + entry) for entry in self.ai_hosts)
+        return any(h == entry or h.endswith("." + entry) for entry in entries)
+
+    def is_ai_host(self, host: str | None) -> bool:
+        """Suffix match on the inspected Host header, port stripped."""
+        return self._host_matches(host, self.ai_hosts)
+
+    def screens_host(self, host: str | None) -> bool:
+        """Whether shield-ws should inspect this host's messages.
+
+        The routed WS set as well as the AI list: a host the PAC sends to
+        shield-ws (e.g. substrate.office.com under the M365 opt-in) is one this
+        service is meant to screen, even though it is not on the ICAP AI list.
+        """
+        return self.is_ai_host(host) or self._host_matches(host, self.ws_hosts)
