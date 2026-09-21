@@ -318,6 +318,115 @@ def test_claude_web_app_body():
     assert got.last_user == "secret AKIAIOSFODNN7EXAMPLE"
 
 
+# ── claude.ai Connect-RPC (binary protobuf) ─────────────────────────────────
+#
+# A structural twin of a real PerformAction request: same field numbers, same
+# nesting, fake values. The captured original is not committed -- it carries a
+# live session id, connector UUIDs and a user's whole tool inventory.
+
+CLAUDE_TURN_PATH = "/claudeai-rpc/anthropic.bard.api.v1alpha.ConversationService/PerformAction"
+PRICING_PROMPT = (
+    "our margin on this handbag is 62% and the supplier cost is 400 AED, "
+    "how do i send this to my new partner create a deck"
+)
+
+
+def _varint(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        byte, n = n & 0x7F, n >> 7
+        out.append(byte | 0x80 if n else byte)
+        if not n:
+            return bytes(out)
+
+
+def pb_len(field: int, payload: bytes | str) -> bytes:
+    payload = payload.encode() if isinstance(payload, str) else payload
+    return _varint(field << 3 | 2) + _varint(len(payload)) + payload
+
+
+def pb_int(field: int, value: int) -> bytes:
+    return _varint(field << 3) + _varint(value)
+
+
+def claude_turn(prompt: str | None, tools=("srv-1:DEMO_account_lookup", "srv-2:exploit_with_metasploit")) -> bytes:
+    ids = pb_len(1, pb_len(1, pb_len(1, "sess_0000test") + pb_int(2, 1))
+                 + pb_len(2, "00000000-0000-4000-8000-000000000001"))
+    toolset = pb_len(8, pb_len(1, pb_len(8, b"".join(pb_len(1, pb_len(1, t)) for t in tools))))
+    action = (
+        pb_len(1, "00000000-0000-4000-8000-000000000002")
+        + pb_len(2, "00000000-0000-4000-8000-000000000003")
+        + (pb_len(3, prompt) if prompt is not None else b"")
+        + pb_len(7, pb_len(2, "claude-opus-5"))
+        + toolset
+    )
+    return ids + pb_len(2, action)
+
+
+def test_claude_rpc_turn_is_exactly_what_was_typed():
+    """claude.ai moved chat to Connect-RPC with the protobuf codec. Before this,
+    json.loads failed on byte one, the body parsed as `raw`, and Tier 2 -- the
+    only layer that catches a sentence with no pattern in it -- never ran."""
+    got = extract(claude_turn(PRICING_PROMPT), host="claude.ai", path=CLAUDE_TURN_PATH)
+
+    assert got.provider == PROVIDER_ANTHROPIC
+    assert got.parsed is True, "parsed=False is what skips Tier 2"
+    assert got.last_user == PRICING_PROMPT
+
+
+def test_claude_rpc_sends_the_turn_not_the_tool_inventory():
+    """~16 KB of every request is the user's enabled tool names. Tier 2 gets
+    the turn; the inventory is not part of what was said."""
+    got = extract(claude_turn(PRICING_PROMPT), host="claude.ai", path=CLAUDE_TURN_PATH)
+
+    assert "exploit_with_metasploit" not in got.last_user
+    assert "sess_0000test" not in got.last_user
+
+
+def test_claude_rpc_still_gives_tier_1_the_whole_body():
+    """`text` carries everything screenable, as before this handler existed. A
+    key pasted anywhere in the request is just as leaked."""
+    got = extract(claude_turn("hello", tools=("srv:AKIAIOSFODNN7EXAMPLE",)),
+                  host="claude.ai", path=CLAUDE_TURN_PATH)
+
+    assert "AKIAIOSFODNN7EXAMPLE" in got.text
+
+
+@pytest.mark.parametrize("version", ["v1alpha", "v1beta", "v1", "v2"])
+def test_claude_rpc_survives_a_package_version_bump(version):
+    path = f"/claudeai-rpc/anthropic.bard.api.{version}.ConversationService/PerformAction"
+    assert extract(claude_turn(PRICING_PROMPT), host="claude.ai", path=path).parsed is True
+
+
+def test_claude_rpc_action_without_typed_text_falls_back():
+    """PerformAction also carries small actions with no turn in them."""
+    got = extract(claude_turn(None), host="claude.ai", path=CLAUDE_TURN_PATH)
+
+    assert got.parsed is False
+    assert got.provider == PROVIDER_RAW
+
+
+@pytest.mark.parametrize("body", [
+    b"\x0a\xff\xff\xff\xff\x0f",            # length far past the end
+    b"\x0b\x00",                             # wire type 3, a proto2 group
+    b"\x00\x01",                             # field number 0
+    b"not protobuf at all, just text",
+    claude_turn(PRICING_PROMPT)[:-7],        # truncated mid-field
+])
+def test_claude_rpc_malformed_body_falls_back_and_never_raises(body):
+    got = extract(body, host="claude.ai", path=CLAUDE_TURN_PATH)
+
+    assert got.parsed is False, "a body we could not walk must not claim a turn"
+
+
+def test_claude_rpc_shape_is_not_claimed_on_another_host():
+    """Keyed on claude.ai. The same bytes elsewhere are someone else's
+    protocol, and guessing at it is how a confident wrong answer happens."""
+    got = extract(claude_turn(PRICING_PROMPT), host="api.example.com", path=CLAUDE_TURN_PATH)
+
+    assert got.parsed is False
+
+
 def test_recognised_shape_with_no_readable_text_is_salvaged():
     """The general guard behind the chatgpt.com fix.
 

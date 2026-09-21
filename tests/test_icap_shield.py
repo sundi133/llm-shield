@@ -313,6 +313,37 @@ def test_unparsed_body_skips_tier2():
     assert seen == []
 
 
+def test_claude_web_turn_reaches_tier_2_as_only_the_typed_text():
+    """The end of the chain that was broken. claude.ai's protobuf turn used to
+    parse as raw, which skips Tier 2, so a tenant's written policies never
+    applied to it while ChatGPT's identical prompt was blocked. Now the policy
+    engine is asked, and asked about what was typed: not the ~16 KB of tool
+    names in the same request."""
+    from tests.test_icap_extract import CLAUDE_TURN_PATH, PRICING_PROMPT, claude_turn
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=PASS)
+
+    async def go():
+        client = ShieldClient(cfg(), transport(handler))
+        client.start()
+        req = IcapRequest(
+            method="REQMOD", service="/screen", headers={},
+            body=claude_turn(PRICING_PROMPT),
+            http_uri=CLAUDE_TURN_PATH, http_headers={"host": "claude.ai"},
+        )
+        assert client.screenable(req) is True
+        await ScreenPipeline(_allow_tier1, client, cfg())(req)
+        await client.drain()
+        await client.aclose()
+
+    asyncio.run(go())
+    assert [s["message"] for s in seen] == [PRICING_PROMPT]
+
+
 def test_missing_api_key_makes_nothing_screenable():
     async def go():
         client = ShieldClient(cfg(api_key=""))

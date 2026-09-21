@@ -20,6 +20,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from icap import protowire
+
 # Bodies are already capped at SHIELD_ICAP_MAX_BODY (1 MiB) before we get here.
 # This second cap bounds the *extracted* text, which matters because a
 # pathological body can expand into far more string content than its own size.
@@ -217,6 +219,52 @@ def _provider_hint(host: str, path: str) -> str:
     return ""
 
 
+# claude.ai's web app sends each chat turn to this Connect-RPC method with the
+# binary protobuf codec. Measured against a real request (16,776 bytes):
+#
+#   1        session and conversation ids
+#   2        the action
+#     2.1    message id
+#     2.2    parent message id
+#     2.3    the text the user typed           <- the turn
+#     2.7.2  model name
+#     2.8    ~16 KB: the names of every enabled tool and connector
+#
+# Matched on the service and method, not the package, because the package
+# carries a version (`v1alpha`) that will move before the method does.
+_CLAUDE_TURN_METHOD = "conversationservice/performaction"
+_CLAUDE_TURN_FIELD = (2, 3)
+
+
+def _claude_rpc(body: bytes, host: str, path: str, max_chars: int) -> Extracted | None:
+    """The claude.ai turn, or None to let the generic path handle the body.
+
+    `last_user` gets field 2.3 alone, so Tier 2 is sent what was typed and not
+    the tool inventory riding along with it. `text` still carries the whole
+    body, so Tier 1 sweeps exactly what it swept before this handler existed.
+    """
+    if "claude.ai" not in (host or "").lower():
+        return None
+    if not (path or "").split("?", 1)[0].lower().endswith(_CLAUDE_TURN_METHOD):
+        return None
+    turn = "\n".join(s for s in protowire.strings_at(body, _CLAUDE_TURN_FIELD) if s.strip())
+    if not turn:
+        # PerformAction also carries actions with no typed text (the 98-byte
+        # ones seen alongside each turn). Nothing to screen as a turn.
+        return None
+    sink = _Collector(max_chars)
+    sink.add(turn)
+    sink.add(body.decode("utf-8", errors="replace"))
+    return Extracted(
+        provider=PROVIDER_ANTHROPIC,
+        text=sink.text,
+        last_user=turn,
+        turns=1,
+        truncated=sink.truncated,
+        parsed=True,
+    )
+
+
 def extract(
     body: bytes | str,
     host: str = "",
@@ -225,6 +273,9 @@ def extract(
 ) -> Extracted:
     """Extract screenable text from one AI request body. Never raises."""
     if isinstance(body, bytes):
+        rpc = _claude_rpc(body, host, path, max_chars)
+        if rpc is not None:
+            return rpc
         raw = body.decode("utf-8", errors="replace")
     else:
         raw = body or ""
