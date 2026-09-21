@@ -257,6 +257,13 @@ SHIELD_ICAP_REDACT_FALLBACK=$FALLBACK
 SHIELD_ICAP_FAIL_OPEN=0
 # What the PAC tells laptops to use. If this is wrong they proxy to themselves.
 SHIELD_ICAP_PAC_PROXY=$EDGE_ADDR:3128
+# The socket screener takes the same mode as the request screener. Without
+# this it defaults to monitor whatever --mode says, so an operator who chose
+# enforce gets blocking on REST and reporting on sockets, with nothing saying
+# so. A message we could not judge is not a message we approved, so it does
+# not fail open either.
+SHIELD_WS_MODE=$MODE
+SHIELD_WS_FAIL_OPEN=0
 ENV
     chmod 600 "$ENV_FILE"
     # The PAC port must listen where laptops can reach it, not on loopback.

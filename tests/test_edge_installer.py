@@ -126,6 +126,13 @@ def test_it_refuses_a_ref_that_has_no_websocket_screener():
     assert "--no-websocket to say out loud" in TEXT
 
 
+def test_enforce_mode_reaches_the_socket_screener_too():
+    """Otherwise --mode enforce blocks REST and only reports on sockets, and
+    nothing in the output says the two differ."""
+    assert "SHIELD_WS_MODE=$MODE" in TEXT
+    assert "SHIELD_WS_FAIL_OPEN=0" in TEXT
+
+
 def test_the_websocket_port_is_published_off_loopback():
     """shield-ws binds 127.0.0.1 in the shipped compose, so opening 3129 in the
     firewall without this override advertises an address that never answers."""
