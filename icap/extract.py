@@ -49,6 +49,7 @@ _NON_TEXT_TYPES = frozenset(
 PROVIDER_OPENAI = "openai"
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_GOOGLE = "google"
+PROVIDER_COPILOT = "copilot"
 PROVIDER_JSON = "json"
 PROVIDER_RAW = "raw"
 
@@ -307,8 +308,56 @@ def _gemini_web(body: bytes, host: str, path: str, max_chars: int) -> Extracted 
     return _turn(PROVIDER_GOOGLE, turn, unquote_plus(body.decode("utf-8", errors="replace")), max_chars)
 
 
+#: SignalR's JSON hub protocol frames a message with this record separator, and
+#: a buffer can hold several (the turn, then a Metrics frame). Splitting on it is
+#: the whole "parser" -- no signalr client library.
+_SIGNALR_RS = b"\x1e"
+_COPILOT_HOSTS = ("copilot.microsoft.com", "substrate.office.com")
+
+
+def _copilot_signalr(body: bytes, host: str, path: str, max_chars: int) -> Extracted | None:
+    """A Microsoft Copilot chat turn, or None to let the generic path run.
+
+    Both consumer Copilot and Microsoft 365 Copilot carry the turn over a
+    WebSocket in SignalR's JSON hub protocol. Measured from a real M365 frame:
+
+        {"arguments":[{...,"message":{"author":"user","text":"<turn>",
+          "messageType":"Chat",...}}],"target":"chat","type":4}
+
+    keyed on host AND a chat-hub path, so a mail or calendar call to
+    substrate.office.com (the same host) is never mistaken for a turn.
+    """
+    h = (host or "").lower()
+    if not any(h == d or h.endswith("." + d) for d in _COPILOT_HOSTS):
+        return None
+    if "chathub" not in (path or "").lower() and "/chat" not in (path or "").lower():
+        return None
+    turn = ""
+    for record in body.split(_SIGNALR_RS):
+        record = record.strip()
+        if not record:
+            continue
+        try:
+            obj = json.loads(record)
+        except (ValueError, RecursionError):
+            continue
+        # type 4 is a streamed invocation; the Metrics frame is type 1.
+        if not isinstance(obj, dict) or obj.get("type") != 4:
+            continue
+        args = obj.get("arguments")
+        msg = args[0].get("message") if isinstance(args, list) and args and isinstance(args[0], dict) else None
+        if isinstance(msg, dict) and msg.get("author") == "user":
+            text = msg.get("text")
+            if isinstance(text, str) and text.strip():
+                turn = text
+                break
+    if not turn:
+        return None
+    return _turn(PROVIDER_COPILOT, turn, body.decode("utf-8", errors="replace"), max_chars)
+
+
 # Web apps whose turn is not JSON at the top level, tried before the JSON path.
-_WEB_APP_TURNS = (_claude_rpc, _gemini_web)
+_WEB_APP_TURNS = (_claude_rpc, _gemini_web, _copilot_signalr)
 
 
 def extract(

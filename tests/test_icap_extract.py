@@ -504,6 +504,102 @@ def test_gemini_shape_is_not_claimed_on_another_host():
     assert got.parsed is False
 
 
+# ── Microsoft Copilot (SignalR over a WebSocket) ────────────────────────────
+#
+# Consumer Copilot and Microsoft 365 Copilot both frame the turn in SignalR's
+# JSON hub protocol. This twin matches a real M365 frame; the captured original
+# carried a live Entra bearer token in the socket URL and is not committed.
+
+from icap.extract import PROVIDER_COPILOT
+
+COPILOT_SOCKET_PATH = "/m365Copilot/Chathub/14b54f0d-03e5@7dd39627"
+RS = b"\x1e"
+
+
+def signalr_turn(prompt, extra_records=True) -> bytes:
+    turn = {
+        "arguments": [{
+            "source": "officeweb",
+            "optionsSets": ["cwc_flux_v3", "rich_responses"],
+            "message": {
+                "author": "user", "inputMethod": "Keyboard",
+                "text": prompt, "messageType": "Chat",
+            },
+        }],
+        "target": "chat", "type": 4,
+    }
+    records = [json.dumps(turn).encode()]
+    if extra_records:
+        metrics = {"arguments": [{"Timestamps": {"ConnectionStart": "2026-09-21T08:09:32Z"}}],
+                   "target": "Metrics", "type": 1}
+        records.append(json.dumps(metrics).encode())
+    return RS.join(records) + RS
+
+
+def test_copilot_signalr_turn_is_exactly_what_was_typed():
+    """M365/consumer Copilot carry the turn over a socket in SignalR frames.
+    Squid excludes socket upgrades from adaptation, so before this Copilot got
+    NO screening -- not even the regex tier the other web apps had."""
+    got = extract(signalr_turn(PRICING_PROMPT), host="substrate.office.com", path=COPILOT_SOCKET_PATH)
+
+    assert got.provider == PROVIDER_COPILOT
+    assert got.parsed is True
+    assert got.last_user == PRICING_PROMPT
+
+
+def test_copilot_ignores_the_metrics_frame_in_the_same_buffer():
+    """A SignalR buffer holds several 0x1e-separated records: the turn (type 4)
+    and a Metrics frame (type 1). Only the turn is the turn."""
+    got = extract(signalr_turn(PRICING_PROMPT), host="substrate.office.com", path=COPILOT_SOCKET_PATH)
+
+    assert "Timestamps" not in got.last_user
+    assert "ConnectionStart" not in got.last_user
+
+
+def test_copilot_matches_consumer_host_too():
+    got = extract(signalr_turn(PRICING_PROMPT), host="copilot.microsoft.com",
+                  path="/c/api/chat/chathub")
+    assert got.provider == PROVIDER_COPILOT and got.parsed is True
+
+
+def test_copilot_is_not_claimed_on_substrate_non_chat_paths():
+    """substrate.office.com also carries Outlook and calendar APIs. A mail call
+    is not a Copilot turn, even though the host matches."""
+    got = extract(signalr_turn(PRICING_PROMPT), host="substrate.office.com",
+                  path="/api/v2.0/me/messages")
+    assert got.parsed is False
+
+
+def test_copilot_token_in_a_frame_never_reaches_the_turn():
+    """Defense in depth: the token rides in the socket URL, not the body, but a
+    crafted frame with a JWT-shaped field must not end up in last_user."""
+    jwt = "eyJ0eXAiOiJKV1QiLIVE_BEARER"
+    turn = {"arguments": [{"access_token": jwt,
+                           "message": {"author": "user", "text": "hello", "messageType": "Chat"}}],
+            "target": "chat", "type": 4}
+    got = extract(json.dumps(turn).encode() + RS, host="substrate.office.com", path=COPILOT_SOCKET_PATH)
+
+    assert got.last_user == "hello"
+    assert jwt not in got.last_user
+
+
+@pytest.mark.parametrize("body", [
+    b"not signalr at all",
+    b"\x1e\x1e",                                              # only separators
+    json.dumps({"type": 1, "target": "Metrics"}).encode() + RS,   # no turn record
+    json.dumps({"type": 4, "arguments": []}).encode() + RS,        # empty arguments
+    json.dumps({"type": 4, "arguments": [{"message": {"author": "bot", "text": "x"}}]}).encode() + RS,
+])
+def test_copilot_malformed_or_non_turn_falls_back(body):
+    got = extract(body, host="substrate.office.com", path=COPILOT_SOCKET_PATH)
+    assert got.parsed is False
+
+
+def test_copilot_shape_is_not_claimed_on_another_host():
+    got = extract(signalr_turn(PRICING_PROMPT), host="example.com", path=COPILOT_SOCKET_PATH)
+    assert got.parsed is False
+
+
 def test_recognised_shape_with_no_readable_text_is_salvaged():
     """The general guard behind the chatgpt.com fix.
 

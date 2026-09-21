@@ -64,6 +64,12 @@ class WSDecision:
     frames: int = 1
     msg_bytes: int = 0
     payload: Optional[dict] = None
+    #: The typed turn, set when Tier 1 allowed a parseable message. The caller
+    #: (ws_addon) sends THIS to Tier 2 when SHIELD_WS_SYNC_SCREEN=1 -- the turn
+    #: alone, not the whole frame, matching the ICAP path. Empty when the
+    #: message was blocked, skipped, or unparseable, so "is there a Tier 2
+    #: candidate here" is a truthiness check, not a re-derivation.
+    tier2_text: str = ""
 
     @property
     def blocks(self) -> bool:
@@ -170,6 +176,12 @@ def decide(
     if not got.text:
         base.action, base.reason = SKIP, SKIP_NO_TEXT
         return base
+    # Eligible for Tier 2 only when the shape was understood (spec §7: an
+    # unknown shape gets Tier 1's regex sweep, never a guessed turn sent to the
+    # model). The turn, or the whole extracted text when no single turn stood
+    # out, mirrors the ICAP path's _message().
+    if got.parsed:
+        base.tier2_text = got.last_user or got.text
 
     try:
         hit = evaluate(bundle, got.text, scan_timeout_s)

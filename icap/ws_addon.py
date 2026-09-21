@@ -20,11 +20,14 @@ import asyncio
 import logging
 import os
 import uuid
+from dataclasses import replace
 
 from mitmproxy import ctx
 
 from icap.config import IcapConfig, redact_path
 from icap.policy import PolicyCache
+from icap.server import IcapRequest
+from icap.shield import ShieldClient
 from icap.ws_screen import (
     ALLOW,
     BLOCK,
@@ -53,9 +56,14 @@ class ShieldWebSocketScreen:
         self.cache: PolicyCache | None = None
         self.enforcing = os.environ.get("SHIELD_WS_MODE", "monitor").strip().lower() == "enforce"
         self.fail_open = _flag("SHIELD_WS_FAIL_OPEN")
+        self.sync = _flag("SHIELD_WS_SYNC_SCREEN")
         self.cap = int(os.environ.get("SHIELD_WS_MAX_MESSAGE", str(1024 * 1024)))
         self.sessions: dict[int, MessageAssembler] = {}
-        self.counters = {"sessions": 0, "screened": 0, "blocked": 0, "skipped": 0, "errors": 0}
+        self.shield: ShieldClient | None = None
+        self.counters = {
+            "sessions": 0, "screened": 0, "blocked": 0, "skipped": 0,
+            "tier2": 0, "errors": 0,
+        }
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -63,10 +71,14 @@ class ShieldWebSocketScreen:
         """Start the policy refresh loop on mitmproxy's own event loop."""
         self.cache = PolicyCache(self.cfg)
         asyncio.ensure_future(self.cache.start())
+        if self.sync:
+            # Tier 2's fail posture is the WS one, not the ICAP one: an operator
+            # who set SHIELD_WS_FAIL_OPEN meant it for this path.
+            self.shield = ShieldClient(replace(self.cfg, fail_open=self.fail_open))
         log.warning(
-            "shield-ws up: mode=%s fail_open=%s cap=%d api_base=%s",
+            "shield-ws up: mode=%s sync=%s fail_open=%s cap=%d api_base=%s",
             "enforce" if self.enforcing else "monitor",
-            self.fail_open, self.cap, self.cfg.api_base,
+            self.sync, self.fail_open, self.cap, self.cfg.api_base,
         )
 
     def websocket_start(self, flow) -> None:
@@ -78,10 +90,15 @@ class ShieldWebSocketScreen:
 
     # -- the hook that matters --------------------------------------------
 
-    def websocket_message(self, flow) -> None:
-        """Screen the newest message. Never raises into mitmproxy."""
+    async def websocket_message(self, flow) -> None:
+        """Screen the newest message. Never raises into mitmproxy.
+
+        Async because Tier 2 (SHIELD_WS_SYNC_SCREEN=1) awaits /guardrails/input,
+        holding this one message until the verdict -- the same inline posture
+        the ICAP sync path takes, and the reason it is off by default (spec §2).
+        """
         try:
-            self._screen(flow)
+            await self._screen(flow)
         except Exception as exc:  # noqa: BLE001 - a screening bug must not be a bypass
             self.counters["errors"] += 1
             log.warning("shield-ws screening error: %s: %s", type(exc).__name__, exc)
@@ -89,7 +106,7 @@ class ShieldWebSocketScreen:
                 # A message we could not judge is not a message we approved.
                 self._close(flow, "screening error", uuid.uuid4().hex[:8])
 
-    def _screen(self, flow) -> None:
+    async def _screen(self, flow) -> None:
         message = flow.websocket.messages[-1]
         if not message.from_client:
             # Server-to-client is the streamed answer. Out of scope in v1: the
@@ -127,6 +144,19 @@ class ShieldWebSocketScreen:
             enforcing=self.enforcing,
             scan_timeout_s=self.cfg.scan_timeout_ms / 1000.0,
         )
+
+        # Tier 2, only when Tier 1 let it through, sync is on, and the shape was
+        # understood well enough to send a real turn. Folded in before the log
+        # so there is one line carrying the FINAL decision, not two.
+        if decision.action == ALLOW and self.shield is not None and decision.tier2_text:
+            self.counters["tier2"] += 1
+            verdict = await self._tier2(host, path, assembled.data, txn)
+            if verdict is not None and verdict.block:
+                decision.action = BLOCK if self.enforcing else WOULD_BLOCK
+                decision.rule_id = verdict.rule_id or "policy"
+                decision.payload = verdict.payload
+                decision.reason = (verdict.payload or {}).get("reason", "blocked by policy")
+
         self._log(txn, host, path, decision)
 
         if decision.action == BLOCK:
@@ -137,6 +167,22 @@ class ShieldWebSocketScreen:
             self.counters["skipped"] += 1
         else:
             self.counters["screened"] += 1
+
+    async def _tier2(self, host: str, path: str, data: bytes, txn: str):
+        """Ask /guardrails/input about the assembled turn. None means "no
+        verdict to apply" (not screenable, or Tier 2 not configured).
+
+        Reuses the ICAP request path so the turn is extracted, the destination
+        and device headers are set, and the fail posture is honoured exactly
+        once -- no second copy of that logic living on the socket side.
+        """
+        req = IcapRequest(
+            method="REQMOD", service="/screen", headers={},
+            body=data, http_uri=path, http_headers={"host": host}, txn_id=txn,
+        )
+        if not self.shield.screenable(req):
+            return None
+        return await self.shield.screen_sync(req)
 
     # -- effects -----------------------------------------------------------
 
