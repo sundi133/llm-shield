@@ -31,12 +31,26 @@ services:
       # Start in monitor. Flip to enforce only after reviewing what would have
       # blocked (docs: /policy-lifecycle/).
       SHIELD_ICAP_MODE: ${SHIELD_ICAP_MODE:-monitor}
-      SHIELD_ICAP_ALLOWED_CLIENTS: 172.16.0.0/12,10.0.0.0/8,127.0.0.0/8
+      # Who may use the ICAP service. All three RFC1918 blocks, not just the
+      # one Docker usually picks: compose networks come out of 172.17.0.0/16
+      # upward until that pool is exhausted, and then Docker falls back to
+      # 192.168.0.0/16. On a machine with enough networks the proxy lands there,
+      # every REQMOD is refused, and with bypass=off Squid answers 500
+      # ERR_ICAP_FAILURE -- which looks like the adapter is broken rather than
+      # like it does not recognise its own proxy. squid.conf's localnet ACL has
+      # always listed all three; these two lists must agree.
+      SHIELD_ICAP_ALLOWED_CLIENTS: ${SHIELD_ICAP_ALLOWED_CLIENTS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8}
       # The tenant this deployment is FOR. Optional, and never selects a
       # tenant -- the API key does that. Setting it makes a wrong key a loud
       # refusal instead of a fleet quietly governed by someone else's policy.
       SHIELD_ICAP_EXPECT_TENANT: ${SHIELD_ICAP_EXPECT_TENANT:-}
       SHIELD_ICAP_PAC_PROXY: "127.0.0.1:3128"
+      # This service renders the PAC (on 8081), so it needs the WS routing too,
+      # or the PAC would omit the shield-ws branch. Kept in step with the
+      # shield-ws service below.
+      SHIELD_WS_HOSTS: ${SHIELD_WS_HOSTS:-}
+      SHIELD_M365_COPILOT: ${SHIELD_M365_COPILOT:-0}
+      SHIELD_WS_PAC_PROXY: ${SHIELD_WS_PAC_PROXY:-127.0.0.1:3129}
       # Tier 2 inline. Off by default: it puts a network round trip on every
       # prompt (measured 1.5-1.9s against the deployed data plane). Turn it on
       # when you want the server's guardrails to BLOCK rather than just report,
@@ -44,6 +58,12 @@ services:
       SHIELD_ICAP_SYNC_SCREEN: ${SHIELD_ICAP_SYNC_SCREEN:-0}
       # Only affects sync mode. A timeout is not an approval.
       SHIELD_ICAP_FAIL_OPEN: ${SHIELD_ICAP_FAIL_OPEN:-0}
+      # What to do with a rule whose action is redact or mask, which this
+      # version cannot perform. `pass` forwards the prompt untouched, so a
+      # tenant whose rules are ALL redactions enforces nothing and reports
+      # enforcing_anything=false. `block` denies instead: a visible refusal
+      # rather than a silent pass. Neither is redaction; see the policy bundle.
+      SHIELD_ICAP_REDACT_FALLBACK: ${SHIELD_ICAP_REDACT_FALLBACK:-pass}
     secrets:
       - shield_api_key
     healthcheck:
@@ -73,6 +93,51 @@ services:
       # stays somewhere they can see, rotate and destroy it. Never in an image.
       - ./deploy/swg/ssl:/etc/squid/ssl:ro
       - squid-ssldb:/var/spool/squid
+
+  # WebSocket screening. Opt-in via a profile, because it is a second
+  # interception point and most deployments should decide to run it rather
+  # than discover it running:
+  #
+  #   docker compose -f docker-compose.swg.yml --profile ws up -d
+  #
+  # Why it exists: ICAP adapts HTTP messages, so once a client upgrades to a
+  # WebSocket the adapter sees nothing, and Squid cannot even carry the upgrade
+  # on a bumped connection. Codex CLI puts its whole conversation in a socket,
+  # so without this it breaks AND goes unscreened. Route its hosts here with
+  # SHIELD_WS_HOSTS; everything else keeps going through Squid.
+  shield-ws:
+    profiles: ["ws"]
+    build:
+      context: .
+      dockerfile: Dockerfile.wsproxy
+    image: shield-ws
+    restart: unless-stopped
+    ports:
+      # Loopback only: this terminates TLS for AI hosts, so it is not something
+      # to expose on an interface by accident.
+      - "127.0.0.1:3129:3129"
+    environment:
+      SHIELD_API_BASE: ${SHIELD_API_BASE:-https://api.guardrails.votal.ai}
+      SHIELD_API_KEY_FILE: /run/secrets/shield_api_key
+      # monitor reports what would have blocked and closes nothing.
+      SHIELD_WS_MODE: ${SHIELD_WS_MODE:-monitor}
+      # A message we could not judge is not a message we approved.
+      SHIELD_WS_FAIL_OPEN: ${SHIELD_WS_FAIL_OPEN:-0}
+      SHIELD_WS_MAX_MESSAGE: ${SHIELD_WS_MAX_MESSAGE:-1048576}
+      # Tier 2 per socket message (asks /guardrails/input). Off by default: a
+      # chat page issues many requests and each waits on a remote verdict.
+      SHIELD_WS_SYNC_SCREEN: ${SHIELD_WS_SYNC_SCREEN:-0}
+      # Hosts routed here, and the Microsoft 365 Copilot opt-in. The opt-in adds
+      # substrate.office.com -- a mail-bearing host -- so it is off by default
+      # and documented; see docs/spec-copilot-coverage.md §5.
+      SHIELD_WS_HOSTS: ${SHIELD_WS_HOSTS:-}
+      SHIELD_M365_COPILOT: ${SHIELD_M365_COPILOT:-0}
+      # Same host list the adapter uses, so one answer to "is this inspected".
+      SHIELD_ICAP_AI_HOSTS: ${SHIELD_ICAP_AI_HOSTS:-}
+    secrets:
+      - shield_api_key
+    volumes:
+      - ./deploy/swg/ssl/ca.pem:/ca/ca.pem:ro
 
 secrets:
   shield_api_key:

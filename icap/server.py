@@ -20,7 +20,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
-from icap.config import IcapConfig
+from icap.config import IcapConfig, redact_path
 from icap.decompress import decode
 from icap.extract import Extracted, extract
 
@@ -535,7 +535,7 @@ class IcapServer:
             decision,
             req.host or "-",
             req.http_method or "-",
-            req.path or "-",
+            redact_path(req.path),
             len(req.body),
             len(got.text) if got else -1,
             got.provider if got else "-",

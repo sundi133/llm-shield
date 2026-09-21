@@ -318,6 +318,288 @@ def test_claude_web_app_body():
     assert got.last_user == "secret AKIAIOSFODNN7EXAMPLE"
 
 
+# ── claude.ai Connect-RPC (binary protobuf) ─────────────────────────────────
+#
+# A structural twin of a real PerformAction request: same field numbers, same
+# nesting, fake values. The captured original is not committed -- it carries a
+# live session id, connector UUIDs and a user's whole tool inventory.
+
+CLAUDE_TURN_PATH = "/claudeai-rpc/anthropic.bard.api.v1alpha.ConversationService/PerformAction"
+PRICING_PROMPT = (
+    "our margin on this handbag is 62% and the supplier cost is 400 AED, "
+    "how do i send this to my new partner create a deck"
+)
+
+
+def _varint(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        byte, n = n & 0x7F, n >> 7
+        out.append(byte | 0x80 if n else byte)
+        if not n:
+            return bytes(out)
+
+
+def pb_len(field: int, payload: bytes | str) -> bytes:
+    payload = payload.encode() if isinstance(payload, str) else payload
+    return _varint(field << 3 | 2) + _varint(len(payload)) + payload
+
+
+def pb_int(field: int, value: int) -> bytes:
+    return _varint(field << 3) + _varint(value)
+
+
+def claude_turn(prompt: str | None, tools=("srv-1:DEMO_account_lookup", "srv-2:exploit_with_metasploit")) -> bytes:
+    ids = pb_len(1, pb_len(1, pb_len(1, "sess_0000test") + pb_int(2, 1))
+                 + pb_len(2, "00000000-0000-4000-8000-000000000001"))
+    toolset = pb_len(8, pb_len(1, pb_len(8, b"".join(pb_len(1, pb_len(1, t)) for t in tools))))
+    action = (
+        pb_len(1, "00000000-0000-4000-8000-000000000002")
+        + pb_len(2, "00000000-0000-4000-8000-000000000003")
+        + (pb_len(3, prompt) if prompt is not None else b"")
+        + pb_len(7, pb_len(2, "claude-opus-5"))
+        + toolset
+    )
+    return ids + pb_len(2, action)
+
+
+def test_claude_rpc_turn_is_exactly_what_was_typed():
+    """claude.ai moved chat to Connect-RPC with the protobuf codec. Before this,
+    json.loads failed on byte one, the body parsed as `raw`, and Tier 2 -- the
+    only layer that catches a sentence with no pattern in it -- never ran."""
+    got = extract(claude_turn(PRICING_PROMPT), host="claude.ai", path=CLAUDE_TURN_PATH)
+
+    assert got.provider == PROVIDER_ANTHROPIC
+    assert got.parsed is True, "parsed=False is what skips Tier 2"
+    assert got.last_user == PRICING_PROMPT
+
+
+def test_claude_rpc_sends_the_turn_not_the_tool_inventory():
+    """~16 KB of every request is the user's enabled tool names. Tier 2 gets
+    the turn; the inventory is not part of what was said."""
+    got = extract(claude_turn(PRICING_PROMPT), host="claude.ai", path=CLAUDE_TURN_PATH)
+
+    assert "exploit_with_metasploit" not in got.last_user
+    assert "sess_0000test" not in got.last_user
+
+
+def test_claude_rpc_still_gives_tier_1_the_whole_body():
+    """`text` carries everything screenable, as before this handler existed. A
+    key pasted anywhere in the request is just as leaked."""
+    got = extract(claude_turn("hello", tools=("srv:AKIAIOSFODNN7EXAMPLE",)),
+                  host="claude.ai", path=CLAUDE_TURN_PATH)
+
+    assert "AKIAIOSFODNN7EXAMPLE" in got.text
+
+
+@pytest.mark.parametrize("version", ["v1alpha", "v1beta", "v1", "v2"])
+def test_claude_rpc_survives_a_package_version_bump(version):
+    path = f"/claudeai-rpc/anthropic.bard.api.{version}.ConversationService/PerformAction"
+    assert extract(claude_turn(PRICING_PROMPT), host="claude.ai", path=path).parsed is True
+
+
+def test_claude_rpc_action_without_typed_text_falls_back():
+    """PerformAction also carries small actions with no turn in them."""
+    got = extract(claude_turn(None), host="claude.ai", path=CLAUDE_TURN_PATH)
+
+    assert got.parsed is False
+    assert got.provider == PROVIDER_RAW
+
+
+@pytest.mark.parametrize("body", [
+    b"\x0a\xff\xff\xff\xff\x0f",            # length far past the end
+    b"\x0b\x00",                             # wire type 3, a proto2 group
+    b"\x00\x01",                             # field number 0
+    b"not protobuf at all, just text",
+    claude_turn(PRICING_PROMPT)[:-7],        # truncated mid-field
+])
+def test_claude_rpc_malformed_body_falls_back_and_never_raises(body):
+    got = extract(body, host="claude.ai", path=CLAUDE_TURN_PATH)
+
+    assert got.parsed is False, "a body we could not walk must not claim a turn"
+
+
+def test_claude_rpc_shape_is_not_claimed_on_another_host():
+    """Keyed on claude.ai. The same bytes elsewhere are someone else's
+    protocol, and guessing at it is how a confident wrong answer happens."""
+    got = extract(claude_turn(PRICING_PROMPT), host="api.example.com", path=CLAUDE_TURN_PATH)
+
+    assert got.parsed is False
+
+
+# ── gemini.google.com (form-encoded, JSON inside a JSON string) ─────────────
+#
+# Structural twin of a real StreamGenerate request with fake tokens. The
+# original carries a Google anti-abuse attestation token and is not committed.
+
+GEMINI_TURN_PATH = "/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate"
+FAKE_ATTESTATION = "!FAKE-attestation-" + "x" * 64
+FAKE_XSRF = "FAKE_XSRF_TOKEN:1789000000000"
+
+
+def gemini_turn(prompt, at: str = FAKE_XSRF) -> bytes:
+    from urllib.parse import urlencode
+
+    inner = [None] * 30
+    inner[0] = [prompt, 0, None, None, None, None, 0]
+    inner[1] = ["en"]
+    inner[2] = ["", "", "", None, None, None, None, None, None, ""]
+    inner[3] = FAKE_ATTESTATION
+    inner[4] = "0" * 32
+    inner[6], inner[7] = [0], 1
+    freq = json.dumps([None, json.dumps(inner)])
+    return (urlencode({"f.req": freq, "at": at}) + "&").encode()
+
+
+def test_gemini_turn_is_exactly_what_was_typed():
+    """Gemini's form body failed json.loads, parsed as raw, and skipped Tier 2:
+    the margin prompt blocked on ChatGPT and was answered on Gemini."""
+    got = extract(gemini_turn(PRICING_PROMPT), host="gemini.google.com", path=GEMINI_TURN_PATH)
+
+    assert got.provider == PROVIDER_GOOGLE
+    assert got.parsed is True
+    assert got.last_user == PRICING_PROMPT
+
+
+def test_gemini_tokens_never_reach_the_turn():
+    """The form carries a login-bound anti-forgery token and a ~2.7 KB
+    attestation token. Neither is something the user said."""
+    got = extract(gemini_turn(PRICING_PROMPT), host="gemini.google.com", path=GEMINI_TURN_PATH)
+
+    assert FAKE_XSRF not in got.last_user
+    assert FAKE_ATTESTATION not in got.last_user
+
+
+def test_gemini_tier_1_sees_decoded_text():
+    """The raw fallback handed the regexes the URL-ENCODED body, so an address
+    typed into Gemini arrived as `name%40bank.com` and no email rule matched.
+    Tier 1 gets the decoded turn now."""
+    got = extract(gemini_turn("email john.doe@bankco.com about his account"),
+                  host="gemini.google.com", path=GEMINI_TURN_PATH)
+
+    assert "john.doe@bankco.com" in got.text
+
+
+@pytest.mark.parametrize("body", [
+    b"at=only-a-token&",                                      # no f.req
+    b"f.req=not%20json&",                                     # f.req is not JSON
+    b"f.req=%5Bnull%2C%22not%20json%20either%22%5D&",         # inner is not JSON
+    b"f.req=%5Bnull%2C%22%5B%5B42%5D%5D%22%5D&",              # turn is not a string
+    b"f.req=%5Bnull%5D&",                                     # outer too short
+    b"\xff\xfe binary",
+])
+def test_gemini_unexpected_body_falls_back_and_never_raises(body):
+    got = extract(body, host="gemini.google.com", path=GEMINI_TURN_PATH)
+
+    assert got.parsed is False
+
+
+def test_gemini_empty_turn_is_not_claimed():
+    assert extract(gemini_turn("   "), host="gemini.google.com", path=GEMINI_TURN_PATH).parsed is False
+
+
+def test_gemini_shape_is_not_claimed_on_another_host():
+    got = extract(gemini_turn(PRICING_PROMPT), host="example.com", path=GEMINI_TURN_PATH)
+
+    assert got.parsed is False
+
+
+# ── Microsoft Copilot (SignalR over a WebSocket) ────────────────────────────
+#
+# Consumer Copilot and Microsoft 365 Copilot both frame the turn in SignalR's
+# JSON hub protocol. This twin matches a real M365 frame; the captured original
+# carried a live Entra bearer token in the socket URL and is not committed.
+
+from icap.extract import PROVIDER_COPILOT
+
+COPILOT_SOCKET_PATH = "/m365Copilot/Chathub/14b54f0d-03e5@7dd39627"
+RS = b"\x1e"
+
+
+def signalr_turn(prompt, extra_records=True) -> bytes:
+    turn = {
+        "arguments": [{
+            "source": "officeweb",
+            "optionsSets": ["cwc_flux_v3", "rich_responses"],
+            "message": {
+                "author": "user", "inputMethod": "Keyboard",
+                "text": prompt, "messageType": "Chat",
+            },
+        }],
+        "target": "chat", "type": 4,
+    }
+    records = [json.dumps(turn).encode()]
+    if extra_records:
+        metrics = {"arguments": [{"Timestamps": {"ConnectionStart": "2026-09-21T08:09:32Z"}}],
+                   "target": "Metrics", "type": 1}
+        records.append(json.dumps(metrics).encode())
+    return RS.join(records) + RS
+
+
+def test_copilot_signalr_turn_is_exactly_what_was_typed():
+    """M365/consumer Copilot carry the turn over a socket in SignalR frames.
+    Squid excludes socket upgrades from adaptation, so before this Copilot got
+    NO screening -- not even the regex tier the other web apps had."""
+    got = extract(signalr_turn(PRICING_PROMPT), host="substrate.office.com", path=COPILOT_SOCKET_PATH)
+
+    assert got.provider == PROVIDER_COPILOT
+    assert got.parsed is True
+    assert got.last_user == PRICING_PROMPT
+
+
+def test_copilot_ignores_the_metrics_frame_in_the_same_buffer():
+    """A SignalR buffer holds several 0x1e-separated records: the turn (type 4)
+    and a Metrics frame (type 1). Only the turn is the turn."""
+    got = extract(signalr_turn(PRICING_PROMPT), host="substrate.office.com", path=COPILOT_SOCKET_PATH)
+
+    assert "Timestamps" not in got.last_user
+    assert "ConnectionStart" not in got.last_user
+
+
+def test_copilot_matches_consumer_host_too():
+    got = extract(signalr_turn(PRICING_PROMPT), host="copilot.microsoft.com",
+                  path="/c/api/chat/chathub")
+    assert got.provider == PROVIDER_COPILOT and got.parsed is True
+
+
+def test_copilot_is_not_claimed_on_substrate_non_chat_paths():
+    """substrate.office.com also carries Outlook and calendar APIs. A mail call
+    is not a Copilot turn, even though the host matches."""
+    got = extract(signalr_turn(PRICING_PROMPT), host="substrate.office.com",
+                  path="/api/v2.0/me/messages")
+    assert got.parsed is False
+
+
+def test_copilot_token_in_a_frame_never_reaches_the_turn():
+    """Defense in depth: the token rides in the socket URL, not the body, but a
+    crafted frame with a JWT-shaped field must not end up in last_user."""
+    jwt = "eyJ0eXAiOiJKV1QiLIVE_BEARER"
+    turn = {"arguments": [{"access_token": jwt,
+                           "message": {"author": "user", "text": "hello", "messageType": "Chat"}}],
+            "target": "chat", "type": 4}
+    got = extract(json.dumps(turn).encode() + RS, host="substrate.office.com", path=COPILOT_SOCKET_PATH)
+
+    assert got.last_user == "hello"
+    assert jwt not in got.last_user
+
+
+@pytest.mark.parametrize("body", [
+    b"not signalr at all",
+    b"\x1e\x1e",                                              # only separators
+    json.dumps({"type": 1, "target": "Metrics"}).encode() + RS,   # no turn record
+    json.dumps({"type": 4, "arguments": []}).encode() + RS,        # empty arguments
+    json.dumps({"type": 4, "arguments": [{"message": {"author": "bot", "text": "x"}}]}).encode() + RS,
+])
+def test_copilot_malformed_or_non_turn_falls_back(body):
+    got = extract(body, host="substrate.office.com", path=COPILOT_SOCKET_PATH)
+    assert got.parsed is False
+
+
+def test_copilot_shape_is_not_claimed_on_another_host():
+    got = extract(signalr_turn(PRICING_PROMPT), host="example.com", path=COPILOT_SOCKET_PATH)
+    assert got.parsed is False
+
+
 def test_recognised_shape_with_no_readable_text_is_salvaged():
     """The general guard behind the chatgpt.com fix.
 
