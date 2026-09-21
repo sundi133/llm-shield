@@ -1,8 +1,12 @@
 # Spec: Microsoft Copilot coverage (consumer + Microsoft 365)
 
-Status: **DRAFT, awaiting approval.** No code beyond the logging-leak fix
-(committed separately) should land against this until the four decisions in §10
-are signed off.
+Status: **APPROVED, implemented.** Tasks 2–5 are on `feat/swg-rollout` (PR #436):
+the query-string logging fix, the SignalR extractor, Tier 2 on the socket, and
+the PAC routing with the M365 opt-in (`SHIELD_M365_COPILOT`, off by default).
+Decisions §10.2 (build both) and §10.3 (Tier 2 off by default) were taken as
+recommended. Outstanding: a consumer-Copilot socket capture (§10.1) to confirm
+its field path — the handler is built to the shared SignalR envelope and
+verified against a real M365 frame; the consumer path needs one live check.
 
 ## 1. Problem & outcome
 
