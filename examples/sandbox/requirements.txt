@@ -1,0 +1,6 @@
+# Customer trusted-plane deps for the sandbox broker (spec task 1).
+# Provider SDKs are example-local BY DESIGN — never add them to the repo
+# root requirements*.txt (docs/spec-sandbox-guardrails.md §6). Unit tests
+# mock the network and import provider SDKs lazily, so CI needs none of this.
+requests>=2.31.0
+modal>=0.64        # ModalProvider only; lazy-imported
