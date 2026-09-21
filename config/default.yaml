@@ -321,12 +321,30 @@ guardrails:
       # a tool's data policy (sanitization_rules), which is tenant-visible and
       # actually runs.
       max_output_length: 50000
-      per_tool_rules:
-        execute_sql:
-          redact_columns:
-            - ssn
-            - password_hash
-            - credit_card
+      # The judge sees `judge_chunk_chars` of the payload per model call. By
+      # default only the FIRST chunk is judged (the historic behaviour) and the
+      # result reports `unjudged_chars`. Set SHIELD_DLP_FULL_SCAN=on to judge
+      # the whole payload in chunks, up to `max_chunks`; anything past that is
+      # withheld, never delivered unjudged. Spec: docs/spec-runtime-dlp-gaps.md
+      judge_chunk_chars: 4000
+      max_chunks: 8
+      # Seconds one judge call may take (was the client's 300). 0 = unbounded.
+      # SHIELD_DLP_LLM_TIMEOUT_S sets the tier-wide default when unset here.
+      # On timeout the original is delivered as `warn` unless
+      # SHIELD_DLP_FAIL_CLOSED=on, so keep this above your model's real p99.
+      llm_timeout_s: 60
+      # Verdicts below this confidence become allow (was hard-coded 0.75).
+      # SHIELD_DLP_CONFIDENCE_FLOOR sets the tier-wide default when unset here.
+      # On a model error or timeout the original is delivered as `warn`;
+      # SHIELD_DLP_FAIL_CLOSED=on blocks instead.
+      confidence_floor: 0.75
+      # The tenant's regex rules, allowlist, thresholds and exact-match lists
+      # (core/dlp/floor.py) run BEFORE the model on every tool result. With
+      # this on, a clean floor and a policy that has no sanitization_intent
+      # or role rules skips the model call. Off by default: on this path the
+      # model also judges the rules' descriptions, so skipping narrows what
+      # is caught. Turn on to trade that for one fewer call per tool result.
+      skip_llm_when_floor_clean: false
 
   sensitive_action_confirmation:
     enabled: true

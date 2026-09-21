@@ -6,6 +6,8 @@ httpx
 pyyaml
 pydantic-settings
 pyahocorasick
+# Deterministic DLP floor (core/dlp/floor.py): tenant patterns need a per-pattern timeout
+regex
 tiktoken
 langdetect
 textblob

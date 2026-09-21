@@ -28,7 +28,7 @@ LLM Shield ships **22 guardrails** organized into a two-tier parallel pipeline: 
 | `keyword_blocklist` | Aho-Corasick keyword matching |
 | `length_limit` | Character and token count limits |
 | `regex_pattern` | Configurable regex rules (SSN, passwords, etc.) |
-| `pii_detection` | Detects PII via Presidio (phone, email, SSN, credit card) |
+| `pii_detection` | LLM classifier for PII (phone, email, SSN, credit card, IP, names, addresses); fails open on a model error |
 | `language_detection` | Blocks non-allowed languages |
 | `sentiment` | Flags extremely negative input |
 | `rate_limiter` | Per-client sliding window rate limiting |
@@ -68,7 +68,7 @@ LLM Shield ships **22 guardrails** organized into a two-tier parallel pipeline: 
 | `data_access_guard` | Clearance level enforcement |
 | `mcp_guard` | MCP server validation and trust scoring |
 | `action_guard` | Per-session action limits and approval gates |
-| `data_taint_tracking` | Track sensitive data flow across tool chains; block unauthorized propagation |
+| `data_taint_tracking` | Track sensitive data flow across tool chains; block unauthorized propagation. Labels are recorded by `tool_output_sanitization` under the call's `session_id` and `tool_call_id` |
 | `goal_drift_detection` | Detect when agents deviate from assigned goals (LLM-based) |
 | `cert_identity` | Certificate-based agent identity with trust-level gated tool access |
 

@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Any, Optional
 
+from core.dlp_settings import confidence_floor
 from core.llm_backend import async_llm_call, parse_csv_response
 from guardrails.base import safe_float
 
@@ -100,7 +101,7 @@ async def evaluate_payload_policy_llm(
             return None
 
         confidence = safe_float(result.get("confidence"), 0.5)
-        if confidence < 0.75:
+        if confidence < confidence_floor():
             return None
 
         return {
@@ -161,7 +162,7 @@ async def evaluate_message_egress_risk_llm(
             return None
 
         confidence = safe_float(result.get("confidence"), 0.5)
-        if confidence < 0.75:
+        if confidence < confidence_floor():
             return None
 
         return {
@@ -189,6 +190,19 @@ def _global_policy_enabled() -> bool:
     import os
     return os.environ.get("SHIELD_GLOBAL_DATA_POLICY", "").strip().lower() \
         not in ("0", "off", "false", "no")
+
+
+def _floor_fields(policy: dict) -> dict:
+    """The deterministic-floor fields and the model-facing intent, carried
+    alongside the rules so core.dlp.floor and the sanitizer see the same
+    policy the API stored. Spec: docs/spec-runtime-dlp-gaps.md, PR 5."""
+    return {
+        "allowlist": policy.get("allowlist") or [],
+        "thresholds": policy.get("thresholds") or [],
+        "exact_match": policy.get("exact_match") or [],
+        "sanitization_intent": policy.get("sanitization_intent") or "",
+        "sanitization_mode": policy.get("sanitization_mode") or "regex",
+    }
 
 
 def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, Any]]:
@@ -233,6 +247,7 @@ def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, A
                 "role_policies": policy.get("role_policies", []),
                 "compliance_framework": policy.get("compliance_framework", ""),
                 "policy_source": "tool",
+                **_floor_fields(policy),
             })
 
         # The global layer sits BENEATH the tool layer: a tool policy may
@@ -251,6 +266,7 @@ def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, A
                     "role_policies": global_policy.get("role_policies", []),
                     "compliance_framework": global_policy.get("compliance_framework", ""),
                     "policy_source": "global",
+                    **_floor_fields(global_policy),
                 })
         return policies
     except Exception as e:

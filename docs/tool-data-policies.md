@@ -125,7 +125,64 @@ curl -X POST "$SHIELD/v1/data-policies/preview-sanitization" \
 **Top level:** `sanitization_rules[]` (regex: `regex`, `replacement`, `severity`,
 `action`), `sanitization_intent` (NL), `sanitization_mode` (`regex` · `ai` ·
 `both`), `scope_mappings[]`, `compliance_framework` (`hipaa` · `pci_dss` ·
-`gdpr`), `audit_required`, `retention_days`.
+`gdpr`), `audit_required`, `retention_days`, and the three deterministic-floor
+fields below.
+
+### The deterministic floor
+
+`sanitization_rules[].regex` is enforced on every entry point (agent chat,
+classify-output, the tool-result sanitizer, the edge bundle) by one shared
+engine, `core/dlp/floor.py`, with a per-pattern time budget (50 ms by default).
+It runs before any model call. A pattern that exceeds its budget is skipped for
+that payload and logged; the other patterns still run. Three optional fields
+extend it. All default to empty, so existing policies are unchanged.
+
+**`allowlist[]`** — spans a rule match may not act on.
+
+| Field | Values | Notes |
+|---|---|---|
+| `value` | literal string | every occurrence is exempt (a test card number) |
+| `regex` | pattern | every match is exempt (your own email domain) |
+| `reason` | free text | shown in the result's `floor_allowlisted` |
+
+**`thresholds[]`** — more than `max_count` matches of one rule in a single payload
+escalates that rule to `block`. Five SSNs in a record is bulk exfiltration, not a
+lookup.
+
+| Field | Values | Notes |
+|---|---|---|
+| `pattern_id` | a `sanitization_rules[].pattern_id` | the write is rejected if it names no rule |
+| `max_count` | integer | matches above this block the payload |
+
+**`exact_match[]`** — known values (customer IDs, account numbers) stored only as
+salted SHA-256 digests. Tokens in the payload are normalised, hashed with the
+same salt, and looked up.
+
+| Field | Values | Notes |
+|---|---|---|
+| `list_id` | name | appears as the `pattern_id` in results |
+| `salt` | string | keep it; you need it to add values to the list later |
+| `normalized` | `strip_lower` · `strip` · `digits` | applied before hashing, on both sides |
+| `hashes` | hex digests | at most 10 000 per list |
+| `action` | `redact` · `block` | what a hit does |
+| `replacement` | string | used for `redact` |
+
+Build the digests with the API, which stores nothing:
+
+```bash
+curl -X POST "$SHIELD/v1/data-policies/exact-match/hash" \
+  -H "$KEY" -H "Content-Type: application/json" \
+  -d '{"salt":"s3cret","values":["CUST-0042","CUST-0043"],"normalized":"strip_lower"}'
+# {"hashes":["…","…"],"count":2,"normalized":"strip_lower","algorithm":"sha256"}
+```
+
+The portal's tool-policy modal has an "Allowlist, thresholds & exact match"
+section with a JSON editor and a hash helper that calls this endpoint. The
+default (all tools) policy accepts the same three fields.
+
+Results carry `floor_violations`, `floor_allowlisted`, `floor_skipped_patterns`
+and `floor_thresholds_exceeded`. A floor redaction is reported as
+`action: redact` even when the model then clears the already-redacted text.
 
 ## Redact reliably: write a transform, not a prohibition
 
@@ -166,6 +223,35 @@ full KYC dossier, a raw secret) where blocking is the intended outcome.
 > confirm the route is bound to a profile whose `output_guardrails`
 > `tool_output_sanitization.action` is `redact`. The ceiling caps the verdict,
 > and a `warn` ceiling can never redact. See the MCP gateway profile docs.
+
+## Operator knobs for the LLM tier
+
+The model-backed judges (tool_output_sanitization, the AI reasoning sanitizer,
+payload_risk) read these live, so a change takes effect without a restart. The
+per-guardrail settings live under `tool_output_sanitization.settings` in
+`config/default.yaml` or a tenant's guardrail config.
+
+| Knob | Default | What it does |
+|---|---|---|
+| `judge_chunk_chars` (setting) | `4000` | characters of a tool result the judge sees per model call |
+| `SHIELD_DLP_FULL_SCAN` | `off` | `on` judges the whole result in chunks (one call per chunk). Off keeps the historic single slice; the result then reports `unjudged_chars` so the unscanned tail is visible |
+| `max_chunks` (setting) | `8` | under full scan, the tail past this many chunks is withheld with a marker, never delivered unjudged |
+| `llm_timeout_s` (setting) / `SHIELD_DLP_LLM_TIMEOUT_S` | `60` | seconds one judge call may take (was the client's 300). `0` removes the bound. On timeout the original is delivered as `warn` unless fail-closed is on, so keep it above the model's real p99 |
+| `SHIELD_DLP_FAIL_CLOSED` | `off` | on a model error or timeout: `off` delivers the original (`allowed: true`, `action: warn`, never a clean `pass`); `on` blocks |
+| `confidence_floor` (setting) / `SHIELD_DLP_CONFIDENCE_FLOOR` | `0.75` | verdicts below this confidence become `allow` |
+| `SHIELD_DLP_ECHO_CHECK` | `on` | a tool result that contains the judge's own verdict line verbatim is withheld as suspected prompt injection (`injection_suspected: true`) |
+| `SHIELD_DLP_REGEX_TIMEOUT_MS` | `50` | per-pattern budget for tenant regexes on the floor. `0` removes the bound |
+| `skip_llm_when_floor_clean` (setting) | `false` | `true` skips the model when the floor is clean and the policy has no `sanitization_intent` or role rules. Off by default: on this path the model also judges the rules' descriptions |
+| `SHIELD_TAINT_RECORD` | `on` | a non-clean verdict records a sensitivity label under the call's `session_id` and `tool_call_id`; a later call naming that id in `input_sources` is judged by `data_taint_tracking`. `POST /v1/shield/tool/output` and the MCP proxy return the `tool_call_id` they used |
+| `SHIELD_CHAT_REDACTION` | `on` | a custom output policy whose action is `redact` returns redacted text or withholds. `off` restores the old verdict-only behaviour (rollback only) |
+| `SHIELD_LLM_REDACTION` | `on` | same promise for tool results. `off` is rollback only |
+
+A redaction the model produces is delivered only if it can stand in for the
+original: not empty, not unchanged, not grown past 1.5× the input, and not cut
+off by the token budget (`finish_reason=length`). Anything else is withheld
+with `redaction_failed` naming the reason. There is no lenient branch: "we
+said redact and returned the original" is the defect these rules exist to
+prevent.
 
 ## Tips
 

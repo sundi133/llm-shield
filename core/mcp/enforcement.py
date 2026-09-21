@@ -592,8 +592,15 @@ async def sanitize_tool_result(
     tenant_id: Optional[str] = None,
     user_role: Optional[str] = None,
     policy: Optional[dict] = None,
+    session_id: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
 ) -> dict:
     """Run data-policy sanitization on an MCP tool result.
+
+    ``session_id`` and ``tool_call_id`` make the result addressable for taint
+    tracking: a non-clean verdict records a sensitivity label under them, and
+    a later call naming the id in ``input_sources`` inherits it. Both are
+    optional and default to None, so every existing caller is unchanged.
 
     Returns {sanitized_output, action, blocked}. On block, the output is
     replaced with a safe placeholder (the guard supplies it).
@@ -613,6 +620,8 @@ async def sanitize_tool_result(
         "X-Tenant-ID": tenant_id,
         "user_role": effective_role,
         "X-User-Role": effective_role,
+        "session_id": session_id,
+        "tool_call_id": tool_call_id,
     }
     configs = _output_request_configs(policy)
     token = _request_configs.set(configs) if configs else None

@@ -16,6 +16,8 @@ verify it against a real upstream, not in unit tests.
 
 from __future__ import annotations
 
+import inspect
+import uuid
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
 # Default enforcement backend: the in-process guard pipeline. Kept as a module
@@ -55,11 +57,33 @@ class Enforcer(Protocol):
     async def sanitize_tool_result(
         self, name: str, raw: Any, *, agent_key: str, tenant_id: Optional[str],
         user_role: Optional[str], policy: Optional[dict] = None,
+        # Optional: an enforcer that declares these (or **kwargs) receives the
+        # ids that make the result addressable for taint tracking; one that
+        # does not is called without them. See _taint_kwargs.
+        session_id: Optional[str] = None, tool_call_id: Optional[str] = None,
     ) -> dict: ...
     def filter_tools_for_role(
         self, tools: list[dict], *, agent_key: str, user_role: Optional[str],
         tenant_id: Optional[str],
     ) -> list[dict]: ...
+
+
+def _taint_kwargs(enforcer: Any, session_id: Optional[str], tool_call_id: Optional[str]) -> dict:
+    """The taint ids, but only for an enforcer whose sanitize_tool_result
+    accepts them. The Enforcer surface is a Protocol that third-party
+    backends (an HTTP thin-edge enforcer, test doubles) satisfy structurally,
+    so new keyword arguments cannot be pushed at every implementation."""
+    try:
+        params = inspect.signature(enforcer.sanitize_tool_result).parameters
+    except (TypeError, ValueError):
+        return {}
+    accepts_any = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    out: dict = {}
+    if accepts_any or "session_id" in params:
+        out["session_id"] = session_id
+    if accepts_any or "tool_call_id" in params:
+        out["tool_call_id"] = tool_call_id
+    return out
 
 
 # Optional sink for recording decisions to audit/SIEM. Kept injectable so the
@@ -203,9 +227,12 @@ class MCPProxy:
         # Re-tokenize any secret the upstream echoed back before it reaches the model.
         raw = _retokenize_mcp(tenant_id, raw)
 
+        # The id a later call names in input_sources to inherit this result's
+        # taint label; returned in `shield` so the client can reference it.
+        tool_call_id = f"tc_{uuid.uuid4().hex[:12]}"
         san = await self._enforcer.sanitize_tool_result(
             name, raw, agent_key=agent_key, tenant_id=tenant_id, user_role=user_role,
-            policy=self._policy,
+            policy=self._policy, **_taint_kwargs(self._enforcer, session_id, tool_call_id),
         )
 
         # On the deferred path, fold the output action (redact/mask/block) into
@@ -221,7 +248,7 @@ class MCPProxy:
         return {
             "content": [{"type": "text", "text": _as_text(san["sanitized_output"])}],
             "isError": False,
-            "shield": effective,
+            "shield": {**effective, "tool_call_id": tool_call_id},
         }
 
     # ── resources ────────────────────────────────────────────────────

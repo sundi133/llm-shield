@@ -8,7 +8,10 @@ from typing import Dict, Optional
 
 from guardrails.base import BaseGuardrail, safe_float
 from core.llm_backend import async_llm_call, parse_csv_response
-from core.text_utils import build_policy_messages, custom_policy_history_turns
+from core.text_utils import (
+    REDACTED_TEXT_KEY, SANITIZED_MARKER, build_policy_messages,
+    custom_policy_history_turns, estimate_tokens, split_marker, usable_redaction,
+)
 from core.models import GuardrailResult
 
 logger = logging.getLogger(__name__)
@@ -56,6 +59,26 @@ def custom_policy_fail_open() -> bool:
     traffic a policy never actually judged is the worse failure.
     """
     return os.environ.get("SHIELD_CUSTOM_POLICY_FAIL_OPEN", "1").strip() != "0"
+
+
+def chat_redaction_enabled() -> bool:
+    """SHIELD_CHAT_REDACTION=off restores verdict-only behaviour.
+
+    UNSAFE. The behaviour it restores is the bug: a policy whose action is
+    `redact` returned `action="redact"` and no redacted text, so every consumer
+    (gateway, OpenAI-compatible route, agent chat) delivered the ORIGINAL
+    response under a `redact` label. Present for rollback only, not as a
+    supported mode. Spec: docs/spec-runtime-dlp-gaps.md, G2.
+    """
+    return os.environ.get("SHIELD_CHAT_REDACTION", "").strip().lower() \
+        not in ("0", "off", "false", "no")
+
+
+#: Upper bound on the redacted rendering. The original is reproduced with
+#: placeholders, so it is at most a little longer than the input; the bound
+#: exists so a runaway model cannot hold the guard path for a full context.
+_REDACTION_MAX_TOKENS = 4096
+_REDACTION_MIN_TOKENS = 256
 
 
 def _parse_policy_csv(raw: str) -> dict:
@@ -155,9 +178,6 @@ class CustomPolicyOutputGuardrail(BaseGuardrail):
             suppressed = [r for r in results if r.get("suppressed")]
             errored = [r for r in results if r.get("error")]
 
-            end_time = datetime.now()
-            latency_ms = (end_time - start_time).total_seconds() * 1000
-
             # Return worst violation or pass
             final_result = self._aggregate_policy_results(
                 violations, enabled_policies, suppressed, errored)
@@ -169,6 +189,19 @@ class CustomPolicyOutputGuardrail(BaseGuardrail):
                     "policies could not be evaluated and "
                     "SHIELD_CUSTOM_POLICY_FAIL_OPEN=0")
             final_result["action"] = self._apply_guardrail_action(final_result["action"])
+
+            # `redact` promises modified content. Produce it or withhold. The
+            # verdict calls above are per-policy and parallel; the rendering is
+            # ONE extra call, made only on a redact verdict, so the common
+            # no-violation path costs nothing more than before.
+            if (not final_result["passed"] and final_result["action"] == "redact"
+                    and chat_redaction_enabled()):
+                by_id = {p.get("policy_id"): p for p in enabled_policies}
+                final_result = await self._render_redaction(
+                    text, violations, by_id, context, final_result)
+
+            end_time = datetime.now()
+            latency_ms = (end_time - start_time).total_seconds() * 1000
             final_result["latency_ms"] = round(latency_ms, 2)
 
             return GuardrailResult(
@@ -294,6 +327,88 @@ Example: false,0.90,none,no policy violation found"""
                     "error": str(e)
                 }
             }
+
+    async def _render_redaction(self, text: str, violations: list[Dict],
+                                policies_by_id: Dict, context: Dict,
+                                final_result: Dict) -> Dict:
+        """Turn a `redact` verdict into redacted text, or escalate to block.
+
+        Mirrors the tool-output path (tool_output_sanitization): the model
+        reproduces the text with only the violating spans replaced, on a line
+        after SANITIZED:, and the result is accepted only if
+        core.text_utils.usable_redaction says it can stand in for the original.
+        Any failure (no marker, unchanged, truncated, exception) withholds:
+        returning the original under a `redact` label is the defect this exists
+        to fix, so there is no lenient branch.
+        """
+        criteria_lines = []
+        for v in violations:
+            d = v.get("details") or {}
+            pol = policies_by_id.get(d.get("policy_id")) or {}
+            name = d.get("policy_name") or pol.get("name") or d.get("policy_id") or "policy"
+            criteria = (pol.get("prompt") or pol.get("description") or "").strip()
+            finding = (d.get("reasoning") or "").strip()
+            line = f"- {name}: {criteria}"
+            if finding:
+                line += f" (finding: {finding})"
+            criteria_lines.append(line)
+
+        prompt = f"""You are a data protection engine. The text below violates the policies listed.
+Reproduce the text EXACTLY, changing ONLY the spans that violate a listed policy.
+Replace each violating span with [REDACTED]. Keep every other character identical.
+Never summarise, reformat, translate, or invent content. Do not add commentary.
+
+POLICIES VIOLATED:
+{chr(10).join(criteria_lines)}
+
+TEXT TO REDACT (everything between the markers):
+<<<BEGIN TEXT
+{text}
+END TEXT>>>
+
+Respond with ONE line that begins with '{SANITIZED_MARKER}' followed by the full redacted text.
+Example: {SANITIZED_MARKER}Your order ships to [REDACTED] and the card ending [REDACTED] was charged."""
+
+        max_tokens = max(_REDACTION_MIN_TOKENS,
+                         min(_REDACTION_MAX_TOKENS, estimate_tokens(text) * 2 + 64))
+        why = ""
+        sanitized = ""
+        finish_reason = None
+        try:
+            llm_response = await async_llm_call(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+                temperature=0,
+                guardrail_name="custom_policy_output_redaction",
+            )
+            choice = (llm_response.get("choices") or [{}])[0]
+            raw = (choice.get("message") or {}).get("content") or ""
+            finish_reason = choice.get("finish_reason")
+            _, sanitized = split_marker(raw, SANITIZED_MARKER)
+            ok, why = usable_redaction(sanitized, text, finish_reason)
+        except Exception as e:
+            logger.error(f"Custom policy redaction rendering error: {e}")
+            ok, why = False, f"error: {e}"
+
+        details = dict(final_result.get("details") or {})
+        if ok:
+            details[REDACTED_TEXT_KEY] = sanitized
+            details["redacted"] = True
+            return {**final_result, "details": details,
+                    "message": final_result["message"] + " (output redacted)"}
+
+        logger.warning(
+            "custom_policy_output: redaction required but not produced (%s); "
+            "withholding output", why)
+        details["redaction_failed"] = why
+        return {
+            **final_result,
+            "passed": False,
+            "action": "block",
+            "message": f"Redaction required but not produced ({why}): "
+                       f"{final_result['message']}",
+            "details": details,
+        }
 
     def _apply_guardrail_action(self, policy_action: str) -> str:
         """Let the parent custom_policy_output action escalate policy violations.

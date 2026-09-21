@@ -759,8 +759,15 @@ async def async_llm_call(
     temperature: float = 0,
     response_format: Optional[dict] = None,
     guardrail_name: Optional[str] = None,
+    timeout: Optional[float] = None,
 ) -> dict:
-    """Async LLM call routed to the correct server based on guardrail name."""
+    """Async LLM call routed to the correct server based on guardrail name.
+
+    ``timeout`` bounds this one request in seconds. Left unset, the shared
+    client's default (300 s) applies, as before. It is forwarded only when
+    set: httpx reads an explicit ``timeout=None`` as "never time out", which
+    is the opposite of what an absent argument means here.
+    """
     url = get_server_url(guardrail_name)
     prep_start = time.perf_counter()
     payload = _build_payload(messages, max_tokens, temperature, response_format)
@@ -770,11 +777,10 @@ async def async_llm_call(
     client = _get_shared_client()
     endpoint_url = _endpoint_url(url)
     _print_llm_request(endpoint_url, payload)
-    res = await client.post(
-        endpoint_url,
-        json=payload,
-        headers=_auth_headers() or None,
-    )
+    request_kwargs = {"json": payload, "headers": _auth_headers() or None}
+    if timeout is not None:
+        request_kwargs["timeout"] = timeout
+    res = await client.post(endpoint_url, **request_kwargs)
     if res.status_code >= 400:
         _print_llm_response(endpoint_url, res.status_code, res.text)
     result = res.json()
