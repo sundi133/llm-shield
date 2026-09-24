@@ -32,6 +32,45 @@ def record_event(event: dict):
 
 
 # ---------------------------------------------------------------------------
+# Output format — "native" (default, unchanged) or "asim" (Microsoft ASIM
+# field names, for Sentinel / portable Sigma). Applied ONLY in the off-thread
+# export path, so it adds nothing to the guard path. Set by init_telemetry from
+# VOTAL_TELEMETRY_FORMAT or the telemetry config; default keeps today's shape.
+# ---------------------------------------------------------------------------
+
+_telemetry_format: str = "native"
+
+
+def get_telemetry_format() -> str:
+    return _telemetry_format
+
+
+def _render_events(events: list[dict]) -> list[dict]:
+    """Format a batch just before it ships to an exporter.
+
+    Native format returns the events untouched. In ASIM format each event is
+    mapped to ASIM field names; spans pass through unchanged (ASIM is for
+    security events, not traces), and a per-event mapping error falls back to the
+    native event rather than dropping telemetry. Callers filter on the native
+    event first (e.g. FileExporter's "unsafe" test) and render the survivors, so
+    routing semantics are identical in both formats.
+    """
+    if _telemetry_format != "asim":
+        return events
+    from core.asim import to_asim
+    rendered: list[dict] = []
+    for e in events:
+        if isinstance(e, dict) and e.get("type") == "span":
+            rendered.append(e)
+            continue
+        try:
+            rendered.append(to_asim(e))
+        except Exception:
+            rendered.append(e)
+    return rendered
+
+
+# ---------------------------------------------------------------------------
 # Span emission — one span per guarded request, grouped into a run trace.
 # Opt-in: no-op unless SHIELD_OTLP_TRACES_ENDPOINT is set (PR 3) or
 # SHIELD_SPAN_TRACING is truthy. Deployments without it see identical behavior.
@@ -367,6 +406,7 @@ class ElasticsearchExporter(BaseExporter):
         return self._client
 
     async def export(self, events: list[dict]):
+        events = _render_events(events)
         client = self._get_client()
         # Build NDJSON bulk payload
         lines = []
@@ -419,6 +459,7 @@ class SplunkHECExporter(BaseExporter):
         return self._client
 
     async def export(self, events: list[dict]):
+        events = _render_events(events)
         client = self._get_client()
         payload = ""
         for event in events:
@@ -462,6 +503,7 @@ class OTLPExporter(BaseExporter):
         return self._client
 
     async def export(self, events: list[dict]):
+        events = _render_events(events)
         client = self._get_client()
         # Wrap events in OTLP log format
         log_records = []
@@ -592,6 +634,8 @@ class FileExporter(BaseExporter):
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     async def export(self, events: list[dict]):
+        # Filter on the NATIVE event so the "unsafe" set is identical regardless
+        # of output format; render the survivors just before writing.
         unsafe = [e for e in events
                   if e.get("votal.safe") is False
                   or e.get("event.kind") == "alert"
@@ -599,6 +643,7 @@ class FileExporter(BaseExporter):
                   or e.get("event.outcome") == "failure"]
         if not unsafe:
             return
+        unsafe = _render_events(unsafe)
         self._rotate_if_needed()
         try:
             with open(self.path, "a") as f:
@@ -641,7 +686,7 @@ _enabled: bool = False
 
 def init_telemetry(config: Optional[dict] = None):
     """Initialize telemetry from config. Call once at startup."""
-    global _exporters, _flush_interval, _enabled
+    global _exporters, _flush_interval, _enabled, _telemetry_format
 
     if config is None:
         # Try loading from yaml config
@@ -654,6 +699,13 @@ def init_telemetry(config: Optional[dict] = None):
 
     if not config:
         config = {}
+
+    # Output format: env overrides yaml. Unknown values fall back to native, so a
+    # typo can never change the on-the-wire shape silently.
+    fmt = os.environ.get("VOTAL_TELEMETRY_FORMAT", str(config.get("format", "native"))).strip().lower()
+    _telemetry_format = fmt if fmt in ("native", "asim") else "native"
+    if _telemetry_format != "native":
+        logger.info(f"Telemetry output format: {_telemetry_format}")
 
     _enabled = config.get("enabled", False)
     if not _enabled:

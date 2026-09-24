@@ -159,6 +159,8 @@ COPY storage/mcp_policy_store.py storage/
 COPY storage/mcp_scan_store.py storage/
 COPY storage/mcp_oauth_store.py storage/
 COPY core/telemetry.py core/
+# core/telemetry.py imports core/asim.py in its export path (ASIM output format).
+COPY core/asim.py core/
 COPY guardrails/__init__.py guardrails/
 COPY guardrails/base.py guardrails/
 # Imported at module load by api/routes_config.py.
