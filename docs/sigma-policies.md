@@ -59,6 +59,18 @@ curl -X POST "$SHIELD/v1/tenant/me/custom-policies/" \
 
 The portal API (`/v1/tenant/me/policies/custom`) accepts the same fields.
 
+### In the tenant portal
+
+Under **Custom Input Policies** or **Custom Output Policies**, choose
+**+ Custom Policy** and set **Format** to **Sigma rule**. Paste one rule, or use
+**Insert example**, then **Test Policy** to validate it before saving. The
+confidence threshold is hidden for Sigma policies because a match is certain.
+Policy cards show a **Sigma** badge and the rule text.
+
+**Import Sigma** and **Export Sigma** sit next to each section heading. Import
+takes a `.yml` file with one or more rules and adds them to that section.
+Export downloads that section's policies as a Sigma file.
+
 ### Fields a rule can match
 
 | Field | Value |
@@ -123,6 +135,9 @@ curl "$SHIELD/v1/tenant/me/custom-policies/<policy_id>/export/sigma" -H "X-API-K
   approximation of a policy that a model judges, so it is marked
   `status: experimental`. Review it before relying on it in another tool. Pass
   `translate=false` to skip natural-language policies instead.
+* Translation needs the guardrail model to be reachable from the server you
+  call. If it is not, those policies are listed in `errors` and every Sigma
+  policy still exports.
 * Every exported rule carries a `votal:` block with the stage, action and
   priority, and for natural-language policies the original prompt. Importing an
   exported rule back into Shield restores the policy exactly.

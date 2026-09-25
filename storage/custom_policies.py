@@ -36,12 +36,19 @@ def normalize_format(value: Optional[str]) -> str:
     return fmt
 
 
-def _load_sigma_rule(source) -> Dict:
-    """Validate a Sigma rule (YAML text or object). Raises ValueError."""
-    from core.sigma import load_rule  # lazy: only Sigma policies need it
+def _load_sigma_rule(source) -> tuple:
+    """Validate a Sigma rule (YAML text or object). Raises ValueError.
+
+    Returns (rule, source_text): the parsed rule the guardrail evaluates, and
+    the YAML the author wrote (kept so the portal edits exactly what was typed,
+    comments included). An object is rendered to YAML.
+    """
+    from core.sigma import dump_rule, load_rule  # lazy: only Sigma policies need it
     if not source:
         raise ValueError("sigma_rule is required for a Sigma policy")
-    return load_rule(source)
+    rule = load_rule(source)
+    text = source if isinstance(source, str) else dump_rule(rule)
+    return rule, text
 
 
 def _persist_policy_stage(tenant_id: str, tenant_config: Dict, stage: str) -> None:
@@ -97,7 +104,8 @@ def save_custom_policy(
         definition = "prompt" if fmt == FORMAT_NATURAL_LANGUAGE else "sigma_rule"
         if not policy_data.get(definition):
             raise ValueError(f"Missing required field: {definition}")
-        sigma_rule = _load_sigma_rule(policy_data["sigma_rule"]) if fmt == FORMAT_SIGMA else None
+        sigma_rule, sigma_source = (_load_sigma_rule(policy_data["sigma_rule"])
+                                    if fmt == FORMAT_SIGMA else (None, None))
 
         # Validate action
         valid_actions = ["pass", "warn", "redact", "block"]
@@ -147,6 +155,7 @@ def save_custom_policy(
         }
         if sigma_rule is not None:
             policy["sigma_rule"] = sigma_rule
+            policy["sigma_source"] = sigma_source
 
         # Add policy to the list
         existing_policies.append(policy)
@@ -268,17 +277,26 @@ def update_custom_policy(
                         # Format / definition: validate before mutating anything.
                         updates = dict(updates)
                         if "format" in updates or "sigma_rule" in updates:
+                            format_given = "format" in updates
                             new_fmt = normalize_format(updates.get("format", policy.get("format")))
                             updates["format"] = new_fmt
                             if new_fmt == FORMAT_SIGMA:
-                                updates["sigma_rule"] = _load_sigma_rule(
-                                    updates.get("sigma_rule", policy.get("sigma_rule")))
+                                if "sigma_rule" in updates:
+                                    rule, text = _load_sigma_rule(updates["sigma_rule"])
+                                    updates["sigma_rule"], updates["sigma_source"] = rule, text
+                                elif not policy.get("sigma_rule"):
+                                    raise ValueError("sigma_rule is required for a Sigma policy")
                             else:
+                                if "sigma_rule" in updates and not format_given:
+                                    raise ValueError(
+                                        "sigma_rule given for a natural_language policy; "
+                                        "set format to sigma")
                                 if not (updates.get("prompt") or policy.get("prompt")):
                                     raise ValueError(
                                         "prompt is required for a natural_language policy")
-                                updates.pop("sigma_rule", None)
-                                policy.pop("sigma_rule", None)
+                                for key in ("sigma_rule", "sigma_source"):
+                                    updates.pop(key, None)
+                                    policy.pop(key, None)
 
                         # Apply updates
                         policy.update(updates)

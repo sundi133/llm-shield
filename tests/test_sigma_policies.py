@@ -526,3 +526,128 @@ def test_api_export_single_and_missing(client):
     r = client.get(f"{BASE}/{pid}/export/sigma")
     assert r.status_code == 200 and "title: SSN in prompt" in r.json()["yaml"]
     assert client.get(f"{BASE}/nope/export/sigma").status_code == 404
+
+
+# ── natural-language regression guards ─────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_legacy_record_without_format_still_uses_llm(monkeypatch):
+    # Records written before `format` existed must keep the LLM path.
+    import guardrails.input.custom_policy as mod
+    from guardrails.input.custom_policy import CustomPolicyInputGuardrail
+    calls = []
+
+    async def fake(messages, **kwargs):
+        calls.append(messages)
+        return {"choices": [{"message": {"content": "true,0.95,pricing,margin disclosed"}}]}
+
+    monkeypatch.setattr(mod, "async_llm_call", fake)
+    legacy = {**NL_POLICY, "policy_id": "legacy", "stage": "input", "enabled": True,
+              "confidence_threshold": 0.8}
+    assert "format" not in legacy
+    g = CustomPolicyInputGuardrail()
+    g._temp_config = {"settings": {"policies": [legacy]}, "action": "pass"}
+    res = await g.check("our margin is 62%", {})
+    assert len(calls) == 1 and res.passed is False and res.action == "block"
+    assert NL_POLICY["prompt"] in calls[0][-1]["content"]
+
+
+def test_nl_update_without_format_takes_old_path(monkeypatch):
+    # The portal's NL edit payload has no `format`; nothing Sigma-related runs.
+    cp = _fake_tenant_store(monkeypatch)
+    saved = cp.save_custom_policy("t1", dict(NL_POLICY), stage="input")
+    updated = cp.update_custom_policy("t1", saved["policy_id"], {
+        "name": "No pricing", "description": "d2", "prompt": NL_POLICY["prompt"] + " More.",
+        "action": "warn", "stage": "input", "confidence_threshold": 0.9, "priority": 5,
+        "enabled": True})
+    assert updated["format"] == "natural_language" and updated["action"] == "warn"
+    assert "sigma_rule" not in updated and "sigma_source" not in updated
+
+
+def test_sigma_rule_on_nl_policy_needs_explicit_format(monkeypatch):
+    cp = _fake_tenant_store(monkeypatch)
+    saved = cp.save_custom_policy("t1", dict(NL_POLICY), stage="input")
+    with pytest.raises(ValueError, match="set format to sigma"):
+        cp.update_custom_policy("t1", saved["policy_id"], {"sigma_rule": SSN_RULE_YAML})
+
+
+def test_sigma_source_kept_verbatim_and_cleared_on_switch(monkeypatch):
+    cp = _fake_tenant_store(monkeypatch)
+    text = "# comment kept\n" + SSN_RULE_YAML
+    saved = cp.save_custom_policy("t1", {"name": "s", "description": "d", "action": "block",
+                                         "format": "sigma", "sigma_rule": text}, stage="input")
+    assert saved["sigma_source"] == text
+    back = cp.update_custom_policy("t1", saved["policy_id"],
+                                   {"format": "natural_language", "prompt": NL_POLICY["prompt"]})
+    assert "sigma_rule" not in back and "sigma_source" not in back
+
+
+def test_object_rule_size_cap():
+    big = {"title": "t", "detection": {"a": {"message|contains": ["x" * 1000] * 80},
+                                       "condition": "a"}}
+    with pytest.raises(SigmaRuleError, match="exceeds"):
+        load_rule(big)
+
+
+# ── portal API (routes_tenant_self) uses the same shared logic ─────────────
+
+@pytest.fixture
+def portal(monkeypatch):
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+    import api.routes_tenant_self as routes
+
+    _fake_tenant_store(monkeypatch)
+    monkeypatch.setattr(routes, "_require_tenant", lambda request: "t1")
+    monkeypatch.setattr(routes, "_actor", lambda request, tid: f"tenant:{tid}")
+    monkeypatch.setattr(routes, "log_admin_action", lambda **kw: None)
+    app = FastAPI()
+    app.include_router(routes.router)
+    return TestClient(app)
+
+
+PORTAL = "/v1/tenant/me/policies/custom"
+
+
+def test_portal_create_nl_with_exact_portal_payload(portal):
+    r = portal.post(PORTAL, json={**NL_POLICY, "stage": "input",
+                                  "confidence_threshold": 0.8, "priority": 100, "enabled": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["policy"]["format"] == "natural_language"
+
+
+def test_portal_sigma_create_validate_import_export(portal):
+    ok = portal.post(f"{PORTAL}/validate-sigma", json={"sigma": SSN_RULE_YAML}).json()
+    assert ok["validation"]["valid"] is True
+    bad = portal.post(f"{PORTAL}/validate-sigma", json={"sigma": "title: x"}).json()
+    assert bad["validation"]["valid"] is False
+
+    r = portal.post(PORTAL, json={"name": "SSN", "description": "d", "action": "block",
+                                  "stage": "input", "format": "sigma", "sigma_rule": SSN_RULE_YAML})
+    assert r.status_code == 200 and r.json()["policy"]["sigma_source"] == SSN_RULE_YAML
+
+    imp = portal.post(f"{PORTAL}/import/sigma", json={
+        "sigma": "title: Key leak\ndetection:\n  k:\n    message|contains: sk-live-\n  condition: k\n",
+        "stage": "output"}).json()
+    assert [p["stage"] for p in imp["created"]] == ["output"]
+
+    exp = portal.get(f"{PORTAL}/export/sigma", params={"translate": "false"}).json()
+    assert exp["count"] == 2 and exp["errors"] == []
+    pid = r.json()["policy"]["policy_id"]
+    one = portal.get(f"{PORTAL}/{pid}/export/sigma").json()
+    assert one["rule"]["title"] == "SSN in prompt"
+
+
+def test_portal_nl_export_without_llm_is_reported_not_fatal(portal, monkeypatch):
+    import core.sigma_translate as tr
+
+    async def down(*a, **k):
+        raise ConnectionError("All connection attempts failed")
+
+    monkeypatch.setattr(tr, "async_llm_call", down)
+    portal.post(PORTAL, json={**NL_POLICY, "stage": "input"})
+    portal.post(PORTAL, json={"name": "SSN", "description": "d", "action": "block",
+                              "stage": "input", "format": "sigma", "sigma_rule": SSN_RULE_YAML})
+    exp = portal.get(f"{PORTAL}/export/sigma").json()
+    assert exp["count"] == 1
+    assert "translation failed" in exp["errors"][0]["error"]

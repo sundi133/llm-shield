@@ -104,10 +104,16 @@ def parse_documents(source: Union[str, dict, list]) -> list:
     Accepts YAML text (one or many `---` documents), a rule object, or a list of
     rule objects. Raises SigmaRuleError only when the input cannot be read at all.
     """
-    if isinstance(source, dict):
-        docs = [source]
-    elif isinstance(source, list):
-        docs = source
+    if isinstance(source, (dict, list)):
+        # Objects (JSON request bodies) get the same size cap as YAML text.
+        import json
+        try:
+            size = len(json.dumps(source, default=str))
+        except (TypeError, ValueError) as e:
+            raise SigmaRuleError(f"rule is not serializable: {e}") from e
+        if size > MAX_RULE_BYTES:
+            raise SigmaRuleError(f"rule exceeds {MAX_RULE_BYTES} bytes")
+        docs = [source] if isinstance(source, dict) else source
     elif isinstance(source, str):
         docs = _load_yaml_docs(source)
     else:

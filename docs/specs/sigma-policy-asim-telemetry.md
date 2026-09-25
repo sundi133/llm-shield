@@ -35,8 +35,8 @@ description: Sigma rules as a custom input/output policy format enforced by the 
 
 **Non-goals:** Sigma correlation rules (`timeframe`, `| count()`); converting
 data policies, sanitization rules or blocklists (only custom input/output
-policies); portal UI for import/export (API only in this change); changing the
-per-tenant SIEM dispatcher formats (`core/siem_dispatcher.py`).
+policies); changing the per-tenant SIEM dispatcher formats
+(`core/siem_dispatcher.py`).
 
 ## 2. Plane & latency contract
 
@@ -80,10 +80,21 @@ Data plane, `X-API-Key` tenant auth, prefix `/v1/tenant/me/custom-policies`:
 | GET | `/export/sigma?stage=&translate=` | all policies as Sigma (`yaml`, `rules`, `errors`) |
 | GET | `/{id}/export/sigma?translate=` | one policy; 404 missing, 422 not convertible |
 
-Admin plane `/v1/tenant/me/policies/custom` create/update accept `format` and
-`sigma_rule`. Import precedence: request field, then the rule's `votal:` block,
+Portal API `/v1/tenant/me/policies/custom` (`api/routes_tenant_self.py`, mounted
+on both planes) accepts `format` and `sigma_rule` on create/update and exposes
+the same `import/sigma`, `export/sigma`, `{id}/export/sigma` plus
+`validate-sigma`. Both routers delegate to `core/sigma_io.py`, so behavior is
+identical. Import precedence: request field, then the rule's `votal:` block,
 then `logsource.category` / `level`. Exported rules carry a `votal:` block
-(stage, action, priority, and for NL the original prompt).
+(stage, action, priority, and for NL the original prompt). Stored Sigma
+policies keep the author's YAML as `sigma_source` for editing.
+
+**Portal UI** (`static/tenant.html`): a Format selector (natural language /
+Sigma), a YAML editor with example and validate, a Sigma badge on cards, and
+Import/Export buttons per stage. The natural-language card markup and the NL
+create/edit payloads are unchanged (verified: DOM-identical card; payload has no
+`format` unless converting a Sigma policy back to NL). NL export from a server
+without a reachable guardrail LLM reports those policies in `errors`.
 
 ## 5. Security & backward compatibility
 

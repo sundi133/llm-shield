@@ -155,16 +155,16 @@ class SigmaImportRequest(BaseModel):
         return v
 
 
-async def _policy_to_sigma(policy: dict, translate: bool) -> dict:
-    """Export one policy as a Sigma rule. Raises ValueError with a reason."""
-    from core.sigma_policy import sigma_policy_to_rule
+class SigmaValidateRequest(BaseModel):
+    sigma: Union[str, dict, list] = Field(..., description="Sigma YAML or rule object(s)")
 
-    if policy.get("format") == "sigma":
-        return sigma_policy_to_rule(policy)
-    if not translate:
-        raise ValueError("natural-language policy: pass translate=true to convert it")
-    from core.sigma_translate import translate_nl_policy
-    return await translate_nl_policy(policy)
+
+@router.post("/validate-sigma")
+async def validate_sigma_rule(request: Request, body: SigmaValidateRequest):
+    """Validate Sigma rule text without creating a policy."""
+    from core.sigma_io import validate_sigma
+    tenant_id = _tenant_id(request)
+    return {"tenant_id": tenant_id, "validation": validate_sigma(body.sigma)}
 
 
 @router.post("/import/sigma")
@@ -175,48 +175,23 @@ async def import_sigma_policies(request: Request, body: SigmaImportRequest):
     that was exported from a natural-language policy is restored as that policy.
     Rules are processed independently: one invalid rule does not block the rest.
     """
-    from core.sigma import SigmaRuleError, parse_documents
-    from core.sigma_policy import rule_to_policy_data
+    from core.sigma import SigmaRuleError
+    from core.sigma_io import import_sigma
 
     tenant_id = _tenant_id(request)
     try:
-        docs = parse_documents(body.sigma)
+        result = import_sigma(tenant_id, body.sigma, stage=body.stage, action=body.action,
+                              dry_run=body.dry_run,
+                              created_by=f"tenant:{tenant_id}:sigma-import")
     except SigmaRuleError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    created, planned, errors = [], [], []
-    for index, doc in enumerate(docs):
-        title = doc.get("title") if isinstance(doc, dict) else None
-        try:
-            if not isinstance(doc, dict):
-                raise ValueError("each Sigma document must be a mapping")
-            policy_data, stage = rule_to_policy_data(doc, body.stage, body.action)
-            if body.dry_run:
-                planned.append(policy_data)
-                continue
-            policy = save_custom_policy(
-                tenant_id=tenant_id,
-                policy_data=policy_data,
-                created_by=f"tenant:{tenant_id}:sigma-import",
-                stage=stage,
-            )
-            created.append(policy)
-        except ValueError as e:
-            errors.append({"index": index, "title": title, "error": str(e)})
-
-    if created:
+    if result["created"]:
         _audit_log(request, "import_custom_policies_sigma", tenant_id, {
-            "policy_ids": [p["policy_id"] for p in created],
-            "errors": len(errors),
+            "policy_ids": [p["policy_id"] for p in result["created"]],
+            "errors": len(result["errors"]),
         })
-
-    return {
-        "tenant_id": tenant_id,
-        "dry_run": body.dry_run,
-        "created": created,
-        "would_create": planned,
-        "errors": errors,
-    }
+    return {"tenant_id": tenant_id, **result}
 
 
 @router.get("/export/sigma")
@@ -226,27 +201,13 @@ async def export_sigma_policies(
     translate: bool = Query(True, description="Translate natural-language policies via the guardrail LLM"),
 ):
     """Export the tenant's custom policies as Sigma rules (multi-document YAML)."""
-    from core.sigma import dump_rules
+    from core.sigma_io import export_sigma
 
     tenant_id = _tenant_id(request)
     if stage is not None and stage not in ("input", "output"):
         raise HTTPException(status_code=400, detail="stage must be input or output")
-
-    rules, errors = [], []
-    for policy in get_tenant_custom_policies(tenant_id, enabled_only=False, stage=stage):
-        try:
-            rules.append(await _policy_to_sigma(policy, translate))
-        except Exception as e:
-            errors.append({"policy_id": policy.get("policy_id"),
-                           "policy_name": policy.get("name"), "error": str(e)})
-
-    return {
-        "tenant_id": tenant_id,
-        "count": len(rules),
-        "yaml": dump_rules(rules) if rules else "",
-        "rules": rules,
-        "errors": errors,
-    }
+    policies = get_tenant_custom_policies(tenant_id, enabled_only=False, stage=stage)
+    return {"tenant_id": tenant_id, **await export_sigma(policies, translate)}
 
 
 @router.get("/{policy_id}/export/sigma")
@@ -256,18 +217,17 @@ async def export_sigma_policy(
     translate: bool = Query(True, description="Translate a natural-language policy via the guardrail LLM"),
 ):
     """Export one custom policy as a Sigma rule."""
-    from core.sigma import dump_rule
+    from core.sigma_io import export_one
 
     tenant_id = _tenant_id(request)
     policy = get_custom_policy(tenant_id, policy_id)
     if not policy:
         raise HTTPException(status_code=404, detail="Policy not found")
     try:
-        rule = await _policy_to_sigma(policy, translate)
+        exported = await export_one(policy, translate)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Cannot export as Sigma: {e}")
-    return {"tenant_id": tenant_id, "policy_id": policy_id,
-            "rule": rule, "yaml": dump_rule(rule)}
+    return {"tenant_id": tenant_id, "policy_id": policy_id, **exported}
 
 
 @router.get("/")

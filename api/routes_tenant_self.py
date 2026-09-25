@@ -1132,6 +1132,95 @@ async def validate_custom_policy_prompt(request: Request, body: ValidatePromptRe
     }
 
 
+# ── Sigma rules (shared logic in core/sigma_io.py, same as the data-plane API) ──
+
+class SigmaSourceRequest(BaseModel):
+    sigma: Union[str, dict, list] = Field(..., description="Sigma YAML or rule object(s)")
+
+
+class SigmaImportRequest(SigmaSourceRequest):
+    stage: Optional[str] = Field(None, description="Force input or output")
+    action: Optional[str] = Field(None, description="Force pass/warn/redact/block")
+    dry_run: bool = False
+
+    @validator("stage")
+    def validate_stage(cls, v):
+        if v is not None and v not in ("input", "output"):
+            raise ValueError("Stage must be one of: ['input', 'output']")
+        return v
+
+    @validator("action")
+    def validate_action(cls, v):
+        if v is not None and v not in ("pass", "warn", "redact", "block"):
+            raise ValueError("Action must be one of: ['pass', 'warn', 'redact', 'block']")
+        return v
+
+
+@router.post("/me/policies/custom/validate-sigma")
+async def validate_custom_policy_sigma(request: Request, body: SigmaSourceRequest):
+    """Validate Sigma rule text without creating a policy."""
+    from core.sigma_io import validate_sigma
+    tenant_id = _require_tenant(request)
+    return {"tenant_id": tenant_id, "validation": validate_sigma(body.sigma)}
+
+
+@router.post("/me/policies/custom/import/sigma")
+async def import_custom_policies_sigma(request: Request, body: SigmaImportRequest):
+    """Import Sigma rules as custom policies (one policy per rule)."""
+    from core.sigma import SigmaRuleError
+    from core.sigma_io import import_sigma
+
+    tenant_id = _require_tenant(request)
+    try:
+        result = import_sigma(tenant_id, body.sigma, stage=body.stage, action=body.action,
+                              dry_run=body.dry_run,
+                              created_by=f"{_actor(request, tenant_id)}:sigma-import")
+    except SigmaRuleError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if result["created"]:
+        _audit_log(request, "import_custom_policies_sigma", tenant_id, {
+            "policy_ids": [p["policy_id"] for p in result["created"]],
+            "errors": len(result["errors"]),
+        })
+    return {"tenant_id": tenant_id, **result}
+
+
+@router.get("/me/policies/custom/export/sigma")
+async def export_custom_policies_sigma(
+    request: Request,
+    stage: Optional[str] = Query(None, description="Only input or output policies"),
+    translate: bool = Query(True, description="Translate natural-language policies via the guardrail LLM"),
+):
+    """Export custom policies as Sigma rules (multi-document YAML)."""
+    from core.sigma_io import export_sigma
+
+    tenant_id = _require_tenant(request)
+    if stage is not None and stage not in ("input", "output"):
+        raise HTTPException(status_code=400, detail="stage must be input or output")
+    policies = get_tenant_custom_policies(tenant_id, enabled_only=False, stage=stage)
+    return {"tenant_id": tenant_id, **await export_sigma(policies, translate)}
+
+
+@router.get("/me/policies/custom/{policy_id}/export/sigma")
+async def export_custom_policy_sigma(
+    request: Request,
+    policy_id: str,
+    translate: bool = Query(True, description="Translate a natural-language policy via the guardrail LLM"),
+):
+    """Export one custom policy as a Sigma rule."""
+    from core.sigma_io import export_one
+
+    tenant_id = _require_tenant(request)
+    policy = get_custom_policy(tenant_id, policy_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    try:
+        exported = await export_one(policy, translate)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Cannot export as Sigma: {e}")
+    return {"tenant_id": tenant_id, "policy_id": policy_id, **exported}
+
+
 @router.get("/me/policies/custom")
 async def list_custom_policies(request: Request, enabled_only: bool = Query(False, description="Only return enabled policies")):
     """List all custom policies for the tenant."""
