@@ -17,11 +17,32 @@ declares the dependency, assert the middleware would enrich its path.
 from __future__ import annotations
 
 import pytest
-from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
 from core.auth import get_tenant_from_request
 from core.middleware import ShieldMiddleware
+
+
+def _api_routes(routes, prefix: str = ""):
+    """Yield (full path, APIRoute) for every route under `routes`.
+
+    Walks the router directly instead of an app it was included into, because
+    FastAPI 0.141 changed include_router: it no longer copies the included
+    routes into the parent, it appends one wrapper that keeps the original
+    router (`original_router`) and the include-time prefix
+    (`include_context.prefix`). Older FastAPI copied APIRoute objects with the
+    prefix applied. Both shapes are handled. If FastAPI changes shape again,
+    discovery comes back empty and the guard-the-guard test below fails loudly
+    rather than letting the coverage check pass vacuously.
+    """
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield prefix + route.path, route
+            continue
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            ctx = getattr(route, "include_context", None)
+            yield from _api_routes(inner.routes, prefix + (getattr(ctx, "prefix", "") or ""))
 
 
 def _tenant_scoped_routes() -> list[tuple[str, str]]:
@@ -39,14 +60,10 @@ def _tenant_scoped_routes() -> list[tuple[str, str]]:
 
     found: list[tuple[str, str]] = []
     for name, router in routers:
-        app = FastAPI()
-        app.include_router(router)
-        for route in app.routes:
-            if not isinstance(route, APIRoute):
-                continue
+        for path, route in _api_routes(router.routes):
             for dep in route.dependant.dependencies:
                 if dep.call is get_tenant_from_request:
-                    found.append((route.path, name))
+                    found.append((path, name))
                     break
     return found
 
