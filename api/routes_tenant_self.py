@@ -5,12 +5,12 @@ Tenants can view and update their own guardrail policies. They cannot modify
 RBAC, quota, plan, or API keys — those are admin-only.
 """
 
-from typing import Optional
+from typing import Optional, Union
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request, Query
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator, validator
 
 from storage.tenant_store import get_tenant, update_tenant, set_tenant_policies, _get_redis
 from storage.tenant_models import GuardrailPolicy
@@ -42,12 +42,24 @@ class TenantSelfUpdateRequest(BaseModel):
 class CustomPolicyRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="Policy name")
     description: str = Field(..., min_length=1, max_length=500, description="Policy description")
-    prompt: str = Field(..., min_length=20, max_length=2000, description="Natural language policy definition")
+    prompt: Optional[str] = Field(None, min_length=20, max_length=2000, description="Natural language policy definition (format natural_language)")
+    format: str = Field("natural_language", description="Policy format: natural_language or sigma")
+    sigma_rule: Optional[Union[str, dict]] = Field(None, description="Sigma rule as YAML text or object (format sigma)")
     action: str = Field(..., description="Action to take when policy is violated")
     stage: str = Field("input", description="Policy stage: input or output")
     enabled: Optional[bool] = Field(True, description="Whether policy is enabled")
     confidence_threshold: Optional[float] = Field(0.8, ge=0.5, le=1.0, description="Minimum confidence for violation")
     priority: Optional[int] = Field(100, ge=1, le=1000, description="Policy priority (lower = higher priority)")
+
+    @model_validator(mode="after")
+    def _definition_for_format(self):
+        if self.format not in ("natural_language", "sigma"):
+            raise ValueError("format must be one of: ['natural_language', 'sigma']")
+        if self.format == "natural_language" and not (self.prompt or "").strip():
+            raise ValueError("prompt is required for a natural_language policy")
+        if self.format == "sigma" and not self.sigma_rule:
+            raise ValueError("sigma_rule is required for a sigma policy")
+        return self
 
     @validator("stage")
     def validate_stage(cls, v):
@@ -71,6 +83,8 @@ class CustomPolicyRequest(BaseModel):
 
     @validator("prompt")
     def validate_prompt(cls, v):
+        if v is None:
+            return v
         if not v.strip():
             raise ValueError("Policy prompt cannot be empty or whitespace only")
         return v.strip()
@@ -80,6 +94,8 @@ class CustomPolicyUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = Field(None, min_length=1, max_length=500)
     prompt: Optional[str] = Field(None, min_length=20, max_length=2000)
+    format: Optional[str] = Field(None, description="natural_language or sigma")
+    sigma_rule: Optional[Union[str, dict]] = Field(None, description="Sigma rule as YAML text or object")
     action: Optional[str] = Field(None)
     stage: Optional[str] = Field(None)
     enabled: Optional[bool] = Field(None)
@@ -913,17 +929,21 @@ async def create_custom_policy(request: Request, body: CustomPolicyRequest):
     tenant_id = _require_tenant(request)
 
     try:
-        # Validate the policy prompt
-        validation = validate_policy_prompt(body.prompt)
-        if not validation["valid"]:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "Policy prompt validation failed",
-                    "issues": validation["issues"],
-                    "suggestions": validation["suggestions"]
-                }
-            )
+        # Validate the definition: prompt heuristics for natural language; a
+        # Sigma rule is validated structurally by storage (SigmaRuleError -> 400).
+        if body.format == "sigma":
+            validation = {"valid": True, "format": "sigma", "issues": [], "suggestions": []}
+        else:
+            validation = validate_policy_prompt(body.prompt)
+            if not validation["valid"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "message": "Policy prompt validation failed",
+                        "issues": validation["issues"],
+                        "suggestions": validation["suggestions"]
+                    }
+                )
 
         # Create the policy within the tenant's guardrail config
         policy = save_custom_policy(
@@ -1110,6 +1130,95 @@ async def validate_custom_policy_prompt(request: Request, body: ValidatePromptRe
         "prompt": body.prompt,
         "validation": validation
     }
+
+
+# ── Sigma rules (shared logic in core/sigma_io.py, same as the data-plane API) ──
+
+class SigmaSourceRequest(BaseModel):
+    sigma: Union[str, dict, list] = Field(..., description="Sigma YAML or rule object(s)")
+
+
+class SigmaImportRequest(SigmaSourceRequest):
+    stage: Optional[str] = Field(None, description="Force input or output")
+    action: Optional[str] = Field(None, description="Force pass/warn/redact/block")
+    dry_run: bool = False
+
+    @validator("stage")
+    def validate_stage(cls, v):
+        if v is not None and v not in ("input", "output"):
+            raise ValueError("Stage must be one of: ['input', 'output']")
+        return v
+
+    @validator("action")
+    def validate_action(cls, v):
+        if v is not None and v not in ("pass", "warn", "redact", "block"):
+            raise ValueError("Action must be one of: ['pass', 'warn', 'redact', 'block']")
+        return v
+
+
+@router.post("/me/policies/custom/validate-sigma")
+async def validate_custom_policy_sigma(request: Request, body: SigmaSourceRequest):
+    """Validate Sigma rule text without creating a policy."""
+    from core.sigma_io import validate_sigma
+    tenant_id = _require_tenant(request)
+    return {"tenant_id": tenant_id, "validation": validate_sigma(body.sigma)}
+
+
+@router.post("/me/policies/custom/import/sigma")
+async def import_custom_policies_sigma(request: Request, body: SigmaImportRequest):
+    """Import Sigma rules as custom policies (one policy per rule)."""
+    from core.sigma import SigmaRuleError
+    from core.sigma_io import import_sigma
+
+    tenant_id = _require_tenant(request)
+    try:
+        result = import_sigma(tenant_id, body.sigma, stage=body.stage, action=body.action,
+                              dry_run=body.dry_run,
+                              created_by=f"{_actor(request, tenant_id)}:sigma-import")
+    except SigmaRuleError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if result["created"]:
+        _audit_log(request, "import_custom_policies_sigma", tenant_id, {
+            "policy_ids": [p["policy_id"] for p in result["created"]],
+            "errors": len(result["errors"]),
+        })
+    return {"tenant_id": tenant_id, **result}
+
+
+@router.get("/me/policies/custom/export/sigma")
+async def export_custom_policies_sigma(
+    request: Request,
+    stage: Optional[str] = Query(None, description="Only input or output policies"),
+    translate: bool = Query(True, description="Translate natural-language policies via the guardrail LLM"),
+):
+    """Export custom policies as Sigma rules (multi-document YAML)."""
+    from core.sigma_io import export_sigma
+
+    tenant_id = _require_tenant(request)
+    if stage is not None and stage not in ("input", "output"):
+        raise HTTPException(status_code=400, detail="stage must be input or output")
+    policies = get_tenant_custom_policies(tenant_id, enabled_only=False, stage=stage)
+    return {"tenant_id": tenant_id, **await export_sigma(policies, translate)}
+
+
+@router.get("/me/policies/custom/{policy_id}/export/sigma")
+async def export_custom_policy_sigma(
+    request: Request,
+    policy_id: str,
+    translate: bool = Query(True, description="Translate a natural-language policy via the guardrail LLM"),
+):
+    """Export one custom policy as a Sigma rule."""
+    from core.sigma_io import export_one
+
+    tenant_id = _require_tenant(request)
+    policy = get_custom_policy(tenant_id, policy_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    try:
+        exported = await export_one(policy, translate)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Cannot export as Sigma: {e}")
+    return {"tenant_id": tenant_id, "policy_id": policy_id, **exported}
 
 
 @router.get("/me/policies/custom")

@@ -2821,9 +2821,13 @@
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border);">
             <div>
               <div style="font-weight: 600; font-size: 13px;">Custom Input Policies</div>
-              <div style="font-size: 12px; color: var(--text-dim);">Natural language policies evaluated by LLM</div>
+              <div style="font-size: 12px; color: var(--text-dim);">Natural language (evaluated by LLM) or Sigma rules (deterministic)</div>
             </div>
-            <span id="custom-input-count" class="badge badge-basic" style="font-size: 10px;">0 policies</span>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <button class="small" onclick="importSigmaPolicies('input')" title="Import Sigma rules (.yml) as input policies">Import Sigma</button>
+              <button class="small" onclick="exportSigmaPolicies('input')" title="Download input policies as Sigma rules">Export Sigma</button>
+              <span id="custom-input-count" class="badge badge-basic" style="font-size: 10px;">0 policies</span>
+            </div>
           </div>
           <div id="custom-input-policies" class="policy-grid">
             <div style="text-align: center; padding: 1rem; color: var(--text-muted); background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius-sm);">
@@ -2852,9 +2856,13 @@
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border);">
             <div>
               <div style="font-weight: 600; font-size: 13px;">Custom Output Policies</div>
-              <div style="font-size: 12px; color: var(--text-dim);">Natural language policies evaluated by LLM</div>
+              <div style="font-size: 12px; color: var(--text-dim);">Natural language (evaluated by LLM) or Sigma rules (deterministic)</div>
             </div>
-            <span id="custom-output-count" class="badge badge-basic" style="font-size: 10px;">0 policies</span>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <button class="small" onclick="importSigmaPolicies('output')" title="Import Sigma rules (.yml) as output policies">Import Sigma</button>
+              <button class="small" onclick="exportSigmaPolicies('output')" title="Download output policies as Sigma rules">Export Sigma</button>
+              <span id="custom-output-count" class="badge badge-basic" style="font-size: 10px;">0 policies</span>
+            </div>
           </div>
           <div id="custom-output-policies" class="policy-grid">
             <div style="text-align: center; padding: 1rem; color: var(--text-muted); background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius-sm);">
@@ -2881,6 +2889,9 @@
           <div id="policies-msg"></div>
         </div>
       </div>
+
+      <!-- Sigma import: file picker opened by the Import Sigma buttons -->
+      <input type="file" id="sigma-import-file" accept=".yml,.yaml,.txt" style="display: none;" onchange="handleSigmaImportFile(this)">
 
       <!-- Custom Policy Modal -->
       <div id="custom-policy-modal" class="modal hidden">
@@ -2911,6 +2922,14 @@
             </div>
 
             <div class="field" style="margin-bottom: 1rem;">
+              <label for="custom-policy-format" style="display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 0.375rem; text-transform: uppercase; letter-spacing: 0.025em;">Format</label>
+              <select id="custom-policy-format" onchange="setCustomPolicyFormat(this.value)" style="width: 100%; background: #f9fafb; border: 2px solid #e5e7eb; border-radius: 8px; color: #111827; padding: 0.75rem 0.875rem; font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer; box-sizing: border-box;">
+                <option value="natural_language">Natural language (evaluated by the guardrail LLM)</option>
+                <option value="sigma">Sigma rule (deterministic, no LLM call)</option>
+              </select>
+            </div>
+
+            <div class="field" id="custom-policy-nl-fields" style="margin-bottom: 1rem;">
               <div style="display: flex; align-items: center; justify-content: between; margin-bottom: 0.5rem;">
                 <label style="font-size: 12px; font-weight: 600; color: #374151; text-transform: uppercase; letter-spacing: 0.025em;">Policy Definition *</label>
                 <select id="policy-examples" onchange="fillExamplePolicy()" style="background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; color: #6b7280; padding: 0.375rem 0.5rem; font-size: 11px; cursor: pointer; margin-left: auto;">
@@ -2928,8 +2947,20 @@
                 <span id="custom-policy-prompt-count">0</span>/2000 characters
               </div>
             </div>
+
+            <div class="field" id="custom-policy-sigma-fields" style="margin-bottom: 1rem; display: none;">
+              <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
+                <label for="custom-policy-sigma" style="font-size: 12px; font-weight: 600; color: #374151; text-transform: uppercase; letter-spacing: 0.025em;">Sigma Rule (YAML) *</label>
+                <button type="button" class="small" onclick="insertSigmaExample()" style="margin-left: auto;">Insert example</button>
+              </div>
+              <textarea id="custom-policy-sigma" spellcheck="false" placeholder="Paste one Sigma rule in YAML" style="width: 100%; height: 220px; padding: 0.75rem 0.875rem; background: #f9fafb; border: 2px solid #e5e7eb; border-radius: 8px; color: #111827; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; resize: vertical; box-sizing: border-box; white-space: pre;"></textarea>
+              <div style="font-size: 11px; color: #6b7280; margin-top: 0.375rem; line-height: 1.5;">
+                Fields: <code>message</code>, <code>stage</code>, <code>user_role</code>, <code>session_id</code>, <code>agent_id</code>, <code>tool_name</code>, <code>tool_input</code>.
+                Modifiers: contains, startswith, endswith, all, cased, exists, re. A keyword list searches <code>message</code>.
+              </div>
+            </div>
             <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; margin-bottom: 1rem;">
-              <div class="field">
+              <div class="field" id="custom-policy-confidence-field">
                 <label style="display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 0.375rem; text-transform: uppercase; letter-spacing: 0.025em;">Confidence Threshold</label>
                 <div style="background: #f9fafb; border: 2px solid #e5e7eb; border-radius: 8px; padding: 0.875rem; transition: all 0.2s;" onfocus="this.style.borderColor='#6366f1'" tabindex="0">
                   <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
@@ -2960,7 +2991,7 @@
             <div id="custom-policy-validation" style="margin-top: 0.75rem;"></div>
           </div>
           <div class="modal-footer" style="background: #f9fafb; border-top: 1px solid #e5e7eb; padding: 1rem 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
-            <button type="button" onclick="validateCustomPolicyPrompt()" style="background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db; padding: 0.625rem 1rem; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 0.375rem; transition: all 0.2s;" onmouseover="this.style.background='#e5e7eb'; this.style.color='#374151'" onmouseout="this.style.background='#f3f4f6'; this.style.color='#6b7280'">
+            <button type="button" onclick="testCustomPolicy()" style="background: #f3f4f6; color: #6b7280; border: 1px solid #d1d5db; padding: 0.625rem 1rem; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 0.375rem; transition: all 0.2s;" onmouseover="this.style.background='#e5e7eb'; this.style.color='#374151'" onmouseout="this.style.background='#f3f4f6'; this.style.color='#6b7280'">
               <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
               </svg>
@@ -15482,6 +15513,9 @@ async function revokeCert() {
 // Custom Policies Management
 let CUSTOM_POLICIES = [];
 let EDITING_POLICY_ID = null;
+// Format of the policy open in the modal when it was loaded, so switching a
+// Sigma policy back to natural language sends format explicitly.
+let EDITING_POLICY_FORMAT = 'natural_language';
 
 async function loadCustomPolicies() {
   if (!API_KEY) return;
@@ -15563,7 +15597,17 @@ function renderCustomPoliciesForStage(stage, policies) {
     return;
   }
 
-  container.innerHTML = policies.map(policy => `
+  container.innerHTML = policies.map(policy => {
+    // Sigma policies show their rule and a Sigma badge; natural-language
+    // policies render exactly as before (prompt + confidence badge).
+    const isSigma = policy.format === 'sigma';
+    const definitionHtml = isSigma
+      ? `<pre class="custom-policy-prompt" style="max-height: 60px; overflow-y: auto; margin: 0; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px;">${escapeHtml(policy.sigma_source || '')}</pre>`
+      : `<div class="custom-policy-prompt" style="max-height: 60px; overflow-y: auto;">${escapeHtml(policy.prompt)}</div>`;
+    const scoreBadge = isSigma
+      ? `<span class="badge badge-basic" title="Deterministic Sigma rule, no LLM call">Sigma</span>`
+      : `<span class="badge badge-basic">Confidence: ${policy.confidence_threshold}</span>`;
+    return `
     <div class="custom-policy-card">
       <div class="custom-policy-toggle">
         <label class="switch">
@@ -15580,11 +15624,11 @@ function renderCustomPoliciesForStage(stage, policies) {
         </div>
       </div>
 
-      <div class="custom-policy-prompt" style="max-height: 60px; overflow-y: auto;">${escapeHtml(policy.prompt)}</div>
+      ${definitionHtml}
 
       <div class="custom-policy-meta">
         <span class="badge ${getActionBadgeClass(policy.action)}">${policy.action}</span>
-        <span class="badge badge-basic">Confidence: ${policy.confidence_threshold}</span>
+        ${scoreBadge}
         <span class="badge badge-basic">Priority: ${policy.priority}</span>
         <span class="badge badge-basic">v${policy.version || 1}</span>
       </div>
@@ -15594,7 +15638,8 @@ function renderCustomPoliciesForStage(stage, policies) {
         <button class="small danger" onclick="deleteCustomPolicy('${policy.policy_id}', '${escapeHtml(policy.name)}')">Delete</button>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function getActionBadgeClass(action) {
@@ -15615,10 +15660,12 @@ function showCreateCustomPolicyModal(stage = 'input') {
   document.getElementById('custom-policy-name').value = '';
   document.getElementById('custom-policy-description').value = '';
   document.getElementById('custom-policy-prompt').value = '';
+  document.getElementById('custom-policy-sigma').value = '';
   document.getElementById('custom-policy-action').value = 'warn';
   document.getElementById('custom-policy-confidence').value = '0.8';
   document.getElementById('custom-policy-priority').value = '100';
-  document.getElementById('custom-policy-validation').innerHTML = '';
+  EDITING_POLICY_FORMAT = 'natural_language';
+  setCustomPolicyFormat('natural_language');
 
   // Set stage (add stage field to form if it doesn't exist)
   if (!document.getElementById('custom-policy-stage')) {
@@ -15646,11 +15693,14 @@ function editCustomPolicy(policyId) {
   // Populate form
   document.getElementById('custom-policy-name').value = policy.name;
   document.getElementById('custom-policy-description').value = policy.description;
-  document.getElementById('custom-policy-prompt').value = policy.prompt;
+  document.getElementById('custom-policy-prompt').value = policy.prompt || '';
+  document.getElementById('custom-policy-sigma').value =
+    policy.sigma_source || (policy.sigma_rule ? JSON.stringify(policy.sigma_rule, null, 2) : '');
   document.getElementById('custom-policy-action').value = policy.action;
   document.getElementById('custom-policy-confidence').value = policy.confidence_threshold;
   document.getElementById('custom-policy-priority').value = policy.priority;
-  document.getElementById('custom-policy-validation').innerHTML = '';
+  EDITING_POLICY_FORMAT = policy.format === 'sigma' ? 'sigma' : 'natural_language';
+  setCustomPolicyFormat(EDITING_POLICY_FORMAT);
 
   // Set stage
   if (!document.getElementById('custom-policy-stage')) {
@@ -15757,22 +15807,38 @@ async function saveCustomPolicy() {
   const confidence_threshold = parseFloat(document.getElementById('custom-policy-confidence').value);
   const priority = parseInt(document.getElementById('custom-policy-priority').value);
   const stage = document.getElementById('custom-policy-stage').value;
+  const format = document.getElementById('custom-policy-format').value;
 
-  if (!name || !description || !prompt) {
-    showToast('Please fill in all required fields', 'error');
-    return;
+  let policyData;
+  if (format === 'sigma') {
+    const sigma_rule = document.getElementById('custom-policy-sigma').value.trim();
+    if (!name || !description || !sigma_rule) {
+      showToast('Please fill in all required fields', 'error');
+      return;
+    }
+    policyData = { name, description, action, stage, priority, enabled: true, format: 'sigma', sigma_rule };
+  } else {
+    if (!name || !description || !prompt) {
+      showToast('Please fill in all required fields', 'error');
+      return;
+    }
+
+    // Natural-language payload is unchanged; format is only sent when
+    // converting a Sigma policy back to natural language.
+    policyData = {
+      name,
+      description,
+      prompt,
+      action,
+      stage,
+      confidence_threshold,
+      priority,
+      enabled: true
+    };
+    if (EDITING_POLICY_ID && EDITING_POLICY_FORMAT === 'sigma') {
+      policyData.format = 'natural_language';
+    }
   }
-
-  const policyData = {
-    name,
-    description,
-    prompt,
-    action,
-    stage,
-    confidence_threshold,
-    priority,
-    enabled: true
-  };
 
   try {
     const url = EDITING_POLICY_ID
@@ -15791,8 +15857,8 @@ async function saveCustomPolicy() {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || `Failed to save policy: ${response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(formatPolicyApiError(errorData.detail, `Failed to save policy: ${response.status}`));
     }
 
     const result = await response.json();
@@ -15921,6 +15987,169 @@ async function validateCustomPolicyPrompt() {
   } catch (error) {
     console.error('Error validating prompt:', error);
     validationDiv.innerHTML = '<div class="toast error">Failed to validate prompt. Please try again.</div>';
+  }
+}
+
+// ── Sigma-format custom policies ──────────────────────────────────────────
+
+// FastAPI errors arrive as a string, a {message} object, or a list of
+// validation errors; turn any of them into readable text.
+function formatPolicyApiError(detail, fallback) {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) return detail.map(d => (d && d.msg) || JSON.stringify(d)).join('; ');
+  if (detail && detail.message) return detail.message;
+  return fallback;
+}
+
+function setCustomPolicyFormat(format) {
+  const isSigma = format === 'sigma';
+  document.getElementById('custom-policy-format').value = isSigma ? 'sigma' : 'natural_language';
+  document.getElementById('custom-policy-nl-fields').style.display = isSigma ? 'none' : '';
+  document.getElementById('custom-policy-sigma-fields').style.display = isSigma ? '' : 'none';
+  // A Sigma match is deterministic, so the confidence threshold does not apply.
+  document.getElementById('custom-policy-confidence-field').style.display = isSigma ? 'none' : '';
+  document.getElementById('custom-policy-validation').innerHTML = '';
+}
+
+function insertSigmaExample() {
+  const stageEl = document.getElementById('custom-policy-stage');
+  const category = stageEl && stageEl.value === 'output' ? 'llm_output' : 'llm_input';
+  document.getElementById('custom-policy-sigma').value = [
+    'title: US social security number',
+    'status: stable',
+    'description: Matches a US social security number anywhere in the text',
+    'logsource:',
+    '  product: votal',
+    '  service: shield',
+    `  category: ${category}`,
+    'detection:',
+    '  ssn:',
+    "    message|re: '\\b\\d{3}-\\d{2}-\\d{4}\\b'",
+    '  condition: ssn',
+    'level: high',
+  ].join('\n');
+}
+
+function testCustomPolicy() {
+  if (document.getElementById('custom-policy-format').value === 'sigma') {
+    return validateCustomPolicySigma();
+  }
+  return validateCustomPolicyPrompt();
+}
+
+async function validateCustomPolicySigma() {
+  const sigma = document.getElementById('custom-policy-sigma').value.trim();
+  const validationDiv = document.getElementById('custom-policy-validation');
+  if (!sigma) {
+    validationDiv.innerHTML = '<div class="toast error">Please enter a Sigma rule to validate</div>';
+    return;
+  }
+  try {
+    validationDiv.innerHTML = '<div style="color: var(--text-muted); font-size: 12px;">Validating Sigma rule...</div>';
+    const response = await fetch(`${BASE_URL}/v1/tenant/me/policies/custom/validate-sigma`, {
+      method: 'POST',
+      headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sigma })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(formatPolicyApiError(data.detail, `Validation failed: ${response.status}`));
+
+    const v = data.validation;
+    if (v.valid && v.rules.length > 1) {
+      validationDiv.innerHTML = '<div class="toast error">A policy holds one rule. Use Import Sigma to add several rules at once.</div>';
+    } else if (v.valid) {
+      validationDiv.innerHTML = `<div class="toast success">✅ Valid Sigma rule: ${escapeHtml(v.rules[0].title || '')}</div>`;
+    } else {
+      validationDiv.innerHTML = '<div class="toast error">❌ Sigma rule has problems:</div>'
+        + '<ul style="margin: 0.5rem 0; padding-left: 1.5rem; color: var(--danger); font-size: 12px;">'
+        + v.errors.map(e => `<li>${escapeHtml(e.error)}</li>`).join('')
+        + '</ul>';
+    }
+  } catch (error) {
+    console.error('Error validating Sigma rule:', error);
+    validationDiv.innerHTML = `<div class="toast error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+let SIGMA_IMPORT_STAGE = 'input';
+
+function importSigmaPolicies(stage) {
+  SIGMA_IMPORT_STAGE = stage;
+  const input = document.getElementById('sigma-import-file');
+  input.value = '';
+  input.click();
+}
+
+async function handleSigmaImportFile(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 64 * 1024) {
+    showToast('Sigma file is larger than 64 KB', 'error');
+    return;
+  }
+  const stage = SIGMA_IMPORT_STAGE;
+  try {
+    const sigma = await file.text();
+    const response = await fetch(`${BASE_URL}/v1/tenant/me/policies/custom/import/sigma`, {
+      method: 'POST',
+      headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sigma, stage })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(formatPolicyApiError(data.detail, `Import failed: ${response.status}`));
+
+    const created = (data.created || []).length;
+    const errors = data.errors || [];
+    if (errors.length) console.warn('Sigma import errors:', errors);
+    if (created && !errors.length) {
+      showToast(`Imported ${created} Sigma ${stage} ${created === 1 ? 'policy' : 'policies'}`, 'success');
+    } else if (created) {
+      showToast(`Imported ${created}, skipped ${errors.length}: ${errors[0].title || 'rule'}: ${errors[0].error}`, 'warning');
+    } else {
+      showToast(errors.length ? `Nothing imported: ${errors[0].error}` : 'No rules found in file', 'error');
+    }
+
+    loadCustomPolicies();
+    if (typeof loadPolicies === 'function') loadPolicies();
+  } catch (error) {
+    console.error('Error importing Sigma rules:', error);
+    showToast(error.message, 'error');
+  }
+}
+
+async function exportSigmaPolicies(stage) {
+  try {
+    showToast(`Exporting ${stage} policies as Sigma...`, 'info');
+    const response = await fetch(
+      `${BASE_URL}/v1/tenant/me/policies/custom/export/sigma?stage=${encodeURIComponent(stage)}`,
+      { headers: { 'X-API-Key': API_KEY } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(formatPolicyApiError(data.detail, `Export failed: ${response.status}`));
+
+    const errors = data.errors || [];
+    if (errors.length) console.warn('Sigma export errors:', errors);
+    if (!data.count) {
+      showToast(errors.length ? `Nothing exported: ${errors[0].error}` : `No ${stage} policies to export`,
+                errors.length ? 'error' : 'info');
+      return;
+    }
+
+    const blob = new Blob([data.yaml], { type: 'application/x-yaml' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `votal-${stage}-policies.sigma.yml`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+
+    showToast(errors.length
+      ? `Exported ${data.count}; ${errors.length} could not be converted (${errors[0].policy_name}: ${errors[0].error})`
+      : `Exported ${data.count} ${stage} ${data.count === 1 ? 'policy' : 'policies'} as Sigma`,
+      errors.length ? 'warning' : 'success');
+  } catch (error) {
+    console.error('Error exporting Sigma rules:', error);
+    showToast(error.message, 'error');
   }
 }
 

@@ -132,6 +132,12 @@ COPY storage/portal_sessions.py storage/
 COPY storage/tenant_models.py storage/
 COPY storage/admin_audit.py storage/
 COPY storage/custom_policies.py storage/
+# storage/custom_policies.py validates Sigma-format policies with core/sigma.py;
+# api/routes_tenant_self.py imports/exports them via core/sigma_io.py.
+COPY core/sigma.py core/
+COPY core/sigma_io.py core/
+COPY core/sigma_policy.py core/
+COPY core/sigma_translate.py core/
 COPY storage/rate_limiter.py storage/
 COPY storage/policy_store.py storage/
 COPY storage/audit_log.py storage/
@@ -159,6 +165,8 @@ COPY storage/mcp_policy_store.py storage/
 COPY storage/mcp_scan_store.py storage/
 COPY storage/mcp_oauth_store.py storage/
 COPY core/telemetry.py core/
+# core/telemetry.py imports core/asim.py in its export path (ASIM output format).
+COPY core/asim.py core/
 COPY guardrails/__init__.py guardrails/
 COPY guardrails/base.py guardrails/
 # Imported at module load by api/routes_config.py.
