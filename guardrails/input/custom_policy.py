@@ -11,6 +11,8 @@ from guardrails.output.custom_policy import (
     POLICY_SCAN_INSTRUCTION,
     _parse_policy_csv,
     custom_policy_fail_open,
+    evaluate_sigma_policy,
+    is_sigma_policy,
 )
 from core.models import GuardrailResult
 from core.text_utils import build_policy_messages, custom_policy_history_turns
@@ -55,6 +57,8 @@ class CustomPolicyInputGuardrail(BaseGuardrail):
 
             async def _eval(policy):
                 try:
+                    if is_sigma_policy(policy):
+                        return await evaluate_sigma_policy(text, policy, context, "input")
                     return await self._evaluate_policy_with_llm(text, policy, context)
                 except Exception as e:
                     logger.error(f"Error evaluating input policy {policy['policy_id']}: {e}")

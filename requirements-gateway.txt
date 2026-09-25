@@ -11,3 +11,5 @@ pydantic
 pydantic-settings
 requests
 tiktoken
+regex         # core/sigma.py (Sigma-format custom policies). Also arrives via
+              # tiktoken, but a direct import must not rely on a transitive dep.

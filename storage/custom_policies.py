@@ -1,6 +1,13 @@
 """Storage operations for tenant-specific custom policies.
 
-Custom policies are LLM-based policies defined by tenants in natural language.
+A custom policy is authored in one of two formats:
+  * natural_language (default) -- a prompt the guardrail LLM evaluates;
+  * sigma -- a Sigma detection rule the guardrail evaluates deterministically
+    (core/sigma.py), stored normalized under `sigma_rule`.
+Both are enforced by the same custom_policy_input / custom_policy_output
+guardrails. Records written before `format` existed have no such key and are
+natural language.
+
 Stored within the existing tenant guardrail configuration structure.
 Max 10 policies per tenant per stage (input/output).
 """
@@ -15,6 +22,26 @@ from storage.tenant_store import get_tenant, set_tenant_policies
 logger = logging.getLogger(__name__)
 
 MAX_POLICIES_PER_STAGE = 10
+
+FORMAT_NATURAL_LANGUAGE = "natural_language"
+FORMAT_SIGMA = "sigma"
+POLICY_FORMATS = (FORMAT_NATURAL_LANGUAGE, FORMAT_SIGMA)
+
+
+def normalize_format(value: Optional[str]) -> str:
+    """Resolve a policy format; absent means natural language."""
+    fmt = (value or FORMAT_NATURAL_LANGUAGE).strip().lower()
+    if fmt not in POLICY_FORMATS:
+        raise ValueError(f"Invalid format. Must be one of: {list(POLICY_FORMATS)}")
+    return fmt
+
+
+def _load_sigma_rule(source) -> Dict:
+    """Validate a Sigma rule (YAML text or object). Raises ValueError."""
+    from core.sigma import load_rule  # lazy: only Sigma policies need it
+    if not source:
+        raise ValueError("sigma_rule is required for a Sigma policy")
+    return load_rule(source)
 
 
 def _persist_policy_stage(tenant_id: str, tenant_config: Dict, stage: str) -> None:
@@ -61,11 +88,16 @@ def save_custom_policy(
 ) -> Dict:
     """Save a new custom policy for a tenant."""
     try:
-        # Validate required fields
-        required_fields = ["name", "description", "prompt", "action"]
+        # Validate required fields (the definition depends on the format)
+        fmt = normalize_format(policy_data.get("format"))
+        required_fields = ["name", "description", "action"]
         for field in required_fields:
             if field not in policy_data:
                 raise ValueError(f"Missing required field: {field}")
+        definition = "prompt" if fmt == FORMAT_NATURAL_LANGUAGE else "sigma_rule"
+        if not policy_data.get(definition):
+            raise ValueError(f"Missing required field: {definition}")
+        sigma_rule = _load_sigma_rule(policy_data["sigma_rule"]) if fmt == FORMAT_SIGMA else None
 
         # Validate action
         valid_actions = ["pass", "warn", "redact", "block"]
@@ -96,7 +128,8 @@ def save_custom_policy(
             "policy_id": policy_id,
             "name": policy_data["name"],
             "description": policy_data["description"],
-            "prompt": policy_data["prompt"],
+            "prompt": policy_data.get("prompt") or "",
+            "format": fmt,
             "action": policy_data["action"],
             "stage": stage,
             "enabled": policy_data.get("enabled", True),
@@ -112,6 +145,8 @@ def save_custom_policy(
             "updated_by": created_by,
             "version": 1
         }
+        if sigma_rule is not None:
+            policy["sigma_rule"] = sigma_rule
 
         # Add policy to the list
         existing_policies.append(policy)
@@ -229,6 +264,21 @@ def update_custom_policy(
                             valid_actions = ["pass", "warn", "redact", "block"]
                             if updates["action"] not in valid_actions:
                                 raise ValueError(f"Invalid action. Must be one of: {valid_actions}")
+
+                        # Format / definition: validate before mutating anything.
+                        updates = dict(updates)
+                        if "format" in updates or "sigma_rule" in updates:
+                            new_fmt = normalize_format(updates.get("format", policy.get("format")))
+                            updates["format"] = new_fmt
+                            if new_fmt == FORMAT_SIGMA:
+                                updates["sigma_rule"] = _load_sigma_rule(
+                                    updates.get("sigma_rule", policy.get("sigma_rule")))
+                            else:
+                                if not (updates.get("prompt") or policy.get("prompt")):
+                                    raise ValueError(
+                                        "prompt is required for a natural_language policy")
+                                updates.pop("sigma_rule", None)
+                                policy.pop("sigma_rule", None)
 
                         # Apply updates
                         policy.update(updates)

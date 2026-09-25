@@ -132,6 +132,8 @@ COPY storage/portal_sessions.py storage/
 COPY storage/tenant_models.py storage/
 COPY storage/admin_audit.py storage/
 COPY storage/custom_policies.py storage/
+# storage/custom_policies.py validates Sigma-format policies with core/sigma.py.
+COPY core/sigma.py core/
 COPY storage/rate_limiter.py storage/
 COPY storage/policy_store.py storage/
 COPY storage/audit_log.py storage/
