@@ -32,13 +32,20 @@ def record_event(event: dict):
 
 
 # ---------------------------------------------------------------------------
-# Output format — "native" (default, unchanged) or "asim" (Microsoft ASIM
-# field names, for Sentinel / portable Sigma). Applied ONLY in the off-thread
-# export path, so it adds nothing to the guard path. Set by init_telemetry from
-# VOTAL_TELEMETRY_FORMAT or the telemetry config; default keeps today's shape.
+# Output format — "asim" (default: Microsoft ASIM field names, for Sentinel and
+# portable Sigma rules) or "native" (the pre-ASIM ECS-style `event.*`/`votal.*`
+# fields). Applied ONLY in the off-thread export path, so it adds nothing to the
+# guard path. Set by init_telemetry from VOTAL_TELEMETRY_FORMAT or the telemetry
+# config's `format`.
+#
+# MIGRATION: exported telemetry (Elasticsearch, Splunk HEC, OTLP logs, the local
+# JSON file) now uses ASIM field names. Dashboards and saved searches built on
+# the old field names need updating; set VOTAL_TELEMETRY_FORMAT=native to keep
+# the previous shape while you migrate.
 # ---------------------------------------------------------------------------
 
-_telemetry_format: str = "native"
+_DEFAULT_TELEMETRY_FORMAT = "asim"
+_telemetry_format: str = _DEFAULT_TELEMETRY_FORMAT
 
 
 def get_telemetry_format() -> str:
@@ -700,12 +707,16 @@ def init_telemetry(config: Optional[dict] = None):
     if not config:
         config = {}
 
-    # Output format: env overrides yaml. Unknown values fall back to native, so a
-    # typo can never change the on-the-wire shape silently.
-    fmt = os.environ.get("VOTAL_TELEMETRY_FORMAT", str(config.get("format", "native"))).strip().lower()
-    _telemetry_format = fmt if fmt in ("native", "asim") else "native"
-    if _telemetry_format != "native":
-        logger.info(f"Telemetry output format: {_telemetry_format}")
+    # Output format: env overrides yaml. An unknown value falls back to the
+    # default (asim) and is logged, so a typo cannot silently pick a shape.
+    fmt = os.environ.get(
+        "VOTAL_TELEMETRY_FORMAT", str(config.get("format", _DEFAULT_TELEMETRY_FORMAT))
+    ).strip().lower()
+    if fmt not in ("native", "asim"):
+        logger.warning(f"Unknown telemetry format {fmt!r}; using {_DEFAULT_TELEMETRY_FORMAT}")
+        fmt = _DEFAULT_TELEMETRY_FORMAT
+    _telemetry_format = fmt
+    logger.info(f"Telemetry output format: {_telemetry_format}")
 
     _enabled = config.get("enabled", False)
     if not _enabled:

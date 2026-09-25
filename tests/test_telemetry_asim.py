@@ -109,12 +109,26 @@ def test_init_telemetry_resolves_format():
     init_telemetry({"format": "asim"})
     assert telemetry.get_telemetry_format() == "native"
 
-    # Unknown value falls back to native (a typo can't change the wire shape).
+    # Unknown value falls back to the default (asim), never to a random shape.
     os.environ["VOTAL_TELEMETRY_FORMAT"] = "nonsense"
     init_telemetry({})
-    assert telemetry.get_telemetry_format() == "native"
+    assert telemetry.get_telemetry_format() == "asim"
 
 
-def test_default_format_is_native():
+def test_default_format_is_asim():
+    init_telemetry({})
+    assert telemetry.get_telemetry_format() == "asim"
+
+
+def test_native_escape_hatch():
+    os.environ["VOTAL_TELEMETRY_FORMAT"] = "native"
     init_telemetry({})
     assert telemetry.get_telemetry_format() == "native"
+
+
+def test_shipped_config_selects_asim():
+    import yaml
+    from pathlib import Path
+    cfg = yaml.safe_load((Path(__file__).resolve().parent.parent
+                          / "config" / "default.yaml").read_text())
+    assert cfg["telemetry"]["format"] == "asim"
