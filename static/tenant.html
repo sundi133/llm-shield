@@ -2339,8 +2339,14 @@
   /* Toggle knob shadow */
   .slider:before { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
 
-  /* Tab pane entrance */
-  .tab-pane:not(.hidden) { animation: paneIn 0.28s ease both; }
+  /* Tab pane entrance. Fill mode MUST be `backwards`, not `both`: a forwards
+     fill keeps the last frame's transform applied after the animation ends
+     (Chrome keeps it as matrix(1,0,0,1,0,0) even when the keyframe says
+     `none`), and any transform makes the pane the containing block for
+     position:fixed descendants. Modals inside a pane then centred on the
+     whole scrolled pane instead of the window, so users had to scroll to find
+     them. `backwards` still plays the slide-in, then leaves no transform. */
+  .tab-pane:not(.hidden) { animation: paneIn 0.28s ease backwards; }
   @keyframes paneIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
   /* Modal entrance */
