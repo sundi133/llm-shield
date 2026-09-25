@@ -3,7 +3,7 @@ title: "Spec: Sigma policies + ASIM telemetry"
 layout: default
 nav_exclude: true
 permalink: /specs/sigma-policy-asim-telemetry/
-description: Sigma rules as a custom input/output policy format enforced by the existing custom-policy guardrails, Sigma import/export for those policies, and ASIM as the default telemetry format.
+description: Sigma rules as a custom input/output policy format enforced by the existing custom-policy guardrails, Sigma import/export for those policies, and ASIM fields in telemetry by default without removing existing fields.
 ---
 
 # Spec: Sigma policies + ASIM telemetry
@@ -30,8 +30,8 @@ description: Sigma rules as a custom input/output policy format enforced by the 
   policy's action, **without an LLM call** for that policy.
 - `POST .../import/sigma` turns Sigma YAML into policies; `GET .../export/sigma`
   returns every policy as Sigma. Export then re-import is lossless.
-- Exported telemetry carries ASIM field names by default;
-  `VOTAL_TELEMETRY_FORMAT=native` restores the previous shape.
+- Exported telemetry carries ASIM fields by default, added next to every
+  existing field (`both`); `asim` emits ASIM only, `native` the previous shape.
 
 **Non-goals:** Sigma correlation rules (`timeframe`, `| count()`); converting
 data policies, sanitization rules or blocklists (only custom input/output
@@ -101,11 +101,13 @@ without a reachable guardrail LLM reports those policies in `errors`.
 - **Policies:** opt-in per policy. Existing records have no `format` and are
   evaluated exactly as before; the NL request contract is unchanged (a prompt is
   still required for NL).
-- **Telemetry default change (behavior change):** ASIM is now the default. Escape
-  hatch `VOTAL_TELEMETRY_FORMAT=native` (or `telemetry.format: native`);
-  migration note in `core/telemetry.py` and the customer doc. No code in the repo
-  reads the native field names; external dashboards on the Elasticsearch index
-  shipped by `Dockerfile.cloud` (`votal-shield-logs`) must be updated.
+- **Telemetry default (non-breaking):** `both` keeps every existing `event.*` /
+  `votal.*` field byte-for-byte, in order, and appends the ASIM fields (no key
+  collides). Existing dashboards keep working. `asim` (ASIM only) and `native`
+  (exactly pre-ASIM) are opt-in. Residual effects: records are larger, and an
+  Elasticsearch index with `dynamic: strict` would need the ASIM fields mapped.
+  Revision 2 first shipped `asim` as the default; changed to `both` after an
+  audit because `asim` removed field names that existing dashboards read.
 - **Untrusted rules:** YAML loaded with a SafeLoader that refuses anchors/aliases
   (no billion-laughs), 64 KiB cap, unsupported features rejected at save time,
   regex bounded by the `regex` module's interruptible timeout plus an overall
@@ -134,7 +136,7 @@ without a reachable guardrail LLM reports those policies in `errors`.
 | Mixed NL + Sigma policies | Evaluated concurrently; only NL policies call the LLM |
 | NL export, model returns nothing usable | Per-policy error; bad regexes from the model are dropped |
 | Rule with no stage on import | Error unless `stage` is supplied |
-| Unknown telemetry format value | Warning, falls back to ASIM |
+| Unknown telemetry format value | Warning, falls back to `both` |
 
 ## 8. Test plan (Definition of Done)
 
@@ -146,7 +148,7 @@ without a reachable guardrail LLM reports those policies in `errors`.
   on Sigma **with the LLM patched to fail if called**, mixed policies, context
   fields, timeout honoring fail-open), import/export round trips, translation
   dropping invalid regexes, and the API.
-- `tests/test_telemetry_asim.py`, `tests/test_asim.py`: ASIM default, native
+- `tests/test_telemetry_asim.py`, `tests/test_asim.py`: `both` default keeps every existing field unchanged, native
   escape hatch, unknown value fallback, file exporter selects the same records in
   both formats.
 - `tests/test_admin_dockerfile_imports.py`, `tests/test_admin_image_transitive_imports.py`.

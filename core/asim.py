@@ -30,8 +30,8 @@ from typing import Any
 #: Bump when the field mapping changes in a way consumers must notice.
 ASIM_SCHEMA_VERSION = "0.1.0"
 
-#: The output formats the telemetry pipeline understands.
-TELEMETRY_FORMATS = ("native", "asim")
+#: The output formats the telemetry pipeline understands (see core/telemetry.py).
+TELEMETRY_FORMATS = ("both", "asim", "native")
 
 # --- value maps -------------------------------------------------------------
 

@@ -1,9 +1,11 @@
 """Integration tests for ASIM formatting in the telemetry export path.
 
-Covers the two guarantees that make this change safe to ship:
-  * native format is byte-identical to today (the default);
-  * asim format renames fields only in the off-thread export path, and the
-    FileExporter's "unsafe" filter selects the identical set in both formats.
+Covers the guarantees that make this change safe to ship:
+  * the default (both) keeps every existing field unchanged and only ADDS the
+    ASIM fields, so nothing that reads today's telemetry breaks;
+  * native is byte-identical to the pre-ASIM records;
+  * asim renames fields only in the off-thread export path, and the
+    FileExporter's "unsafe" filter selects the identical set in every format.
 """
 import asyncio
 import json
@@ -109,15 +111,15 @@ def test_init_telemetry_resolves_format():
     init_telemetry({"format": "asim"})
     assert telemetry.get_telemetry_format() == "native"
 
-    # Unknown value falls back to the default (asim), never to a random shape.
+    # Unknown value falls back to the default (both), which removes nothing.
     os.environ["VOTAL_TELEMETRY_FORMAT"] = "nonsense"
     init_telemetry({})
-    assert telemetry.get_telemetry_format() == "asim"
+    assert telemetry.get_telemetry_format() == "both"
 
 
-def test_default_format_is_asim():
+def test_default_format_is_both():
     init_telemetry({})
-    assert telemetry.get_telemetry_format() == "asim"
+    assert telemetry.get_telemetry_format() == "both"
 
 
 def test_native_escape_hatch():
@@ -126,9 +128,32 @@ def test_native_escape_hatch():
     assert telemetry.get_telemetry_format() == "native"
 
 
-def test_shipped_config_selects_asim():
+def test_shipped_config_selects_both():
     import yaml
     from pathlib import Path
     cfg = yaml.safe_load((Path(__file__).resolve().parent.parent
                           / "config" / "default.yaml").read_text())
-    assert cfg["telemetry"]["format"] == "asim"
+    assert cfg["telemetry"]["format"] == "both"
+
+
+def test_both_keeps_every_existing_field_unchanged():
+    # The non-breaking guarantee: every key/value of today's record survives
+    # byte-for-byte, in the same order, and ASIM fields are only appended.
+    telemetry._telemetry_format = "both"
+    for event in (_block(), _pass()):
+        original = json.loads(json.dumps(event, default=str))
+        out = _render_events([event])[0]
+        assert {k: out[k] for k in original} == original
+        assert list(out)[:len(original)] == list(original)
+        assert out["EventVendor"] == "Votal" and "EventResult" in out
+
+
+def test_both_mode_file_exporter_writes_old_and_asim_fields(tmp_path):
+    telemetry._telemetry_format = "both"
+    path = tmp_path / "both.json"
+    asyncio.run(FileExporter(path=str(path)).export([_block(), _pass()]))
+    lines = path.read_text().splitlines()
+    assert len(lines) == 1  # same unsafe selection as native
+    rec = json.loads(lines[0])
+    assert rec["votal.action"] == "block" and rec["event.outcome"] == "failure"
+    assert rec["EventResult"] == "Failure" and rec["DvcAction"] == "Deny"

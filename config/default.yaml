@@ -681,9 +681,10 @@ audit_logging:
 telemetry:
   enabled: true
   flush_interval_seconds: 5
-  # Exported field names: asim (Microsoft ASIM, the default) or native (the
-  # pre-ASIM event.* / votal.* fields). Env VOTAL_TELEMETRY_FORMAT overrides.
-  format: asim
+  # Exported fields: both (default: existing event.* / votal.* fields plus
+  # Microsoft ASIM fields), asim (ASIM only), or native (pre-ASIM only).
+  # Env VOTAL_TELEMETRY_FORMAT overrides.
+  format: both
 
   # Local JSON file with rotation for safe=false events
   file:

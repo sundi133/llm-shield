@@ -32,19 +32,20 @@ def record_event(event: dict):
 
 
 # ---------------------------------------------------------------------------
-# Output format — "asim" (default: Microsoft ASIM field names, for Sentinel and
-# portable Sigma rules) or "native" (the pre-ASIM ECS-style `event.*`/`votal.*`
-# fields). Applied ONLY in the off-thread export path, so it adds nothing to the
-# guard path. Set by init_telemetry from VOTAL_TELEMETRY_FORMAT or the telemetry
-# config's `format`.
+# Output format, applied ONLY in the off-thread export path (nothing on the
+# guard path). Set by init_telemetry from VOTAL_TELEMETRY_FORMAT or the
+# telemetry config's `format`:
 #
-# MIGRATION: exported telemetry (Elasticsearch, Splunk HEC, OTLP logs, the local
-# JSON file) now uses ASIM field names. Dashboards and saved searches built on
-# the old field names need updating; set VOTAL_TELEMETRY_FORMAT=native to keep
-# the previous shape while you migrate.
+#   both   (default) every existing `event.*` / `votal.*` field exactly as
+#          before, PLUS the Microsoft ASIM fields (EventResult, DvcAction, ...).
+#          Existing dashboards keep working; Sentinel ASIM content and Sigma
+#          rules can read the ASIM fields.
+#   asim   ASIM fields only (drop the old fields once dashboards have moved).
+#   native exactly the pre-ASIM records.
 # ---------------------------------------------------------------------------
 
-_DEFAULT_TELEMETRY_FORMAT = "asim"
+TELEMETRY_FORMATS = ("both", "asim", "native")
+_DEFAULT_TELEMETRY_FORMAT = "both"
 _telemetry_format: str = _DEFAULT_TELEMETRY_FORMAT
 
 
@@ -55,23 +56,26 @@ def get_telemetry_format() -> str:
 def _render_events(events: list[dict]) -> list[dict]:
     """Format a batch just before it ships to an exporter.
 
-    Native format returns the events untouched. In ASIM format each event is
-    mapped to ASIM field names; spans pass through unchanged (ASIM is for
+    native returns the events untouched. both keeps every existing field and
+    appends the ASIM fields (no key collides: ASIM names are PascalCase). asim
+    emits only the ASIM record. Spans always pass through unchanged (ASIM is for
     security events, not traces), and a per-event mapping error falls back to the
     native event rather than dropping telemetry. Callers filter on the native
     event first (e.g. FileExporter's "unsafe" test) and render the survivors, so
-    routing semantics are identical in both formats.
+    routing semantics are identical in every format.
     """
-    if _telemetry_format != "asim":
+    if _telemetry_format == "native":
         return events
     from core.asim import to_asim
+    keep_native = _telemetry_format == "both"
     rendered: list[dict] = []
     for e in events:
         if isinstance(e, dict) and e.get("type") == "span":
             rendered.append(e)
             continue
         try:
-            rendered.append(to_asim(e))
+            asim = to_asim(e)
+            rendered.append({**e, **asim} if keep_native else asim)
         except Exception:
             rendered.append(e)
     return rendered
@@ -708,11 +712,11 @@ def init_telemetry(config: Optional[dict] = None):
         config = {}
 
     # Output format: env overrides yaml. An unknown value falls back to the
-    # default (asim) and is logged, so a typo cannot silently pick a shape.
+    # default (both, which removes nothing) and is logged.
     fmt = os.environ.get(
         "VOTAL_TELEMETRY_FORMAT", str(config.get("format", _DEFAULT_TELEMETRY_FORMAT))
     ).strip().lower()
-    if fmt not in ("native", "asim"):
+    if fmt not in TELEMETRY_FORMATS:
         logger.warning(f"Unknown telemetry format {fmt!r}; using {_DEFAULT_TELEMETRY_FORMAT}")
         fmt = _DEFAULT_TELEMETRY_FORMAT
     _telemetry_format = fmt

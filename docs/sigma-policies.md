@@ -12,7 +12,7 @@ description: Write custom input and output policies as Sigma rules, import and e
 Custom input and output policies can be written as **Sigma rules** as well as in
 natural language. Both formats are enforced the same way at runtime. You can
 import existing Sigma rules as policies and export any policy as a Sigma rule.
-Shield telemetry is emitted in **Microsoft ASIM** format.
+Shield telemetry includes **Microsoft ASIM** fields alongside its existing fields.
 {: .fs-6 .fw-300 }
 
 <details open markdown="block">
@@ -145,22 +145,27 @@ curl "$SHIELD/v1/tenant/me/custom-policies/<policy_id>/export/sigma" -H "X-API-K
 ## Telemetry in ASIM format
 
 Shield telemetry (Elasticsearch, Splunk HEC, OTLP logs and the local JSON log
-file) uses **Microsoft ASIM** field names, for example `EventResult`,
+file) includes **Microsoft ASIM** fields, for example `EventResult`,
 `DvcAction`, `SrcIpAddr`, `ActorUsername` and `EventSeverity`. Microsoft
 Sentinel ASIM content and Sigma rules can read Shield events without a custom
 parser. Agent context that ASIM has no field for (agent id, tool, guardrail
-results, risk score) is in `AdditionalFields`. Prompt and response text is not
-copied into these records.
+results, risk score) is in `AdditionalFields`. The ASIM fields never carry
+prompt or response text.
 
-### Migration from the previous format
+### Nothing to migrate
 
-Earlier releases exported `event.*` and `votal.*` field names. Dashboards,
-saved searches and alerts built on those names need updating. To keep the
-previous format while you migrate, set:
+By default every record keeps all of its existing `event.*` and `votal.*`
+fields, unchanged, and the ASIM fields are added next to them. Dashboards,
+saved searches and alerts built on the existing fields keep working.
 
-```bash
-VOTAL_TELEMETRY_FORMAT=native
-```
+Choose the format with `VOTAL_TELEMETRY_FORMAT` or `telemetry.format` in the
+configuration file:
 
-or `telemetry.format: native` in the configuration file. Remove it once your
-dashboards use the ASIM fields.
+| Value | Records contain |
+|---|---|
+| `both` (default) | Existing fields plus ASIM fields |
+| `asim` | ASIM fields only. Smaller records, once nothing reads the old fields |
+| `native` | Existing fields only, exactly as before ASIM |
+
+Records in `both` are larger than before. If your Elasticsearch index uses a
+strict mapping (`dynamic: strict`), add the ASIM fields to it or use `native`.
