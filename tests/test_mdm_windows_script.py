@@ -1,10 +1,10 @@
 """The Windows endpoint script (deploy/swg/mdm/install-windows.ps1).
 
-The counterpart to test_mdm_macos_script.py. PowerShell is not on the CI
-runner, so where the shell tests execute the script these mostly assert on its
-text -- but each assertion still guards a specific way a Windows fleet ends up
-looking covered while coding agents go straight out. When `pwsh` IS present the
-first test parses the script so a syntax error is still caught.
+The counterpart to test_mdm_macos_script.py. These mostly assert on the
+script's text (the script needs Windows to run), but each assertion still guards
+a specific way a Windows fleet ends up looking covered while coding agents go
+straight out. Where `pwsh` is present, which includes GitHub's Ubuntu runners,
+the first test parses the script so a syntax error is caught.
 
 The gaps these guard were real: the original Windows script trusted the CA and
 set the browser PAC but never set the proxy env vars the terminal reads, so
@@ -26,16 +26,23 @@ def test_script_exists():
     assert SCRIPT.exists()
 
 
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell not installed (the CI case)")
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell not installed")
 def test_script_parses():
-    """Catch a syntax error where pwsh exists; a no-op on the Linux CI runner."""
+    """Catch a syntax error where pwsh exists (GitHub's Ubuntu runners have it).
+
+    [ref] needs an existing variable, so $tokens and $errs are created first;
+    passing [ref]$errs uninitialised fails with "[ref] cannot be applied to a
+    variable that does not exist" before the script is ever parsed.
+    """
     r = subprocess.run(
-        ["pwsh", "-NoProfile", "-Command",
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command",
+         "$tokens = $null; $errs = $null; "
          f"$null = [System.Management.Automation.Language.Parser]::ParseFile("
-         f"'{SCRIPT}', [ref]$null, [ref]$errs); if ($errs) {{ exit 1 }}"],
+         f"'{SCRIPT}', [ref]$tokens, [ref]$errs); "
+         "if ($errs) { $errs | ForEach-Object { $_.ToString() }; exit 1 }"],
         capture_output=True, text=True,
     )
-    assert r.returncode == 0, r.stderr
+    assert r.returncode == 0, r.stdout + r.stderr
 
 
 # ── the silent bypasses ──────────────────────────────────────────────────
