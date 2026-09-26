@@ -28,6 +28,7 @@ from storage.custom_policies import (
     get_policy_stats,
     validate_policy_prompt,
     MAX_POLICIES_PER_STAGE,
+    sigma_max_policies_per_stage,
 )
 
 router = APIRouter(prefix="/v1/tenant/me/custom-policies", tags=["tenant-custom-policies"])
@@ -140,6 +141,7 @@ class SigmaImportRequest(BaseModel):
         ..., description="Sigma YAML (one or more --- documents), a rule object, or a list of rule objects")
     stage: Optional[str] = Field(None, description="Force input or output (else from votal:/logsource.category)")
     action: Optional[str] = Field(None, description="Force pass/warn/redact/block (else from votal:/level)")
+    field_map: Optional[dict[str, str]] = Field(None, description="Translate rule field names: {external_name: shield_field}")
     dry_run: bool = Field(False, description="Validate and report without creating policies")
 
     @validator("stage")
@@ -157,6 +159,9 @@ class SigmaImportRequest(BaseModel):
 
 class SigmaValidateRequest(BaseModel):
     sigma: Union[str, dict, list] = Field(..., description="Sigma YAML or rule object(s)")
+    samples: Optional[list[Union[str, dict]]] = Field(
+        None, max_length=20, description="Texts (or {message, user_role, tool_name, tool_input, stage}) to run the rule against")
+    field_map: Optional[dict[str, str]] = Field(None, description="Translate rule field names: {external_name: shield_field}")
 
 
 @router.post("/validate-sigma")
@@ -164,7 +169,8 @@ async def validate_sigma_rule(request: Request, body: SigmaValidateRequest):
     """Validate Sigma rule text without creating a policy."""
     from core.sigma_io import validate_sigma
     tenant_id = _tenant_id(request)
-    return {"tenant_id": tenant_id, "validation": validate_sigma(body.sigma)}
+    return {"tenant_id": tenant_id, "validation": validate_sigma(body.sigma, samples=body.samples,
+                                                             field_map=body.field_map)}
 
 
 @router.post("/import/sigma")
@@ -181,7 +187,7 @@ async def import_sigma_policies(request: Request, body: SigmaImportRequest):
     tenant_id = _tenant_id(request)
     try:
         result = import_sigma(tenant_id, body.sigma, stage=body.stage, action=body.action,
-                              dry_run=body.dry_run,
+                              dry_run=body.dry_run, field_map=body.field_map,
                               created_by=f"tenant:{tenant_id}:sigma-import")
     except SigmaRuleError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -482,6 +488,7 @@ async def get_policy_limits(request: Request):
         "tenant_id": tenant_id,
         "limits": {
             "max_policies_per_stage": MAX_POLICIES_PER_STAGE,
+            "max_sigma_policies_per_stage": sigma_max_policies_per_stage(),
             "valid_stages": ["input", "output"],
             "min_prompt_length": 20,
             "max_prompt_length": 2000,

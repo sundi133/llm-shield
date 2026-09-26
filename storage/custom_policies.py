@@ -13,6 +13,7 @@ Max 10 policies per tenant per stage (input/output).
 """
 
 import logging
+import os
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -43,12 +44,28 @@ def _load_sigma_rule(source) -> tuple:
     the YAML the author wrote (kept so the portal edits exactly what was typed,
     comments included). An object is rendered to YAML.
     """
-    from core.sigma import dump_rule, load_rule  # lazy: only Sigma policies need it
+    from core.sigma import check_fields, dump_rule, load_rule, translate_fields
     if not source:
         raise ValueError("sigma_rule is required for a Sigma policy")
-    rule = load_rule(source)
+    # Common field names from other schemas (prompt, tool_args, ...) become
+    # Shield's; a rule still reading a field Shield never provides could never
+    # match, so it is rejected here rather than stored as a silent no-op.
+    rule = translate_fields(load_rule(source))
+    check_fields(rule)
     text = source if isinstance(source, str) else dump_rule(rule)
     return rule, text
+
+
+def sigma_max_policies_per_stage() -> int:
+    """Sigma policies get their own cap: each costs microseconds, not an LLM call."""
+    try:
+        return max(1, int(os.environ.get("SHIELD_SIGMA_MAX_POLICIES_PER_STAGE", "100")))
+    except (TypeError, ValueError):
+        return 100
+
+
+def _is_sigma(policy: Dict) -> bool:
+    return policy.get("format") == FORMAT_SIGMA
 
 
 def _persist_policy_stage(tenant_id: str, tenant_config: Dict, stage: str) -> None:
@@ -124,8 +141,13 @@ def save_custom_policy(
         guardrail_key = f"custom_policy_{stage}"
         existing_policies = tenant_config[f"{stage}_guardrails"][guardrail_key]["settings"]["policies"]
 
-        # Check policy limit
-        if len(existing_policies) >= MAX_POLICIES_PER_STAGE:
+        # Check policy limit: NL and Sigma are capped separately (an NL policy is
+        # an LLM call per request; a Sigma policy is deterministic matching).
+        if fmt == FORMAT_SIGMA:
+            sigma_cap = sigma_max_policies_per_stage()
+            if sum(1 for p in existing_policies if _is_sigma(p)) >= sigma_cap:
+                raise ValueError(f"Maximum {sigma_cap} Sigma policies per {stage} stage exceeded")
+        elif sum(1 for p in existing_policies if not _is_sigma(p)) >= MAX_POLICIES_PER_STAGE:
             raise ValueError(f"Maximum {MAX_POLICIES_PER_STAGE} policies per {stage} stage exceeded")
 
         # Generate policy ID and set defaults
@@ -392,15 +414,23 @@ def get_policy_stats(tenant_id: str) -> Dict:
         input_policies = get_tenant_custom_policies(tenant_id, enabled_only=False, stage="input")
         output_policies = get_tenant_custom_policies(tenant_id, enabled_only=False, stage="output")
 
+        nl_input = [p for p in input_policies if not _is_sigma(p)]
+        nl_output = [p for p in output_policies if not _is_sigma(p)]
+        sigma_cap = sigma_max_policies_per_stage()
         stats = {
             "total_policies": len(all_policies),
             "enabled_policies": len([p for p in all_policies if p.get("enabled", True)]),
             "disabled_policies": len([p for p in all_policies if not p.get("enabled", True)]),
             "input_policies": len(input_policies),
             "output_policies": len(output_policies),
+            # The 10-per-stage cap applies to natural-language policies.
             "max_allowed_per_stage": MAX_POLICIES_PER_STAGE,
-            "remaining_input_slots": MAX_POLICIES_PER_STAGE - len(input_policies),
-            "remaining_output_slots": MAX_POLICIES_PER_STAGE - len(output_policies),
+            "remaining_input_slots": MAX_POLICIES_PER_STAGE - len(nl_input),
+            "remaining_output_slots": MAX_POLICIES_PER_STAGE - len(nl_output),
+            "sigma_policies": len([p for p in all_policies if _is_sigma(p)]),
+            "max_sigma_per_stage": sigma_cap,
+            "remaining_sigma_input_slots": sigma_cap - (len(input_policies) - len(nl_input)),
+            "remaining_sigma_output_slots": sigma_cap - (len(output_policies) - len(nl_output)),
             "actions": {}
         }
 

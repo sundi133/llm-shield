@@ -2516,6 +2516,7 @@
   }
   .cp-close:hover { background: var(--bg-hover); color: var(--text); }
   .cp-sheet #custom-policy-prompt { height: 120px; min-height: 120px; font-family: inherit; font-size: 14px; line-height: 1.5; }
+  .cp-sheet #custom-policy-sigma-sample { height: 72px; min-height: 72px; font-family: inherit; font-size: 13px; line-height: 1.5; }
   .cp-sheet #custom-policy-sigma { height: 220px; min-height: 160px; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-size: 12px; line-height: 1.55; white-space: pre; }
 </style>
 </head>
@@ -3118,6 +3119,8 @@
                 Fields: <code>message</code>, <code>stage</code>, <code>user_role</code>, <code>session_id</code>, <code>agent_id</code>, <code>tool_name</code>, <code>tool_input</code>.
                 Modifiers: contains, startswith, endswith, all, cased, exists, re. A keyword list searches <code>message</code>.
               </div>
+              <label for="custom-policy-sigma-sample" class="cp-label" style="margin-top: 0.75rem;">Sample text (optional)</label>
+              <textarea id="custom-policy-sigma-sample" class="cp-control" spellcheck="false" placeholder="Paste a prompt (or response) and click Test policy to see whether the rule matches it"></textarea>
             </div>
 
             <div class="cp-grid-21">
@@ -15822,6 +15825,7 @@ function showCreateCustomPolicyModal(stage = 'input') {
   document.getElementById('custom-policy-description').value = '';
   document.getElementById('custom-policy-prompt').value = '';
   document.getElementById('custom-policy-sigma').value = '';
+  document.getElementById('custom-policy-sigma-sample').value = '';
   document.getElementById('custom-policy-action').value = 'warn';
   document.getElementById('custom-policy-confidence').value = '0.8';
   document.getElementById('custom-policy-priority').value = '100';
@@ -15857,6 +15861,7 @@ function editCustomPolicy(policyId) {
   document.getElementById('custom-policy-prompt').value = policy.prompt || '';
   document.getElementById('custom-policy-sigma').value =
     policy.sigma_source || (policy.sigma_rule ? JSON.stringify(policy.sigma_rule, null, 2) : '');
+  document.getElementById('custom-policy-sigma-sample').value = '';
   document.getElementById('custom-policy-action').value = policy.action;
   document.getElementById('custom-policy-confidence').value = policy.confidence_threshold;
   document.getElementById('custom-policy-priority').value = policy.priority;
@@ -16205,12 +16210,17 @@ async function validateCustomPolicySigma() {
     validationDiv.innerHTML = '<div class="toast error">Please enter a Sigma rule to validate</div>';
     return;
   }
+  // Optional sample: run the rule against it through the live-traffic engine.
+  const sample = (document.getElementById('custom-policy-sigma-sample').value || '').trim();
+  const stageEl = document.getElementById('custom-policy-stage');
+  const stage = stageEl && stageEl.value === 'output' ? 'output' : 'input';
+  const payload = sample ? { sigma, samples: [{ message: sample, stage }] } : { sigma };
   try {
     validationDiv.innerHTML = '<div style="color: var(--text-muted); font-size: 12px;">Validating Sigma rule...</div>';
     const response = await fetch(`${BASE_URL}/v1/tenant/me/policies/custom/validate-sigma`, {
       method: 'POST',
       headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sigma })
+      body: JSON.stringify(payload)
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(formatPolicyApiError(data.detail, `Validation failed: ${response.status}`));
@@ -16219,7 +16229,16 @@ async function validateCustomPolicySigma() {
     if (v.valid && v.rules.length > 1) {
       validationDiv.innerHTML = '<div class="toast error">A policy holds one rule. Use Import Sigma to add several rules at once.</div>';
     } else if (v.valid) {
-      validationDiv.innerHTML = `<div class="toast success">✅ Valid Sigma rule: ${escapeHtml(v.rules[0].title || '')}</div>`;
+      let html = `<div class="toast success">✅ Valid Sigma rule: ${escapeHtml(v.rules[0].title || '')}</div>`;
+      const r = (v.sample_results || [])[0];
+      if (r && r.error) {
+        html += `<div class="toast error">Sample could not be tested: ${escapeHtml(r.error)}</div>`;
+      } else if (r && r.matched) {
+        html += `<div class="toast success">Matches the sample (${escapeHtml((r.selections || []).join(', '))}): this policy would <strong>${escapeHtml(document.getElementById('custom-policy-action').value)}</strong> it.</div>`;
+      } else if (r) {
+        html += '<div class="toast">Does not match the sample.</div>';
+      }
+      validationDiv.innerHTML = html;
     } else {
       validationDiv.innerHTML = '<div class="toast error">❌ Sigma rule has problems:</div>'
         + '<ul style="margin: 0.5rem 0; padding-left: 1.5rem; color: var(--danger); font-size: 12px;">'

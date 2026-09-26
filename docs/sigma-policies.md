@@ -63,7 +63,9 @@ The portal API (`/v1/tenant/me/policies/custom`) accepts the same fields.
 
 Under **Custom Input Policies** or **Custom Output Policies**, choose
 **+ Custom Policy** and set **Format** to **Sigma rule**. Paste one rule, or use
-**Insert example**, then **Test Policy** to validate it before saving. The
+**Insert example**. To check it before saving, paste a prompt (or response) into
+**Sample text** and click **Test Policy**: it confirms the rule is valid and
+whether it matches the sample, using the same engine as live traffic. The
 confidence threshold is hidden for Sigma policies because a match is certain.
 Policy cards show a **Sigma** badge and the rule text.
 
@@ -85,6 +87,20 @@ Export downloads that section's policies as a Sigma file.
 
 A keyword list (a detection identifier holding plain strings) searches `message`.
 
+A rule may only use these fields. A rule that reads anything else (for example
+`CommandLine` or `EventID` from a Windows rule) could never match, so it is
+rejected when saved or imported, with the field named in the error. Common names
+from other schemas are translated automatically:
+
+| Written in the rule | Becomes |
+|---|---|
+| `prompt`, `input`, `user_input`, `text`, `content`, `query`, `output`, `response`, `completion` | `message` |
+| `role`, `user.role` | `user_role` |
+| `agent`, `agent_name`, `agent.id`, `agent.name`, `agent_key` | `agent_id` |
+| `tool`, `tool.name`, `tool_call.name`, `function`, `function_name` | `tool_name` |
+| `tool_args`, `tool_arguments`, `arguments`, `tool.input`, `tool_call.arguments`, `params`, `parameters` | `tool_input` |
+| `session`, `session.id`, `conversation_id` | `session_id` |
+
 ### Supported Sigma
 
 * Field maps (all fields must match), lists of maps (any may match), keyword lists.
@@ -97,9 +113,34 @@ A keyword list (a detection identifier holding plain strings) searches `message`
 
 Correlation rules (`timeframe`, `| count()`) and other modifiers such as `base64`,
 `windash` and `cidr` are rejected when the policy is saved, so a rule never
-silently matches nothing. Each evaluation is bounded by
-`SHIELD_SIGMA_EVAL_TIMEOUT_MS` (default 250). A rule that runs past it counts as
-an evaluation error and follows `SHIELD_CUSTOM_POLICY_FAIL_OPEN`.
+silently matches nothing.
+
+Before matching, `message` and `tool_input` are normalized: compatibility forms
+such as fullwidth digits become plain characters, and invisible characters such as
+zero-width spaces are removed, so `pass\u200bword` still matches `password`.
+Look-alike letters from other alphabets (a Cyrillic "a" for a Latin "a") are not
+mapped; keep the natural-language and adversarial guardrails for those.
+
+### Limits and performance
+
+* Up to **100 Sigma policies per stage** (`SHIELD_SIGMA_MAX_POLICIES_PER_STAGE`),
+  separate from the 10 natural-language policies per stage.
+* All Sigma policies of a stage are evaluated together in one pass. Each rule is
+  prepared once, and a single scan of the text skips every rule whose required
+  words are absent, so 100 rules cost well under a millisecond on a typical
+  prompt.
+* Each rule is bounded by `SHIELD_SIGMA_EVAL_TIMEOUT_MS` (default 250) and the
+  whole pass by `SHIELD_SIGMA_STAGE_BUDGET_MS` (default 500). A rule that runs
+  past either counts as an evaluation error and follows
+  `SHIELD_CUSTOM_POLICY_FAIL_OPEN`.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `SHIELD_SIGMA_MAX_POLICIES_PER_STAGE` | `100` | Sigma policy cap per stage |
+| `SHIELD_SIGMA_NORMALIZE` | `1` | `0` matches raw, unnormalized text |
+| `SHIELD_SIGMA_PREFILTER` | `1` | `0` fully evaluates every rule (same verdicts, slower) |
+| `SHIELD_SIGMA_EVAL_TIMEOUT_MS` | `250` | Time limit per rule |
+| `SHIELD_SIGMA_STAGE_BUDGET_MS` | `500` | Time limit for all Sigma rules of a stage |
 
 ## Import Sigma rules
 
@@ -116,8 +157,34 @@ curl -X POST "$SHIELD/v1/tenant/me/custom-policies/import/sigma" \
 * **Action** comes from the `action` field in the request, otherwise from the
   rule `level`: `informational` is `pass`, `low` and `medium` are `warn`, `high`
   and `critical` are `block`.
-* Use `"dry_run": true` to see what would be created without saving.
-* The 10 policies per stage limit applies.
+* Use `"dry_run": true` to see what would be created without saving. A dry run
+  also reports rules that use fields Shield does not provide.
+* Translate field names the built-in list does not cover with `field_map`, for
+  example `"field_map": {"CommandLine": "tool_input"}`.
+* The Sigma limit per stage applies (100 by default).
+
+## Starter rule pack
+
+`config/sigma/shield-starter-pack.yml` ships 17 tested rules you can import as a
+starting point:
+
+| Group | Rules |
+|---|---|
+| Secrets | AWS access keys, private key blocks, GitHub, Slack, OpenAI and Anthropic, Google and Stripe live keys, JWTs |
+| Personal data | US social security numbers, payment card numbers |
+| Prompt attacks | Instruction override, jailbreak personas, system prompt extraction |
+| Agent tool inputs | Command injection, destructive SQL, cloud metadata access, path traversal and credential files |
+
+Every rule carries examples it must match and examples it must not, and they run
+in Shield's test suite, so a shipped rule that stops working fails the build.
+Import the file from the portal with **Import Sigma**, or through the API. Rules
+come in for the stage in their `logsource.category`; import the file again with
+`"stage": "output"` to also screen model output.
+
+**Public rule libraries.** SigmaHQ's rules target operating system, cloud and
+network logs (Windows process events, CloudTrail) rather than prompts, so run them
+in your SIEM against those logs. Shield rejects them at import with a clear error
+instead of storing rules that could never match.
 
 ## Export policies as Sigma
 
