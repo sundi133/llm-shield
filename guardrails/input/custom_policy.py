@@ -11,7 +11,7 @@ from guardrails.output.custom_policy import (
     POLICY_SCAN_INSTRUCTION,
     _parse_policy_csv,
     custom_policy_fail_open,
-    evaluate_sigma_policy,
+    evaluate_sigma_policies,
     is_sigma_policy,
 )
 from core.models import GuardrailResult
@@ -55,10 +55,17 @@ class CustomPolicyInputGuardrail(BaseGuardrail):
             # once multi_turn inflates each policy's prompt.)
             start_time = datetime.now()
 
+            # Sigma policies: one deterministic pass for all of them, running
+            # alongside the NL policies' LLM calls.
+            sigma_policies = [p for p in enabled_policies if is_sigma_policy(p)]
+            sigma_index = {id(p): i for i, p in enumerate(sigma_policies)}
+            sigma_batch = (asyncio.ensure_future(evaluate_sigma_policies(
+                text, sigma_policies, context, "input")) if sigma_policies else None)
+
             async def _eval(policy):
                 try:
                     if is_sigma_policy(policy):
-                        return await evaluate_sigma_policy(text, policy, context, "input")
+                        return (await sigma_batch)[sigma_index[id(policy)]]
                     return await self._evaluate_policy_with_llm(text, policy, context)
                 except Exception as e:
                     logger.error(f"Error evaluating input policy {policy['policy_id']}: {e}")

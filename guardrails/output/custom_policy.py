@@ -121,39 +121,65 @@ def is_sigma_policy(policy: Dict) -> bool:
     return policy.get("format") == "sigma"
 
 
-async def evaluate_sigma_policy(text: str, policy: Dict, context: Dict, stage: str) -> Dict:
-    """Evaluate a Sigma-format custom policy. Deterministic: no LLM call.
+def _sigma_error_result(policy: Dict, stage: str, error: str) -> Dict:
+    return {
+        "passed": True, "action": "pass", "confidence": 0.0,
+        "suppressed": False, "error": error,
+        "message": f"{stage.capitalize()} policy evaluation error: {error}",
+        "details": {
+            "policy_id": policy.get("policy_id"),
+            "policy_name": policy.get("name", ""),
+            "format": "sigma",
+            "error": error,
+        },
+    }
 
-    Returns the same result shape as the LLM evaluator so aggregation, action
-    escalation, redaction, monitor mode and fail-open handling are unchanged.
-    Matching runs in a worker thread so a slow pattern (bounded by
-    SHIELD_SIGMA_EVAL_TIMEOUT_MS) never stalls the event loop. A rule that errors
-    or times out is reported as an evaluation error, exactly like an LLM failure,
-    so SHIELD_CUSTOM_POLICY_FAIL_OPEN governs it.
+
+async def evaluate_sigma_policies(text: str, policies: list[Dict], context: Dict,
+                                  stage: str) -> list[Dict]:
+    """Evaluate every Sigma-format policy of a stage. Deterministic: no LLM call.
+
+    One pass in ONE worker thread (not one thread per rule): the text is
+    normalized once, scanned once for every rule's literals, and only rules that
+    could still match are fully evaluated (core.sigma.evaluate_rules). Returns,
+    per policy and in order, the same result shape as the LLM evaluator, so
+    aggregation, action escalation, redaction, monitor mode and fail-open handling
+    are unchanged. A rule that errors, times out or is not reached within
+    SHIELD_SIGMA_STAGE_BUDGET_MS is an evaluation error, exactly like an LLM
+    failure, so SHIELD_CUSTOM_POLICY_FAIL_OPEN governs it.
     """
-    from core.sigma import match_rule, policy_event  # only loaded when used
+    if not policies:
+        return []
+    from core.sigma import evaluate_rules, policy_event  # only loaded when used
 
+    try:
+        event = policy_event(text, context, stage)
+        outcomes = await asyncio.to_thread(
+            evaluate_rules, [p.get("sigma_rule") or {} for p in policies], event)
+    except Exception as e:
+        logger.error(f"Sigma evaluation error for {stage} policies: {e}")
+        return [_sigma_error_result(p, stage, str(e)) for p in policies]
+
+    results = []
+    for policy, outcome in zip(policies, outcomes):
+        if outcome.error:
+            logger.error(f"Sigma evaluation error for {stage} policy "
+                         f"{policy.get('policy_id')}: {outcome.error}")
+            results.append(_sigma_error_result(policy, stage, outcome.error))
+        else:
+            results.append(_sigma_match_result(policy, stage, outcome.matched, outcome.selections))
+    return results
+
+
+async def evaluate_sigma_policy(text: str, policy: Dict, context: Dict, stage: str) -> Dict:
+    """Evaluate a single Sigma-format policy (see evaluate_sigma_policies)."""
+    return (await evaluate_sigma_policies(text, [policy], context, stage))[0]
+
+
+def _sigma_match_result(policy: Dict, stage: str, matched: bool, selections: list) -> Dict:
     rule = policy.get("sigma_rule") or {}
     title = rule.get("title") or policy.get("name", "")
-    try:
-        result = await asyncio.to_thread(
-            match_rule, rule, policy_event(text, context, stage))
-    except Exception as e:
-        logger.error(f"Sigma evaluation error for {stage} policy {policy.get('policy_id')}: {e}")
-        return {
-            "passed": True, "action": "pass", "confidence": 0.0,
-            "suppressed": False, "error": str(e),
-            "message": f"{stage.capitalize()} policy evaluation error: {e}",
-            "details": {
-                "policy_id": policy.get("policy_id"),
-                "policy_name": policy.get("name", ""),
-                "format": "sigma",
-                "error": str(e),
-            },
-        }
-
-    matched = result.matched
-    reasoning = (f"Sigma rule '{title}' matched: {', '.join(result.selections)}"
+    reasoning = (f"Sigma rule '{title}' matched: {', '.join(selections)}"
                  if matched else f"Sigma rule '{title}' did not match")
     return {
         "passed": not matched,
@@ -169,7 +195,7 @@ async def evaluate_sigma_policy(text: str, policy: Dict, context: Dict, stage: s
             "policy_name": policy.get("name", ""),
             "format": "sigma",
             "violation_type": f"sigma:{rule.get('id') or title}" if matched else None,
-            "matched_selections": result.selections,
+            "matched_selections": selections,
             "reasoning": reasoning,
             "confidence": 1.0,
             "threshold": policy.get("confidence_threshold", 0.8),
@@ -212,10 +238,17 @@ class CustomPolicyOutputGuardrail(BaseGuardrail):
             # once multi_turn inflates each policy's prompt.)
             start_time = datetime.now()
 
+            # Sigma policies: one deterministic pass for all of them, running
+            # alongside the NL policies' LLM calls.
+            sigma_policies = [p for p in enabled_policies if is_sigma_policy(p)]
+            sigma_index = {id(p): i for i, p in enumerate(sigma_policies)}
+            sigma_batch = (asyncio.ensure_future(evaluate_sigma_policies(
+                text, sigma_policies, context, "output")) if sigma_policies else None)
+
             async def _eval(policy):
                 try:
                     if is_sigma_policy(policy):
-                        return await evaluate_sigma_policy(text, policy, context, "output")
+                        return (await sigma_batch)[sigma_index[id(policy)]]
                     return await self._evaluate_policy_with_llm(text, policy, context)
                 except Exception as e:
                     logger.error(f"Error evaluating output policy {policy['policy_id']}: {e}")
