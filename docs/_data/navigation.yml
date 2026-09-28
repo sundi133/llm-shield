@@ -28,6 +28,9 @@ groups:
       - { title: Agentic Identity Architecture, url: /agent-identity-architecture/ }
       - { title: Role-Based Access (RBAC), url: /rbac/ }
       - { title: Tool Data Policies, url: /tool-data-policies/ }
+      # Next to data policies: those govern what one tool call may carry, this
+      # governs where data read by one app may go next in the same session.
+      - { title: Cross-App Flow Control, url: /cross-app-flow-control/ }
       - { title: Secret Vault, url: /prevent-secret-leakage/ }
       - { title: Policy Lifecycle, url: /policy-lifecycle/ }
       # AIBOM sits with the policy pages, not under Operate: the inventory is
