@@ -35,6 +35,14 @@ from guardrails.base import _request_configs
 from core import policy_mode
 from core.risk import score_tool
 from core.xflow import runtime as xflow
+from core.runtime_policy import check as runtime_check
+
+
+def _shield_hosts() -> set:
+    from urllib.parse import urlparse
+    pub = os.environ.get("SHIELD_PUBLIC_URL", "").strip()
+    host = (urlparse(pub).hostname or "").lower() if pub else ""
+    return {host} if host else set()
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _MCP_PARITY_ENV = "SHIELD_MCP_TOOL_PARITY"
@@ -446,6 +454,17 @@ async def enforce_tool_call(
                     results.append({**rr, "passed": True, "action": "log",
                                     "message": "[monitor] would block: " + rr["message"]})
 
+    # Infrastructure guardrails: the agent's runtime profile applied to the
+    # paths, commands and URLs in the arguments (docs/specs/infra-guardrails.md).
+    if not any(not rr["passed"] and rr["action"] in ("block", "pending_confirmation")
+               for rr in results):
+        rb = runtime_check.check_tool_call(
+            tenant_id, agent_key=agent_key, tool_name=tool_name, params=arguments,
+            shield_hosts=_shield_hosts(),
+        )
+        if rb is not None:
+            results.append(rb)
+
     # Cross-app flow control (docs/specs/cross-app-flow-control.md): the same
     # check as /v1/shield/tool/check, on the verified session. MCP cannot carry
     # an approval grant, so require_approval denies here, exactly as the
@@ -477,9 +496,12 @@ async def enforce_tool_call(
     decision = policy_mode.apply(results, allowed=allowed, action=action, mode=mode)
     _record_metrics(tenant_id, results)
     if decision["allowed"]:
+        _rtp = runtime_check.profile_for(tenant_id, agent_key)
         await xflow.record_call(
             tenant_id, tool_name=tool_name, evidence="authorized", path="mcp_tools_call",
             route=route, session_id=session_id, agent=agent_key,
+            classification=(runtime_check.classified_read(_rtp, tool_name, arguments)
+                            if _rtp is not None else None),
         )
     # MCP decisions were absent from the decision audit entirely, so a gateway
     # denial left no forensic record. Never let logging fail the call.

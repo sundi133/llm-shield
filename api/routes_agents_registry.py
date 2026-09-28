@@ -302,6 +302,13 @@ def _save_agents(tenant_id: str, agents: dict) -> None:
         invalidate_registry_cache(tenant_id)
     except Exception:
         pass
+    try:
+        # A changed runtime_profile binding applies on this replica at once;
+        # others within SHIELD_RUNTIME_POLICY_CACHE_S.
+        from core.runtime_policy.check import invalidate as invalidate_runtime_profiles
+        invalidate_runtime_profiles(tenant_id)
+    except Exception:
+        pass
 
 
 @router.get("/registry")

@@ -28,6 +28,7 @@ from storage.tool_killswitch import is_tool_disabled
 from core.identity_resolution import (BIND_REQUIRED, resolve_identity,
                                        token_binding_mode)
 from core.xflow import runtime as xflow
+from core.runtime_policy import check as runtime_check
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
 from core.run_context import resolve_run_id
@@ -154,6 +155,22 @@ def _first_denial(results) -> str:
         if not passed and msg:
             return msg
     return "blocked (no failing guardrail reported)"
+
+
+def _shield_hosts(request) -> set:
+    """Hosts that ARE Shield: a tool fetching Shield itself is never an egress."""
+    import os
+    from urllib.parse import urlparse
+    hosts = set()
+    try:
+        hosts.add((request.url.hostname or "").lower())
+    except Exception:
+        pass
+    pub = os.environ.get("SHIELD_PUBLIC_URL", "").strip()
+    if pub:
+        hosts.add((urlparse(pub).hostname or "").lower())
+    hosts.discard("")
+    return hosts
 
 
 def _denied(results) -> bool:
@@ -650,6 +667,18 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         # it is tenant policy, not a caller-selected check. None means no
         # policy or no rule destination matched, and appends nothing, so a
         # tenant without a policy gets byte-identical results.
+        # Infrastructure guardrails (docs/specs/infra-guardrails.md): the agent's
+        # runtime profile applied to paths, commands and URLs in the arguments,
+        # so this check and the sandbox never disagree. None for agents with no
+        # profile, i.e. unchanged behaviour.
+        if not _denied(results):
+            rb = runtime_check.check_tool_call(
+                tenant_id, agent_key=body.agent_key, tool_name=body.tool_name,
+                params=body.tool_params, shield_hosts=_shield_hosts(request),
+            )
+            if rb is not None:
+                results.append(rb)
+
         flow_user = _resolved.acting_for if _resolved.delegation_verified else None
         if not _denied(results):
             flow = await xflow.check_call(
@@ -737,11 +766,15 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         # The call is going ahead: if it reads a classified app, remember that
         # this session has that data. Awaited so the session's next call sees it.
         if allowed:
+            _rtp = runtime_check.profile_for(tenant_id, body.agent_key)
             await xflow.record_call(
                 tenant_id, tool_name=body.tool_name, evidence="authorized",
                 path="tool_check", route=body.route, session_id=body.session_id,
                 agent=body.agent_key, user=flow_user, tool_call_id=body.tool_call_id,
                 input_sources=body.input_sources,
+                classification=(runtime_check.classified_read(_rtp, body.tool_name,
+                                                              body.tool_params)
+                                if _rtp is not None else None),
             )
 
         _final_result = {

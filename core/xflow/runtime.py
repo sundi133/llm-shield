@@ -28,6 +28,7 @@ from typing import Any, Optional
 
 from core.xflow import state
 from core.xflow.policy import (
+    CLASS_RANK,
     CompiledPolicy,
     PolicyError,
     apps_for,
@@ -303,8 +304,13 @@ async def record_call(
     tags: Optional[list[str]] = None,
     tool_call_id: Optional[str] = None,
     input_sources: Optional[list[str]] = None,
+    classification: Optional[str] = None,
 ) -> Optional[dict]:
     """Record that this session read from a classified app (or got tagged data).
+
+    ``classification`` lifts the record from another source of truth, e.g. a
+    runtime profile marking the file this call read as confidential; the
+    stronger of it and the app's classification is kept.
 
     Returns the stored record, or None when there was nothing to record. Awaited
     by callers so the very next call in the session sees it; failures are
@@ -315,7 +321,12 @@ async def record_call(
         return None
     try:
         apps = apps_for(cp, tool_name, route)
-        classification = source_classification(cp, tool_name, apps)
+        app_class = source_classification(cp, tool_name, apps)
+        if classification not in CLASS_RANK:
+            classification = None
+        if app_class and (classification is None
+                          or CLASS_RANK[app_class] > CLASS_RANK[classification]):
+            classification = app_class
         tags = [str(t) for t in (tags or []) if t]
         if classification is None and not tags:
             return None

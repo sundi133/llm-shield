@@ -24,6 +24,7 @@ from fastapi.responses import PlainTextResponse
 
 from core.auth import get_tenant_from_request, require_registry_write
 from core.runtime_policy import bundle as rt_bundle
+from core.runtime_policy import check as runtime_check
 from core.runtime_policy import store as rt_store
 from core.runtime_policy.compilers import TARGETS, ExportContext, compile_profile
 from core.runtime_policy.model import ProfileError, profile_hash, templates, valid_name, \
@@ -156,6 +157,7 @@ async def put_runtime_profile(name: str, request: Request, profile: dict = Body(
     except ProfileError as e:
         raise _invalid(e)
     phash = profile_hash(normalized)
+    runtime_check.invalidate(tenant_id)
     _audit(request, "tenant_set_runtime_profile", tenant_id, {"profile": name, "hash": phash})
     return {"tenant_id": tenant_id, "name": name, "profile": normalized, "hash": phash}
 
@@ -175,6 +177,7 @@ async def delete_runtime_profile(name: str, request: Request,
                        f"rebind them or pass force=true",
             "agents": agents})
     deleted = rt_store.delete_profile(tenant_id, name)
+    runtime_check.invalidate(tenant_id)
     _audit(request, "tenant_delete_runtime_profile", tenant_id,
            {"profile": name, "deleted": deleted, "bound_agents": agents})
     return {"tenant_id": tenant_id, "name": name, "deleted": deleted}
