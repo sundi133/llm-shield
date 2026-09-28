@@ -40,12 +40,12 @@ class Compiled:
 
 
 def _registry() -> dict[str, Callable]:
-    from core.runtime_policy.compilers import cilium, k8s, openshell
+    from core.runtime_policy.compilers import cilium, k8s, openshell, squid
     return {"openshell": openshell.compile_profile, "k8s": k8s.compile_profile,
-            "cilium": cilium.compile_profile}
+            "cilium": cilium.compile_profile, "squid": squid.compile_profile}
 
 
-TARGETS = ("openshell", "k8s", "cilium")
+TARGETS = ("openshell", "k8s", "cilium", "squid")
 
 
 def compile_profile(target: str, profile: dict, ctx: ExportContext) -> Compiled:

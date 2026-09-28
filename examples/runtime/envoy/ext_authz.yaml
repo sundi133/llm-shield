@@ -1,0 +1,57 @@
+# Reference (not run in CI): an Envoy egress listener that asks Shield whether
+# each outbound HTTP request is allowed by the agent's runtime profile.
+#
+# Contract with Shield (POST/GET ... /v1/shield/runtime/ext-authz/<original path>):
+#   - Envoy's HTTP ext_authz sends the original method and path (after the prefix).
+#   - Headers Shield reads:  Host (original host), x-forwarded-proto,
+#     x-shield-agent (which agent this pod runs; set per pod below), X-API-Key.
+#   - 200 = allow, 403 = deny (x-shield-reason explains). Agents without a
+#     runtime profile are allowed, so wiring this in changes nothing until a
+#     profile is bound.
+# Replace SHIELD_HOST, the agent id and the key (keep the key in an Envoy
+# secret / SDS in production, not inline).
+static_resources:
+  listeners:
+  - name: agent_egress
+    address: { socket_address: { address: 0.0.0.0, port_value: 10000 } }
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: agent_egress
+          route_config:
+            virtual_hosts:
+            - name: all
+              domains: ["*"]
+              routes: [{ match: { prefix: "/" }, route: { cluster: dynamic_forward_proxy } }]
+          http_filters:
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              failure_mode_allow: false          # Shield unreachable -> deny
+              http_service:
+                server_uri: { uri: "https://SHIELD_HOST", cluster: shield, timeout: 0.5s }
+                path_prefix: /v1/shield/runtime/ext-authz
+                authorization_request:
+                  headers_to_add:
+                  - { key: x-shield-agent, value: "research-bot" }
+                  - { key: X-API-Key, value: "REPLACE_WITH_TENANT_KEY" }
+          - name: envoy.filters.http.router
+            typed_config: { "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router }
+  clusters:
+  - name: shield
+    type: LOGICAL_DNS
+    load_assignment:
+      cluster_name: shield
+      endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: SHIELD_HOST, port_value: 443 } } } }] }]
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config: { "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext, sni: SHIELD_HOST }
+  - name: dynamic_forward_proxy
+    lb_policy: CLUSTER_PROVIDED
+    cluster_type:
+      name: envoy.clusters.dynamic_forward_proxy
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+        dns_cache_config: { name: dns_cache, dns_lookup_family: V4_ONLY }

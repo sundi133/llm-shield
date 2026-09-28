@@ -113,6 +113,14 @@ def _options(request: Request) -> dict:
             raise HTTPException(status_code=400, detail=f"egress_cidr: not a CIDR: {c[:60]!r}")
     if cidrs:
         opts["egress_cidrs"] = cidrs[:50]
+    sources = q.getlist("source_cidr")
+    for c in sources:
+        try:
+            ipaddress.ip_network(c, strict=False)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"source_cidr: not a CIDR: {c[:60]!r}")
+    if sources:
+        opts["source_cidrs"] = [str(ipaddress.ip_network(c, strict=False)) for c in sources[:50]]
     if q.get("run_as_uid"):
         try:
             uid = int(q["run_as_uid"])
@@ -137,9 +145,12 @@ def _compile(request: Request, tenant_id: str, name: str, target: str,
     profile = _load(tenant_id, name)
     phash = profile_hash(profile)
     host, port = _shield_endpoint(request, shield_url)
-    compiled = compile_profile(target, profile, ExportContext(
-        profile_name=name, profile_hash=phash, shield_host=host, shield_port=port,
-        options=_options(request)))
+    try:
+        compiled = compile_profile(target, profile, ExportContext(
+            profile_name=name, profile_hash=phash, shield_host=host, shield_port=port,
+            options=_options(request)))
+    except ValueError as e:     # a target's required option is missing
+        raise HTTPException(status_code=400, detail=str(e))
     return profile, phash, compiled
 
 

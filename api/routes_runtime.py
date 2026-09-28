@@ -82,3 +82,70 @@ async def ingest_runtime_events(request: Request, background: BackgroundTasks,
         source_ip = request.client.host if request.client else ""
         background.add_task(rt_events.ingest, tenant_id, accepted, source_ip=source_ip)
     return {"accepted": len(accepted), "rejected": rejected}
+
+
+# ── decision API for runtime hooks (hot path: deterministic, no LLM) ──
+
+from typing import Optional  # noqa: E402
+
+from fastapi import Response  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
+
+from core.runtime_policy import check as runtime_check  # noqa: E402
+
+
+class RuntimeCheckRequest(BaseModel):
+    agent_key: str = Field(..., max_length=200)
+    kind: str = Field(..., pattern="^(file|exec|net)$")
+    value: str = Field(..., max_length=8192, description="path, command line or URL")
+    op: str = Field("read", pattern="^(read|write)$", description="file access mode")
+    method: str = Field("GET", max_length=10, description="HTTP method, for kind=net")
+
+
+def _decide(tenant_id: str, agent_key: str, kind: str, value: str, *, op: str = "read",
+            method: str = "GET", shield_hosts: Optional[set] = None) -> dict:
+    cp = runtime_check.profile_for(tenant_id, agent_key)
+    if cp is None:
+        return {"allowed": True, "profile": None, "profile_hash": None,
+                "reason": "agent has no runtime profile"}
+    if kind == "file":
+        reason = runtime_check._check_file(cp, value, "write_file" if op == "write" else "read_file")
+    elif kind == "exec":
+        reason = runtime_check._check_exec(cp, value)
+    else:
+        reason = runtime_check._check_net(cp, value, method, shield_hosts or set())
+    return {"allowed": reason is None, "profile": cp.name, "profile_hash": cp.hash,
+            "reason": reason or ""}
+
+
+@router.post("/check")
+async def runtime_check_endpoint(body: RuntimeCheckRequest, request: Request):
+    """Would the agent's runtime profile allow this path, command or URL?
+    For sandbox hooks and proxies; the same decision /v1/shield/tool/check makes."""
+    tenant_id = get_tenant_from_request(request)
+    return _decide(tenant_id, body.agent_key, body.kind, body.value, op=body.op,
+                   method=body.method)
+
+
+@router.api_route("/ext-authz/{path:path}",
+                  methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+async def envoy_ext_authz(path: str, request: Request):
+    """Envoy HTTP ext_authz: 200 allows the original request, 403 denies it.
+
+    Envoy sends the original method and path (after this prefix) and the
+    original Host; the sidecar adds x-shield-agent (which agent this pod runs)
+    and X-API-Key. An agent without a profile is allowed (unchanged behaviour).
+    """
+    tenant_id = get_tenant_from_request(request)
+    agent = (request.headers.get("x-shield-agent") or "").strip()
+    if not agent:
+        return Response(status_code=403, headers={"x-shield-reason": "missing x-shield-agent"})
+    host = (request.headers.get("x-envoy-original-host") or request.headers.get("host") or "").strip()
+    scheme = "https" if request.headers.get("x-forwarded-proto", "https") == "https" else "http"
+    method = request.headers.get("x-shield-original-method") or request.method
+    result = _decide(tenant_id, agent, "net", f"{scheme}://{host}/{path}", method=method)
+    if result["allowed"]:
+        return Response(status_code=200)
+    return Response(status_code=403, content=result["reason"],
+                    headers={"x-shield-reason": result["reason"][:200],
+                             "x-shield-profile": result["profile"] or ""})
