@@ -43,7 +43,8 @@ _TOP_KEYS = {"description", "network", "filesystem", "process", "tools", "identi
              "resources", "fail_closed"}
 _NET_KEYS = {"default", "allow"}
 _ALLOW_KEYS = {"host", "port", "methods", "paths", "description"}
-_FS_KEYS = {"read_only", "read_write", "deny", "classified"}
+_FS_KEYS = {"read_only", "read_write", "deny", "classified", "kernel_enforcement"}
+KERNEL_ENFORCEMENT = ("required", "best_effort")
 _PROC_KEYS = {"run_as", "allow_binaries", "deny_commands", "no_new_privileges"}
 _TOOLS_KEYS = {"from_registry", "extract"}
 _EXTRACT_KEYS = {"tools", "param", "kind"}
@@ -228,7 +229,14 @@ def _filesystem(raw: Any, errors: list[str]) -> dict:
         "read_write": _paths(fs.get("read_write"), "filesystem.read_write", errors, glob_ok=False),
         "deny": _paths(fs.get("deny"), "filesystem.deny", errors, glob_ok=True),
         "classified": [],
+        # required: the sandbox refuses to start where the kernel cannot enforce
+        # these rules (no Landlock, e.g. Docker Desktop on macOS). best_effort:
+        # it starts anyway, and Shield reports the degraded boundary.
+        "kernel_enforcement": fs.get("kernel_enforcement", "required"),
     }
+    if out["kernel_enforcement"] not in KERNEL_ENFORCEMENT:
+        errors.append(f"filesystem.kernel_enforcement: must be one of {', '.join(KERNEL_ENFORCEMENT)}")
+        out["kernel_enforcement"] = "required"
     both = set(out["read_only"]) & set(out["read_write"])
     if both:
         errors.append(f"filesystem: {sorted(both)} listed as both read_only and read_write")

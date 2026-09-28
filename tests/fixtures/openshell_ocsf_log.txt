@@ -1,0 +1,27 @@
+[1790630381.701] [sandbox] [OCSF ] [ocsf] CONFIG:ENRICHED [INFO] Enriched policy with baseline filesystem paths for proxy mode
+[1790630381.720] [sandbox] [OCSF ] [ocsf] CONFIG:LOADED [INFO] Fetched provider environment [env_count:0]
+[1790630381.720] [sandbox] [OCSF ] [ocsf] CONFIG:CREATING [INFO] Creating network namespace [ns:sandbox-d28bc8ec host_veth:veth-h-d28bc8ec sandbox_veth:veth-s-d28bc8ec]
+[1790630381.764] [sandbox] [OCSF ] [ocsf] CONFIG:CREATED [INFO] Network namespace created [ns:sandbox-d28bc8ec host_ip:10.200.0.1 sandbox_ip:10.200.0.2]
+[1790630381.775] [sandbox] [OCSF ] [ocsf] CONFIG:INSTALLED [INFO] Bypass detection rules installed [ns:sandbox-d28bc8ec]
+[1790630381.778] [sandbox] [OCSF ] [ocsf] CONFIG:ENABLED [INFO] TLS termination enabled: ephemeral CA generated
+[1790630381.781] [sandbox] [OCSF ] [ocsf] CONFIG:LOADED [INFO] Loaded inference route bundle [route_count:0 revision:d1fba762150c532c]
+[1790630381.781] [sandbox] [OCSF ] [ocsf] CONFIG:WAITING [INFO] Inference route bundle is empty; keeping routing enabled and waiting for refresh
+[1790630381.781] [sandbox] [OCSF ] [ocsf] CONFIG:ENABLED [INFO] Inference routing enabled with local execution [route_count:0]
+[1790630381.865] [sandbox] [OCSF ] [ocsf] NET:LISTEN [INFO] 10.200.0.1:3128
+[1790630381.865] [sandbox] [OCSF ] [ocsf] CONFIG:VALIDATED [INFO] Validated 'sandbox' user exists in image
+[1790630381.865] [sandbox] [OCSF ] [ocsf] CONFIG:VALIDATED [INFO] Validated 'sandbox' group exists in image
+[1790630381.870] [sandbox] [OCSF ] [ocsf] CONFIG:LOADED [INFO] Acknowledged initial policy revision as loaded [version:2] [hash:be7831c2cb81cf5503ccd13055ed3dde9daabdf56cdf07bcd0763b0a123186cd]
+[1790630381.872] [sandbox] [OCSF ] [ocsf] SSH:LISTEN [INFO]
+[1790630381.872] [sandbox] [OCSF ] [ocsf] LIFECYCLE:INSTALL [INFO] OpenShell Sandbox Supervisor success
+[1790630381.872] [sandbox] [OCSF ] [ocsf] FINDING:UNKNOWN [HIGH] "Landlock Filesystem Sandbox Unavailable" [confidence:high]
+[1790630381.872] [sandbox] [OCSF ] [ocsf] FINDING:UNKNOWN [HIGH] "Landlock Filesystem Sandbox Unavailable" [confidence:high]
+[1790630381.874] [sandbox] [OCSF ] [ocsf] PROC:LAUNCH [INFO] sleep(31)
+[1790630381.875] [sandbox] [OCSF ] [ocsf] NET:OPEN [INFO] host.openshell.internal:17670
+[1790630381.899] [sandbox] [OCSF ] [ocsf] NET:OPEN [INFO] [msg:ssh relay open (channel_id=f4db2abb-b7d1-49a6-a75b-b01c03daabaf, target=unix:/run/openshell/ssh.sock)]
+[1790630381.899] [sandbox] [OCSF ] [ocsf] SSH:OPEN [INFO] ALLOWED
+[1790630381.905] [sandbox] [OCSF ] [ocsf] FINDING:UNKNOWN [HIGH] "Landlock Filesystem Sandbox Unavailable" [confidence:high]
+[1790630382.599] [sandbox] [OCSF ] [ocsf] NET:OPEN [MED] DENIED /usr/bin/curl(38) -> example.com:443 [policy:- engine:opa] [reason:endpoint example.com:443 is not allowed by any policy]
+[1790630382.667] [sandbox] [OCSF ] [ocsf] NET:OPEN [INFO] ALLOWED /usr/bin/curl(39) -> api.github.com:443 [policy:allow_1_api_github_com engine:opa]
+[1790630382.718] [sandbox] [OCSF ] [ocsf] HTTP:POST [MED] DENIED POST http://api.github.com:443/zen [policy:allow_1_api_github_com engine:l7] [reason:L7_REQUEST deny POST api.github.com:443/zen reason=POST /zen not permitted by policy]
+[1790630383.084] [sandbox] [OCSF ] [ocsf] NET:OPEN [MED] DENIED /sandbox/.uv/python/cpython-3.14.3-linux-aarch64-gnu/bin/python3.14(40) -> api.github.com:443 [policy:- engine:opa] [reason:binary '/sandbox/.uv/python/cpython-3.14.3-linux-aarch64-gnu/bin/python3.14' not allowed in policy 'allow_1_api_github_com' (ancestors: [/usr/bin/bash -> /opt/openshell/bin/openshell-sandbox], cmdline: []). SYMLINK HINT: the binary path is the kernel-resol...]
+[1790630383.172] [sandbox] [OCSF ] [ocsf] NET:CLOSE [INFO] [msg:ssh relay closed (channel_id=f4db2abb-b7d1-49a6-a75b-b01c03daabaf, target=unix:/run/openshell/ssh.sock)]

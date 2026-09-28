@@ -282,6 +282,15 @@ methods and no file rules.
 - **Path matching:** paths are normalized before matching (`~`, `..`, symlink
   components not resolved server-side, which is documented), and a deny always
   beats an allow.
+- **Kernel filesystem enforcement is not everywhere.** Found while building
+  task 4: on Docker Desktop for macOS, OpenShell logs `Landlock Filesystem
+  Sandbox Unavailable`, and with `landlock.compatibility: best_effort` it runs
+  the sandbox with the filesystem rules skipped. Profiles therefore carry
+  `filesystem.kernel_enforcement: required | best_effort`, default
+  `required`, which compiles to `hard_requirement`: the sandbox refuses to
+  start rather than run unprotected (verified live). `best_effort` is for
+  development only. The degradation arrives as a high-severity
+  `runtime_boundary` event either way.
 - **Loosening needs admin:** writes that loosen go through the registry write
   gate, as they do for xflow.
 

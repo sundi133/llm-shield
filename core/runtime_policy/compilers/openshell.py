@@ -68,6 +68,16 @@ def compile_profile(profile: dict, ctx: ExportContext) -> Compiled:
         notes.append(f"filesystem.classified {c['path']}: reported through runtime events, "
                      f"not a sandbox rule")
 
+    if fs["kernel_enforcement"] == "required":
+        landlock = "hard_requirement"
+        notes.append("filesystem.kernel_enforcement=required: the sandbox refuses to start on "
+                     "a host without Landlock (e.g. Docker Desktop on macOS) instead of running "
+                     "without filesystem rules")
+    else:
+        landlock = "best_effort"
+        unsupported.append("filesystem rules (kernel_enforcement=best_effort): skipped on hosts "
+                           "without Landlock; the sandbox reports it and Shield records a "
+                           "degraded-boundary event")
     binaries = [{"path": b} for b in proc["allow_binaries"]]
     if binaries:
         notes.append("process.allow_binaries: only these programs may open the allowed "
@@ -119,7 +129,7 @@ def compile_profile(profile: dict, ctx: ExportContext) -> Compiled:
     doc = {
         "version": 1,
         "filesystem_policy": {"read_only": ro, "read_write": rw},
-        "landlock": {"compatibility": "best_effort"},
+        "landlock": {"compatibility": landlock},
         "process": {"run_as_user": proc["run_as"], "run_as_group": proc["run_as"]},
         "network_policies": policies,
     }

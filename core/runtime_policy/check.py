@@ -253,6 +253,16 @@ def _check_net(cp: CompiledProfile, value: str, method: str,
 _CLASS_RANK = {"public": 0, "internal": 1, "confidential": 2, "restricted": 3}
 
 
+def classify_path(cp: CompiledProfile, value: str) -> Optional[str]:
+    """Classification of one path per the profile's filesystem.classified, or None."""
+    path = normalize_path(value, cp.workdir)
+    best = None
+    for rx, cls in cp.classified:
+        if rx.match(path) and (best is None or _CLASS_RANK[cls] > _CLASS_RANK[best]):
+            best = cls
+    return best
+
+
 def classified_read(cp: CompiledProfile, tool_name: str, params: Optional[dict]) -> Optional[str]:
     """The highest classification among the files this call names, per the
     profile's filesystem.classified globs, or None."""
@@ -380,6 +390,6 @@ def check_tool_call(tenant_id: Optional[str], *, agent_key: Optional[str], tool_
             "details": details, "latency_ms": latency}
 
 
-__all__ = ["GUARDRAIL", "CompiledProfile", "ProfileError", "check_tool_call", "classified_read",
+__all__ = ["GUARDRAIL", "CompiledProfile", "ProfileError", "check_tool_call", "classified_read", "classify_path",
            "compile_checks", "enabled", "evaluate", "invalidate", "normalize_path",
            "profile_for"]
