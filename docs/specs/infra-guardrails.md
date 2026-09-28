@@ -8,7 +8,7 @@ description: One Shield policy for an agent's runtime boundary (network, files, 
 
 # Spec: Infrastructure Guardrails (Runtime Policy)
 
-> Status: **DRAFT, awaiting approval.** No code until approved.
+> Status: **APPROVED 2026-09-28** (user: "approved"), with the recommended decisions in §12.
 > Planes:
 > - **Admin plane:** policy, compilers and bundles.
 > - **Data plane:** the decision API and event ingest.
@@ -153,9 +153,9 @@ resources:
 
 ### 4.1 Runtime profile
 
-Stored at Redis key `rtprofile:{tenant_id}:{profile}` as JSON, with no TTL.
+Stored in one Redis hash per tenant, `rtprofile:{tenant_id}` (field = profile
+name, value = normalized profile JSON), with no TTL.
 
-- The index is `rtprofile:{tenant_id}:_index`.
 - The version is a sha256 of the normalized profile, returned as the bundle
   ETag and the attestation hash.
 - Validation is strict, like xflow: unknown fields, bad globs and unsafe
@@ -174,8 +174,8 @@ duplicated. The compiler reads the agent registry's tools and the MCP routes
 those tools live on, and emits the matching egress allow entries, for example
 the MCP gateway host. This removes the most common drift.
 
-`network.allow` entries may reference **xflow apps** (`{app: github}`), which
-expand to that app's MCP route hosts. Destination knowledge then lives in one
+Later: `network.allow` entries may reference **xflow apps** (`{app: github}`),
+expanding to that app's MCP route hosts. Destination knowledge then lives in one
 place.
 
 ### 4.2 Runtime event (ingest)

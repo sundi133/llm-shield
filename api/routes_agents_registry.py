@@ -185,6 +185,16 @@ def _validate_agent_body(body: dict) -> None:
                 detail=f"tool name must be 1-128 alphanumeric/hyphen/underscore characters, got: {str(t)[:50]}",
             )
 
+    # Infrastructure guardrails: the runtime profile (docs/specs/infra-guardrails.md)
+    # this agent runs under. None/"" means no profile, i.e. today's behaviour.
+    rtp = body.get("runtime_profile")
+    if rtp not in (None, ""):
+        from core.runtime_policy.model import valid_name
+        if not valid_name(rtp):
+            raise HTTPException(status_code=400,
+                                detail="runtime_profile must be a profile name "
+                                       "(lowercase letters, digits, . _ -)")
+
     status = body.get("status")
     if status is not None and status not in ("active", "inactive", "disabled"):
         raise HTTPException(status_code=400, detail="status must be active, inactive, or disabled")
@@ -265,6 +275,17 @@ def _ensure_sandbox_tenant() -> str:
             "created_at": "2026-04-08T00:00:00Z",
         })
     return _SANDBOX_TENANT_ID
+
+
+def _require_known_runtime_profile(tenant_id: str, name) -> None:
+    """Binding an agent to a profile that does not exist would look enforced
+    and enforce nothing: refuse it."""
+    if name in (None, ""):
+        return
+    from core.runtime_policy import store as rtp_store
+    if name not in rtp_store.list_profiles(tenant_id):
+        raise HTTPException(status_code=400, detail=f"unknown runtime_profile '{name}'; "
+                            f"create it under /v1/tenant/me/runtime-profiles first")
 
 
 def get_redis_data(key: str):
@@ -737,6 +758,7 @@ async def create_agent(request: Request):
         # shadow agent, whose id must be stored exactly as traffic produced it.
         _validate_new_agent_id(agent_id, tenant_id)
         _validate_agent_body(body)
+        _require_known_runtime_profile(tenant_id, body.get("runtime_profile"))
 
         agents_key = f"agents:{tenant_id}"
         agents = get_redis_data(agents_key) or {}
@@ -779,6 +801,7 @@ async def create_agent(request: Request):
                 _sanitize_string(e, _MAX_ENVIRONMENT_LEN).strip()
                 for e in (body.get("environments") or [])
             ],
+            "runtime_profile": body.get("runtime_profile") or "",
             "status": body.get("status", "active"),
             "created_at": now,
             "updated_at": now,
@@ -818,6 +841,7 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
         tenant_id = get_tenant_from_api_key(request)
         _require_registry_write(request, tenant_id, "update an agent")
         _validate_agent_body(agent_data)
+        _require_known_runtime_profile(tenant_id, agent_data.get("runtime_profile"))
 
         # Get existing agents
         agents_key = f"agents:{tenant_id}"

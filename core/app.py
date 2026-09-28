@@ -42,6 +42,7 @@ from api.routes_tenant import router as tenant_router, global_router as tenant_a
 from api.routes_tenant_self import router as tenant_self_router
 from api.routes_agentic_control_plane import router as tenant_agentic_router
 from api.routes_flow_control import router as flow_control_router
+from api.routes_runtime_policy import router as runtime_profiles_router, edge_router as runtime_bundle_router
 from api.routes_custom_policies import router as custom_policies_router
 from api.routes_policy_templates import router as policy_templates_router
 from api.routes_policy import router as policy_router
@@ -129,6 +130,8 @@ def create_app() -> FastAPI:
     app.include_router(tenant_self_router)
     app.include_router(tenant_agentic_router)
     app.include_router(flow_control_router)
+    app.include_router(runtime_profiles_router)
+    app.include_router(runtime_bundle_router)
     app.include_router(custom_policies_router)
     app.include_router(policy_templates_router)
     app.include_router(policy_router)
