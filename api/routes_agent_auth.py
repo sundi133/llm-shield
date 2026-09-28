@@ -40,6 +40,7 @@ from core.agent_auth_safety import (
 from core.identity import IdentityTuple, get_identity_from_request
 from core.identity_resolution import resolve_identity
 from core.rbac import enforcer as rbac_enforcer
+from core.xflow import runtime as xflow
 from storage.agent_auth_stats import (
     EVENT_CAP_DENIED,
     EVENT_CAP_INVALID,
@@ -362,6 +363,102 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
     return AgentTokenResponse(agent_token=token, expires_in=body.ttl_seconds)
 
 
+def _log_flow_decision(flow: dict, identity: IdentityTuple, body: "CapMintRequest") -> None:
+    """Decision-audit row for a cross-app flow finding on cap/mint, lineage
+    included, so a denial here is as explainable as one on /tool/check."""
+    try:
+        from storage.decision_audit import log_decision
+        log_decision(
+            tenant_id=identity.tenant_id, action=flow["action"], guardrail=xflow.GUARDRAIL,
+            agent_key=identity.agent_id, tool_name=body.tool, user_role="",
+            session_id=body.session_id or identity.session_id or "",
+            reason=flow.get("message", ""), source_ip="",
+            metadata={"path": "cap_mint", "user_sub": identity.user_sub,
+                      "resource": body.resource, **(flow.get("details") or {})},
+        )
+    except Exception:
+        pass
+
+
+def _enforce_flow_decision(flow: dict, identity: IdentityTuple, body: "CapMintRequest",
+                           approvers_for_event: Optional[str]) -> Optional[str]:
+    """Act on a denying cross-app flow result at cap/mint.
+
+    block -> 403 with the usual quiet payload. require_approval -> accept the
+    same signed grant the approval-rule gate accepts (bound to tool, resource,
+    params, instance, session), or open a request and return the same 403
+    approval_required shape. Returns the approvers tag for EVENT_CAP_MINTED.
+    """
+    violations = (flow.get("details") or {}).get("flow_violations") or [{}]
+    rule_id = violations[0].get("rule_id", "")
+    if flow["action"] == "require_approval":
+        if approvers_for_event:
+            # The approval-rule gate verified a grant for this exact call and
+            # burned its nonce; that human approval covers this finding too.
+            return approvers_for_event
+        from core.approvals import ApprovalError, params_hash, verify_grant
+
+        if body.approval_grant:
+            try:
+                g = verify_grant(
+                    body.approval_grant,
+                    expected_tool=body.tool,
+                    expected_resource=body.resource,
+                    expected_params_hash=params_hash(body.tool_params),
+                    expected_instance=identity.agent_instance_id,
+                    expected_session=body.session_id,
+                )
+                if g.tenant_id and g.tenant_id != identity.tenant_id:
+                    raise ApprovalError("grant issued for another tenant")
+            except ApprovalError as e:
+                record_event(
+                    tenant_id=identity.tenant_id, event=EVENT_CAP_DENIED,
+                    agent_id=identity.agent_id, user_sub=identity.user_sub,
+                    tool=body.tool, resource=body.resource,
+                    reason=f"cross_app_flow approval:{e}"[:240],
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail=public_denial_payload([f"approval grant invalid: {e}"]),
+                )
+            return "breakglass" if g.breakglass else "approved"
+
+        req = xflow.open_approval_request(
+            identity.tenant_id, flow,
+            agent_key=identity.agent_id,
+            tool_name=body.tool,
+            session_id=body.session_id or "",
+            tool_params=body.tool_params,
+            agent_instance_id=identity.agent_instance_id,
+            resource=body.resource,
+        )
+        _log_flow_decision(flow, identity, body)
+        record_event(
+            tenant_id=identity.tenant_id, event=EVENT_CAP_DENIED,
+            agent_id=identity.agent_id, user_sub=identity.user_sub,
+            tool=body.tool, resource=body.resource,
+            reason=f"approval_required:cross_app_flow:{rule_id}"[:240],
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "reason": "approval_required",
+                "request_id": req["request_id"],
+                "required_approvals": req["required_approvals"],
+                "expires_at": req["expires_at"],
+            },
+        )
+
+    _log_flow_decision(flow, identity, body)
+    record_event(
+        tenant_id=identity.tenant_id, event=EVENT_CAP_DENIED,
+        agent_id=identity.agent_id, user_sub=identity.user_sub,
+        tool=body.tool, resource=body.resource,
+        reason=f"cross_app_flow:{rule_id}: {flow.get('message', '')}"[:240],
+    )
+    raise HTTPException(status_code=403, detail=public_denial_payload([flow["message"]]))
+
+
 @router.post("/cap/mint", response_model=CapMintResponse)
 async def mint_capability(
     body: CapMintRequest,
@@ -490,6 +587,20 @@ async def mint_capability(
                 },
             )
 
+    # Cross-app flow control (docs/specs/cross-app-flow-control.md), on the
+    # VERIFIED identity: the principal is agent_id|user_sub from the agent
+    # token, so rotating session ids does not shed what this agent read for
+    # this user.
+    flow_session = body.session_id or identity.session_id or None
+    flow = await xflow.check_call(
+        identity.tenant_id, tool_name=body.tool, params=body.tool_params,
+        resource=body.resource, session_id=flow_session,
+        agent=identity.agent_id, user=identity.user_sub,
+    )
+    if flow is not None and not flow["passed"] and flow["action"] != "warn":
+        approvers_for_event = _enforce_flow_decision(
+            flow, identity, body, approvers_for_event)
+
     try:
         cap = mint_cap(
             identity=identity,
@@ -507,6 +618,12 @@ async def mint_capability(
         agent_id=identity.agent_id, user_sub=identity.user_sub,
         tool=body.tool, resource=body.resource,
         reason=approvers_for_event or "",
+    )
+    if flow is not None and flow["action"] == "warn":
+        _log_flow_decision(flow, identity, body)
+    await xflow.record_call(
+        identity.tenant_id, tool_name=body.tool, evidence="authorized", path="cap_mint",
+        session_id=flow_session, agent=identity.agent_id, user=identity.user_sub,
     )
     # In quiet mode return only what the caller needs to use the cap;
     # the full decision (role, reasons, etc.) goes to the audit log.

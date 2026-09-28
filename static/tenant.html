@@ -2651,6 +2651,10 @@
           <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
           Kill Switch
         </div>
+        <div class="nav-item" data-tab="cross-app-flow">
+          <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+          Cross-App Flow
+        </div>
       <div class="nav-item" data-tab="workflow-controls">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v2m0 6v2a2 2 0 002 2h2m6 0h2a2 2 0 002-2v-2m0-6V7a2 2 0 00-2-2h-2M9 12h6m-3-3v6"/></svg>
         Operations Center
@@ -4727,6 +4731,75 @@ if __name__ == "__main__":
             <tr><td colspan="5" style="padding:1.5rem;text-align:center;color:var(--text-muted);">Loading tools...</td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- ── Enterprise: Cross-App Flow Control ──────── -->
+    <div id="tab-cross-app-flow" class="tab-pane hidden">
+      <div class="page-header">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+          <div>
+            <div class="page-title">Cross-App Flow Control</div>
+            <div class="page-desc">Stop agents moving data where it must not go, such as a confidential Drive document into a public GitHub repository. Shield remembers what each agent session has read and judges every outgoing tool call against these rules.</div>
+          </div>
+          <div id="xf-status" style="display:flex;gap:0.4rem;flex-wrap:wrap;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Policy</div>
+            <div class="card-desc">Apps (which tools belong to which application, and how sensitive their data is), exposure rules (when a call sends data outside or to the public) and flow rules (block, require approval or warn). Start in <code>monitor</code> mode, review what would be blocked, then switch to <code>enforce</code>.</div>
+          </div>
+        </div>
+        <textarea id="xf-policy" spellcheck="false" style="width:100%;min-height:360px;" placeholder="Loading..."></textarea>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+          <button class="small" onclick="xfLoadTemplate()">Load starter template</button>
+          <button class="small" onclick="xfValidate()">Validate</button>
+          <button class="primary small" onclick="xfSave()">Save policy</button>
+          <button class="small" onclick="xfLoad()">Reload saved</button>
+          <button class="small danger" onclick="xfDelete()">Delete policy</button>
+        </div>
+        <div id="xf-policy-msg" style="margin-top:0.75rem;font-size:13px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Try a flow</div>
+            <div class="card-desc">Decide a call exactly as enforcement would, using the policy in the editor above. Nothing is saved and no session is touched.</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0.75rem;">
+          <div>
+            <label style="font-size:12px;color:var(--text-dim);">The agent already read (one tool per line; add <code>#SSN</code> for a detected tag)</label>
+            <textarea id="xf-sim-sources" spellcheck="false" style="width:100%;min-height:110px;">drive_read_file</textarea>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--text-dim);">Now it calls</label>
+            <input id="xf-sim-tool" type="text" value="github_create_repo" style="width:100%;margin-bottom:0.5rem;">
+            <label style="font-size:12px;color:var(--text-dim);">With arguments (JSON)</label>
+            <textarea id="xf-sim-params" spellcheck="false" style="width:100%;min-height:60px;">{"name": "customer-dump", "private": false}</textarea>
+          </div>
+        </div>
+        <div style="margin-top:0.75rem;"><button class="primary small" onclick="xfSimulate()">Decide</button></div>
+        <div id="xf-sim-result" style="margin-top:0.75rem;font-size:13px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Session lineage</div>
+            <div class="card-desc">What a session has read, oldest first. This is the evidence behind a flow decision. Clearing a session lifts every flow rule for it and is audited.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <input id="xf-session" type="text" placeholder="session id" style="flex:1;min-width:220px;">
+          <button class="primary small" onclick="xfSession()">Look up</button>
+          <button class="small danger" onclick="xfClearSession()">Clear session</button>
+        </div>
+        <div id="xf-session-result" style="margin-top:0.75rem;font-size:13px;"></div>
       </div>
     </div>
 
@@ -13817,6 +13890,7 @@ document.addEventListener('click', (e) => {
       console.log('Architecture tab loaded');
     }
     if (tab === 'siem') loadSIEMData();
+    if (tab === 'cross-app-flow') xfLoad();
     if (tab === 'guardrail-metrics') { loadGuardrailDashboard(); loadGuardrailMetrics(); }
     if (tab === 'board-report') loadBoardReport();
     if (tab === 'aibom') loadAibom();
@@ -16401,6 +16475,162 @@ if (originalLoadPolicies) {
   };
 }
 
+
+// ── Cross-App Flow Control ────────────────────────────────
+// Spec: docs/specs/cross-app-flow-control.md. Own fetch wrapper: the policy
+// API returns 422 {detail: {message, errors: [...]}} and apiCall would render
+// that object as "[object Object]".
+function xfEsc(v) {
+  return String(v === null || v === undefined ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+async function xfApi(path, options = {}) {
+  options.headers = { ...(options.headers || {}), 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
+  const r = await fetch(`${BASE_URL}/v1/tenant/me/flow-control${path}`, options);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = data.detail;
+    const err = new Error((d && d.message) || (typeof d === 'string' ? d : '') || `HTTP ${r.status}`);
+    err.errors = (d && d.errors) || [];
+    throw err;
+  }
+  return data;
+}
+function xfMsg(id, html, kind) {
+  const color = kind === 'error' ? 'var(--danger)' : kind === 'ok' ? 'var(--success, #10b981)' : 'var(--text-dim)';
+  document.getElementById(id).innerHTML = `<div style="color:${color};">${html}</div>`;
+}
+function xfErrors(e) {
+  const list = (e.errors || []).map(x => `<li>${xfEsc(x)}</li>`).join('');
+  return xfEsc(e.message) + (list ? `<ul style="margin:0.4rem 0 0 1.1rem;">${list}</ul>` : '');
+}
+function xfEditorPolicy() {
+  try { return JSON.parse(document.getElementById('xf-policy').value); }
+  catch (e) { throw Object.assign(new Error('Policy is not valid JSON: ' + e.message), { errors: [] }); }
+}
+function xfStatus(data) {
+  const el = document.getElementById('xf-status');
+  const p = data.policy;
+  const badges = [];
+  if (data.globally_disabled) badges.push('<span class="badge badge-danger">Disabled on this server (SHIELD_XFLOW=off)</span>');
+  if (!data.configured) badges.push('<span class="badge badge-basic">Not configured</span>');
+  else if (data.errors) badges.push('<span class="badge badge-danger">Stored policy invalid: not enforced</span>');
+  else if (!p.enabled) badges.push('<span class="badge badge-basic">Disabled</span>');
+  else if (p.mode === 'monitor') badges.push('<span class="badge badge-warn">Monitor: reports, never blocks</span>');
+  else badges.push('<span class="badge badge-success">Enforcing</span>');
+  if (p) badges.push(`<span class="badge badge-basic">${Object.keys(p.apps || {}).length} apps · ${(p.rules || []).length} rules</span>`);
+  el.innerHTML = badges.join('');
+}
+async function xfLoad() {
+  try {
+    const data = await xfApi('/policy');
+    xfStatus(data);
+    if (data.policy) {
+      document.getElementById('xf-policy').value = JSON.stringify(data.policy, null, 2);
+      xfMsg('xf-policy-msg', 'Loaded the saved policy.');
+    } else if (data.errors) {
+      xfMsg('xf-policy-msg', 'The stored policy no longer validates and is NOT enforced:' + xfErrors({ message: '', errors: data.errors }), 'error');
+    } else {
+      await xfLoadTemplate(true);
+    }
+  } catch (e) { xfMsg('xf-policy-msg', xfErrors(e), 'error'); }
+}
+async function xfLoadTemplate(silentIntro) {
+  try {
+    const data = await xfApi('/template');
+    document.getElementById('xf-policy').value = JSON.stringify(data.policy, null, 2);
+    xfMsg('xf-policy-msg', silentIntro
+      ? 'No policy saved yet. The starter template is loaded (monitor mode). Edit the gmail domain list, then Save.'
+      : 'Starter template loaded. Not saved yet.');
+  } catch (e) { xfMsg('xf-policy-msg', xfErrors(e), 'error'); }
+}
+async function xfValidate() {
+  try {
+    const r = await xfApi('/validate', { method: 'POST', body: JSON.stringify(xfEditorPolicy()) });
+    if (r.valid) xfMsg('xf-policy-msg', 'Valid.', 'ok');
+    else xfMsg('xf-policy-msg', xfErrors({ message: 'Invalid policy', errors: r.errors }), 'error');
+  } catch (e) { xfMsg('xf-policy-msg', xfErrors(e), 'error'); }
+}
+async function xfSave() {
+  try {
+    const r = await xfApi('/policy', { method: 'PUT', body: JSON.stringify(xfEditorPolicy()) });
+    document.getElementById('xf-policy').value = JSON.stringify(r.policy, null, 2);
+    xfMsg('xf-policy-msg', 'Saved. Every server applies it within a few seconds.', 'ok');
+    xfStatus({ configured: true, policy: r.policy });
+    showToast('Cross-app flow policy saved', 'success');
+  } catch (e) { xfMsg('xf-policy-msg', xfErrors(e), 'error'); }
+}
+async function xfDelete() {
+  if (!confirm('Delete the cross-app flow policy? Enforcement stops for this tenant.')) return;
+  try {
+    await xfApi('/policy', { method: 'DELETE' });
+    xfStatus({ configured: false });
+    xfMsg('xf-policy-msg', 'Policy deleted. Nothing is enforced.', 'ok');
+  } catch (e) { xfMsg('xf-policy-msg', xfErrors(e), 'error'); }
+}
+function xfActionBadge(action) {
+  const map = { block: 'badge-danger', require_approval: 'badge-warn', warn: 'badge-warn', allow: 'badge-success' };
+  const label = { block: 'Blocked', require_approval: 'Needs approval', warn: 'Allowed with warning', allow: 'Allowed' }[action] || action;
+  return `<span class="badge ${map[action] || 'badge-basic'}">${xfEsc(label)}</span>`;
+}
+async function xfSimulate() {
+  let params = {};
+  const raw = document.getElementById('xf-sim-params').value.trim();
+  if (raw) {
+    try { params = JSON.parse(raw); }
+    catch (e) { xfMsg('xf-sim-result', 'Arguments are not valid JSON: ' + xfEsc(e.message), 'error'); return; }
+  }
+  const sources = document.getElementById('xf-sim-sources').value.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const [tool, ...tags] = l.split('#').map(x => x.trim());
+    return { tool_name: tool, tags: tags.filter(Boolean) };
+  });
+  try {
+    const r = await xfApi('/simulate', { method: 'POST', body: JSON.stringify({
+      policy: xfEditorPolicy(), tool_name: document.getElementById('xf-sim-tool').value.trim(),
+      tool_params: params, sources }) });
+    const d = r.decision, dest = r.destination;
+    const head = r.result ? xfActionBadge(d.action) : '<span class="badge badge-basic">No rule applies</span>';
+    const mode = r.result && r.result.action === 'log' ? ' <span class="badge badge-warn" style="text-transform:none;">monitor mode: would not block yet</span>' : '';
+    const lineage = (d.lineage || []).map(x => `<li>${xfEsc(x)}</li>`).join('');
+    const recorded = (r.recorded_sources || []).map(s => `${xfEsc(s.tool)} → ${xfEsc((s.apps || []).join(', ') || 'no app')} (${xfEsc(s.classification || (s.tags || []).join(', '))})`).join('<br>');
+    document.getElementById('xf-sim-result').innerHTML = `
+      <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;">${head}${mode}</div>
+      ${d.message ? `<div style="margin-top:0.5rem;">${xfEsc(d.message)}</div>` : ''}
+      ${r.note ? `<div style="margin-top:0.5rem;color:var(--text-dim);">${xfEsc(r.note)}</div>` : ''}
+      <div style="margin-top:0.5rem;color:var(--text-dim);">Destination: <b>${xfEsc(dest.tool)}</b> · apps ${xfEsc(dest.apps.join(', ') || 'none')} · exposure <b>${xfEsc(dest.exposure)}</b></div>
+      <div style="margin-top:0.35rem;color:var(--text-dim);">Sources the session would hold:<br>${recorded || 'none (no source tool matched a classified app)'}</div>
+      ${lineage ? `<ul style="margin:0.5rem 0 0 1.1rem;">${lineage}</ul>` : ''}`;
+  } catch (e) { xfMsg('xf-sim-result', xfErrors(e), 'error'); }
+}
+async function xfSession() {
+  const sid = document.getElementById('xf-session').value.trim();
+  if (!sid) { xfMsg('xf-session-result', 'Enter a session id.', 'error'); return; }
+  try {
+    const r = await xfApi('/sessions/' + encodeURIComponent(sid));
+    if (!r.records.length) { xfMsg('xf-session-result', 'Nothing recorded for this session.'); return; }
+    const rows = r.records.map(x => `<tr>
+      <td style="padding:0.4rem 0.6rem;">${xfEsc(new Date((x.at || 0) * 1000).toLocaleString())}</td>
+      <td style="padding:0.4rem 0.6rem;"><code>${xfEsc(x.tool)}</code></td>
+      <td style="padding:0.4rem 0.6rem;">${xfEsc((x.apps || []).join(', '))}</td>
+      <td style="padding:0.4rem 0.6rem;">${xfEsc(x.classification || '')}</td>
+      <td style="padding:0.4rem 0.6rem;">${xfEsc((x.tags || []).join(', '))}</td>
+      <td style="padding:0.4rem 0.6rem;">${xfEsc(x.evidence)} · ${xfEsc(x.path)}</td></tr>`).join('');
+    document.getElementById('xf-session-result').innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+        <thead><tr style="text-align:left;color:var(--text-dim);"><th style="padding:0.4rem 0.6rem;">When</th><th style="padding:0.4rem 0.6rem;">Tool</th><th style="padding:0.4rem 0.6rem;">Apps</th><th style="padding:0.4rem 0.6rem;">Classification</th><th style="padding:0.4rem 0.6rem;">Tags</th><th style="padding:0.4rem 0.6rem;">Evidence</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+  } catch (e) { xfMsg('xf-session-result', xfErrors(e), 'error'); }
+}
+async function xfClearSession() {
+  const sid = document.getElementById('xf-session').value.trim();
+  if (!sid) { xfMsg('xf-session-result', 'Enter a session id.', 'error'); return; }
+  if (!confirm('Clear this session? Every flow rule is lifted for it until it reads classified data again.')) return;
+  try {
+    await xfApi('/sessions/' + encodeURIComponent(sid), { method: 'DELETE' });
+    xfMsg('xf-session-result', 'Session cleared.', 'ok');
+  } catch (e) { xfMsg('xf-session-result', xfErrors(e), 'error'); }
+}
 </script>
 </body>
 </html>

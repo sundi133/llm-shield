@@ -23,7 +23,10 @@ from guardrails.agentic.rbac_guard import RBACGuard
 from guardrails.agentic.data_access_guard import DataAccessGuard
 from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
 from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuardrail
-from guardrails.agentic.tool.tool_output_sanitization import ToolOutputSanitizationGuardrail
+from guardrails.agentic.tool.tool_output_sanitization import (
+    ToolOutputSanitizationGuardrail,
+    taint_tags_for,
+)
 from guardrails.agentic.tool.tool_use_control import ToolUseControlGuardrail
 from guardrails.agentic.tool.tool_call_rate_limiting import ToolCallRateLimitingGuardrail
 from guardrails.agentic.tool.sensitive_action_confirmation import SensitiveActionConfirmationGuardrail
@@ -31,6 +34,7 @@ from guardrails.agentic.tool.indirect_injection_detection import IndirectInjecti
 from guardrails.base import _request_configs
 from core import policy_mode
 from core.risk import score_tool
+from core.xflow import runtime as xflow
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _MCP_PARITY_ENV = "SHIELD_MCP_TOOL_PARITY"
@@ -442,6 +446,24 @@ async def enforce_tool_call(
                     results.append({**rr, "passed": True, "action": "log",
                                     "message": "[monitor] would block: " + rr["message"]})
 
+    # Cross-app flow control (docs/specs/cross-app-flow-control.md): the same
+    # check as /v1/shield/tool/check, on the verified session. MCP cannot carry
+    # an approval grant, so require_approval denies here, exactly as the
+    # control plane's approval rules already do on this path.
+    if not any(not rr["passed"] and rr["action"] in ("block", "pending_confirmation")
+               for rr in results):
+        flow = await xflow.check_call(
+            tenant_id, tool_name=tool_name, params=arguments, route=route,
+            session_id=session_id, agent=agent_key,
+        )
+        if flow is not None:
+            if flow["action"] == "require_approval":
+                flow = {**flow, "action": "block",
+                        "message": flow["message"] + ". It needs human approval, which the "
+                                   "MCP path cannot carry: use /v1/shield/tool/check with "
+                                   "the approval grant"}
+            results.append(flow)
+
     allowed = all(
         rr["passed"] or rr["action"] not in ("block", "pending_confirmation")
         for rr in results
@@ -454,6 +476,11 @@ async def enforce_tool_call(
 
     decision = policy_mode.apply(results, allowed=allowed, action=action, mode=mode)
     _record_metrics(tenant_id, results)
+    if decision["allowed"]:
+        await xflow.record_call(
+            tenant_id, tool_name=tool_name, evidence="authorized", path="mcp_tools_call",
+            route=route, session_id=session_id, agent=agent_key,
+        )
     # MCP decisions were absent from the decision audit entirely, so a gateway
     # denial left no forensic record. Never let logging fail the call.
     try:
@@ -632,6 +659,16 @@ async def sanitize_tool_result(
             _request_configs.reset(token)
     sanitized = (r.details or {}).get("sanitized_output", output)
     blocked = (not r.passed and r.action == "block")
+
+    # Cross-app flow: record the tags DLP found in this result, so the
+    # session's later calls are judged as carrying that data.
+    if not (r.passed and r.action == "pass"):
+        await xflow.record_call(
+            tenant_id, tool_name=tool_name, evidence="observed", path="mcp_result",
+            session_id=session_id, agent=agent_key,
+            tags=taint_tags_for(r.details or {}, str((r.details or {}).get("findings") or "")),
+            tool_call_id=tool_call_id,
+        )
 
     # Provenance-aware indirect-injection scan on the INGESTED tool result
     # (opt-in via SHIELD_INDIRECT_INJECTION_SCAN; monitor-first, deterministic).

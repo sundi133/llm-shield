@@ -10,7 +10,10 @@ from guardrails.agentic.tool.tool_allowlist import ToolAllowlistGuardrail
 from guardrails.agentic.tool.tool_use_control import ToolUseControlGuardrail
 from guardrails.agentic.tool.tool_call_rate_limiting import ToolCallRateLimitingGuardrail
 from guardrails.agentic.tool.tool_call_validation import ToolCallValidationGuardrail
-from guardrails.agentic.tool.tool_output_sanitization import ToolOutputSanitizationGuardrail
+from guardrails.agentic.tool.tool_output_sanitization import (
+    ToolOutputSanitizationGuardrail,
+    taint_tags_for,
+)
 from guardrails.agentic.tool.sensitive_action_confirmation import SensitiveActionConfirmationGuardrail
 from guardrails.agentic.identity.cert_identity import CertIdentityGuardrail
 from guardrails.agentic.rbac_guard import RBACGuard
@@ -24,6 +27,7 @@ from core.feature_flags import (
 from storage.tool_killswitch import is_tool_disabled
 from core.identity_resolution import (BIND_REQUIRED, resolve_identity,
                                        token_binding_mode)
+from core.xflow import runtime as xflow
 from storage.decision_audit import log_decision
 from core.webhook_dispatcher import dispatch_event
 from core.run_context import resolve_run_id
@@ -40,6 +44,7 @@ from storage.agentic_control_plane import (
     evaluate_workflow_constraints,
     record_workflow_step,
     is_circuit_breaker_open,
+    list_approval_requests,
 )
 
 router = APIRouter(prefix="/v1/shield/tool", tags=["tool"])
@@ -78,6 +83,10 @@ class ToolCheckRequest(BaseModel):
     # endpoint. When present it is the authoritative, cryptographic proof of human
     # approval — verified here, not trusted as a status flag. See core/approvals.py.
     approval_grant: Optional[str] = None
+    # MCP server the call is bound for. The HTTP enforcer has always sent it;
+    # cross-app flow control uses it to place the call in an app (it can add
+    # an app to the call, never remove one the tool name matched).
+    route: Optional[str] = None
 
 
 class ToolOutputRequest(BaseModel):
@@ -145,6 +154,80 @@ def _first_denial(results) -> str:
         if not passed and msg:
             return msg
     return "blocked (no failing guardrail reported)"
+
+
+def _denied(results) -> bool:
+    return any(not r["passed"] and r["action"] in ("block", "pending_confirmation")
+               for r in results)
+
+
+def _resolve_flow_approval(flow: dict, body: "ToolCheckRequest", tenant_id: Optional[str],
+                           results: list) -> dict:
+    """Map a cross-app flow ``require_approval`` onto the existing approval
+    channel: a signed grant or an approved request passes; otherwise open a
+    request and return pending_confirmation with its id.
+
+    The approval-rule step earlier in this request may already have accepted
+    the same grant (its nonce is now burned) or consumed the same request, so
+    either of those counts as approval here too.
+    """
+    from core.approvals import ApprovalError, params_hash, verify_grant
+
+    def _pass(msg: str, extra: dict) -> dict:
+        return {**flow, "passed": True, "action": "pass", "message": msg,
+                "details": {**flow["details"], "approval": extra}}
+
+    def _block(msg: str) -> dict:
+        return {**flow, "passed": False, "action": "block", "message": msg}
+
+    for r in results:
+        if r.get("guardrail") in ("approval_grant", "approval_lifecycle") and r.get("passed"):
+            return _pass("Cross-app flow approved (approval accepted earlier in this check)",
+                         {"via": r["guardrail"]})
+    if body.approval_grant:
+        try:
+            claims = verify_grant(
+                body.approval_grant,
+                expected_tool=body.tool_name,
+                expected_params_hash=params_hash(body.tool_params),
+                expected_session=body.session_id or "",
+            )
+        except ApprovalError as e:
+            return _block(f"Cross-app flow approval grant rejected: {e}")
+        if tenant_id and claims.tenant_id and claims.tenant_id != tenant_id:
+            return _block("Cross-app flow approval grant rejected: issued for another tenant")
+        return _pass("Cross-app flow approved by signed grant",
+                     {"via": "approval_grant", "grant_id": claims.grant_id,
+                      "approvers": claims.approvers, "breakglass": claims.breakglass})
+    if not tenant_id:
+        return _block(flow["message"] + " (no tenant to open an approval request in)")
+    if body.approval_request_id:
+        # consume_approval_request binds agent, tool and session but not the
+        # arguments. Check them first, without consuming, so approval for one
+        # email cannot be spent on a different one.
+        pending = next((a for a in list_approval_requests(tenant_id)
+                        if a.get("request_id") == body.approval_request_id), None)
+        if pending is not None and \
+                params_hash(pending.get("tool_params")) != params_hash(body.tool_params):
+            return _block("Cross-app flow approval rejected: arguments changed since approval")
+        ok, msg, approval = consume_approval_request(
+            tenant_id, body.approval_request_id, agent_key=body.agent_key,
+            tool_name=body.tool_name, session_id=body.session_id or "",
+        )
+        if not ok:
+            return _block(f"Cross-app flow approval rejected: {msg}")
+        return _pass("Cross-app flow approved (approval request consumed)",
+                     {"via": "approval_request", "request_id": body.approval_request_id})
+    req = xflow.open_approval_request(
+        tenant_id, flow, agent_key=body.agent_key, tool_name=body.tool_name,
+        session_id=body.session_id or "", tool_params=body.tool_params,
+        workflow=body.workflow or "default",
+    )
+    return {**flow, "passed": False, "action": "pending_confirmation",
+            "message": flow["message"] + f". Approval request {req['request_id']} is pending.",
+            "details": {**flow["details"], "request_id": req["request_id"],
+                        "required_approvals": req["required_approvals"],
+                        "expires_at": req["expires_at"]}}
 
 
 def _emit_tool_check_telemetry(
@@ -562,6 +645,27 @@ async def check_tool(body: ToolCheckRequest, request: Request):
             if not r.passed and r.action == "block":
                 break  # early exit
 
+        # Cross-app flow control (docs/specs/cross-app-flow-control.md). Runs
+        # only when nothing has denied yet, and body.guardrails cannot skip it:
+        # it is tenant policy, not a caller-selected check. None means no
+        # policy or no rule destination matched, and appends nothing, so a
+        # tenant without a policy gets byte-identical results.
+        flow_user = _resolved.acting_for if _resolved.delegation_verified else None
+        if not _denied(results):
+            flow = await xflow.check_call(
+                tenant_id, tool_name=body.tool_name, params=body.tool_params,
+                route=body.route, session_id=body.session_id,
+                agent=body.agent_key, user=flow_user,
+            )
+            if flow is not None:
+                if flow["action"] == "require_approval":
+                    if resolve_mode(tenant_config) == "monitor":
+                        # Dry run: report it as a would-be denial, open nothing.
+                        flow = {**flow, "action": "pending_confirmation"}
+                    else:
+                        flow = _resolve_flow_approval(flow, body, tenant_id, results)
+                results.append(flow)
+
         allowed = all(r["passed"] or r["action"] not in ("block", "pending_confirmation") for r in results)
         action = "pass"
         for r in results:
@@ -630,6 +734,16 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 workflow_step=body.workflow_step,
             )
 
+        # The call is going ahead: if it reads a classified app, remember that
+        # this session has that data. Awaited so the session's next call sees it.
+        if allowed:
+            await xflow.record_call(
+                tenant_id, tool_name=body.tool_name, evidence="authorized",
+                path="tool_check", route=body.route, session_id=body.session_id,
+                agent=body.agent_key, user=flow_user, tool_call_id=body.tool_call_id,
+                input_sources=body.input_sources,
+            )
+
         _final_result = {
             "allowed": allowed,
             "action": action,
@@ -672,7 +786,8 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
         else None
     ) or request.headers.get("X-Tenant-ID") or request.headers.get("x-tenant-id")
     # Same seam as /tool/check. Defaults to "user" when absent, as before.
-    user_role = resolve_identity(request, body_agent_key=body.agent_key).user_role or "user"
+    _rid = resolve_identity(request, body_agent_key=body.agent_key)
+    user_role = _rid.user_role or "user"
 
     # The id a later call names in input_sources to inherit this output's
     # taint. Generated when the caller did not supply one and returned below.
@@ -690,6 +805,19 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
     }
     r = await guard.check(body.tool_output, context)
     sanitized = (r.details or {}).get("sanitized_output", body.tool_output)
+
+    # Cross-app flow: this result came back, so the session now holds its
+    # app's data, plus whatever DLP detected in it (SSN, card, secret...).
+    flow_tags = []
+    if not (r.passed and r.action == "pass"):
+        flow_tags = taint_tags_for(r.details or {}, str((r.details or {}).get("findings") or ""))
+    await xflow.record_call(
+        tenant_id, tool_name=body.tool_name, evidence="observed", path="tool_output",
+        session_id=body.session_id, agent=body.agent_key,
+        user=_rid.acting_for if _rid.delegation_verified else None,
+        tags=flow_tags, tool_call_id=tool_call_id,
+    )
+
     latency_ms = (time.perf_counter() - start) * 1000
     result = _format(r)
 
@@ -751,6 +879,9 @@ async def confirm_tool(body: ToolConfirmRequest):
 
 @router.get("/taint")
 async def get_taint_info(session_id: str):
+    # NB: reads the in-process taint store, whose keys omit the tenant (a
+    # known gap, tracked outside cross-app flow control). The tenant-scoped
+    # lineage view is GET /v1/tenant/me/flow-control/sessions/{session_id}.
     """Query the taint graph and active taints for a session."""
     from guardrails.agentic.taint.taint_store import get_session_taints, get_taint_graph
 
