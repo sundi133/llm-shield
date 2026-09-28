@@ -21,6 +21,9 @@ class ExportContext:
     #: Where the agent reaches Shield (always allowed, so enforcement cannot be bypassed).
     shield_host: str
     shield_port: int = 443
+    #: Target-specific export options (k8s: namespace, egress_cidrs,
+    #: run_as_uid, container, image). Validated by the API.
+    options: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -37,11 +40,12 @@ class Compiled:
 
 
 def _registry() -> dict[str, Callable]:
-    from core.runtime_policy.compilers import openshell
-    return {"openshell": openshell.compile_profile}
+    from core.runtime_policy.compilers import cilium, k8s, openshell
+    return {"openshell": openshell.compile_profile, "k8s": k8s.compile_profile,
+            "cilium": cilium.compile_profile}
 
 
-TARGETS = ("openshell",)
+TARGETS = ("openshell", "k8s", "cilium")
 
 
 def compile_profile(target: str, profile: dict, ctx: ExportContext) -> Compiled:

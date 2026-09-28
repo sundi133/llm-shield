@@ -93,6 +93,42 @@ def _load(tenant_id: str, name: str) -> dict:
     return profile
 
 
+_NS = __import__("re").compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
+
+
+def _options(request: Request) -> dict:
+    """Validated target options from the query string."""
+    import ipaddress
+    q = request.query_params
+    opts: dict = {}
+    if q.get("namespace"):
+        if not _NS.match(q["namespace"]):
+            raise HTTPException(status_code=400, detail="namespace: a DNS-1123 label")
+        opts["namespace"] = q["namespace"]
+    cidrs = q.getlist("egress_cidr")
+    for c in cidrs:
+        try:
+            ipaddress.ip_network(c, strict=False)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"egress_cidr: not a CIDR: {c[:60]!r}")
+    if cidrs:
+        opts["egress_cidrs"] = cidrs[:50]
+    if q.get("run_as_uid"):
+        try:
+            uid = int(q["run_as_uid"])
+        except ValueError:
+            uid = -1
+        if not 1 <= uid <= 2**31 - 1:
+            raise HTTPException(status_code=400, detail="run_as_uid: a non-root numeric UID")
+        opts["run_as_uid"] = uid
+    for k in ("container", "image"):
+        if q.get(k):
+            if len(q[k]) > 255 or any(ch.isspace() for ch in q[k]):
+                raise HTTPException(status_code=400, detail=f"{k}: invalid")
+            opts[k] = q[k]
+    return opts
+
+
 def _compile(request: Request, tenant_id: str, name: str, target: str,
              shield_url: Optional[str]) -> tuple[dict, str, object]:
     if target not in TARGETS:
@@ -102,7 +138,8 @@ def _compile(request: Request, tenant_id: str, name: str, target: str,
     phash = profile_hash(profile)
     host, port = _shield_endpoint(request, shield_url)
     compiled = compile_profile(target, profile, ExportContext(
-        profile_name=name, profile_hash=phash, shield_host=host, shield_port=port))
+        profile_name=name, profile_hash=phash, shield_host=host, shield_port=port,
+        options=_options(request)))
     return profile, phash, compiled
 
 
