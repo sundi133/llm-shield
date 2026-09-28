@@ -30,11 +30,30 @@ where that call sends data.
 
 ## How it works
 
+```mermaid
+sequenceDiagram
+    participant A as AI agent
+    participant S as Shield
+    participant D as Google Drive
+    participant G as GitHub
+    A->>S: tool/check drive_read_file (session task-42)
+    S-->>A: allowed
+    Note over S: task-42 now holds google_drive / confidential
+    A->>D: read contract
+    A->>S: tool/check github_create_repo {"private": false}
+    Note over S: destination github, exposure public<br/>rule confidential-to-public matches
+    S-->>A: BLOCKED, with the lineage
+    A--xG: never called
+```
+
 ```text
 drive_read_file            ->  session remembers: google_drive, confidential
 github_create_repo         ->  destination: github, exposure PUBLIC (private=false)
   {"private": false}           rule confidential-to-public: BLOCK
 ```
+
+For a complete walkthrough with real requests and responses, see the
+[end-to-end example](#end-to-end-example) at the end of this page.
 
 A policy has three parts:
 
@@ -284,3 +303,221 @@ the portal and the guardrail server.
   sources, destination and lineage. It flows into the decision audit,
   telemetry (including ASIM), webhooks and SIEM like any other guardrail.
   Policy changes and session clears are written to the admin audit log.
+
+## End-to-end example
+
+A contracts assistant helps the legal team. It can read Google Drive and
+Salesforce, create GitHub repositories, and send mail. The company's rules:
+
+- **Confidential data is never published.** Drive documents and Salesforce
+  records are confidential.
+- **Customer data may leave the company only with a human's approval.**
+
+Everything below is a real run. Only the timestamps and ids differ from run to
+run. Set these first:
+
+```bash
+SHIELD=https://YOUR_SHIELD
+KEY=your-tenant-api-key
+```
+
+### 1. Register the agent and save the policy
+
+The agent must be in the registry with the tools it uses, as for any tool call
+through Shield:
+
+```bash
+curl -s -X POST $SHIELD/v1/agents/registry -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{
+  "agent_id": "contracts-agent",
+  "tools": ["drive_read_file", "salesforce_get_account", "github_create_repo", "gmail_send"],
+  "role_permissions": {"analyst": ["drive_read_file", "salesforce_get_account", "github_create_repo", "gmail_send"]}
+}'
+```
+
+Save the policy. Replace `acme.com` with your own mail domains.
+
+```bash
+curl -s -X PUT $SHIELD/v1/tenant/me/flow-control/policy -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{
+  "enabled": true,
+  "mode": "enforce",
+  "apps": {
+    "google_drive": {"tools": ["drive_*"], "classification": "confidential"},
+    "salesforce":   {"tools": ["salesforce_*"], "classification": "confidential",
+                     "source_tools": ["salesforce_get*", "salesforce_query*"]},
+    "github":       {"tools": ["github_*"], "classification": "internal"},
+    "gmail":        {"tools": ["gmail_*"]}
+  },
+  "exposure_rules": [
+    {"tools": ["github_create_repo"], "param": "private", "equals": false, "exposure": "public"},
+    {"tools": ["github_create_repo"], "param": "private", "missing": true, "exposure": "public"},
+    {"apps": ["gmail"], "param": "*", "domain_not_in": ["acme.com"], "exposure": "external"}
+  ],
+  "rules": [
+    {"id": "confidential-to-public", "description": "Confidential data is never published",
+     "source": {"min_classification": "confidential"},
+     "destination": {"exposure": ["public"]}, "action": "block"},
+    {"id": "customer-data-external", "description": "Customer data leaving the company needs a human",
+     "source": {"apps": ["salesforce"]},
+     "destination": {"exposure": ["external"]}, "action": "require_approval"}
+  ]
+}'
+```
+
+{: .note }
+On a live tenant, save with `"mode": "monitor"` first. Review what it would
+block, then switch to `"enforce"`.
+
+### 2. The agent reads a contract and a customer record
+
+Every call carries the same `session_id` for the task:
+
+```bash
+check() {  # usage: check <tool> '<json params>' [extra JSON fields]
+  curl -s -X POST $SHIELD/v1/shield/tool/check -H "X-API-Key: $KEY" -H "X-User-Role: analyst" \
+    -H "Content-Type: application/json" \
+    -d "{\"agent_key\": \"contracts-agent\", \"session_id\": \"task-42\", \"tool_name\": \"$1\", \"tool_params\": $2 ${3:+, $3}}"
+}
+
+check drive_read_file '{"file_id": "msa-globex-2026.pdf"}'
+check salesforce_get_account '{"account_id": "001-GLOBEX"}'
+```
+
+Both are allowed (`"allowed": true`). Shield now knows session `task-42` holds
+confidential data from `google_drive` and `salesforce`.
+
+### 3. The agent tries to publish a summary publicly: blocked
+
+```bash
+check github_create_repo '{"name": "globex-contract-summary", "private": false}'
+```
+
+```json
+{
+  "allowed": false,
+  "action": "block",
+  "guardrail_results": [
+    {
+      "guardrail": "cross_app_flow",
+      "passed": false,
+      "action": "block",
+      "message": "Cross-app flow blocked by rule 'confidential-to-public': confidential data from salesforce (salesforce_get_account) may not be sent to github (github_create_repo, public destination)",
+      "details": {
+        "destination": {"tool": "github_create_repo", "apps": ["github"], "exposure": "public"},
+        "flow_violations": [
+          {
+            "rule_id": "confidential-to-public",
+            "action": "block",
+            "description": "Confidential data is never published",
+            "source_count": 2,
+            "sources": [
+              {"apps": ["salesforce"], "tool": "salesforce_get_account", "classification": "confidential",
+               "evidence": "authorized", "scope": "session"},
+              {"apps": ["google_drive"], "tool": "drive_read_file", "classification": "confidential",
+               "evidence": "authorized", "scope": "session"}
+            ]
+          }
+        ],
+        "lineage": [
+          "confidential data from salesforce (salesforce_get_account) -> github (github_create_repo, public destination)",
+          "confidential data from google_drive (drive_read_file) -> github (github_create_repo, public destination)"
+        ]
+      }
+    }
+  ]
+}
+```
+
+(Shortened: the other guardrails' passing results are left out.)
+
+### 4. A private repository is fine
+
+```bash
+check github_create_repo '{"name": "globex-contract-summary", "private": true}'
+```
+
+`"allowed": true`. The exposure is `internal`, so no rule applies. Leaving
+`private` out would be blocked, because GitHub creates public repositories by
+default.
+
+### 5. Mailing the customer's lawyers: held for approval
+
+```bash
+check gmail_send '{"to": "legal@globex.com", "subject": "Contract summary", "body": "Summary attached"}'
+```
+
+```json
+{
+  "allowed": false,
+  "action": "pending_confirmation",
+  "guardrail_results": [
+    {
+      "guardrail": "cross_app_flow",
+      "action": "pending_confirmation",
+      "message": "Cross-app flow requires approval by rule 'customer-data-external': confidential data from salesforce (salesforce_get_account) may not be sent to gmail (gmail_send, external destination). Approval request apr_8c691964f2 is pending.",
+      "details": {"request_id": "apr_8c691964f2", "required_approvals": 1}
+    }
+  ]
+}
+```
+
+The same mail to `someone@acme.com` would go straight through, because it is
+internal.
+
+### 6. A person approves, and the agent sends
+
+An approver approves it under **Operations Center > Pending Approvals** in the
+portal, or through the API. Use the `request_id` from step 5:
+
+```bash
+RID=apr_8c691964f2   # the request_id from step 5
+GRANT=$(curl -s -X POST $SHIELD/v1/tenant/me/agentic/approvals/$RID/approve \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"approver": "dana@acme.com", "reason": "Globex legal asked for it"}' | jq -r .approval_grant)
+```
+
+The approve response has `"status": "approved"` and a signed
+`approval_grant`, kept here in `$GRANT`. The agent repeats the exact same call
+with it:
+
+```bash
+check gmail_send '{"to": "legal@globex.com", "subject": "Contract summary", "body": "Summary attached"}' \
+  "\"approval_grant\": \"$GRANT\""
+```
+
+`"allowed": true`, with the message `Cross-app flow approved by signed grant`.
+
+The grant works once and only for these arguments:
+
+- Sending it again is refused with `approval replay detected (nonce already
+  used)`.
+- Changing the recipient or body is refused with `arguments changed since
+  approval`.
+
+### 7. The audit trail
+
+The session view shows what the agent had read when each decision was made:
+
+```bash
+curl -s $SHIELD/v1/tenant/me/flow-control/sessions/task-42 -H "X-API-Key: $KEY"
+```
+
+```json
+{
+  "session_id": "task-42",
+  "count": 3,
+  "records": [
+    {"tool": "drive_read_file", "apps": ["google_drive"], "classification": "confidential",
+     "evidence": "authorized", "path": "tool_check", "at": 1790605193.65},
+    {"tool": "salesforce_get_account", "apps": ["salesforce"], "classification": "confidential",
+     "evidence": "authorized", "path": "tool_check", "at": 1790605193.66},
+    {"tool": "github_create_repo", "apps": ["github"], "classification": "internal",
+     "evidence": "authorized", "path": "tool_check", "at": 1790605193.70}
+  ]
+}
+```
+
+The block in step 3 and the approval in step 5 are also in the decision audit,
+telemetry and SIEM feeds, as `cross_app_flow` results.
+
+The same scenario, with pass/fail checks and automatic cleanup, is what
+`scripts/test_cross_app_flow.py` runs.
