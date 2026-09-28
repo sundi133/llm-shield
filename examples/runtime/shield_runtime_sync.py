@@ -20,6 +20,8 @@ What it guarantees:
     --allow-unsigned accepts a bundle from a Shield with no signing key
     configured (development only); a bad signature is never accepted.
   * With --etag-file, an unchanged bundle is a cheap 304 and the file stays as is.
+  * With --hash-file, the verified profile hash is written for the broker to
+    mint the sandbox's agent token with runtime_profile_hash (attestation).
 
 Needs the `cryptography` package (already a Shield dependency).
 """
@@ -100,6 +102,8 @@ def main() -> int:
     ap.add_argument("--tenant", help="expected tenant id (recommended)")
     ap.add_argument("--shield-url", help="Shield URL as the sandbox reaches it, if different")
     ap.add_argument("--etag-file", help="remember the bundle version between runs")
+    ap.add_argument("--hash-file", help="write the verified profile hash here, for the broker "
+                                        "to put in the agent token (runtime_profile_hash)")
     ap.add_argument("--allow-unsigned", action="store_true",
                     help="accept an unsigned bundle (development only)")
     args = ap.parse_args()
@@ -144,6 +148,9 @@ def main() -> int:
     with open(tmp, "w") as f:
         f.write(bundle["artifact"])
     os.replace(tmp, args.out)
+    if args.hash_file:
+        with open(args.hash_file, "w") as f:
+            f.write(bundle["profile_hash"])
     if args.etag_file and new_etag:
         with open(args.etag_file, "w") as f:
             f.write(new_etag)

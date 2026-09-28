@@ -324,6 +324,8 @@ def mint_agent_token(
     roles: Optional[list] = None,
     ttl_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
     signer: Optional[AgentTokenSigner] = None,
+    runtime_profile: Optional[str] = None,
+    runtime_profile_hash: Optional[str] = None,
 ) -> str:
     """Mint a signed agent token as a standard JWT. Raises TokenError on misconfiguration."""
     if ttl_seconds <= 0 or ttl_seconds > MAX_TOKEN_TTL_SECONDS:
@@ -372,6 +374,11 @@ def mint_agent_token(
         # Absent when unbound, so tokens minted without a key stay
         # byte-compatible with every token issued before this existed.
         **({"cnf": cnf} if cnf else {}),
+        # Runtime attestation (docs/specs/infra-guardrails.md): the runtime
+        # profile the sandbox was started from. Absent unless the broker sets
+        # it, so every other token is byte-compatible with before.
+        **({"runtime_profile": runtime_profile} if runtime_profile else {}),
+        **({"runtime_profile_hash": runtime_profile_hash} if runtime_profile_hash else {}),
         "iat": now,
         "exp": now + ttl_seconds,
         "jti": uuid.uuid4().hex,

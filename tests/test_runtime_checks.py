@@ -158,8 +158,11 @@ def _tenant(app, profile="coding-agent"):
     create_tenant(tid, {"name": tid, "plan": "enterprise"}, api_keys=[key])
     c = TestClient(app, headers={"X-API-Key": key, "X-User-Role": "dev"})
     if profile:
-        assert c.put(f"/v1/tenant/me/runtime-profiles/{profile}",
-                     json=TEMPLATES[profile]).status_code == 200
+        # These tests call with an API key (an asserted identity); the verified
+        # identity requirement is covered in tests/test_runtime_attest.py.
+        body = copy.deepcopy(TEMPLATES[profile])
+        body["identity"]["require_agent_token"] = False
+        assert c.put(f"/v1/tenant/me/runtime-profiles/{profile}", json=body).status_code == 200
     for agent, rp in (("boxed", profile or ""), ("free", "")):
         r = c.post("/v1/agents/registry", json={"agent_id": agent, "tools": TOOLS,
                                                 "role_permissions": {"dev": TOOLS},
@@ -195,6 +198,7 @@ def test_profile_change_applies_immediately_on_this_replica(app):
     t = _tenant(app)
     assert _check(t, "boxed", "fetch", {"url": "https://example.org/x"})["allowed"] is False
     changed = copy.deepcopy(TEMPLATES["coding-agent"])
+    changed["identity"]["require_agent_token"] = False
     changed["network"]["allow"].append({"host": "example.org"})
     t.c.put("/v1/tenant/me/runtime-profiles/coding-agent", json=changed)
     assert _check(t, "boxed", "fetch", {"url": "https://example.org/x"})["allowed"] is True

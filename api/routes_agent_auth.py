@@ -86,6 +86,10 @@ class AgentTokenRequest(BaseModel):
                           "the token as cnf.jkt for proof-of-possession. "
                           "Private key members are refused.")
     ttl_seconds: int = Field(DEFAULT_TOKEN_TTL_SECONDS, ge=1, le=MAX_TOKEN_TTL_SECONDS)
+    # Runtime attestation: the profile (and its hash, from the verified runtime
+    # bundle) the sandbox was started from. See core/runtime_policy/attest.py.
+    runtime_profile: Optional[str] = Field(None, pattern=r"^[a-z0-9][a-z0-9_.-]{0,63}$")
+    runtime_profile_hash: Optional[str] = Field(None, pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 class AgentTokenResponse(BaseModel):
@@ -337,6 +341,7 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
         body_parent_agent_id=body.parent_agent_id,
         parent_agent_token=body.parent_agent_token,
     )
+    ttl_seconds = _profile_capped_ttl(body.tenant_id, body.agent_id, body.ttl_seconds)
     try:
         token = mint_agent_token(
             user_sub=body.user_sub,
@@ -349,7 +354,9 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
             parent_agent_id=parent_id,
             delegation_depth=depth,
             agent_jwk=body.agent_jwk,
-            ttl_seconds=body.ttl_seconds,
+            ttl_seconds=ttl_seconds,
+            runtime_profile=body.runtime_profile,
+            runtime_profile_hash=body.runtime_profile_hash,
         )
     except TokenError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -359,8 +366,59 @@ async def issue_agent_token(body: AgentTokenRequest, request: Request):
     )
     # Track owning tenant so it can later self-service-revoke this instance.
     record_instance_owner(body.agent_instance_id, body.tenant_id,
-                          ttl=body.ttl_seconds + 3600)
-    return AgentTokenResponse(agent_token=token, expires_in=body.ttl_seconds)
+                          ttl=ttl_seconds + 3600)
+    return AgentTokenResponse(agent_token=token, expires_in=ttl_seconds)
+
+
+def _profile_capped_ttl(tenant_id: str, agent_id: str, requested: int) -> int:
+    """A runtime profile's identity.max_token_ttl_seconds caps the tokens of
+    agents bound to it. Unchanged for agents without a profile."""
+    try:
+        from core.runtime_policy.check import profile_for
+        cp = profile_for(tenant_id, agent_id)
+        if cp is not None:
+            return min(requested, int(cp.raw["identity"]["max_token_ttl_seconds"]))
+    except Exception:
+        pass
+    return requested
+
+
+def _attest_or_deny(identity: IdentityTuple, request: Optional[Request]) -> Optional[str]:
+    """Runtime attestation at cap/mint (core/runtime_policy/attest.py).
+    Returns a warning reason (warn mode), raises 403 (enforce), or None."""
+    from core.runtime_policy.attest import check_attestation
+    from core.jwt_utils import decode_jwt_unverified
+
+    claims: dict = {}
+    token = (request.headers.get("X-Agent-Token") or "") if request is not None else ""
+    if token:
+        try:
+            # Already verified by AgentIdentityMiddleware for this request; only
+            # the attestation claim is read here.
+            claims = decode_jwt_unverified(token)
+        except Exception:
+            claims = {}
+    result = check_attestation(identity.tenant_id, agent_id=identity.agent_id,
+                               instance_id=identity.agent_instance_id, claims=claims)
+    if result is None:
+        return None
+    try:
+        from storage.decision_audit import log_decision
+        log_decision(tenant_id=identity.tenant_id,
+                     action="block" if result["mode"] == "enforce" else "warn",
+                     guardrail="runtime_attestation", agent_key=identity.agent_id,
+                     tool_name="cap/mint", user_role="", session_id=identity.session_id or "",
+                     reason=result["reason"], source_ip="",
+                     metadata={"path": "cap_mint", "instance": identity.agent_instance_id,
+                               **result})
+    except Exception:
+        pass
+    if result["mode"] == "enforce":
+        record_event(tenant_id=identity.tenant_id, event=EVENT_CAP_DENIED,
+                     agent_id=identity.agent_id, user_sub=identity.user_sub,
+                     reason=result["reason"][:240])
+        raise HTTPException(status_code=403, detail=public_denial_payload([result["reason"]]))
+    return result["reason"]
 
 
 def _log_flow_decision(flow: dict, identity: IdentityTuple, body: "CapMintRequest") -> None:
@@ -600,6 +658,9 @@ async def mint_capability(
     if flow is not None and not flow["passed"] and flow["action"] != "warn":
         approvers_for_event = _enforce_flow_decision(
             flow, identity, body, approvers_for_event)
+
+    # Runtime attestation: is this sandbox on the current runtime profile?
+    _attest_or_deny(identity, request)
 
     try:
         cap = mint_cap(
@@ -1134,6 +1195,10 @@ class TenantAgentTokenRequest(BaseModel):
                           "the token as cnf.jkt for proof-of-possession. "
                           "Private key members are refused.")
     ttl_seconds: int = Field(DEFAULT_TOKEN_TTL_SECONDS, ge=1, le=MAX_TOKEN_TTL_SECONDS)
+    # Runtime attestation: the profile (and its hash, from the verified runtime
+    # bundle) the sandbox was started from. See core/runtime_policy/attest.py.
+    runtime_profile: Optional[str] = Field(None, pattern=r"^[a-z0-9][a-z0-9_.-]{0,63}$")
+    runtime_profile_hash: Optional[str] = Field(None, pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 @tenant_router.post("/agent-token", response_model=AgentTokenResponse)
@@ -1154,6 +1219,7 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
         body_parent_agent_id=body.parent_agent_id,
         parent_agent_token=body.parent_agent_token,
     )
+    ttl_seconds = _profile_capped_ttl(tenant_id, body.agent_id, body.ttl_seconds)
     try:
         token = mint_agent_token(
             user_sub=body.user_sub,
@@ -1166,7 +1232,9 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
             parent_agent_id=parent_id,
             delegation_depth=depth,
             agent_jwk=body.agent_jwk,
-            ttl_seconds=body.ttl_seconds,
+            ttl_seconds=ttl_seconds,
+            runtime_profile=body.runtime_profile,
+            runtime_profile_hash=body.runtime_profile_hash,
         )
     except TokenError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1176,8 +1244,8 @@ async def issue_agent_token_tenant(body: TenantAgentTokenRequest, request: Reque
     )
     # Track owning tenant so it can later self-service-revoke this instance.
     record_instance_owner(body.agent_instance_id, tenant_id,
-                          ttl=body.ttl_seconds + 3600)
-    return AgentTokenResponse(agent_token=token, expires_in=body.ttl_seconds)
+                          ttl=ttl_seconds + 3600)
+    return AgentTokenResponse(agent_token=token, expires_in=ttl_seconds)
 
 
 class TenantRevokeRequest(BaseModel):

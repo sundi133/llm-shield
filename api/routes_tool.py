@@ -672,6 +672,11 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         # so this check and the sandbox never disagree. None for agents with no
         # profile, i.e. unchanged behaviour.
         if not _denied(results):
+            from core.runtime_policy.attest import identity_requirement
+            ident = identity_requirement(tenant_id, body.agent_key, _resolved.agent_verified)
+            if ident is not None:
+                results.append(ident)
+        if not _denied(results):
             rb = runtime_check.check_tool_call(
                 tenant_id, agent_key=body.agent_key, tool_name=body.tool_name,
                 params=body.tool_params, shield_hosts=_shield_hosts(request),

@@ -203,7 +203,8 @@ def test_requires_a_tenant(app):
 def test_classified_file_read_reported_by_the_sandbox_feeds_cross_app_flow(app):
     t = _tenant(app)
     tools = ["github_create_repo"]
-    t.c.put("/v1/tenant/me/runtime-profiles/research-agent", json=TEMPLATES["research-agent"])
+    prof = {**TEMPLATES["research-agent"], "identity": {"require_agent_token": False}}
+    t.c.put("/v1/tenant/me/runtime-profiles/research-agent", json=prof)
     t.c.post("/v1/agents/registry", json={"agent_id": "boxed", "tools": tools,
                                           "role_permissions": {"dev": tools},
                                           "runtime_profile": "research-agent"})
