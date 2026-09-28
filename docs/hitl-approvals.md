@@ -77,6 +77,15 @@ only. For enforcement, use the signed `approval_grant` described here. Existing
 `approval_request_id` (status-flag) handling still works for backward compatibility
 but is weaker than a signed grant; prefer `approval_grant`.
 
+## Approvals raised by cross-app flow rules
+
+A [Cross-App Flow Control](/cross-app-flow-control/) rule with `"action": "require_approval"`
+opens the same kind of approval request, for example when an agent that read Salesforce tries
+to mail someone outside the company. It is approved the same way and the agent presents the
+same signed `approval_grant`, on `tool/check` or `cap/mint`. The grant is bound to the call's
+arguments, so approving one email does not approve a different one. A retry of a held call
+reuses the pending request instead of opening another.
+
 ## Enforcement points
 
 Approval is enforced at **both** gates:

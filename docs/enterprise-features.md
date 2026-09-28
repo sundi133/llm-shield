@@ -272,6 +272,13 @@ curl -X DELETE http://localhost:8080/v1/admin/tenants/team-alpha/parent \
 
 **Enable**: Add `tool_call_id` and `input_sources` to your tool check requests. That's it.
 
+{: .note }
+Taint tracking gates a tagged value by the agent's clearance. To control where data may go by
+application and destination, for example "nothing read from Google Drive may be sent to a public
+GitHub repository" or "customer records need approval before leaving the company", use
+[Cross-App Flow Control](/cross-app-flow-control/). It needs no `input_sources`: it tracks the
+whole session and works on `/tool/check`, the MCP gateway and `cap/mint`.
+
 ### Step 1 — Tool output records taint automatically
 ```bash
 curl -X POST http://localhost:8080/v1/shield/tool/output \
@@ -725,6 +732,9 @@ curl "http://localhost:8080/v1/shield/agent/identity/payment-bot?tenant_id=acme"
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/v1/shield/tool/taint` | GET | Query taint graph for session |
+| `/v1/tenant/me/flow-control/policy` | GET/PUT/DELETE | [Cross-app flow](/cross-app-flow-control/) policy |
+| `/v1/tenant/me/flow-control/simulate` | POST | Decide a hypothetical cross-app flow |
+| `/v1/tenant/me/flow-control/sessions/{session_id}` | GET/DELETE | What a session has read (lineage) |
 | `/v1/shield/agent/goal` | POST/GET | Register/query agent goal |
 | `/v1/shield/agent/identity/register` | POST | Register cert fingerprint |
 | `/v1/shield/agent/identity/revoke` | POST | Revoke cert |

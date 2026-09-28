@@ -226,6 +226,33 @@ curl -X POST http://localhost/v1/shield/memory/check \
   -d '{"agent_key": "acme-bot-1", "operation": "write", "key": "customer:42", "value": "data"}'
 ```
 
+### Cross-App Flow Control
+
+Session-aware rules on where an agent may send data it has read. Full guide:
+[Cross-App Flow Control](/cross-app-flow-control/).
+
+```bash
+# Save a policy (apps, exposure_rules, rules); 422 lists every validation error
+curl -X PUT http://localhost/v1/tenant/me/flow-control/policy \
+  -H "X-API-Key: $SHIELD_API_KEY" -H "Content-Type: application/json" -d @flow-policy.json
+
+# Starter template
+curl http://localhost/v1/tenant/me/flow-control/template -H "X-API-Key: $SHIELD_API_KEY"
+
+# Decide a hypothetical call (no state read or written)
+curl -X POST http://localhost/v1/tenant/me/flow-control/simulate \
+  -H "X-API-Key: $SHIELD_API_KEY" -H "Content-Type: application/json" \
+  -d '{"tool_name": "github_create_repo", "tool_params": {"private": false},
+       "sources": [{"tool_name": "drive_read_file"}]}'
+
+# What a session has read (the evidence behind a decision)
+curl http://localhost/v1/tenant/me/flow-control/sessions/task-42 -H "X-API-Key: $SHIELD_API_KEY"
+```
+
+Enforcement needs no new call: `/v1/shield/tool/check`, MCP `tools/call` and `cap/mint`
+return a `cross_app_flow` result when a rule applies. `/v1/shield/tool/check` also accepts an
+optional `route` (MCP server) to place a tool in an app.
+
 ### MCP Server Guards
 
 ```bash
@@ -298,6 +325,11 @@ curl http://localhost/ping
 | `/v1/shield/mcp/servers` | `GET` | Tenant | Tenant Dev |
 | `/v1/shield/guardrails` | `GET` | Tenant | Tenant Dev |
 | `/v1/tenant/me` | `GET` | Tenant | Tenant Dev |
+| `/v1/tenant/me/flow-control/policy` | `GET/PUT/DELETE` | Tenant | Tenant Dev |
+| `/v1/tenant/me/flow-control/validate` | `POST` | Tenant | Tenant Dev |
+| `/v1/tenant/me/flow-control/template` | `GET` | Tenant | Tenant Dev |
+| `/v1/tenant/me/flow-control/simulate` | `POST` | Tenant | Tenant Dev |
+| `/v1/tenant/me/flow-control/sessions/{session_id}` | `GET/DELETE` | Tenant | Tenant Dev |
 | `/v1/tenant/me/usage` | `GET` | Tenant | Tenant Dev |
 | `/health`, `/ping` | `GET` | Public | Monitoring |
 
