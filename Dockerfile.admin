@@ -114,6 +114,8 @@ COPY api/routes_identity_config.py api/
 # Cross-app flow control policy API. Its core/xflow package is also imported
 # at module load by routes_tool and routes_agent_auth.
 COPY api/routes_flow_control.py api/
+# Infrastructure guardrails: runtime profiles + signed runtime bundles.
+COPY api/routes_runtime_policy.py api/
 COPY api/routes_guardrail_metrics.py api/
 COPY api/routes_siem.py api/
 COPY api/routes_vault.py api/
@@ -141,6 +143,7 @@ COPY core/sigma.py core/
 COPY core/sigma_io.py core/
 COPY core/sigma_policy.py core/
 COPY core/xflow/ core/xflow/
+COPY core/runtime_policy/ core/runtime_policy/
 COPY core/sigma_translate.py core/
 COPY storage/rate_limiter.py storage/
 COPY storage/policy_store.py storage/

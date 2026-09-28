@@ -31,7 +31,16 @@ groups:
       # Next to data policies: those govern what one tool call may carry, this
       # governs where data read by one app may go next in the same session.
       - { title: Cross-App Flow Control, url: /cross-app-flow-control/ }
+      # Where the agent RUNS (network, files, processes, resources), next to
+      # the pages about what it may DO.
+      - { title: Infrastructure Guardrails, url: /infra-guardrails/ }
+      # Where require_approval rules (tool approval rules and cross-app flow
+      # rules) send the human, so it follows the pages that raise approvals.
+      - { title: Human-in-the-Loop Approvals, url: /hitl-approvals/ }
       - { title: Secret Vault, url: /prevent-secret-leakage/ }
+      # Custom input/output policies written as Sigma rules, and the ASIM
+      # telemetry format; next to the lifecycle those policies go through.
+      - { title: Sigma Policies & ASIM Telemetry, url: /sigma-policies/ }
       - { title: Policy Lifecycle, url: /policy-lifecycle/ }
       # AIBOM sits with the policy pages, not under Operate: the inventory is
       # what compliance mapping and drift review are computed FROM, so a reader

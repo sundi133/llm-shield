@@ -197,4 +197,47 @@ def to_asim(event: dict) -> dict:
     if additional:
         asim["AdditionalFields"] = additional
 
+    runtime_kind = event.get("votal.runtime.kind")
+    if runtime_kind:
+        asim.update(_runtime_fields(event, runtime_kind))
+
     return _clean(asim)
+
+
+# Runtime-boundary events (sandbox / proxy decisions, docs/specs/infra-guardrails.md)
+# map onto the ASIM schema for what happened, not the generic AuditEvent.
+_RUNTIME_SCHEMAS = {
+    "network": ("NetworkSession", "0.2.6", "EndpointNetworkSession"),
+    "file": ("FileEvent", "0.2.1", "FileAccessed"),
+    "process": ("ProcessEvent", "0.1.4", "ProcessCreated"),
+}
+
+
+def _runtime_fields(event: dict, kind: str) -> dict:
+    decision = event.get("votal.runtime.decision")
+    out: dict[str, Any] = {
+        "DvcAction": "Deny" if decision == "deny" else ("Allow" if decision == "allow" else "Audit"),
+        "EventResult": "Failure" if decision == "deny" else "Success",
+        "EventResultDetails": event.get("votal.runtime.reason") or event.get("votal.guardrail.message"),
+        "EventSeverity": {"critical": "High", "high": "High", "medium": "Medium",
+                          "low": "Low"}.get(event.get("votal.runtime.severity"), "Informational"),
+        "EventProduct": "Shield Runtime Boundary",
+        "EventOriginalType": f"{event.get('votal.runtime.source', '')}:{kind}",
+    }
+    if kind in _RUNTIME_SCHEMAS:
+        schema, version, event_type = _RUNTIME_SCHEMAS[kind]
+        out.update({"EventSchema": schema, "EventSchemaVersion": version,
+                    "EventType": event_type})
+    if kind == "network":
+        out.update({"NetworkDirection": "Outbound",
+                    "DstHostname": event.get("destination.domain"),
+                    "DstPortNumber": event.get("destination.port"),
+                    "HttpRequestMethod": event.get("http.request.method"),
+                    "Url": event.get("votal.runtime.path"),
+                    "SrcProcessName": event.get("process.executable")})
+    elif kind == "file":
+        out["TargetFilePath"] = event.get("file.path")
+    elif kind == "process":
+        out.update({"TargetProcessName": event.get("process.executable"),
+                    "TargetProcessCommandLine": event.get("process.command_line")})
+    return {k: v for k, v in out.items() if v not in (None, "")}
