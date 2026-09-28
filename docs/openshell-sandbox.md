@@ -75,6 +75,25 @@ network_policies:
 
 Runnable copy: [examples/openshell/shield-policy.yaml](https://github.com/sundi133/llm-shield/blob/main/examples/openshell/shield-policy.yaml).
 
+### Generate it from Shield instead
+
+Rather than keeping this file by hand, write a **runtime profile** in Shield
+and let Shield generate the OpenShell policy from it:
+
+- the Shield host is always allowed;
+- each allowed host gets its method and path rules;
+- only the programs you list may use the network;
+- the file is served as a signed bundle for your sandbox broker to verify.
+
+The same profile drives Shield's own tool checks and its Kubernetes, Cilium
+and Squid exports. See [Infrastructure Guardrails](/infra-guardrails/).
+
+```bash
+python examples/runtime/shield_runtime_sync.py --shield $SHIELD \
+  --profile research-agent --out research-agent.openshell.yaml
+openshell sandbox create --policy research-agent.openshell.yaml -- <cmd>
+```
+
 ## Prerequisites
 
 - **Docker** running (OpenShell's compute driver; on macOS it backs the sandboxes).
@@ -131,10 +150,22 @@ A **high-clearance role** on the same call returns the data; the restricted role
 gets `-32000`. Identity comes from the connection headers (`X-Agent-Key` /
 `X-User-Role`), never from the agent's arguments.
 
-> **Verified live.** On macOS with real OpenShell sandboxes: Test A blocked
-> `example.com` at the kernel (`000`) while Shield stayed reachable (`200`); Test B
-> returned the authorized value for a high-clearance role and `-32000` for a
-> restricted one — all from inside a sandbox that can reach nothing but Shield.
+> **Verified live.** On macOS with real OpenShell sandboxes:
+> - Test A blocked `example.com` (`000`) while Shield stayed reachable (`200`).
+> - Test B returned the authorized value for a high-clearance role and
+>   `-32000` for a restricted one.
+>
+> All of this ran inside a sandbox that can reach nothing but Shield.
+
+> **Filesystem rules need Landlock.** The network lockdown above is enforced
+> by OpenShell's proxy on any host. The `filesystem_policy` is enforced by
+> the kernel's Landlock, which Docker Desktop on macOS does not have:
+> - OpenShell then logs `Landlock Filesystem Sandbox Unavailable`.
+> - With `compatibility: best_effort` it runs without the file rules.
+>
+> Use `hard_requirement` (the default in Shield-generated policies) so the
+> sandbox refuses to start instead, and run production sandboxes on a Linux
+> kernel with Landlock (5.13 or later).
 
 ## Reachability note
 

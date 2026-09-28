@@ -2651,6 +2651,10 @@
           <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
           Kill Switch
         </div>
+        <div class="nav-item" data-tab="runtime-profiles">
+          <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+          Runtime Profiles
+        </div>
         <div class="nav-item" data-tab="cross-app-flow">
           <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
           Cross-App Flow
@@ -4800,6 +4804,59 @@ if __name__ == "__main__":
           <button class="small danger" onclick="xfClearSession()">Clear session</button>
         </div>
         <div id="xf-session-result" style="margin-top:0.75rem;font-size:13px;"></div>
+      </div>
+    </div>
+
+    <!-- ── Enterprise: Runtime Profiles (infrastructure guardrails) ── -->
+    <div id="tab-runtime-profiles" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Runtime Profiles</div>
+        <div class="page-desc">The infrastructure boundary for each kind of agent: where it may connect, which files it may touch, which programs may run, and its resource limits. Shield turns one profile into the policy your sandbox or cluster enforces (OpenShell, Kubernetes, Cilium, Squid), applies the same rules to its own tool checks, and records what the sandbox blocks.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Profiles</div>
+          <div class="card-desc">Bind an agent to a profile in the Agent Registry (field <code>runtime_profile</code>). Agents without a profile are unaffected.</div></div></div>
+        <div id="rp-list" style="font-size:13px;">Loading...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Edit profile</div></div></div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
+          <input id="rp-name" type="text" placeholder="profile name, e.g. research-agent" style="flex:1;min-width:220px;">
+          <select id="rp-template"><option value="">Start from a template...</option><option>research-agent</option><option>coding-agent</option><option>support-bot</option></select>
+        </div>
+        <textarea id="rp-editor" spellcheck="false" style="width:100%;min-height:320px;" placeholder="Pick a profile above or start from a template"></textarea>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+          <button class="small" onclick="rpValidate()">Validate</button>
+          <button class="primary small" onclick="rpSave()">Save profile</button>
+          <button class="small danger" onclick="rpDelete()">Delete</button>
+        </div>
+        <div id="rp-msg" style="margin-top:0.75rem;font-size:13px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Export for your runtime</div>
+          <div class="card-desc">Everything the target cannot enforce is listed, never silently dropped. Sandboxes should pull the signed bundle with <code>examples/runtime/shield_runtime_sync.py</code> rather than a copy of this file.</div></div></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0.5rem;">
+          <select id="rp-target"><option value="openshell">NVIDIA OpenShell</option><option value="k8s">Kubernetes</option><option value="cilium">Cilium</option><option value="squid">Squid (SWG)</option></select>
+          <input id="rp-shield-url" type="text" placeholder="Shield URL the sandbox reaches (optional)">
+          <input id="rp-namespace" type="text" placeholder="namespace (k8s, cilium)">
+          <input id="rp-egress" type="text" placeholder="egress proxy CIDR (k8s)">
+          <input id="rp-source" type="text" placeholder="agents' source CIDR (squid)">
+          <input id="rp-uid" type="text" placeholder="run as UID (k8s)">
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-top:0.6rem;">
+          <button class="primary small" onclick="rpExport()">Export</button>
+          <button class="small" onclick="rpDownload()">Download</button>
+        </div>
+        <div id="rp-export-result" style="margin-top:0.75rem;font-size:13px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Drift</div>
+          <div class="card-desc">Sandboxes whose agent token attests an older (or no) profile hash. Requires <code>identity.require_attestation</code> warn or enforce.</div></div></div>
+        <div id="rp-drift" style="font-size:13px;" class="muted">Select a profile.</div>
       </div>
     </div>
 
@@ -13891,6 +13948,7 @@ document.addEventListener('click', (e) => {
     }
     if (tab === 'siem') loadSIEMData();
     if (tab === 'cross-app-flow') xfLoad();
+    if (tab === 'runtime-profiles') rpLoad();
     if (tab === 'guardrail-metrics') { loadGuardrailDashboard(); loadGuardrailMetrics(); }
     if (tab === 'board-report') loadBoardReport();
     if (tab === 'aibom') loadAibom();
@@ -16630,6 +16688,135 @@ async function xfClearSession() {
     await xfApi('/sessions/' + encodeURIComponent(sid), { method: 'DELETE' });
     xfMsg('xf-session-result', 'Session cleared.', 'ok');
   } catch (e) { xfMsg('xf-session-result', xfErrors(e), 'error'); }
+}
+
+// ── Runtime Profiles (infrastructure guardrails) ──────────
+// Spec: docs/specs/infra-guardrails.md. Uses xfEsc from the Cross-App Flow block.
+let RP_LAST_EXPORT = null;
+async function rpApi(path, options = {}) {
+  options.headers = { ...(options.headers || {}), 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
+  const r = await fetch(`${BASE_URL}/v1/tenant/me/runtime-profiles${path}`, options);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = data.detail;
+    const err = new Error((d && d.message) || (typeof d === 'string' ? d : '') || `HTTP ${r.status}`);
+    err.errors = (d && d.errors) || (d && d.agents ? ['bound agents: ' + d.agents.join(', ')] : []);
+    throw err;
+  }
+  return data;
+}
+function rpMsg(id, html, kind) { xfMsg(id, html, kind); }
+async function rpLoad() {
+  try {
+    const d = await rpApi('');
+    const names = Object.keys(d.profiles);
+    if (!names.length) {
+      document.getElementById('rp-list').innerHTML = '<div class="muted">No runtime profiles yet. Start from a template below.</div>';
+      return;
+    }
+    document.getElementById('rp-list').innerHTML = `<table style="width:100%;border-collapse:collapse;">
+      <thead><tr style="text-align:left;color:var(--text-dim);"><th style="padding:0.4rem 0.6rem;">Profile</th><th style="padding:0.4rem 0.6rem;">Hash</th><th style="padding:0.4rem 0.6rem;">Agents</th><th style="padding:0.4rem 0.6rem;">Description</th></tr></thead>
+      <tbody>${names.map(n => { const p = d.profiles[n]; return `<tr style="cursor:pointer;" onclick="rpOpen('${xfEsc(n)}')">
+        <td style="padding:0.4rem 0.6rem;"><b>${xfEsc(n)}</b></td>
+        <td style="padding:0.4rem 0.6rem;"><code>${p.error ? '<span style="color:var(--danger)">invalid</span>' : xfEsc((p.hash || '').slice(7, 19))}</code></td>
+        <td style="padding:0.4rem 0.6rem;">${xfEsc((p.agents || []).join(', ') || '-')}</td>
+        <td style="padding:0.4rem 0.6rem;color:var(--text-dim);">${xfEsc(p.description || (p.error || []).join('; '))}</td></tr>`; }).join('')}</tbody></table>`;
+  } catch (e) { rpMsg('rp-list', xfErrors(e), 'error'); }
+}
+async function rpOpen(name) {
+  try {
+    const d = await rpApi('/' + encodeURIComponent(name));
+    document.getElementById('rp-name').value = name;
+    document.getElementById('rp-editor').value = JSON.stringify(d.profile, null, 2);
+    rpMsg('rp-msg', `Loaded ${xfEsc(name)} (${xfEsc(d.hash.slice(0, 19))}...). Bound agents: ${xfEsc((d.agents || []).join(', ') || 'none')}.`);
+    rpDrift(name);
+  } catch (e) { rpMsg('rp-msg', xfErrors(e), 'error'); }
+}
+document.addEventListener('change', async (e) => {
+  if (!e.target || e.target.id !== 'rp-template' || !e.target.value) return;
+  try {
+    const t = (await rpApi('/templates')).templates[e.target.value];
+    document.getElementById('rp-editor').value = JSON.stringify(t, null, 2);
+    if (!document.getElementById('rp-name').value) document.getElementById('rp-name').value = e.target.value;
+    rpMsg('rp-msg', 'Template loaded. Not saved yet.');
+  } catch (err) { rpMsg('rp-msg', xfErrors(err), 'error'); }
+  e.target.value = '';
+});
+function rpEditorProfile() {
+  try { return JSON.parse(document.getElementById('rp-editor').value); }
+  catch (e) { throw Object.assign(new Error('Profile is not valid JSON: ' + e.message), { errors: [] }); }
+}
+function rpNameOrThrow() {
+  const n = document.getElementById('rp-name').value.trim();
+  if (!n) throw Object.assign(new Error('Enter a profile name'), { errors: [] });
+  return n;
+}
+async function rpValidate() {
+  try {
+    const r = await rpApi('/validate', { method: 'POST', body: JSON.stringify(rpEditorProfile()) });
+    if (r.valid) rpMsg('rp-msg', 'Valid. Hash ' + xfEsc(r.hash.slice(0, 19)) + '...', 'ok');
+    else rpMsg('rp-msg', xfErrors({ message: 'Invalid profile', errors: r.errors }), 'error');
+  } catch (e) { rpMsg('rp-msg', xfErrors(e), 'error'); }
+}
+async function rpSave() {
+  try {
+    const name = rpNameOrThrow();
+    const r = await rpApi('/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify(rpEditorProfile()) });
+    document.getElementById('rp-editor').value = JSON.stringify(r.profile, null, 2);
+    rpMsg('rp-msg', `Saved. New hash ${xfEsc(r.hash.slice(0, 19))}...; sandboxes pick it up on their next bundle sync.`, 'ok');
+    showToast('Runtime profile saved', 'success');
+    rpLoad();
+  } catch (e) { rpMsg('rp-msg', xfErrors(e), 'error'); }
+}
+async function rpDelete() {
+  try {
+    const name = rpNameOrThrow();
+    if (!confirm(`Delete runtime profile ${name}?`)) return;
+    try { await rpApi('/' + encodeURIComponent(name), { method: 'DELETE' }); }
+    catch (e) {
+      if (!(e.errors || []).length || !confirm(e.message + '\n\nDelete anyway? Those agents lose their boundary.')) throw e;
+      await rpApi('/' + encodeURIComponent(name) + '?force=true', { method: 'DELETE' });
+    }
+    rpMsg('rp-msg', 'Deleted.', 'ok');
+    rpLoad();
+  } catch (e) { rpMsg('rp-msg', xfErrors(e), 'error'); }
+}
+function rpExportQuery() {
+  const q = new URLSearchParams({ target: document.getElementById('rp-target').value });
+  const add = (id, key) => { const v = document.getElementById(id).value.trim(); if (v) q.append(key, v); };
+  add('rp-shield-url', 'shield_url'); add('rp-namespace', 'namespace'); add('rp-egress', 'egress_cidr');
+  add('rp-source', 'source_cidr'); add('rp-uid', 'run_as_uid');
+  return q.toString();
+}
+async function rpExport() {
+  try {
+    const name = rpNameOrThrow();
+    const r = await rpApi('/' + encodeURIComponent(name) + '/export?' + rpExportQuery());
+    RP_LAST_EXPORT = r;
+    const uns = (r.unsupported || []).map(u => `<li>${xfEsc(u)}</li>`).join('');
+    const notes = (r.notes || []).map(u => `<li>${xfEsc(u)}</li>`).join('');
+    document.getElementById('rp-export-result').innerHTML = `
+      ${uns ? `<div style="color:var(--warning, #b45309);"><b>Not enforced by ${xfEsc(r.target)}</b> (Shield's own checks may still cover these):<ul style="margin:0.3rem 0 0.6rem 1.1rem;">${uns}</ul></div>` : ''}
+      ${notes ? `<div style="color:var(--text-dim);"><ul style="margin:0 0 0.6rem 1.1rem;">${notes}</ul></div>` : ''}
+      <pre style="max-height:420px;overflow:auto;background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;">${xfEsc(r.artifact)}</pre>`;
+  } catch (e) { rpMsg('rp-export-result', xfErrors(e), 'error'); }
+}
+function rpDownload() {
+  if (!RP_LAST_EXPORT) { rpMsg('rp-export-result', 'Export first.', 'error'); return; }
+  const blob = new Blob([RP_LAST_EXPORT.artifact], { type: RP_LAST_EXPORT.content_type || 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = RP_LAST_EXPORT.filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+async function rpDrift(name) {
+  try {
+    const d = await rpApi('/' + encodeURIComponent(name) + '/drift');
+    const el = document.getElementById('rp-drift');
+    if (d.attestation === 'off') { el.innerHTML = 'Attestation is off for this profile.'; return; }
+    if (!d.stale.length) { el.innerHTML = `No stale sandboxes (attestation: ${xfEsc(d.attestation)}).`; return; }
+    el.innerHTML = `<b>${d.stale_count}</b> sandbox(es) not on the current profile (${xfEsc(d.current_hash.slice(0, 19))}...):` +
+      `<ul style="margin:0.4rem 0 0 1.1rem;">${d.stale.map(s => `<li>${xfEsc(s.instance)} (agent ${xfEsc(s.agent_id)}) attests ${xfEsc((s.attested_hash || 'nothing').slice(0, 19))}, seen ${xfEsc(new Date(s.at * 1000).toLocaleString())}</li>`).join('')}</ul>`;
+  } catch (e) { rpMsg('rp-drift', xfErrors(e), 'error'); }
 }
 </script>
 </body>

@@ -8,8 +8,8 @@
 #   - 200 = allow, 403 = deny (x-shield-reason explains). Agents without a
 #     runtime profile are allowed, so wiring this in changes nothing until a
 #     profile is bound.
-# Replace SHIELD_HOST, the agent id and the key (keep the key in an Envoy
-# secret / SDS in production, not inline).
+# Replace SHIELD_HOST and the agent id; render SHIELD_API_KEY with envsubst (or an
+# Envoy secret / SDS). Never commit a real key into this file.
 static_resources:
   listeners:
   - name: agent_egress
@@ -36,7 +36,7 @@ static_resources:
                 authorization_request:
                   headers_to_add:
                   - { key: x-shield-agent, value: "research-bot" }
-                  - { key: X-API-Key, value: "REPLACE_WITH_TENANT_KEY" }
+                  - { key: X-API-Key, value: "${SHIELD_API_KEY}" }   # envsubst at deploy time
           - name: envoy.filters.http.router
             typed_config: { "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router }
   clusters:
