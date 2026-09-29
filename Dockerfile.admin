@@ -146,6 +146,7 @@ COPY core/sigma_policy.py core/
 COPY core/xflow/ core/xflow/
 COPY core/runtime_policy/ core/runtime_policy/
 COPY core/embodied/ core/embodied/
+COPY embodied-bench/ embodied-bench/
 COPY core/sigma_translate.py core/
 COPY storage/rate_limiter.py storage/
 COPY storage/policy_store.py storage/

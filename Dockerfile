@@ -25,6 +25,7 @@ COPY guardrails/ guardrails/
 COPY api/ api/
 COPY storage/ storage/
 COPY static/ static/
+COPY embodied-bench/ embodied-bench/
 COPY scripts/ scripts/
 
 # Create logs directory for telemetry file logging

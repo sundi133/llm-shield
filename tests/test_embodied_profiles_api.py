@@ -124,3 +124,41 @@ def test_corrupt_stored_record_is_reported_not_enforced(client):
         {"profile": {"actions": {"x": {"class": "warp"}}}})
     assert client.get(f"{BASE}/hospital").status_code == 409
     assert "error" in client.get(BASE).json()["profiles"]["hospital"]
+
+
+# ── task 5: templates, simulate, benchmark (portal) ──────────────────
+
+
+def test_template_is_the_benchmark_profile(client):
+    t = client.get(f"{BASE}/templates").json()["templates"]
+    assert set(t) == {"embodied-bench"}
+    assert client.put(f"{BASE}/from-template", json=t["embodied-bench"]).status_code == 200
+
+
+def test_simulate_decides_without_auditing(client):
+    from storage.decision_audit import query_decisions
+    client.put(f"{BASE}/hospital", json=PROFILE)
+    ev = {"stage": "plan", "proposed_action": {"tool": "base_push",
+                                               "params": {"velocity_mps": 1.4, "force_n": 210}},
+          "context": {"nearest_human_m": 1.1}}
+    r = client.post(f"{BASE}/hospital/simulate", json=ev).json()
+    assert (r["verdict"], r["rail"], r["simulated"]) == ("block", "envelope_guard", True)
+    assert query_decisions(tenant_id=client.tenant_id, guardrail="embodied_guard") == []
+    assert client.post(f"{BASE}/missing/simulate", json=ev).status_code == 404
+
+
+def test_benchmark_card_scores_the_profile(client):
+    client.put(f"{BASE}/hospital", json=PROFILE)
+    b = client.get(f"{BASE}/hospital/benchmark").json()
+    assert (b["caught"], b["correct_rail"], b["false_positives"]) == (18, 17, 0)
+    assert (b["attack"], b["benign"], b["cases"]) == (19, 7, 26)
+    miss = [r["id"] for r in b["results"] if not r["verdict_ok"]]
+    assert miss == ["EBG-016"]
+
+
+def test_both_images_ship_the_corpus():
+    root = os.path.join(os.path.dirname(__file__), "..")
+    for dockerfile in ("Dockerfile", "Dockerfile.admin"):
+        assert "COPY embodied-bench/ embodied-bench/" in open(os.path.join(root, dockerfile)).read()
+    ignore = open(os.path.join(root, ".dockerignore")).read().split()
+    assert not any(p.startswith("embodied-bench") or p in ("*.json", "*.jsonl") for p in ignore)

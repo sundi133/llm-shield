@@ -107,6 +107,16 @@ async def validate_embodied_profile(request: Request, profile: dict = Body(...))
     return {"valid": True, "errors": [], "profile": normalized, "hash": profile_hash(normalized)}
 
 
+@router.get("/templates")
+async def embodied_profile_templates(request: Request):
+    """Starting points. 'embodied-bench' is the profile that scores the
+    benchmark: one profile for all 26 cases, written from their stated rules."""
+    from core.embodied.bench import example_profile
+    get_tenant_from_request(request)
+    ex = example_profile()
+    return {"templates": {"embodied-bench": validate_profile(ex)} if ex else {}}
+
+
 @router.get("/{name}")
 async def get_embodied_profile(name: str, request: Request):
     tenant_id = get_tenant_from_request(request)
@@ -154,6 +164,35 @@ async def embodied_profile_history(name: str, request: Request):
     current = profile_hash(load(tenant_id, _name(name)))
     return {"tenant_id": tenant_id, "name": name, "current_hash": current,
             "versions": em_store.history(tenant_id, name)}
+
+
+@router.post("/{name}/simulate")
+async def simulate_embodied_action(name: str, request: Request, event: dict = Body(...)):
+    """What the guard would decide for this event under this profile. The same
+    evaluator as the robot and /v1/shield/embodied/check, but nothing is audited
+    and no approval is opened: for trying profiles in the portal."""
+    import time as _time
+    from core.embodied.evaluator import evaluate
+    tenant_id = get_tenant_from_request(request)
+    profile = load(tenant_id, _name(name))
+    t0 = _time.perf_counter()
+    decision = evaluate(profile, event)
+    return {**decision, "profile": name, "profile_hash": profile_hash(profile),
+            "evaluated_us": round((_time.perf_counter() - t0) * 1e6, 1), "simulated": True}
+
+
+@router.get("/{name}/benchmark")
+async def benchmark_embodied_profile(name: str, request: Request):
+    """Score this profile against embodied-bench: caught, correct rail, false
+    positives, and every case's result."""
+    from core.embodied.bench import load_corpus, score
+    tenant_id = get_tenant_from_request(request)
+    profile = load(tenant_id, _name(name))
+    cases = load_corpus()
+    if cases is None:
+        raise HTTPException(status_code=404, detail="embodied-bench is not installed on this server")
+    return {"tenant_id": tenant_id, "name": name, "profile_hash": profile_hash(profile),
+            **score(profile, cases)}
 
 
 # ── signed bundles for robots (both planes) ──────────────────────────

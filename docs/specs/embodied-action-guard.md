@@ -320,7 +320,10 @@ controls are the check against tuning.
 | GET | `/v1/tenant/me/embodied-profiles` | both | list with hashes and bound robots |
 | POST | `/v1/tenant/me/embodied-profiles/validate` | both | validate without saving |
 | GET | `/v1/tenant/me/embodied-profiles/{name}/history` | both | last 20 versions |
-| GET | `/v1/edge/embodied-bundle?profile=` | both | signed bundle for robots, ETag/304, MAVLink bundle format |
+| GET | `/v1/edge/embodied-bundle?profile=&fleet=` | both | signed bundle for robots, bound to tenant and fleet, ETag/304, MAVLink bundle format; `/pubkey` for provisioning |
+| GET | `/v1/tenant/me/embodied-profiles/templates` | both | the benchmark profile as a starting point (added in task 5) |
+| POST | `/v1/tenant/me/embodied-profiles/{name}/simulate` | both | decide one event, nothing audited, no approval opened: the portal's "Try an action" (added in task 5; the check endpoint is data plane only) |
+| GET | `/v1/tenant/me/embodied-profiles/{name}/benchmark` | both | score the profile against embodied-bench, which both images now ship (added in task 5) |
 
 **Robot SDK** (`packages/shield-embodied`, stdlib plus `cryptography` for bundle
 verification, as MAVLink):
