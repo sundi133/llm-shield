@@ -29,6 +29,10 @@ DECISIONS = ("deny", "allow", "audit")
 SEVERITIES = ("info", "low", "medium", "high", "critical")
 MAX_DETAIL_BYTES = 4096
 MAX_ID = 200
+#: Sync sidecar report -> minimum severity. A sandbox loosened outside Shield
+#: is critical whatever the reporter says.
+SIDECAR_OPS = {"applied": "info", "reverted": "high", "restart_required": "high",
+               "apply_failed": "high", "tampered": "critical"}
 
 
 class EventError(ValueError):
@@ -75,6 +79,16 @@ def normalize(raw: dict) -> dict:
         raise EventError("detail must be an object")
     if len(json.dumps(detail, default=str)) > MAX_DETAIL_BYTES:
         raise EventError(f"detail larger than {MAX_DETAIL_BYTES} bytes")
+    op = detail.get("op")
+    if kind == "policy" and op is not None:
+        # Sync sidecar reports (docs/specs/runtime-live-policy.md §5.1). On
+        # file events detail.op is the access mode (read/write) instead.
+        if op not in SIDECAR_OPS:
+            raise EventError(f"detail.op on a policy event must be one of "
+                             f"{', '.join(SIDECAR_OPS)}")
+        floor = SIDECAR_OPS[op]
+        if SEVERITIES.index(severity) < SEVERITIES.index(floor):
+            severity = floor
     return {
         "source": source,
         "kind": kind,
@@ -185,6 +199,14 @@ def summary(ev: dict) -> str:
         return f"{ev['decision']} file {d.get('op', 'access')} {d.get('path', '?')}"
     if ev["kind"] == "process":
         return f"{ev['decision']} process {d.get('command') or d.get('binary') or '?'}"
+    if ev["kind"] == "policy" and d.get("op"):
+        where = d.get("instance") or ev["agent_instance_id"] or "?"
+        text = {"applied": "runtime policy applied live", "reverted":
+                "runtime policy changed outside Shield was reverted", "restart_required":
+                "runtime policy change needs a sandbox restart", "apply_failed":
+                "runtime policy could not be applied", "tampered":
+                "runtime policy changed outside Shield"}[d["op"]]
+        return f"{text} on {where}" + (f": {d['message']}" if d.get("message") else "")
     if ev["kind"] == "policy" and d.get("degraded"):
         return f"runtime boundary degraded: {d.get('finding', d['degraded'])}"
     if ev["kind"] == "policy" and d.get("runtime_policy_hash"):
@@ -224,20 +246,43 @@ def _audit_action(ev: dict) -> str:
     return "log"
 
 
-async def ingest(tenant_id: str, events: list[dict], *, source_ip: str = "") -> dict:
+def _record_sidecar_report(tenant_id: str, ev: dict, trusted: bool) -> bool:
+    d = ev["detail"]
+    instance = _s(d.get("instance") or ev["agent_instance_id"])
+    if ev["kind"] != "policy" or not d.get("op") or not ev["profile"] or not instance:
+        return False
+    from core.runtime_policy.attest import record_applied
+    record_applied(tenant_id, ev["profile"], instance, op=d["op"],
+                   profile_hash=ev["profile_hash"], runtime_hash=_s(d.get("runtime_hash"), 80),
+                   runtime_version=d.get("runtime_version"),
+                   target_hash=_s(d.get("target_hash"), 80), lock=_s(d.get("lock"), 20),
+                   reconcile=_s(d.get("reconcile"), 20), detail=_s(d.get("message"), 500),
+                   trusted=trusted, at=ev["at"])
+    return True
+
+
+async def ingest(tenant_id: str, events: list[dict], *, source_ip: str = "",
+                 trusted: bool = False) -> dict:
     """Write normalized events to the sinks. Never raises; returns counts.
 
     deny and audit events go to the decision audit; every event goes to
     telemetry; an allowed read of a file the agent's runtime profile marks
-    classified is recorded in cross-app flow control.
+    classified is recorded in cross-app flow control. Sync sidecar reports
+    (policy events with detail.op) update the instance's applied state;
+    ``trusted`` says the caller used an admin-scoped key, and only then can a
+    report satisfy attestation.
     """
     from core.runtime_policy import check as runtime_check
     from core.telemetry import build_guardrail_event, record_event
     from core.xflow import runtime as xflow
     from storage.decision_audit import log_decision
 
-    audited = flowed = 0
+    audited = flowed = applied = 0
     for ev in events:
+        try:
+            applied += _record_sidecar_report(tenant_id, ev, trusted)
+        except Exception:
+            pass
         text = summary(ev)
         action = _audit_action(ev)
         meta = {"path": "runtime_event", "source": ev["source"], "kind": ev["kind"],
@@ -272,4 +317,4 @@ async def ingest(tenant_id: str, events: list[dict], *, source_ip: str = "") -> 
                     evidence="observed", path="runtime_event", session_id=ev["session_id"],
                     agent=ev["agent_id"], classification=cls)
                 flowed += bool(rec)
-    return {"audited": audited, "flow_records": flowed}
+    return {"audited": audited, "flow_records": flowed, "applied_reports": applied}

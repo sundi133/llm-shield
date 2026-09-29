@@ -57,6 +57,15 @@ def reset_rate_limits_for_tests() -> None:
         _windows.clear()
 
 
+def _admin_key(request: Request) -> bool:
+    """True only for an admin-scoped key, whatever SHIELD_REGISTRY_WRITE_SCOPE
+    says: require_registry_write is a no-op under its default, and an agent's
+    own key must never be able to vouch for its sandbox."""
+    from core.auth import caller_key_scope
+    scope, resolved = caller_key_scope(request)
+    return bool(resolved and scope == "admin")
+
+
 @router.post("/events", status_code=202)
 async def ingest_runtime_events(request: Request, background: BackgroundTasks,
                                 body: dict = Body(...)):
@@ -80,7 +89,8 @@ async def ingest_runtime_events(request: Request, background: BackgroundTasks,
             rejected.append({"index": i, "error": str(e)})
     if accepted:
         source_ip = request.client.host if request.client else ""
-        background.add_task(rt_events.ingest, tenant_id, accepted, source_ip=source_ip)
+        background.add_task(rt_events.ingest, tenant_id, accepted, source_ip=source_ip,
+                            trusted=_admin_key(request))
     return {"accepted": len(accepted), "rejected": rejected}
 
 

@@ -277,14 +277,15 @@ async def delete_runtime_profile(name: str, request: Request,
 async def runtime_profile_drift(name: str, request: Request):
     """Sandboxes seen attesting a profile hash other than the current one (or
     none at all): the ones still running an old or unknown boundary."""
-    from core.runtime_policy.attest import list_drift
+    from core.runtime_policy.attest import instances, list_drift
     tenant_id = get_tenant_from_request(request)
     profile = _load(tenant_id, _name(name))
     current = profile_hash(profile)
     stale = list_drift(tenant_id, name, current)
     return {"tenant_id": tenant_id, "name": name, "current_hash": current,
             "attestation": profile["identity"]["require_attestation"],
-            "stale_count": len(stale), "stale": stale}
+            "stale_count": len(stale), "stale": stale,
+            "instances": instances(tenant_id, name, current)}
 
 
 @router.get("/{name}/export")

@@ -152,3 +152,168 @@ def test_put_returns_live_change_and_history_endpoint(client):
     assert h["versions"][2]["live_change"] is None
     assert h["versions"][0]["actor"] == f"tenant:{client.tenant_id}"
     assert client.get(f"{BASE}/missing/history").status_code == 404
+
+
+# ── task 2: applied state, drift, attestation ────────────────────────
+
+import asyncio  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+from fastapi import HTTPException  # noqa: E402
+
+from core.runtime_policy import attest  # noqa: E402
+from core.runtime_policy import check as rc  # noqa: E402
+from core.runtime_policy import events as rt_events  # noqa: E402
+
+
+def _report(op, *, profile="research-agent", phash="", instance="sbx-1", **detail):
+    return {"source": "custom", "kind": "policy", "decision": "audit", "profile": profile,
+            "profile_hash": phash, "detail": {"op": op, "instance": instance, **detail}}
+
+
+def test_sidecar_op_validation_and_severity_floor():
+    with pytest.raises(rt_events.EventError):
+        rt_events.normalize(_report("deleted_everything"))
+    # On file events detail.op is the access mode, untouched by sidecar rules.
+    file_ev = rt_events.normalize({"kind": "file", "decision": "allow",
+                                   "detail": {"op": "read", "path": "/sandbox/a"}})
+    assert file_ev["severity"] == "info"
+    ev = rt_events.normalize({**_report("tampered"), "severity": "info"})
+    assert ev["severity"] == "critical"
+    assert rt_events.normalize(_report("applied"))["severity"] == "info"
+    assert "outside Shield" in rt_events.summary(ev)
+
+
+def test_ingest_records_applied_state_and_trust():
+    asyncio.run(rt_events.ingest("t1", [rt_events.normalize(_report(
+        "applied", phash="sha256:" + "a" * 64, runtime_hash="e732", runtime_version=3))],
+        trusted=True))
+    rec = attest.applied_for("t1", "research-agent", "sbx-1")
+    assert rec["state"] == "current" and rec["trusted"] is True and rec["runtime_version"] == 3
+    asyncio.run(rt_events.ingest("t1", [rt_events.normalize(_report(
+        "restart_required", phash="sha256:" + "a" * 64, instance="sbx-2",
+        target_hash="sha256:" + "b" * 64, message="process policy cannot be changed"))]))
+    rec2 = attest.applied_for("t1", "research-agent", "sbx-2")
+    assert rec2["state"] == "restart_required" and rec2["trusted"] is False
+    assert rec2["target_hash"].startswith("sha256:bbbb") and "process" in rec2["detail"]
+
+
+@pytest.fixture
+def cap_env(monkeypatch):
+    monkeypatch.setenv("SHIELD_SIGNER_BACKEND", "local")
+    monkeypatch.setenv("SHIELD_CAP_TOKEN_PRIVATE_KEY", "52" * 32)
+    monkeypatch.delenv("SHIELD_RUNTIME_ATTEST_ACCEPT_APPLIED", raising=False)
+    attest.reset_memory()
+    rc.invalidate()
+    yield
+    attest.reset_memory()
+    rc.invalidate()
+
+
+def _attested_tenant():
+    """A profile at H1 that moved to H2 while sandbox sbx-1 kept its H1 token."""
+    from storage.tenant_store import kv_set
+    tenant = "la" + uuid.uuid4().hex[:8]
+    prof = copy.deepcopy(TEMPLATES["research-agent"])
+    prof["identity"] = {"require_attestation": "enforce"}
+    h1 = profile_hash(rt_store.save_profile(tenant, "research-agent", prof))
+    prof["network"]["allow"].append({"host": "pypi.org", "methods": ["GET"]})
+    h2 = profile_hash(rt_store.save_profile(tenant, "research-agent", prof))
+    kv_set(f"agents:{tenant}", {"bot": {"agent_id": "bot", "runtime_profile": "research-agent"}})
+    rc.invalidate(tenant)
+    return tenant, h1, h2
+
+
+def _mint(tenant, h, instance="sbx-1"):
+    from api import routes_agent_auth as aa
+    from api.routes_agent_auth import CapMintRequest
+    from core.identity import IdentityTuple
+    from core.jwt_utils import encode_jwt
+    from core.signers import LocalEd25519Signer
+
+    token = encode_jwt({"agent_id": "bot", "runtime_profile_hash": h},
+                       LocalEd25519Signer(kid="lp", private_key_hex="41" * 32))
+    ident = IdentityTuple(user_sub="alice@corp.com", agent_id="bot", agent_instance_id=instance,
+                          tenant_id=tenant, build_hash="h", model_version="m", session_id="s1")
+    body = CapMintRequest(tool="fetch", resource="r/1", session_id="s1")
+    with patch.object(aa, "rate_limit_cap_mint", return_value=(True, None)), \
+         patch.object(aa, "_decide_authz", return_value={
+             "allowed": True, "tool": "fetch", "resource": "r/1", "reasons": []}):
+        return asyncio.run(aa.mint_capability(body, ident,
+                                              SimpleNamespace(headers={"X-Agent-Token": token})))
+
+
+def test_trusted_live_update_satisfies_attestation(cap_env):
+    tenant, h1, h2 = _attested_tenant()
+    with pytest.raises(HTTPException):
+        _mint(tenant, h1)                                  # stale token, no report yet
+    attest.record_applied(tenant, "research-agent", "sbx-1", op="applied", profile_hash=h2,
+                          trusted=True)
+    assert _mint(tenant, h1).cap_token                     # updated in place
+    with pytest.raises(HTTPException):
+        _mint(tenant, h1, instance="sbx-9")                # a different sandbox is still stale
+
+
+def test_untrusted_or_not_running_reports_do_not(cap_env, monkeypatch):
+    tenant, h1, h2 = _attested_tenant()
+    attest.record_applied(tenant, "research-agent", "sbx-1", op="applied", profile_hash=h2,
+                          trusted=False)
+    with pytest.raises(HTTPException):
+        _mint(tenant, h1)
+    attest.record_applied(tenant, "research-agent", "sbx-1", op="restart_required",
+                          profile_hash=h1, target_hash=h2, trusted=True)
+    with pytest.raises(HTTPException):
+        _mint(tenant, h1)
+    attest.record_applied(tenant, "research-agent", "sbx-1", op="applied", profile_hash=h2,
+                          trusted=True)
+    monkeypatch.setenv("SHIELD_RUNTIME_ATTEST_ACCEPT_APPLIED", "0")
+    with pytest.raises(HTTPException):
+        _mint(tenant, h1)                                  # escape hatch: strict again
+
+
+def test_matching_claim_reads_nothing(cap_env):
+    tenant, _, h2 = _attested_tenant()
+    with patch.object(attest, "applied_for") as read:
+        assert _mint(tenant, h2).cap_token
+    read.assert_not_called()
+
+
+def test_events_endpoint_trusts_only_admin_keys(app, monkeypatch):
+    """Under the default SHIELD_REGISTRY_WRITE_SCOPE=off, an unscoped key's
+    report is recorded but not trusted."""
+    from starlette.testclient import TestClient
+    from storage import tenant_store as ts
+
+    monkeypatch.delenv("SHIELD_REGISTRY_WRITE_SCOPE", raising=False)
+    tid = "la" + uuid.uuid4().hex[:8]
+    admin, plain = "sk-lad-" + uuid.uuid4().hex, "sk-lpl-" + uuid.uuid4().hex
+    ts.create_tenant(tid, {"name": tid, "plan": "enterprise"}, api_keys=[admin])
+    ts.set_key_scope(admin, "admin")
+    ts.add_api_key(tid, plain)
+    h = "sha256:" + "c" * 64
+    for key, inst in ((admin, "sbx-admin"), (plain, "sbx-plain")):
+        r = TestClient(app, headers={"X-API-Key": key}).post(
+            "/v1/shield/runtime/events", json={"events": [_report("applied", phash=h,
+                                                                  instance=inst)]})
+        assert r.status_code == 202 and r.json()["accepted"] == 1
+    assert attest.applied_for(tid, "research-agent", "sbx-admin")["trusted"] is True
+    assert attest.applied_for(tid, "research-agent", "sbx-plain")["trusted"] is False
+    attest.reset_memory()
+
+
+def test_drift_endpoint_lists_instances(client):
+    client.put(f"{BASE}/research-agent", json=_p())
+    h = client.get(f"{BASE}/research-agent").json()["hash"]
+    tid = client.tenant_id
+    attest.record_drift(tid, "research-agent", instance="sbx-1", agent_id="bot",
+                        got="sha256:" + "0" * 64, expected=h)
+    attest.record_drift(tid, "research-agent", instance="sbx-2", agent_id="bot",
+                        got="sha256:" + "0" * 64, expected=h)
+    attest.record_applied(tid, "research-agent", "sbx-1", op="applied", profile_hash=h,
+                          trusted=True, lock="global")
+    d = client.get(f"{BASE}/research-agent/drift").json()
+    assert [s["instance"] for s in d["stale"]] == ["sbx-2"]      # sbx-1 was updated in place
+    by = {i["instance"]: i for i in d["instances"]}
+    assert by["sbx-1"]["on_current"] is True and by["sbx-1"]["lock"] == "global"
+    assert by["sbx-2"]["on_current"] is False and by["sbx-2"]["state"] is None
+    attest.reset_memory()
