@@ -40,6 +40,14 @@ Watch mode keeps RUNNING sandboxes on the current policy, with no restart
     key: only its reports let a live-updated sandbox pass attestation.
   * Fail static: Shield unreachable, the profile deleted or a bad signature
     never removes or changes a sandbox's policy.
+  * Reconcile: a policy changed outside Shield (`openshell policy set`, a
+    draft approved in `openshell term`) is reported as tampered, with each
+    rule it added, and with --reconcile revert (default) Shield's policy is
+    put back within one tick. --reconcile report only reports (development).
+  * --lock global applies the policy as OpenShell's gateway-global policy:
+    OpenShell then refuses sandbox-level changes and draft approvals, so there
+    is no window at all. It is gateway wide, so the sidecar refuses it while
+    the gateway runs any sandbox it does not manage.
 
 Needs the `cryptography` package (already a Shield dependency).
 """
@@ -181,14 +189,48 @@ class OpenShell:
                 "hash": sub.group(2) if sub else "", "message": message,
                 "live_refused": rc != 0 and LIVE_REFUSED in message}
 
-    def policy(self, name: str) -> dict | None:
-        rc, out, _ = self._run("policy", "get", name, "-o", "json")
+    def policy(self, name: str, full: bool = False) -> dict | None:
+        """``policy get NAME -o json``: {hash, version, policy_source, ...};
+        with ``full``, also the effective ``policy`` payload."""
+        return self._json("policy", "get", name, *(["--full"] if full else []), "-o", "json")
+
+    def set_global(self, path: str) -> dict:
+        rc, out, err = self._run("policy", "set", "--global", "--yes", "--policy", path)
+        m = re.search(r"hash: ([0-9a-f]+)", _ANSI.sub("", out + err))
+        message = "" if rc == 0 else _clean(err or out)
+        return {"ok": rc == 0, "version": None, "hash": m.group(1) if m else "",
+                "message": message, "live_refused": rc != 0 and LIVE_REFUSED in message}
+
+    def global_policy(self, full: bool = False) -> dict | None:
+        """The gateway-global policy, or None. ``status`` is ``superseded``
+        once the lock has been deleted."""
+        return self._json("policy", "get", "--global", *(["--full"] if full else []),
+                          "-o", "json")
+
+    def _json(self, *args: str) -> dict | None:
+        rc, out, _ = self._run(*args)
         if rc != 0:
             return None
         try:
-            return json.loads(out)
+            doc = json.loads(out)
         except ValueError:
             return None
+        return doc if isinstance(doc, dict) else None
+
+
+def endpoints(policy_doc: dict | None) -> set[tuple]:
+    """(host, port, method, path) for every allow rule in an OpenShell policy
+    payload; an endpoint with no L7 rules allows everything on it."""
+    out: set[tuple] = set()
+    for rule in ((policy_doc or {}).get("network_policies") or {}).values():
+        for ep in (rule or {}).get("endpoints") or []:
+            host, port = str(ep.get("host", "")), int(ep.get("port") or 0)
+            allows = [r.get("allow") or {} for r in ep.get("rules") or [] if r.get("allow")]
+            if not allows:
+                out.add((host, port, "*", "/**"))
+            for a in allows:
+                out.add((host, port, str(a.get("method") or "*"), str(a.get("path") or "/**")))
+    return out
 
 
 class Reporter:
@@ -216,6 +258,18 @@ class Reporter:
         self.queue.append(ev)
         del self.queue[:-self.MAX_QUEUE]
 
+    def out_of_band(self, instance: str, endpoint: tuple) -> None:
+        """A rule someone added to the sandbox outside Shield. Shield's advisor
+        turns it into a suggestion an operator can approve properly."""
+        host, port, method, path = endpoint
+        self.queue.append({
+            "source": "openshell", "kind": "network", "decision": "audit",
+            "severity": "high", "profile": self.profile, "agent_instance_id": instance,
+            "at": time.time(),
+            "detail": {"host": host, "port": port, "method": method, "path": path,
+                       "out_of_band": True}})
+        del self.queue[:-self.MAX_QUEUE]
+
     def _http_post(self, events: list[dict]) -> bool:
         req = urllib.request.Request(
             self.url, data=json.dumps({"events": events}).encode(), method="POST",
@@ -235,30 +289,48 @@ class Reporter:
 
 
 class Watcher:
-    """One tick: poll the bundle, then bring every managed sandbox onto it.
+    """One tick: poll the bundle, reconcile, then bring every managed sandbox
+    onto the current policy.
 
-    State per sandbox: the profile hash it runs (as far as this watcher
-    applied it) and, when OpenShell refused a live change, the hash it
-    refused, so that change is not retried until the profile moves again.
+    State per sandbox, as this watcher last applied it: the profile hash, and
+    OpenShell's own view of that policy (its hash and the endpoints it
+    allows). Reconcile compares the live policy with that record: a change
+    nobody made through Shield is `tampered`, reported with the rules it
+    added, and with --reconcile revert the recorded policy is put back.
+
+    --lock global applies the policy as OpenShell's gateway-global policy,
+    which refuses sandbox-level changes and draft approvals outright. It is
+    gateway wide, so it is only used when every sandbox on the gateway is
+    managed here.
     """
+
+    GLOBAL = "*global*"
+    KEEP_ARTIFACTS = 5
 
     def __init__(self, *, shield: str, key: str, profile: str, target: str, out: str,
                  tenant: str | None = None, shield_url: str | None = None,
                  sandboxes=(), prefix: str | None = None, allow_unsigned: bool = False,
+                 lock: str = "none", reconcile: str = "revert",
                  shell: OpenShell | None = None, reporter: Reporter | None = None,
                  fetch=None, log=None):
         self.base, self.key, self.profile, self.target = shield.rstrip("/"), key, profile, target
         self.out, self.tenant, self.shield_url = out, tenant, shield_url
         self.explicit, self.prefix, self.allow_unsigned = list(sandboxes), prefix, allow_unsigned
+        self.lock, self.reconcile = lock, reconcile
         self.shell = shell or OpenShell()
         self.reporter = reporter or Reporter(shield, key, profile)
         self.fetch = fetch or _fetch
         self.log = log or (lambda msg: print(msg, file=sys.stderr, flush=True))
         self.etag: str | None = None
         self.bundle: dict | None = None          # last VERIFIED bundle
-        self.running: dict[str, dict] = {}       # sandbox -> {profile_hash, runtime_hash}
+        self.artifacts: dict[str, str] = {}      # profile hash -> verified artifact
+        #: sandbox (or GLOBAL) -> {profile_hash, runtime_hash, endpoints}
+        self.running: dict[str, dict] = {}
         self.refused: dict[str, str] = {}        # sandbox -> profile hash OpenShell refused live
+        self._tamper_seen: dict[str, str] = {}   # sandbox -> live hash already reported
         self._bad: str | None = None             # etag of a bundle that failed verification
+
+    # ── what to manage ───────────────────────────────────────────────
 
     def _bundle_url(self) -> str:
         q = {"profile": self.profile, "target": self.target}
@@ -271,9 +343,20 @@ class Watcher:
         if self.prefix:
             listed = self.shell.sandbox_names()
             if listed is None:                   # gateway unreachable: keep what we know
-                listed = list(self.running)
+                listed = [n for n in self.running if n != self.GLOBAL]
             names += [n for n in listed if n.startswith(self.prefix)]
         return sorted(set(names))
+
+    def unmanaged(self) -> list[str] | None:
+        """Sandboxes on the gateway this watcher does not manage (None when
+        the gateway cannot be listed)."""
+        listed = self.shell.sandbox_names()
+        if listed is None:
+            return None
+        mine = set(self.managed())
+        return sorted(n for n in listed if n not in mine)
+
+    # ── bundle ───────────────────────────────────────────────────────
 
     def poll(self) -> None:
         try:
@@ -292,9 +375,7 @@ class Watcher:
                 self._bad = etag
                 self.log(f"REFUSED bundle: {problem}. Sandboxes keep their current policy.")
                 for sb in self.managed():
-                    self.reporter.report(sb, "apply_failed",
-                                         (self.running.get(sb) or {}).get("profile_hash", ""),
-                                         severity="critical",
+                    self.reporter.report(sb, "apply_failed", self._runs(sb), severity="critical",
                                          target_hash=bundle.get("profile_hash", ""),
                                          message=f"bundle refused: {problem}")
             return
@@ -303,6 +384,9 @@ class Watcher:
             f.write(bundle["artifact"])
         os.replace(tmp, self.out)
         self.bundle, self.etag, self._bad = bundle, etag, None
+        self.artifacts[bundle["profile_hash"]] = bundle["artifact"]
+        for old in list(self.artifacts)[:-self.KEEP_ARTIFACTS]:
+            self.artifacts.pop(old, None)
         self.log(f"new policy {bundle['profile_hash'][:19]}... written to {self.out}")
 
     def _verify(self, bundle: dict) -> str | None:
@@ -316,45 +400,195 @@ class Watcher:
             return None
         return None if self.allow_unsigned else "bundle is unsigned"
 
+    def _runs(self, sb: str) -> str:
+        return (self.running.get(sb) or {}).get("profile_hash", "")
+
+    def _artifact_file(self, profile_hash: str) -> str | None:
+        """A file holding the verified artifact for ``profile_hash``."""
+        if self.bundle and profile_hash == self.bundle["profile_hash"]:
+            return self.out
+        artifact = self.artifacts.get(profile_hash)
+        if artifact is None:
+            return None
+        path = self.out + ".revert"
+        with open(path, "w") as f:
+            f.write(artifact)
+        return path
+
+    def _extra(self) -> dict:
+        return {"lock": self.lock, "reconcile": self.reconcile}
+
+    # ── converge: bring sandboxes onto the current bundle ────────────
+
     def converge(self) -> None:
         if self.bundle is None:
+            return
+        if self.lock == "global":
+            self._converge_global()
             return
         want = self.bundle["profile_hash"]
         names = self.managed()
         for gone in set(self.running) - set(names):
             self.running.pop(gone, None)
             self.refused.pop(gone, None)
+            self._tamper_seen.pop(gone, None)
         for sb in names:
-            if (self.running.get(sb) or {}).get("profile_hash") == want:
-                continue
-            if self.refused.get(sb) == want:
-                continue                          # needs a restart; do not hammer OpenShell
+            if self._runs(sb) == want or self.refused.get(sb) == want:
+                continue                          # current, or needs a restart
             self.apply(sb)
 
-    def apply(self, sb: str) -> None:
-        want = self.bundle["profile_hash"]
-        have = (self.running.get(sb) or {}).get("profile_hash", "")
-        res = self.shell.set_policy(sb, self.out)
+    def _record(self, key: str, profile_hash: str, live: dict | None, fallback_hash: str) -> dict:
+        live = live or {}
+        state = {"profile_hash": profile_hash,
+                 "runtime_hash": live.get("hash") or fallback_hash,
+                 "endpoints": endpoints(live.get("policy"))}
+        self.running[key] = state
+        if self.refused.get(key) == profile_hash:
+            # Only now does the sandbox run what OpenShell refused live; a
+            # revert to an older policy leaves the refusal standing.
+            self.refused.pop(key, None)
+        self._tamper_seen.pop(key, None)
+        return state
+
+    def apply(self, sb: str, profile_hash: str | None = None, op: str = "applied") -> bool:
+        want = profile_hash or self.bundle["profile_hash"]
+        path = self._artifact_file(want)
+        if path is None:
+            return False
+        have = self._runs(sb)
+        res = self.shell.set_policy(sb, path)
         if res["ok"]:
-            live = self.shell.policy(sb) or {}
-            runtime_hash = live.get("hash") or res["hash"]
-            self.running[sb] = {"profile_hash": want, "runtime_hash": runtime_hash}
-            self.refused.pop(sb, None)
-            self.reporter.report(sb, "applied", want, runtime_hash=runtime_hash,
-                                 runtime_version=res["version"])
-            self.log(f"{sb}: policy {want[:19]}... loaded live (version {res['version']})")
-        elif res["live_refused"]:
+            state = self._record(sb, want, self.shell.policy(sb, full=True), res["hash"])
+            self.reporter.report(sb, op, want, runtime_hash=state["runtime_hash"],
+                                 runtime_version=res["version"], **self._extra())
+            self.log(f"{sb}: policy {want[:19]}... {op} live (version {res['version']})")
+            return True
+        if res["live_refused"]:
             self.refused[sb] = want
             self.reporter.report(sb, "restart_required", have, target_hash=want,
-                                 message=res["message"])
+                                 message=res["message"], **self._extra())
             self.log(f"{sb}: needs a restart to take {want[:19]}...: {res['message']}")
         else:
             self.reporter.report(sb, "apply_failed", have, target_hash=want,
-                                 message=res["message"])
+                                 message=res["message"], **self._extra())
             self.log(f"{sb}: apply failed, retrying next tick: {res['message']}")
+        return False
+
+    def _converge_global(self) -> None:
+        want = self.bundle["profile_hash"]
+        if self._runs(self.GLOBAL) == want or self.refused.get(self.GLOBAL) == want:
+            return
+        self.apply_global(want)
+
+    def apply_global(self, want: str, op: str = "applied") -> bool:
+        names = self.managed()
+        unmanaged = self.unmanaged()
+        if unmanaged:
+            # A global policy would silently replace their policies too.
+            if self.refused.get("*unsafe*") != want:
+                self.refused["*unsafe*"] = want
+                for sb in names:
+                    self.reporter.report(sb, "apply_failed", self._runs(sb), severity="critical",
+                                         target_hash=want, **self._extra(),
+                                         message="not applied: the gateway also runs "
+                                                 f"unmanaged sandboxes {', '.join(unmanaged)}")
+                self.log(f"REFUSED global lock: unmanaged sandboxes {unmanaged}")
+            return False
+        path = self._artifact_file(want)
+        if path is None:
+            return False
+        have = self._runs(self.GLOBAL)
+        res = self.shell.set_global(path)
+        if res["ok"]:
+            state = self._record(self.GLOBAL, want, self.shell.global_policy(full=True),
+                                 res["hash"])
+            self.refused.pop("*unsafe*", None)
+            for sb in names:
+                self.running[sb] = dict(state)
+                self.reporter.report(sb, op, want, runtime_hash=state["runtime_hash"],
+                                     **self._extra())
+            self.log(f"gateway-global policy {want[:19]}... {op}")
+            return True
+        if res["live_refused"]:
+            self.refused[self.GLOBAL] = want
+        for sb in names:
+            self.reporter.report(sb, "restart_required" if res["live_refused"] else
+                                 "apply_failed", have, target_hash=want,
+                                 message=res["message"], **self._extra())
+        self.log(f"global policy not applied: {res['message']}")
+        return False
+
+    # ── reconcile: catch changes made outside Shield ─────────────────
+
+    def reconcile_all(self) -> None:
+        if self.lock == "global":
+            self._reconcile_global()
+            return
+        for sb in self.managed():
+            if sb in self.running:
+                self._reconcile(sb)
+
+    def _tampered(self, sb: str, base: dict, live: dict, added: set, why: str) -> None:
+        self.reporter.report(sb, "tampered", base["profile_hash"],
+                             runtime_hash=live.get("hash", ""),
+                             runtime_version=live.get("version"),
+                             message=f"{why}; expected runtime hash "
+                                     f"{base['runtime_hash'][:12]}, found "
+                                     f"{(live.get('hash') or 'none')[:12]}; "
+                                     f"{len(added)} rule(s) added",
+                             **self._extra())
+        for ep in sorted(added):
+            self.reporter.out_of_band(sb, ep)
+
+    def _reconcile(self, sb: str) -> None:
+        base = self.running[sb]
+        live = self.shell.policy(sb)
+        if live is None or live.get("hash") == base["runtime_hash"]:
+            if live is not None:
+                self._tamper_seen.pop(sb, None)
+            return
+        if self._tamper_seen.get(sb) == live.get("hash"):
+            return                               # report mode: already reported
+        self._tamper_seen[sb] = live.get("hash", "")
+        full = self.shell.policy(sb, full=True) or {}
+        added = endpoints(full.get("policy")) - base["endpoints"]
+        why = ("sandbox policy changed outside Shield" if live.get("policy_source") != "global"
+               else "a gateway-global policy not managed by Shield replaced it")
+        self._tampered(sb, base, live, added, why)
+        self.log(f"{sb}: TAMPERED ({why}, {len(added)} rule(s) added)")
+        if self.reconcile == "revert":
+            self.apply(sb, base["profile_hash"], op="reverted")
+
+    def _reconcile_global(self) -> None:
+        base = self.running.get(self.GLOBAL)
+        if base is None:
+            return
+        live = self.shell.global_policy()
+        if live is None:
+            return
+        active = live.get("status") != "superseded"
+        if active and live.get("hash") == base["runtime_hash"]:
+            self._tamper_seen.pop(self.GLOBAL, None)
+            return
+        seen = f"{live.get('hash')}:{active}"
+        if self._tamper_seen.get(self.GLOBAL) == seen:
+            return
+        self._tamper_seen[self.GLOBAL] = seen
+        added = set()
+        if active:
+            added = endpoints((self.shell.global_policy(full=True) or {}).get("policy")) \
+                - base["endpoints"]
+        why = "the gateway-global lock was replaced" if active else \
+            "the gateway-global lock was deleted"
+        for sb in self.managed():
+            self._tampered(sb, base, live if active else {}, added, why)
+        self.log(f"TAMPERED: {why}")
+        if self.reconcile == "revert":
+            self.apply_global(base["profile_hash"], op="reverted")
 
     def tick(self) -> None:
         self.poll()
+        self.reconcile_all()      # before converge, so a tamper is never silently overwritten
         self.converge()
         self.reporter.flush()
 
@@ -366,8 +600,18 @@ def watch(args, key: str) -> int:
     w = Watcher(shield=args.shield, key=key, profile=args.profile, target=args.target,
                 out=args.out, tenant=args.tenant, shield_url=args.shield_url,
                 sandboxes=args.sandbox or [], prefix=args.sandbox_prefix,
-                allow_unsigned=args.allow_unsigned,
+                allow_unsigned=args.allow_unsigned, lock=args.lock, reconcile=args.reconcile,
                 shell=OpenShell(args.openshell, args.gateway))
+    if args.lock == "global":
+        unmanaged = w.unmanaged()
+        if unmanaged is None:
+            print("--lock global: cannot list the gateway's sandboxes", file=sys.stderr)
+            return 1
+        if unmanaged:
+            print(f"--lock global would also replace the policy of sandboxes this sidecar "
+                  f"does not manage: {', '.join(unmanaged)}. Use a gateway dedicated to "
+                  f"profile '{args.profile}', or --lock none.", file=sys.stderr)
+            return 1
     n = 0
     while True:
         w.tick()
@@ -397,6 +641,12 @@ def main() -> int:
                    help="a sandbox to manage (repeatable)")
     w.add_argument("--sandbox-prefix", metavar="PREFIX",
                    help="manage every sandbox whose name starts with PREFIX")
+    w.add_argument("--reconcile", choices=("revert", "report"), default="revert",
+                   help="a policy changed outside Shield: put Shield's back (default) or "
+                        "only report it (development)")
+    w.add_argument("--lock", choices=("none", "global"), default="none",
+                   help="global: apply as OpenShell's gateway-global policy, which refuses "
+                        "any other change; needs a gateway running only this profile")
     w.add_argument("--openshell", default="openshell", help="OpenShell CLI binary")
     w.add_argument("--gateway", help="OpenShell gateway name (openshell -g)")
     w.add_argument("--ticks", type=int, default=0, help="stop after N ticks (0: run forever)")

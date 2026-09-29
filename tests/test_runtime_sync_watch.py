@@ -89,19 +89,37 @@ def test_cli_wrapper_missing_binary():
 # ── the watcher, with a fake shell and a fake Shield ─────────────────
 
 
+def _sha(text):
+    import hashlib
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _doc(*hosts):
+    """An OpenShell policy payload allowing GET on each host."""
+    return {"network_policies": {"p": {"endpoints": [
+        {"host": h, "port": 443, "rules": [{"allow": {"method": "GET", "path": "/**"}}]}
+        for h in ("api.github.com",) + hosts]}}}
+
+
 class FakeShell:
+    """OpenShell as the watcher sees it: per-sandbox live policy (hash,
+    version, payload) and an optional gateway-global policy."""
+
     def __init__(self, names=("sbx-a", "sbx-b")):
         self.names = list(names)
         self.calls = []
         self.refuse = set()          # sandbox names that refuse the next live change
         self.fail = set()            # sandbox names that fail with a non-live error
         self.list_ok = True
+        self.live: dict = {}
+        self.glob = None
 
     def sandbox_names(self):
         return list(self.names) if self.list_ok else None
 
     def set_policy(self, name, path):
-        self.calls.append(("set", name, open(path).read()))
+        content = open(path).read()
+        self.calls.append(("set", name, content))
         if name in self.fail:
             return {"ok": False, "version": None, "hash": "", "message": "gateway timeout",
                     "live_refused": False}
@@ -109,11 +127,38 @@ class FakeShell:
             return {"ok": False, "version": None, "hash": "",
                     "message": "process policy cannot be changed on a live sandbox",
                     "live_refused": True}
-        return {"ok": True, "version": len(self.calls), "hash": "abc123", "message": "",
+        v = self.live.get(name, {}).get("version", 0) + 1
+        self.live[name] = {"hash": _sha(content), "policy": _doc(), "version": v,
+                           "policy_source": "sandbox", "content": content}
+        return {"ok": True, "version": v, "hash": _sha(content)[:12], "message": "",
                 "live_refused": False}
 
-    def policy(self, name):
-        return {"hash": "f" * 64, "policy_source": "sandbox"}
+    def policy(self, name, full=False):
+        s = self.live.get(name)
+        if s is None:
+            return None
+        d = {k: s[k] for k in ("hash", "version", "policy_source")}
+        return {**d, "policy": s["policy"]} if full else d
+
+    def tamper(self, name, *hosts):
+        """What `openshell policy set` or a TUI draft approval does."""
+        s = self.live[name]
+        s.update(hash=_sha(s["hash"] + ",".join(hosts)), policy=_doc(*hosts),
+                 version=s["version"] + 1)
+
+    def set_global(self, path):
+        content = open(path).read()
+        self.calls.append(("global", "*", content))
+        self.glob = {"hash": _sha(content), "policy": _doc(), "status": "loaded",
+                     "content": content}
+        return {"ok": True, "version": None, "hash": _sha(content)[:12], "message": "",
+                "live_refused": False}
+
+    def global_policy(self, full=False):
+        if self.glob is None:
+            return None
+        d = {"hash": self.glob["hash"], "status": self.glob["status"]}
+        return {**d, "policy": self.glob["policy"]} if full else d
 
 
 class FakeShield:
@@ -152,7 +197,8 @@ def _watcher(tmp_path, shell=None, shield=None, **kw):
 
 
 def _ops(posted):
-    return [(e["detail"]["instance"], e["detail"]["op"]) for e in posted]
+    """(instance, op) for the sidecar's policy reports, in order."""
+    return [(e["detail"]["instance"], e["detail"]["op"]) for e in posted if e["kind"] == "policy"]
 
 
 def test_applies_live_then_idles_on_304(tmp_path):
@@ -162,7 +208,8 @@ def test_applies_live_then_idles_on_304(tmp_path):
     assert open(w.out).read() == "policy-v1"
     assert _ops(posted) == [("sbx-a", "applied"), ("sbx-b", "applied")]
     assert posted[0]["profile_hash"] == "sha256:" + "0" * 63 + "1"
-    assert posted[0]["detail"]["runtime_hash"] == "f" * 64
+    assert posted[0]["detail"]["runtime_hash"] == _sha("policy-v1")
+    assert posted[0]["detail"]["lock"] == "none" and posted[0]["detail"]["reconcile"] == "revert"
     w.tick()                                           # 304: nothing to do
     assert len(shell.calls) == 2 and len(posted) == 2
 
@@ -359,3 +406,120 @@ def test_end_to_end_signed_bundle_and_trusted_report(app, tmp_path, monkeypatch)
     assert inst["sbx-1"]["profile_hash"] == h2 and inst["sbx-1"]["on_current"] is True
     attest.reset_memory()
     rt_bundle.reset_signer_cache_for_tests()
+
+
+# ── task 4: reconcile and the gateway-global lock ────────────────────
+
+
+def test_endpoints_from_a_real_full_policy():
+    """Shape of `openshell policy get NAME --full -o json`.policy (0.0.80)."""
+    doc = {"network_policies": {"gh": {"binaries": [{"path": "/usr/bin/curl"}], "endpoints": [
+        {"enforcement": "enforce", "host": "api.github.com", "port": 443, "protocol": "rest",
+         "rules": [{"allow": {"method": "*", "path": "/**"}}]}], "name": "gh"},
+        "l4": {"endpoints": [{"host": "pypi.org", "port": 443}]}}}
+    assert sync.endpoints(doc) == {("api.github.com", 443, "*", "/**"),
+                                   ("pypi.org", 443, "*", "/**")}
+    assert sync.endpoints(None) == set()
+
+
+def test_tamper_is_reported_with_added_rules_and_reverted(tmp_path):
+    w, shell, shield, posted = _watcher(tmp_path)
+    w.tick()
+    good = shell.live["sbx-a"]["hash"]
+    shell.tamper("sbx-a", "evil.io")
+    w.tick()
+    tampered = [e for e in posted if e["detail"].get("op") == "tampered"]
+    assert len(tampered) == 1 and tampered[0]["detail"]["instance"] == "sbx-a"
+    assert "1 rule(s) added" in tampered[0]["detail"]["message"]
+    oob = [e for e in posted if e["kind"] == "network"]
+    assert [(e["detail"]["host"], e["detail"]["out_of_band"]) for e in oob] == [("evil.io", True)]
+    assert _ops(posted)[-1] == ("sbx-a", "reverted")
+    assert shell.live["sbx-a"]["hash"] == good                 # Shield's policy is back
+    n = len(posted)
+    w.tick()
+    assert len(posted) == n                                    # and it stays quiet
+
+
+def test_report_mode_reports_once_and_does_not_revert(tmp_path):
+    w, shell, shield, posted = _watcher(tmp_path, reconcile="report")
+    w.tick()
+    shell.tamper("sbx-a", "evil.io")
+    n_calls = len(shell.calls)
+    w.tick()
+    w.tick()
+    assert [op for _, op in _ops(posted)].count("tampered") == 1
+    assert len(shell.calls) == n_calls                         # nothing re-applied
+    shell.tamper("sbx-a", "evil.io", "paste.example")          # a second change
+    w.tick()
+    assert [op for _, op in _ops(posted)].count("tampered") == 2
+
+
+def test_tamper_in_the_same_tick_as_a_new_version_is_not_lost(tmp_path):
+    w, shell, shield, posted = _watcher(tmp_path)
+    w.tick()
+    shell.tamper("sbx-a", "evil.io")
+    shield.version, shield.artifact = 2, "policy-v2"
+    w.tick()
+    a = [op for sb, op in _ops(posted) if sb == "sbx-a"]
+    assert a == ["applied", "tampered", "reverted", "applied"]
+    assert shell.live["sbx-a"]["content"] == "policy-v2"
+
+
+def test_revert_restores_the_policy_the_sandbox_should_run(tmp_path):
+    """A sandbox that could not take v2 live (restart needed) is reverted to
+    v1, not pushed to v2."""
+    w, shell, shield, posted = _watcher(tmp_path)
+    w.tick()
+    shell.refuse.add("sbx-b")
+    shield.version, shield.artifact = 2, "policy-v2"
+    w.tick()
+    shell.refuse.clear()
+    shell.tamper("sbx-b", "evil.io")
+    w.tick()
+    assert _ops(posted)[-1] == ("sbx-b", "reverted")
+    assert shell.live["sbx-b"]["content"] == "policy-v1"
+
+
+def test_global_lock_applies_once_for_the_gateway(tmp_path):
+    w, shell, shield, posted = _watcher(tmp_path, lock="global")
+    w.tick()
+    assert [c[:2] for c in shell.calls] == [("global", "*")]
+    assert _ops(posted) == [("sbx-a", "applied"), ("sbx-b", "applied")]
+    assert all(e["detail"]["lock"] == "global" for e in posted)
+    shield.version, shield.artifact = 2, "policy-v2"
+    w.tick()
+    assert shell.calls[-1] == ("global", "*", "policy-v2")
+
+
+def test_global_lock_deleted_is_tampered_and_restored(tmp_path):
+    w, shell, shield, posted = _watcher(tmp_path, lock="global")
+    w.tick()
+    shell.glob["status"] = "superseded"                        # openshell policy delete --global
+    w.tick()
+    tampered = [e for e in posted if e["detail"].get("op") == "tampered"]
+    assert {e["detail"]["instance"] for e in tampered} == {"sbx-a", "sbx-b"}
+    assert "deleted" in tampered[0]["detail"]["message"]
+    assert shell.glob["status"] == "loaded" and shell.calls[-1][0] == "global"
+    assert [op for _, op in _ops(posted)][-2:] == ["reverted", "reverted"]
+
+
+def test_global_lock_refused_while_the_gateway_runs_unmanaged_sandboxes(tmp_path):
+    shell = FakeShell(names=["sbx-a", "sbx-b", "someone-else"])
+    w, _, _, posted = _watcher(tmp_path, shell=shell, lock="global")
+    w.tick()
+    w.tick()
+    assert shell.calls == []
+    failed = [e for e in posted if e["detail"]["op"] == "apply_failed"]
+    assert len(failed) == 2 and all(e["severity"] == "critical" for e in failed)
+    assert "someone-else" in failed[0]["detail"]["message"]
+
+
+def test_cli_refuses_global_lock_on_a_shared_gateway(monkeypatch, capsys):
+    shell = FakeShell(names=["research-1", "coding-1"])
+    monkeypatch.setattr(sync, "OpenShell", lambda *a, **k: shell)
+    monkeypatch.setenv("SHIELD_API_KEY", "k")
+    monkeypatch.setattr(sys, "argv", ["x", "--shield", "https://s", "--profile", "research",
+                                      "--out", "o", "--watch", "1", "--sandbox-prefix",
+                                      "research-", "--lock", "global"])
+    assert sync.main() == 1
+    assert "coding-1" in capsys.readouterr().err and shell.calls == []
