@@ -4854,9 +4854,22 @@ if __name__ == "__main__":
       </div>
 
       <div class="card">
-        <div class="card-header"><div><div class="card-title">Drift</div>
-          <div class="card-desc">Sandboxes whose agent token attests an older (or no) profile hash. Requires <code>identity.require_attestation</code> warn or enforce.</div></div></div>
+        <div class="card-header"><div><div class="card-title">Advisor</div>
+          <div class="card-desc">What this profile's sandboxes were denied, turned into the narrowest rule that would allow it. Nothing changes until you approve. Approved rules reach running sandboxes on the next sync, without a restart. Flagged suggestions (write methods, raw IPs, unusual ports, new programs, known data-drop hosts, rules added outside Shield) ask for a second confirmation.</div></div>
+          <select id="rp-advice-status" onchange="rpAdvice()" style="align-self:flex-start;"><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="all">All</option></select></div>
+        <div id="rp-advice" style="font-size:13px;" class="muted">Select a profile.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Sandboxes</div>
+          <div class="card-desc">Every sandbox Shield has heard from for this profile: what the sync sidecar applied (<code>shield_runtime_sync.py --watch</code>) and what agent tokens attest at capability mint. A sandbox that needs a restart, or whose policy was changed outside Shield, is shown here.</div></div></div>
         <div id="rp-drift" style="font-size:13px;" class="muted">Select a profile.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">History</div>
+          <div class="card-desc">The last 20 saved versions, and whether running sandboxes could take each change live or needed a restart.</div></div></div>
+        <div id="rp-history" style="font-size:13px;" class="muted">Select a profile.</div>
       </div>
     </div>
 
@@ -16701,6 +16714,7 @@ async function rpApi(path, options = {}) {
     const d = data.detail;
     const err = new Error((d && d.message) || (typeof d === 'string' ? d : '') || `HTTP ${r.status}`);
     err.errors = (d && d.errors) || (d && d.agents ? ['bound agents: ' + d.agents.join(', ')] : []);
+    err.status = r.status; err.detail = d;
     throw err;
   }
   return data;
@@ -16729,8 +16743,17 @@ async function rpOpen(name) {
     document.getElementById('rp-name').value = name;
     document.getElementById('rp-editor').value = JSON.stringify(d.profile, null, 2);
     rpMsg('rp-msg', `Loaded ${xfEsc(name)} (${xfEsc(d.hash.slice(0, 19))}...). Bound agents: ${xfEsc((d.agents || []).join(', ') || 'none')}.`);
-    rpDrift(name);
+    RP_OPEN = name;
+    rpDrift(name); rpAdvice(); rpHistory();
   } catch (e) { rpMsg('rp-msg', xfErrors(e), 'error'); }
+}
+let RP_OPEN = null;
+// What a change does to running sandboxes (live_change from the API).
+function rpLiveChange(c) {
+  if (!c) return '';
+  if (!c.sandbox_changed) return 'Only Shield\'s own checks change; sandbox policies are untouched.';
+  if (c.live) return 'Running sandboxes take this change live on their next sync, no restart.';
+  return `<span style="color:var(--warning, #b45309);"><b>Needs a sandbox restart:</b> ${(c.reasons || []).map(xfEsc).join('; ')}. Sandboxes keep the previous policy and show as restart required until restarted.</span>`;
 }
 document.addEventListener('change', async (e) => {
   if (!e.target || e.target.id !== 'rp-template' || !e.target.value) return;
@@ -16753,8 +16776,10 @@ function rpNameOrThrow() {
 }
 async function rpValidate() {
   try {
-    const r = await rpApi('/validate', { method: 'POST', body: JSON.stringify(rpEditorProfile()) });
-    if (r.valid) rpMsg('rp-msg', 'Valid. Hash ' + xfEsc(r.hash.slice(0, 19)) + '...', 'ok');
+    const name = document.getElementById('rp-name').value.trim();
+    const q = name ? '?against=' + encodeURIComponent(name) : '';
+    const r = await rpApi('/validate' + q, { method: 'POST', body: JSON.stringify(rpEditorProfile()) });
+    if (r.valid) rpMsg('rp-msg', 'Valid. Hash ' + xfEsc(r.hash.slice(0, 19)) + '... ' + rpLiveChange(r.live_change), 'ok');
     else rpMsg('rp-msg', xfErrors({ message: 'Invalid profile', errors: r.errors }), 'error');
   } catch (e) { rpMsg('rp-msg', xfErrors(e), 'error'); }
 }
@@ -16763,9 +16788,11 @@ async function rpSave() {
     const name = rpNameOrThrow();
     const r = await rpApi('/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify(rpEditorProfile()) });
     document.getElementById('rp-editor').value = JSON.stringify(r.profile, null, 2);
-    rpMsg('rp-msg', `Saved. New hash ${xfEsc(r.hash.slice(0, 19))}...; sandboxes pick it up on their next bundle sync.`, 'ok');
+    rpMsg('rp-msg', `Saved. New hash ${xfEsc(r.hash.slice(0, 19))}... ` +
+      (r.live_change ? rpLiveChange(r.live_change) : 'New profile: sandboxes pick it up when created or synced.'), r.live_change && !r.live_change.live ? 'error' : 'ok');
     showToast('Runtime profile saved', 'success');
-    rpLoad();
+    RP_OPEN = name;
+    rpLoad(); rpHistory(); rpDrift(name);
   } catch (e) { rpMsg('rp-msg', xfErrors(e), 'error'); }
 }
 async function rpDelete() {
@@ -16808,15 +16835,143 @@ function rpDownload() {
   a.href = URL.createObjectURL(blob); a.download = RP_LAST_EXPORT.filename; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
+const RP_STATE = {
+  current: ['On current policy', 'var(--success, #15803d)'],
+  reverted: ['Restored after tampering', 'var(--warning, #b45309)'],
+  restart_required: ['Needs restart', 'var(--warning, #b45309)'],
+  apply_failed: ['Apply failed', 'var(--danger, #b91c1c)'],
+  tampered: ['Changed outside Shield', 'var(--danger, #b91c1c)'],
+};
+function rpWhen(t) { return t ? new Date(t * 1000).toLocaleString() : '-'; }
+function rpShort(h) { return h ? xfEsc(String(h).replace('sha256:', '').slice(0, 12)) : '-'; }
 async function rpDrift(name) {
   try {
     const d = await rpApi('/' + encodeURIComponent(name) + '/drift');
     const el = document.getElementById('rp-drift');
-    if (d.attestation === 'off') { el.innerHTML = 'Attestation is off for this profile.'; return; }
-    if (!d.stale.length) { el.innerHTML = `No stale sandboxes (attestation: ${xfEsc(d.attestation)}).`; return; }
-    el.innerHTML = `<b>${d.stale_count}</b> sandbox(es) not on the current profile (${xfEsc(d.current_hash.slice(0, 19))}...):` +
-      `<ul style="margin:0.4rem 0 0 1.1rem;">${d.stale.map(s => `<li>${xfEsc(s.instance)} (agent ${xfEsc(s.agent_id)}) attests ${xfEsc((s.attested_hash || 'nothing').slice(0, 19))}, seen ${xfEsc(new Date(s.at * 1000).toLocaleString())}</li>`).join('')}</ul>`;
+    const rows = d.instances || [];
+    if (!rows.length) {
+      el.innerHTML = `No sandbox has reported yet. Run the sync sidecar with <code>--watch</code> and an admin-scoped key, or turn on attestation (now: ${xfEsc(d.attestation)}).`;
+      return;
+    }
+    el.innerHTML = `<div style="margin-bottom:0.5rem;">Current policy <code>${rpShort(d.current_hash)}</code>. <b>${d.stale_count}</b> sandbox(es) attest an older one.</div>
+      <table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
+        <th style="padding:0.35rem 0.5rem;">Sandbox</th><th style="padding:0.35rem 0.5rem;">State</th><th style="padding:0.35rem 0.5rem;">Runs</th>
+        <th style="padding:0.35rem 0.5rem;">Token attests</th><th style="padding:0.35rem 0.5rem;">Lock</th><th style="padding:0.35rem 0.5rem;">Last report</th><th style="padding:0.35rem 0.5rem;">Detail</th></tr></thead>
+      <tbody>${rows.map(i => {
+        const [label, color] = RP_STATE[i.state] || [i.attested_hash ? 'Attestation only' : 'Unknown', 'var(--text-dim)'];
+        const trust = i.state && !i.trusted ? ' <span title="Reported with a non-admin key: shown, but it does not count for attestation" style="color:var(--text-dim);">(untrusted)</span>' : '';
+        return `<tr>
+          <td style="padding:0.35rem 0.5rem;"><b>${xfEsc(i.instance)}</b></td>
+          <td style="padding:0.35rem 0.5rem;color:${color};">${xfEsc(label)}${trust}${i.on_current ? '' : ' <span style="color:var(--danger, #b91c1c);">stale</span>'}</td>
+          <td style="padding:0.35rem 0.5rem;"><code>${rpShort(i.profile_hash)}</code></td>
+          <td style="padding:0.35rem 0.5rem;"><code>${rpShort(i.attested_hash)}</code></td>
+          <td style="padding:0.35rem 0.5rem;">${xfEsc(i.lock || '-')}</td>
+          <td style="padding:0.35rem 0.5rem;">${xfEsc(rpWhen(i.at || i.attested_at))}</td>
+          <td style="padding:0.35rem 0.5rem;color:var(--text-dim);">${xfEsc(i.detail || '')}</td></tr>`; }).join('')}</tbody></table>`;
   } catch (e) { rpMsg('rp-drift', xfErrors(e), 'error'); }
+}
+const RP_FLAG_TEXT = {
+  write_method: 'writes (POST/PUT/PATCH/DELETE)', raw_ip: 'raw IP address', non_standard_port: 'unusual port',
+  binary: 'new program', exfil_domain: 'known data-drop host', out_of_band: 'added outside Shield',
+};
+function rpRule(p) {
+  return `<code>${xfEsc(p.methods.join(','))} ${xfEsc(p.host)}:${p.port}${xfEsc(p.paths.join(' '))}</code>`;
+}
+async function rpAdvice() {
+  if (!RP_OPEN) return;
+  const status = document.getElementById('rp-advice-status').value;
+  try {
+    const d = await rpApi('/' + encodeURIComponent(RP_OPEN) + '/advice?status=' + status);
+    const el = document.getElementById('rp-advice');
+    if (!d.enabled) { el.innerHTML = 'The advisor is off on this Shield (SHIELD_RUNTIME_ADVISOR=off).'; return; }
+    const dropped = d.dropped ? `<div style="color:var(--warning, #b45309);margin-bottom:0.4rem;">${d.dropped} more denial(s) were not kept: the suggestion list is full.</div>` : '';
+    if (!d.advice.length) { el.innerHTML = dropped + `No ${xfEsc(status === 'all' ? '' : status)} suggestions. Denials forwarded from sandboxes (<code>openshell_events.py</code>) appear here.`; return; }
+    const what = { network_allow: 'Allow a new host', network_method: 'Allow more on an allowed host', binary: 'Allow a program to connect' };
+    el.innerHTML = dropped + `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
+        <th style="padding:0.35rem 0.5rem;">Suggestion</th><th style="padding:0.35rem 0.5rem;">Seen</th><th style="padding:0.35rem 0.5rem;">By</th>
+        <th style="padding:0.35rem 0.5rem;">Flags</th><th style="padding:0.35rem 0.5rem;"></th></tr></thead>
+      <tbody>${d.advice.map(a => `<tr>
+        <td style="padding:0.35rem 0.5rem;">${xfEsc(what[a.kind] || a.kind)}<br>${a.kind === 'binary'
+          ? `<code>${xfEsc(a.proposal.binaries.join(', '))}</code> to reach <code>${xfEsc(a.host)}:${a.port}</code>`
+          : rpRule(a.proposal) + (a.methods_observed ? '' : ' <span style="color:var(--text-dim);" title="Only the connection was seen (no HTTP details), so GET is proposed. Edit to widen.">(method not observed)</span>') +
+            (a.proposal.binaries.length ? `<div style="color:var(--text-dim);">seen from ${xfEsc(a.proposal.binaries.join(', '))}</div>` : '')}
+          ${a.sample_reason ? `<div style="color:var(--text-dim);font-size:12px;">${xfEsc(a.sample_reason)}</div>` : ''}</td>
+        <td style="padding:0.35rem 0.5rem;">${a.hits}x<br><span style="color:var(--text-dim);font-size:12px;">last ${xfEsc(rpWhen(a.last_seen))}</span></td>
+        <td style="padding:0.35rem 0.5rem;">${xfEsc((a.agents || []).join(', ') || '-')}</td>
+        <td style="padding:0.35rem 0.5rem;color:var(--warning, #b45309);">${(a.flags || []).map(f => xfEsc(RP_FLAG_TEXT[f] || f)).join('<br>') || '<span style="color:var(--text-dim);">none</span>'}</td>
+        <td style="padding:0.35rem 0.5rem;white-space:nowrap;">${a.status === 'pending' ? `
+          <button class="primary small" onclick="rpApprove('${xfEsc(a.id)}', false)">Approve</button>
+          <button class="small" onclick="rpApprove('${xfEsc(a.id)}', true)">Edit...</button>
+          <button class="small danger" onclick="rpReject('${xfEsc(a.id)}')">Reject</button>` :
+          `${xfEsc(a.status)} by ${xfEsc(a.decided_by || '?')}${a.reject_reason ? ': ' + xfEsc(a.reject_reason) : ''}`}</td></tr>`).join('')}</tbody></table>`;
+  } catch (e) { rpMsg('rp-advice', xfErrors(e), 'error'); }
+}
+async function rpApprove(id, edit) {
+  const path = '/' + encodeURIComponent(RP_OPEN) + '/advice/' + encodeURIComponent(id) + '/approve';
+  const body = {};
+  try {
+    if (edit) {
+      const d = await rpApi('/' + encodeURIComponent(RP_OPEN) + '/advice?status=pending');
+      const a = d.advice.find(x => x.id === id);
+      if (!a) throw Object.assign(new Error('Suggestion no longer pending'), { errors: [] });
+      const m = prompt('Methods (comma separated)', a.proposal.methods.join(','));
+      if (m === null) return;
+      const p = prompt('Paths (comma separated, globs like /simple/**)', a.proposal.paths.join(','));
+      if (p === null) return;
+      body.methods = m.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      body.paths = p.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    let r;
+    try { r = await rpApi(path, { method: 'POST', body: JSON.stringify(body) }); }
+    catch (e) {
+      const flags = e.status === 422 && e.detail && e.detail.flags;
+      if (!flags) throw e;
+      if (!confirm('This suggestion is flagged:\n\n- ' + flags.map(f => RP_FLAG_TEXT[f] || f).join('\n- ') + '\n\nApprove anyway?')) return;
+      r = await rpApi(path, { method: 'POST', body: JSON.stringify({ ...body, confirm_flagged: true }) });
+    }
+    document.getElementById('rp-editor').value = JSON.stringify(r.profile, null, 2);
+    rpMsg('rp-msg', `Approved ${rpRule(r.rule)}. New hash ${xfEsc(r.hash.slice(0, 19))}... ${rpLiveChange(r.live_change)}`, 'ok');
+    showToast('Suggestion approved', 'success');
+    rpAdvice(); rpHistory(); rpLoad();
+  } catch (e) { rpMsg('rp-advice', xfErrors(e), 'error'); }
+}
+async function rpReject(id) {
+  const reason = prompt('Why reject it? (optional; it will not be suggested again)', '');
+  if (reason === null) return;
+  try {
+    await rpApi('/' + encodeURIComponent(RP_OPEN) + '/advice/' + encodeURIComponent(id) + '/reject',
+      { method: 'POST', body: JSON.stringify({ reason }) });
+    rpAdvice();
+  } catch (e) { rpMsg('rp-advice', xfErrors(e), 'error'); }
+}
+let RP_HISTORY = [];
+async function rpHistory() {
+  if (!RP_OPEN) return;
+  try {
+    const d = await rpApi('/' + encodeURIComponent(RP_OPEN) + '/history');
+    RP_HISTORY = d.versions;
+    const el = document.getElementById('rp-history');
+    if (!d.versions.length) { el.innerHTML = 'No saved versions yet.'; return; }
+    const verdict = c => !c ? '<span style="color:var(--text-dim);">first kept version</span>' :
+      !c.sandbox_changed ? 'Shield checks only' : c.live ? '<span style="color:var(--success, #15803d);">live</span>' :
+      `<span style="color:var(--warning, #b45309);" title="${xfEsc((c.reasons || []).join('; '))}">restart needed</span>`;
+    el.innerHTML = `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
+        <th style="padding:0.35rem 0.5rem;">Version</th><th style="padding:0.35rem 0.5rem;">When</th><th style="padding:0.35rem 0.5rem;">By</th>
+        <th style="padding:0.35rem 0.5rem;">Why</th><th style="padding:0.35rem 0.5rem;">Running sandboxes</th><th></th></tr></thead>
+      <tbody>${d.versions.map((v, i) => `<tr>
+        <td style="padding:0.35rem 0.5rem;"><code>${rpShort(v.hash)}</code>${v.hash === d.current_hash ? ' (current)' : ''}</td>
+        <td style="padding:0.35rem 0.5rem;">${xfEsc(rpWhen(v.at))}</td>
+        <td style="padding:0.35rem 0.5rem;">${xfEsc(v.actor || '-')}</td>
+        <td style="padding:0.35rem 0.5rem;">${xfEsc((v.reason || '').startsWith('advice:') ? 'approved suggestion' : 'edited')}</td>
+        <td style="padding:0.35rem 0.5rem;">${verdict(v.live_change)}</td>
+        <td style="padding:0.35rem 0.5rem;">${v.hash === d.current_hash ? '' : `<button class="small" onclick="rpLoadVersion(${i})">Load into editor</button>`}</td></tr>`).join('')}</tbody></table>`;
+  } catch (e) { rpMsg('rp-history', xfErrors(e), 'error'); }
+}
+function rpLoadVersion(i) {
+  const v = RP_HISTORY[i];
+  if (!v) return;
+  document.getElementById('rp-editor').value = JSON.stringify(v.profile, null, 2);
+  rpMsg('rp-msg', `Version ${rpShort(v.hash)} loaded into the editor. Validate to preview the effect on running sandboxes, then Save to roll back.`);
 }
 </script>
 </body>

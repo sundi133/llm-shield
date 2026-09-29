@@ -148,6 +148,91 @@ Then set `identity.require_attestation` in the profile:
 `GET /v1/tenant/me/runtime-profiles/research-agent/drift` lists the sandboxes
 that are behind.
 
+## Keep running sandboxes current
+
+### Live updates, no restart
+
+Run the sync script in watch mode next to your sandboxes, with an
+admin-scoped key:
+
+```bash
+export SHIELD_API_KEY=$ADMIN_KEY
+python examples/runtime/shield_runtime_sync.py --shield $SHIELD \
+  --profile research-agent --tenant <your-tenant-id> \
+  --out research-agent.openshell.yaml --watch 30 --sandbox-prefix research-
+```
+
+Every 30 seconds it checks for a new signed policy. When the profile changes,
+it applies the new policy to each running sandbox with
+`openshell policy set --wait`. The sandbox keeps running.
+
+OpenShell can change some parts of a running sandbox but not others:
+
+| Change | Running sandboxes |
+|---|---|
+| Hosts, methods, paths, programs allowed to connect | Applied live |
+| A file path added to `read_only` or `read_write` | Applied live |
+| A file path removed, `run_as` changed, `kernel_enforcement` changed | Needs a restart |
+
+The portal tells you which case applies before you save (Validate) and after
+(Save). A sandbox that needs a restart keeps its previous policy, and appears
+as **Needs restart** under **Sandboxes** until your broker restarts it. Shield
+never restarts sandboxes itself.
+
+Use an admin-scoped key for the script. Its reports are what let a sandbox
+updated in place pass attestation (step 5). Reports sent with any other key
+are shown, but do not count, so an agent can never vouch for its own sandbox.
+
+If Shield is unreachable, the profile is deleted, or a policy fails its
+signature check, the script leaves every sandbox's policy as it is.
+
+### Advisor
+
+Sandbox denials sent to Shield (step 4) become suggestions in the portal's
+**Advisor** card. For example: "Allow `GET pypi.org:443/simple/requests/`, seen
+6 times from research-bot". Each suggestion is the narrowest rule that would
+have allowed what was denied:
+
+- a host that is not allowed: only the methods and paths that were seen (GET
+  when the sandbox only saw the connection)
+- a method or path denied on an allowed host: a separate rule for just that
+  method and path, so the existing rule is never widened
+- a program denied on an allowed host: that program only
+
+File and program-execution denials never produce suggestions. Nothing changes
+until someone approves. Suggestions that write data, use a raw IP address or an
+unusual port, add a program, reach a known data-drop host (paste sites, request
+catchers, tunnels), or came from a rule added outside Shield ask for a second
+confirmation. Approved rules reach running sandboxes on the next sync. Rejected
+ones are not suggested again.
+
+### Changes made outside Shield
+
+The watch script compares each sandbox's live policy with the one it applied.
+If someone changes it directly (`openshell policy set`, or approving a rule in
+`openshell term`), Shield records a critical `runtime_boundary` event listing
+the rules that were added, and the script puts Shield's policy back within one
+interval. The added rules appear in the Advisor, so they can be approved
+properly. For development, `--reconcile report` records the change without
+reverting it.
+
+### Locking a gateway
+
+Without a lock, a change made outside Shield is live until the next interval.
+To close that window, give each profile its own OpenShell gateway and add
+`--lock global`:
+
+```bash
+python examples/runtime/shield_runtime_sync.py ... --watch 30 \
+  --sandbox-prefix research- --gateway research-gw --lock global
+```
+
+Shield's policy then becomes the gateway's global policy, and OpenShell itself
+refuses sandbox-level changes and rule approvals. The lock applies to every
+sandbox on the gateway, so the script refuses to start while the gateway also
+runs sandboxes it does not manage. Removing the lock is a manual step:
+`openshell policy delete --global`.
+
 ## Kubernetes, Cilium and Squid
 
 ```bash
@@ -227,10 +312,14 @@ and bad hosts are rejected, with every error listed.
 |---|---|---|
 | GET | `/v1/tenant/me/runtime-profiles` | Profiles, hashes, bound agents |
 | GET | `/v1/tenant/me/runtime-profiles/templates` | Starter profiles |
-| POST | `/v1/tenant/me/runtime-profiles/validate` | Validate without saving |
-| GET, PUT, DELETE | `/v1/tenant/me/runtime-profiles/{name}` | Manage a profile. DELETE refuses while agents are bound, unless `force=true`. |
+| POST | `/v1/tenant/me/runtime-profiles/validate?against={name}` | Validate without saving; with `against`, also whether running sandboxes can take the change live |
+| GET, PUT, DELETE | `/v1/tenant/me/runtime-profiles/{name}` | Manage a profile. PUT returns `live_change`. DELETE refuses while agents are bound, unless `force=true`. |
 | GET | `/v1/tenant/me/runtime-profiles/{name}/export?target=` | `openshell`, `k8s`, `cilium`, `squid`. Add `raw=true` for the file. |
-| GET | `/v1/tenant/me/runtime-profiles/{name}/drift` | Sandboxes attesting an outdated profile |
+| GET | `/v1/tenant/me/runtime-profiles/{name}/drift` | Sandboxes attesting an outdated profile, and every sandbox's reported state (`instances`) |
+| GET | `/v1/tenant/me/runtime-profiles/{name}/history` | The last 20 versions, each with `live_change` |
+| GET | `/v1/tenant/me/runtime-profiles/{name}/advice?status=` | Suggestions: `pending`, `approved`, `rejected` or `all` |
+| POST | `/v1/tenant/me/runtime-profiles/{name}/advice/{id}/approve` | Body `{methods?, paths?, confirm_flagged?}`. Writes the profile. |
+| POST | `/v1/tenant/me/runtime-profiles/{name}/advice/{id}/reject` | Body `{reason?}` |
 | GET | `/v1/edge/runtime-bundle?profile=&target=` | The signed bundle runtimes pull (ETag/304) |
 | GET | `/v1/edge/runtime-bundle/jwks` | Keys to verify bundles |
 | POST | `/v1/shield/runtime/events` | Sandbox decisions, canonical or raw OpenShell log lines |
@@ -247,6 +336,10 @@ and bad hosts are rejected, with every error listed.
 | `SHIELD_PUBLIC_URL` | The Shield URL sandboxes reach |
 | `SHIELD_RUNTIME_EVENTS_MAX_BATCH` | Maximum events per request |
 | `SHIELD_RUNTIME_EVENTS_PER_MIN` | Per-tenant event rate limit |
+| `SHIELD_RUNTIME_ADVISOR` | `off` stops building suggestions |
+| `SHIELD_RUNTIME_ADVICE_TTL_DAYS` | How long decided suggestions are kept (default 30) |
+| `SHIELD_RUNTIME_ADVICE_MAX` | Suggestions kept per profile (default 200) |
+| `SHIELD_RUNTIME_ATTEST_ACCEPT_APPLIED` | `0` ignores the sync script's reports at attestation, so only a restart with a new token clears drift |
 
 - **Who can change profiles:** profile writes follow the agent-registry write
   gate (`SHIELD_REGISTRY_WRITE_SCOPE`). Under `enforce`, only admin keys or
