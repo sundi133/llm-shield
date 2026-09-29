@@ -27,6 +27,7 @@ from core.runtime_policy import bundle as rt_bundle
 from core.runtime_policy import check as runtime_check
 from core.runtime_policy import store as rt_store
 from core.runtime_policy.compilers import TARGETS, ExportContext, compile_profile
+from core.runtime_policy.compilers.openshell import live_change
 from core.runtime_policy.model import ProfileError, profile_hash, templates, valid_name, \
     validate_profile
 from storage.admin_audit import log_admin_action
@@ -195,19 +196,60 @@ async def get_runtime_profile(name: str, request: Request):
             "hash": profile_hash(profile), "agents": _bound_agents(tenant_id).get(name, [])}
 
 
+def _actor(request: Request, tenant_id: str) -> str:
+    """Who made a change, for profile history: the signed-in user, else the key."""
+    try:
+        from core.auth import portal_principal
+        principal = portal_principal(request)
+    except Exception:
+        principal = None
+    if principal:
+        return f"user:{principal.get('email') or principal.get('sub') or '?'}"
+    return f"tenant:{tenant_id}"
+
+
+def _previous(tenant_id: str, name: str) -> Optional[dict]:
+    try:
+        return rt_store.get_profile(tenant_id, name)
+    except ProfileError:
+        return None
+
+
 @router.put("/{name}")
 async def put_runtime_profile(name: str, request: Request, profile: dict = Body(...)):
     tenant_id = get_tenant_from_request(request)
     _name(name)
     require_registry_write(request, tenant_id, "change a runtime profile")
+    previous = _previous(tenant_id, name)
     try:
-        normalized = rt_store.save_profile(tenant_id, name, profile)
+        normalized = rt_store.save_profile(tenant_id, name, profile,
+                                           actor=_actor(request, tenant_id), reason="put")
     except ProfileError as e:
         raise _invalid(e)
     phash = profile_hash(normalized)
     runtime_check.invalidate(tenant_id)
     _audit(request, "tenant_set_runtime_profile", tenant_id, {"profile": name, "hash": phash})
-    return {"tenant_id": tenant_id, "name": name, "profile": normalized, "hash": phash}
+    return {"tenant_id": tenant_id, "name": name, "profile": normalized, "hash": phash,
+            "live_change": live_change(previous, normalized) if previous is not None else None}
+
+
+@router.get("/{name}/history")
+async def runtime_profile_history(name: str, request: Request):
+    """Saved versions, newest first. ``live_change`` on each says whether a
+    running sandbox could move to it from the version before without a
+    restart (null for the oldest one kept)."""
+    tenant_id = get_tenant_from_request(request)
+    current = profile_hash(_load(tenant_id, _name(name)))
+    versions = rt_store.history(tenant_id, name)
+    out = []
+    for i, v in enumerate(versions):
+        older = versions[i + 1]["profile"] if i + 1 < len(versions) else None
+        try:
+            change = live_change(older, v["profile"]) if older is not None else None
+        except Exception:       # an old entry the current compiler cannot read
+            change = None
+        out.append({**v, "live_change": change})
+    return {"tenant_id": tenant_id, "name": name, "current_hash": current, "versions": out}
 
 
 @router.delete("/{name}")

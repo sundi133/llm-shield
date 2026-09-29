@@ -145,3 +145,41 @@ def compile_profile(profile: dict, ctx: ExportContext) -> Compiled:
     return Compiled(target=TARGET, artifact=header + body, content_type="application/yaml",
                     filename=f"{ctx.profile_name}.openshell.yaml",
                     unsupported=unsupported, notes=notes)
+
+
+# ── live change preview ──────────────────────────────────────────────
+
+_PREVIEW_CTX = ExportContext(profile_name="preview", profile_hash="", shield_host="shield.invalid",
+                             shield_port=443)
+
+
+def _policy_doc(profile: dict) -> dict:
+    return yaml.safe_load(compile_profile(profile, _PREVIEW_CTX).artifact)
+
+
+def live_change(old: dict, new: dict) -> dict:
+    """Can a running sandbox move from ``old`` to ``new`` with
+    ``openshell policy set``, or does it need a restart?
+
+    What OpenShell 0.0.80 accepts on a live sandbox (verified, spec
+    docs/specs/runtime-live-policy.md §1): any network_policies change and
+    filesystem ADDITIONS. It refuses filesystem removals and any process
+    change; landlock is treated the same way, since it is applied at startup.
+    Advisory only: OpenShell's own answer at apply time is authoritative.
+
+    Returns {live, sandbox_changed, reasons}: sandbox_changed is False when
+    the change only affects Shield's own checks (deny lists, identity,
+    resources), so nothing is pushed to sandboxes at all.
+    """
+    a, b = _policy_doc(old), _policy_doc(new)
+    reasons: list[str] = []
+    for kind in ("read_only", "read_write"):
+        removed = sorted(set(a["filesystem_policy"][kind]) - set(b["filesystem_policy"][kind]))
+        for p in removed:
+            reasons.append(f"filesystem {kind} path {p} removed: OpenShell cannot remove a "
+                           f"path from a running sandbox")
+    if a["process"] != b["process"]:
+        reasons.append("process (run_as) changed: applied when the sandbox starts")
+    if a["landlock"] != b["landlock"]:
+        reasons.append("filesystem.kernel_enforcement changed: applied when the sandbox starts")
+    return {"live": not reasons, "sandbox_changed": a != b, "reasons": reasons}
