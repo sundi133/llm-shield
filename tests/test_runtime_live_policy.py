@@ -364,12 +364,18 @@ def test_classify_the_three_kinds():
 
 def test_collapse_paths():
     assert advisor.collapse_paths([]) == ["/**"]
+    # Shallow paths are kept exactly, so the rule surely matches the denial.
+    assert advisor.collapse_paths(["/zen"]) == ["/zen"]
     assert advisor.collapse_paths(["/simple/requests/", "/simple/numpy/?x=1"]) == \
-        ["/simple/numpy/**", "/simple/requests/**"]
+        ["/simple/numpy/", "/simple/requests/"]
+    assert advisor.collapse_paths(["/packages/ab/requests.whl", "/packages/cd/numpy.whl"]) == \
+        ["/packages/ab/**", "/packages/cd/**"]
     many = [f"/simple/p{i}/" for i in range(6)]
     assert advisor.collapse_paths(many) == ["/simple/**"]
     assert advisor.collapse_paths([f"/{c}/x" for c in "abcdef"]) == ["/**"]
-    assert advisor.collapse_paths(["/"]) == ["/**"]
+    # Globs from rules added outside Shield are kept, never nested (/**/**).
+    assert advisor.collapse_paths(["/**"]) == ["/**"]
+    assert advisor.collapse_paths(["/api/*/items"]) == ["/api/*/items"]
 
 
 def test_flags():
@@ -396,7 +402,7 @@ def test_observe_real_openshell_denials(adv):
     assert ex["methods_observed"] is False and ex["proposal"]["methods"] == ["GET"]
     assert ex["proposal"]["binaries"] == ["/usr/bin/curl"] and ex["flags"] == []
     gh = out["network_method"]
-    assert gh["proposal"]["methods"] == ["POST"] and gh["proposal"]["paths"] == ["/zen/**"]
+    assert gh["proposal"]["methods"] == ["POST"] and gh["proposal"]["paths"] == ["/zen"]
     assert gh["flags"] == ["write_method"]
     assert out["binary"]["flags"] == ["binary"]
 
@@ -434,7 +440,7 @@ def test_observe_l7_details_and_out_of_band(adv):
                            _net("pypi.org", method="HEAD", path="/simple/numpy/")])
     a = advisor.list_advice("t1", "ra")["advice"][0]
     assert a["proposal"]["methods"] == ["GET", "HEAD"] and a["methods_observed"] is True
-    assert a["proposal"]["paths"] == ["/simple/numpy/**", "/simple/requests/**"]
+    assert a["proposal"]["paths"] == ["/simple/numpy/", "/simple/requests/"]
     oob = {**_net("evil.io"), "decision": "audit"}
     oob["detail"]["out_of_band"] = True
     advisor.observe("t1", [oob])
@@ -555,3 +561,15 @@ def test_api_follows_the_registry_write_gate(app, adv, monkeypatch):
     assert rt.post(f"{BASE}/ra/advice/{aid}/approve", json={}).status_code == 403
     assert rt.post(f"{BASE}/ra/advice/{aid}/reject", json={}).status_code == 403
     assert ad.post(f"{BASE}/ra/advice/{aid}/approve", json={}).status_code == 200
+
+
+# ── task 6: preview before save ──────────────────────────────────────
+
+
+def test_validate_previews_the_change_against_a_saved_profile(client):
+    client.put(f"{BASE}/ra", json=_p())
+    r = client.post(f"{BASE}/validate?against=ra", json=_p(process__run_as="agent")).json()
+    assert r["valid"] and r["live_change"]["live"] is False
+    r = client.post(f"{BASE}/validate?against=new-one", json=_p()).json()
+    assert r["valid"] and r["live_change"] is None
+    assert "live_change" not in client.post(f"{BASE}/validate", json=_p()).json()

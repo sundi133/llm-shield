@@ -131,21 +131,27 @@ def classify(profile: dict, detail: dict) -> Optional[tuple[str, Optional[int]]]
 
 
 def collapse_paths(paths: list[str]) -> list[str]:
-    """At most 3 globs, as deep as 2 segments allows: /simple/requests/ and
-    /simple/numpy/ -> /simple/requests/**, /simple/numpy/**; many more ->
-    /simple/**; no paths observed -> /**."""
+    """At most 3 paths, as narrow as that allows. A path no deeper than the
+    collapse depth is kept exactly (/zen stays /zen, so the rule is sure to
+    match the request that was denied); deeper ones become a prefix glob
+    (/packages/ab/x.whl -> /packages/ab/**). Too many at depth 2 -> depth 1;
+    still too many, or nothing observed -> /**. Paths that are already globs
+    (rules added outside Shield) are kept as they are."""
     clean = sorted({p.split("?")[0] for p in paths if isinstance(p, str) and p.startswith("/")})
     if not clean:
         return ["/**"]
+    globs = {p for p in clean if any(c in p for c in "*?[")}
+    if "/**" in globs:
+        return ["/**"]
     for depth in (2, 1):
-        prefixes = set()
+        out = set(globs)
         for p in clean:
-            segs = [s for s in p.split("/") if s][:depth]
-            prefixes.add("/" + "/".join(segs) + "/**" if segs else "/**")
-        if "/**" in prefixes:
-            return ["/**"]
-        if len(prefixes) <= 3:
-            return sorted(prefixes)
+            if p in globs:
+                continue
+            segs = [s for s in p.split("/") if s]
+            out.add(p if len(segs) <= depth else "/" + "/".join(segs[:depth]) + "/**")
+        if len(out) <= 3:
+            return sorted(out)
     return ["/**"]
 
 

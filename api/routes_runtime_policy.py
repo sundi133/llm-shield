@@ -179,13 +179,20 @@ async def runtime_profile_templates(request: Request):
 
 
 @router.post("/validate")
-async def validate_runtime_profile(request: Request, profile: dict = Body(...)):
-    get_tenant_from_request(request)
+async def validate_runtime_profile(request: Request, profile: dict = Body(...),
+                                   against: Optional[str] = Query(
+                                       None, description="saved profile to preview the change "
+                                                         "against (live_change)")):
+    tenant_id = get_tenant_from_request(request)
     try:
         normalized = validate_profile(profile)
     except ProfileError as e:
         return {"valid": False, "errors": e.errors, "profile": None}
-    return {"valid": True, "errors": [], "profile": normalized, "hash": profile_hash(normalized)}
+    out = {"valid": True, "errors": [], "profile": normalized, "hash": profile_hash(normalized)}
+    if against:
+        previous = _previous(tenant_id, _name(against))
+        out["live_change"] = live_change(previous, normalized) if previous is not None else None
+    return out
 
 
 @router.get("/{name}")
