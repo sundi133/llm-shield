@@ -403,7 +403,12 @@ evaluator in process with no server. Its HTTP contract is unchanged.
   asserts the §2 targets exactly (18 of 19 verdicts, 17 correct rails, 0 of 7
   false positives). A change that moves any number fails and must update the spec.
 - **Mutation, as for MAVLink:** weaken each rule in the benchmark profile in turn;
-  at least one case must change. A rule nothing defends is reported.
+  at least one case must change. A rule nothing defends is reported. Mutation
+  runs on the **facts-only** corpus (the policy copies some events carry in
+  `context` removed), because otherwise those copies mask a deleted profile rule.
+  Found while building task 1: four profile rules were masked this way.
+- **The profile alone decides:** the facts-only corpus scores identically to the
+  full one.
 - **Parity:** `core/embodied` and the robot package copy are byte-identical, and
   the endpoint and the SDK return identical results over all 26 events.
 - **Latency:** the evaluator's p99 over the corpus under 1 ms in CI (a
