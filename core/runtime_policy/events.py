@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 SOURCES = ("openshell", "k8s", "cilium", "falco", "squid", "envoy", "custom")
-KINDS = ("network", "file", "process", "resource", "policy")
+KINDS = ("network", "file", "process", "resource", "policy", "action")
 DECISIONS = ("deny", "allow", "audit")
 SEVERITIES = ("info", "low", "medium", "high", "critical")
 MAX_DETAIL_BYTES = 4096
@@ -199,6 +199,11 @@ def summary(ev: dict) -> str:
         return f"{ev['decision']} file {d.get('op', 'access')} {d.get('path', '?')}"
     if ev["kind"] == "process":
         return f"{ev['decision']} process {d.get('command') or d.get('binary') or '?'}"
+    if ev["kind"] == "action":
+        # Embodied action guard decisions uploaded from robots
+        # (docs/specs/embodied-action-guard.md §5.3).
+        return (f"{ev['decision']} action {d.get('tool', '?')} by {d.get('rail', '?')}"
+                + (f": {', '.join(d['reasons'])}" if isinstance(d.get("reasons"), list) else ""))
     if ev["kind"] == "policy" and d.get("op"):
         where = d.get("instance") or ev["agent_instance_id"] or "?"
         text = {"applied": "runtime policy applied live", "reverted":

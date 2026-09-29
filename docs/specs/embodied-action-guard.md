@@ -258,10 +258,13 @@ the decision.
 
 ### 5.3 Audit
 
-- Server: `log_decision(guardrail="embodied_guard")` for `block` and
-  `require_approval`; telemetry for every verdict (sampled for `pass` beyond a
-  per-tenant rate).
-- Robot: every verdict appended to the audit chain; blocks and approvals are
+- Server: `log_decision(guardrail="embodied_guard")` and telemetry for `block`
+  and `require_approval`. Passes are not recorded (as built in task 3; a
+  sampled pass stream can be added if fleets ask for it).
+- Robot: every refusal (block, approval, degraded refusal) appended to the audit
+  chain, and passes too with `audit_passes=True`. Changed from "every verdict"
+  while building task 4: at 50 Hz an fsync per pass is too slow for Pi-class
+  hardware, and a decision that cannot be recorded is refused. Blocks and approvals are
   uploaded as `/v1/shield/runtime/events` with a new `kind: "action"` (a one-word
   addition to `events.KINDS`).
 

@@ -156,6 +156,54 @@ async def embodied_profile_history(name: str, request: Request):
             "versions": em_store.history(tenant_id, name)}
 
 
+# ── signed bundles for robots (both planes) ──────────────────────────
+
+edge_router = APIRouter(prefix="/v1/edge", tags=["edge"])
+
+
+@edge_router.get("/embodied-bundle")
+async def embodied_bundle(request: Request, profile: str = Query(...),
+                          fleet: str = Query(..., description="fleet id the bundle is bound to")):
+    """The action profile as a signed bundle in shield-mavlink's format, bound to
+    this tenant and fleet, with an expiry. Robots verify it against a key pinned
+    on disk (see /embodied-bundle/pubkey for provisioning). ETag/304 for polling."""
+    import hashlib
+    from fastapi import Response
+    from core.embodied import bundle as em_bundle
+    tenant_id = get_tenant_from_request(request)
+    _name(profile)
+    if not valid_name(fleet):
+        raise HTTPException(status_code=400, detail="fleet: lowercase letters, digits, . _ -")
+    policy = load(tenant_id, profile)
+    phash = profile_hash(policy)
+    etag = '"' + hashlib.sha256(f"{phash}|{fleet}|{tenant_id}".encode()).hexdigest()[:32] + '"'
+    if (request.headers.get("if-none-match") or "").strip() == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    rec = em_store.list_profiles(tenant_id).get(profile) or {}
+    signed = em_bundle.sign_bundle(policy, tenant_id=tenant_id, fleet_id=fleet,
+                                   bundle_version=int(rec.get("updated_at") or 0))
+    if signed is None:
+        raise HTTPException(status_code=503, detail="bundle signing is not configured on this "
+                            "Shield (SHIELD_RUNTIME_BUNDLE_PRIVATE_KEY); robots only accept "
+                            "signed bundles")
+    from fastapi.responses import JSONResponse
+    return JSONResponse({**signed, "profile": profile, "profile_hash": phash},
+                        headers={"ETag": etag, "Cache-Control": "no-cache"})
+
+
+@edge_router.get("/embodied-bundle/pubkey")
+async def embodied_bundle_pubkey(request: Request):
+    """For provisioning only: copy this key onto robots out of band and pin it.
+    A robot that fetches its trust anchor over the network trusts the network."""
+    from core.embodied import bundle as em_bundle
+    get_tenant_from_request(request)
+    key = em_bundle.public_key_hex()
+    if key is None:
+        raise HTTPException(status_code=503, detail="bundle signing is not configured")
+    return {"kid": em_bundle.kid(), "public_key_hex": key,
+            "note": "pin this on the robot at provisioning; never fetch it at runtime"}
+
+
 def _invalidate(tenant_id: str) -> None:
     """Drop the check endpoint's cached profiles for this tenant (task 3)."""
     try:
