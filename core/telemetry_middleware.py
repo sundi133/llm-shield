@@ -153,7 +153,11 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         try:
             body_bytes = b"" if is_multipart else await request.body()
             if body_bytes:
-                body_dict = json.loads(body_bytes)
+                parsed = json.loads(body_bytes)
+                # A JSON array or scalar body carries none of these fields. It
+                # used to crash the middleware (500) on every endpoint; the
+                # route itself now answers it (typically 422).
+                body_dict = parsed if isinstance(parsed, dict) else {}
                 # Extract input text efficiently in one pass
                 bd = body_dict
                 input_text = (
