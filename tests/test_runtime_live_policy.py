@@ -317,3 +317,241 @@ def test_drift_endpoint_lists_instances(client):
     assert by["sbx-1"]["on_current"] is True and by["sbx-1"]["lock"] == "global"
     assert by["sbx-2"]["on_current"] is False and by["sbx-2"]["state"] is None
     attest.reset_memory()
+
+
+# ── task 5: advisor ──────────────────────────────────────────────────
+
+import os  # noqa: E402
+import threading  # noqa: E402
+
+from core.runtime_policy import advisor  # noqa: E402
+
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "openshell_ocsf_log.txt")
+
+
+def _denied_lines():
+    """Real OpenShell 0.0.80 denials: example.com at L4, POST api.github.com
+    at L7, and a python3.14 binary refused on an allowed host."""
+    return [l.strip() for l in open(FIXTURE) if "DENIED" in l]
+
+
+@pytest.fixture(autouse=False)
+def adv(monkeypatch):
+    monkeypatch.delenv("SHIELD_RUNTIME_ADVISOR", raising=False)
+    monkeypatch.delenv("SHIELD_RUNTIME_ADVICE_MAX", raising=False)
+    advisor.reset_memory()
+    yield
+    advisor.reset_memory()
+
+
+def _net(host, **detail):
+    return {"kind": "network", "decision": "deny", "source": "openshell", "profile": "ra",
+            "agent_id": "bot", "at": 1.0, "detail": {"host": host, "port": 443, **detail}}
+
+
+def test_classify_the_three_kinds():
+    p = _p()
+    assert advisor.classify(p, {"host": "pypi.org", "port": 443}) == ("network_allow", None)
+    assert advisor.classify(p, {"host": "api.github.com", "port": 443, "method": "POST",
+                                "path": "/zen"})[0] == "network_method"
+    assert advisor.classify(p, {"host": "api.github.com", "port": 443,
+                                "binary": "/opt/py/bin/python3.14"}) == ("binary", None)
+    # Allowed already: the sandbox runs an old policy. Drift, not advice.
+    assert advisor.classify(p, {"host": "api.github.com", "port": 443, "method": "GET",
+                                "binary": "/usr/bin/curl"}) is None
+    assert advisor.classify(p, {"host": "storage.googleapis.com", "port": 443}) is None
+
+
+def test_collapse_paths():
+    assert advisor.collapse_paths([]) == ["/**"]
+    assert advisor.collapse_paths(["/simple/requests/", "/simple/numpy/?x=1"]) == \
+        ["/simple/numpy/**", "/simple/requests/**"]
+    many = [f"/simple/p{i}/" for i in range(6)]
+    assert advisor.collapse_paths(many) == ["/simple/**"]
+    assert advisor.collapse_paths([f"/{c}/x" for c in "abcdef"]) == ["/**"]
+    assert advisor.collapse_paths(["/"]) == ["/**"]
+
+
+def test_flags():
+    base = {"kind": "network_allow", "host": "pypi.org", "port": 443, "methods": ["GET"],
+            "binaries": ["/usr/bin/curl"]}
+    assert advisor.flags(base, _p()) == []
+    assert advisor.flags({**base, "methods": ["POST"]}, _p()) == ["write_method"]
+    assert "raw_ip" in advisor.flags({**base, "host": "203.0.113.9"}, _p())
+    assert "non_standard_port" in advisor.flags({**base, "port": 8443}, _p())
+    assert "exfil_domain" in advisor.flags({**base, "host": "x.webhook.site"}, _p())
+    assert "binary" in advisor.flags({**base, "binaries": ["/tmp/evil"]}, _p())
+    assert "out_of_band" in advisor.flags({**base, "origin": "out_of_band"}, _p())
+
+
+def test_observe_real_openshell_denials(adv):
+    rt_store.save_profile("t1", "ra", _p())
+    events = [rt_events.normalize({"source": "openshell", "raw": l, "profile": "ra",
+                                   "agent_id": "bot"}) for l in _denied_lines()]
+    assert advisor.observe("t1", events + events) == 6
+    out = {a["kind"]: a for a in advisor.list_advice("t1", "ra", _p())["advice"]}
+    assert set(out) == {"network_allow", "network_method", "binary"}
+    ex = out["network_allow"]
+    assert ex["host"] == "example.com" and ex["hits"] == 2
+    assert ex["methods_observed"] is False and ex["proposal"]["methods"] == ["GET"]
+    assert ex["proposal"]["binaries"] == ["/usr/bin/curl"] and ex["flags"] == []
+    gh = out["network_method"]
+    assert gh["proposal"]["methods"] == ["POST"] and gh["proposal"]["paths"] == ["/zen/**"]
+    assert gh["flags"] == ["write_method"]
+    assert out["binary"]["flags"] == ["binary"]
+
+
+def test_observe_ignores_what_it_must(adv, monkeypatch):
+    rt_store.save_profile("t1", "ra", _p())
+    ignored = [
+        {"kind": "file", "decision": "deny", "profile": "ra", "detail": {"path": "/etc/shadow"}},
+        {"kind": "process", "decision": "deny", "profile": "ra", "detail": {"command": "nc x"}},
+        {**_net("pypi.org"), "decision": "allow"},
+        {**_net("pypi.org"), "profile": "no-such-profile"},
+        {**_net("pypi.org"), "profile": "", "agent_id": "unbound"},
+    ]
+    assert advisor.observe("t1", ignored) == 0
+    monkeypatch.setenv("SHIELD_PUBLIC_URL", "https://shield.acme.internal")
+    assert advisor.observe("t1", [_net("shield.acme.internal")]) == 0
+    monkeypatch.setenv("SHIELD_RUNTIME_ADVISOR", "off")
+    assert advisor.observe("t1", [_net("pypi.org")]) == 0
+
+
+def test_observe_binds_through_the_registry(adv):
+    from storage.tenant_store import kv_set
+    tenant = "adv" + uuid.uuid4().hex[:6]
+    rt_store.save_profile(tenant, "ra", _p())
+    kv_set(f"agents:{tenant}", {"bot": {"agent_id": "bot", "runtime_profile": "ra"}})
+    rc.invalidate(tenant)
+    assert advisor.observe(tenant, [{**_net("pypi.org"), "profile": ""}]) == 1
+    assert advisor.list_advice(tenant, "ra")["advice"][0]["agents"] == ["bot"]
+    rc.invalidate(tenant)
+
+
+def test_observe_l7_details_and_out_of_band(adv):
+    rt_store.save_profile("t1", "ra", _p())
+    advisor.observe("t1", [_net("pypi.org", method="GET", path="/simple/requests/"),
+                           _net("pypi.org", method="HEAD", path="/simple/numpy/")])
+    a = advisor.list_advice("t1", "ra")["advice"][0]
+    assert a["proposal"]["methods"] == ["GET", "HEAD"] and a["methods_observed"] is True
+    assert a["proposal"]["paths"] == ["/simple/numpy/**", "/simple/requests/**"]
+    oob = {**_net("evil.io"), "decision": "audit"}
+    oob["detail"]["out_of_band"] = True
+    advisor.observe("t1", [oob])
+    ev = next(x for x in advisor.list_advice("t1", "ra")["advice"] if x["host"] == "evil.io")
+    assert ev["origin"] == "out_of_band" and "out_of_band" in ev["flags"]
+
+
+def test_cap_counts_dropped(adv, monkeypatch):
+    monkeypatch.setenv("SHIELD_RUNTIME_ADVICE_MAX", "2")
+    rt_store.save_profile("t1", "ra", _p())
+    advisor.observe("t1", [_net(f"h{i}.example.com") for i in range(4)])
+    out = advisor.list_advice("t1", "ra")
+    assert len(out["advice"]) == 2 and out["dropped"] == 2
+    advisor.observe("t1", [_net("h0.example.com")])           # existing ones still count
+    assert max(a["hits"] for a in advisor.list_advice("t1", "ra")["advice"]) == 2
+
+
+def test_rejected_is_not_suggested_again(adv):
+    rt_store.save_profile("t1", "ra", _p())
+    advisor.observe("t1", [_net("pypi.org")])
+    aid = advisor.list_advice("t1", "ra")["advice"][0]["id"]
+    advisor.decide("t1", "ra", aid, status="rejected", actor="me", reason="not needed")
+    advisor.observe("t1", [_net("pypi.org")])
+    assert advisor.list_advice("t1", "ra")["advice"] == []
+    rejected = advisor.list_advice("t1", "ra", status="rejected")["advice"][0]
+    assert rejected["hits"] == 2 and rejected["reject_reason"] == "not needed"
+
+
+# ── advice API ──
+
+def _seed(client, *events):
+    client.put(f"{BASE}/ra", json=_p())
+    r = client.post("/v1/shield/runtime/events", json={"events": list(events)})
+    assert r.status_code == 202
+    return {a["host"] + ":" + a["kind"]: a
+            for a in client.get(f"{BASE}/ra/advice").json()["advice"]}
+
+
+def test_api_approve_writes_the_profile(client, adv):
+    lines = _denied_lines()
+    got = _seed(client, {"source": "openshell", "raw": lines[0], "profile": "ra",
+                         "agent_id": "bot"})
+    a = got["example.com:network_allow"]
+    r = client.post(f"{BASE}/ra/advice/{a['id']}/approve", json={})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["rule"] == {"host": "example.com", "port": 443, "methods": ["GET"],
+                            "paths": ["/**"], "binaries": ["/usr/bin/curl"]}
+    assert body["live_change"] == {"live": True, "sandbox_changed": True, "reasons": []}
+    allow = client.get(f"{BASE}/ra").json()["profile"]["network"]["allow"]
+    assert {"host": "example.com", "port": 443, "methods": ["GET"], "paths": ["/**"],
+            "description": f"approved from advisor {a['id']}"} in allow
+    hist = client.get(f"{BASE}/ra/history").json()["versions"]
+    assert hist[0]["reason"] == f"advice:{a['id']}"
+    assert client.post(f"{BASE}/ra/advice/{a['id']}/approve").status_code == 409
+    assert client.get(f"{BASE}/ra/advice").json()["advice"] == []
+    assert client.get(f"{BASE}/ra/advice?status=approved").json()["advice"][0]["id"] == a["id"]
+
+
+def test_api_flagged_needs_confirmation_and_can_be_narrowed(client, adv):
+    got = _seed(client, _net("api.github.com", method="POST", path="/repos/x/issues"))
+    a = got["api.github.com:network_method"]
+    r = client.post(f"{BASE}/ra/advice/{a['id']}/approve", json={})
+    assert r.status_code == 422 and r.json()["detail"]["flags"] == ["write_method"]
+    r = client.post(f"{BASE}/ra/advice/{a['id']}/approve",
+                    json={"confirm_flagged": True, "paths": ["/repos/x/issues"]})
+    assert r.status_code == 200, r.text
+    gh = [(e["methods"], e["paths"]) for e in r.json()["profile"]["network"]["allow"]
+          if e["host"] == "api.github.com"]
+    # A separate narrow entry: POST only where it was observed, never POST /**.
+    assert gh == [(["GET"], ["/**"]), (["POST"], ["/repos/x/issues"])]
+
+
+def test_api_reject_and_validation(client, adv):
+    got = _seed(client, _net("pypi.org"))
+    aid = got["pypi.org:network_allow"]["id"]
+    assert client.post(f"{BASE}/ra/advice/{aid}/approve",
+                       json={"methods": "GET"}).status_code == 422
+    assert client.post(f"{BASE}/ra/advice/adv_nope/approve").status_code == 404
+    r = client.post(f"{BASE}/ra/advice/{aid}/reject", json={"reason": "use the mirror"})
+    assert r.json()["status"] == "rejected"
+    assert client.post(f"{BASE}/ra/advice/{aid}/approve").status_code == 409
+    assert client.post(f"{BASE}/ra/advice/{aid}/reject").status_code == 409
+    assert client.get(f"{BASE}/ra/advice?status=bogus").status_code == 422
+    client.delete(f"{BASE}/ra")
+    client.put(f"{BASE}/ra", json=_p())
+    assert client.get(f"{BASE}/ra/advice?status=all").json()["advice"] == []   # forgotten
+
+
+def test_api_concurrent_approvals_lose_nothing(client, adv):
+    got = _seed(client, *[_net(f"h{i}.example.com") for i in range(4)])
+    ids = [a["id"] for a in got.values()]
+    codes = []
+    threads = [threading.Thread(target=lambda i=i: codes.append(
+        client.post(f"{BASE}/ra/advice/{i}/approve", json={}).status_code)) for i in ids]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(codes) == [200] * 4
+    hosts = {e["host"] for e in client.get(f"{BASE}/ra").json()["profile"]["network"]["allow"]}
+    assert {f"h{i}.example.com" for i in range(4)} <= hosts
+
+
+def test_api_follows_the_registry_write_gate(app, adv, monkeypatch):
+    from starlette.testclient import TestClient
+    from storage import tenant_store as ts
+    tid = "adv" + uuid.uuid4().hex[:6]
+    admin, runtime = "sk-av-" + uuid.uuid4().hex, "sk-avr-" + uuid.uuid4().hex
+    ts.create_tenant(tid, {"name": tid, "plan": "enterprise"}, api_keys=[admin])
+    ts.set_key_scope(admin, "admin")
+    ts.add_api_key(tid, runtime, scope="runtime")
+    ad, rt = (TestClient(app, headers={"X-API-Key": k}) for k in (admin, runtime))
+    ad.put(f"{BASE}/ra", json=_p())
+    rt.post("/v1/shield/runtime/events", json={"events": [_net("evil.example")]})  # agents can cause denials
+    aid = ad.get(f"{BASE}/ra/advice").json()["advice"][0]["id"]
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    assert rt.post(f"{BASE}/ra/advice/{aid}/approve", json={}).status_code == 403
+    assert rt.post(f"{BASE}/ra/advice/{aid}/reject", json={}).status_code == 403
+    assert ad.post(f"{BASE}/ra/advice/{aid}/approve", json={}).status_code == 200

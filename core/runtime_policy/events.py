@@ -317,4 +317,11 @@ async def ingest(tenant_id: str, events: list[dict], *, source_ip: str = "",
                     evidence="observed", path="runtime_event", session_id=ev["session_id"],
                     agent=ev["agent_id"], classification=cls)
                 flowed += bool(rec)
-    return {"audited": audited, "flow_records": flowed, "applied_reports": applied}
+    advised = 0
+    try:
+        from core.runtime_policy import advisor
+        advised = advisor.observe(tenant_id, events)
+    except Exception:
+        pass
+    return {"audited": audited, "flow_records": flowed, "applied_reports": applied,
+            "advised": advised}

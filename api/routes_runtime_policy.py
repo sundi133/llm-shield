@@ -233,6 +233,113 @@ async def put_runtime_profile(name: str, request: Request, profile: dict = Body(
             "live_change": live_change(previous, normalized) if previous is not None else None}
 
 
+# ── advisor (docs/specs/runtime-live-policy.md §5.2) ─────────────────
+
+
+def _advice_or_404(tenant_id: str, name: str, aid: str) -> dict:
+    from core.runtime_policy import advisor
+    if not aid.startswith("adv_") or len(aid) > 40:
+        raise HTTPException(status_code=404, detail="suggestion not found")
+    rec = advisor.get(tenant_id, name, aid)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="suggestion not found")
+    return rec
+
+
+@router.get("/{name}/advice")
+async def list_runtime_advice(name: str, request: Request,
+                              status: str = Query("pending",
+                                                  pattern="^(pending|approved|rejected|all)$")):
+    """Least-privilege suggestions built from what this profile's sandboxes
+    were denied. Each carries the rule it would add and its risk flags."""
+    from core.runtime_policy import advisor
+    tenant_id = get_tenant_from_request(request)
+    profile = _load(tenant_id, _name(name))
+    try:
+        out = advisor.list_advice(tenant_id, name, profile, status=status)
+    except Exception:
+        raise HTTPException(status_code=503, detail="suggestions unavailable (store down)")
+    return {"tenant_id": tenant_id, "name": name, "current_hash": profile_hash(profile),
+            "enabled": advisor.enabled(), **out}
+
+
+@router.post("/{name}/advice/{aid}/approve")
+async def approve_runtime_advice(name: str, aid: str, request: Request,
+                                 body: dict = Body(default={})):
+    """Write the suggestion into the profile. Body (all optional):
+    {methods: [...], paths: [...], confirm_flagged: true}. A flagged
+    suggestion (write methods, raw IP, odd port, new binary, known exfil
+    host, out-of-band origin) needs confirm_flagged."""
+    from core.runtime_policy import advisor
+    tenant_id = get_tenant_from_request(request)
+    _name(name)
+    require_registry_write(request, tenant_id, "approve a runtime policy suggestion")
+    methods, paths = body.get("methods"), body.get("paths")
+    for field, value in (("methods", methods), ("paths", paths)):
+        if value is not None and (not isinstance(value, list) or not value or
+                                  not all(isinstance(v, str) for v in value)):
+            raise HTTPException(status_code=422, detail=f"{field}: a non-empty list of strings")
+    try:
+        with advisor.profile_lock(tenant_id, name):
+            rec = _advice_or_404(tenant_id, name, aid)
+            if rec.get("status") != "pending":
+                raise HTTPException(status_code=409,
+                                    detail=f"suggestion already {rec.get('status')}")
+            previous = _load(tenant_id, name)
+            try:
+                updated, rule = advisor.apply_to_profile(previous, rec, methods=methods,
+                                                         paths=paths)
+            except ValueError as e:
+                raise HTTPException(status_code=409, detail=str(e))
+            risk = advisor.flags({**rec, **rule}, previous)
+            if risk and body.get("confirm_flagged") is not True:
+                raise HTTPException(status_code=422, detail={
+                    "message": "this suggestion is flagged; review it and approve with "
+                               "confirm_flagged=true", "flags": risk})
+            actor = _actor(request, tenant_id)
+            try:
+                normalized = rt_store.save_profile(tenant_id, name, updated, actor=actor,
+                                                   reason=f"advice:{aid}")
+            except ProfileError as e:
+                raise _invalid(e)
+            advisor.decide(tenant_id, name, aid, status="approved", actor=actor)
+    except advisor.Busy:
+        raise HTTPException(status_code=409, detail="the profile is being changed; retry")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail="suggestions unavailable (store down)")
+    phash = profile_hash(normalized)
+    runtime_check.invalidate(tenant_id)
+    _audit(request, "tenant_runtime_advice_approve", tenant_id,
+           {"profile": name, "advice": aid, "rule": rule, "flags": risk, "hash": phash})
+    return {"tenant_id": tenant_id, "name": name, "hash": phash, "profile": normalized,
+            "rule": rule, "flags": risk, "live_change": live_change(previous, normalized)}
+
+
+@router.post("/{name}/advice/{aid}/reject")
+async def reject_runtime_advice(name: str, aid: str, request: Request,
+                                body: dict = Body(default={})):
+    from core.runtime_policy import advisor
+    tenant_id = get_tenant_from_request(request)
+    _name(name)
+    require_registry_write(request, tenant_id, "reject a runtime policy suggestion")
+    reason = body.get("reason") if isinstance(body.get("reason"), str) else ""
+    try:
+        rec = _advice_or_404(tenant_id, name, aid)
+        if rec.get("status") != "pending":
+            raise HTTPException(status_code=409, detail=f"suggestion already {rec.get('status')}")
+        advisor.decide(tenant_id, name, aid, status="rejected",
+                       actor=_actor(request, tenant_id), reason=reason)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail="suggestions unavailable (store down)")
+    _audit(request, "tenant_runtime_advice_reject", tenant_id,
+           {"profile": name, "advice": aid, "reason": reason[:300]})
+    return {"tenant_id": tenant_id, "name": name, "id": aid, "status": "rejected"}
+
+
 @router.get("/{name}/history")
 async def runtime_profile_history(name: str, request: Request):
     """Saved versions, newest first. ``live_change`` on each says whether a
@@ -267,6 +374,11 @@ async def delete_runtime_profile(name: str, request: Request,
                        f"rebind them or pass force=true",
             "agents": agents})
     deleted = rt_store.delete_profile(tenant_id, name)
+    try:
+        from core.runtime_policy import advisor
+        advisor.forget(tenant_id, name)
+    except Exception:
+        pass
     runtime_check.invalidate(tenant_id)
     _audit(request, "tenant_delete_runtime_profile", tenant_id,
            {"profile": name, "deleted": deleted, "bound_agents": agents})

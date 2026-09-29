@@ -212,7 +212,7 @@ The profile is `event.profile`, or else the agent's registry binding
 | Deny event | Suggestion |
 |---|---|
 | network deny, host not in the profile | `network_allow`: host and port. Methods and paths come from observed L7 events; for an L4-only denial they default to `["GET"]`, marked `methods_observed: false` |
-| L7 deny on a host already allowed | `network_method`: merge the observed method into the existing allow entry |
+| L7 deny on a host already allowed | `network_method`: a **separate** allow entry with only the observed methods and paths. Merging into the existing entry would widen it (an entry is methods x paths, so POST merged into `GET /**` allows POST everywhere). OpenShell 0.0.80 allows a request if any policy does (verified: `GET /**` + `POST /zen` entries allowed POST /zen and denied POST /other) |
 | network deny on an allowed host by a binary not in `allow_binaries` | `binary`: always flagged |
 | file or process deny | none: shown as observed activity only |
 
@@ -304,6 +304,9 @@ Escape hatch: `SHIELD_RUNTIME_ATTEST_ACCEPT_APPLIED=0`.
   - Flags, including `exfil_domain` and `raw_ip`.
   - Explicit confirmation for flagged suggestions.
   - The portal lists which agents caused each suggestion.
+- **`exfil_domain` uses a built-in host list only.** xflow apps are keyed by
+  tool name, not hostname, so there is nothing to extend it with (a change
+  from the draft, found while building task 5).
   - No bulk "approve all" that includes flagged suggestions.
 
 ## 8. Packaging & deploy
