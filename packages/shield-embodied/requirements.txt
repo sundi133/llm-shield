@@ -1,0 +1,6 @@
+# Component-local, like shield-mavlink: nothing in the data or admin plane
+# installs this. cryptography is already a Shield root dependency; it is listed
+# so the package installs standalone on a robot's computer.
+cryptography>=42
+# shield-mavlink (packages/shield-mavlink) provides the bundle verifier and the
+# offline audit chain. From a Shield checkout it is found automatically.

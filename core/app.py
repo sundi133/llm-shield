@@ -43,6 +43,8 @@ from api.routes_tenant_self import router as tenant_self_router
 from api.routes_agentic_control_plane import router as tenant_agentic_router
 from api.routes_flow_control import router as flow_control_router
 from api.routes_runtime_policy import router as runtime_profiles_router, edge_router as runtime_bundle_router
+from api.routes_embodied import router as embodied_profiles_router, edge_router as embodied_bundle_router
+from api.routes_embodied_check import router as embodied_check_router
 from api.routes_runtime import router as runtime_events_router
 from api.routes_custom_policies import router as custom_policies_router
 from api.routes_policy_templates import router as policy_templates_router
@@ -133,6 +135,9 @@ def create_app() -> FastAPI:
     app.include_router(flow_control_router)
     app.include_router(runtime_profiles_router)
     app.include_router(runtime_bundle_router)
+    app.include_router(embodied_profiles_router)
+    app.include_router(embodied_bundle_router)
+    app.include_router(embodied_check_router)   # data plane only
     app.include_router(runtime_events_router)
     app.include_router(custom_policies_router)
     app.include_router(policy_templates_router)

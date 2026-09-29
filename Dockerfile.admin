@@ -116,6 +116,7 @@ COPY api/routes_identity_config.py api/
 COPY api/routes_flow_control.py api/
 # Infrastructure guardrails: runtime profiles + signed runtime bundles.
 COPY api/routes_runtime_policy.py api/
+COPY api/routes_embodied.py api/
 COPY api/routes_guardrail_metrics.py api/
 COPY api/routes_siem.py api/
 COPY api/routes_vault.py api/
@@ -144,6 +145,8 @@ COPY core/sigma_io.py core/
 COPY core/sigma_policy.py core/
 COPY core/xflow/ core/xflow/
 COPY core/runtime_policy/ core/runtime_policy/
+COPY core/embodied/ core/embodied/
+COPY embodied-bench/ embodied-bench/
 COPY core/sigma_translate.py core/
 COPY storage/rate_limiter.py storage/
 COPY storage/policy_store.py storage/

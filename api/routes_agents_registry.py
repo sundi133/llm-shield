@@ -195,6 +195,16 @@ def _validate_agent_body(body: dict) -> None:
                                 detail="runtime_profile must be a profile name "
                                        "(lowercase letters, digits, . _ -)")
 
+    # Embodied action guard (docs/specs/embodied-action-guard.md): the action
+    # profile this robot's proposed actions are checked against. None/"" = none.
+    ap = body.get("action_profile")
+    if ap not in (None, ""):
+        from core.embodied.model import valid_name as valid_action_profile_name
+        if not valid_action_profile_name(ap):
+            raise HTTPException(status_code=400,
+                                detail="action_profile must be a profile name "
+                                       "(lowercase letters, digits, . _ -)")
+
     status = body.get("status")
     if status is not None and status not in ("active", "inactive", "disabled"):
         raise HTTPException(status_code=400, detail="status must be active, inactive, or disabled")
@@ -286,6 +296,17 @@ def _require_known_runtime_profile(tenant_id: str, name) -> None:
     if name not in rtp_store.list_profiles(tenant_id):
         raise HTTPException(status_code=400, detail=f"unknown runtime_profile '{name}'; "
                             f"create it under /v1/tenant/me/runtime-profiles first")
+
+
+def _require_known_action_profile(tenant_id: str, name) -> None:
+    """A robot bound to a profile that does not exist would look guarded and
+    be guarded by nothing: refuse it."""
+    if name in (None, ""):
+        return
+    from core.embodied import store as em_store
+    if name not in em_store.list_profiles(tenant_id):
+        raise HTTPException(status_code=400, detail=f"unknown action_profile '{name}'; "
+                            f"create it under /v1/tenant/me/embodied-profiles first")
 
 
 def get_redis_data(key: str):
@@ -766,6 +787,7 @@ async def create_agent(request: Request):
         _validate_new_agent_id(agent_id, tenant_id)
         _validate_agent_body(body)
         _require_known_runtime_profile(tenant_id, body.get("runtime_profile"))
+        _require_known_action_profile(tenant_id, body.get("action_profile"))
 
         agents_key = f"agents:{tenant_id}"
         agents = get_redis_data(agents_key) or {}
@@ -809,6 +831,7 @@ async def create_agent(request: Request):
                 for e in (body.get("environments") or [])
             ],
             "runtime_profile": body.get("runtime_profile") or "",
+            "action_profile": body.get("action_profile") or "",
             "status": body.get("status", "active"),
             "created_at": now,
             "updated_at": now,
@@ -849,6 +872,7 @@ async def update_agent(agent_id: str, agent_data: dict, request: Request):
         _require_registry_write(request, tenant_id, "update an agent")
         _validate_agent_body(agent_data)
         _require_known_runtime_profile(tenant_id, agent_data.get("runtime_profile"))
+        _require_known_action_profile(tenant_id, agent_data.get("action_profile"))
 
         # Get existing agents
         agents_key = f"agents:{tenant_id}"

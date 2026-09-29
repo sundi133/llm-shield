@@ -2655,6 +2655,10 @@
           <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
           Runtime Profiles
         </div>
+        <div class="nav-item" data-tab="embodied-guard">
+          <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4a2 2 0 110 4 2 2 0 010-4zM8 21v-5l-2-3 2-4h8l2 4-2 3v5M9 13h6"/></svg>
+          Embodied Guard
+        </div>
         <div class="nav-item" data-tab="cross-app-flow">
           <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
           Cross-App Flow
@@ -4870,6 +4874,61 @@ if __name__ == "__main__":
         <div class="card-header"><div><div class="card-title">History</div>
           <div class="card-desc">The last 20 saved versions, and whether running sandboxes could take each change live or needed a restart.</div></div></div>
         <div id="rp-history" style="font-size:13px;" class="muted">Select a profile.</div>
+      </div>
+    </div>
+
+    <!-- ── Enterprise: Embodied Guard (robots, world/action models) ── -->
+    <div id="tab-embodied-guard" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Embodied Guard</div>
+        <div class="page-desc">Guardrails for robots driven by world and action models. A small deterministic guard runs on the robot between the model's proposed action and the controller, checks it against facts from the robot and the action profile below, and refuses what breaks a rule. It works offline and never reads the model's reasoning. It is not a certified safety function: the robot's safety-rated controller stays the last line of defence.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Action profiles</div>
+          <div class="card-desc">Bind a robot to a profile in the Agent Registry (field <code>action_profile</code>). Robots pull the profile as a signed bundle with <code>packages/shield-embodied</code>.</div></div></div>
+        <div id="em-list" style="font-size:13px;">Loading...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Edit profile</div></div></div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
+          <input id="em-name" type="text" placeholder="profile name, e.g. hospital-logistics" style="flex:1;min-width:220px;">
+          <button class="small" onclick="emTemplate()">Start from the benchmark profile</button>
+        </div>
+        <textarea id="em-editor" spellcheck="false" style="width:100%;min-height:300px;" placeholder="Pick a profile above or start from the benchmark profile"></textarea>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+          <button class="small" onclick="emValidate()">Validate</button>
+          <button class="primary small" onclick="emSave()">Save profile</button>
+          <button class="small danger" onclick="emDelete()">Delete</button>
+        </div>
+        <div id="em-msg" style="margin-top:0.75rem;font-size:13px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Try an action</div>
+          <div class="card-desc">What the guard would decide for one event under the selected profile. Nothing is recorded. <code>proposed_action</code> is what the model proposes; <code>context</code> is what the robot knows.</div></div></div>
+        <textarea id="em-event" spellcheck="false" style="width:100%;min-height:170px;">{
+  "stage": "plan",
+  "proposed_action": {"tool": "base_push", "params": {"velocity_mps": 1.4, "force_n": 210}},
+  "context": {"nearest_human_m": 1.1, "zone": "pick_aisle_3"}
+}</textarea>
+        <div style="margin-top:0.6rem;"><button class="primary small" onclick="emSimulate()">Check</button></div>
+        <div id="em-sim" style="margin-top:0.75rem;font-size:13px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Benchmark</div>
+          <div class="card-desc">Score the selected profile against embodied-bench: 19 cases that must be blocked or gated, and 7 paired benign controls that must pass. A profile that blocks every attack and its pair has learned to refuse work, not to enforce policy.</div></div></div>
+        <button class="small" onclick="emBenchmark()">Score the selected profile</button>
+        <div id="em-bench" style="margin-top:0.75rem;font-size:13px;" class="muted">Select a profile.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Fleet decisions</div>
+          <div class="card-desc">Recent refusals and approvals: from this server (<code>embodied_guard</code>) and uploaded from robots' audit logs (<code>runtime:action</code>).</div></div></div>
+        <button class="small" onclick="emFleet()">Refresh</button>
+        <div id="em-fleet" style="margin-top:0.75rem;font-size:13px;" class="muted">Not loaded.</div>
       </div>
     </div>
 
@@ -13962,6 +14021,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'siem') loadSIEMData();
     if (tab === 'cross-app-flow') xfLoad();
     if (tab === 'runtime-profiles') rpLoad();
+    if (tab === 'embodied-guard') emLoad();
     if (tab === 'guardrail-metrics') { loadGuardrailDashboard(); loadGuardrailMetrics(); }
     if (tab === 'board-report') loadBoardReport();
     if (tab === 'aibom') loadAibom();
@@ -16972,6 +17032,148 @@ function rpLoadVersion(i) {
   if (!v) return;
   document.getElementById('rp-editor').value = JSON.stringify(v.profile, null, 2);
   rpMsg('rp-msg', `Version ${rpShort(v.hash)} loaded into the editor. Validate to preview the effect on running sandboxes, then Save to roll back.`);
+}
+// ── Embodied Guard (robots, world/action models) ──────────
+// Spec: docs/specs/embodied-action-guard.md. Reuses xfEsc/xfErrors/xfMsg.
+let EM_OPEN = null;
+async function emApi(path, options = {}) {
+  options.headers = { ...(options.headers || {}), 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
+  const r = await fetch(`${BASE_URL}/v1/tenant/me/embodied-profiles${path}`, options);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = data.detail;
+    const err = new Error((d && d.message) || (typeof d === 'string' ? d : '') || `HTTP ${r.status}`);
+    err.errors = (d && d.errors) || (d && d.robots ? ['bound robots: ' + d.robots.join(', ')] : []);
+    throw err;
+  }
+  return data;
+}
+const EM_VERDICT = { pass: ['Allowed', 'var(--success, #15803d)'], block: ['Blocked', 'var(--danger, #b91c1c)'],
+                     require_approval: ['Needs approval', 'var(--warning, #b45309)'] };
+function emVerdict(v) { const [t, c] = EM_VERDICT[v] || [v, 'var(--text-dim)']; return `<b style="color:${c};">${xfEsc(t)}</b>`; }
+async function emLoad() {
+  try {
+    const d = await emApi('');
+    const names = Object.keys(d.profiles);
+    document.getElementById('em-list').innerHTML = !names.length
+      ? '<div class="muted">No action profiles yet. Start from the benchmark profile below.</div>'
+      : `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
+          <th style="padding:0.4rem 0.6rem;">Profile</th><th style="padding:0.4rem 0.6rem;">Hash</th><th style="padding:0.4rem 0.6rem;">Actions</th><th style="padding:0.4rem 0.6rem;">Robots</th><th style="padding:0.4rem 0.6rem;">Description</th></tr></thead>
+        <tbody>${names.map(n => { const p = d.profiles[n]; return `<tr style="cursor:pointer;" onclick="emOpen('${xfEsc(n)}')">
+          <td style="padding:0.4rem 0.6rem;"><b>${xfEsc(n)}</b></td>
+          <td style="padding:0.4rem 0.6rem;"><code>${p.error ? '<span style="color:var(--danger)">invalid</span>' : xfEsc((p.hash || '').slice(7, 19))}</code></td>
+          <td style="padding:0.4rem 0.6rem;">${p.error ? '-' : p.actions}</td>
+          <td style="padding:0.4rem 0.6rem;">${xfEsc((p.robots || []).join(', ') || '-')}</td>
+          <td style="padding:0.4rem 0.6rem;color:var(--text-dim);">${xfEsc(p.description || (p.error || []).join('; '))}</td></tr>`; }).join('')}</tbody></table>`;
+  } catch (e) { xfMsg('em-list', xfErrors(e), 'error'); }
+}
+async function emOpen(name) {
+  try {
+    const d = await emApi('/' + encodeURIComponent(name));
+    EM_OPEN = name;
+    document.getElementById('em-name').value = name;
+    document.getElementById('em-editor').value = JSON.stringify(d.profile, null, 2);
+    xfMsg('em-msg', `Loaded ${xfEsc(name)} (${xfEsc(d.hash.slice(0, 19))}...). Robots: ${xfEsc((d.robots || []).join(', ') || 'none')}.`);
+    document.getElementById('em-bench').innerHTML = 'Ready: click Score.';
+  } catch (e) { xfMsg('em-msg', xfErrors(e), 'error'); }
+}
+async function emTemplate() {
+  try {
+    const t = (await emApi('/templates')).templates['embodied-bench'];
+    if (!t) throw Object.assign(new Error('The benchmark profile is not installed on this server'), { errors: [] });
+    document.getElementById('em-editor').value = JSON.stringify(t, null, 2);
+    if (!document.getElementById('em-name').value) document.getElementById('em-name').value = 'embodied-bench';
+    xfMsg('em-msg', 'Benchmark profile loaded. Not saved yet.');
+  } catch (e) { xfMsg('em-msg', xfErrors(e), 'error'); }
+}
+function emEditor() {
+  try { return JSON.parse(document.getElementById('em-editor').value); }
+  catch (e) { throw Object.assign(new Error('Profile is not valid JSON: ' + e.message), { errors: [] }); }
+}
+function emName() {
+  const n = document.getElementById('em-name').value.trim();
+  if (!n) throw Object.assign(new Error('Enter a profile name'), { errors: [] });
+  return n;
+}
+async function emValidate() {
+  try {
+    const r = await emApi('/validate', { method: 'POST', body: JSON.stringify(emEditor()) });
+    if (r.valid) xfMsg('em-msg', 'Valid. Hash ' + xfEsc(r.hash.slice(0, 19)) + '...', 'ok');
+    else xfMsg('em-msg', xfErrors({ message: 'Invalid profile', errors: r.errors }), 'error');
+  } catch (e) { xfMsg('em-msg', xfErrors(e), 'error'); }
+}
+async function emSave() {
+  try {
+    const name = emName();
+    const r = await emApi('/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify(emEditor()) });
+    EM_OPEN = name;
+    document.getElementById('em-editor').value = JSON.stringify(r.profile, null, 2);
+    xfMsg('em-msg', `Saved. New hash ${xfEsc(r.hash.slice(0, 19))}...; robots pick it up on their next bundle sync.`, 'ok');
+    showToast('Action profile saved', 'success');
+    emLoad();
+  } catch (e) { xfMsg('em-msg', xfErrors(e), 'error'); }
+}
+async function emDelete() {
+  try {
+    const name = emName();
+    if (!confirm(`Delete action profile ${name}?`)) return;
+    try { await emApi('/' + encodeURIComponent(name), { method: 'DELETE' }); }
+    catch (e) {
+      if (!(e.errors || []).length || !confirm(e.message + '\n\nDelete anyway? Those robots lose their policy and run degraded.')) throw e;
+      await emApi('/' + encodeURIComponent(name) + '?force=true', { method: 'DELETE' });
+    }
+    EM_OPEN = null;
+    xfMsg('em-msg', 'Deleted.', 'ok');
+    emLoad();
+  } catch (e) { xfMsg('em-msg', xfErrors(e), 'error'); }
+}
+function emRails(rails) {
+  return (rails || []).map(r => `<li><code>${xfEsc(r.rail)}</code> ${emVerdict(r.verdict)}: ${xfEsc(r.message)} <span style="color:var(--text-dim);">(${xfEsc(r.reasons.join(', '))})</span></li>`).join('');
+}
+async function emSimulate() {
+  try {
+    const name = EM_OPEN || emName();
+    let ev;
+    try { ev = JSON.parse(document.getElementById('em-event').value); }
+    catch (e) { throw Object.assign(new Error('Event is not valid JSON: ' + e.message), { errors: [] }); }
+    const r = await emApi('/' + encodeURIComponent(name) + '/simulate', { method: 'POST', body: JSON.stringify(ev) });
+    document.getElementById('em-sim').innerHTML = `${emVerdict(r.verdict)}${r.rail ? ` by <code>${xfEsc(r.rail)}</code>` : ''}: ${xfEsc(r.message)}
+      <span style="color:var(--text-dim);">(${r.evaluated_us} us, profile ${xfEsc(name)})</span>
+      ${(r.rails || []).length ? `<ul style="margin:0.4rem 0 0 1.1rem;">${emRails(r.rails)}</ul>` : ''}`;
+  } catch (e) { xfMsg('em-sim', xfErrors(e), 'error'); }
+}
+async function emBenchmark() {
+  try {
+    const name = EM_OPEN || emName();
+    const b = await emApi('/' + encodeURIComponent(name) + '/benchmark');
+    const bad = b.results.filter(r => !r.verdict_ok || !r.rail_ok);
+    document.getElementById('em-bench').innerHTML = `
+      <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:0.6rem;">
+        <div><div style="font-size:22px;font-weight:bold;">${b.caught}/${b.attack}</div><div class="muted">caught</div></div>
+        <div><div style="font-size:22px;font-weight:bold;">${b.correct_rail}/${b.attack}</div><div class="muted">correct rail</div></div>
+        <div><div style="font-size:22px;font-weight:bold;color:${b.false_positives ? 'var(--danger, #b91c1c)' : 'var(--success, #15803d)'};">${b.false_positives}/${b.benign}</div><div class="muted">false positives</div></div>
+      </div>
+      ${bad.length ? `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);"><th style="padding:0.35rem 0.5rem;">Case</th><th style="padding:0.35rem 0.5rem;">Class</th><th style="padding:0.35rem 0.5rem;">Expected</th><th style="padding:0.35rem 0.5rem;">Got</th></tr></thead><tbody>
+        ${bad.map(r => `<tr><td style="padding:0.35rem 0.5rem;"><code>${xfEsc(r.id)}</code></td><td style="padding:0.35rem 0.5rem;">${xfEsc(r.class)}</td>
+          <td style="padding:0.35rem 0.5rem;">${emVerdict(r.expected_verdict)} ${r.expected_rail ? '<code>' + xfEsc(r.expected_rail) + '</code>' : ''}</td>
+          <td style="padding:0.35rem 0.5rem;">${emVerdict(r.verdict)} ${r.rail ? '<code>' + xfEsc(r.rail) + '</code>' : ''}</td></tr>`).join('')}</tbody></table>` : '<div style="color:var(--success, #15803d);">Every case decided as expected.</div>'}`;
+  } catch (e) { xfMsg('em-bench', xfErrors(e), 'error'); }
+}
+async function emFleet() {
+  try {
+    const tid = (TENANT_INFO && TENANT_INFO.tenant_id) || 'default';
+    const [server, robots] = await Promise.all([
+      apiCall(`/v1/shield/decisions/${tid}?limit=25&guardrail=embodied_guard`),
+      apiCall(`/v1/shield/decisions/${tid}?limit=25&guardrail=runtime_boundary&tool_name=runtime:action`)]);
+    const rows = [...(server.decisions || []).map(d => ({ ...d, from: 'server' })),
+                  ...(robots.decisions || []).map(d => ({ ...d, from: 'robot' }))]
+      .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp))).slice(0, 30);
+    document.getElementById('em-fleet').innerHTML = !rows.length ? 'No embodied decisions yet.' :
+      `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);"><th style="padding:0.35rem 0.5rem;">When</th><th style="padding:0.35rem 0.5rem;">From</th><th style="padding:0.35rem 0.5rem;">Robot</th><th style="padding:0.35rem 0.5rem;">Action</th><th style="padding:0.35rem 0.5rem;">Why</th></tr></thead><tbody>
+      ${rows.map(d => `<tr><td style="padding:0.35rem 0.5rem;">${xfEsc(new Date(d.timestamp).toLocaleString())}</td><td style="padding:0.35rem 0.5rem;">${xfEsc(d.from)}</td>
+        <td style="padding:0.35rem 0.5rem;">${xfEsc(d.agent_key || '-')}</td><td style="padding:0.35rem 0.5rem;"><span class="badge ${d.action === 'block' ? 'badge-danger' : 'badge-warn'}">${xfEsc(d.action)}</span></td>
+        <td style="padding:0.35rem 0.5rem;color:var(--text-dim);">${xfEsc(d.reason || '')}</td></tr>`).join('')}</tbody></table>`;
+  } catch (e) { xfMsg('em-fleet', xfErrors(e), 'error'); }
 }
 </script>
 </body>
