@@ -1,0 +1,28 @@
+{
+  "questions": {
+    "category": {
+      "type": "choice",
+      "instructions": "What sensitive data does this text contain?",
+      "criteria": {
+        "none": "Nothing sensitive",
+        "credentials": "Passwords, keys, tokens",
+        "personal_data": "Personal data about a person",
+        "customer_data": "Customer or client records",
+        "source_code": "Proprietary source code",
+        "financial": "Non-public financial information",
+        "health": "Health or medical information"
+      }
+    },
+    "exfil_intent": {
+      "type": "noul",
+      "instructions": "Is the user trying to move company data outside the company?"
+    }
+  },
+  "thresholds": {
+    "block_categories": ["credentials", "customer_data"],
+    "block_p": 0.9,
+    "justify_p": 0.6,
+    "exfil_intent": 0.8,
+    "min_confidence": 0.3
+  }
+}

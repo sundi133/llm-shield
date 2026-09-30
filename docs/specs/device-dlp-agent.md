@@ -183,6 +183,15 @@ chooses per host: `block` or `allow_and_log`.
    The model says *what kind* of data, not *where*, so model hits cannot be
    redacted, only blocked or justified.
 
+   **Updated by task 1 (measured, `dlp-bench/reports/SUMMARY.md`):** the signal
+   is the probability mass away from `none` (1 - P(none)), labelled by the most
+   likely category, not the chosen option's probability. The default questions
+   ask whether the text *contains actual* data (`dlp-bench/questions_v2.json`);
+   topic-style wording gave 46 % false positives. Each category also carries
+   its own enforcement (`justify` or `monitor`): on Tev1 0.8B, source code,
+   financial data and exfiltration intent are monitor-only until a model
+   passes them.
+
 **Justify** without holding the request open: the request is blocked with a
 notice ("This looks like customer data. To send it anyway, give a reason"). The
 user answers in the agent's menu-bar or tray app; the agent then allows the
