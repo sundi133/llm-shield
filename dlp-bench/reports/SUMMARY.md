@@ -43,11 +43,12 @@ every answer in the matching `.json`.
    *chooses* "none" on real data while moving probability away from it. The
    harness and spec now use the mass away from "none", labelled by the most
    likely category (spec §3.2 updated).
-4. **Latency is dominated by the question text.** The longer, precise wording
-   roughly doubles latency (p50 345 to 659 ms), because every call re-reads the
-   instructions and criteria (about 600 input tokens). Nimble's published 91 ms
-   was a 9B model on an M5 Max; the 0.8B on an M3 is 3 to 7 times slower than
-   that figure on our questions.
+4. **Latency is not driven by the question text; it tracks machine load.**
+   (Corrected by the follow-up below.) The first full runs suggested the longer
+   wording doubled latency; an interleaved measurement showed that was
+   run-to-run variance. On a quiet M3 the 0.8B answers in about 350 ms at p50;
+   under a busy desktop's load, about 580 ms at p50 and 1.3 s at p95, whatever
+   the wording. Nimble's published 91 ms was a 9B model on an M5 Max.
 5. **Exfiltration intent is weak** (0.31 recall at the chosen threshold). It
    should not drive blocking.
 
@@ -81,3 +82,32 @@ needs careful wording and per-category limits.
 - Latency is sequential, one request at a time, model warm.
 - The Tev1 weights' licence is not stated on the model page (only the dataset
   builders and training scripts are MIT). Confirm before shipping to customers.
+
+## Follow-up: shorter wording (2026-09-30)
+
+Tried because the first runs suggested wording drove latency. Two shorter
+wordings with the same meaning (`questions_v3a.json`, `questions_v3b.json`),
+compared on the **calibration split only** (the test split was not touched):
+
+| Wording | Input tokens | Recall at <= 3 % false positives (macro) | Exfil recall |
+|---|---|---|---|
+| v2 (current default) | 807 | **0.69** | 0.14 |
+| v3a (short) | 609 | 0.24 | 0.00 |
+| v3b (shortest) | 555 | 0.37 | 0.00 |
+
+Latency, interleaved over the same 30 prompts for three rounds (90 calls per
+wording, randomised order, load average 8 to 11):
+
+| Wording | p50 | p95 |
+|---|---|---|
+| topic (v1) | 590 ms | 1338 ms |
+| v2 | 582 ms | 1342 ms |
+| v3a | 595 ms | 1294 ms |
+| v3b | 562 ms | 1296 ms |
+
+**Result:** shorter wording loses most of the accuracy (the explicit "not a
+question, example, template or fiction" criteria are what separate real data
+from look-alikes) and saves no measurable time. **v2 stays the default.** The
+latency gate is a property of the hardware and its load, not the question: on an
+M3 the 0.8B model runs after sending (monitor), rules block inline, as the spec
+already provides.

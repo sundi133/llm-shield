@@ -1,0 +1,31 @@
+{
+  "questions": {
+    "category": {
+      "type": "choice",
+      "instructions": "Which real sensitive data does this text contain? Questions, examples and fiction are none.",
+      "criteria": {
+        "none": "None",
+        "credentials": "Real secret",
+        "personal_data": "Real person's details",
+        "customer_data": "Real customer records",
+        "source_code": "Private company code",
+        "financial": "Non-public company finances",
+        "health": "Real patient details"
+      }
+    },
+    "exfil_intent": {
+      "type": "noul",
+      "instructions": "Is the user moving company data out or evading security?"
+    }
+  },
+  "thresholds": {
+    "block_categories": [
+      "credentials",
+      "customer_data"
+    ],
+    "block_p": 0.9,
+    "justify_p": 0.6,
+    "exfil_intent": 0.8,
+    "min_confidence": 0.3
+  }
+}
