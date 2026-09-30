@@ -91,6 +91,7 @@ class Agent:
         self.proxy_port: Optional[int] = None
         self.ca_dir = Path(cfg.state_dir) / "ca"
         self.ca_trust_pending = False
+        self.ca_error = ""
         # Called with the CA certificate path when a new CA is issued; the
         # installer (task 6) sets it to add the CA to the system trust store.
         self.on_ca_rotated = None
@@ -112,8 +113,43 @@ class Agent:
         if self.proxy is not None and self.engine.ai_hosts != before:
             self._ensure_ca(restart=True)
 
+    def ca_valid(self) -> bool:
+        """Whether the proxy holds a CA it may intercept with right now."""
+        if self.cfg.ca_mode != "tenant":
+            return True
+        from votal_device_agent import ca
+        return ca.status(self.ca_dir, self.engine.ai_hosts, self.store.now()) in ("ok", "renew")
+
+    def _ensure_tenant_ca(self, restart: bool) -> bool:
+        """Tenant mode: renew this laptop's intermediate when due (daily)."""
+        from votal_device_agent import ca
+        state = ca.status(self.ca_dir, self.engine.ai_hosts, self.store.now())
+        if state == "ok" or self.creds is None:
+            return False
+        code, body = sync.request_ca(self.cfg, self.creds,
+                                     ca.csr_pem(self.ca_dir, self.creds.device_id), http=self.http)
+        if code != 200:
+            self.ca_error = f"HTTP {code}: {str(body.get('detail', ''))[:200]}"
+            return False
+        try:
+            ca.install_intermediate(self.ca_dir, body["certificate_pem"], body["root_pem"])
+        except (KeyError, ValueError) as e:
+            self.ca_error = f"refused the issued CA: {e}"
+            return False
+        self.ca_error = ""
+        self.ca_trust_pending = False          # the root is trusted through MDM
+        if restart and self.proxy is not None:
+            self.proxy.stop()
+            self._start_proxy()
+        elif restart and self.proxy is None and self.local_api is not None \
+                and self.cfg.capture == "proxy":
+            self._start_proxy()                # first intermediate: capture can begin
+        return True
+
     def _ensure_ca(self, restart: bool = False) -> bool:
         """A CA constrained to the current AI hosts; a new one when they grew."""
+        if self.cfg.ca_mode == "tenant":
+            return self._ensure_tenant_ca(restart)
         from votal_device_agent import ca
         rotated = ca.ensure_ca(self.ca_dir, self.engine.ai_hosts,
                                device_name=self.creds.device_id if self.creds else "")
@@ -137,10 +173,18 @@ class Agent:
             return None
         base = f"http://127.0.0.1:{self.local_api.server.server_address[1]}" if self.local_api \
             else ""
+        if not self.ca_valid() and self.cfg.ca_mode == "tenant":
+            # Never let mitmproxy start without our CA: it would invent its own,
+            # unconstrained and trusted by nobody.
+            return None
         self.proxy = LocalProxy(self.engine, port=self.cfg.proxy_port, confdir=self.ca_dir,
-                                justify_base=base)
+                                justify_base=base, intercept_ok=self.ca_valid)
         self.proxy_port = self.proxy.start()
         return self.proxy_port
+
+    def _ca_not_after(self) -> Optional[int]:
+        from votal_device_agent import ca
+        return ca.not_after(self.ca_dir)
 
     def pac(self) -> Optional[str]:
         if self.proxy_port is None:
@@ -188,6 +232,8 @@ class Agent:
             out["model"] = self.check_model()
         else:
             self.reload()                   # an expiry or grace boundary may have passed
+        if self.cfg.capture == "proxy" and self.cfg.ca_mode == "tenant":
+            self._ensure_tenant_ca(restart=self.local_api is not None)
         out["audit"] = sync.push_audit(self.cfg, self.creds, self.audit, http=self.http)
         out["heartbeat"] = sync.heartbeat(self.cfg, self.creds, self.heartbeat_payload(),
                                           self.store, http=self.http)
@@ -259,5 +305,7 @@ class Agent:
                           "p95_ms": self.model.gate.p95(), "gate_ms": self.model.gate.gate_ms},
                 "counters": dict(self.engine.counters), "last_sync": self.last,
                 "capture": {"proxy_port": self.proxy_port, "ca_trust_pending": self.ca_trust_pending,
+                            "ca_mode": self.cfg.ca_mode, "ca_valid": self.ca_valid(),
+                            "ca_not_after": self._ca_not_after(), "ca_error": self.ca_error,
                             "ai_hosts": list(self.engine.ai_hosts)},
                 "audit": self.audit.verify().detail}

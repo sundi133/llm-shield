@@ -20,7 +20,7 @@ installers (task 6) come next.
 | Sync | `sync.py` | Enroll, pull the bundle, push the audit log as `dlp` events, send heartbeats. Offline is fine. |
 | Loopback API | `local_api.py` | `127.0.0.1` only. Requires the per-install secret, the loopback Host header and no web Origin. Also serves `/proxy.pac` and the reason page `/justify/{token}`. |
 | Local proxy | `proxy.py`, `capture.py`, `ws.py` | mitmproxy on `127.0.0.1:47824`. Intercepts TLS for AI hosts only and tunnels everything else untouched. Reads bodies with the ICAP adapter's decoder and extractor. Redacts by rewriting the JSON, and blocks with the provider's own error shape. |
-| Device CA | `ca.py` | Made on the laptop and never leaves it. Path length 0, and name-constrained to the AI hosts, so a stolen key cannot impersonate any other site. |
+| Device CA | `ca.py` | Name-constrained to the AI hosts, so a stolen key cannot impersonate any other site. Windows (`ca_mode` device): a CA made and trusted on the laptop. macOS (`ca_mode` tenant): a 7-day intermediate, renewed daily, under the tenant root that MDM trusts. The laptop's key never leaves it. |
 | Browser | `native_host.py`, `examples/browser-extension/agent_client.js` | The extension gets the port and secret over native messaging and asks the agent. It falls back to Shield when there is no agent. |
 
 ## Run it (from a Shield checkout)

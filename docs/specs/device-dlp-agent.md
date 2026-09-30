@@ -534,8 +534,8 @@ extension and the loopback reason page (task 5), which cover the same need.
 *The prototype `extension/` (v0.1.0, unpublished) is unchanged.* Only the
 published extension (`examples/browser-extension`) asks the agent.
 
-**PROPOSED AMENDMENT, not yet approved: certificate trust on macOS.** Found in
-task 6 and confirmed in Apple's developer forums. Since Big Sur, a root process
+**AMENDMENT, approved and built (commit after d055198): certificate trust on
+macOS.** Found in task 6 and confirmed in Apple's developer forums. Since Big Sur, a root process
 (a pkg postinstall or a LaunchDaemon) can add a certificate but cannot mark it
 trusted without interactive authorization. Only an MDM profile
 (`com.apple.security.root`) can do that silently. A profile is fleet-wide, so
@@ -562,6 +562,41 @@ What changes:
 - **New server work:** one server secret (`SHIELD_DEVICE_CA_PRIVATE_KEY`) and
   one endpoint (`POST /v1/devices/ca`, device key).
 - **Windows can stay per-device.**
+
+*As built*
+- **One master secret, one root per tenant.** A single root for the whole
+  deployment would have let a laptop key stolen at one tenant be used against
+  another tenant's laptops. So the secret is `SHIELD_DEVICE_CA_MASTER_KEY`,
+  and each tenant's root key is derived from it with HKDF over the tenant id.
+  No root key is stored. The public root certificate is kept at
+  `device_ca_root:{tenant}`, so the MDM profile's fingerprint stays stable.
+- **Root:** ECDSA P-256, path length 1, and critical name constraints limited
+  to the tenant's AI hosts. It is reissued with the same key when the policy
+  outgrows it (`POST .../root-ca/reissue`); the portal warns when that is
+  needed. If the master key changes, the stored root is reported (409) rather
+  than used.
+- **Intermediate:** each laptop generates an RSA 2048 key and sends a CSR to
+  `POST /v1/devices/ca` (device key; a fourth entry in `DEVICE_PATHS`). The
+  CSR signature and key type are checked. The certificate has path length 0,
+  constraints equal to the policy hosts that the root also covers, and a
+  7-day validity; it is renewed when less than 6 days remain.
+- **Proxy:** `mitmproxy-ca.pem` holds the key, the intermediate and the root,
+  so the full chain is served. The proxy never starts without a valid
+  intermediate: mitmproxy would otherwise make its own, unconstrained CA.
+  - With an expired intermediate and `fail_mode` allow, AI hosts are
+    tunnelled and a record is kept.
+  - With `fail_mode` block, they stay intercepted, so connections fail.
+- **Mode selection:** `ca_mode` is `tenant` by default on macOS and `device`
+  on Windows (MDM key `CAMode`).
+- **Downloads:** the portal offers `root-ca.mobileconfig`
+  (com.apple.security.root).
+- **Verified on this Mac against real host names:**
+  - Real curl, trusting only the tenant root, verified the 3-level chain for
+    api.openai.com, api.anthropic.com, chatgpt.com and claude.ai.
+  - macOS `security verify-cert` accepted the served chain.
+  - It **refused** leaf certificates for bank.example and mail.google.com
+    forged with the laptop's own intermediate key, so Apple enforces the name
+    constraints.
 
 ## 9. Failure modes & edge cases
 

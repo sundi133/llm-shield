@@ -52,6 +52,10 @@ class AgentConfig:
     local_port: int = 47823
     proxy_port: int = 47824
     capture: str = "proxy"                # proxy | off (the extension still asks the agent)
+    # device: a self-signed CA made on the laptop (Windows trusts it silently).
+    # tenant: an intermediate under the tenant root that MDM trusts (macOS,
+    # where only an MDM profile can trust a certificate silently).
+    ca_mode: str = "device"
     fallback_path: str = ""
     model_inline: str = "auto"            # auto | always | never
 
@@ -66,6 +70,8 @@ class AgentConfig:
             raise ValueError("model_inline: auto, always or never")
         if cfg.capture not in ("proxy", "off"):
             raise ValueError("capture: proxy or off")
+        if cfg.ca_mode not in ("device", "tenant"):
+            raise ValueError("ca_mode: device or tenant")
         cfg.pinned_public_key = key
         return cfg
 
@@ -196,6 +202,21 @@ def push_audit(cfg: AgentConfig, creds: Credentials, audit: AuditLog, *, batch: 
     tmp.write_text(json.dumps({"seq": pending[-1]["seq"]}))
     os.replace(tmp, mark)
     return len(pending)
+
+
+def request_ca(cfg: AgentConfig, creds: Credentials, csr_pem: str, *,
+               http: Http = _urllib) -> tuple[int, dict]:
+    """(status, body): this laptop's 7-day intermediate CA, for a CSR."""
+    try:
+        status, _h, body = http("POST", f"{cfg.shield_url.rstrip('/')}/v1/devices/ca",
+                                {"X-API-Key": creds.api_key, "Content-Type": "application/json"},
+                                json.dumps({"csr_pem": csr_pem}).encode())
+    except OSError as e:
+        return 0, {"detail": f"shield unreachable ({e})"}
+    try:
+        return status, json.loads(body or b"{}")
+    except ValueError:
+        return status, {}
 
 
 def heartbeat(cfg: AgentConfig, creds: Credentials, payload: dict, store: TrustStore, *,

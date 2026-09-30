@@ -23,6 +23,10 @@ with sensitive values masked are opt-in.
 - A Shield deployment with policy-bundle signing configured
   (`SHIELD_RUNTIME_BUNDLE_PRIVATE_KEY`). Without it laptops do not enroll,
   because they only accept signed policy.
+- For Macs, a device CA secret: `SHIELD_DEVICE_CA_MASTER_KEY` (64 hex
+  characters, for example from `openssl rand -hex 32`). Keep it with your other
+  Shield secrets. Each tenant's root certificate is derived from it, so tenants
+  never share one.
 - An MDM: Jamf Pro, Kandji or Intune.
 - Laptops:
   - macOS 13 or later, or Windows 10 or 11 (x64).
@@ -60,9 +64,9 @@ Files are in `packages/votal-device-agent/packaging/macos/`.
 4. **Browser extension (optional).** Edit
    `mdm/votal-device-agent-chrome.mobileconfig` with your extension id, and add
    the same id to `ExtensionIDs` in the settings profile.
-5. **Trust for the agent's certificate.** macOS allows a certificate to be
-   trusted silently only through an MDM profile. See "Certificate trust on
-   macOS" below.
+5. **Root certificate profile.** In the portal's MDM settings, click
+   **Download macOS profile**, then upload it the same way. It lets the agent
+   inspect AI services only. See "Certificate trust on macOS" below.
 
 Order does not matter. The agent waits for its settings and enrolls when they
 arrive.
@@ -132,22 +136,30 @@ By default, even in enforce mode:
 
 ## Certificate trust on macOS
 
-The agent inspects AI traffic with a certificate authority it creates on the
-laptop. That CA is limited to the AI services in your policy, so it cannot be
-used against any other site. Since macOS 11, only an MDM profile can mark a
-certificate as trusted without a user's approval. A certificate created on
-the laptop cannot be put in a fleet-wide profile.
+To inspect AI traffic, the agent needs a certificate that apps trust. Since
+macOS 11, only an MDM profile can make a certificate trusted without the user
+approving it. So Macs work like this:
 
-Until this is resolved in a later release, choose one of these:
+- **Your tenant has one root certificate.** You upload it once, as the
+  profile from the portal. It is limited to the AI services in your policy:
+  macOS refuses it for any other site.
+- **Each Mac has its own certificate under that root.** It is valid for 7 days
+  and renewed daily. The Mac creates its key and never sends it anywhere. A
+  device you revoke gets no renewal, so its certificate stops working within
+  a week.
+- **If a Mac cannot renew for more than 7 days** (for example, long offline),
+  AI traffic passes uninspected and this is recorded. If your policy's
+  `fail_mode` is `block`, AI services are unreachable instead, until it
+  renews.
 
-- Use the browser extension for web AI tools. It does not need the
-  certificate, and works today.
-- Have the user approve the certificate once. Run
-  `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "/Library/Application Support/Votal/DeviceAgent/state/ca/mitmproxy-ca-cert.pem"`
-  in a session where they can authenticate.
+If you add an AI service to the policy that the root does not cover, the portal
+says so. Click **Reissue root** and upload the new profile. Until you do, that
+service is not inspected on Macs.
 
-`verify` reports "device CA trusted: FAIL" until one of these is done. Apps
-that do not trust the certificate are handled by the policy's
+Windows needs none of this. The agent trusts its own certificate on the laptop
+itself.
+
+Apps that refuse the certificate are handled by the policy's
 `pinned_host_action`: logged and passed through (the default), or blocked.
 
 ## Command-line tools and SDKs
@@ -179,7 +191,8 @@ device in the portal so its key stops working immediately.
 | policy bundle: fallback | The laptop cannot reach Shield, or the pinned key is wrong. The laptop still redacts known secrets. |
 | decision model: model_unavailable | The local model is still downloading, or failed to. Check `/Library/Logs/Votal/ollama.log` (Mac) or `C:\ProgramData\Votal\DeviceAgent\logs\ollama.log` (Windows). |
 | decision model: model_mismatch | The model on the laptop is not the one your policy pins. The agent removes it and downloads it again. |
-| local proxy: FAIL | The agent could not start its proxy. Check the agent log. |
+| local proxy: FAIL | The agent could not start its proxy. On a Mac, it starts once the Mac has its certificate; check that the device is enrolled and can reach Shield. Otherwise check the agent log. |
+| device CA trusted: FAIL | On a Mac, the root certificate profile is missing, or was replaced: upload the current one from the portal. |
 
 ## Privacy
 

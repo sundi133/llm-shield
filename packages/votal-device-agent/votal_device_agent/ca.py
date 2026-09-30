@@ -104,3 +104,75 @@ def fingerprint(ca_dir: str | Path) -> str:
         return json.loads((Path(ca_dir) / META_FILE).read_text()).get("fingerprint_sha256", "")
     except (OSError, ValueError):
         return ""
+
+
+# ── tenant mode (macOS): an intermediate under the tenant root in MDM ─────
+# Spec §3.1, task 6 amendment. The root is trusted by an MDM profile; this
+# laptop holds only its own intermediate (path length 0, 7 days), whose key it
+# generated and never sends anywhere.
+
+INTER_KEY = "intermediate.key"
+RENEW_BEFORE_S = 6 * 86400          # renew once a day in a 7-day validity
+
+
+def csr_pem(ca_dir: str | Path, device_id: str) -> str:
+    """A CSR for this laptop's intermediate; the key is made once and kept."""
+    ca_dir = Path(ca_dir)
+    ca_dir.mkdir(parents=True, exist_ok=True)
+    key_path = ca_dir / INTER_KEY
+    if key_path.exists():
+        key = serialization.load_pem_private_key(key_path.read_bytes(), None)
+    else:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        _write_private(key_path, key.private_bytes(serialization.Encoding.PEM,
+                                                   serialization.PrivateFormat.TraditionalOpenSSL,
+                                                   serialization.NoEncryption()))
+    csr = (x509.CertificateSigningRequestBuilder()
+           .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,
+                                                       f"Votal Device DLP CA ({device_id})"[:64])]))
+           .sign(key, hashes.SHA256()))
+    return csr.public_bytes(serialization.Encoding.PEM).decode()
+
+
+def install_intermediate(ca_dir: str | Path, certificate_pem: str, root_pem: str) -> None:
+    """Write mitmproxy's CA file as key + intermediate + root (it serves the
+    chain), and the root as the certificate clients trust."""
+    ca_dir = Path(ca_dir)
+    key_pem = (ca_dir / INTER_KEY).read_bytes()
+    cert = x509.load_pem_x509_certificate(certificate_pem.encode())
+    root = x509.load_pem_x509_certificate(root_pem.encode())
+    key = serialization.load_pem_private_key(key_pem, None)
+    pub = serialization.PublicFormat.SubjectPublicKeyInfo
+    if cert.public_key().public_bytes(serialization.Encoding.DER, pub) != \
+            key.public_key().public_bytes(serialization.Encoding.DER, pub):
+        raise ValueError("the issued certificate is not for this laptop's key")
+    nc = cert.extensions.get_extension_for_class(x509.NameConstraints).value
+    _write_private(ca_dir / CA_FILE, key_pem + certificate_pem.encode() + root_pem.encode())
+    (ca_dir / CERT_FILE).write_bytes(root_pem.encode())
+    (ca_dir / META_FILE).write_text(json.dumps({
+        "mode": "tenant", "hosts": sorted(n.value for n in nc.permitted_subtrees),
+        "fingerprint_sha256": root.fingerprint(hashes.SHA256()).hex(),
+        "not_after": int(cert.not_valid_after_utc.timestamp())}))
+
+
+def status(ca_dir: str | Path, hosts: Iterable[str], now: float) -> str:
+    """ok, renew (due within a day of the 7), expired, or missing."""
+    try:
+        meta = json.loads((Path(ca_dir) / META_FILE).read_text())
+    except (OSError, ValueError):
+        return "missing"
+    if meta.get("mode") != "tenant" or not (Path(ca_dir) / CA_FILE).exists():
+        return "missing"
+    left = int(meta.get("not_after", 0)) - now
+    if left <= 0:
+        return "expired"
+    if left < RENEW_BEFORE_S or not covers(ca_dir, hosts):
+        return "renew"
+    return "ok"
+
+
+def not_after(ca_dir: str | Path) -> int | None:
+    try:
+        return json.loads((Path(ca_dir) / META_FILE).read_text()).get("not_after")
+    except (OSError, ValueError):
+        return None

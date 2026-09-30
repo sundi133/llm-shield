@@ -33,8 +33,13 @@ POLICY_CLOSE_CODE = 4403
 
 
 class DeviceProxyAddon:
-    def __init__(self, engine, *, justify_base: str = "", clock=time.time):
+    def __init__(self, engine, *, justify_base: str = "", clock=time.time, intercept_ok=None):
         self.engine, self.justify_base, self.clock = engine, justify_base, clock
+        # False when the laptop's CA has expired (tenant mode, offline too long):
+        # intercepting would break every AI app, so under fail_mode allow the
+        # traffic is tunnelled uninspected, and that is recorded.
+        self.intercept_ok = intercept_ok or (lambda: True)
+        self._noted_expired = 0.0
         self._passthrough: dict[str, float] = {}      # host -> until (pinned, allow_and_log)
         self._lock = threading.Lock()
 
@@ -49,6 +54,13 @@ class DeviceProxyAddon:
         host = (data.client_hello.sni or "").lower()
         if not self.engine.is_ai_host(host) or self._tunnel(host):
             data.ignore_connection = True
+            return
+        if not self.intercept_ok() and self.engine.policy.get("fail_mode") != "block":
+            data.ignore_connection = True
+            if self.clock() - self._noted_expired > 3600:
+                self._noted_expired = self.clock()
+                self.engine.note(host, "monitor", "the device CA has expired and could not be "
+                                                  "renewed; AI traffic passes uninspected")
 
     def tls_failed_client(self, data: tls.TlsData) -> None:
         host = (data.conn.sni or "").lower()
@@ -120,8 +132,8 @@ class LocalProxy:
     """mitmproxy in a background thread, bound to 127.0.0.1."""
 
     def __init__(self, engine, *, port: int, confdir: str | Path, justify_base: str = "",
-                 upstream_ca: Optional[str] = None):
-        self.addon = DeviceProxyAddon(engine, justify_base=justify_base)
+                 upstream_ca: Optional[str] = None, intercept_ok=None):
+        self.addon = DeviceProxyAddon(engine, justify_base=justify_base, intercept_ok=intercept_ok)
         self.port, self.confdir, self.upstream_ca = port, str(confdir), upstream_ca
         self.master: Optional[DumpMaster] = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None

@@ -13,10 +13,10 @@ secret's SHA-256 is stored. Each device gets its own key (`vdk_...`, scope
 `device`); Shield keeps only its hash, in the key store and in the device
 record, which is what revoke removes.
 
-A device key may reach three endpoints and nothing else (DEVICE_PATHS). The
+A device key may reach four endpoints and nothing else (DEVICE_PATHS). The
 check is a prefix test on the presented key, run inside ShieldMiddleware, so
 it adds no Redis read and no middleware layer to any other request, including
-the guard path. Each of the three endpoints also checks the device record, so a
+the guard path. Each of those endpoints also checks the device record, so a
 revoke takes effect at once on every worker, not after the tenant cache expires.
 """
 
@@ -37,6 +37,7 @@ ENROLL_TOKEN_PREFIX = "vde."
 DEVICE_PATHS = frozenset({
     ("GET", "/v1/edge/dlp-bundle"),
     ("POST", "/v1/devices/heartbeat"),
+    ("POST", "/v1/devices/ca"),
     ("POST", "/v1/shield/runtime/events"),
 })
 STATES = ("ok", "no_bundle", "stale_bundle", "model_unavailable", "model_unsupported",
@@ -376,6 +377,13 @@ def heartbeat(tenant_id: str, device_id: str, body: dict) -> dict:
         seen["agent_version"] = av
     _hset(_seen_key(tenant_id), device_id, seen)
     return seen
+
+
+def note_ca(tenant_id: str, device_id: str, not_after: int) -> None:
+    rec = _hget(_devices_key(tenant_id), device_id)
+    if rec:
+        rec["ca_not_after"], rec["ca_issued_at"] = int(not_after), int(time.time())
+        _hset(_devices_key(tenant_id), device_id, rec)
 
 
 def list_devices(tenant_id: str, expected_digest: str = "") -> dict:

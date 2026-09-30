@@ -17254,8 +17254,37 @@ async function ddMdm() {
       <tr><td style="${DD_TD}color:var(--text-dim);">ShieldURL</td><td style="${DD_TD}"><code>${xfEsc(BASE_URL || location.origin)}</code></td></tr>
       <tr><td style="${DD_TD}color:var(--text-dim);">TenantID</td><td style="${DD_TD}"><code>${xfEsc(tid)}</code></td></tr>
       <tr><td style="${DD_TD}color:var(--text-dim);">PinnedPublicKey</td><td style="${DD_TD}"><code style="word-break:break-all;user-select:all;">${xfEsc(k.public_key_hex)}</code></td></tr>
-      <tr><td style="${DD_TD}color:var(--text-dim);">Fleet, EnrollmentToken</td><td style="${DD_TD}">from an enrollment token below</td></tr></table>`;
+      <tr><td style="${DD_TD}color:var(--text-dim);">Fleet, EnrollmentToken</td><td style="${DD_TD}">from an enrollment token below</td></tr></table>
+      <div id="dd-root" style="margin-top:0.75rem;"></div>`;
+    ddRoot();
   } catch (e) { xfMsg('dd-mdm', xfErrors(e), 'error'); }
+}
+// macOS trusts a certificate silently only through MDM: the tenant root goes in
+// a profile, and each Mac gets a 7-day intermediate under it.
+async function ddRoot() {
+  const el = document.getElementById('dd-root');
+  try {
+    const r = await ddApi('/devices/root-ca');
+    const warn = r.covers_policy ? '' : `<div style="color:var(--danger);margin:0.4rem 0;">The policy has AI hosts this root does not cover: ${xfEsc(r.missing_hosts.join(', '))}. Reissue it and upload the new profile; until then those hosts are not inspected on Macs.</div>
+      <button class="small" onclick="ddReissueRoot()">Reissue root</button> `;
+    el.innerHTML = `<div><b>Root certificate for Macs</b> <span class="muted">(upload to Jamf or Kandji as a profile; Windows does not need it)</span></div>
+      <div class="muted" style="margin:0.3rem 0;">SHA-256 <code>${xfEsc(r.fingerprint_sha256.slice(0, 32))}...</code>, limited to ${r.hosts.length} AI hosts</div>
+      ${warn}<button class="small primary" onclick="ddDownloadRoot()">Download macOS profile</button>`;
+  } catch (e) { xfMsg('dd-root', xfErrors(e), 'error'); }
+}
+async function ddDownloadRoot() {
+  try {
+    const r = await fetch(`${BASE_URL}/v1/tenant/me/devices/root-ca.mobileconfig`, { headers: { 'X-API-Key': API_KEY } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const url = URL.createObjectURL(await r.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: 'votal-device-agent-root.mobileconfig' });
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  } catch (e) { xfMsg('dd-root', xfErrors(e), 'error'); }
+}
+async function ddReissueRoot() {
+  if (!confirm('Issue a new root covering the current AI hosts? Upload the new profile to your MDM afterwards.')) return;
+  try { await ddApi('/devices/root-ca/reissue', { method: 'POST' }); ddRoot(); }
+  catch (e) { xfMsg('dd-root', xfErrors(e), 'error'); }
 }
 async function ddLoad() {
   ddDevices(); ddTokens(); ddMdm();

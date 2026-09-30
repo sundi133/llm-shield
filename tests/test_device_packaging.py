@@ -79,7 +79,8 @@ def test_agent_json_from_settings(tmp_path):
     cfg = json.loads(path.read_text())
     assert cfg == {"shield_url": "https://api.guardrails.votal.ai", "tenant_id": "acme",
                    "fleet": "sales", "pinned_public_key": pub(SK), "state_dir": str(p.state_dir),
-                   "capture": "proxy", "model_inline": "auto", "fallback_path": ""}
+                   "capture": "proxy", "model_inline": "auto", "fallback_path": "",
+                   "ca_mode": "device"}
     assert "vde." not in path.read_text()                              # the token is not copied
     assert oct(os.stat(path).st_mode & 0o777) == "0o644"
 

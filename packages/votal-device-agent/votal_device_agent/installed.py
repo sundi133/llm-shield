@@ -39,7 +39,7 @@ def install_hooks(*, os_name: Optional[str] = None, p: Optional[Paths] = None,
     if not m:
         out["config"] = "no MDM settings yet: the agent waits for them"
         return out
-    out["config"] = str(managed.write_agent_json(m, p))
+    out["config"] = str(managed.write_agent_json(m, p, os_name))
     if os_name == "windows":
         # chmod means nothing on Windows, and ProgramData lets every user read
         # what the service writes: the CA key and the audit log would be
@@ -78,7 +78,7 @@ def build_agent(os_name: Optional[str] = None, p: Optional[Paths] = None, *, run
     p = p or os_paths(os_name)
     m = managed.read(os_name)
     if m:
-        managed.write_agent_json(m, p)
+        managed.write_agent_json(m, p, os_name)
     cfg = sync.AgentConfig.load(p.config)
     agent = (agent_cls or Agent)(cfg, credentials=credentials.default_store(p.state_dir, os_name,
                                                                              run), **agent_kw)

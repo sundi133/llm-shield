@@ -2,6 +2,9 @@
 
   POST   /v1/devices/enroll                                   data plane, enrollment token
   POST   /v1/devices/heartbeat                                data plane, device key
+  POST   /v1/devices/ca                                       data plane, device key: CSR -> 7-day CA
+  GET    /v1/tenant/me/devices/root-ca[.mobileconfig]         both planes: the tenant root, MDM profile
+  POST   /v1/tenant/me/devices/root-ca/reissue                both planes: cover new AI hosts
   GET    /v1/tenant/me/devices                                both planes, fleet view
   DELETE /v1/tenant/me/devices/{device_id}                    both planes, revoke
   POST   /v1/tenant/me/devices/enrollment-tokens              both planes
@@ -86,7 +89,78 @@ async def device_heartbeat(request: Request, body: dict = Body(...)):
     return Response(status_code=204)
 
 
+def _policy_hosts(tenant_id: str) -> list:
+    from core.dlp import device_store
+    return device_store.get_policy(tenant_id)["ai_hosts"]
+
+
+@router.post("/ca")
+async def device_intermediate_ca(request: Request, body: dict = Body(...)):
+    """{csr_pem} -> this laptop's intermediate CA for 7 days, and the tenant root.
+    Spec §3.1, task 6 amendment: the root is trusted through MDM, the laptop's
+    key never leaves it, and a revoked laptop gets no renewal."""
+    from core.dlp import device_ca
+    try:
+        caller = dv.caller_device(request)
+        if caller is None:
+            raise dv.DeviceError("a device CA is issued to a device key", status=403)
+    except dv.DeviceError as e:
+        raise _http(e)
+    tenant_id, device_id, record = caller
+    try:
+        out = device_ca.issue_intermediate(tenant_id, device_id, str(body.get("csr_pem") or ""),
+                                           _policy_hosts(tenant_id))
+    except device_ca.DeviceCAError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    dv.note_ca(tenant_id, device_id, out["not_after"])
+    return out
+
+
 # ── the tenant's view (both planes) ──────────────────────────────────
+
+
+def _root(tenant_id: str) -> dict:
+    from core.dlp import device_ca
+    try:
+        return device_ca.get_root(tenant_id, _policy_hosts(tenant_id))
+    except device_ca.DeviceCAError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+
+
+@tenant_router.get("/root-ca")
+async def tenant_root_ca(request: Request):
+    """The tenant's device root: what the MDM profile trusts on Macs."""
+    tenant_id = get_tenant_from_request(request)
+    root = _root(tenant_id)
+    return {"tenant_id": tenant_id, **{k: root[k] for k in (
+        "pem", "hosts", "fingerprint_sha256", "issued_at", "not_after", "covers_policy",
+        "missing_hosts")}}
+
+
+@tenant_router.get("/root-ca.mobileconfig")
+async def tenant_root_ca_profile(request: Request):
+    from core.dlp import device_ca
+    tenant_id = get_tenant_from_request(request)
+    return Response(content=device_ca.mobileconfig(tenant_id, _root(tenant_id)),
+                    media_type="application/x-apple-aspen-config",
+                    headers={"Content-Disposition":
+                             'attachment; filename="votal-device-agent-root.mobileconfig"'})
+
+
+@tenant_router.post("/root-ca/reissue")
+async def reissue_tenant_root_ca(request: Request):
+    """A new root certificate (same key) covering the policy's current AI hosts.
+    Upload the new profile to MDM; until then, new hosts are not inspected."""
+    from core.dlp import device_ca
+    tenant_id = get_tenant_from_request(request)
+    require_registry_write(request, tenant_id, "reissue the device root CA")
+    try:
+        rec = device_ca.issue_root(tenant_id, _policy_hosts(tenant_id))
+    except device_ca.DeviceCAError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    _audit(request, "tenant_reissue_device_root_ca", tenant_id, _actor(request, tenant_id),
+           {"fingerprint_sha256": rec["fingerprint_sha256"], "hosts": rec["hosts"]})
+    return {"tenant_id": tenant_id, **rec}
 
 
 @tenant_router.get("")

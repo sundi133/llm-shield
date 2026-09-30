@@ -34,7 +34,11 @@ from votal_device_agent.platform import Paths
 MAC_PLIST = Path("/Library/Managed Preferences/ai.votal.device-agent.plist")
 WIN_KEY = r"SOFTWARE\Policies\Votal\DeviceAgent"
 KEYS = ("ShieldURL", "TenantID", "Fleet", "PinnedPublicKey", "EnrollmentToken", "ExtensionIDs",
-        "Capture", "ModelInline", "FallbackRulesPath")
+        "Capture", "ModelInline", "FallbackRulesPath", "CAMode")
+#: macOS trusts a certificate silently only through MDM, so Macs use the tenant
+#: root (in the MDM profile) with a 7-day intermediate per laptop; Windows
+#: trusts the laptop's own CA silently.
+DEFAULT_CA_MODE = {"macos": "tenant", "windows": "device"}
 _EXT_ID = re.compile(r"^[a-p]{32}$")
 _FLEET = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
@@ -109,24 +113,27 @@ def validate(m: dict) -> dict:
         errors.append("Capture: proxy or off")
     if m.get("ModelInline", "auto") not in ("auto", "always", "never"):
         errors.append("ModelInline: auto, always or never")
+    if m.get("CAMode", "device") not in ("device", "tenant"):
+        errors.append("CAMode: device or tenant")
     if errors:
         raise ManagedError(errors)
     return {**m, "PinnedPublicKey": key, "ShieldURL": url.rstrip("/")}
 
 
-def agent_json(m: dict, p: Paths) -> dict:
+def agent_json(m: dict, p: Paths, os_name: str = "") -> dict:
     """The agent.json the agent runs from (see sync.AgentConfig)."""
     m = validate(m)
+    ca_mode = m.get("CAMode") or DEFAULT_CA_MODE.get(os_name, "device")
     return {"shield_url": m["ShieldURL"], "tenant_id": m["TenantID"], "fleet": m["Fleet"],
             "pinned_public_key": m["PinnedPublicKey"], "state_dir": str(p.state_dir),
             "capture": m.get("Capture", "proxy"), "model_inline": m.get("ModelInline", "auto"),
-            "fallback_path": m.get("FallbackRulesPath", "")}
+            "fallback_path": m.get("FallbackRulesPath", ""), "ca_mode": ca_mode}
 
 
-def write_agent_json(m: dict, p: Paths) -> Path:
+def write_agent_json(m: dict, p: Paths, os_name: str = "") -> Path:
     """Write agent.json atomically, readable by local users (the native host reads
     the port from it); it holds no secret: the enrollment token is not copied."""
-    cfg = agent_json(m, p)
+    cfg = agent_json(m, p, os_name)
     p.state_dir.mkdir(parents=True, exist_ok=True)
     tmp = p.config.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2))

@@ -300,8 +300,8 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             # which makes the bare name local to this whole function.
             return _JSON(status_code=403, content={
                 "error": "device_key_scope",
-                "detail": "A device key may only fetch its DLP bundle, send heartbeats "
-                          "and post runtime events."})
+                "detail": "A device key may only fetch its DLP bundle, send heartbeats, "
+                          "renew its CA and post runtime events."})
 
         # Skip enrichment for non-guarded paths
         if path in self._SKIP_PATHS or path.startswith("/v1/admin"):
