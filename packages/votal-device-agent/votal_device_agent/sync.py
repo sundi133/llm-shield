@@ -148,13 +148,27 @@ def enroll(cfg: AgentConfig, token: str, info: dict, *, http: Http = _urllib,
     return creds
 
 
+REFRESH_BEFORE_S = 12 * 3600
+
+
+def _fresh(bundle_path: Path, now: float) -> bool:
+    """Whether the bundle on disk has more than 12 hours left. If not, ask for a
+    new one without If-None-Match: a Shield answering 304 for an unchanged
+    policy would otherwise let the laptop's copy expire while it is online."""
+    try:
+        expires = int(json.loads(bundle_path.read_text())["header"]["expires_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return expires - now > REFRESH_BEFORE_S
+
+
 def pull_bundle(cfg: AgentConfig, creds: Credentials, store: TrustStore, *,
                 http: Http = _urllib) -> str:
     """updated, unchanged, revoked, or refused: <why>. Never writes a bundle
     that does not verify, so a bad download cannot replace a good bundle."""
     etag_file = store.dir / "bundle.etag"
     headers = {"X-API-Key": creds.api_key}
-    if etag_file.exists() and store.bundle_path.exists():
+    if etag_file.exists() and _fresh(store.bundle_path, store.now()):
         headers["If-None-Match"] = etag_file.read_text().strip()
     q = urllib.parse.urlencode({"fleet": cfg.fleet})
     try:

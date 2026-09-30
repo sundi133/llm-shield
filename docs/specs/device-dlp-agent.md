@@ -331,7 +331,22 @@ thresholds calibrated for `tev1:0.8b` (the numbers above), and `enforcement`,
 where a `monitor` category is recorded but never blocks or asks for a reason. A
 monitor category cannot be listed in `block_categories` (validation error).
 `bundle_version` is the issue time, so it rises on every change and an agent can
-refuse an older bundle replayed to it. Validity is `SHIELD_DLP_BUNDLE_VALID_S`
+refuse an older bundle replayed to it.
+
+**Fixed later (found while writing the admin runbook):** the ETag covered only
+the policy, so while the policy was unchanged every poll got 304 and the laptop
+kept its first bundle, which expired after 24 h: an online, synced laptop went
+to grace after a day and to the secrets-only fallback after about 8. Robots'
+`/v1/edge/embodied-bundle` had the same flaw (degraded mode after a day).
+- **Server:** the ETag now includes a bucket that ticks every half-validity
+  (`core.embodied.bundle.freshness_bucket`), so an unchanged policy is re-signed
+  before a client's copy expires.
+- **Clients:** the agent and the shield-embodied SDK also skip `If-None-Match`
+  when their bundle has under 12 h left, which protects them against a Shield
+  not yet upgraded.
+
+Tested over nine simulated days of hourly polls. Runtime-profile bundles carry
+no expiry and were never affected. Validity is `SHIELD_DLP_BUNDLE_VALID_S`
 (default 86400). `kind: "dlp"` events are refused if `detail` holds `prompt`,
 `text`, `body`, `content` or `message`, and `excerpt` is capped at 200
 characters.

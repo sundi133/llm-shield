@@ -215,7 +215,11 @@ async def embodied_bundle(request: Request, profile: str = Query(...),
         raise HTTPException(status_code=400, detail="fleet: lowercase letters, digits, . _ -")
     policy = load(tenant_id, profile)
     phash = profile_hash(policy)
-    etag = '"' + hashlib.sha256(f"{phash}|{fleet}|{tenant_id}".encode()).hexdigest()[:32] + '"'
+    # The bucket changes every half-validity, so an unchanged profile is still
+    # re-signed before a robot's copy expires (see freshness_bucket).
+    bucket = em_bundle.freshness_bucket(em_bundle.valid_for_s())
+    etag = '"' + hashlib.sha256(f"{phash}|{fleet}|{tenant_id}|{bucket}".encode()
+                                ).hexdigest()[:32] + '"'
     if (request.headers.get("if-none-match") or "").strip() == etag:
         return Response(status_code=304, headers={"ETag": etag})
     rec = em_store.list_profiles(tenant_id).get(profile) or {}
