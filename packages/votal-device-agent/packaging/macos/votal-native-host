@@ -1,0 +1,5 @@
+#!/bin/sh
+# Started by Chrome or Edge for the Votal extension (native messaging). Chrome
+# passes the extension origin as an argument; the agent ignores it (the host
+# manifest's allowed_origins already decided who may start this).
+exec "/Library/Application Support/Votal/DeviceAgent/bin/votal-device-agent" native-host "$@"

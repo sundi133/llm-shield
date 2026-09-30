@@ -119,7 +119,8 @@ def _server_time(headers: dict, store: TrustStore) -> None:
             pass
 
 
-def enroll(cfg: AgentConfig, token: str, info: dict, *, http: Http = _urllib) -> Credentials:
+def enroll(cfg: AgentConfig, token: str, info: dict, *, http: Http = _urllib,
+           store=None) -> Credentials:
     """Exchange the MDM's enrollment token for this device's key. Refuses when
     Shield's signing key is not the one MDM pinned."""
     status, _h, body = http("POST", f"{cfg.shield_url.rstrip('/')}/v1/devices/enroll",
@@ -137,7 +138,7 @@ def enroll(cfg: AgentConfig, token: str, info: dict, *, http: Http = _urllib) ->
                         f"install is for {cfg.tenant_id}/{cfg.fleet}")
     creds = Credentials(device_id=out["device_id"], api_key=out["api_key"],
                         tenant_id=out["tenant_id"], fleet=out["fleet"])
-    CredentialStore(cfg.state_dir).save(creds)
+    (store or CredentialStore(cfg.state_dir)).save(creds)
     return creds
 
 

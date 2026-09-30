@@ -279,6 +279,15 @@ def test_bundle_etag_and_fleet_names(client, signing, tenant_rules):
     assert client.get(BUNDLE).status_code == 422
 
 
+def test_the_signing_key_for_mdm(client, signing, monkeypatch):
+    r = client.get(f"{BASE}/signing-key").json()
+    assert r["public_key_hex"] == signing and r["kid"]
+    from core.runtime_policy import bundle as rt_bundle
+    monkeypatch.delenv("SHIELD_RUNTIME_BUNDLE_PRIVATE_KEY")
+    rt_bundle.reset_signer_cache_for_tests()
+    assert client.get(f"{BASE}/signing-key").status_code == 503
+
+
 def test_signed_validity_is_configurable(client, signing, monkeypatch):
     monkeypatch.setenv("SHIELD_DLP_BUNDLE_VALID_S", "3600")
     h = client.get(f"{BUNDLE}?fleet=sales").json()["header"]

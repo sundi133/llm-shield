@@ -18,6 +18,7 @@ State directory layout:
 from __future__ import annotations
 
 import hashlib
+import os
 import platform
 import subprocess
 import threading
@@ -64,15 +65,20 @@ def device_info() -> dict:
 
 class Agent:
     def __init__(self, cfg: sync.AgentConfig, *, http: sync.Http = sync._urllib,
-                 model_http: Optional[model_mod.Http] = None):
+                 model_http: Optional[model_mod.Http] = None, credentials=None):
         self.cfg, self.http = cfg, http
         self.store = TrustStore(cfg.state_dir, tenant_id=cfg.tenant_id, fleet=cfg.fleet,
                                 pinned_key_hex=cfg.pinned_public_key,
                                 fallback_path=cfg.fallback_path or None)
-        self.credentials = sync.CredentialStore(cfg.state_dir)
+        # The keychain or DPAPI in an installed agent (platform/credentials.py).
+        self.credentials = credentials or sync.CredentialStore(cfg.state_dir)
         self.creds = self.credentials.load()
         self.audit = AuditLog(Path(cfg.state_dir) / "audit",
                               device_id=self.creds.device_id if self.creds else "")
+        try:
+            os.chmod(self.audit.dir, 0o700)   # which sites were used, and when: not for other users
+        except OSError:
+            pass
         self.model = DecisionModel(cfg.ollama_url, http=model_http or model_mod._urllib,
                                    gate=LatencyGate(override=cfg.model_inline))
         self.engine = Engine(self.store.load(), self.model, audit=self.audit)
@@ -95,7 +101,8 @@ class Agent:
         if self.creds is None:
             if not token:
                 raise sync.SyncError("not enrolled and no enrollment token given")
-            self.creds = sync.enroll(self.cfg, token, info or device_info(), http=self.http)
+            self.creds = sync.enroll(self.cfg, token, info or device_info(), http=self.http,
+                                     store=self.credentials)
             self.audit.device_id = self.creds.device_id
         return self.creds
 

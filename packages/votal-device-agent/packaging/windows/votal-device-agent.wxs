@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Votal device agent for Windows (WiX Toolset v5). Built by build_msi.ps1.
+
+  MDM settings arrive as MSI properties (Intune: the app's command line), and
+  are written to the policy key the agent reads,
+  HKLM\SOFTWARE\Policies\Votal\DeviceAgent. An empty property writes an empty
+  value, which the agent treats as unset.
+
+    msiexec /i votal-device-agent.msi /qn SHIELDURL=https://... TENANTID=acme
+      FLEET=sales PINNEDPUBLICKEY=<64 hex> ENROLLMENTTOKEN=vde....
+      EXTENSIONIDS=<id>[,<id>]
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Votal Device Agent" Manufacturer="Votal AI" Version="$(Version)"
+           UpgradeCode="6f4b3d51-2c8e-4b8f-9a71-3e5d0c9a8b42" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer Votal Device Agent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="SHIELDURL" Secure="yes" />
+    <Property Id="TENANTID" Secure="yes" />
+    <Property Id="FLEET" Secure="yes" />
+    <Property Id="PINNEDPUBLICKEY" Secure="yes" />
+    <Property Id="ENROLLMENTTOKEN" Secure="yes" Hidden="yes" />
+    <Property Id="EXTENSIONIDS" Secure="yes" />
+    <Property Id="CAPTURE" Secure="yes" />
+    <Property Id="MODELINLINE" Secure="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="VotalDir" Name="Votal">
+        <Directory Id="INSTALLFOLDER" Name="DeviceAgent" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Votal Device Agent">
+      <ComponentGroupRef Id="AgentFiles" />
+      <ComponentRef Id="AgentService" />
+      <ComponentRef Id="NativeHost" />
+      <ComponentRef Id="PolicySettings" />
+    </Feature>
+
+    <!-- PyInstaller's onedir output and the pinned Ollama build. -->
+    <ComponentGroup Id="AgentFiles" Directory="INSTALLFOLDER">
+      <Files Include="!(bindpath.dist)\**">
+        <Exclude Files="!(bindpath.dist)\votal-device-agent.exe" />
+      </Files>
+    </ComponentGroup>
+
+    <Component Id="AgentService" Directory="INSTALLFOLDER">
+      <File Id="AgentExe" Source="!(bindpath.dist)\votal-device-agent.exe" KeyPath="yes" />
+      <ServiceInstall Id="AgentSvc" Name="VotalDeviceAgent" DisplayName="Votal Device Agent"
+                      Description="Checks prompts to AI tools on this computer against your company's policy."
+                      Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem"
+                      Arguments="service" />
+      <ServiceControl Id="AgentSvcCtl" Name="VotalDeviceAgent" Start="install" Stop="both"
+                      Remove="uninstall" Wait="yes" />
+    </Component>
+
+    <Component Id="NativeHost" Directory="INSTALLFOLDER">
+      <File Id="NativeHostCmd" Source="votal-native-host.cmd" KeyPath="yes" />
+    </Component>
+
+    <Component Id="PolicySettings" Directory="INSTALLFOLDER" Condition="SHIELDURL">
+      <RegistryKey Root="HKLM" Key="SOFTWARE\Policies\Votal\DeviceAgent">
+        <RegistryValue Name="ShieldURL" Type="string" Value="[SHIELDURL]" KeyPath="yes" />
+        <RegistryValue Name="TenantID" Type="string" Value="[TENANTID]" />
+        <RegistryValue Name="Fleet" Type="string" Value="[FLEET]" />
+        <RegistryValue Name="PinnedPublicKey" Type="string" Value="[PINNEDPUBLICKEY]" />
+        <RegistryValue Name="EnrollmentToken" Type="string" Value="[ENROLLMENTTOKEN]" />
+        <RegistryValue Name="ExtensionIDs" Type="string" Value="[EXTENSIONIDS]" />
+        <RegistryValue Name="Capture" Type="string" Value="[CAPTURE]" />
+        <RegistryValue Name="ModelInline" Type="string" Value="[MODELINLINE]" />
+      </RegistryKey>
+    </Component>
+
+    <!-- agent.json from the policy key, and the browser host registration. -->
+    <CustomAction Id="InstallHooks" FileRef="AgentExe" ExeCommand="install-hooks"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="UninstallHooks" FileRef="AgentExe" ExeCommand="uninstall-hooks"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="InstallHooks" Before="StartServices" Condition="NOT REMOVE" />
+      <Custom Action="UninstallHooks" After="StopServices" Condition='REMOVE="ALL"' />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

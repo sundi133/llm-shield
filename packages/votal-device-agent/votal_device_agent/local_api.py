@@ -57,6 +57,11 @@ def load_or_create_secret(state_dir: str | Path) -> str:
                  stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
     with os.fdopen(fd, "w") as f:
         f.write(secret)
+    if os.name == "nt":
+        # The state folder admits only SYSTEM and Administrators (install-hooks);
+        # the native host runs as the signed-in user.
+        import subprocess
+        subprocess.run(["icacls", str(path), "/grant", "*S-1-5-32-545:R"], capture_output=True)
     return secret
 
 

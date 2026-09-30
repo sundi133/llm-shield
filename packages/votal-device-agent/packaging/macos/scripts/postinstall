@@ -1,0 +1,13 @@
+#!/bin/sh
+# Runs as root after the payload is in place. Idempotent: upgrades run it again.
+set -e
+BASE="/Library/Application Support/Votal/DeviceAgent"
+mkdir -p /Library/Logs/Votal "$BASE/state"
+chown -R root:wheel "$BASE" /Library/Logs/Votal
+chmod 755 "$BASE" "$BASE/state"
+chmod 644 /Library/LaunchDaemons/ai.votal.device-agent.plist
+# agent.json from the MDM settings (if the profile has arrived) and the
+# browser's native-messaging host registration.
+"$BASE/bin/votal-device-agent" install-hooks || true
+/bin/launchctl bootstrap system /Library/LaunchDaemons/ai.votal.device-agent.plist
+exit 0

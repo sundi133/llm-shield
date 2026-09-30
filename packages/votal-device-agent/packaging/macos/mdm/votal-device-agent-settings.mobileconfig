@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>Capture</key>
+			<string>proxy</string>
+			<key>EnrollmentToken</key>
+			<string>__ENROLLMENT_TOKEN__</string>
+			<key>ExtensionIDs</key>
+			<array>
+				<string>__CHROME_EXTENSION_ID__</string>
+			</array>
+			<key>Fleet</key>
+			<string>__FLEET__</string>
+			<key>ModelInline</key>
+			<string>auto</string>
+			<key>PayloadDisplayName</key>
+			<string>Votal device agent settings</string>
+			<key>PayloadIdentifier</key>
+			<string>ai.votal.device-agent.settings.prefs</string>
+			<key>PayloadType</key>
+			<string>ai.votal.device-agent</string>
+			<key>PayloadUUID</key>
+			<string>5282C0C6-BAC8-50CA-8DDA-C567276421CA</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>PinnedPublicKey</key>
+			<string>__PINNED_PUBLIC_KEY_64_HEX__</string>
+			<key>ShieldURL</key>
+			<string>__SHIELD_URL__</string>
+			<key>TenantID</key>
+			<string>__TENANT_ID__</string>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Tenant, fleet and pinned signing key for the Votal device agent. Replace every __PLACEHOLDER__.</string>
+	<key>PayloadDisplayName</key>
+	<string>Votal device agent: settings</string>
+	<key>PayloadIdentifier</key>
+	<string>ai.votal.device-agent.settings</string>
+	<key>PayloadOrganization</key>
+	<string>Votal AI</string>
+	<key>PayloadRemovalDisallowed</key>
+	<true/>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>051BD10F-72ED-57EA-B1E0-349338DE30BE</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>

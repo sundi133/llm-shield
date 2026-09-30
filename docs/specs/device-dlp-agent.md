@@ -483,6 +483,86 @@ secret the extension reads through native messaging.
   an Intune package; install writes the tenant, fleet, enrollment token and
   pinned key.
 
+**As built in task 6.** The installer sources are under `packaging/`; the
+customer guide is `docs/device-dlp-agent.md`.
+
+*Settings from MDM (`platform/managed.py`)*
+- macOS reads the managed preferences domain `ai.votal.device-agent`; Windows
+  reads `HKLM\SOFTWARE\Policies\Votal\DeviceAgent`, which the MSI's properties
+  write.
+- Keys: ShieldURL, TenantID, Fleet, PinnedPublicKey, EnrollmentToken,
+  ExtensionIDs, Capture, ModelInline.
+- `agent.json` is regenerated from them at every start. The enrollment token
+  is never copied into it.
+- The portal shows the values an admin needs (Device DLP, then MDM settings)
+  through the new `GET /v1/tenant/me/dlp-policy/signing-key`.
+
+*Device key (`platform/credentials.py`)*
+- macOS: the System keychain, written through `security -i` on stdin, so the
+  key never appears in a process argument list.
+- Windows: DPAPI under LocalSystem, in a file with an ACL for SYSTEM and
+  Administrators only.
+
+*Windows folder permissions.* Folders under ProgramData are readable by every
+user, and `chmod` does nothing there. `install-hooks` restricts the state
+folder to SYSTEM and Administrators, and lets users read only `agent.json` and
+`local_secret`. Otherwise the CA key and the audit log would be readable by
+anyone on the laptop.
+
+*Ollama (`platform/ollama.py`)*
+- The agent starts and supervises its own instance, as §3.2 says. It restarts
+  on exit and uses a separate model folder.
+- The model is pulled by name, then compared with the pinned digest. A
+  different digest is deleted and reported as `model_mismatch`.
+
+*Services and packaging*
+- The service is a macOS LaunchDaemon, or a Windows service hosted by pywin32
+  (a plain executable is killed by the Service Control Manager after 30 s).
+- Installers: `macos/build_pkg.sh` builds with pkgbuild and `windows/*.wxs`
+  with WiX v5. Both use a PyInstaller onedir build. Signing and notarization
+  run only when release credentials are present.
+- CI (`.github/workflows/device-agent-installers.yml`) builds both installers
+  unsigned and smoke-tests the binary.
+- Ollama is bundled only when the release supplies the archive and its
+  SHA-256.
+- Agent commands: `install-hooks`, `uninstall-hooks`, `verify` (one line per
+  check, non-zero exit on a critical failure) and `native-host`.
+
+*No menu-bar or tray helper was built.* Justify runs through the browser
+extension and the loopback reason page (task 5), which cover the same need.
+
+*The prototype `extension/` (v0.1.0, unpublished) is unchanged.* Only the
+published extension (`examples/browser-extension`) asks the agent.
+
+**PROPOSED AMENDMENT, not yet approved: certificate trust on macOS.** Found in
+task 6 and confirmed in Apple's developer forums. Since Big Sur, a root process
+(a pkg postinstall or a LaunchDaemon) can add a certificate but cannot mark it
+trusted without interactive authorization. Only an MDM profile
+(`com.apple.security.root`) can do that silently. A profile is fleet-wide, so
+it cannot carry a CA generated on each laptop.
+
+§3.1's per-device CA therefore works silently on Windows (certutil as
+LocalSystem) but not on macOS. Today the agent reports `needs_mdm`, and
+`verify` fails the trust check on Macs.
+
+Proposed fix:
+- A **tenant device root** (ECDSA P-256), generated and held by Shield like the
+  bundle signing key. It is name-constrained to the AI hosts and delivered to
+  Macs in one MDM profile.
+- At enrollment, and daily after, each laptop sends a CSR for its own
+  **intermediate CA**: path length 0, the same name constraints, valid 7 days.
+  The laptop's key never leaves it.
+- A revoked device gets no renewal.
+
+What changes:
+- **Cost:** a stolen laptop key could intercept AI traffic for other laptops
+  in the same tenant until its intermediate expires (at most 7 days), from an
+  on-path network position.
+- **Unchanged:** it still cannot touch any non-AI site.
+- **New server work:** one server secret (`SHIELD_DEVICE_CA_PRIVATE_KEY`) and
+  one endpoint (`POST /v1/devices/ca`, device key).
+- **Windows can stay per-device.**
+
 ## 9. Failure modes & edge cases
 
 | Case | Behaviour |

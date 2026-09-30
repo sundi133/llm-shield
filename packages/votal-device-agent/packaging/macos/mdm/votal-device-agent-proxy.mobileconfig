@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadDisplayName</key>
+			<string>Votal PAC</string>
+			<key>PayloadIdentifier</key>
+			<string>ai.votal.device-agent.proxy.pac</string>
+			<key>PayloadType</key>
+			<string>com.apple.SystemConfiguration</string>
+			<key>PayloadUUID</key>
+			<string>5CBD6EA5-4C4E-53E1-B586-E22DFAAD8766</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>Proxies</key>
+			<dict>
+				<key>FallBackAllowed</key>
+				<integer>1</integer>
+				<key>ProxyAutoConfigEnable</key>
+				<integer>1</integer>
+				<key>ProxyAutoConfigURLString</key>
+				<string>http://127.0.0.1:47823/proxy.pac</string>
+				<key>ProxyCaptiveLoginAllowed</key>
+				<integer>1</integer>
+			</dict>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Sends only AI services' traffic to the Votal device agent on this Mac (PAC). Everything else goes direct.</string>
+	<key>PayloadDisplayName</key>
+	<string>Votal device agent: AI traffic</string>
+	<key>PayloadIdentifier</key>
+	<string>ai.votal.device-agent.proxy</string>
+	<key>PayloadOrganization</key>
+	<string>Votal AI</string>
+	<key>PayloadRemovalDisallowed</key>
+	<true/>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>4070CD37-5DE2-5AF8-B077-BC770F275E23</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>

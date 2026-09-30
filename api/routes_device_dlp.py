@@ -79,6 +79,21 @@ async def validate_dlp_policy(request: Request, policy: dict = Body(...)):
     return {"valid": True, "errors": [], "policy": normalized, "hash": policy_hash(normalized)}
 
 
+@router.get("/signing-key")
+async def dlp_signing_key(request: Request):
+    """The public key laptops pin, for the MDM settings profile (PinnedPublicKey).
+    Copied into MDM by an admin, out of band: an agent that fetched its trust
+    anchor over the network would trust whoever answered."""
+    from core.embodied import bundle as edge_bundle
+    get_tenant_from_request(request)
+    key = edge_bundle.public_key_hex()
+    if key is None:
+        raise HTTPException(status_code=503, detail="bundle signing is not configured on this "
+                                                    "Shield (SHIELD_RUNTIME_BUNDLE_PRIVATE_KEY)")
+    return {"kid": edge_bundle.kid(), "public_key_hex": key,
+            "note": "Put this in the MDM settings as PinnedPublicKey. Never fetch it at runtime."}
+
+
 @router.put("")
 async def put_dlp_policy(request: Request, policy: dict = Body(...)):
     tenant_id = get_tenant_from_request(request)

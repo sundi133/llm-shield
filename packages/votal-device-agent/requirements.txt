@@ -5,3 +5,4 @@ cryptography>=42   # bundle verification (shield_mavlink.bundle)
 regex>=2023.0      # the DLP rule engine (icap/rules.py), for its match timeout
 mitmproxy>=11.0,<13.0   # the local AI proxy (proxy.py only), as requirements-ws.txt
 # Everything else is the standard library.
+pywin32>=306; sys_platform == "win32"   # the Windows service host (platform/winservice.py)

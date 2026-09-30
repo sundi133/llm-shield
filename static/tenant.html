@@ -4965,6 +4965,12 @@ if __name__ == "__main__":
       </div>
 
       <div class="card">
+        <div class="card-header"><div><div class="card-title">MDM settings</div>
+          <div class="card-desc">Values for the agent's MDM settings profile (macOS) or MSI properties (Windows). <code>PinnedPublicKey</code> is the key laptops check every policy bundle against; copy it from here into MDM, never from anywhere else.</div></div></div>
+        <div id="dd-mdm" style="font-size:13px;">Loading...</div>
+      </div>
+
+      <div class="card">
         <div class="card-header"><div><div class="card-title">DLP policy</div>
           <div class="card-desc">What every laptop enforces, signed into its bundle. <code>mode</code> is monitor or enforce, per fleet in <code>fleet_modes</code>. <code>enforcement</code> sets which categories the model may act on; source code, financial data and exfiltration intent are monitor-only by default because Tev1 0.8B misses too many of them. Rules come from your Data Policies.</div></div></div>
         <textarea id="dd-policy" spellcheck="false" style="width:100%;min-height:320px;"></textarea>
@@ -17240,8 +17246,19 @@ function ddAgo(t) {
   return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : s < 172800 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
 }
 const DD_TD = 'padding:0.4rem 0.6rem;';
+async function ddMdm() {
+  try {
+    const k = await ddApi('/dlp-policy/signing-key');
+    const tid = (TENANT_INFO && TENANT_INFO.tenant_id) || '';
+    document.getElementById('dd-mdm').innerHTML = `<table style="border-collapse:collapse;">
+      <tr><td style="${DD_TD}color:var(--text-dim);">ShieldURL</td><td style="${DD_TD}"><code>${xfEsc(BASE_URL || location.origin)}</code></td></tr>
+      <tr><td style="${DD_TD}color:var(--text-dim);">TenantID</td><td style="${DD_TD}"><code>${xfEsc(tid)}</code></td></tr>
+      <tr><td style="${DD_TD}color:var(--text-dim);">PinnedPublicKey</td><td style="${DD_TD}"><code style="word-break:break-all;user-select:all;">${xfEsc(k.public_key_hex)}</code></td></tr>
+      <tr><td style="${DD_TD}color:var(--text-dim);">Fleet, EnrollmentToken</td><td style="${DD_TD}">from an enrollment token below</td></tr></table>`;
+  } catch (e) { xfMsg('dd-mdm', xfErrors(e), 'error'); }
+}
 async function ddLoad() {
-  ddDevices(); ddTokens();
+  ddDevices(); ddTokens(); ddMdm();
   try {
     const p = await ddApi('/dlp-policy');
     document.getElementById('dd-policy').value = JSON.stringify(p.policy, null, 2);
