@@ -320,6 +320,43 @@ account.
 The verified bundle, the pinned public key, the per-device CA, the audit chain,
 and the justify allow-list (prompt hash, destination, expiry; memory only).
 
+**As built in task 4** (`packages/votal-device-agent/`, standard library plus
+the repo's `icap/rules.py` and `shield_mavlink`):
+- **Verdict and action are separate.** `verdict` is what the policy says;
+  `action` is what the agent does (allow, redact, block, justify). In
+  `monitor` mode, and for monitor-only categories, the action is allow and the
+  verdict is recorded. The model decision rule is the benchmark's, byte for
+  byte, held equal by a test.
+- **Justify** only for a prompt the agent asked about (pending for 5 minutes).
+  The reason is at least 3 characters. The grant is single-use and lapses
+  after 60 s.
+- **Fallback when no bundle verifies:** the MDM's `fallback.json`, else built-in
+  rules that **redact** known credential shapes (AWS, private keys, GitHub,
+  Slack, Stripe live keys). No model in fallback. Trust state is kept in
+  `trust_state.json`: the highest bundle version accepted, and the last server
+  time seen (from the `Date` header).
+- **Model on the send path only when its own measured p95 meets the gate**
+  (`LatencyGate`; `model_inline` auto, always or never). Until it is measured,
+  and on slower hardware, it judges after sending.
+  - The agent loads the model at start (`keep_alive` 24 h, about 0.9 GB
+    resident) because a cold load takes longer than `model_timeout_ms`, and
+    would otherwise turn the first decisions into `model_unavailable`. Found
+    against the real model, not the fake.
+- **Excerpts** (`capture_excerpt` only) mask every rule and blocked term, not
+  only redact rules.
+- **Measured on an M3 against real `tev1:0.8b`, enforce mode:**
+
+  | Prompt | Action | Category |
+  |---|---|---|
+  | A password | block | credentials |
+  | Customer rows | block | customer data |
+  | Patient record | justify | health |
+  | AWS key | redact (by rule) | |
+  | Benign, and a question about passwords | allow | |
+
+  Decisions took 320 to 440 ms, with a warm-up p95 of 322 ms (just over the
+  300 ms gate, so `auto` judges after sending on this machine).
+
 ## 6. API / interface
 
 | Method | Path | Plane | Auth | Purpose |

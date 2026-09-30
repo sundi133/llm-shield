@@ -1,0 +1,6 @@
+# Component-local, like shield-mavlink: nothing in the data or admin plane
+# installs this. Both are already Shield root dependencies; they are listed so
+# the agent installs standalone on a laptop.
+cryptography>=42   # bundle verification (shield_mavlink.bundle)
+regex>=2023.0      # the DLP rule engine (icap/rules.py), for its match timeout
+# mitmproxy arrives with capture (task 5). HTTP is the standard library.
