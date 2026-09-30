@@ -3,6 +3,7 @@
 - shield_mavlink.bundle   the verifier every Shield edge device uses
 - shield_mavlink.audit    the hash-chained offline audit log
 - icap.rules              the DLP rule engine the ICAP adapter runs
+- icap.decompress, icap.extract   reading a provider's request body, as ICAP does
 
 Installed, they import normally; from a Shield checkout they are found beside
 this package. The installers (task 6) bundle all three.
@@ -29,5 +30,10 @@ except ImportError:                                        # running from a Shie
     sys.path.insert(0, str(_PACKAGES.parent))
     from icap.rules import Bundle, compile_bundle, evaluate, redact
 
-__all__ = ["Bundle", "BundleError", "OfflineAuditChain", "VerifyResult", "compile_bundle",
-           "evaluate", "redact", "verify_bundle"]
+# Extraction exactly as the ICAP adapter does it: decode first (claude.ai
+# compresses its request bodies), then pull the prompt out of the provider's shape.
+from icap.decompress import decode  # noqa: E402
+from icap.extract import Extracted, extract  # noqa: E402
+
+__all__ = ["Bundle", "BundleError", "Extracted", "OfflineAuditChain", "VerifyResult",
+           "compile_bundle", "decode", "evaluate", "extract", "redact", "verify_bundle"]

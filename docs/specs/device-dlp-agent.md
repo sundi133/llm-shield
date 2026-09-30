@@ -142,6 +142,69 @@ laptop's AI traffic, not the whole fleet's (unlike a shared gateway CA).
 Pinned apps: an app that refuses the device CA cannot be inspected. The policy
 chooses per host: `block` or `allow_and_log`.
 
+**As built in task 5.**
+
+*Proxy (`proxy.py`, `capture.py`)*
+- mitmproxy on `127.0.0.1:47824`, with a lazy connection strategy. TLS is
+  intercepted for AI hosts only, decided from the ClientHello. Any other
+  connection, for example from an app with `HTTPS_PROXY` set, is tunnelled and
+  never decrypted.
+- Upstream certificates are verified.
+- Bodies are read with the ICAP adapter's `decode` and `extract`.
+- A redaction rewrites JSON string by string, so structure and escapes survive.
+  A body that is compressed without a `Content-Encoding` header (claude.ai), or
+  is not JSON or text, is **blocked rather than sent unredacted**. A WebSocket
+  message is rewritten in place, or dropped with close code 4403.
+
+*Block bodies (`blocks.py`)*
+- 403 with each provider's own error shape (OpenAI, Anthropic, Google, and a
+  generic one). The spec said to reuse ICAP's per-provider bodies, but ICAP has
+  only one generic body, so these are new.
+- Checked with curl against `api.openai.com`, `api.anthropic.com` and
+  `chatgpt.com`, where the request never leaves the laptop. How the web UIs
+  render them is still to be checked in each app.
+
+*Reason page for justify.* The block message carries
+`http://127.0.0.1:47823/justify/{token}`:
+- The one-time token is the capability.
+- The page cannot be framed.
+- Its POST is accepted only from its own origin, so a web page that learned the
+  token cannot submit a reason.
+- A reason given in the browser extension also covers the same turn when the
+  proxy sees it inside the request body. Grants match on the last user turn,
+  whitespace-normalised.
+- The model's answer for identical text is cached for 60 s, so the extension
+  and the proxy do not both pay for a model call.
+
+*Device CA (`ca.py`)*
+- RSA 2048, path length 0.
+- Critical name constraints limited to the AI hosts, so a stolen key cannot
+  impersonate any other site.
+- A policy that adds a host outside the constraints gets a new CA. The proxy
+  restarts, and `on_ca_rotated` hands the certificate to the installer to
+  trust (task 6).
+
+*PAC.* Served at `/proxy.pac` from the current policy, using ICAP's host
+matching. The `; DIRECT` fallback appears unless `fail_mode` is `block`.
+
+*Browser extension (v1.2.0)*
+- Asks the agent first; the prompt then never goes to Shield. It finds the
+  agent through native messaging (`ai.votal.device_agent`, `native_host.py`),
+  which hands over the port and secret.
+- Redact rewrites the composer; justify asks for a reason.
+- With no agent it screens through Shield as before.
+- File attachments still go to `/guardrails/file` as before (file DLP is a v1
+  non-goal on the device).
+
+*Secret file.* `local_secret` is 0644 because the native host runs as the
+signed-in user. It keeps web pages out; local software could skip the proxy
+anyway (§7: detection, not prevention).
+
+*Tests.* The end-to-end tests run real mitmproxy with TLS through the device CA
+against a fake AI service: redact, block, justify, tunnel, and pinned
+allow_and_log. Like the ICAP WebSocket addon's tests, they skip without
+mitmproxy (`requirements-ws.txt`).
+
 ### 3.2 Decide
 
 1. **Rules** (microseconds): the tenant's regex rules and keyword blocklists,

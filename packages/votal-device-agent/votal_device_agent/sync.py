@@ -50,6 +50,8 @@ class AgentConfig:
     state_dir: str
     ollama_url: str = "http://127.0.0.1:11535"
     local_port: int = 47823
+    proxy_port: int = 47824
+    capture: str = "proxy"                # proxy | off (the extension still asks the agent)
     fallback_path: str = ""
     model_inline: str = "auto"            # auto | always | never
 
@@ -62,6 +64,8 @@ class AgentConfig:
             raise ValueError("pinned_public_key: 64 hex characters (Ed25519 public key)")
         if cfg.model_inline not in ("auto", "always", "never"):
             raise ValueError("model_inline: auto, always or never")
+        if cfg.capture not in ("proxy", "off"):
+            raise ValueError("capture: proxy or off")
         cfg.pinned_public_key = key
         return cfg
 

@@ -4,6 +4,9 @@
 // tenant X-API-Key, and identity/attribution headers. Content script talks to
 // it via sendMessage.
 
+// The on-laptop Votal device agent, when present, decides first (agent_client.js).
+importScripts("agent_client.js");
+
 const DEFAULTS = {
   shieldUrl: "https://api.guardrails.votal.ai",
   tenantKey: "",
@@ -83,6 +86,10 @@ async function screen(text, origin) {
   const cfg = await getConfig();
   const identity = await resolveIdentity();
   if (cfg.mode === "off") return { block: false, warn: false, reason: "", mode: "off", identity };
+  // A managed laptop with the Votal device agent decides locally, on the
+  // tenant's signed policy: the prompt does not leave the laptop to be judged.
+  const local = await agentScreen(text, origin);
+  if (local) return { ...local, identity };
   if (!cfg.shieldUrl) return { block: false, warn: false, reason: "", error: "no shieldUrl configured", mode: cfg.mode, identity };
 
   const headers = { "Content-Type": "application/json" };
@@ -210,6 +217,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // channel open forever and hang the content script fail-closed.
     screenFile(msg.file || {}).then(sendResponse, () =>
       sendResponse({ block: false, warn: false, reason: "", error: "file screening failed" }));
+    return true;
+  }
+  if (msg && msg.type === "shield-justify") {
+    agentJustify(String(msg.prompt_sha256 || ""), String(msg.destination || ""), String(msg.reason || ""))
+      .then((granted) => sendResponse({ granted }), () => sendResponse({ granted: false }));
     return true;
   }
   if (msg && msg.type === "shield-test") {

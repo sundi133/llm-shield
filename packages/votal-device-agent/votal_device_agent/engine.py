@@ -22,6 +22,8 @@ excerpt when the tenant turns on privacy.capture_excerpt.
 from __future__ import annotations
 
 import hashlib
+import json
+import secrets
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -72,11 +74,14 @@ class Decision:
     notice: str = ""
     evaluated_ms: float = 0.0
     excerpt: Optional[str] = None         # masked; recorded only with capture_excerpt
+    justify_token: Optional[str] = None   # one-time, for the reason page (action justify)
 
     def public(self) -> dict:
         """For the loopback API: never the prompt, only the redacted text to send."""
         out = asdict(self)
         out.pop("excerpt")
+        if self.action != "justify":
+            out.pop("justify_token")
         if self.action != "redact":
             out.pop("text")
         return out
@@ -87,6 +92,12 @@ def _host(h: str) -> str:
     if h.startswith("["):
         return h[1:].split("]", 1)[0]
     return h.split(":", 1)[0] if h.count(":") == 1 else h
+
+
+def _norm_sha(text: str) -> str:
+    """The same turn typed in a browser and seen in the request body can differ
+    in whitespace; justify grants and the model cache match on this."""
+    return hashlib.sha256(" ".join((text or "").split()).encode()).hexdigest()
 
 
 def _segments(text: str, size: int) -> list[str]:
@@ -100,8 +111,19 @@ class Engine:
         self.model, self.audit, self.clock = model, audit, clock
         self.justify_ttl_s, self.pending_ttl_s = justify_ttl_s, pending_ttl_s
         self._lock = threading.Lock()
-        self._grants: dict[tuple, tuple] = {}      # (sha, host) -> (expires, reason)
-        self._pending: dict[tuple, float] = {}     # (sha, host) -> expires: justify asked
+        # A prompt waiting for a reason: (sha, host) -> (expires, token, also),
+        # where `also` is the key of its last user turn. The token is what the
+        # reason page carries.
+        self._pending: dict[tuple, tuple] = {}
+        self._tokens: dict[str, tuple] = {}
+        # A granted reason, reachable from the full prompt's key or its last
+        # turn's: the extension justifies the composer text, the proxy then sees
+        # the same turn inside the request body. Single use through either key.
+        self._grants: dict[tuple, int] = {}
+        self._grant_data: dict[int, tuple] = {}    # id -> (expires, reason, keys)
+        self._grant_seq = 0
+        self._model_cache: dict[str, tuple] = {}   # key -> (expires, answer)
+        self.model_cache_ttl_s = 60.0
         self._executor = after_send_executor
         self.counters: dict[str, int] = {}
         self.set_trust(trust)
@@ -135,27 +157,72 @@ class Engine:
         """Allow this exact prompt to this destination once, within justify_ttl_s.
         Only for a prompt the engine asked to justify: a reason cannot be given
         in advance for a prompt nobody has seen."""
-        key = (prompt_sha256, _host(destination))
+        return self._grant((prompt_sha256, _host(destination)), reason)
+
+    def justify_token(self, token: str, reason: str) -> bool:
+        """The same, from the reason page, which carries the one-time token."""
+        with self._lock:
+            key = self._tokens.get(token or "")
+        return key is not None and self._grant(key, reason)
+
+    def pending_for_token(self, token: str) -> Optional[str]:
+        """The destination a live token is waiting on (for the reason page)."""
+        self._expire()
+        with self._lock:
+            key = self._tokens.get(token or "")
+        return key[1] if key else None
+
+    def _grant(self, key: tuple, reason: str) -> bool:
         reason = (reason or "").strip()
         if len(reason) < 3:
             return False
+        self._expire()
         now = self.clock()
         with self._lock:
-            if self._pending.get(key, 0) <= now:
+            pending = self._pending.pop(key, None)
+            if pending is None:
                 return False
-            self._pending.pop(key, None)
-            self._grants[key] = (now + self.justify_ttl_s, reason[:500])
+            _exp, token, also = pending
+            self._tokens.pop(token, None)
+            keys = tuple(k for k in (key, also) if k)
+            self._grant_seq += 1
+            self._grant_data[self._grant_seq] = (now + self.justify_ttl_s, reason[:500], keys)
+            for k in keys:
+                self._grants[k] = self._grant_seq
         return True
 
-    def _take_grant(self, key: tuple) -> Optional[str]:
+    def _expire(self) -> None:
         now = self.clock()
         with self._lock:
-            for k in [k for k, (exp, _) in self._grants.items() if exp <= now]:
-                self._grants.pop(k)
-            for k in [k for k, exp in self._pending.items() if exp <= now]:
-                self._pending.pop(k)
-            got = self._grants.pop(key, None)
-        return got[1] if got else None
+            for gid in [g for g, (exp, _r, _k) in self._grant_data.items() if exp <= now]:
+                for k in self._grant_data.pop(gid)[2]:
+                    self._grants.pop(k, None)
+            for k in [k for k, (exp, _t, _a) in self._pending.items() if exp <= now]:
+                self._tokens.pop(self._pending.pop(k)[1], None)
+
+    def _take_grant(self, *keys: tuple) -> Optional[str]:
+        self._expire()
+        with self._lock:
+            for key in keys:
+                gid = self._grants.get(key)
+                if gid is not None:
+                    _exp, reason, all_keys = self._grant_data.pop(gid)
+                    for k in all_keys:
+                        self._grants.pop(k, None)
+                    return reason
+        return None
+
+    def note(self, destination: str, verdict: str, reason: str, source: str = "proxy") -> None:
+        """Record something that is not a prompt decision, e.g. an app that
+        refused the device certificate (spec §3.1, pinned apps)."""
+        p = self.policy
+        d = Decision(action="block" if verdict == "block" else "allow", verdict=verdict,
+                     enforced=p.get("mode") == "enforce", destination=_host(destination), app="",
+                     source=source, prompt_sha256="", prompt_len=0, mode=p.get("mode", "monitor"),
+                     trust=self.trust.status, bundle_version=self.trust.bundle_version,
+                     reason=reason, model_state="not_run")
+        self._count("pinned_" + verdict)
+        self._record(d)
 
     # ── deciding ───────────────────────────────────────────────────────
 
@@ -189,7 +256,13 @@ class Engine:
                 return self._finish(d, t0)
         d.excerpt = self._excerpt(text) if (p.get("privacy") or {}).get("capture_excerpt") else None
 
-        grant = self._take_grant((d.prompt_sha256, host))
+        # The key of the turn the user typed: the last user turn when the caller
+        # knows it, else the whole text from the extension (which sends only
+        # the composer). A grant made under either key covers the other path.
+        turn_key = ((_norm_sha(last_user), host) if last_user else
+                    (_norm_sha(text), host) if source != "proxy" else None)
+        d._turn_key = turn_key
+        grant = self._take_grant(*[k for k in ((d.prompt_sha256, host), turn_key) if k])
         if grant is not None and hit is None:
             d.justified, d.justify_reason = True, grant
             d.rule_ids = [h.rule_id for h in red_hits]
@@ -247,14 +320,21 @@ class Engine:
             return None
         t = p["thresholds"]
         best, best_key = None, (-1, -1.0)
+        qkey = hashlib.sha256(json.dumps([p["model"], p["questions"]], sort_keys=True)
+                              .encode()).hexdigest()
         for seg in segments:
-            try:
-                ans = self.model.decide(p["model"]["name"],
-                                        {"prompt": seg, "destination": d.destination, "app": d.app},
-                                        p["questions"], p.get("model_timeout_ms", 1500) / 1000.0)
-            except ModelUnavailable as e:
-                d.model_state = e.state
-                return None
+            ckey = hashlib.sha256(f"{qkey}|{d.destination}|{_norm_sha(seg)}".encode()).hexdigest()
+            ans = self._cached(ckey)
+            if ans is None:
+                try:
+                    ans = self.model.decide(p["model"]["name"],
+                                            {"prompt": seg, "destination": d.destination,
+                                             "app": d.app},
+                                            p["questions"], p.get("model_timeout_ms", 1500) / 1000.0)
+                except ModelUnavailable as e:
+                    d.model_state = e.state
+                    return None
+                self._cache(ckey, ans)
             d.chunks_judged += 1
             mv = model_verdict(ans, t)
             key = (RANK.get(mv, 0), ans["p_category"])
@@ -264,6 +344,25 @@ class Engine:
                 break
         d.model_state = "ok"
         return best
+
+    def _cached(self, key: str) -> Optional[dict]:
+        """A recent answer for the same text: the extension and the proxy often
+        see the same turn within a second, and one model call is enough."""
+        with self._lock:
+            hit = self._model_cache.get(key)
+        if hit and hit[0] > self.clock():
+            self._count("model_cached")
+            return hit[1]
+        return None
+
+    def _cache(self, key: str, ans: dict) -> None:
+        with self._lock:
+            if len(self._model_cache) >= 512:
+                now = self.clock()
+                self._model_cache = {k: v for k, v in self._model_cache.items() if v[0] > now}
+                if len(self._model_cache) >= 512:
+                    self._model_cache.clear()
+            self._model_cache[key] = (self.clock() + self.model_cache_ttl_s, ans)
 
     def _apply_model(self, d: Decision, segments: list[str]) -> None:
         p = self.policy
@@ -335,8 +434,16 @@ class Engine:
         if d.action != "redact":
             d.text = None
         if d.action == "justify":
+            token = secrets.token_urlsafe(24)
+            key = (d.prompt_sha256, d.destination)
+            also = getattr(d, "_turn_key", None)
             with self._lock:
-                self._pending[(d.prompt_sha256, d.destination)] = self.clock() + self.pending_ttl_s
+                old = self._pending.pop(key, None)
+                if old:
+                    self._tokens.pop(old[1], None)
+                self._pending[key] = (self.clock() + self.pending_ttl_s, token, also)
+                self._tokens[token] = key
+            d.justify_token = token
         d.notice = self._notice(d)
         self._count({"allow": "allowed", "redact": "redacted", "block": "blocked",
                      "justify": "justify_asked"}[d.action])

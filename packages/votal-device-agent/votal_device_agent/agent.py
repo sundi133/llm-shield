@@ -12,6 +12,7 @@ State directory layout:
   fallback.json      optional MDM-shipped secrets-only rules
   audit/             hash-chained decision log, uploaded.json
   local_secret       the loopback API secret
+  ca/                the per-device CA (mitmproxy confdir layout)
 """
 
 from __future__ import annotations
@@ -80,6 +81,13 @@ class Agent:
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self.local_api: Optional[LocalApi] = None
+        self.proxy = None
+        self.proxy_port: Optional[int] = None
+        self.ca_dir = Path(cfg.state_dir) / "ca"
+        self.ca_trust_pending = False
+        # Called with the CA certificate path when a new CA is issued; the
+        # installer (task 6) sets it to add the CA to the system trust store.
+        self.on_ca_rotated = None
 
     # ── lifecycle ──────────────────────────────────────────────────────
 
@@ -92,7 +100,47 @@ class Agent:
         return self.creds
 
     def reload(self) -> None:
+        before = self.engine.ai_hosts
         self.engine.set_trust(self.store.load())
+        if self.proxy is not None and self.engine.ai_hosts != before:
+            self._ensure_ca(restart=True)
+
+    def _ensure_ca(self, restart: bool = False) -> bool:
+        """A CA constrained to the current AI hosts; a new one when they grew."""
+        from votal_device_agent import ca
+        rotated = ca.ensure_ca(self.ca_dir, self.engine.ai_hosts,
+                               device_name=self.creds.device_id if self.creds else "")
+        if rotated:
+            self.ca_trust_pending = True
+            if self.on_ca_rotated:
+                try:
+                    self.on_ca_rotated(str(self.ca_dir / ca.CERT_FILE))
+                    self.ca_trust_pending = False
+                except Exception:
+                    pass
+            if restart and self.proxy is not None:
+                self.proxy.stop()
+                self._start_proxy()
+        return rotated
+
+    def _start_proxy(self) -> Optional[int]:
+        try:
+            from votal_device_agent.proxy import LocalProxy
+        except ImportError:                 # mitmproxy not installed: extension-only capture
+            return None
+        base = f"http://127.0.0.1:{self.local_api.server.server_address[1]}" if self.local_api \
+            else ""
+        self.proxy = LocalProxy(self.engine, port=self.cfg.proxy_port, confdir=self.ca_dir,
+                                justify_base=base)
+        self.proxy_port = self.proxy.start()
+        return self.proxy_port
+
+    def pac(self) -> Optional[str]:
+        if self.proxy_port is None:
+            return None
+        from votal_device_agent.pac import render
+        return render(self.engine.ai_hosts, self.proxy_port,
+                      fail_open=self.engine.policy.get("fail_mode") != "block")
 
     def check_model(self) -> str:
         m = self.engine.policy.get("model") or {}
@@ -146,6 +194,9 @@ class Agent:
         self.local_api = LocalApi(self, load_or_create_secret(self.cfg.state_dir),
                                   port=self.cfg.local_port)
         port = self.local_api.start()
+        if self.cfg.capture == "proxy":
+            self._ensure_ca()
+            self._start_proxy()
 
         def loop(every: float, fn):
             while not self._stop.is_set():
@@ -163,6 +214,8 @@ class Agent:
 
     def stop(self) -> None:
         self._stop.set()
+        if self.proxy:
+            self.proxy.stop()
         if self.local_api:
             self.local_api.stop()
         self.engine.drain()
@@ -198,4 +251,6 @@ class Agent:
                 "model": {"state": self.model.state, "inline": self.model.gate.inline(),
                           "p95_ms": self.model.gate.p95(), "gate_ms": self.model.gate.gate_ms},
                 "counters": dict(self.engine.counters), "last_sync": self.last,
+                "capture": {"proxy_port": self.proxy_port, "ca_trust_pending": self.ca_trust_pending,
+                            "ai_hosts": list(self.engine.ai_hosts)},
                 "audit": self.audit.verify().detail}
