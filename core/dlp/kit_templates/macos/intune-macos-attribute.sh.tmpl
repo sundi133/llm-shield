@@ -6,8 +6,7 @@ if [ ! -x "$BIN" ]; then
   echo "not installed"
   exit 0
 fi
-OUT=$("$BIN" verify 2>&1)
-if [ $? -eq 0 ]; then
+if OUT=$("$BIN" verify 2>&1); then
   echo "ok"
 else
   echo "$OUT" | grep '^FAIL' | sed 's/^FAIL *//' | tr '\n' ';' | cut -c1-240

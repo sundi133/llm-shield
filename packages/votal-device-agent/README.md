@@ -66,3 +66,33 @@ Point the system proxy at the PAC file (MDM does this in production):
 With `auto`, the model sits on the send path only when its measured p95 meets
 the gate: 300 ms on Apple Silicon, 800 ms on x86. Otherwise it judges after the
 prompt is sent and its verdict is only recorded.
+
+## Releasing
+
+1. Set the new version in `votal_device_agent/_version.py` (and
+   `core/dlp/kits.py DEFAULT_AGENT_VERSION`; a test keeps them equal).
+2. To move to a newer Ollama, regenerate the lock from GitHub's asset digests
+   and review the diff:
+
+   ```bash
+   python packages/votal-device-agent/packaging/fetch_ollama.py --print-digests 0.36.0 > packages/votal-device-agent/packaging/ollama.lock
+   ```
+
+3. Merge, then tag `device-agent-v<version>` on main. The
+   `device-agent-release` workflow checks that the tag matches `_version.py`,
+   builds both installers with the pinned Ollama (CUDA left out on Windows),
+   signs and notarizes them when the repository secrets exist, and publishes a
+   GitHub Release with `SHA256SUMS`. Without the secrets it publishes an
+   **unsigned pre-release**, labelled so, for pilots.
+
+Repository secrets for signed releases:
+
+| Secret | What |
+|---|---|
+| `APPLE_APP_CERT_P12`, `APPLE_INSTALLER_CERT_P12` | Developer ID Application and Installer certificates, base64 `.p12` |
+| `APPLE_CERT_PASSWORD` | Their password |
+| `NOTARY_KEY_ID`, `NOTARY_ISSUER`, `NOTARY_KEY_P8` | App Store Connect API key for `notarytool` |
+| `WINDOWS_SIGN_CERT_PFX`, `WINDOWS_SIGN_PASSWORD` | Code-signing certificate, base64 `.pfx` |
+
+Then set `SHIELD_APPLE_TEAM_ID` on Shield so the kits' `get-installer.sh` and
+the managed login item check Votal's Apple team.

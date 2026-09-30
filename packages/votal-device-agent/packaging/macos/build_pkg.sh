@@ -7,10 +7,11 @@
 #   VERSION=0.1.1 ./build_pkg.sh   (override)
 #
 # Optional:
-#   OLLAMA_TGZ=/path/ollama-darwin.tgz OLLAMA_SHA256=<hex>   bundle Ollama (release)
+#   OLLAMA_DIR=<dir from fetch_ollama.py macos>              bundle Ollama (release)
 #   MAC_APP_IDENTITY="Developer ID Application: ..."           sign the binaries
 #   MAC_INSTALLER_IDENTITY="Developer ID Installer: ..."       sign the pkg
 #   NOTARY_PROFILE=<keychain profile for notarytool>          notarize and staple
+#   NOTARY_KEYCHAIN=<keychain holding that profile>           when not the default one
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG_ROOT="$(cd "$HERE/../.." && pwd)"            # packages/votal-device-agent
@@ -34,16 +35,19 @@ cp -R "$WORK/dist/votal-device-agent" "$BASE/bin"
 cp "$HERE/votal-native-host" "$BASE/bin/votal-native-host"
 cp "$HERE/ai.votal.device-agent.plist" "$WORK/root/Library/LaunchDaemons/"
 
-if [ -n "${OLLAMA_TGZ:-}" ]; then
-  echo "${OLLAMA_SHA256:?OLLAMA_SHA256 is required with OLLAMA_TGZ}  $OLLAMA_TGZ" | shasum -a 256 -c -
-  mkdir -p "$BASE/ollama"
-  tar -xzf "$OLLAMA_TGZ" -C "$BASE/ollama"
+if [ -n "${OLLAMA_DIR:-}" ]; then
+  # Already checked against ollama.lock by fetch_ollama.py.
+  [ -x "$OLLAMA_DIR/ollama" ] || { echo "OLLAMA_DIR has no ollama binary" >&2; exit 1; }
+  cp -R "$OLLAMA_DIR" "$BASE/ollama"
 else
-  echo "note: no OLLAMA_TGZ; this package does not bundle Ollama (development build)"
+  echo "note: no OLLAMA_DIR; this package does not bundle Ollama (development build)"
 fi
 
 if [ -n "${MAC_APP_IDENTITY:-}" ]; then
-  find "$BASE" -type f \( -perm -u+x -o -name "*.dylib" -o -name "*.so" \) -print0 |
+  # Our files only. Ollama arrives signed by its maker (Developer ID, hardened
+  # runtime, timestamped), which notarization accepts; re-signing it would
+  # replace their identity with ours for code we did not build.
+  find "$BASE/bin" -type f \( -perm -u+x -o -name "*.dylib" -o -name "*.so" \) -print0 |
     xargs -0 codesign --force --options runtime --timestamp --sign "$MAC_APP_IDENTITY"
 fi
 
@@ -55,7 +59,9 @@ pkgbuild --root "$WORK/root" --scripts "$HERE/scripts" --identifier ai.votal.dev
   --version "$VERSION" --install-location / ${SIGN[@]+"${SIGN[@]}"} "$PKG"
 
 if [ -n "${NOTARY_PROFILE:-}" ]; then
-  xcrun notarytool submit "$PKG" --keychain-profile "$NOTARY_PROFILE" --wait
+  KC=()
+  [ -n "${NOTARY_KEYCHAIN:-}" ] && KC=(--keychain "$NOTARY_KEYCHAIN")
+  xcrun notarytool submit "$PKG" --keychain-profile "$NOTARY_PROFILE" ${KC[@]+"${KC[@]}"} --wait
   xcrun stapler staple "$PKG"
 fi
 echo "$PKG"

@@ -1,0 +1,20 @@
+{
+  "comment": "The Ollama build the installers bundle, pinned by SHA-256. 0.35.0 is the first release with /v1/systemone, which the agent needs. Digests from the GitHub release's asset metadata. Update with: python packaging/fetch_ollama.py --print-digests <version> (see README).",
+  "version": "0.35.0",
+  "source": "https://github.com/ollama/ollama/releases/download/v0.35.0",
+  "assets": {
+    "macos": {
+      "name": "ollama-darwin.tgz",
+      "sha256": "2608dbb0a0f0136a198db9d48b4f74ece55f452314a39452fca35b7cf20c2589",
+      "binary": "ollama",
+      "exclude": []
+    },
+    "windows": {
+      "name": "ollama-windows-amd64.zip",
+      "sha256": "d6f7d3dd4f5d013553a78c1e78b2521fcf41d43dd2863e4596cdc046fe6036db",
+      "binary": "ollama.exe",
+      "exclude": ["lib/ollama/cuda_v12/*", "lib/ollama/cuda_v13/*"],
+      "exclude_why": "CUDA runners are 1.43 GB of the 1.46 GB archive; the 0.8B model runs on the CPU and Vulkan runners that remain (about 40 MB)."
+    }
+  }
+}

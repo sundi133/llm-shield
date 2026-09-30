@@ -1,0 +1,221 @@
+name: Device agent release
+
+# Publishes the Votal device agent's installers as a GitHub Release, which the
+# rollout kits' get-installer scripts download and verify.
+# Spec: docs/specs/device-rollout-kit.md, task 5.
+#
+# Tag device-agent-v<version>; the version must equal
+# packages/votal-device-agent/votal_device_agent/_version.py.
+#
+# Signed when the repository secrets exist; otherwise the release is an
+# UNSIGNED PRE-RELEASE, labelled so, for pilots only:
+#   macOS    APPLE_APP_CERT_P12, APPLE_INSTALLER_CERT_P12 (base64 .p12),
+#            APPLE_CERT_PASSWORD, NOTARY_KEY_ID, NOTARY_ISSUER, NOTARY_KEY_P8
+#   Windows  WINDOWS_SIGN_CERT_PFX (base64 .pfx), WINDOWS_SIGN_PASSWORD
+on:
+  push:
+    tags: ["device-agent-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "device-agent-v<version>, matching votal_device_agent/_version.py"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: device-agent-release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          WANT=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' packages/votal-device-agent/votal_device_agent/_version.py)
+          if [ "$TAG" != "device-agent-v$WANT" ]; then
+            echo "::error::tag $TAG does not match _version.py ($WANT): bump the version first"
+            exit 1
+          fi
+          echo "version=$WANT" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  macos:
+    name: macOS pkg
+    needs: version
+    runs-on: macos-14
+    outputs:
+      signed: ${{ steps.sign.outputs.signed || 'false' }}
+    env:
+      HAS_SIGNING: ${{ secrets.APPLE_APP_CERT_P12 != '' && secrets.APPLE_INSTALLER_CERT_P12 != '' && secrets.NOTARY_KEY_P8 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r packages/votal-device-agent/requirements.txt "pyinstaller>=6,<7"
+      - name: Fetch the pinned Ollama (SHA-256 from ollama.lock)
+        run: python packages/votal-device-agent/packaging/fetch_ollama.py macos "$RUNNER_TEMP/ollama"
+      - name: Import the signing identities
+        id: sign
+        if: env.HAS_SIGNING == 'true'
+        env:
+          APPLE_APP_CERT_P12: ${{ secrets.APPLE_APP_CERT_P12 }}
+          APPLE_INSTALLER_CERT_P12: ${{ secrets.APPLE_INSTALLER_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KCPASS=$(openssl rand -hex 16)
+          security create-keychain -p "$KCPASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPASS" "$KC"
+          echo "$APPLE_APP_CERT_P12" | base64 --decode > "$RUNNER_TEMP/app.p12"
+          echo "$APPLE_INSTALLER_CERT_P12" | base64 --decode > "$RUNNER_TEMP/installer.p12"
+          security import "$RUNNER_TEMP/app.p12" -k "$KC" -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security import "$RUNNER_TEMP/installer.p12" -k "$KC" -P "$APPLE_CERT_PASSWORD" -T /usr/bin/pkgbuild -T /usr/bin/productsign
+          rm -f "$RUNNER_TEMP/app.p12" "$RUNNER_TEMP/installer.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPASS" "$KC" > /dev/null
+          # Word splitting intended: the existing keychains are separate arguments.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          APP_ID=$(security find-identity -v -p codesigning "$KC" | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
+          INST_ID=$(security find-identity -v "$KC" | grep "Developer ID Installer" | head -1 | sed 's/.*"\(.*\)"/\1/')
+          [ -n "$APP_ID" ] && [ -n "$INST_ID" ] || { echo "::error::Developer ID identities not found in the certificates"; exit 1; }
+          printf '%s' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool store-credentials votal-notary --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --keychain "$KC"
+          rm -f "$RUNNER_TEMP/notary.p8"
+          {
+            echo "MAC_APP_IDENTITY=$APP_ID"
+            echo "MAC_INSTALLER_IDENTITY=$INST_ID"
+            echo "NOTARY_PROFILE=votal-notary"
+            echo "NOTARY_KEYCHAIN=$KC"
+          } >> "$GITHUB_ENV"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - name: Build
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          OLLAMA_DIR: ${{ runner.temp }}/ollama
+        run: packages/votal-device-agent/packaging/macos/build_pkg.sh
+      - name: Check the package
+        run: |
+          PKG=packages/votal-device-agent/dist/votal-device-agent-${{ needs.version.outputs.version }}.pkg
+          pkgutil --expand-full "$PKG" "$RUNNER_TEMP/pkg"
+          BASE="$RUNNER_TEMP/pkg/Payload/Library/Application Support/Votal/DeviceAgent"
+          test "$("$BASE/bin/votal-device-agent" version)" = "${{ needs.version.outputs.version }}"
+          test -x "$BASE/ollama/ollama"
+          if [ "${{ steps.sign.outputs.signed }}" = "true" ]; then
+            pkgutil --check-signature "$PKG" | grep -q "Developer ID Installer"
+            spctl -a -vv -t install "$PKG"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: packages/votal-device-agent/dist/*.pkg
+
+  windows:
+    name: Windows msi
+    needs: version
+    runs-on: windows-latest
+    outputs:
+      signed: ${{ steps.sign.outputs.signed || 'false' }}
+    env:
+      HAS_SIGNING: ${{ secrets.WINDOWS_SIGN_CERT_PFX != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r packages/votal-device-agent/requirements.txt "pyinstaller>=6,<7"
+          dotnet tool install --global wix --version 5.0.2
+      - name: Fetch the pinned Ollama (SHA-256 from ollama.lock, CUDA left out)
+        shell: pwsh
+        run: python packages/votal-device-agent/packaging/fetch_ollama.py windows "$env:RUNNER_TEMP\ollama"
+      - name: Import the signing certificate
+        id: sign
+        if: env.HAS_SIGNING == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_SIGN_CERT_PFX: ${{ secrets.WINDOWS_SIGN_CERT_PFX }}
+          WINDOWS_SIGN_PASSWORD: ${{ secrets.WINDOWS_SIGN_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "sign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGN_CERT_PFX))
+          $pw = ConvertTo-SecureString $env:WINDOWS_SIGN_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pw
+          Remove-Item $pfx
+          "SIGN_CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "signed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: Build
+        shell: pwsh
+        run: packages/votal-device-agent/packaging/windows/build_msi.ps1 -Version "${{ needs.version.outputs.version }}" -OllamaDir "$env:RUNNER_TEMP\ollama"
+      - name: Check the installer
+        shell: pwsh
+        run: |
+          $msi = Get-Item "packages/votal-device-agent/dist/votal-device-agent-${{ needs.version.outputs.version }}.msi"
+          Start-Process msiexec -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=C:\votal-extract" -Wait
+          $exe = Get-ChildItem -Recurse C:\votal-extract -Filter votal-device-agent.exe | Select-Object -First 1
+          if ((& $exe.FullName version) -ne "${{ needs.version.outputs.version }}") { throw "wrong version" }
+          if (-not (Get-ChildItem -Recurse C:\votal-extract -Filter ollama.exe)) { throw "Ollama not bundled" }
+          if ("${{ steps.sign.outputs.signed }}" -eq "true") {
+            if ((Get-AuthenticodeSignature $msi.FullName).Status -ne "Valid") { throw "msi signature invalid" }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: packages/votal-device-agent/dist/*.msi
+
+  release:
+    name: Publish
+    needs: [version, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS
+        working-directory: dist
+        # Bare file names: the kits' get-installer scripts match them exactly.
+        run: sha256sum -- *.pkg *.msi > SHA256SUMS && cat SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+          MAC_SIGNED: ${{ needs.macos.outputs.signed }}
+          WIN_SIGNED: ${{ needs.windows.outputs.signed }}
+        run: |
+          OLLAMA=$(jq -r .version packages/votal-device-agent/packaging/ollama.lock)
+          if [ "$MAC_SIGNED" = "true" ] && [ "$WIN_SIGNED" = "true" ]; then
+            TITLE="Votal device agent $VERSION"; PRE=""
+            STATUS="Signed and notarized (macOS), Authenticode-signed (Windows)."
+          else
+            TITLE="Votal device agent $VERSION (UNSIGNED PRE-RELEASE)"; PRE="--prerelease"
+            STATUS="UNSIGNED: for pilots only (macOS signed: $MAC_SIGNED, Windows signed: $WIN_SIGNED). The kits' get-installer scripts refuse it unless run with --allow-unsigned / -AllowUnsigned; Intune for Mac will not deploy it."
+          fi
+          cat > notes.md <<EOF
+          $STATUS
+
+          - Bundles Ollama $OLLAMA (pinned by SHA-256 in packaging/ollama.lock; CUDA left out on Windows).
+          - Deploy with a rollout kit from the Votal portal (Device DLP, Rollout kits).
+          - Verify downloads against SHA256SUMS.
+          EOF
+          gh release create "$TAG" dist/* --repo "${{ github.repository }}" --title "$TITLE" --notes-file notes.md --target "${{ github.sha }}" $PRE

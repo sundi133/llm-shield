@@ -362,10 +362,16 @@ def test_scripts_parse(root_pem):
                                       input=data).returncode == 0, name
 
 
-def _stub_bin(tmp_path, sig: str, spctl: str):
+def _stub_bin(tmp_path, sig: str, spctl: str, sums_ok: bool = True):
+    import hashlib
     b = tmp_path / "bin"
     b.mkdir()
-    for name, body in {"curl": 'for a; do [ "$prev" = "-o" ] && echo pkg > "$a"; prev="$a"; done',
+    digest = hashlib.sha256(b"pkg\n").hexdigest() if sums_ok else "0" * 64
+    # curl: -o FILE writes the "pkg"; without -o (the SHA256SUMS fetch) it prints the sums.
+    curl = ('out=""; for a; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+            'if [ -n "$out" ]; then echo pkg > "$out"; else '
+            f'echo "{digest}  votal-device-agent-0.1.0.pkg"; fi')
+    for name, body in {"curl": curl,
                        "pkgutil": f'printf "%s\\n" "{sig}"',
                        "spctl": f'echo "{spctl}" >&2'}.items():
         (b / name).write_text(f"#!/bin/bash\n{body}\n")
@@ -375,6 +381,8 @@ def _stub_bin(tmp_path, sig: str, spctl: str):
 
 @pytest.mark.parametrize("sig, spctl, args, code", [
     ("Status: no signature", "", [], 2),
+    ("1. Developer ID Installer: Votal AI (ABCDE12345)", "accepted", ["--bad-sums"], 2),
+    ("Status: no signature", "", ["--allow-unsigned", "--bad-sums"], 2),
     ("1. Developer ID Installer: Someone Else (ZZZZZ99999)", "accepted", [], 2),
     ("1. Developer ID Installer: Votal AI (ABCDE12345)", "rejected", [], 2),
     ("1. Developer ID Installer: Votal AI (ABCDE12345)", "accepted", [], 0),
@@ -383,7 +391,8 @@ def _stub_bin(tmp_path, sig: str, spctl: str):
 def test_get_installer_refuses_what_votal_did_not_sign(root_pem, tmp_path, sig, spctl, args, code):
     script = tmp_path / "get-installer.sh"
     script.write_bytes(rk.files(kit_req(root_pem))["macos/get-installer.sh"])
-    b = _stub_bin(tmp_path, sig, spctl)
+    b = _stub_bin(tmp_path, sig, spctl, sums_ok="--bad-sums" not in args)
+    args = [a for a in args if a != "--bad-sums"]
     out = subprocess.run(["bash", str(script), *args], capture_output=True, text=True, timeout=20,
                          cwd=tmp_path, env={**os.environ, "PATH": f"{b}:{os.environ['PATH']}"})
     assert out.returncode == code, out.stderr
@@ -818,3 +827,179 @@ def test_delete_inventory_is_not_taken_for_a_device_id(api):
     versions): DELETE .../inventory must reach the inventory route."""
     r = api.delete(INV)
     assert r.status_code == 200 and r.json()["enforced"] is False and "cleared" in r.json()
+
+
+# ── task 5: the release pipeline ─────────────────────────────────────
+
+import hashlib as _hashlib  # noqa: E402
+import http.server  # noqa: E402
+import importlib.util  # noqa: E402
+import tarfile  # noqa: E402
+
+PACKAGING = PKG / "packaging"
+
+
+def _fetch_mod():
+    spec = importlib.util.spec_from_file_location("fetch_ollama", PACKAGING / "fetch_ollama.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_lock_pins_a_release_the_agent_can_use():
+    lock = json.loads((PACKAGING / "ollama.lock").read_text())
+    assert re.match(r"^\d+\.\d+\.\d+$", lock["version"])
+    assert lock["source"].endswith(f"/v{lock['version']}")
+    for plat, asset in lock["assets"].items():
+        assert re.match(r"^[0-9a-f]{64}$", asset["sha256"]), plat
+        assert asset["binary"] in ("ollama", "ollama.exe")
+    assert "lib/ollama/cuda_v12/*" in lock["assets"]["windows"]["exclude"]
+    from core.dlp.device_policy import DEFAULT_MODEL
+    need = tuple(int(x) for x in DEFAULT_MODEL["min_ollama"].split("."))
+    assert tuple(int(x) for x in lock["version"].split(".")) >= need     # has /v1/systemone
+
+
+@pytest.fixture
+def served(tmp_path):
+    """A local release: archives in a folder, served over HTTP."""
+    root = tmp_path / "release"
+    root.mkdir()
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=str(root), **kw)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Quiet)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield root, f"http://127.0.0.1:{srv.server_port}"
+    srv.shutdown()
+
+
+def _zip(path, entries):
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in entries.items():
+            z.writestr(name, data)
+    return _hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _tgz(path, entries):
+    with tarfile.open(path, "w:gz") as t:
+        for name, data in entries.items():
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(data), 0o755
+            t.addfile(info, _io.BytesIO(data))
+    return _hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _lock(tmp_path, source, **assets):
+    p = tmp_path / "test.lock"
+    p.write_text(json.dumps({"version": "9.9.9", "source": source, "assets": assets}))
+    return p
+
+
+def test_fetch_verifies_then_unpacks_without_cuda(served, tmp_path):
+    fo = _fetch_mod()
+    root, url = served
+    digest = _zip(root / "ollama-windows-amd64.zip", {
+        "ollama.exe": b"exe", "lib/ollama/ggml-cpu.dll": b"cpu",
+        "lib/ollama/cuda_v12/big.dll": b"x" * 1000, "lib/ollama/cuda_v13/big.dll": b"y"})
+    lock = _lock(tmp_path, url, windows={"name": "ollama-windows-amd64.zip", "sha256": digest,
+                                         "binary": "ollama.exe",
+                                         "exclude": ["lib/ollama/cuda_v12/*",
+                                                     "lib/ollama/cuda_v13/*"]})
+    dest = tmp_path / "out"
+    assert fo.fetch("windows", dest, lock) == dest / "ollama.exe"
+    assert (dest / "lib/ollama/ggml-cpu.dll").exists()
+    assert not (dest / "lib/ollama/cuda_v12").exists() and not (dest / "lib/ollama/cuda_v13").exists()
+    digest = _tgz(root / "ollama-darwin.tgz", {"ollama": b"bin", "libggml-cpu.so": b"so"})
+    lock = _lock(tmp_path, url, macos={"name": "ollama-darwin.tgz", "sha256": digest,
+                                       "binary": "ollama", "exclude": []})
+    out = fo.fetch("macos", tmp_path / "mac", lock)
+    assert out.read_bytes() == b"bin" and os.access(out, os.X_OK)
+
+
+def test_fetch_refuses_a_changed_archive_and_unpacks_nothing(served, tmp_path):
+    fo = _fetch_mod()
+    root, url = served
+    _zip(root / "ollama-windows-amd64.zip", {"ollama.exe": b"tampered"})
+    lock = _lock(tmp_path, url, windows={"name": "ollama-windows-amd64.zip", "sha256": "0" * 64,
+                                         "binary": "ollama.exe", "exclude": []})
+    with pytest.raises(fo.FetchError, match="SHA-256 mismatch"):
+        fo.fetch("windows", tmp_path / "out", lock)
+    assert not (tmp_path / "out").exists()
+    assert fo.main(["windows", str(tmp_path / "out"), "--lock", str(lock)]) == 2
+
+
+@pytest.mark.parametrize("kind, entries", [
+    ("zip", {"ollama.exe": b"x", "../escape.dll": b"x"}),
+    ("zip", {"ollama.exe": b"x", "/abs/escape.dll": b"x"}),
+    ("tgz", {"ollama": b"x", "../escape.so": b"x"}),
+])
+def test_fetch_refuses_entries_outside_the_target(served, tmp_path, kind, entries):
+    fo = _fetch_mod()
+    root, url = served
+    name = "ollama-windows-amd64.zip" if kind == "zip" else "ollama-darwin.tgz"
+    digest = (_zip if kind == "zip" else _tgz)(root / name, entries)
+    plat = "windows" if kind == "zip" else "macos"
+    lock = _lock(tmp_path, url, **{plat: {"name": name, "sha256": digest,
+                                          "binary": "ollama.exe" if kind == "zip" else "ollama",
+                                          "exclude": []}})
+    with pytest.raises(fo.FetchError, match="outside the target"):
+        fo.fetch(plat, tmp_path / "out", lock)
+    assert not (tmp_path / "escape.dll").exists() and not (tmp_path / "escape.so").exists()
+
+
+def test_fetch_requires_the_binary(served, tmp_path):
+    fo = _fetch_mod()
+    root, url = served
+    digest = _zip(root / "ollama-windows-amd64.zip", {"bin/ollama.exe": b"x"})
+    lock = _lock(tmp_path, url, windows={"name": "ollama-windows-amd64.zip", "sha256": digest,
+                                         "binary": "ollama.exe", "exclude": []})
+    with pytest.raises(fo.FetchError, match="did not contain ollama.exe"):
+        fo.fetch("windows", tmp_path / "out", lock)
+
+
+def test_the_builds_use_the_verified_ollama_and_sign_only_our_files():
+    sh = (PACKAGING / "macos" / "build_pkg.sh").read_text()
+    assert "OLLAMA_DIR" in sh and "OLLAMA_TGZ" not in sh
+    sign = sh[sh.index('if [ -n "${MAC_APP_IDENTITY:-}" ]'):]
+    assert 'find "$BASE/bin"' in sign and 'find "$BASE" ' not in sign   # not Ollama's binaries
+    assert "NOTARY_KEYCHAIN" in sh
+    ps1 = (PACKAGING / "windows" / "build_msi.ps1").read_text()
+    assert "[string]$OllamaDir" in ps1 and "OllamaZip" not in ps1
+    assert 'Sign-File "$Dist\\votal-device-agent.exe"' in ps1 and "Sign-File $Msi" in ps1
+
+
+def test_the_model_store_is_not_the_ollama_binary_folder():
+    from votal_device_agent.platform import paths
+    for os_name in ("macos", "windows", "other"):
+        p = paths(os_name)
+        assert p.ollama_models != p.install_dir / "ollama", os_name
+
+
+def test_the_release_workflow():
+    import yaml
+    path = Path(ROOT) / ".github" / "workflows" / "device-agent-release.yml"
+    text = path.read_text()
+    wf = yaml.safe_load(text)
+    on = wf.get("on") or wf.get(True)
+    assert on["push"]["tags"] == ["device-agent-v*"]
+    assert wf["permissions"] == {"contents": "write"}
+    assert set(wf["jobs"]) == {"version", "macos", "windows", "release"}
+    assert "does not match _version.py" in text                        # a wrong tag fails
+    assert text.count("fetch_ollama.py") == 2                           # both platforms, pinned
+    for secret in ("APPLE_APP_CERT_P12", "APPLE_INSTALLER_CERT_P12", "APPLE_CERT_PASSWORD",
+                   "NOTARY_KEY_ID", "NOTARY_ISSUER", "NOTARY_KEY_P8", "WINDOWS_SIGN_CERT_PFX",
+                   "WINDOWS_SIGN_PASSWORD"):
+        assert f"secrets.{secret}" in text, secret
+    assert "UNSIGNED PRE-RELEASE" in text and "--prerelease" in text
+    assert "sha256sum -- *.pkg *.msi > SHA256SUMS" in text
+    # The kits download exactly these names from exactly this tag.
+    assert "device-agent-v${VERSION}" in (Path(ROOT) / "core" / "dlp" / "kit_templates" / "macos"
+                                          / "get-installer.sh.tmpl").read_text()
+    if shutil.which("actionlint"):
+        out = subprocess.run(["actionlint", str(path)], capture_output=True, text=True)
+        assert out.returncode == 0, out.stdout

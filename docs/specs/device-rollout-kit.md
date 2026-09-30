@@ -463,6 +463,47 @@ the Rollout kits card on the Device DLP page):
   fired in production. It now uses `app.url_path_for("enroll_device")`, and the
   test runs against the real data and admin apps.
 
+**As built, task 5:**
+- **`packaging/ollama.lock`** pins Ollama 0.35.0 (the first release with
+  `/v1/systemone`) by the SHA-256 digests GitHub publishes for each asset.
+  `fetch_ollama.py --print-digests <version>` regenerates it.
+- **`packaging/fetch_ollama.py`** (standard library only):
+  - downloads the asset and refuses it on a SHA-256 mismatch, before
+    unpacking anything;
+  - refuses archive entries outside the target, and links that point outside;
+  - skips the lock's `exclude` patterns and requires the binary at the top
+    level.
+- **Windows size.** The Windows archive is 1.46 GB, of which CUDA runners are
+  1.43 GB. They are left out; the CPU and Vulkan runners that remain (about
+  40 MB) run the 0.8B model. The release still downloads the whole archive,
+  because Ollama publishes a digest only for the whole file.
+- **Archive layout, checked:** the macOS archive has `ollama` at its top level
+  (streamed the first 30 MB, not the whole file); the Windows archive has
+  `ollama.exe` at its top level (listed from its zip index, 9 KB fetched).
+- **Signing.**
+  - macOS: Ollama arrives signed by its maker (Developer ID, hardened runtime,
+    timestamped, no entitlements), which notarization accepts. `build_pkg.sh`
+    now signs **only our files** (`bin/`) and no longer re-signs Ollama's.
+  - Windows: `build_msi.ps1` signs the agent executable and the MSI.
+- **Model store moved** to a `models` folder: it was in the same folder as the
+  bundled Ollama binary on macOS.
+- **`.github/workflows/device-agent-release.yml`**, on tag
+  `device-agent-v<version>`:
+  - checks the tag against `_version.py`;
+  - builds both installers with the pinned Ollama, signing and notarizing when
+    the secrets exist;
+  - checks the result (version, bundled Ollama, signatures when signed);
+  - publishes a GitHub Release with `SHA256SUMS`. Unless both installers are
+    signed it is an **unsigned pre-release**, labelled so.
+
+  `actionlint` and `shellcheck` are clean.
+- **`get-installer.sh` also checks `SHA256SUMS`,** including for a pilot with
+  `--allow-unsigned`, as the Windows script already did.
+- **Not yet run for real.** The release workflow has not run, because nothing
+  is tagged; its first run is the first real signed (or unsigned) build with
+  Ollama inside. The fetch-and-verify step has been tested only against local
+  archives, not the real 160 MB and 1.46 GB downloads.
+
 ## What is needed from Votal (not code)
 
 1. **An Apple Developer ID** (Application and Installer certificates) and a
