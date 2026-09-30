@@ -1,0 +1,13 @@
+## Windows, with Intune (3 steps)
+
+1. **The installer.** Run `windows/get-installer.ps1`. It downloads version
+   {{version}}, checks its checksum and signature, and prints the `.msi`. In
+   Intune, add it as a line-of-business app (Apps, Windows, Add,
+   Line-of-business app). For "Command-line arguments", paste the arguments
+   line from `windows/install-command.txt`. Assign it to your group.
+{{windows_scripts_step}}
+3. **The health check.** Create a remediation (Devices, Scripts and
+   remediations, Remediations) with `windows/detect.ps1` as its detection
+   script. A laptop is "without issues" when the agent's own checks pass.
+
+Order does not matter: the agent waits for its settings.

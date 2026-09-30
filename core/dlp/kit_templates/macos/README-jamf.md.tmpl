@@ -1,0 +1,16 @@
+## Macs, with Jamf Pro (3 steps)
+
+1. **The installer.** Run `macos/get-installer.sh`. It downloads version
+   {{version}} and checks that Votal signed it and Apple notarized it. In Jamf
+   Pro, upload the `.pkg` it prints (Settings, Computer management, Packages),
+   then add it to a policy scoped to your group: trigger Recurring Check-in,
+   execution frequency Once per computer.
+2. **The profile.** Upload `macos/Votal-Device-Agent.mobileconfig` (Computers,
+   Configuration Profiles, Upload) and scope it to the same group. It holds
+   {{profile_contents}}.
+3. **The health check.** Add `macos/jamf-extension-attribute.sh` as a
+   computer extension attribute (Settings, Computer management, Extension
+   attributes; Input type: Script). It shows "ok", or what is wrong, for every
+   Mac.
+
+Order does not matter: the agent waits for its profile.

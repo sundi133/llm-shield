@@ -1,0 +1,50 @@
+#!/bin/bash
+# Downloads the Votal device agent {{version}} for macOS, checks its SHA-256
+# against the release's SHA256SUMS, and checks that Votal signed it and Apple
+# notarized it. Prints the .pkg to upload to your MDM.
+#
+#   ./get-installer.sh                    check the signature (Intune requires a signed .pkg)
+#   ./get-installer.sh --allow-unsigned   a pilot with an unsigned pre-release only
+set -euo pipefail
+VERSION="{{version}}"
+BASE="{{release_base}}/device-agent-v${VERSION}"
+URL="$BASE/votal-device-agent-${VERSION}.pkg"
+TEAM_ID="{{apple_team_id}}"
+OUT="${OUT_DIR:-$PWD}/votal-device-agent-${VERSION}.pkg"
+
+if ! curl -fsSL --proto '=https' -o "$OUT" "$URL"; then
+  echo "Could not download $URL" >&2
+  echo "Check that the release device-agent-v${VERSION} exists: {{release_page}}" >&2
+  exit 1
+fi
+
+# The checksum is checked even for a pilot: it proves the file is the release's.
+SUMS=$(curl -fsSL --proto '=https' "$BASE/SHA256SUMS") || { echo "Could not download $BASE/SHA256SUMS" >&2; exit 1; }
+WANT=$(echo "$SUMS" | awk -v f="votal-device-agent-${VERSION}.pkg" '$2 == f {print $1}')
+HAVE=$(shasum -a 256 "$OUT" | awk '{print $1}')
+if [ -z "$WANT" ] || [ "$WANT" != "$HAVE" ]; then
+  echo "Refusing: $OUT does not match the release's SHA256SUMS." >&2
+  exit 2
+fi
+
+if [ "${1:-}" = "--allow-unsigned" ]; then
+  echo "WARNING: the signature was not checked. Use this only for a pilot." >&2
+  echo "$OUT"
+  exit 0
+fi
+
+SIG=$(pkgutil --check-signature "$OUT" 2>&1 || true)
+if ! echo "$SIG" | grep -q "Developer ID Installer"; then
+  echo "Refusing: $OUT is not signed with a Developer ID Installer certificate." >&2
+  echo "If this is an unsigned pre-release for a pilot, run: $0 --allow-unsigned" >&2
+  exit 2
+fi
+if [ -n "$TEAM_ID" ] && ! echo "$SIG" | grep -q "($TEAM_ID)"; then
+  echo "Refusing: $OUT is signed, but not by Votal (team $TEAM_ID)." >&2
+  exit 2
+fi
+if ! spctl -a -vv -t install "$OUT" 2>&1 | grep -q "accepted"; then
+  echo "Refusing: $OUT is not notarized by Apple." >&2
+  exit 2
+fi
+echo "$OUT"

@@ -35,7 +35,7 @@ class Paths:
     state_dir: Path         # bundle, audit, CA, secret; the agent's account only
     config: Path            # agent.json, generated from MDM settings
     log_dir: Path
-    ollama_models: Path
+    ollama_models: Path     # the model store; the Ollama binary is under install_dir/ollama
 
 
 def paths(os_name: Optional[str] = None) -> Paths:
@@ -43,12 +43,12 @@ def paths(os_name: Optional[str] = None) -> Paths:
     if os_name == "macos":
         base = Path("/Library/Application Support/Votal/DeviceAgent")
         return Paths(base, base / "state", base / "state" / "agent.json",
-                     Path("/Library/Logs/Votal"), base / "ollama")
+                     Path("/Library/Logs/Votal"), base / "models")
     if os_name == "windows":
         prog = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Votal" / "DeviceAgent"
         data = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "Votal" / "DeviceAgent"
         return Paths(prog, data / "state", data / "state" / "agent.json", data / "logs",
-                     data / "ollama")
+                     data / "models")
     base = Path(os.environ.get("VOTAL_AGENT_HOME", Path.home() / ".votal-device-agent"))
     return Paths(base, base / "state", base / "state" / "agent.json", base / "logs",
-                 base / "ollama")
+                 base / "models")

@@ -5,6 +5,10 @@
   POST   /v1/devices/ca                                       data plane, device key: CSR -> 7-day CA
   GET    /v1/tenant/me/devices/root-ca[.mobileconfig]         both planes: the tenant root, MDM profile
   POST   /v1/tenant/me/devices/root-ca/reissue                both planes: cover new AI hosts
+  GET    /v1/tenant/me/devices/rollout-kits                   both planes: kits, never a token
+  POST   /v1/tenant/me/devices/rollout-kits                   both planes: a kit (zip), token minted
+  DELETE /v1/tenant/me/devices/rollout-kits/{kit_id}          both planes: revoke its token
+  GET, PUT, DELETE /v1/tenant/me/devices/inventory            both planes: opt-in serial allow list
   GET    /v1/tenant/me/devices                                both planes, fleet view
   DELETE /v1/tenant/me/devices/{device_id}                    both planes, revoke
   POST   /v1/tenant/me/devices/enrollment-tokens              both planes
@@ -62,12 +66,17 @@ def _enabled() -> None:
 
 
 async def _enrollment_alert(request: Request, alert: dict) -> None:
-    """A refused enrollment over a live device: a high-severity event in the
-    tenant's decision audit and telemetry, and an admin audit record."""
+    """A refused enrollment (over a live device, or from a laptop missing from the
+    company inventory): a high-severity event in the tenant's decision audit and
+    telemetry, and an admin audit record."""
     from core.runtime_policy import events as rt_events
     tenant_id = alert["tenant_id"]
-    detail = {"verdict": "block", "event": "enrollment_refused",
-              "reason": "an enrollment claimed the serial of a device that is still reporting",
+    why = alert.get("why", "live_serial")
+    reason = {"live_serial": "an enrollment claimed the serial of a device that is still "
+                             "reporting",
+              "not_in_inventory": "an enrollment came from a laptop that is not in the "
+                                  "company inventory"}.get(why, why)
+    detail = {"verdict": "block", "event": "enrollment_refused", "reason": reason,
               **{k: str(v)[:200] for k, v in alert.items() if k != "tenant_id"}}
     try:
         ev = rt_events.normalize({"source": "custom", "kind": "dlp", "decision": "deny",
@@ -78,7 +87,7 @@ async def _enrollment_alert(request: Request, alert: dict) -> None:
                                source_ip=request.client.host if request.client else "")
     except Exception:
         pass
-    _audit(request, "device_enrollment_refused_live_serial", tenant_id, "device:unenrolled",
+    _audit(request, f"device_enrollment_refused_{why}", tenant_id, "device:unenrolled",
            {k: v for k, v in alert.items() if k != "tenant_id"})
 
 
@@ -184,6 +193,137 @@ async def reissue_tenant_root_ca(request: Request):
     _audit(request, "tenant_reissue_device_root_ca", tenant_id, _actor(request, tenant_id),
            {"fingerprint_sha256": rec["fingerprint_sha256"], "hosts": rec["hosts"]})
     return {"tenant_id": tenant_id, **rec}
+
+
+# ── company inventory (docs/specs/device-rollout-kit.md, task 4) ────
+# Declared before DELETE /{device_id}, which would otherwise take "inventory"
+# for a device id.
+
+INVENTORY_MAX_BYTES = 16 * 1024 * 1024
+
+
+@tenant_router.get("/inventory")
+async def get_inventory(request: Request):
+    tenant_id = get_tenant_from_request(request)
+    return {"tenant_id": tenant_id, **dv.inventory_status(tenant_id)}
+
+
+@tenant_router.put("/inventory")
+async def put_inventory(request: Request):
+    """Body: the MDM's serial number export (CSV with a "Serial..." column, or
+    one serial per line), or JSON. Replaces the inventory; once it is
+    non-empty only those laptops can enroll. Serials are hashed on arrival."""
+    tenant_id = get_tenant_from_request(request)
+    require_registry_write(request, tenant_id, "replace the device inventory")
+    raw = await request.body()
+    if len(raw) > INVENTORY_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"body over {INVENTORY_MAX_BYTES} bytes")
+    try:
+        serials, skipped = dv.parse_serials(raw, request.headers.get("content-type", ""))
+        if not serials:
+            raise dv.DeviceError("no serial numbers found; to stop restricting enrollment, "
+                                 "DELETE the inventory instead")
+        meta = dv.set_inventory(tenant_id, serials, actor=_actor(request, tenant_id))
+    except dv.DeviceError as e:
+        raise _http(e)
+    _audit(request, "tenant_set_device_inventory", tenant_id, _actor(request, tenant_id),
+           {"count": meta["count"], "skipped": skipped})
+    return {"tenant_id": tenant_id, **meta, "skipped": skipped, "enforced": True}
+
+
+@tenant_router.delete("/inventory")
+async def delete_inventory(request: Request):
+    """Stop restricting enrollment to the inventory."""
+    tenant_id = get_tenant_from_request(request)
+    require_registry_write(request, tenant_id, "clear the device inventory")
+    had = dv.clear_inventory(tenant_id)
+    _audit(request, "tenant_clear_device_inventory", tenant_id, _actor(request, tenant_id),
+           {"had_inventory": had})
+    return {"tenant_id": tenant_id, "cleared": had, "enforced": False}
+
+
+# ── rollout kits (docs/specs/device-rollout-kit.md, task 3) ─────────
+
+
+def _kit_shield_url(request: Request) -> str:
+    """The URL laptops use to reach this Shield's data plane.
+
+    SHIELD_DEVICE_AGENT_SHIELD_URL when set. Otherwise this request's own URL,
+    but only when this app mounts the enrollment route (the data plane) and
+    the URL is https: a kit generated through the admin plane must not point
+    laptops at a host that cannot enroll them.
+    """
+    import os
+    env = os.environ.get("SHIELD_DEVICE_AGENT_SHIELD_URL", "").strip().rstrip("/")
+    if env:
+        return env
+    # url_path_for, not a scan of app.routes: newer FastAPI (0.141+) keeps
+    # included routers nested, so their paths are not in app.routes.
+    try:
+        request.app.url_path_for("enroll_device")
+        serves_enroll = True
+    except Exception:
+        serves_enroll = False
+    base = str(request.base_url).rstrip("/")
+    if serves_enroll and base.startswith("https://"):
+        return base
+    raise HTTPException(status_code=503, detail="set SHIELD_DEVICE_AGENT_SHIELD_URL to the https "
+                        "URL laptops use to reach this Shield's data plane")
+
+
+@tenant_router.get("/rollout-kits")
+async def list_rollout_kits(request: Request):
+    from core.dlp import kits
+    tenant_id = get_tenant_from_request(request)
+    s = kits.settings()
+    return {"tenant_id": tenant_id, "kits": kits.list_kits(tenant_id),
+            "defaults": {"agent_version": s["agent_version"], "extension_ids": s["extension_ids"],
+                         "signed_release": bool(s["apple_team_id"]),
+                         "mdms": list(kits.rk.MDMS),
+                         "platforms": {m: list(p) for m, p in kits.rk.PLATFORMS.items()}}}
+
+
+@tenant_router.post("/rollout-kits")
+async def create_rollout_kit(request: Request, body: dict = Body(...)):
+    """A rollout kit for one fleet and MDM, as a zip. It contains a new
+    enrollment token, shown nowhere else: the kit is the only copy."""
+    from core.dlp import kits
+    tenant_id = get_tenant_from_request(request)
+    require_registry_write(request, tenant_id, "create a device rollout kit")
+    actor = _actor(request, tenant_id)
+    shield_url = _kit_shield_url(request)
+    try:
+        out = kits.create_kit(tenant_id, body, shield_url=shield_url, actor=actor)
+    except kits.KitAPIError as e:
+        raise HTTPException(status_code=e.status, detail={"message": str(e), "errors": e.errors}
+                            if e.errors else str(e))
+    rec = out["record"]
+    if out["root_reissued"]:
+        _audit(request, "tenant_reissue_device_root_ca", tenant_id, actor,
+               {"fingerprint_sha256": rec["root_fingerprint_sha256"], "reason": "rollout kit",
+                "kit_id": rec["kit_id"]})
+    _audit(request, "tenant_create_rollout_kit", tenant_id, actor,
+           {k: rec[k] for k in ("kit_id", "fleet", "mdm", "platforms", "token_id",
+                                "expires_at", "uses", "include_proxy")}
+           | {"revoked_previous": out["revoked"]})
+    name = f"votal-rollout-kit-{rec['fleet']}-{rec['mdm']}.zip"
+    return Response(content=out["zip"], media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store",
+        "X-Votal-Kit-Id": rec["kit_id"], "X-Votal-Root-Reissued": "1" if out["root_reissued"]
+        else "0"})
+
+
+@tenant_router.delete("/rollout-kits/{kit_id}")
+async def revoke_rollout_kit(kit_id: str, request: Request):
+    from core.dlp import kits
+    tenant_id = get_tenant_from_request(request)
+    require_registry_write(request, tenant_id, "revoke a device rollout kit")
+    rec = kits.revoke_kit(tenant_id, kit_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="rollout kit not found")
+    _audit(request, "tenant_revoke_rollout_kit", tenant_id, _actor(request, tenant_id),
+           {"kit_id": kit_id, "fleet": rec.get("fleet"), "token_id": rec.get("token_id")})
+    return {"tenant_id": tenant_id, "kit_id": kit_id, "revoked": True}
 
 
 @tenant_router.get("")

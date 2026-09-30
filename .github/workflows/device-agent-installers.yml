@@ -14,8 +14,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Installer version"
-        default: "0.1.0"
+        description: "Installer version (empty: votal_device_agent/_version.py)"
+        default: ""
 
 permissions:
   contents: read
@@ -35,7 +35,7 @@ jobs:
           pip install -r packages/votal-device-agent/requirements.txt "pyinstaller>=6,<7"
       - name: Build (unsigned)
         env:
-          VERSION: ${{ inputs.version || '0.1.0' }}
+          VERSION: ${{ inputs.version }}
         run: packages/votal-device-agent/packaging/macos/build_pkg.sh
       - name: Smoke test the payload
         run: |
@@ -43,7 +43,8 @@ jobs:
           pkgutil --payload-files "$PKG" | grep -q "Library/LaunchDaemons/ai.votal.device-agent.plist"
           pkgutil --expand-full "$PKG" /tmp/pkg
           BIN="/tmp/pkg/Payload/Library/Application Support/Votal/DeviceAgent/bin/votal-device-agent"
-          "$BIN" version
+          WANT=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' packages/votal-device-agent/votal_device_agent/_version.py)
+          test "$("$BIN" version)" = "$WANT"     # the binary reports votal_device_agent/_version.py
           printf '\x11\x00\x00\x00{"type": "hello"}' | "$BIN" native-host --config=/nonexistent | tail -c +5
       - uses: actions/upload-artifact@v4
         with:
@@ -65,7 +66,7 @@ jobs:
           dotnet tool install --global wix --version 5.0.2
       - name: Build (unsigned)
         shell: pwsh
-        run: packages/votal-device-agent/packaging/windows/build_msi.ps1 -Version "${{ inputs.version || '0.1.0' }}"
+        run: packages/votal-device-agent/packaging/windows/build_msi.ps1 -Version "${{ inputs.version }}"
       - name: Smoke test the payload
         shell: pwsh
         run: |

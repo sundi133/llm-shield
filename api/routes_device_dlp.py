@@ -152,13 +152,17 @@ async def dlp_bundle(request: Request,
         # A laptop gets its own fleet's policy, never a looser fleet's.
         raise HTTPException(status_code=403, detail=f"this device is enrolled in fleet "
                                                     f"'{device[2].get('fleet')}'")
+    import time
     policy = bundle_policy(tenant_id, fleet)
     phash = policy_hash(policy)
-    etag = '"' + hashlib.sha256(f"{phash}|{fleet}|{tenant_id}".encode()).hexdigest()[:32] + '"'
+    now = int(time.time())
+    # The bucket changes every half-validity, so an unchanged policy is still
+    # re-signed before a laptop's copy expires (see freshness_bucket).
+    bucket = edge_bundle.freshness_bucket(_valid_s(), now)
+    etag = '"' + hashlib.sha256(f"{phash}|{fleet}|{tenant_id}|{bucket}".encode()
+                                ).hexdigest()[:32] + '"'
     if (request.headers.get("if-none-match") or "").strip() == etag:
         return Response(status_code=304, headers={"ETag": etag})
-    import time
-    now = int(time.time())
     # The version is the issue time: monotonic, so an agent can refuse an older
     # bundle replayed to it (rules change without touching the stored policy).
     signed = edge_bundle.sign_bundle(policy, tenant_id=tenant_id, fleet_id=fleet,

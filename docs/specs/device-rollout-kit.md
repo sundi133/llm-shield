@@ -8,7 +8,7 @@ description: One download per fleet and MDM (Jamf, Kandji, Intune) that rolls th
 
 # Spec: Device DLP rollout kit
 
-> Status: **APPROVED 2026-09-30** (user: "approved"). The live-device serial fix (§5, point 1) went into PR #447 first, at the user's request.
+> Status: **APPROVED 2026-09-30** (user: "approved"); **BUILT** (tasks 1 to 6). The live-device serial fix (§5, point 1) went into PR #447 first, at the user's request.
 > Builds on: `docs/specs/device-dlp-agent.md` (PR #447).
 > Planes: admin and data (kit generation, the same tenant routes as `/v1/tenant/me/devices/*`); CI (release pipeline); the laptop (agent fixes).
 > Guard path: untouched.
@@ -351,6 +351,185 @@ live-device replacement (point 1), with its escape hatch.
 | 4 | Opt-in inventory allow list: API, enrollment check, portal upload | S |
 | 5 | Release pipeline: `ollama.lock`, the tagged release workflow (signed when secrets exist, unsigned pre-release otherwise), `SHA256SUMS`, and the signature checks in the `get-installer` scripts | M |
 | 6 | Admin guide rewritten around the kit, plus the acceptance checklist | S |
+
+**As built, task 1:**
+- **Waiting for settings.** `installed.wait_for_settings` polls every 30 s and
+  logs once per change of reason. SIGTERM ends the wait cleanly.
+- **Invalid settings.** Invalid MDM settings with no earlier `agent.json`: the
+  service waits and says why. Invalid settings pushed later: it keeps the last
+  good `agent.json` and logs it, so DLP stays on.
+- **Kit tokens.** `create_enrollment_token(kind="kit", kit_id=, mdm=)` allows
+  up to 365 days and 100,000 uses; hand-made tokens keep 90 days and 10,000.
+  The existing token endpoint cannot make kit tokens.
+- **One version.** It is written in `votal_device_agent/_version.py` and read by
+  the CLI, the heartbeat and enrollment, `build_pkg.sh` and `build_msi.ps1`.
+  CI checks that the built binary reports it.
+
+**As built, task 2** (`core/dlp/rollout_kit.py`, templates in
+`core/dlp/kit_templates/`):
+- **Pure:** a `KitRequest` goes in, a zip comes out. Minting the token and
+  reading the root and policy is task 3.
+- **Strict validation.** Every value that reaches a script or command line is
+  checked against a pattern (tenant, fleet, URLs, version, Team ID, signer,
+  extension ids, hosts, token). A kit runs as root or SYSTEM on every laptop,
+  so none of them can carry shell or PowerShell syntax.
+- **Templates:**
+  - They are `*.tmpl`, because `.dockerignore` drops `*.md`.
+  - Rendering fails on any unknown or leftover placeholder.
+  - Every template is used; a test checks it.
+- **One stable profile identifier per tenant and fleet**
+  (`ai.votal.device-agent.<tenant>.<fleet>`): a newer kit's profile replaces
+  the older one instead of adding a second proxy payload.
+- **Managed Login Items** carry the Team ID once the release is signed
+  (`apple_team_id`).
+- **The token appears in exactly two files:** the Mac profile and the Windows
+  `install-command.txt`. `SECURITY.txt` lists them.
+- **Generated sentences.** The README's profile description and Windows script
+  step are built from what the kit actually contains.
+- **Admin guide link:** the kit links `https://docs.shield.votal.ai/device-dlp-agent/`.
+
+**As built, task 3** (`core/dlp/kits.py`, routes in `api/routes_devices.py`,
+the Rollout kits card on the Device DLP page):
+- **Order inside `create_kit`:**
+  1. Parse the body.
+  2. Validate the whole kit with a placeholder token.
+  3. Reissue the root if the policy outgrew it (audited as
+     `tenant_reissue_device_root_ca`, reason "rollout kit").
+  4. Mint the kit token.
+  5. Build the zip.
+  6. Record the kit.
+
+  A bad request returns 400 without minting a token. A failed build revokes
+  the token it minted.
+- **The kit record** is `device_kit:{tenant}:{kit_id}`. It never holds the
+  token, and has a millisecond timestamp so the list stays newest first.
+- **Kit status:** active, exhausted, revoked or expired. Laptops left shows
+  only while the token can still enroll.
+- **Stale reasons:**
+  - the root was reissued since the kit was made;
+  - the policy has hosts no root covers;
+  - an older agent version.
+- **Revoking** a kit (or `revoke_previous`) revokes its token only; laptops it
+  enrolled keep working.
+- **The Shield URL in a kit:**
+  - `SHIELD_DEVICE_AGENT_SHIELD_URL` when set.
+  - Otherwise the request's own https URL, but only in the app that mounts
+    `/v1/devices/enroll` (the data plane).
+  - A kit made through the admin plane without the variable gets 503: it
+    would otherwise point laptops at a host that cannot enroll them.
+- **More env:** `SHIELD_DEVICE_AGENT_RELEASE_BASE`, `SHIELD_APPLE_TEAM_ID`,
+  `SHIELD_WINDOWS_SIGNER`, `SHIELD_BROWSER_EXTENSION_IDS`,
+  `SHIELD_DEVICE_AGENT_VERSION`. Default agent version:
+  `kits.DEFAULT_AGENT_VERSION`, held equal to the agent's `_version.py`.
+- **Checked in the portal** (admin plane, local demo):
+  - generate Jamf, Kandji and Intune kits, all 200;
+  - list them and revoke one;
+  - "revoke earlier kits" keeps the new one active;
+  - console errors are only the pre-existing sign-in and `aibom/drift` loads.
+- **End to end in the tests:** the token taken out of a downloaded kit enrolls
+  a laptop.
+
+**As built, task 4** (`core/dlp/devices.py` inventory functions, routes in
+`api/routes_devices.py`, the Company inventory card):
+- **One hashing rule.** Serials are trimmed, uppercased, then SHA-256. The
+  laptop (`votal_device_agent.agent.serial_hash`, now used by `device_info`)
+  and Shield (`devices.serial_hash`) apply the same rule, held equal by a
+  test, so an export and the firmware match whatever case either reports.
+- **Upload formats.** `PUT` accepts:
+  - a CSV export (the column whose header contains "serial": the Jamf,
+    Kandji and Intune exports);
+  - one serial per line;
+  - JSON: a list, or `{"serials": [...]}`.
+
+  Invalid rows are skipped and counted.
+- **Storage.** Stored as hashes only. With Redis, the set is built under a
+  temporary key and renamed into place, so enrollment never sees half a list.
+  Capped at 200,000 serials (413).
+- **Enrollment check.** When the list is non-empty, a missing or unlisted
+  serial returns 403 and spends no token use. It raises a high-severity alert
+  (`detail.why: not_in_inventory`, and the admin audit
+  `device_enrollment_refused_not_in_inventory`). The live-serial refusal is now
+  `why: live_serial`.
+- **Access.** Writes are behind the registry write gate and audited as counts
+  only. `GET` never returns serials.
+- **Route order.** The inventory routes are declared before
+  `DELETE /{device_id}`, which would otherwise take "inventory" for a device
+  id; a test checks this.
+- **Checked in the portal:** upload a Jamf-style CSV (2 laptops, 1 row
+  skipped), then clear it.
+- **Fixed on the way (task 3 bug).** `_kit_shield_url` found the data plane by
+  scanning `app.routes`, and FastAPI 0.141+ (it is unpinned, so that is what
+  images install) keeps included routers nested. The fallback would never have
+  fired in production. It now uses `app.url_path_for("enroll_device")`, and the
+  test runs against the real data and admin apps.
+
+**As built, task 5:**
+- **`packaging/ollama.lock`** pins Ollama 0.35.0 (the first release with
+  `/v1/systemone`) by the SHA-256 digests GitHub publishes for each asset.
+  `fetch_ollama.py --print-digests <version>` regenerates it.
+- **`packaging/fetch_ollama.py`** (standard library only):
+  - downloads the asset and refuses it on a SHA-256 mismatch, before
+    unpacking anything;
+  - refuses archive entries outside the target, and links that point outside;
+  - skips the lock's `exclude` patterns and requires the binary at the top
+    level.
+- **Windows size.** The Windows archive is 1.46 GB, of which CUDA runners are
+  1.43 GB. They are left out; the CPU and Vulkan runners that remain (about
+  40 MB) run the 0.8B model. The release still downloads the whole archive,
+  because Ollama publishes a digest only for the whole file.
+- **Archive layout, checked:** the macOS archive has `ollama` at its top level
+  (streamed the first 30 MB, not the whole file); the Windows archive has
+  `ollama.exe` at its top level (listed from its zip index, 9 KB fetched).
+- **Signing.**
+  - macOS: Ollama arrives signed by its maker (Developer ID, hardened runtime,
+    timestamped, no entitlements), which notarization accepts. `build_pkg.sh`
+    now signs **only our files** (`bin/`) and no longer re-signs Ollama's.
+  - Windows: `build_msi.ps1` signs the agent executable and the MSI.
+- **Model store moved** to a `models` folder: it was in the same folder as the
+  bundled Ollama binary on macOS.
+- **`.github/workflows/device-agent-release.yml`**, on tag
+  `device-agent-v<version>`:
+  - checks the tag against `_version.py`;
+  - builds both installers with the pinned Ollama, signing and notarizing when
+    the secrets exist;
+  - checks the result (version, bundled Ollama, signatures when signed);
+  - publishes a GitHub Release with `SHA256SUMS`. Unless both installers are
+    signed it is an **unsigned pre-release**, labelled so.
+
+  `actionlint` and `shellcheck` are clean.
+- **`get-installer.sh` also checks `SHA256SUMS`,** including for a pilot with
+  `--allow-unsigned`, as the Windows script already did.
+- **Not yet run for real.** The release workflow has not run, because nothing
+  is tagged; its first run is the first real signed (or unsigned) build with
+  Ollama inside. The fetch-and-verify step has been tested only against local
+  archives, not the real 160 MB and 1.46 GB downloads.
+
+**As built, task 6:**
+- **The admin guide `docs/device-dlp-agent.md` is rewritten around the kit.**
+  - It covers what you need (including the Shield settings), then six rollout
+    steps: monitor, inventory, kit, MDM upload, watch, enforce.
+  - It then covers what employees see, keeping it current, macOS trust, CLIs,
+    uninstall, troubleshooting (one row per `verify` check), privacy, and
+    setting up without a kit.
+- **Corrected** the old claim that a mismatched model is downloaded again at
+  once: it is deleted at once and fetched when the service next starts.
+- **The acceptance checklist** `docs/specs/device-rollout-acceptance.md`
+  covers:
+  - A: Mac through Jamf or Kandji;
+  - B: Windows through Intune, including that a standard user cannot read the
+    CA key;
+  - C: security behaviours (revoked kit, inventory, live serial, root reissue,
+    uninstall);
+  - a record table.
+- **Tests keep the guide honest:**
+  - every `verify` check has a troubleshooting row;
+  - every message and Shield setting it quotes exists in the code;
+  - the files it names exist;
+  - no em dashes.
+
+Status: **tasks 1 to 6 complete** on `feat/device-rollout-kit`. The remaining
+steps need Votal (below): signing identities for task 5's signed releases, and
+the acceptance run on real MDMs.
 
 ## What is needed from Votal (not code)
 

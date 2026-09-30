@@ -1,0 +1,12 @@
+#!/bin/bash
+# Kandji Custom Script, audit: exits 0 when the Votal device agent's own checks
+# pass, 1 otherwise, with the failing checks in the output.
+BIN="/Library/Application Support/Votal/DeviceAgent/bin/votal-device-agent"
+if [ ! -x "$BIN" ]; then
+  echo "Votal device agent: not installed"
+  exit 1
+fi
+OUT=$("$BIN" verify 2>&1)
+RC=$?
+echo "$OUT"
+exit $RC

@@ -1,0 +1,13 @@
+#!/bin/bash
+# Intune custom attribute for macOS (data type: String): "ok", or the failing
+# checks, from the Votal device agent's own verify.
+BIN="/Library/Application Support/Votal/DeviceAgent/bin/votal-device-agent"
+if [ ! -x "$BIN" ]; then
+  echo "not installed"
+  exit 0
+fi
+if OUT=$("$BIN" verify 2>&1); then
+  echo "ok"
+else
+  echo "$OUT" | grep '^FAIL' | sed 's/^FAIL *//' | tr '\n' ';' | cut -c1-240
+fi

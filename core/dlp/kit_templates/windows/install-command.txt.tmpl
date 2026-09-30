@@ -1,0 +1,9 @@
+Votal device agent {{version}}, fleet {{fleet}}. This file contains an enrollment token: see SECURITY.txt.
+
+Intune (Apps > Windows > Line-of-business app), "Command-line arguments":
+
+SHIELDURL={{shield_url}} TENANTID={{tenant_id}} FLEET={{fleet}} PINNEDPUBLICKEY={{pinned_public_key}} ENROLLMENTTOKEN={{token}} EXTENSIONIDS={{extension_ids_csv}}
+
+The full command, for a manual install or another deployment tool:
+
+msiexec /i votal-device-agent-{{version}}.msi /qn SHIELDURL={{shield_url}} TENANTID={{tenant_id}} FLEET={{fleet}} PINNEDPUBLICKEY={{pinned_public_key}} ENROLLMENTTOKEN={{token}} EXTENSIONIDS={{extension_ids_csv}}

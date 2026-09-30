@@ -38,6 +38,15 @@ def valid_for_s() -> int:
         return 86400
 
 
+def freshness_bucket(valid_s: int, now: Optional[float] = None) -> int:
+    """A counter that ticks every half-validity. Signed-bundle endpoints put it
+    in their ETag so that a client polling an unchanged policy still receives a
+    freshly signed bundle before its copy expires. Without it a 304 kept the
+    first bundle a client ever received, and it expired on a client that was
+    online and polling (24 h by default)."""
+    return int((now if now is not None else time.time()) // max(60, valid_s // 2))
+
+
 def public_key_hex() -> Optional[str]:
     signer = rt_bundle.get_signer()
     return signer.public_key_bytes().hex() if signer else None

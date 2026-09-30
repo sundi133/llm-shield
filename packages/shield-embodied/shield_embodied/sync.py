@@ -36,12 +36,27 @@ def _urllib(method: str, url: str, headers: dict, body: Optional[bytes]) -> tupl
         return e.code, dict(e.headers or {}), e.read()
 
 
+REFRESH_BEFORE_S = 12 * 3600
+
+
+def _fresh(bundle_path: Path) -> bool:
+    """Whether the bundle on disk has more than 12 hours left. If not, ask for a
+    new one without If-None-Match, so a robot's copy is re-signed before it
+    expires even while its profile is unchanged."""
+    import time
+    try:
+        expires = int(json.loads(bundle_path.read_text())["header"]["expires_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return expires - time.time() > REFRESH_BEFORE_S
+
+
 def pull_bundle(shield_url: str, api_key: str, *, profile: str, fleet: str, tenant: str,
                 bundle_path: str, pinned_key_hex: str, http: Http = _urllib) -> str:
     """'updated', 'unchanged', or 'refused: <why>'. Never writes an unverified bundle."""
     etag_file = Path(str(bundle_path) + ".etag")
     headers = {"X-API-Key": api_key}
-    if etag_file.exists() and Path(bundle_path).exists():
+    if etag_file.exists() and _fresh(Path(bundle_path)):
         headers["If-None-Match"] = etag_file.read_text().strip()
     q = urllib.parse.urlencode({"profile": profile, "fleet": fleet})
     try:

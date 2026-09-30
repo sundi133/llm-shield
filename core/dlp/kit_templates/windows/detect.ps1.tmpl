@@ -1,0 +1,16 @@
+# Intune remediation, detection script (run as system, 64-bit): compliant when
+# the Votal device agent's own checks pass; otherwise the failing checks.
+$Exe = Join-Path $env:ProgramFiles "Votal\DeviceAgent\votal-device-agent.exe"
+if (-not (Test-Path $Exe)) {
+  Write-Output "not installed"
+  exit 1
+}
+$Out = & $Exe verify 2>&1
+if ($LASTEXITCODE -eq 0) {
+  Write-Output "ok"
+  exit 0
+}
+$Fails = ($Out | Where-Object { "$_" -like "FAIL*" }) -join "; "
+if ($Fails.Length -gt 2000) { $Fails = $Fails.Substring(0, 2000) }
+Write-Output $Fails
+exit 1

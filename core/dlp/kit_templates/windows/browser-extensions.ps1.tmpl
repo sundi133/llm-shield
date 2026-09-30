@@ -1,0 +1,19 @@
+# Intune platform script (run as system, 64-bit): installs the Votal browser
+# extension in Chrome and Edge through their ExtensionInstallForcelist policy,
+# leaving any other forced extensions in place.
+$ErrorActionPreference = "Stop"
+$Ids = @({{extension_ids_ps}})
+$Keys = @("HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist",
+          "HKLM:\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist")
+foreach ($Key in $Keys) {
+  New-Item -Path $Key -Force | Out-Null
+  foreach ($Id in $Ids) {
+    $Value = "$Id;https://clients2.google.com/service/update2/crx"
+    $Current = (Get-ItemProperty -Path $Key).PSObject.Properties | Where-Object { $_.Name -match '^\d+$' }
+    if ($Current | Where-Object { $_.Value -eq $Value }) { continue }
+    $N = 1
+    while ($Current.Name -contains "$N") { $N++ }
+    New-ItemProperty -Path $Key -Name "$N" -Value $Value -PropertyType String -Force | Out-Null
+  }
+}
+Write-Output "Votal extension forced in Chrome and Edge"

@@ -1,0 +1,15 @@
+## Macs, with Kandji (3 steps)
+
+1. **The installer.** Run `macos/get-installer.sh`. It downloads version
+   {{version}} and checks that Votal signed it and Apple notarized it. In
+   Kandji, add a Custom App (Library, Add new, Custom App), upload the `.pkg`
+   it prints, choose "Install once per device" and assign it to your
+   Blueprint.
+2. **The profile.** Add a Custom Profile (Library, Add new, Custom Profile),
+   upload `macos/Votal-Device-Agent.mobileconfig` and assign it to the same
+   Blueprint. It holds {{profile_contents}}.
+3. **The health check.** Add a Custom Script (Library, Add new, Custom
+   Script) with `macos/kandji-audit.sh` as its audit script. A Mac passes when
+   the agent's own checks pass.
+
+Order does not matter: the agent waits for its profile.

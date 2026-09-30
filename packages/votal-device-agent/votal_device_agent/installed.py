@@ -78,7 +78,15 @@ def build_agent(os_name: Optional[str] = None, p: Optional[Paths] = None, *, run
     p = p or os_paths(os_name)
     m = managed.read(os_name)
     if m:
-        managed.write_agent_json(m, p, os_name)
+        try:
+            managed.write_agent_json(m, p, os_name)
+        except managed.ManagedError as e:
+            if not p.config.exists():
+                raise
+            # A broken profile pushed later must not switch DLP off: keep the
+            # last good settings, and say why.
+            print(f"votal-device-agent: MDM settings invalid ({'; '.join(e.errors)}); "
+                  f"keeping the last good settings", flush=True)
     cfg = sync.AgentConfig.load(p.config)
     agent = (agent_cls or Agent)(cfg, credentials=credentials.default_store(p.state_dir, os_name,
                                                                              run), **agent_kw)
@@ -95,12 +103,63 @@ def build_agent(os_name: Optional[str] = None, p: Optional[Paths] = None, *, run
     return agent, m.get("EnrollmentToken", "")
 
 
+SETTINGS_POLL_S = 30.0
+
+
+def settings_problem(os_name: str, p: Paths) -> Optional[str]:
+    """Why the agent cannot start yet, or None when it can."""
+    m = managed.read(os_name)
+    if m:
+        try:
+            managed.validate(m)
+            return None
+        except managed.ManagedError as e:
+            if p.config.exists():
+                return None                      # last good settings still apply
+            return "MDM settings are invalid: " + "; ".join(e.errors)
+    if p.config.exists():
+        return None
+    return ("waiting for MDM settings: no configuration profile (macOS) or policy key "
+            "(Windows) has arrived yet")
+
+
+def wait_for_settings(os_name: str, p: Paths, stop: threading.Event, *,
+                      poll_s: float = SETTINGS_POLL_S, log=print) -> bool:
+    """Block until the agent has usable settings (True), or until `stop` (False).
+
+    The installer and the MDM profile arrive in either order. Before this the
+    service exited without settings and launchd restarted it every 10 s,
+    filling the log; now it waits and says so once per change of reason.
+    """
+    said = None
+    while True:
+        problem = settings_problem(os_name, p)
+        if problem is None:
+            if said is not None:
+                log("votal-device-agent: settings arrived, starting")
+            return True
+        if problem != said:
+            log(f"votal-device-agent: {problem}")
+            said = problem
+        if stop.wait(poll_s):
+            return False
+
+
 def run_installed(os_name: Optional[str] = None, stop: Optional[threading.Event] = None) -> int:
     """The service: its own Ollama, enrollment, model, capture, sync, until `stop`
     is set (the Windows service) or a signal arrives (launchd)."""
     from votal_device_agent.platform.ollama import OllamaSupervisor
     os_name = os_name or system()
     p = os_paths(os_name)
+    done = stop or threading.Event()
+    if stop is None:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(sig, lambda *_: done.set())
+            except ValueError:
+                pass
+    if not wait_for_settings(os_name, p, done, log=lambda m: print(m, flush=True)):
+        return 0
     agent, token = build_agent(os_name, p)
     binary = os.environ.get("VOTAL_OLLAMA_BIN") or str(p.install_dir / OLLAMA_BIN.get(os_name, ""))
     supervisor = None
@@ -124,13 +183,6 @@ def run_installed(os_name: Optional[str] = None, stop: Optional[threading.Event]
     port = agent.start()
     print(f"votal-device-agent: running, loopback API 127.0.0.1:{port}, state {agent.state()}",
           flush=True)
-    done = stop or threading.Event()
-    if stop is None:
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                signal.signal(sig, lambda *_: done.set())
-            except ValueError:
-                pass
     done.wait()
     agent.stop()
     if supervisor:

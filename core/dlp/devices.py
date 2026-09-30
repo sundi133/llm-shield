@@ -45,9 +45,17 @@ STATES = ("ok", "no_bundle", "stale_bundle", "model_unavailable", "model_unsuppo
 OS_NAMES = ("macos", "windows")
 MAX_USES = 10000
 MAX_TOKEN_DAYS = 90
+# A rollout kit's token sits in MDM for the life of the rollout (new hires
+# join months later), so it may live longer and serve more laptops. It is
+# still revocable, and every kit mints its own (docs/specs/device-rollout-kit.md §3).
+KIT_MAX_USES = 100_000
+KIT_MAX_DAYS = 365
+KIT_MDMS = ("jamf", "kandji", "intune")
+_KIT_ID = re.compile(r"^kit_[0-9a-f]{16}$")
 MAX_COUNTERS = 20
 
 _mem_hash: dict[str, dict[str, str]] = {}
+_mem_sets: dict[str, set] = {}
 _mem_counter: dict[str, int] = {}
 _counter_lock = threading.Lock()
 _ID = re.compile(r"^dev_[0-9a-f]{16}$")
@@ -167,6 +175,7 @@ def _counter(key: str) -> int:
 def reset_memory() -> None:
     _mem_hash.clear()
     _mem_counter.clear()
+    _mem_sets.clear()
 
 
 # ── enrollment tokens ────────────────────────────────────────────────
@@ -181,22 +190,37 @@ def _used_key(tenant_id: str, token_sha: str) -> str:
 
 
 def create_enrollment_token(tenant_id: str, fleet: str, *, uses: int = 50,
-                            expires_in_days: int = 7, created_by: str = "") -> tuple[str, dict]:
-    """(token, record). The token is returned once and never stored."""
+                            expires_in_days: int = 7, created_by: str = "",
+                            kind: str = "standard", kit_id: str = "",
+                            mdm: str = "") -> tuple[str, dict]:
+    """(token, record). The token is returned once and never stored.
+
+    kind "kit" is for a rollout kit (kit_id and mdm required) and has its own
+    limits; "standard" is the portal's hand-made token."""
     from core.dlp.device_policy import valid_fleet
     from storage.tenant_store import kv_set
     if not valid_fleet(fleet):
         raise DeviceError("fleet: lowercase letters, digits, . _ - (1-64 characters)")
-    if isinstance(uses, bool) or not isinstance(uses, int) or not 1 <= uses <= MAX_USES:
-        raise DeviceError(f"uses: an integer from 1 to {MAX_USES}")
+    if kind not in ("standard", "kit"):
+        raise DeviceError("kind: standard or kit")
+    if kind == "kit" and (not _KIT_ID.match(kit_id or "") or mdm not in KIT_MDMS):
+        raise DeviceError(f"a kit token needs kit_id (kit_<16 hex>) and mdm "
+                          f"({', '.join(KIT_MDMS)})")
+    max_uses, max_days = (KIT_MAX_USES, KIT_MAX_DAYS) if kind == "kit" else (MAX_USES,
+                                                                            MAX_TOKEN_DAYS)
+    if isinstance(uses, bool) or not isinstance(uses, int) or not 1 <= uses <= max_uses:
+        raise DeviceError(f"uses: an integer from 1 to {max_uses}")
     if (isinstance(expires_in_days, bool) or not isinstance(expires_in_days, int)
-            or not 1 <= expires_in_days <= MAX_TOKEN_DAYS):
-        raise DeviceError(f"expires_in_days: an integer from 1 to {MAX_TOKEN_DAYS}")
+            or not 1 <= expires_in_days <= max_days):
+        raise DeviceError(f"expires_in_days: an integer from 1 to {max_days}")
     secret = secrets.token_urlsafe(32)
     token = f"{ENROLL_TOKEN_PREFIX}{tenant_id}.{secret}"
     now = int(time.time())
     record = {"fleet": fleet, "uses": uses, "expires_at": now + expires_in_days * 86400,
-              "created_by": created_by[:200], "created_at": now, "token_id": _sha(secret)[:16]}
+              "created_by": created_by[:200], "created_at": now, "token_id": _sha(secret)[:16],
+              "kind": kind}
+    if kind == "kit":
+        record.update(kit_id=kit_id, mdm=mdm)
     kv_set(_token_key(tenant_id, _sha(secret)), record, ttl=expires_in_days * 86400)
     return token, record
 
@@ -274,6 +298,129 @@ def _consume(token: str) -> tuple[str, dict, str]:
     return tenant_id, rec, token_sha
 
 
+# ── the company inventory (opt-in) ───────────────────────────────────
+# docs/specs/device-rollout-kit.md §3, §5 point 2. An admin uploads the MDM's
+# serial number export; once it is non-empty, only those laptops can enroll.
+# Serials are hashed on upload and never stored in the clear.
+#
+#   device_inventory:{tenant_id}        SET of serial_hash
+#   device_inventory_meta:{tenant_id}   {count, uploaded_at, uploaded_by}
+
+INVENTORY_MAX = 200_000
+_SERIAL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$")
+
+
+def serial_hash(serial: str) -> str:
+    """Trimmed and uppercased, then SHA-256: the agent's rule too
+    (votal_device_agent.agent.serial_hash), so exports and firmware agree."""
+    return _sha((serial or "").strip().upper())
+
+
+def _inv_key(tenant_id: str) -> str:
+    return f"device_inventory:{tenant_id}"
+
+
+def _inv_meta_key(tenant_id: str) -> str:
+    return f"device_inventory_meta:{tenant_id}"
+
+
+def parse_serials(raw: bytes, content_type: str = "") -> tuple[list[str], int]:
+    """(serials, skipped) from a CSV export (Jamf, Kandji, Intune: the column
+    whose header contains "serial"), a one-column list, or JSON (a list, or
+    {"serials": [...]})."""
+    import csv
+    import io
+    text = raw.decode("utf-8-sig", errors="replace")
+    if "json" in (content_type or "") or text.lstrip()[:1] in ("[", "{"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            raise DeviceError("not valid JSON")
+        items = data.get("serials") if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            raise DeviceError('JSON: a list of serials, or {"serials": [...]}')
+    else:
+        rows = [r for r in csv.reader(io.StringIO(text)) if any(c.strip() for c in r)]
+        header = [h.strip().lower() for h in (rows[0] if rows else [])]
+        col = next((i for i, h in enumerate(header) if "serial" in h), None)
+        if col is not None:
+            items = [r[col] for r in rows[1:] if len(r) > col]
+        elif all(len(r) == 1 for r in rows):
+            items = [r[0] for r in rows]
+        else:
+            raise DeviceError("CSV: no column whose header contains \"serial\"")
+    serials, skipped, seen = [], 0, set()
+    for item in items:
+        s = str(item).strip()
+        if not s:
+            continue
+        if not _SERIAL.match(s):
+            skipped += 1
+            continue
+        if s.upper() not in seen:
+            seen.add(s.upper())
+            serials.append(s)
+    return serials, skipped
+
+
+def set_inventory(tenant_id: str, serials: list[str], actor: str = "") -> dict:
+    """Replace the inventory (atomically with Redis: build, then rename)."""
+    from storage.tenant_store import kv_set
+    if len(serials) > INVENTORY_MAX:
+        raise DeviceError(f"at most {INVENTORY_MAX} serials", status=413)
+    hashes = {serial_hash(s) for s in serials}
+    key, r = _inv_key(tenant_id), _redis()
+    if r is None:
+        _mem_sets[key] = set(hashes)
+    elif hashes:
+        tmp = f"{key}:upload:{secrets.token_hex(6)}"
+        items = list(hashes)
+        for i in range(0, len(items), 1000):
+            r.sadd(tmp, *items[i:i + 1000])
+        r.rename(tmp, key)
+    else:
+        r.delete(key)
+    meta = {"count": len(hashes), "uploaded_at": int(time.time()), "uploaded_by": actor[:200]}
+    kv_set(_inv_meta_key(tenant_id), meta)
+    return meta
+
+
+def clear_inventory(tenant_id: str) -> bool:
+    from storage.tenant_store import _fallback_store
+    key, r = _inv_key(tenant_id), _redis()
+    had = inventory_status(tenant_id)["count"] > 0
+    if r is None:
+        _mem_sets.pop(key, None)
+        _fallback_store.pop(_inv_meta_key(tenant_id), None)
+    else:
+        r.delete(key)
+        r.delete(_inv_meta_key(tenant_id))
+    return had
+
+
+def inventory_status(tenant_id: str) -> dict:
+    """{count, uploaded_at, uploaded_by, enforced}: never the serials."""
+    from storage.tenant_store import kv_get
+    key, r = _inv_key(tenant_id), _redis()
+    count = len(_mem_sets.get(key, ())) if r is None else int(r.scard(key) or 0)
+    meta = kv_get(_inv_meta_key(tenant_id)) or {}
+    return {"count": count, "uploaded_at": meta.get("uploaded_at"),
+            "uploaded_by": meta.get("uploaded_by", ""), "enforced": count > 0}
+
+
+def inventory_allows(tenant_id: str, serial_hash_: str) -> Optional[bool]:
+    """None when there is no inventory (anyone with a token may enroll)."""
+    key, r = _inv_key(tenant_id), _redis()
+    if r is None:
+        members = _mem_sets.get(key)
+        if not members:
+            return None
+        return bool(serial_hash_) and serial_hash_ in members
+    if not int(r.scard(key) or 0):
+        return None
+    return bool(serial_hash_) and bool(r.sismember(key, serial_hash_))
+
+
 # ── devices ──────────────────────────────────────────────────────────
 
 
@@ -319,6 +466,13 @@ def enroll(token: str, body: dict) -> dict:
 
     tenant_id, rec, token_sha = _check_token(token)
     fleet = rec["fleet"]
+    if inventory_allows(tenant_id, info["serial_hash"]) is False:
+        raise DeviceError(
+            "this laptop is not in the company inventory; ask IT to add its serial number",
+            status=403,
+            alert={"tenant_id": tenant_id, "why": "not_in_inventory", "fleet": fleet,
+                   "hostname_claimed": info["hostname"],
+                   "token_id": rec.get("token_id", token_sha[:16])})
     # A reinstall on the same machine replaces its old identity instead of
     # leaving a ghost that reads as a silent, possibly tampered, device. But a
     # serial is not a secret (it is printed in About This Mac) and the token can
@@ -336,7 +490,8 @@ def enroll(token: str, body: dict) -> dict:
                     raise DeviceError(
                         "a device with this serial is still reporting; to reinstall it, "
                         "revoke it in the portal first", status=409,
-                        alert={"tenant_id": tenant_id, "device_id": did, "fleet": fleet,
+                        alert={"tenant_id": tenant_id, "why": "live_serial",
+                               "device_id": did, "fleet": fleet,
                                "hostname_claimed": info["hostname"],
                                "token_id": rec.get("token_id", token_sha[:16])})
                 device_id, replaced = did, d
