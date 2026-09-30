@@ -3,7 +3,8 @@
 # only when the release credentials are present (spec §10: "signing in release
 # only").
 #
-#   VERSION=0.1.0 ./build_pkg.sh
+#   ./build_pkg.sh                 (version from votal_device_agent/_version.py)
+#   VERSION=0.1.1 ./build_pkg.sh   (override)
 #
 # Optional:
 #   OLLAMA_TGZ=/path/ollama-darwin.tgz OLLAMA_SHA256=<hex>   bundle Ollama (release)
@@ -14,7 +15,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG_ROOT="$(cd "$HERE/../.." && pwd)"            # packages/votal-device-agent
 REPO="$(cd "$PKG_ROOT/../.." && pwd)"
-VERSION="${VERSION:-0.1.0}"
+# The agent's own version unless the release overrides it.
+VERSION="${VERSION:-$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' "$PKG_ROOT/votal_device_agent/_version.py")}"
 OUT="${OUT:-$PKG_ROOT/dist}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

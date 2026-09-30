@@ -45,6 +45,13 @@ STATES = ("ok", "no_bundle", "stale_bundle", "model_unavailable", "model_unsuppo
 OS_NAMES = ("macos", "windows")
 MAX_USES = 10000
 MAX_TOKEN_DAYS = 90
+# A rollout kit's token sits in MDM for the life of the rollout (new hires
+# join months later), so it may live longer and serve more laptops. It is
+# still revocable, and every kit mints its own (docs/specs/device-rollout-kit.md §3).
+KIT_MAX_USES = 100_000
+KIT_MAX_DAYS = 365
+KIT_MDMS = ("jamf", "kandji", "intune")
+_KIT_ID = re.compile(r"^kit_[0-9a-f]{16}$")
 MAX_COUNTERS = 20
 
 _mem_hash: dict[str, dict[str, str]] = {}
@@ -181,22 +188,37 @@ def _used_key(tenant_id: str, token_sha: str) -> str:
 
 
 def create_enrollment_token(tenant_id: str, fleet: str, *, uses: int = 50,
-                            expires_in_days: int = 7, created_by: str = "") -> tuple[str, dict]:
-    """(token, record). The token is returned once and never stored."""
+                            expires_in_days: int = 7, created_by: str = "",
+                            kind: str = "standard", kit_id: str = "",
+                            mdm: str = "") -> tuple[str, dict]:
+    """(token, record). The token is returned once and never stored.
+
+    kind "kit" is for a rollout kit (kit_id and mdm required) and has its own
+    limits; "standard" is the portal's hand-made token."""
     from core.dlp.device_policy import valid_fleet
     from storage.tenant_store import kv_set
     if not valid_fleet(fleet):
         raise DeviceError("fleet: lowercase letters, digits, . _ - (1-64 characters)")
-    if isinstance(uses, bool) or not isinstance(uses, int) or not 1 <= uses <= MAX_USES:
-        raise DeviceError(f"uses: an integer from 1 to {MAX_USES}")
+    if kind not in ("standard", "kit"):
+        raise DeviceError("kind: standard or kit")
+    if kind == "kit" and (not _KIT_ID.match(kit_id or "") or mdm not in KIT_MDMS):
+        raise DeviceError(f"a kit token needs kit_id (kit_<16 hex>) and mdm "
+                          f"({', '.join(KIT_MDMS)})")
+    max_uses, max_days = (KIT_MAX_USES, KIT_MAX_DAYS) if kind == "kit" else (MAX_USES,
+                                                                            MAX_TOKEN_DAYS)
+    if isinstance(uses, bool) or not isinstance(uses, int) or not 1 <= uses <= max_uses:
+        raise DeviceError(f"uses: an integer from 1 to {max_uses}")
     if (isinstance(expires_in_days, bool) or not isinstance(expires_in_days, int)
-            or not 1 <= expires_in_days <= MAX_TOKEN_DAYS):
-        raise DeviceError(f"expires_in_days: an integer from 1 to {MAX_TOKEN_DAYS}")
+            or not 1 <= expires_in_days <= max_days):
+        raise DeviceError(f"expires_in_days: an integer from 1 to {max_days}")
     secret = secrets.token_urlsafe(32)
     token = f"{ENROLL_TOKEN_PREFIX}{tenant_id}.{secret}"
     now = int(time.time())
     record = {"fleet": fleet, "uses": uses, "expires_at": now + expires_in_days * 86400,
-              "created_by": created_by[:200], "created_at": now, "token_id": _sha(secret)[:16]}
+              "created_by": created_by[:200], "created_at": now, "token_id": _sha(secret)[:16],
+              "kind": kind}
+    if kind == "kit":
+        record.update(kit_id=kit_id, mdm=mdm)
     kv_set(_token_key(tenant_id, _sha(secret)), record, ttl=expires_in_days * 86400)
     return token, record
 

@@ -22,7 +22,7 @@ import signal
 import sys
 import threading
 
-VERSION = "0.1.0"
+from votal_device_agent._version import __version__ as VERSION  # noqa: E402
 
 
 def main(argv=None) -> int:

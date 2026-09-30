@@ -23,7 +23,7 @@ from votal_device_agent.audit import AuditLog, to_event
 from votal_device_agent.trust import TrustStore
 
 Http = Callable[[str, str, dict, Optional[bytes]], tuple]
-AGENT_VERSION = "0.1.0"
+from votal_device_agent._version import __version__ as AGENT_VERSION  # noqa: E402
 
 
 def _urllib(method: str, url: str, headers: dict, body: Optional[bytes]) -> tuple:

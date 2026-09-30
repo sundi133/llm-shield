@@ -352,6 +352,19 @@ live-device replacement (point 1), with its escape hatch.
 | 5 | Release pipeline: `ollama.lock`, the tagged release workflow (signed when secrets exist, unsigned pre-release otherwise), `SHA256SUMS`, and the signature checks in the `get-installer` scripts | M |
 | 6 | Admin guide rewritten around the kit, plus the acceptance checklist | S |
 
+**As built, task 1:**
+- **Waiting for settings.** `installed.wait_for_settings` polls every 30 s and
+  logs once per change of reason. SIGTERM ends the wait cleanly.
+- **Invalid settings.** Invalid MDM settings with no earlier `agent.json`: the
+  service waits and says why. Invalid settings pushed later: it keeps the last
+  good `agent.json` and logs it, so DLP stays on.
+- **Kit tokens.** `create_enrollment_token(kind="kit", kit_id=, mdm=)` allows
+  up to 365 days and 100,000 uses; hand-made tokens keep 90 days and 10,000.
+  The existing token endpoint cannot make kit tokens.
+- **One version.** It is written in `votal_device_agent/_version.py` and read by
+  the CLI, the heartbeat and enrollment, `build_pkg.sh` and `build_msi.ps1`.
+  CI checks that the built binary reports it.
+
 ## What is needed from Votal (not code)
 
 1. **An Apple Developer ID** (Application and Installer certificates) and a
