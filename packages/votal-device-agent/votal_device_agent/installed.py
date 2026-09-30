@@ -169,6 +169,7 @@ def verify(*, os_name: Optional[str] = None, p: Optional[Paths] = None, run: Run
         add("MDM settings", False, "; ".join(e.errors) if m else "none found")
     add("agent.json", p.config.exists(), str(p.config))
     creds = credentials.default_store(p.state_dir, os_name, run).load()
+    enrolled_at = len(checks)
     add("enrolled", creds is not None, creds.device_id if creds else "no device key yet")
     status = {}
     try:
@@ -177,6 +178,9 @@ def verify(*, os_name: Optional[str] = None, p: Optional[Paths] = None, run: Run
         code, body = local(int(cfg.get("local_port", 47823)), secret, "/v1/local/status")
         status = json.loads(body) if code == 200 else {}
         add("agent running", code == 200, f"state {status.get('state')}" if status else f"HTTP {code}")
+        if creds is None and status.get("enroll_error"):
+            # Say why: e.g. the old install of this laptop is still reporting.
+            checks[enrolled_at] = ("enrolled", False, status["enroll_error"])
     except (OSError, ValueError) as e:
         add("agent running", False, f"not reachable ({type(e).__name__})")
     t = status.get("trust") or {}

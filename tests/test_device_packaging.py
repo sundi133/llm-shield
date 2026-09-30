@@ -256,6 +256,10 @@ def test_verify_reports_every_check(tmp_path, monkeypatch):
     ok, checks = installed.verify(os_name="other", p=p, run=Recorder(),
                                   local=lambda *a: (_ for _ in ()).throw(OSError("refused")))
     assert dict((n, x) for n, x, _ in checks)["agent running"] is False
+    refused = {**status, "enroll_error": "enrollment refused: HTTP 409 still reporting"}
+    ok, checks = installed.verify(os_name="other", p=p, run=Recorder(),
+                                  local=lambda *a: (200, json.dumps(refused).encode()))
+    assert {n: d for n, _, d in checks}["enrolled"] == refused["enroll_error"]
 
 
 # ── the agent's own Ollama ───────────────────────────────────────────

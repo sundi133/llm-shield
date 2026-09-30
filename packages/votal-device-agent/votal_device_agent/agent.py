@@ -83,6 +83,7 @@ class Agent:
                                    gate=LatencyGate(override=cfg.model_inline))
         self.engine = Engine(self.store.load(), self.model, audit=self.audit)
         self.revoked = False
+        self.enroll_error = ""
         self.last: dict = {}
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -98,14 +99,36 @@ class Agent:
 
     # ── lifecycle ──────────────────────────────────────────────────────
 
+    ENROLL_RETRY_S = 3600
+
     def enroll_if_needed(self, token: str = "", info: Optional[dict] = None) -> sync.Credentials:
         if self.creds is None:
             if not token:
                 raise sync.SyncError("not enrolled and no enrollment token given")
-            self.creds = sync.enroll(self.cfg, token, info or device_info(), http=self.http,
-                                     store=self.credentials)
+            # Kept so sync_once can retry: a refusal can be temporary (Shield
+            # unreachable, or the old install of this laptop still reporting).
+            self._enroll_token, self._enroll_info = token, info
+            self._enroll_tried = time.time()
+            try:
+                self.creds = sync.enroll(self.cfg, token, info or device_info(), http=self.http,
+                                         store=self.credentials)
+            except sync.SyncError as e:
+                self.enroll_error = str(e)[:300]
+                raise
+            self.enroll_error = ""
             self.audit.device_id = self.creds.device_id
         return self.creds
+
+    def _retry_enroll(self) -> None:
+        token = getattr(self, "_enroll_token", "")
+        if self.creds is not None or not token:
+            return
+        if time.time() - getattr(self, "_enroll_tried", 0) < self.ENROLL_RETRY_S:
+            return
+        try:
+            self.enroll_if_needed(token, getattr(self, "_enroll_info", None))
+        except sync.SyncError:
+            pass
 
     def reload(self) -> None:
         before = self.engine.ai_hosts
@@ -224,8 +247,9 @@ class Agent:
 
     def sync_once(self) -> dict:
         """Pull the bundle, push the audit log, send a heartbeat. Offline is fine."""
+        self._retry_enroll()
         if self.creds is None:
-            return {"skipped": "not enrolled"}
+            return {"skipped": "not enrolled", "enroll_error": self.enroll_error}
         out = {"bundle": sync.pull_bundle(self.cfg, self.creds, self.store, http=self.http)}
         if out["bundle"] == "updated":
             self.reload()
@@ -296,6 +320,7 @@ class Agent:
     def status(self) -> dict:
         t = self.engine.trust
         return {"device_id": self.creds.device_id if self.creds else None,
+                "enroll_error": self.enroll_error,
                 "tenant_id": self.cfg.tenant_id, "fleet": self.cfg.fleet,
                 "state": self.state(), "revoked": self.revoked,
                 "trust": {"status": t.status, "reason": t.reason, "bundle_version": t.bundle_version,

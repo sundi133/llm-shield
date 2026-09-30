@@ -174,6 +174,18 @@ own certificate list. To cover them:
 Traffic to other sites goes through the agent untouched and is never
 decrypted.
 
+## Reinstalling a laptop
+
+A laptop can be reinstalled or reimaged at any time. If its previous install
+reported to Shield in the last 24 hours, revoke the old device in the portal
+first. Otherwise Shield refuses the new enrollment and raises an alert. This
+stops anyone who has read the enrollment token from taking over a colleague's
+laptop by claiming its serial number.
+
+Silent for more than 24 hours, the old device is replaced automatically. To go
+back to replacing immediately, set `SHIELD_DEVICE_REENROLL_LIVE=replace` on
+Shield.
+
 ## Uninstall
 
 - macOS: run `packaging/macos/uninstall.sh` as root, then remove the profiles.
@@ -188,6 +200,7 @@ device in the portal so its key stops working immediately.
 |---|---|
 | MDM settings: none found | The settings profile or registry key has not arrived. Check its scope in the MDM. |
 | enrolled: FAIL | The enrollment token is missing, expired or used up. Create a new one and update the profile. |
+| enrolled: "a device with this serial is still reporting" | This laptop's previous install is still enrolled and reported in the last 24 hours. Revoke the old device in the portal; the agent enrolls again within an hour. |
 | policy bundle: fallback | The laptop cannot reach Shield, or the pinned key is wrong. The laptop still redacts known secrets. |
 | decision model: model_unavailable | The local model is still downloading, or failed to. Check `/Library/Logs/Votal/ollama.log` (Mac) or `C:\ProgramData\Votal\DeviceAgent\logs\ollama.log` (Windows). |
 | decision model: model_mismatch | The model on the laptop is not the one your policy pins. The agent removes it and downloads it again. |

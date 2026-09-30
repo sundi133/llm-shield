@@ -55,14 +55,28 @@ _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class DeviceError(ValueError):
-    def __init__(self, message: str, status: int = 400):
+    def __init__(self, message: str, status: int = 400, alert: Optional[dict] = None):
         super().__init__(message)
         self.status = status
+        # Set when the refusal is itself worth an alert (see enroll): the route
+        # records it as a high-severity event for the tenant.
+        self.alert = alert
 
 
 def enabled() -> bool:
     return os.environ.get("SHIELD_DEVICE_AGENT", "on").strip().lower() not in (
         "0", "off", "false", "no")
+
+
+#: How recently a device must have been heard from for its serial to be
+#: "live" (spec: docs/specs/device-rollout-kit.md §5, point 1).
+LIVE_WINDOW_S = 24 * 3600
+
+
+def reenroll_live_mode() -> str:
+    """reject (default) or replace: the escape hatch restoring the old rule."""
+    v = os.environ.get("SHIELD_DEVICE_REENROLL_LIVE", "reject").strip().lower()
+    return "replace" if v == "replace" else "reject"
 
 
 def stale_after_s() -> int:
@@ -227,11 +241,10 @@ def revoke_enrollment_token(tenant_id: str, token_id: str) -> bool:
     return bool(keys)
 
 
-def _consume(token: str) -> tuple[str, dict, str]:
-    """(tenant_id, token record, token_sha) for a token with a use left, the use
-    taken atomically. Raises DeviceError(401) for any token that cannot enroll,
-    with one message for all of them: which part was wrong is not the caller's
-    business."""
+def _check_token(token: str) -> tuple[str, dict, str]:
+    """(tenant_id, token record, token_sha) for a live token, WITHOUT taking a
+    use. Raises DeviceError(401) for any token that cannot enroll, with one
+    message for all of them: which part was wrong is not the caller's business."""
     from storage.tenant_store import kv_get
     bad = DeviceError("invalid or expired enrollment token", status=401)
     if not isinstance(token, str) or not token.startswith(ENROLL_TOKEN_PREFIX):
@@ -243,9 +256,21 @@ def _consume(token: str) -> tuple[str, dict, str]:
     rec = kv_get(_token_key(tenant_id, token_sha))
     if not isinstance(rec, dict) or rec.get("expires_at", 0) <= time.time():
         raise bad
+    if _counter(_used_key(tenant_id, token_sha)) >= int(rec.get("uses", 0)):
+        raise DeviceError("enrollment token has no uses left", status=401)
+    return tenant_id, rec, token_sha
+
+
+def _take_use(tenant_id: str, rec: dict, token_sha: str) -> None:
+    """Take one use atomically (two enrollments racing for the last use: one wins)."""
     used = _incr(_used_key(tenant_id, token_sha), ttl=int(rec["expires_at"] - time.time()) + 60)
     if used > int(rec.get("uses", 0)):
         raise DeviceError("enrollment token has no uses left", status=401)
+
+
+def _consume(token: str) -> tuple[str, dict, str]:
+    tenant_id, rec, token_sha = _check_token(token)
+    _take_use(tenant_id, rec, token_sha)
     return tenant_id, rec, token_sha
 
 
@@ -292,16 +317,31 @@ def enroll(token: str, body: dict) -> dict:
         raise DeviceError("bundle signing is not configured on this Shield "
                           "(SHIELD_RUNTIME_BUNDLE_PRIVATE_KEY)", status=503)
 
-    tenant_id, rec, token_sha = _consume(token)
+    tenant_id, rec, token_sha = _check_token(token)
     fleet = rec["fleet"]
     # A reinstall on the same machine replaces its old identity instead of
-    # leaving a ghost that reads as a silent, possibly tampered, device.
+    # leaving a ghost that reads as a silent, possibly tampered, device. But a
+    # serial is not a secret (it is printed in About This Mac) and the token can
+    # be read on any enrolled laptop, so claiming the serial of a device that is
+    # still reporting would knock that colleague's laptop off the fleet and take
+    # its place. A device heard from in the last 24 h is therefore never
+    # replaced: the enrollment is refused and raised as an alert.
     device_id, replaced = None, None
     if info["serial_hash"]:
+        seen = _hgetall(_seen_key(tenant_id))
         for did, d in _hgetall(_devices_key(tenant_id)).items():
             if d.get("serial_hash") == info["serial_hash"] and d.get("fleet") == fleet:
+                last = int((seen.get(did) or {}).get("at") or d.get("enrolled_at") or 0)
+                if time.time() - last < LIVE_WINDOW_S and reenroll_live_mode() == "reject":
+                    raise DeviceError(
+                        "a device with this serial is still reporting; to reinstall it, "
+                        "revoke it in the portal first", status=409,
+                        alert={"tenant_id": tenant_id, "device_id": did, "fleet": fleet,
+                               "hostname_claimed": info["hostname"],
+                               "token_id": rec.get("token_id", token_sha[:16])})
                 device_id, replaced = did, d
                 break
+    _take_use(tenant_id, rec, token_sha)       # checks passed: only now spend a use
     if replaced:
         remove_api_key_by_hash(replaced.get("key_hash", ""))
     device_id = device_id or "dev_" + secrets.token_hex(8)

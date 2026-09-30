@@ -222,6 +222,9 @@ def summary(ev: dict) -> str:
         # (docs/specs/embodied-action-guard.md §5.3).
         return (f"{ev['decision']} action {d.get('tool', '?')} by {d.get('rail', '?')}"
                 + (f": {', '.join(d['reasons'])}" if isinstance(d.get("reasons"), list) else ""))
+    if ev["kind"] == "dlp" and d.get("event") == "enrollment_refused":
+        return (f"device enrollment refused: a device in fleet {d.get('fleet', '?')} with "
+                f"this serial ({d.get('device_id', '?')}) is still reporting")
     if ev["kind"] == "dlp":
         what = d.get("category") or d.get("rule_id") or "?"
         where = d.get("destination") or "?"

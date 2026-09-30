@@ -61,6 +61,27 @@ def _enabled() -> None:
 # ── the agent's own calls (data plane) ───────────────────────────────
 
 
+async def _enrollment_alert(request: Request, alert: dict) -> None:
+    """A refused enrollment over a live device: a high-severity event in the
+    tenant's decision audit and telemetry, and an admin audit record."""
+    from core.runtime_policy import events as rt_events
+    tenant_id = alert["tenant_id"]
+    detail = {"verdict": "block", "event": "enrollment_refused",
+              "reason": "an enrollment claimed the serial of a device that is still reporting",
+              **{k: str(v)[:200] for k, v in alert.items() if k != "tenant_id"}}
+    try:
+        ev = rt_events.normalize({"source": "custom", "kind": "dlp", "decision": "deny",
+                                  "severity": "high", "agent_id": alert.get("device_id", ""),
+                                  "agent_instance_id": alert.get("device_id", ""),
+                                  "detail": detail})
+        await rt_events.ingest(tenant_id, [ev],
+                               source_ip=request.client.host if request.client else "")
+    except Exception:
+        pass
+    _audit(request, "device_enrollment_refused_live_serial", tenant_id, "device:unenrolled",
+           {k: v for k, v in alert.items() if k != "tenant_id"})
+
+
 @router.post("/enroll")
 async def enroll_device(request: Request, body: dict = Body(...),
                         x_enrollment_token: str = Header("", alias="X-Enrollment-Token")):
@@ -69,6 +90,8 @@ async def enroll_device(request: Request, body: dict = Body(...),
     try:
         out = dv.enroll(x_enrollment_token, body)
     except dv.DeviceError as e:
+        if e.alert:
+            await _enrollment_alert(request, e.alert)
         raise _http(e)
     _audit(request, "device_enrolled", out["tenant_id"], f"device:{out['device_id']}",
            {"device_id": out["device_id"], "fleet": out["fleet"],

@@ -683,3 +683,22 @@ def test_config_requires_a_pinned_key(tmp_path):
                              "pinned_public_key": "abc", "state_dir": str(tmp_path)}))
     with pytest.raises(ValueError, match="pinned_public_key"):
         vsync.AgentConfig.load(p)
+
+
+def test_a_refused_enrollment_is_reported_and_retried(tmp_path, shield, ollama):
+    """The old install of this laptop still reporting: 409, the reason shows in
+    status (and so in verify), and the hourly retry enrolls once it is revoked."""
+    token = shield.post("/v1/tenant/me/devices/enrollment-tokens",
+                        json={"fleet": "sales"}).json()["enrollment_token"]
+    old = _agent(tmp_path / "old", shield, ollama)
+    old.enroll_if_needed(token, LAPTOP)
+    old.sync_once()                                                   # a heartbeat: it is live
+    new = _agent(tmp_path / "new", shield, ollama)
+    with pytest.raises(vsync.SyncError, match="409"):
+        new.enroll_if_needed(token, LAPTOP)
+    assert "still reporting" in new.status()["enroll_error"]
+    assert new.sync_once()["skipped"] == "not enrolled"               # no retry within the hour
+    shield.delete(f"/v1/tenant/me/devices/{old.creds.device_id}")
+    new._enroll_tried -= new.ENROLL_RETRY_S + 1                       # an hour later
+    new.sync_once()
+    assert new.creds is not None and new.status()["enroll_error"] == ""

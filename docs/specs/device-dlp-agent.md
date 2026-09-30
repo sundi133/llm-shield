@@ -367,6 +367,17 @@ account.
 - A reinstall on the same machine (same `serial_hash` and fleet) keeps its
   `device_id` and replaces the old key, so reinstalls do not leave stale ghosts
   that look like tampered devices.
+- **Tightened before merge** (from the rollout-kit spec, §5 point 1): a serial is
+  not a secret, and an MDM-deployed token can be read on any enrolled laptop.
+  So an enrollment that claims the serial of a device heard from in the last
+  24 h is **refused** (409), never replaced. The refusal:
+  - is recorded as a high-severity `dlp` event (`detail.event:
+    enrollment_refused`) and in the admin audit;
+  - spends no token use, because the token is now checked, then the device,
+    then the use taken.
+
+  The agent retries hourly and `verify` shows the reason. To reinstall a live
+  laptop, revoke it first. Escape hatch: `SHIELD_DEVICE_REENROLL_LIVE=replace`.
 - Added beside the spec'd token POST: `GET` and
   `DELETE /v1/tenant/me/devices/enrollment-tokens[/{token_id}]`, so a leaked
   token can be stopped before it expires (it never lists the token itself).

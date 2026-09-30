@@ -138,15 +138,53 @@ def test_no_signing_key_no_enrollment(app, admin, monkeypatch):
     assert _enroll(app, token).status_code == 200                   # no use was burnt
 
 
-def test_reinstall_replaces_the_old_identity(app, admin):
+def test_claiming_a_live_devices_serial_is_refused_and_raised(app, admin):
+    """The serial is printed in About This Mac and the token is readable on any
+    enrolled laptop: claiming a colleague's serial must not knock their laptop
+    off the fleet (spec: docs/specs/device-rollout-kit.md §5, point 1)."""
+    token = _token(admin, uses=5)
+    first = _enroll(app, token).json()
+    victim = _client(app, first["api_key"])
+    assert victim.post("/v1/devices/heartbeat", json={}).status_code == 204
+    with patch("core.runtime_policy.events.ingest") as ingest:
+        r = _enroll(app, token, {**LAPTOP, "hostname": "attacker-box"})
+    assert r.status_code == 409 and "still reporting" in r.text
+    assert victim.post("/v1/devices/heartbeat", json={}).status_code == 204   # untouched
+    ev = ingest.call_args.args[1][0]
+    assert (ev["kind"], ev["severity"], ev["detail"]["event"]) == ("dlp", "high", "enrollment_refused")
+    assert ev["detail"]["device_id"] == first["device_id"]
+    assert ev["detail"]["hostname_claimed"] == "attacker-box"
+    tokens = admin.get(TOKENS).json()["tokens"]
+    assert tokens[0]["uses_left"] == 4                                  # the refusal spent no use
+
+
+def test_a_silent_devices_serial_can_be_reinstalled(app, admin):
+    token = _token(admin)
+    first = _enroll(app, token).json()
+    later = time.time() + dv.LIVE_WINDOW_S + 60                         # silent for over 24 h
+    with patch("time.time", return_value=later):
+        second = _enroll(app, token).json()
+    assert second["device_id"] == first["device_id"]
+    assert admin.get(DEVICES).json()["summary"]["devices"] == 1
+    assert _client(app, first["api_key"]).post("/v1/devices/heartbeat", json={}).status_code == 401
+    assert _client(app, second["api_key"]).post("/v1/devices/heartbeat", json={}).status_code == 204
+
+
+def test_revoking_the_old_install_unblocks_a_reinstall(app, admin):
+    token = _token(admin)
+    first = _enroll(app, token).json()
+    assert _enroll(app, token).status_code == 409
+    admin.delete(f"{DEVICES}/{first['device_id']}")
+    assert _enroll(app, token).status_code == 200
+
+
+def test_escape_hatch_restores_replacement(app, admin, monkeypatch):
+    monkeypatch.setenv("SHIELD_DEVICE_REENROLL_LIVE", "replace")
     token = _token(admin)
     first = _enroll(app, token).json()
     second = _enroll(app, token).json()
     assert second["device_id"] == first["device_id"]
-    assert admin.get(DEVICES).json()["summary"]["devices"] == 1
-    old = _client(app, first["api_key"])
-    assert old.post("/v1/devices/heartbeat", json={}).status_code == 401
-    assert _client(app, second["api_key"]).post("/v1/devices/heartbeat", json={}).status_code == 204
+    assert _client(app, first["api_key"]).post("/v1/devices/heartbeat", json={}).status_code == 401
 
 
 def test_token_validation_and_revocation(app, admin):
