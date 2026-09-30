@@ -4979,6 +4979,18 @@ if __name__ == "__main__":
       </div>
 
       <div class="card">
+        <div class="card-header"><div><div class="card-title">Company inventory (optional)</div>
+          <div class="card-desc">Upload your MDM's serial number export (Jamf, Kandji or Intune, as CSV). Once uploaded, only those laptops can enroll, even with a valid token. Serial numbers are hashed on arrival and never stored as uploaded.</div></div></div>
+        <div id="di-status" style="font-size:13px;margin-bottom:0.5rem;">Loading...</div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+          <input id="di-file" type="file" accept=".csv,.txt,.json" style="font-size:13px;">
+          <button class="primary small" onclick="diUpload()">Upload</button>
+          <button class="small danger" onclick="diClear()">Clear</button>
+        </div>
+        <div id="di-msg" style="margin-top:0.6rem;font-size:13px;"></div>
+      </div>
+
+      <div class="card">
         <div class="card-header"><div><div class="card-title">Enrollment tokens</div>
           <div class="card-desc">Put a token in the MDM install profile (Jamf, Kandji, Intune). Each laptop exchanges it once for its own key, bound to the token's fleet. Shield keeps only a hash: the token is shown once.</div></div></div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
@@ -17372,8 +17384,35 @@ async function dkRevoke(id) {
   try { await ddApi(`/devices/rollout-kits/${encodeURIComponent(id)}`, { method: 'DELETE' }); dkLoad(); }
   catch (e) { xfMsg('dk-list', xfErrors(e), 'error'); }
 }
+// Company inventory: the opt-in serial allow list (docs/specs/device-rollout-kit.md).
+async function diLoad() {
+  try {
+    const s = await ddApi('/devices/inventory');
+    document.getElementById('di-status').innerHTML = s.enforced
+      ? `<b>On:</b> ${s.count} laptops may enroll. Uploaded ${xfEsc(new Date(s.uploaded_at * 1000).toLocaleString())} by ${xfEsc(s.uploaded_by || '?')}.`
+      : '<b>Off:</b> any laptop with a valid enrollment token can enroll.';
+  } catch (e) { xfMsg('di-status', xfErrors(e), 'error'); }
+}
+async function diUpload() {
+  const f = document.getElementById('di-file').files[0];
+  if (!f) return xfMsg('di-msg', 'Choose the export file first.', 'error');
+  try {
+    const r = await fetch(`${BASE_URL}/v1/tenant/me/devices/inventory`, { method: 'PUT',
+      headers: { 'X-API-Key': API_KEY, 'Content-Type': f.name.endsWith('.json') ? 'application/json' : 'text/csv' },
+      body: await f.text() });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error((typeof d.detail === 'string' ? d.detail : '') || `HTTP ${r.status}`), { errors: [] });
+    xfMsg('di-msg', `Inventory replaced: ${d.count} laptops.` + (d.skipped ? ` ${d.skipped} ${d.skipped === 1 ? 'row was not a serial number and was' : 'rows were not serial numbers and were'} skipped.` : ''), 'ok');
+    diLoad();
+  } catch (e) { xfMsg('di-msg', xfErrors(e), 'error'); }
+}
+async function diClear() {
+  if (!confirm('Clear the inventory? Any laptop with a valid enrollment token will be able to enroll.')) return;
+  try { await ddApi('/devices/inventory', { method: 'DELETE' }); xfMsg('di-msg', 'Inventory cleared.', 'ok'); diLoad(); }
+  catch (e) { xfMsg('di-msg', xfErrors(e), 'error'); }
+}
 async function ddLoad() {
-  ddDevices(); ddTokens(); ddMdm(); dkLoad(); dkPlatforms();
+  ddDevices(); ddTokens(); ddMdm(); dkLoad(); dkPlatforms(); diLoad();
   try {
     const p = await ddApi('/dlp-policy');
     document.getElementById('dd-policy').value = JSON.stringify(p.policy, null, 2);

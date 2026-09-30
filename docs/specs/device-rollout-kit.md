@@ -429,6 +429,40 @@ the Rollout kits card on the Device DLP page):
 - **End to end in the tests:** the token taken out of a downloaded kit enrolls
   a laptop.
 
+**As built, task 4** (`core/dlp/devices.py` inventory functions, routes in
+`api/routes_devices.py`, the Company inventory card):
+- **One hashing rule.** Serials are trimmed, uppercased, then SHA-256. The
+  laptop (`votal_device_agent.agent.serial_hash`, now used by `device_info`)
+  and Shield (`devices.serial_hash`) apply the same rule, held equal by a
+  test, so an export and the firmware match whatever case either reports.
+- **Upload formats.** `PUT` accepts:
+  - a CSV export (the column whose header contains "serial": the Jamf,
+    Kandji and Intune exports);
+  - one serial per line;
+  - JSON: a list, or `{"serials": [...]}`.
+
+  Invalid rows are skipped and counted.
+- **Storage.** Stored as hashes only. With Redis, the set is built under a
+  temporary key and renamed into place, so enrollment never sees half a list.
+  Capped at 200,000 serials (413).
+- **Enrollment check.** When the list is non-empty, a missing or unlisted
+  serial returns 403 and spends no token use. It raises a high-severity alert
+  (`detail.why: not_in_inventory`, and the admin audit
+  `device_enrollment_refused_not_in_inventory`). The live-serial refusal is now
+  `why: live_serial`.
+- **Access.** Writes are behind the registry write gate and audited as counts
+  only. `GET` never returns serials.
+- **Route order.** The inventory routes are declared before
+  `DELETE /{device_id}`, which would otherwise take "inventory" for a device
+  id; a test checks this.
+- **Checked in the portal:** upload a Jamf-style CSV (2 laptops, 1 row
+  skipped), then clear it.
+- **Fixed on the way (task 3 bug).** `_kit_shield_url` found the data plane by
+  scanning `app.routes`, and FastAPI 0.141+ (it is unpinned, so that is what
+  images install) keeps included routers nested. The fallback would never have
+  fired in production. It now uses `app.url_path_for("enroll_device")`, and the
+  test runs against the real data and admin apps.
+
 ## What is needed from Votal (not code)
 
 1. **An Apple Developer ID** (Application and Installer certificates) and a

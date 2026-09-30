@@ -55,6 +55,7 @@ _KIT_ID = re.compile(r"^kit_[0-9a-f]{16}$")
 MAX_COUNTERS = 20
 
 _mem_hash: dict[str, dict[str, str]] = {}
+_mem_sets: dict[str, set] = {}
 _mem_counter: dict[str, int] = {}
 _counter_lock = threading.Lock()
 _ID = re.compile(r"^dev_[0-9a-f]{16}$")
@@ -174,6 +175,7 @@ def _counter(key: str) -> int:
 def reset_memory() -> None:
     _mem_hash.clear()
     _mem_counter.clear()
+    _mem_sets.clear()
 
 
 # ── enrollment tokens ────────────────────────────────────────────────
@@ -296,6 +298,129 @@ def _consume(token: str) -> tuple[str, dict, str]:
     return tenant_id, rec, token_sha
 
 
+# ── the company inventory (opt-in) ───────────────────────────────────
+# docs/specs/device-rollout-kit.md §3, §5 point 2. An admin uploads the MDM's
+# serial number export; once it is non-empty, only those laptops can enroll.
+# Serials are hashed on upload and never stored in the clear.
+#
+#   device_inventory:{tenant_id}        SET of serial_hash
+#   device_inventory_meta:{tenant_id}   {count, uploaded_at, uploaded_by}
+
+INVENTORY_MAX = 200_000
+_SERIAL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$")
+
+
+def serial_hash(serial: str) -> str:
+    """Trimmed and uppercased, then SHA-256: the agent's rule too
+    (votal_device_agent.agent.serial_hash), so exports and firmware agree."""
+    return _sha((serial or "").strip().upper())
+
+
+def _inv_key(tenant_id: str) -> str:
+    return f"device_inventory:{tenant_id}"
+
+
+def _inv_meta_key(tenant_id: str) -> str:
+    return f"device_inventory_meta:{tenant_id}"
+
+
+def parse_serials(raw: bytes, content_type: str = "") -> tuple[list[str], int]:
+    """(serials, skipped) from a CSV export (Jamf, Kandji, Intune: the column
+    whose header contains "serial"), a one-column list, or JSON (a list, or
+    {"serials": [...]})."""
+    import csv
+    import io
+    text = raw.decode("utf-8-sig", errors="replace")
+    if "json" in (content_type or "") or text.lstrip()[:1] in ("[", "{"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            raise DeviceError("not valid JSON")
+        items = data.get("serials") if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            raise DeviceError('JSON: a list of serials, or {"serials": [...]}')
+    else:
+        rows = [r for r in csv.reader(io.StringIO(text)) if any(c.strip() for c in r)]
+        header = [h.strip().lower() for h in (rows[0] if rows else [])]
+        col = next((i for i, h in enumerate(header) if "serial" in h), None)
+        if col is not None:
+            items = [r[col] for r in rows[1:] if len(r) > col]
+        elif all(len(r) == 1 for r in rows):
+            items = [r[0] for r in rows]
+        else:
+            raise DeviceError("CSV: no column whose header contains \"serial\"")
+    serials, skipped, seen = [], 0, set()
+    for item in items:
+        s = str(item).strip()
+        if not s:
+            continue
+        if not _SERIAL.match(s):
+            skipped += 1
+            continue
+        if s.upper() not in seen:
+            seen.add(s.upper())
+            serials.append(s)
+    return serials, skipped
+
+
+def set_inventory(tenant_id: str, serials: list[str], actor: str = "") -> dict:
+    """Replace the inventory (atomically with Redis: build, then rename)."""
+    from storage.tenant_store import kv_set
+    if len(serials) > INVENTORY_MAX:
+        raise DeviceError(f"at most {INVENTORY_MAX} serials", status=413)
+    hashes = {serial_hash(s) for s in serials}
+    key, r = _inv_key(tenant_id), _redis()
+    if r is None:
+        _mem_sets[key] = set(hashes)
+    elif hashes:
+        tmp = f"{key}:upload:{secrets.token_hex(6)}"
+        items = list(hashes)
+        for i in range(0, len(items), 1000):
+            r.sadd(tmp, *items[i:i + 1000])
+        r.rename(tmp, key)
+    else:
+        r.delete(key)
+    meta = {"count": len(hashes), "uploaded_at": int(time.time()), "uploaded_by": actor[:200]}
+    kv_set(_inv_meta_key(tenant_id), meta)
+    return meta
+
+
+def clear_inventory(tenant_id: str) -> bool:
+    from storage.tenant_store import _fallback_store
+    key, r = _inv_key(tenant_id), _redis()
+    had = inventory_status(tenant_id)["count"] > 0
+    if r is None:
+        _mem_sets.pop(key, None)
+        _fallback_store.pop(_inv_meta_key(tenant_id), None)
+    else:
+        r.delete(key)
+        r.delete(_inv_meta_key(tenant_id))
+    return had
+
+
+def inventory_status(tenant_id: str) -> dict:
+    """{count, uploaded_at, uploaded_by, enforced}: never the serials."""
+    from storage.tenant_store import kv_get
+    key, r = _inv_key(tenant_id), _redis()
+    count = len(_mem_sets.get(key, ())) if r is None else int(r.scard(key) or 0)
+    meta = kv_get(_inv_meta_key(tenant_id)) or {}
+    return {"count": count, "uploaded_at": meta.get("uploaded_at"),
+            "uploaded_by": meta.get("uploaded_by", ""), "enforced": count > 0}
+
+
+def inventory_allows(tenant_id: str, serial_hash_: str) -> Optional[bool]:
+    """None when there is no inventory (anyone with a token may enroll)."""
+    key, r = _inv_key(tenant_id), _redis()
+    if r is None:
+        members = _mem_sets.get(key)
+        if not members:
+            return None
+        return bool(serial_hash_) and serial_hash_ in members
+    if not int(r.scard(key) or 0):
+        return None
+    return bool(serial_hash_) and bool(r.sismember(key, serial_hash_))
+
+
 # ── devices ──────────────────────────────────────────────────────────
 
 
@@ -341,6 +466,13 @@ def enroll(token: str, body: dict) -> dict:
 
     tenant_id, rec, token_sha = _check_token(token)
     fleet = rec["fleet"]
+    if inventory_allows(tenant_id, info["serial_hash"]) is False:
+        raise DeviceError(
+            "this laptop is not in the company inventory; ask IT to add its serial number",
+            status=403,
+            alert={"tenant_id": tenant_id, "why": "not_in_inventory", "fleet": fleet,
+                   "hostname_claimed": info["hostname"],
+                   "token_id": rec.get("token_id", token_sha[:16])})
     # A reinstall on the same machine replaces its old identity instead of
     # leaving a ghost that reads as a silent, possibly tampered, device. But a
     # serial is not a secret (it is printed in About This Mac) and the token can
@@ -358,7 +490,8 @@ def enroll(token: str, body: dict) -> dict:
                     raise DeviceError(
                         "a device with this serial is still reporting; to reinstall it, "
                         "revoke it in the portal first", status=409,
-                        alert={"tenant_id": tenant_id, "device_id": did, "fleet": fleet,
+                        alert={"tenant_id": tenant_id, "why": "live_serial",
+                               "device_id": did, "fleet": fleet,
                                "hostname_claimed": info["hostname"],
                                "token_id": rec.get("token_id", token_sha[:16])})
                 device_id, replaced = did, d

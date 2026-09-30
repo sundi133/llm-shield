@@ -616,8 +616,9 @@ def test_the_shield_url_in_a_kit(api, monkeypatch):
     from api.routes_devices import _kit_shield_url
     from fastapi import HTTPException
     from types import SimpleNamespace
-    data_plane = SimpleNamespace(routes=[SimpleNamespace(path="/v1/devices/enroll")])
-    admin_plane = SimpleNamespace(routes=[SimpleNamespace(path="/v1/tenant/me/devices")])
+    import admin_app
+    # The real apps, so this holds whatever FastAPI does with included routers.
+    data_plane, admin_plane = api.app_, admin_app.app
     monkeypatch.delenv("SHIELD_DEVICE_AGENT_SHIELD_URL")
     req = lambda app, base: SimpleNamespace(app=app, base_url=base)
     assert _kit_shield_url(req(data_plane, "https://api.example.com/")) == "https://api.example.com"
@@ -638,3 +639,182 @@ def test_kits_pin_the_agents_own_version():
 def test_the_admin_image_has_the_kit_code():
     df = (Path(ROOT) / "Dockerfile.admin").read_text()
     assert "COPY core/dlp/ core/dlp/" in df and "COPY api/routes_devices.py api/" in df
+
+
+# ── task 4: the company inventory ────────────────────────────────────
+
+INV = "/v1/tenant/me/devices/inventory"
+JAMF_EXPORT = ("Computer Name,Serial Number,Model\n"
+               "ana-mbp,C02XK0AAJG5H,MacBook Pro\n"
+               "raj-mba,FVFZ1234ABCD,MacBook Air\n")
+INTUNE_EXPORT = ('﻿"Device name","Serial number","OS"\n'
+                 '"RAJ-PC","5CG1234XYZ","Windows"\n'
+                 '"LEE-PC","  pf2abc12  ","Windows"\n'
+                 '"BAD","not a serial!!","Windows"\n')
+
+
+def _enroll_with(api, token, serial):
+    from starlette.testclient import TestClient
+    from votal_device_agent.agent import serial_hash
+    body = {"hostname": "h-" + (serial or "none")[:8], "os": "macos", "os_version": "14",
+            "agent_version": "0.1.0", "serial_hash": serial_hash(serial) if serial else ""}
+    return TestClient(api.app_).post("/v1/devices/enroll", json=body,
+                                     headers={"X-Enrollment-Token": token})
+
+
+def _token(api):
+    return api.post("/v1/tenant/me/devices/enrollment-tokens",
+                    json={"fleet": "sales", "uses": 20}).json()
+
+
+def test_off_until_uploaded(api):
+    assert api.get(INV).json()["enforced"] is False
+    assert _enroll_with(api, _token(api)["enrollment_token"], "ANYTHING1").status_code == 200
+
+
+@pytest.mark.parametrize("body, ctype, count, skipped", [
+    (JAMF_EXPORT, "text/csv", 2, 0),
+    (INTUNE_EXPORT, "text/csv", 2, 1),
+    ("C02XK0AAJG5H\nFVFZ1234ABCD\nC02XK0AAJG5H\n", "text/plain", 2, 0),
+    (json.dumps({"serials": ["C02XK0AAJG5H", "x"]}), "application/json", 2, 0),
+    (json.dumps(["C02XK0AAJG5H"]), "application/json", 1, 0),
+])
+def test_the_exports_mdms_produce(api, body, ctype, count, skipped):
+    r = api.put(INV, content=body.encode(), headers={"Content-Type": ctype})
+    assert r.status_code == 200, r.text
+    assert (r.json()["count"], r.json()["skipped"]) == (count, skipped)
+    status = api.get(INV).json()
+    assert status["enforced"] and status["count"] == count and "serials" not in status
+
+
+def test_only_inventory_laptops_enroll(api):
+    api.put(INV, content=INTUNE_EXPORT.encode(), headers={"Content-Type": "text/csv"})
+    tok = _token(api)
+    assert _enroll_with(api, tok["enrollment_token"], "5CG1234XYZ").status_code == 200
+    # Firmware reports case and whitespace differently from the export: still a match.
+    assert _enroll_with(api, tok["enrollment_token"], "PF2ABC12").status_code == 200
+    with patch("core.runtime_policy.events.ingest") as ingest:
+        r = _enroll_with(api, tok["enrollment_token"], "NOTOURS999")
+    assert r.status_code == 403 and "not in the company inventory" in r.text
+    ev = ingest.call_args.args[1][0]
+    assert (ev["severity"], ev["detail"]["why"]) == ("high", "not_in_inventory")
+    assert "not in the company inventory" in __import__(
+        "core.runtime_policy.events", fromlist=["summary"]).summary(ev)
+    assert _enroll_with(api, tok["enrollment_token"], "").status_code == 403   # no serial read
+    left = next(t for t in api.get("/v1/tenant/me/devices/enrollment-tokens").json()["tokens"]
+                if t["token_id"] == tok["token_id"])["uses_left"]
+    assert left == 18                                   # refusals spent no use
+
+
+def test_serials_are_never_stored_as_uploaded(api):
+    from storage.tenant_store import _fallback_store
+    from core.dlp import devices as dv
+    api.put(INV, content=JAMF_EXPORT.encode(), headers={"Content-Type": "text/csv"})
+    stored = json.dumps({k: str(v) for k, v in _fallback_store.items()}) + str(dv._mem_sets)
+    assert "C02XK0AAJG5H" not in stored and "FVFZ1234ABCD" not in stored
+    with patch("api.routes_devices.log_admin_action") as audit:
+        api.put(INV, content=JAMF_EXPORT.encode(), headers={"Content-Type": "text/csv"})
+    assert "C02XK0AAJG5H" not in json.dumps([c.kwargs for c in audit.call_args_list], default=str)
+
+
+def test_an_upload_replaces_and_clear_turns_it_off(api):
+    api.put(INV, content=b"C02XK0AAJG5H\n", headers={"Content-Type": "text/plain"})
+    api.put(INV, content=b"FVFZ1234ABCD\n", headers={"Content-Type": "text/plain"})
+    tok = _token(api)["enrollment_token"]
+    assert _enroll_with(api, tok, "C02XK0AAJG5H").status_code == 403            # replaced
+    assert api.delete(INV).json() == {"tenant_id": api.tenant_id, "cleared": True,
+                                      "enforced": False}
+    assert _enroll_with(api, tok, "C02XK0AAJG5H").status_code == 200
+
+
+@pytest.mark.parametrize("body, ctype, needle, status", [
+    ("Name,Model\na,b\n", "text/csv", "serial", 400),
+    ("{not json", "application/json", "JSON", 400),
+    ("", "text/csv", "no serial numbers", 400),
+])
+def test_bad_uploads(api, body, ctype, needle, status):
+    r = api.put(INV, content=body.encode(), headers={"Content-Type": ctype})
+    assert r.status_code == status and needle in r.text
+    assert api.get(INV).json()["enforced"] is False
+
+
+def test_the_size_cap(api, monkeypatch):
+    from core.dlp import devices as dv
+    monkeypatch.setattr(dv, "INVENTORY_MAX", 3)
+    r = api.put(INV, content=b"A1\nA2\nA3\nA4\n", headers={"Content-Type": "text/plain"})
+    assert r.status_code == 413
+
+
+def test_inventory_writes_follow_the_gate_and_stay_in_the_tenant(api, monkeypatch):
+    from starlette.testclient import TestClient
+    from storage import tenant_store as ts
+    api.put(INV, content=JAMF_EXPORT.encode(), headers={"Content-Type": "text/csv"})
+    key = "sk-inv-" + uuid.uuid4().hex
+    ts.create_tenant("inv" + uuid.uuid4().hex[:8], {"name": "o", "plan": "enterprise"},
+                     api_keys=[key])
+    assert TestClient(api.app_, headers={"X-API-Key": key}).get(INV).json()["enforced"] is False
+    rt_key = "sk-invr-" + uuid.uuid4().hex
+    ts.add_api_key(api.tenant_id, rt_key, scope="runtime")
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    rt = TestClient(api.app_, headers={"X-API-Key": rt_key})
+    assert rt.put(INV, content=b"X1\n", headers={"Content-Type": "text/plain"}).status_code == 403
+    assert rt.delete(INV).status_code == 403
+
+
+def test_the_laptop_and_shield_hash_serials_the_same_way():
+    from core.dlp.devices import serial_hash as server
+    from votal_device_agent.agent import serial_hash as laptop
+    for s in ("C02XK0AAJG5H", " c02xk0aajg5h ", "5CG1234XYZ\n"):
+        assert laptop(s) == server(s) == server("C02XK0AAJG5H" if "c02" in s.lower() else s)
+    assert laptop("") == ""
+
+
+class FakeSetRedis:
+    """The Redis set commands the inventory uses, and nothing else."""
+
+    def __init__(self):
+        self.sets, self.ops = {}, []
+
+    def sadd(self, key, *members):
+        self.ops.append(("sadd", key))
+        self.sets.setdefault(key, set()).update(members)
+
+    def rename(self, src, dst):
+        self.ops.append(("rename", src, dst))
+        self.sets[dst] = self.sets.pop(src)
+
+    def delete(self, key):
+        self.ops.append(("delete", key))
+        self.sets.pop(key, None)
+
+    def scard(self, key):
+        return len(self.sets.get(key, ()))
+
+    def sismember(self, key, member):
+        return member in self.sets.get(key, ())
+
+
+def test_the_redis_path_swaps_the_inventory_atomically(store, monkeypatch):
+    dv = store
+    fake = FakeSetRedis()
+    monkeypatch.setattr(dv, "_redis", lambda: fake)
+    tid = "rinv" + uuid.uuid4().hex[:6]
+    many = [f"SER{i:06d}" for i in range(2500)]                       # more than one batch
+    dv.set_inventory(tid, many)
+    key = f"device_inventory:{tid}"
+    adds = [op for op in fake.ops if op[0] == "sadd"]
+    assert len(adds) == 3 and all(op[1] != key for op in adds)        # built aside...
+    assert fake.ops[-1][0] == "rename" and fake.ops[-1][2] == key     # ...then swapped in
+    assert dv.inventory_allows(tid, dv.serial_hash("ser000042")) is True
+    assert dv.inventory_allows(tid, dv.serial_hash("OTHER")) is False
+    dv.set_inventory(tid, ["ONLY1"])
+    assert fake.scard(key) == 1 and dv.inventory_status(tid)["count"] == 1
+    dv.clear_inventory(tid)
+    assert dv.inventory_allows(tid, dv.serial_hash("ONLY1")) is None
+
+
+def test_delete_inventory_is_not_taken_for_a_device_id(api):
+    """Behavioral, not a scan of app.routes (whose shape changes across FastAPI
+    versions): DELETE .../inventory must reach the inventory route."""
+    r = api.delete(INV)
+    assert r.status_code == 200 and r.json()["enforced"] is False and "cleared" in r.json()

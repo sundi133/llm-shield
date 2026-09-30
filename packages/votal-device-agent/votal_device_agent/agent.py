@@ -38,6 +38,14 @@ WARMUP_PROMPTS = ("How do I write a for loop in Python?", "Summarise the plot of
                   "What is the capital of Australia?", "Explain what a REST API is.")
 
 
+def serial_hash(serial: str) -> str:
+    """SHA-256 of the hardware serial, trimmed and uppercased: the same rule
+    Shield applies to an MDM's serial export (core/dlp/devices.serial_hash), so
+    the company inventory matches whatever case the firmware reports."""
+    s = (serial or "").strip().upper()
+    return hashlib.sha256(s.encode()).hexdigest() if s else ""
+
+
 def device_info() -> dict:
     """hostname, os, os_version and a SHA-256 of the hardware serial (never the
     serial itself), for enrollment."""
@@ -60,7 +68,7 @@ def device_info() -> dict:
         serial = ""
     return {"hostname": platform.node()[:255] or "unknown", "os": os_name,
             "os_version": (version or "unknown")[:64],
-            "serial_hash": hashlib.sha256(serial.encode()).hexdigest() if serial else ""}
+            "serial_hash": serial_hash(serial)}
 
 
 class Agent:

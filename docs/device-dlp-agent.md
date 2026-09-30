@@ -174,6 +174,21 @@ own certificate list. To cover them:
 Traffic to other sites goes through the agent untouched and is never
 decrypted.
 
+## Company inventory (optional)
+
+An enrollment token deployed through MDM can be read on the laptops it was
+deployed to. To make sure only your own laptops can enroll, upload your MDM's
+serial number export:
+
+1. Export the computer or device list from Jamf, Kandji or Intune as CSV. Any
+   column whose header contains "Serial" is used.
+2. In the portal, open Device DLP, then Company inventory, and upload the file.
+
+From then on, a laptop whose serial number is not in the list is refused, even
+with a valid token, and the attempt raises an alert. Serial numbers are hashed
+on arrival; Votal does not keep them as uploaded. Upload again whenever you add
+laptops: each upload replaces the list. **Clear** turns the restriction off.
+
 ## Reinstalling a laptop
 
 A laptop can be reinstalled or reimaged at any time. If its previous install
