@@ -124,10 +124,19 @@ async def dlp_bundle(request: Request,
     to this tenant and fleet, with an expiry. Agents verify it against the key
     pinned at enrollment. ETag/304 for polling."""
     from core.embodied import bundle as edge_bundle
-    tenant_id = get_tenant_from_request(request)
+    from core.dlp import devices as dv
+    try:
+        device = dv.caller_device(request)
+    except dv.DeviceError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    tenant_id = device[0] if device else get_tenant_from_request(request)
     if not valid_fleet(fleet):
         raise HTTPException(status_code=400, detail="fleet: lowercase letters, digits, . _ - "
                                                     "(1-64 characters)")
+    if device and device[2].get("fleet") != fleet:
+        # A laptop gets its own fleet's policy, never a looser fleet's.
+        raise HTTPException(status_code=403, detail=f"this device is enrolled in fleet "
+                                                    f"'{device[2].get('fleet')}'")
     policy = bundle_policy(tenant_id, fleet)
     phash = policy_hash(policy)
     etag = '"' + hashlib.sha256(f"{phash}|{fleet}|{tenant_id}".encode()).hexdigest()[:32] + '"'

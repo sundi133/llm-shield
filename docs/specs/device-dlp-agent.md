@@ -286,6 +286,35 @@ post heartbeats and events, and nothing else. It is stored in the macOS keychain
 or Windows Credential Manager (DPAPI), readable only by the agent's service
 account.
 
+**As built in task 3.**
+- Enrollment tokens look like `vde.<tenant_id>.<secret>`: at install the agent
+  has nothing else to find its tenant by. Only the secret's SHA-256 is stored.
+  Uses are counted with an atomic INCR on `device_enroll_used:{tenant_id}:{sha}`
+  rather than a `uses_left` field, so two laptops cannot both take the last use.
+  The token goes in the `X-Enrollment-Token` header; `/v1/devices/enroll` is the
+  one path AuthMiddleware lets through without an API key, because the route
+  checks the token itself.
+- Device keys are `vdk_...`. The path limit (bundle, heartbeat, events) is a
+  prefix test inside ShieldMiddleware: no store read and no extra middleware,
+  so other requests, the guard path included, pay one string comparison. Only
+  a `vdk_` key can be given scope `device`. The three endpoints also check the
+  device record, so a revoke takes effect at once on every worker. A device key
+  gets only its own fleet's bundle (403 otherwise), and its events are stamped
+  with its own `device_id`, whatever the event says.
+- A reinstall on the same machine (same `serial_hash` and fleet) keeps its
+  `device_id` and replaces the old key, so reinstalls do not leave stale ghosts
+  that look like tampered devices.
+- Added beside the spec'd token POST: `GET` and
+  `DELETE /v1/tenant/me/devices/enrollment-tokens[/{token_id}]`, so a leaked
+  token can be stopped before it expires (it never lists the token itself).
+- Enrollment returns 503 without a signing key, before a use is taken.
+- Env: `SHIELD_DEVICE_AGENT` (on; off makes enrollment 404),
+  `SHIELD_DEVICE_STALE_S` (3600).
+- Portal: Enterprise Controls, then Device DLP. It has the fleet table, tokens
+  and the policy editor.
+- Modules: `core/dlp/devices.py`, `api/routes_devices.py`,
+  `api/routes_device_dlp.py`.
+
 ### 5.3 On the device
 
 The verified bundle, the pinned public key, the per-device CA, the audit chain,

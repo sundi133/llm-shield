@@ -27,6 +27,10 @@ logger = logging.getLogger("votal.auth")
 _MAX_FAILED_ATTEMPTS = int(os.environ.get("SHIELD_AUTH_MAX_FAILURES", "10"))
 _LOCKOUT_WINDOW_SECS = int(os.environ.get("SHIELD_AUTH_LOCKOUT_SECS", "300"))
 
+# Exact paths whose route checks its own non-API-key credential. Adding one is
+# a deliberate act: the route must refuse an unauthenticated caller itself.
+_SELF_AUTHENTICATED_PATHS = frozenset({"/v1/devices/enroll"})
+
 # {ip: [(timestamp, ...),]} — in-memory; Redis-backed deployments can
 # override via SHIELD_AUTH_RATE_LIMIT_REDIS=1 in future.
 _failed_attempts: dict[str, list[float]] = defaultdict(list)
@@ -136,6 +140,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if cfg is None or not cfg.auth.enabled:
+            return await call_next(request)
+
+        # Routes that authenticate the caller themselves with a credential
+        # that is not an API key: a laptop enrolling with its MDM-issued
+        # enrollment token (docs/specs/device-dlp-agent.md §6).
+        if path in _SELF_AUTHENTICATED_PATHS:
             return await call_next(request)
 
         # Check if path is public
