@@ -388,6 +388,47 @@ live-device replacement (point 1), with its escape hatch.
   step are built from what the kit actually contains.
 - **Admin guide link:** the kit links `https://docs.shield.votal.ai/device-dlp-agent/`.
 
+**As built, task 3** (`core/dlp/kits.py`, routes in `api/routes_devices.py`,
+the Rollout kits card on the Device DLP page):
+- **Order inside `create_kit`:**
+  1. Parse the body.
+  2. Validate the whole kit with a placeholder token.
+  3. Reissue the root if the policy outgrew it (audited as
+     `tenant_reissue_device_root_ca`, reason "rollout kit").
+  4. Mint the kit token.
+  5. Build the zip.
+  6. Record the kit.
+
+  A bad request returns 400 without minting a token. A failed build revokes
+  the token it minted.
+- **The kit record** is `device_kit:{tenant}:{kit_id}`. It never holds the
+  token, and has a millisecond timestamp so the list stays newest first.
+- **Kit status:** active, exhausted, revoked or expired. Laptops left shows
+  only while the token can still enroll.
+- **Stale reasons:**
+  - the root was reissued since the kit was made;
+  - the policy has hosts no root covers;
+  - an older agent version.
+- **Revoking** a kit (or `revoke_previous`) revokes its token only; laptops it
+  enrolled keep working.
+- **The Shield URL in a kit:**
+  - `SHIELD_DEVICE_AGENT_SHIELD_URL` when set.
+  - Otherwise the request's own https URL, but only in the app that mounts
+    `/v1/devices/enroll` (the data plane).
+  - A kit made through the admin plane without the variable gets 503: it
+    would otherwise point laptops at a host that cannot enroll them.
+- **More env:** `SHIELD_DEVICE_AGENT_RELEASE_BASE`, `SHIELD_APPLE_TEAM_ID`,
+  `SHIELD_WINDOWS_SIGNER`, `SHIELD_BROWSER_EXTENSION_IDS`,
+  `SHIELD_DEVICE_AGENT_VERSION`. Default agent version:
+  `kits.DEFAULT_AGENT_VERSION`, held equal to the agent's `_version.py`.
+- **Checked in the portal** (admin plane, local demo):
+  - generate Jamf, Kandji and Intune kits, all 200;
+  - list them and revoke one;
+  - "revoke earlier kits" keeps the new one active;
+  - console errors are only the pre-existing sign-in and `aibom/drift` loads.
+- **End to end in the tests:** the token taken out of a downloaded kit enrolls
+  a laptop.
+
 ## What is needed from Votal (not code)
 
 1. **An Apple Developer ID** (Application and Installer certificates) and a

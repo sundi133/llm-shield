@@ -431,3 +431,210 @@ def test_the_readme_describes_this_kit_not_every_kit(root_pem, include_proxy, ex
     for s in not_says:
         assert s not in readme, s
     assert readme.count("## Your existing proxy (PAC) file") == (0 if include_proxy else 1)
+
+
+# ── task 3: the kit API ──────────────────────────────────────────────
+
+KITS = "/v1/tenant/me/devices/rollout-kits"
+
+
+@pytest.fixture
+def api(monkeypatch):
+    """A tenant on Shield's data plane with signing and the device CA configured."""
+    from starlette.testclient import TestClient
+    from core.dlp import devices as dv
+    from core.runtime_policy import bundle as rt_bundle
+    from storage import tenant_store as ts
+    monkeypatch.setenv("SHIELD_RUNTIME_BUNDLE_PRIVATE_KEY", SK)
+    monkeypatch.setenv("SHIELD_DEVICE_CA_MASTER_KEY", "4d" * 32)
+    monkeypatch.setenv("SHIELD_DEVICE_AGENT_SHIELD_URL", "https://shield.example.com")
+    rt_bundle.reset_signer_cache_for_tests()
+    dv.reset_memory()
+    with patch("storage.tenant_store._get_redis", return_value=None):
+        from core.app import create_app
+        app = create_app()
+        tid = "rk" + uuid.uuid4().hex[:8]
+        key = "sk-rk-" + uuid.uuid4().hex
+        ts.create_tenant(tid, {"name": tid, "plan": "enterprise"}, api_keys=[key])
+        c = TestClient(app, headers={"X-API-Key": key})
+        c.tenant_id, c.app_ = tid, app
+        yield c
+    rt_bundle.reset_signer_cache_for_tests()
+    dv.reset_memory()
+
+
+def _kit(api, **body):
+    r = api.post(KITS, json={"fleet": "sales", "mdm": "intune", **body})
+    assert r.status_code == 200, r.text
+    z = zipfile.ZipFile(_io.BytesIO(r.content))
+    files = {n.split("/", 1)[1]: z.read(n) for n in z.namelist()}
+    return r, files
+
+
+def _token_from(files) -> str:
+    return re.search(r"ENROLLMENTTOKEN=(\S+)", files["windows/install-command.txt"].decode()).group(1)
+
+
+def test_a_kits_token_enrolls_a_laptop(api):
+    from starlette.testclient import TestClient
+    r, files = _kit(api)
+    assert r.headers["content-type"] == "application/zip"
+    kit_id = r.headers["X-Votal-Kit-Id"]
+    token = _token_from(files)
+    laptop = {"hostname": "ana-pc", "os": "windows", "os_version": "11", "agent_version": "0.1.0",
+              "serial_hash": "ab" * 32}
+    out = TestClient(api.app_).post("/v1/devices/enroll", json=laptop,
+                                    headers={"X-Enrollment-Token": token})
+    assert out.status_code == 200 and out.json()["fleet"] == "sales"
+    kit = next(k for k in api.get(KITS).json()["kits"] if k["kit_id"] == kit_id)
+    assert (kit["status"], kit["uses_left"], kit["uses"]) == ("active", 4999, 5000)
+    # The same kit's Mac profile carries the same token, and the right Shield.
+    settings = next(p for p in plistlib.loads(files["macos/Votal-Device-Agent.mobileconfig"])[
+        "PayloadContent"] if p["PayloadType"] == "ai.votal.device-agent")
+    assert settings["EnrollmentToken"] == token
+    assert settings["ShieldURL"] == "https://shield.example.com"
+
+
+def test_the_list_never_shows_a_token(api):
+    _r, files = _kit(api)
+    listing = json.dumps(api.get(KITS).json())
+    assert _token_from(files) not in listing and "vde." not in listing
+
+
+def test_revoking_a_kit_stops_its_token_only(api):
+    from starlette.testclient import TestClient
+    r, files = _kit(api)
+    token, kit_id = _token_from(files), r.headers["X-Votal-Kit-Id"]
+    laptop = {"hostname": "a", "os": "windows", "os_version": "11", "agent_version": "0.1.0"}
+    enrolled = TestClient(api.app_).post("/v1/devices/enroll", json=laptop,
+                                         headers={"X-Enrollment-Token": token}).json()
+    assert api.delete(f"{KITS}/{kit_id}").json()["revoked"] is True
+    again = TestClient(api.app_).post("/v1/devices/enroll", json=laptop,
+                                      headers={"X-Enrollment-Token": token})
+    assert again.status_code == 401
+    device = TestClient(api.app_, headers={"X-API-Key": enrolled["api_key"]})
+    assert device.post("/v1/devices/heartbeat", json={}).status_code == 204   # still works
+    revoked = next(k for k in api.get(KITS).json()["kits"])
+    assert (revoked["status"], revoked["uses_left"]) == ("revoked", None)
+    assert api.delete(f"{KITS}/kit_{'0' * 16}").status_code == 404
+
+
+def test_revoke_previous_retires_the_fleets_older_kits(api):
+    first, _ = _kit(api)
+    other_fleet, _ = _kit(api, fleet="finance")
+    second, _ = _kit(api, revoke_previous=True)
+    listing = api.get(KITS).json()["kits"]
+    assert listing[0]["kit_id"] == second.headers["X-Votal-Kit-Id"]         # newest first
+    by = {k["kit_id"]: k["status"] for k in listing}
+    assert by[first.headers["X-Votal-Kit-Id"]] == "revoked"
+    assert by[second.headers["X-Votal-Kit-Id"]] == "active"
+    assert by[other_fleet.headers["X-Votal-Kit-Id"]] == "active"      # another fleet untouched
+
+
+def test_a_kit_reissues_a_root_that_no_longer_covers_the_policy(api):
+    old, _ = _kit(api, mdm="jamf")
+    assert old.headers["X-Votal-Root-Reissued"] == "0"
+    hosts = api.get("/v1/tenant/me/dlp-policy").json()["policy"]["ai_hosts"]
+    api.put("/v1/tenant/me/dlp-policy", json={"ai_hosts": hosts + ["newai.example"]})
+    stale = next(k for k in api.get(KITS).json()["kits"])
+    assert any("newai.example" in s for s in stale["stale"])
+    with patch("api.routes_devices.log_admin_action") as audit:
+        new, files = _kit(api, mdm="jamf")
+    assert new.headers["X-Votal-Root-Reissued"] == "1"
+    actions = [c.kwargs["action"] for c in audit.call_args_list]
+    assert actions == ["tenant_reissue_device_root_ca", "tenant_create_rollout_kit"]
+    root = next(p for p in plistlib.loads(files["macos/Votal-Device-Agent.mobileconfig"])[
+        "PayloadContent"] if p["PayloadType"] == "com.apple.security.root")
+    from cryptography import x509
+    nc = x509.load_der_x509_certificate(root["PayloadContent"]).extensions.get_extension_for_class(
+        x509.NameConstraints).value
+    assert "newai.example" in {n.value for n in nc.permitted_subtrees}
+    kits_now = {k["kit_id"]: k for k in api.get(KITS).json()["kits"]}
+    assert any("reissued" in s for s in kits_now[old.headers["X-Votal-Kit-Id"]]["stale"])
+    assert not kits_now[new.headers["X-Votal-Kit-Id"]]["stale"]
+
+
+def test_the_audit_never_carries_the_token(api):
+    with patch("api.routes_devices.log_admin_action") as audit:
+        _r, files = _kit(api)
+    logged = json.dumps([c.kwargs for c in audit.call_args_list], default=str)
+    assert _token_from(files) not in logged and "tenant_create_rollout_kit" in logged
+
+
+@pytest.mark.parametrize("body, needle", [
+    ({"mdm": "workspace-one"}, "mdm"), ({"fleet": "Sales Team"}, "fleet"),
+    ({"mdm": "jamf", "platforms": ["windows"]}, "jamf manages macos"),
+    ({"expires_in_days": 400}, "1 to 365"), ({"uses": 0}, "uses"),
+    ({"extension_ids": ["bad"]}, "extension id"), ({"turbo": True}, "unknown field"),
+    ({"include_proxy": "yes"}, "include_proxy"),
+])
+def test_a_bad_request_mints_no_token(api, body, needle):
+    from core.dlp import devices as dv
+    before = len(dv.list_enrollment_tokens(api.tenant_id))
+    r = api.post(KITS, json={"fleet": "sales", "mdm": "intune", **body})
+    assert r.status_code == 400 and needle in r.text
+    assert len(dv.list_enrollment_tokens(api.tenant_id)) == before
+
+
+def test_missing_keys_are_named(api, monkeypatch):
+    from core.runtime_policy import bundle as rt_bundle
+    monkeypatch.delenv("SHIELD_DEVICE_CA_MASTER_KEY")
+    r = api.post(KITS, json={"fleet": "sales", "mdm": "jamf"})
+    assert r.status_code == 503 and "SHIELD_DEVICE_CA_MASTER_KEY" in r.text
+    ok, files = _kit(api, platforms=["windows"])                       # Windows needs no root
+    assert "macos/Votal-Device-Agent.mobileconfig" not in files
+    monkeypatch.delenv("SHIELD_RUNTIME_BUNDLE_PRIVATE_KEY")
+    rt_bundle.reset_signer_cache_for_tests()
+    r = api.post(KITS, json={"fleet": "sales", "mdm": "intune", "platforms": ["windows"]})
+    assert r.status_code == 503 and "SHIELD_RUNTIME_BUNDLE_PRIVATE_KEY" in r.text
+
+
+def test_kits_follow_the_registry_write_gate(api, monkeypatch):
+    from starlette.testclient import TestClient
+    from storage import tenant_store as ts
+    rt_key = "sk-rkr-" + uuid.uuid4().hex
+    ts.add_api_key(api.tenant_id, rt_key, scope="runtime")
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    rt = TestClient(api.app_, headers={"X-API-Key": rt_key})
+    assert rt.post(KITS, json={"fleet": "sales", "mdm": "jamf"}).status_code == 403
+    assert rt.get(KITS).status_code == 200
+
+
+def test_tenants_see_only_their_kits(api):
+    from starlette.testclient import TestClient
+    from storage import tenant_store as ts
+    r, _ = _kit(api)
+    key = "sk-rk2-" + uuid.uuid4().hex
+    ts.create_tenant("rk" + uuid.uuid4().hex[:8], {"name": "o", "plan": "enterprise"}, api_keys=[key])
+    other = TestClient(api.app_, headers={"X-API-Key": key})
+    assert other.get(KITS).json()["kits"] == []
+    assert other.delete(f"{KITS}/{r.headers['X-Votal-Kit-Id']}").status_code == 404
+
+
+def test_the_shield_url_in_a_kit(api, monkeypatch):
+    """Laptops must be pointed at a data plane over https."""
+    from api.routes_devices import _kit_shield_url
+    from fastapi import HTTPException
+    from types import SimpleNamespace
+    data_plane = SimpleNamespace(routes=[SimpleNamespace(path="/v1/devices/enroll")])
+    admin_plane = SimpleNamespace(routes=[SimpleNamespace(path="/v1/tenant/me/devices")])
+    monkeypatch.delenv("SHIELD_DEVICE_AGENT_SHIELD_URL")
+    req = lambda app, base: SimpleNamespace(app=app, base_url=base)
+    assert _kit_shield_url(req(data_plane, "https://api.example.com/")) == "https://api.example.com"
+    for app, base in ((admin_plane, "https://portal.example.com/"), (data_plane, "http://x.example/")):
+        with pytest.raises(HTTPException) as e:
+            _kit_shield_url(req(app, base))
+        assert e.value.status_code == 503 and "SHIELD_DEVICE_AGENT_SHIELD_URL" in e.value.detail
+    monkeypatch.setenv("SHIELD_DEVICE_AGENT_SHIELD_URL", "https://shield.corp.example/")
+    assert _kit_shield_url(req(admin_plane, "https://portal.example.com/")) == \
+        "https://shield.corp.example"
+
+
+def test_kits_pin_the_agents_own_version():
+    from core.dlp import kits
+    assert kits.DEFAULT_AGENT_VERSION == _version()
+
+
+def test_the_admin_image_has_the_kit_code():
+    df = (Path(ROOT) / "Dockerfile.admin").read_text()
+    assert "COPY core/dlp/ core/dlp/" in df and "COPY api/routes_devices.py api/" in df

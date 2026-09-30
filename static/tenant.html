@@ -4952,6 +4952,33 @@ if __name__ == "__main__":
       </div>
 
       <div class="card">
+        <div class="card-header"><div><div class="card-title">Rollout kits</div>
+          <div class="card-desc">One download per fleet and MDM with everything filled in: upload its files to Jamf, Kandji or Intune and scope them to a group. The zip contains a new enrollment token and is its only copy; treat it like a password and delete it once uploaded.</div></div></div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+          <input id="dk-fleet" type="text" placeholder="fleet, e.g. sales" style="flex:1;min-width:140px;">
+          <select id="dk-mdm" onchange="dkPlatforms()">
+            <option value="jamf">Jamf Pro (Mac)</option>
+            <option value="kandji">Kandji (Mac)</option>
+            <option value="intune">Intune (Windows and Mac)</option>
+          </select>
+          <span id="dk-plats" style="font-size:13px;display:none;">
+            <label><input type="checkbox" id="dk-win" checked> Windows</label>
+            <label><input type="checkbox" id="dk-mac" checked> Mac</label>
+          </span>
+        </div>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;margin-top:0.5rem;font-size:13px;">
+          <label title="Leave off if your laptops already have a proxy (PAC) configuration; the kit then includes the lines to add to it."><input type="checkbox" id="dk-proxy" checked> Include the proxy setting</label>
+          <label>Extension ids <input id="dk-ext" type="text" placeholder="none" style="width:260px;"></label>
+          <label>Days <input id="dk-days" type="number" value="180" min="1" max="365" style="width:70px;"></label>
+          <label>Laptops <input id="dk-uses" type="number" value="5000" min="1" max="100000" style="width:90px;"></label>
+          <label><input type="checkbox" id="dk-prev"> Revoke this fleet's earlier kits for this MDM</label>
+          <button class="primary small" onclick="dkCreate()">Download rollout kit</button>
+        </div>
+        <div id="dk-msg" style="margin-top:0.6rem;font-size:13px;"></div>
+        <div id="dk-list" style="margin-top:0.75rem;font-size:13px;overflow-x:auto;"></div>
+      </div>
+
+      <div class="card">
         <div class="card-header"><div><div class="card-title">Enrollment tokens</div>
           <div class="card-desc">Put a token in the MDM install profile (Jamf, Kandji, Intune). Each laptop exchanges it once for its own key, bound to the token's fleet. Shield keeps only a hash: the token is shown once.</div></div></div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
@@ -17286,8 +17313,67 @@ async function ddReissueRoot() {
   try { await ddApi('/devices/root-ca/reissue', { method: 'POST' }); ddRoot(); }
   catch (e) { xfMsg('dd-root', xfErrors(e), 'error'); }
 }
+// Rollout kits (docs/specs/device-rollout-kit.md).
+let DK_DEFAULTS = null;
+function dkPlatforms() {
+  document.getElementById('dk-plats').style.display = document.getElementById('dk-mdm').value === 'intune' ? 'inline' : 'none';
+}
+const DK_STATUS = { active: '', revoked: 'badge-danger', expired: 'badge-warn', exhausted: 'badge-warn' };
+async function dkLoad() {
+  try {
+    const d = await ddApi('/devices/rollout-kits');
+    if (!DK_DEFAULTS) {
+      DK_DEFAULTS = d.defaults;
+      document.getElementById('dk-ext').value = (d.defaults.extension_ids || []).join(',');
+    }
+    const note = d.defaults.signed_release ? '' : '<div class="muted" style="margin-bottom:0.4rem;">Installers are not signed yet: kits work for a pilot with Jamf or Kandji (the kit explains the unsigned option); Intune for Mac needs a signed release.</div>';
+    document.getElementById('dk-list').innerHTML = note + (!d.kits.length ? '<div class="muted">No rollout kits yet.</div>'
+      : `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
+          <th style="${DD_TD}">Kit</th><th style="${DD_TD}">Fleet</th><th style="${DD_TD}">MDM</th><th style="${DD_TD}">Laptops left</th><th style="${DD_TD}">Expires</th><th style="${DD_TD}">Status</th><th style="${DD_TD}"></th></tr></thead>
+        <tbody>${d.kits.map(k => `<tr>
+          <td style="${DD_TD}"><code>${xfEsc(k.kit_id)}</code><div class="muted" style="font-size:11px;">agent ${xfEsc(k.agent_version)}, ${xfEsc((k.platforms || []).join(' and '))}</div></td>
+          <td style="${DD_TD}">${xfEsc(k.fleet)}</td><td style="${DD_TD}">${xfEsc(k.mdm)}</td>
+          <td style="${DD_TD}">${k.uses_left === null ? '-' : `${k.uses_left} of ${k.uses}`}</td>
+          <td style="${DD_TD}">${xfEsc(new Date(k.expires_at * 1000).toLocaleDateString())}</td>
+          <td style="${DD_TD}"><span class="badge ${DK_STATUS[k.status] || ''}">${xfEsc(k.status)}</span>${(k.stale || []).map(s => `<div style="color:var(--warning, #b45309);font-size:12px;">${xfEsc(s)}</div>`).join('')}</td>
+          <td style="${DD_TD}">${k.status === 'active' ? `<button class="small danger" onclick="dkRevoke('${xfEsc(k.kit_id)}')">Revoke</button>` : ''}</td></tr>`).join('')}</tbody></table>`);
+  } catch (e) { xfMsg('dk-list', xfErrors(e), 'error'); }
+}
+async function dkCreate() {
+  const mdm = document.getElementById('dk-mdm').value;
+  const platforms = mdm !== 'intune' ? ['macos'] :
+    [document.getElementById('dk-win').checked && 'windows', document.getElementById('dk-mac').checked && 'macos'].filter(Boolean);
+  const body = {
+    fleet: document.getElementById('dk-fleet').value.trim(), mdm, platforms,
+    include_proxy: document.getElementById('dk-proxy').checked,
+    extension_ids: document.getElementById('dk-ext').value.split(',').map(s => s.trim()).filter(Boolean),
+    expires_in_days: parseInt(document.getElementById('dk-days').value, 10),
+    uses: parseInt(document.getElementById('dk-uses').value, 10),
+    revoke_previous: document.getElementById('dk-prev').checked };
+  try {
+    const r = await fetch(`${BASE_URL}/v1/tenant/me/devices/rollout-kits`, { method: 'POST',
+      headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      const dt = data.detail;
+      throw Object.assign(new Error((dt && dt.message) || (typeof dt === 'string' ? dt : '') || `HTTP ${r.status}`), { errors: (dt && dt.errors) || [] });
+    }
+    const url = URL.createObjectURL(await r.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: `votal-rollout-kit-${body.fleet}-${mdm}.zip` });
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    const reissued = r.headers.get('X-Votal-Root-Reissued') === '1';
+    xfMsg('dk-msg', `Kit <code>${xfEsc(r.headers.get('X-Votal-Kit-Id'))}</code> downloaded. Follow its README.md.` +
+      (reissued ? ' The tenant root was reissued to cover every AI host in your policy: replace this fleet\'s profile with the one in the kit.' : ''), 'ok');
+    dkLoad(); ddRoot && ddRoot();
+  } catch (e) { xfMsg('dk-msg', xfErrors(e), 'error'); }
+}
+async function dkRevoke(id) {
+  if (!confirm('Revoke this kit? Its token stops enrolling laptops; laptops it already enrolled keep working.')) return;
+  try { await ddApi(`/devices/rollout-kits/${encodeURIComponent(id)}`, { method: 'DELETE' }); dkLoad(); }
+  catch (e) { xfMsg('dk-list', xfErrors(e), 'error'); }
+}
 async function ddLoad() {
-  ddDevices(); ddTokens(); ddMdm();
+  ddDevices(); ddTokens(); ddMdm(); dkLoad(); dkPlatforms();
   try {
     const p = await ddApi('/dlp-policy');
     document.getElementById('dd-policy').value = JSON.stringify(p.policy, null, 2);

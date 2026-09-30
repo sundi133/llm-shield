@@ -5,6 +5,9 @@
   POST   /v1/devices/ca                                       data plane, device key: CSR -> 7-day CA
   GET    /v1/tenant/me/devices/root-ca[.mobileconfig]         both planes: the tenant root, MDM profile
   POST   /v1/tenant/me/devices/root-ca/reissue                both planes: cover new AI hosts
+  GET    /v1/tenant/me/devices/rollout-kits                   both planes: kits, never a token
+  POST   /v1/tenant/me/devices/rollout-kits                   both planes: a kit (zip), token minted
+  DELETE /v1/tenant/me/devices/rollout-kits/{kit_id}          both planes: revoke its token
   GET    /v1/tenant/me/devices                                both planes, fleet view
   DELETE /v1/tenant/me/devices/{device_id}                    both planes, revoke
   POST   /v1/tenant/me/devices/enrollment-tokens              both planes
@@ -184,6 +187,84 @@ async def reissue_tenant_root_ca(request: Request):
     _audit(request, "tenant_reissue_device_root_ca", tenant_id, _actor(request, tenant_id),
            {"fingerprint_sha256": rec["fingerprint_sha256"], "hosts": rec["hosts"]})
     return {"tenant_id": tenant_id, **rec}
+
+
+# ── rollout kits (docs/specs/device-rollout-kit.md, task 3) ─────────
+
+
+def _kit_shield_url(request: Request) -> str:
+    """The URL laptops use to reach this Shield's data plane.
+
+    SHIELD_DEVICE_AGENT_SHIELD_URL when set. Otherwise this request's own URL,
+    but only when this app mounts the enrollment route (the data plane) and
+    the URL is https: a kit generated through the admin plane must not point
+    laptops at a host that cannot enroll them.
+    """
+    import os
+    env = os.environ.get("SHIELD_DEVICE_AGENT_SHIELD_URL", "").strip().rstrip("/")
+    if env:
+        return env
+    serves_enroll = any(getattr(r, "path", "") == "/v1/devices/enroll" for r in request.app.routes)
+    base = str(request.base_url).rstrip("/")
+    if serves_enroll and base.startswith("https://"):
+        return base
+    raise HTTPException(status_code=503, detail="set SHIELD_DEVICE_AGENT_SHIELD_URL to the https "
+                        "URL laptops use to reach this Shield's data plane")
+
+
+@tenant_router.get("/rollout-kits")
+async def list_rollout_kits(request: Request):
+    from core.dlp import kits
+    tenant_id = get_tenant_from_request(request)
+    s = kits.settings()
+    return {"tenant_id": tenant_id, "kits": kits.list_kits(tenant_id),
+            "defaults": {"agent_version": s["agent_version"], "extension_ids": s["extension_ids"],
+                         "signed_release": bool(s["apple_team_id"]),
+                         "mdms": list(kits.rk.MDMS),
+                         "platforms": {m: list(p) for m, p in kits.rk.PLATFORMS.items()}}}
+
+
+@tenant_router.post("/rollout-kits")
+async def create_rollout_kit(request: Request, body: dict = Body(...)):
+    """A rollout kit for one fleet and MDM, as a zip. It contains a new
+    enrollment token, shown nowhere else: the kit is the only copy."""
+    from core.dlp import kits
+    tenant_id = get_tenant_from_request(request)
+    require_registry_write(request, tenant_id, "create a device rollout kit")
+    actor = _actor(request, tenant_id)
+    shield_url = _kit_shield_url(request)
+    try:
+        out = kits.create_kit(tenant_id, body, shield_url=shield_url, actor=actor)
+    except kits.KitAPIError as e:
+        raise HTTPException(status_code=e.status, detail={"message": str(e), "errors": e.errors}
+                            if e.errors else str(e))
+    rec = out["record"]
+    if out["root_reissued"]:
+        _audit(request, "tenant_reissue_device_root_ca", tenant_id, actor,
+               {"fingerprint_sha256": rec["root_fingerprint_sha256"], "reason": "rollout kit",
+                "kit_id": rec["kit_id"]})
+    _audit(request, "tenant_create_rollout_kit", tenant_id, actor,
+           {k: rec[k] for k in ("kit_id", "fleet", "mdm", "platforms", "token_id",
+                                "expires_at", "uses", "include_proxy")}
+           | {"revoked_previous": out["revoked"]})
+    name = f"votal-rollout-kit-{rec['fleet']}-{rec['mdm']}.zip"
+    return Response(content=out["zip"], media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store",
+        "X-Votal-Kit-Id": rec["kit_id"], "X-Votal-Root-Reissued": "1" if out["root_reissued"]
+        else "0"})
+
+
+@tenant_router.delete("/rollout-kits/{kit_id}")
+async def revoke_rollout_kit(kit_id: str, request: Request):
+    from core.dlp import kits
+    tenant_id = get_tenant_from_request(request)
+    require_registry_write(request, tenant_id, "revoke a device rollout kit")
+    rec = kits.revoke_kit(tenant_id, kit_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="rollout kit not found")
+    _audit(request, "tenant_revoke_rollout_kit", tenant_id, _actor(request, tenant_id),
+           {"kit_id": kit_id, "fleet": rec.get("fleet"), "token_id": rec.get("token_id")})
+    return {"tenant_id": tenant_id, "kit_id": kit_id, "revoked": True}
 
 
 @tenant_router.get("")
