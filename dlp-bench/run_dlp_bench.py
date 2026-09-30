@@ -58,7 +58,12 @@ def call(endpoint: str, body: dict, timeout: float) -> tuple[dict, float]:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read())
     except urllib.error.HTTPError as e:
-        detail = e.read()[:200].decode("utf-8", "replace")
+        # The status is the answer; the body only decorates the message, and
+        # reading it can fail (a server that closes early resets the socket).
+        try:
+            detail = e.read()[:200].decode("utf-8", "replace")
+        except OSError:
+            detail = ""
         if e.code == 404:
             raise EndpointError(f"{endpoint} returned 404: this Ollama build has no decision-model "
                                 f"support, or the model is not pulled ({detail.strip()})") from None

@@ -130,12 +130,16 @@ class FakeDecisions(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
+        # Read the body first on every path: replying and closing with request
+        # bytes unread makes the OS reset the connection, and the client then
+        # sees a reset instead of the 404 (an intermittent failure).
+        raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         if self.path != "/v1/systemone" or FakeDecisions.mode == "old_ollama":
             self.send_response(404)
             self.end_headers()
             self.wfile.write(b"404 page not found")
             return
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        body = json.loads(raw)
         text = body["state"]["prompt"].lower()
         cat = next((c for c, words in KEYWORDS.items() if any(w in text for w in words)), "none")
         exfil = 0.9 if any(w in text for w in ("personal", "leaving", "quit", "journalist")) else 0.05
