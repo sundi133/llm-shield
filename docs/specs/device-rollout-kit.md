@@ -8,7 +8,7 @@ description: One download per fleet and MDM (Jamf, Kandji, Intune) that rolls th
 
 # Spec: Device DLP rollout kit
 
-> Status: **APPROVED 2026-09-30** (user: "approved"). The live-device serial fix (§5, point 1) went into PR #447 first, at the user's request.
+> Status: **APPROVED 2026-09-30** (user: "approved"); **BUILT** (tasks 1 to 6). The live-device serial fix (§5, point 1) went into PR #447 first, at the user's request.
 > Builds on: `docs/specs/device-dlp-agent.md` (PR #447).
 > Planes: admin and data (kit generation, the same tenant routes as `/v1/tenant/me/devices/*`); CI (release pipeline); the laptop (agent fixes).
 > Guard path: untouched.
@@ -503,6 +503,33 @@ the Rollout kits card on the Device DLP page):
   is tagged; its first run is the first real signed (or unsigned) build with
   Ollama inside. The fetch-and-verify step has been tested only against local
   archives, not the real 160 MB and 1.46 GB downloads.
+
+**As built, task 6:**
+- **The admin guide `docs/device-dlp-agent.md` is rewritten around the kit.**
+  - It covers what you need (including the Shield settings), then six rollout
+    steps: monitor, inventory, kit, MDM upload, watch, enforce.
+  - It then covers what employees see, keeping it current, macOS trust, CLIs,
+    uninstall, troubleshooting (one row per `verify` check), privacy, and
+    setting up without a kit.
+- **Corrected** the old claim that a mismatched model is downloaded again at
+  once: it is deleted at once and fetched when the service next starts.
+- **The acceptance checklist** `docs/specs/device-rollout-acceptance.md`
+  covers:
+  - A: Mac through Jamf or Kandji;
+  - B: Windows through Intune, including that a standard user cannot read the
+    CA key;
+  - C: security behaviours (revoked kit, inventory, live serial, root reissue,
+    uninstall);
+  - a record table.
+- **Tests keep the guide honest:**
+  - every `verify` check has a troubleshooting row;
+  - every message and Shield setting it quotes exists in the code;
+  - the files it names exist;
+  - no em dashes.
+
+Status: **tasks 1 to 6 complete** on `feat/device-rollout-kit`. The remaining
+steps need Votal (below): signing identities for task 5's signed releases, and
+the acceptance run on real MDMs.
 
 ## What is needed from Votal (not code)
 

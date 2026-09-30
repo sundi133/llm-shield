@@ -1003,3 +1003,55 @@ def test_the_release_workflow():
     if shutil.which("actionlint"):
         out = subprocess.run(["actionlint", str(path)], capture_output=True, text=True)
         assert out.returncode == 0, out.stdout
+
+
+# ── task 6: the admin guide and the acceptance checklist ─────────────
+
+GUIDE = Path(ROOT) / "docs" / "device-dlp-agent.md"
+ACCEPT = Path(ROOT) / "docs" / "specs" / "device-rollout-acceptance.md"
+
+
+def test_the_guide_has_no_em_dashes():
+    assert "—" not in GUIDE.read_text()
+
+
+def test_every_verify_check_has_a_troubleshooting_row():
+    src = (PKG / "votal_device_agent" / "installed.py").read_text()
+    checks = set(re.findall(r'add\("([^"]+)"', src))
+    table = GUIDE.read_text().split("## Troubleshooting", 1)[1]
+    rows = {m.group(1) for m in re.finditer(r"^\| ([^|]+?) \|", table, re.M)}
+    assert checks and checks <= rows, checks - rows
+
+
+def test_the_guide_quotes_real_messages_and_settings():
+    guide = GUIDE.read_text().lower()
+    code = ((Path(ROOT) / "core" / "dlp" / "devices.py").read_text()
+            + (Path(ROOT) / "core" / "dlp" / "kits.py").read_text()
+            + (Path(ROOT) / "core" / "dlp" / "device_ca.py").read_text()
+            + (Path(ROOT) / "api" / "routes_devices.py").read_text()).lower()
+    for message in ("invalid or expired enrollment token", "no uses left", "still reporting",
+                    "not in the company inventory"):
+        assert message in guide and message in code, message
+    for env in ("SHIELD_RUNTIME_BUNDLE_PRIVATE_KEY", "SHIELD_DEVICE_CA_MASTER_KEY",
+                "SHIELD_DEVICE_AGENT_SHIELD_URL", "SHIELD_BROWSER_EXTENSION_IDS",
+                "SHIELD_DEVICE_REENROLL_LIVE"):
+        assert env.lower() in guide and env.lower() in code, env
+
+
+def test_the_files_the_guide_names_exist():
+    text = GUIDE.read_text()
+    for rel in ("packaging/macos/uninstall.sh", "packaging/macos/mdm",
+                "packaging/windows/intune/set-pac.ps1"):
+        assert rel in text or rel.replace("packaging/", "") in text, rel
+        assert (PKG / rel).exists(), rel
+
+
+def test_the_acceptance_run_covers_each_mdm_and_the_security_behaviours():
+    text = ACCEPT.read_text()
+    assert text.startswith("---") and "nav_exclude: true" in text
+    for section in ("## A. Mac, with Jamf Pro or Kandji", "## B. Windows, with Intune",
+                    "## C. Security behaviours", "## Record"):
+        assert section in text, section
+    for behaviour in ("not in the company inventory", "still reporting",
+                      "invalid or expired enrollment token", "reissued"):
+        assert behaviour in text, behaviour
