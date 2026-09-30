@@ -81,7 +81,11 @@ needs careful wording and per-category limits.
 - English only, hand-written prompts, no attachments, single-turn prompts.
 - Latency is sequential, one request at a time, model warm.
 - The Tev1 weights' licence is not stated on the model page (only the dataset
-  builders and training scripts are MIT). Confirm before shipping to customers.
+  builders and training scripts are MIT). The Ollama package itself (manifest
+  `sha256:d45e875d...`) carries two licence layers: Apache 2.0 (consistent with
+  the Qwen3.5 base) and MIT ("open-jev contributors"). Neither says which covers
+  the fine-tuned weights, so confirm with Together AI before shipping to
+  customers.
 
 ## Follow-up: shorter wording (2026-09-30)
 

@@ -235,14 +235,18 @@ with the runtime bundle key. The policy:
 {
   "mode": "monitor",
   "ai_hosts": ["chatgpt.com", "claude.ai", "..."],
-  "pinned_host_action": {"default": "allow_and_log"},
+  "pinned_host_action": {"default": "allow_and_log", "hosts": {"example-pinned.ai": "block"}},
   "rules": [{"id": "aws-key", "regex": "...", "action": "redact", "severity": "critical",
              "replacement": "[REDACTED]"}],
   "blocklists": ["project-atlas"],
-  "model": {"name": "tev1:0.8b", "digest": "sha256:...", "min_ollama": "0.x.y"},
+  "rules_version": "<16 hex, from _build_bundle>",
+  "model": {"name": "tev1:0.8b", "digest": "sha256:d45e875d...", "min_ollama": "0.35.0"},
   "questions": {"category": {...}, "exfil_intent": {...}},
-  "thresholds": {"block_categories": ["credentials", "customer_data"], "block_p": 0.9,
-                 "justify_p": 0.6, "exfil_intent": 0.8, "min_confidence": 0.3},
+  "thresholds": {"block_categories": ["credentials", "customer_data"], "block_p": 0.471,
+                 "justify_p": 0.3, "exfil_intent": 0.25, "min_confidence": 0.0},
+  "enforcement": {"credentials": "justify", "personal_data": "justify",
+                  "customer_data": "justify", "health": "justify",
+                  "source_code": "monitor", "financial": "monitor", "exfil_intent": "monitor"},
   "fail_mode": "allow",
   "model_timeout_ms": 1500,
   "privacy": {"capture_excerpt": false, "server_screen": false},
@@ -255,7 +259,19 @@ with the runtime bundle key. The policy:
 unchanged for the extension and ICAP.
 
 Tenant settings for everything else live in `dlp_policy:{tenant_id}` (one JSON
-value, validated strictly, no TTL), edited in the portal.
+value, validated strictly, no TTL), edited in the portal. The stored value also
+holds `fleet_modes` (`{fleet_id: "monitor" | "enforce"}`), the per-fleet switch
+§7 calls for; the bundle carries only the mode resolved for its own fleet.
+
+**As built in task 2.** Defaults are task 1's measurements: the v2 questions, the
+thresholds calibrated for `tev1:0.8b` (the numbers above), and `enforcement`,
+where a `monitor` category is recorded but never blocks or asks for a reason. A
+monitor category cannot be listed in `block_categories` (validation error).
+`bundle_version` is the issue time, so it rises on every change and an agent can
+refuse an older bundle replayed to it. Validity is `SHIELD_DLP_BUNDLE_VALID_S`
+(default 86400). `kind: "dlp"` events are refused if `detail` holds `prompt`,
+`text`, `body`, `content` or `message`, and `excerpt` is capped at 200
+characters.
 
 ### 5.2 Devices
 

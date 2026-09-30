@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
 from typing import Optional
 
 import httpx
@@ -35,97 +34,16 @@ import httpx
 import regex
 
 from icap.config import IcapConfig
+# The rule engine lives in icap/rules.py, shared with the device agent
+# (docs/specs/device-dlp-agent.md). Re-exported so every importer is unchanged.
+from icap.rules import (  # noqa: F401
+    EMPTY, Bundle, Hit, Rule, compile_bundle, evaluate,
+)
 from icap.server import IcapRequest, Verdict
 
 log = logging.getLogger("shield.icap")
 
 BUNDLE_PATH = "/v1/edge/policy-bundle"
-
-
-@dataclass(frozen=True)
-class Rule:
-    id: str
-    action: str
-    severity: str
-    pattern: "regex.Pattern"
-
-    @property
-    def blocks(self) -> bool:
-        return self.action == "block"
-
-
-@dataclass(frozen=True)
-class Bundle:
-    tenant_id: str = ""
-    version: str = ""
-    rules: tuple[Rule, ...] = ()
-    blocklists: tuple[str, ...] = ()
-    fetched_at: float = 0.0
-    skipped: int = 0  # rules whose regex would not compile
-
-    @property
-    def empty(self) -> bool:
-        return not self.rules and not self.blocklists
-
-    @property
-    def blocking_rules(self) -> int:
-        """Rules that can actually block.
-
-        Distinct from len(rules) on purpose. A tenant whose only rule is
-        `redact` has a policy, and this adapter cannot act on it (v1 does not
-        rewrite bodies), so counting it as enforcement would tell an operator
-        they are protected when nothing can fire.
-        """
-        return sum(1 for r in self.rules if r.blocks)
-
-    @property
-    def can_block(self) -> bool:
-        return bool(self.blocking_rules or self.blocklists)
-
-
-EMPTY = Bundle()
-
-
-def compile_bundle(data: dict, redact_fallback: str = "pass") -> Bundle:
-    """Turn the edge bundle's JSON into compiled rules.
-
-    A rule whose regex will not compile is dropped rather than fatal: one bad
-    pattern typed into the portal must not disarm every other rule in the
-    tenant's policy.
-    """
-    rules: list[Rule] = []
-    skipped = 0
-    for raw in data.get("rules") or []:
-        expr = raw.get("regex")
-        if not expr:
-            continue
-        action = (raw.get("action") or "").lower()
-        severity = (raw.get("severity") or "medium").lower()
-        # v1 does not rewrite request bodies (spec §5), so a `redact` rule is
-        # resolved to a decision the adapter can actually carry out.
-        if action == "redact":
-            action = "block" if redact_fallback == "block" else "pass"
-        try:
-            pattern = regex.compile(expr)
-        except (regex.error, ValueError, TypeError) as exc:
-            skipped += 1
-            log.warning("icap bundle rule skipped id=%s reason=%s", raw.get("id", "?"), exc)
-            continue
-        rules.append(
-            Rule(id=raw.get("id") or "unnamed", action=action, severity=severity, pattern=pattern)
-        )
-
-    blocklists = tuple(
-        w.lower() for w in (data.get("blocklists") or []) if isinstance(w, str) and w.strip()
-    )
-    return Bundle(
-        tenant_id=str(data.get("tenant_id") or ""),
-        version=str(data.get("version") or ""),
-        rules=tuple(rules),
-        blocklists=blocklists,
-        fetched_at=time.time(),
-        skipped=skipped,
-    )
 
 
 class PolicyCache:
@@ -273,46 +191,6 @@ class PolicyCache:
     def start(self) -> asyncio.Task:
         self._task = asyncio.ensure_future(self.run())
         return self._task
-
-
-# ── evaluation ───────────────────────────────────────────────────────────────
-
-
-@dataclass
-class Hit:
-    rule_id: str
-    severity: str
-    kind: str = "rule"  # rule | blocklist
-
-
-def evaluate(bundle: Bundle, text: str, timeout_s: float = 0.25) -> Optional[Hit]:
-    """First blocking match wins. Raises TimeoutError if the budget runs out.
-
-    The budget spans the whole rule set, not each rule, so a policy with fifty
-    patterns still cannot exceed one deadline.
-    """
-    if not text or bundle.empty:
-        return None
-
-    deadline = time.monotonic() + timeout_s
-    for rule in bundle.rules:
-        if not rule.blocks:
-            continue
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("rule scan budget exhausted")
-        # `regex` self-terminates at the deadline instead of running to
-        # completion, which is what keeps a pathological pattern from
-        # outliving the request that triggered it.
-        if rule.pattern.search(text, timeout=remaining):
-            return Hit(rule_id=rule.id, severity=rule.severity)
-
-    if bundle.blocklists:
-        lowered = text.lower()
-        for word in bundle.blocklists:
-            if word in lowered:
-                return Hit(rule_id=word, severity="high", kind="blocklist")
-    return None
 
 
 class Tier1Screener:

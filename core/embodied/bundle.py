@@ -49,14 +49,15 @@ def kid() -> Optional[str]:
 
 
 def sign_bundle(policy: dict, *, tenant_id: str, fleet_id: str, bundle_version: int,
-                now: Optional[int] = None) -> Optional[dict]:
-    """The signed bundle, or None when no signing key is configured."""
+                now: Optional[int] = None, valid_s: Optional[int] = None) -> Optional[dict]:
+    """The signed bundle, or None when no signing key is configured. Also signs
+    device DLP bundles (core/dlp), which pass their own `valid_s`."""
     signer = rt_bundle.get_signer()
     if signer is None:
         return None
     issued = int(now if now is not None else time.time())
     header = {"tenant_id": tenant_id, "fleet_id": fleet_id, "bundle_version": int(bundle_version),
-              "issued_at": issued, "expires_at": issued + valid_for_s(), "kid": signer.kid}
+              "issued_at": issued, "expires_at": issued + (valid_s or valid_for_s()), "kid": signer.kid}
     signature = signer.sign(canonical({"header": header, "policy": policy}))
     return {"header": header, "policy": policy,
             "signature": base64.b64encode(signature).decode(), "format": FORMAT}
