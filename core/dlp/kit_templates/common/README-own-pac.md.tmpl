@@ -1,0 +1,11 @@
+## Your existing proxy (PAC) file
+
+This kit leaves out the proxy setting, because your laptops already have a
+proxy configuration (and a Mac accepts only one proxy profile). Add these lines
+at the start of
+`FindProxyForURL` in your PAC file, so only AI services ({{host_count}} hosts)
+go to the Votal device agent and everything else keeps its current route:
+
+```javascript
+{{pac_snippet}}
+```

@@ -1,0 +1,14 @@
+## Macs, with Intune (3 steps)
+
+1. **The installer.** Run `macos/get-installer.sh`. It downloads version
+   {{version}} and checks that Votal signed it and Apple notarized it (Intune
+   accepts only a signed `.pkg`). In Intune, add it as a macOS app (Apps,
+   macOS, Add, macOS app (PKG)) and assign it to your group.
+2. **The profile.** Create a custom configuration profile (Devices,
+   Configuration, Create, macOS, Templates, Custom), upload
+   `macos/Votal-Device-Agent.mobileconfig`, deployment channel "Device
+   channel", and assign it to the same group. It holds {{profile_contents}}.
+3. **The health check.** Add `macos/intune-macos-attribute.sh` as a custom
+   attribute (Devices, macOS, Custom attributes; data type String).
+
+Order does not matter: the agent waits for its profile.

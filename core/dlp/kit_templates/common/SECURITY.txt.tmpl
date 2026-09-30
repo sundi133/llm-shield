@@ -1,0 +1,19 @@
+Votal device agent rollout kit {{kit_id}}, fleet "{{fleet}}"
+
+This kit contains an ENROLLMENT TOKEN. Anyone who has it can enroll a device
+into the fleet "{{fleet}}" until {{expires}}, or until {{uses}} laptops have
+used it.
+
+It appears only in:
+{{token_files}}
+
+Once deployed, the token is in your MDM and readable on enrolled laptops.
+Shield refuses an enrollment that claims the serial number of a laptop that is
+still reporting, and raises an alert for it. For a stricter setup, upload your
+MDM's serial number export in the portal, so only your own laptops can enroll.
+
+To stop the token enrolling anything more:
+  Votal portal > Enterprise Controls > Device DLP > Rollout kits > Revoke {{kit_id}}
+Laptops it already enrolled keep working; revoke any of them on the same page.
+
+Keep this kit like a password, and delete it once the files are uploaded.

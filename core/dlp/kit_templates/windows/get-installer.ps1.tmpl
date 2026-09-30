@@ -1,0 +1,35 @@
+# Downloads the Votal device agent {{version}} for Windows, checks its SHA-256
+# against the release's SHA256SUMS and its Authenticode signature, and prints
+# the .msi to upload to Intune.
+#
+#   ./get-installer.ps1                  check the signature
+#   ./get-installer.ps1 -AllowUnsigned   a pilot with an unsigned pre-release only
+param([switch]$AllowUnsigned)
+$ErrorActionPreference = "Stop"
+$Version = "{{version}}"
+$Base = "{{release_base}}/device-agent-v$Version"
+$Msi = Join-Path (Get-Location) "votal-device-agent-$Version.msi"
+try {
+  Invoke-WebRequest -UseBasicParsing -Uri "$Base/votal-device-agent-$Version.msi" -OutFile $Msi
+  $Sums = (Invoke-WebRequest -UseBasicParsing -Uri "$Base/SHA256SUMS").Content
+} catch {
+  Write-Error "Could not download the release device-agent-v$Version. Check that it exists: {{release_page}}"
+  exit 1
+}
+$Line = ($Sums -split "`n") | Where-Object { $_ -match "votal-device-agent-$Version\.msi" } | Select-Object -First 1
+if (-not $Line) { Write-Error "SHA256SUMS has no entry for the .msi: refusing."; exit 2 }
+$Want = ($Line -split "\s+")[0].ToLower()
+$Have = (Get-FileHash -Algorithm SHA256 $Msi).Hash.ToLower()
+if ($Want -ne $Have) { Write-Error "Checksum mismatch: refusing $Msi."; exit 2 }
+if ($AllowUnsigned) {
+  Write-Warning "The signature was not checked. Use this only for a pilot."
+  Write-Output $Msi
+  exit 0
+}
+$Sig = Get-AuthenticodeSignature $Msi
+if ($Sig.Status -ne "Valid") { Write-Error "Refusing: the .msi signature is $($Sig.Status)."; exit 2 }
+if ("{{windows_signer}}" -and ($Sig.SignerCertificate.Subject -notlike "*{{windows_signer}}*")) {
+  Write-Error "Refusing: signed by '$($Sig.SignerCertificate.Subject)', not {{windows_signer}}."
+  exit 2
+}
+Write-Output $Msi

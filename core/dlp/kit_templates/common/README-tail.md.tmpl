@@ -1,0 +1,24 @@
+## Then
+
+1. **Watch the fleet.** In the Votal portal, open Enterprise Controls, then
+   Device DLP. Laptops appear as they enroll, usually within minutes of the
+   installer and profile arriving.
+2. **Look at what monitor mode records.** Fleets are in monitor mode unless
+   you have set them to enforce: nothing is blocked, every decision is
+   recorded.
+3. **Turn on enforcement.** When the results look right, set the fleet to
+   `enforce` in the DLP policy on the same page.
+
+## If something is wrong
+
+On a laptop, as an administrator, `votal-device-agent verify` prints one line
+per check with the reason for any failure. The health check in this kit shows
+the same result in your MDM. The admin guide covers each failure:
+https://docs.shield.votal.ai/device-dlp-agent/
+
+## Later
+
+- **A new kit:** download one from the portal. Upload its profile over this
+  one (same identifier) and revoke this kit there.
+- **Reinstalling a laptop:** revoke its old device in the portal first if it
+  reported in the last 24 hours.

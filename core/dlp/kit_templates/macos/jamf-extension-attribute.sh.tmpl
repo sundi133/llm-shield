@@ -1,0 +1,14 @@
+#!/bin/bash
+# Jamf Pro extension attribute "Votal device agent" (Input type: Script).
+# Reports "ok", or the checks that fail, from the agent's own verify.
+BIN="/Library/Application Support/Votal/DeviceAgent/bin/votal-device-agent"
+if [ ! -x "$BIN" ]; then
+  echo "<result>not installed</result>"
+  exit 0
+fi
+OUT=$("$BIN" verify 2>&1)
+if [ $? -eq 0 ]; then
+  echo "<result>ok</result>"
+else
+  echo "<result>$(echo "$OUT" | grep '^FAIL' | sed 's/^FAIL *//' | tr '\n' ';' | cut -c1-240)</result>"
+fi

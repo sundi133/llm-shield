@@ -365,6 +365,29 @@ live-device replacement (point 1), with its escape hatch.
   the CLI, the heartbeat and enrollment, `build_pkg.sh` and `build_msi.ps1`.
   CI checks that the built binary reports it.
 
+**As built, task 2** (`core/dlp/rollout_kit.py`, templates in
+`core/dlp/kit_templates/`):
+- **Pure:** a `KitRequest` goes in, a zip comes out. Minting the token and
+  reading the root and policy is task 3.
+- **Strict validation.** Every value that reaches a script or command line is
+  checked against a pattern (tenant, fleet, URLs, version, Team ID, signer,
+  extension ids, hosts, token). A kit runs as root or SYSTEM on every laptop,
+  so none of them can carry shell or PowerShell syntax.
+- **Templates:**
+  - They are `*.tmpl`, because `.dockerignore` drops `*.md`.
+  - Rendering fails on any unknown or leftover placeholder.
+  - Every template is used; a test checks it.
+- **One stable profile identifier per tenant and fleet**
+  (`ai.votal.device-agent.<tenant>.<fleet>`): a newer kit's profile replaces
+  the older one instead of adding a second proxy payload.
+- **Managed Login Items** carry the Team ID once the release is signed
+  (`apple_team_id`).
+- **The token appears in exactly two files:** the Mac profile and the Windows
+  `install-command.txt`. `SECURITY.txt` lists them.
+- **Generated sentences.** The README's profile description and Windows script
+  step are built from what the kit actually contains.
+- **Admin guide link:** the kit links `https://docs.shield.votal.ai/device-dlp-agent/`.
+
 ## What is needed from Votal (not code)
 
 1. **An Apple Developer ID** (Application and Installer certificates) and a
