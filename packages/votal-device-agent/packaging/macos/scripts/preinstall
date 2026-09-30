@@ -1,0 +1,4 @@
+#!/bin/sh
+# Stop a running agent before its files are replaced (upgrades).
+/bin/launchctl bootout system/ai.votal.device-agent 2>/dev/null || true
+exit 0

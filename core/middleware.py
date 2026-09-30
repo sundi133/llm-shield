@@ -9,9 +9,11 @@ from typing import Optional
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+_JSON = JSONResponse
 
 from core.rbac import enforcer
-from storage.tenant_store import resolve_tenant_by_api_key, get_tenant
+from core.dlp.devices import DEVICE_PATHS
+from storage.tenant_store import DEVICE_KEY_PREFIX, resolve_tenant_by_api_key, get_tenant
 from storage.rate_limiter import check_and_increment
 from core.feature_flags import CERT_IDENTITY_ENABLED
 
@@ -251,6 +253,8 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         # rejection behaviour is unchanged and the route's own dependency
         # remains what refuses an anonymous caller.
         "/v1/edge",
+        # The DLP agent's heartbeat resolves its tenant the same way.
+        "/v1/devices",
     )
     _GUARDED_EXACT = {"/classify", "/classify_output", "/guardrails/input", "/guardrails/output", "/guardrails/file", "/v1/chat/completions"}
 
@@ -284,6 +288,20 @@ class ShieldMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
+
+        # A laptop's DLP agent key reaches its bundle, heartbeat and event
+        # ingest, nothing else (docs/specs/device-dlp-agent.md §5.2). Decided
+        # from the key's prefix alone: no store read, so every other request,
+        # the guard path included, pays one string comparison.
+        _presented = _extract_api_key(request)
+        if _presented and _presented.startswith(DEVICE_KEY_PREFIX) \
+                and (request.method.upper(), path.rstrip("/")) not in DEVICE_PATHS:
+            # _JSON: dispatch re-imports JSONResponse locally further down,
+            # which makes the bare name local to this whole function.
+            return _JSON(status_code=403, content={
+                "error": "device_key_scope",
+                "detail": "A device key may only fetch its DLP bundle, send heartbeats, "
+                          "renew its CA and post runtime events."})
 
         # Skip enrichment for non-guarded paths
         if path in self._SKIP_PATHS or path.startswith("/v1/admin"):

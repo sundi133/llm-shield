@@ -71,7 +71,12 @@ async def ingest_runtime_events(request: Request, background: BackgroundTasks,
                                 body: dict = Body(...)):
     """Body: {"events": [event, ...]}. Each event is the canonical shape, or
     {"source": "openshell", "raw": "<OCSF log line>", "agent_id": ...}."""
-    tenant_id = get_tenant_from_request(request)
+    from core.dlp import devices as dv
+    try:
+        device = dv.caller_device(request)
+    except dv.DeviceError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    tenant_id = device[0] if device else get_tenant_from_request(request)
     events = body.get("events")
     if not isinstance(events, list) or not events:
         raise HTTPException(status_code=422, detail="events: a non-empty list is required")
@@ -84,7 +89,13 @@ async def ingest_runtime_events(request: Request, background: BackgroundTasks,
     accepted, rejected = [], []
     for i, raw in enumerate(events):
         try:
-            accepted.append(rt_events.normalize(raw))
+            ev = rt_events.normalize(raw)
+            if device:
+                # A laptop reports as itself: the identity comes from its key,
+                # never from what it writes in the event.
+                ev["detail"]["device_id"] = device[1]
+                ev["agent_instance_id"] = device[1]
+            accepted.append(ev)
         except rt_events.EventError as e:
             rejected.append({"index": i, "error": str(e)})
     if accepted:

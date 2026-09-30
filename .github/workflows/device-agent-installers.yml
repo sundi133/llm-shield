@@ -1,0 +1,79 @@
+name: Device agent installers
+
+# Builds the macOS .pkg and Windows .msi for packages/votal-device-agent on
+# every change to it, unsigned, and smoke-tests the built binary. Signing and
+# notarization happen only in a release run with the credentials present
+# (docs/specs/device-dlp-agent.md §10).
+on:
+  pull_request:
+    paths:
+      - "packages/votal-device-agent/**"
+      - "icap/**"
+      - "packages/shield-mavlink/**"
+      - ".github/workflows/device-agent-installers.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Installer version"
+        default: "0.1.0"
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS pkg
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r packages/votal-device-agent/requirements.txt "pyinstaller>=6,<7"
+      - name: Build (unsigned)
+        env:
+          VERSION: ${{ inputs.version || '0.1.0' }}
+        run: packages/votal-device-agent/packaging/macos/build_pkg.sh
+      - name: Smoke test the payload
+        run: |
+          PKG=$(ls packages/votal-device-agent/dist/*.pkg)
+          pkgutil --payload-files "$PKG" | grep -q "Library/LaunchDaemons/ai.votal.device-agent.plist"
+          pkgutil --expand-full "$PKG" /tmp/pkg
+          BIN="/tmp/pkg/Payload/Library/Application Support/Votal/DeviceAgent/bin/votal-device-agent"
+          "$BIN" version
+          printf '\x11\x00\x00\x00{"type": "hello"}' | "$BIN" native-host --config=/nonexistent | tail -c +5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: votal-device-agent-macos
+          path: packages/votal-device-agent/dist/*.pkg
+
+  windows:
+    name: Windows msi
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r packages/votal-device-agent/requirements.txt "pyinstaller>=6,<7"
+          dotnet tool install --global wix --version 5.0.2
+      - name: Build (unsigned)
+        shell: pwsh
+        run: packages/votal-device-agent/packaging/windows/build_msi.ps1 -Version "${{ inputs.version || '0.1.0' }}"
+      - name: Smoke test the payload
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem packages/votal-device-agent/dist/*.msi | Select-Object -First 1
+          Start-Process msiexec -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=C:\votal-extract" -Wait
+          $exe = Get-ChildItem -Recurse C:\votal-extract -Filter votal-device-agent.exe | Select-Object -First 1
+          & $exe.FullName version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: votal-device-agent-windows
+          path: packages/votal-device-agent/dist/*.msi

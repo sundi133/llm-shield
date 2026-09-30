@@ -24,13 +24,19 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 SOURCES = ("openshell", "k8s", "cilium", "falco", "squid", "envoy", "custom")
-KINDS = ("network", "file", "process", "resource", "policy", "action")
+KINDS = ("network", "file", "process", "resource", "policy", "action", "dlp")
 DECISIONS = ("deny", "allow", "audit")
 SEVERITIES = ("info", "low", "medium", "high", "critical")
 MAX_DETAIL_BYTES = 4096
 MAX_ID = 200
 #: Sync sidecar report -> minimum severity. A sandbox loosened outside Shield
 #: is critical whatever the reporter says.
+#: Device DLP agent verdicts (docs/specs/device-dlp-agent.md §3.3).
+DLP_VERDICTS = ("allow", "block", "justify", "redact", "uncertain", "monitor")
+#: The agent records verdicts, never the prompt: only a rule-redacted excerpt,
+#: and only when the tenant turns on privacy.capture_excerpt.
+DLP_TEXT_KEYS = ("prompt", "text", "body", "content", "message")
+DLP_EXCERPT_MAX = 200
 SIDECAR_OPS = {"applied": "info", "reverted": "high", "restart_required": "high",
                "apply_failed": "high", "tampered": "critical"}
 
@@ -89,6 +95,18 @@ def normalize(raw: dict) -> dict:
         floor = SIDECAR_OPS[op]
         if SEVERITIES.index(severity) < SEVERITIES.index(floor):
             severity = floor
+    if kind == "dlp":
+        if detail.get("verdict") not in DLP_VERDICTS:
+            raise EventError(f"detail.verdict on a dlp event must be one of "
+                             f"{', '.join(DLP_VERDICTS)}")
+        present = [k for k in DLP_TEXT_KEYS if k in detail]
+        if present:
+            raise EventError(f"detail.{present[0]}: dlp events carry no prompt text (send "
+                             f"prompt_sha256 and prompt_len; excerpt only with capture_excerpt)")
+        excerpt = detail.get("excerpt")
+        if excerpt is not None and (not isinstance(excerpt, str)
+                                    or len(excerpt) > DLP_EXCERPT_MAX):
+            raise EventError(f"detail.excerpt: text of at most {DLP_EXCERPT_MAX} characters")
     return {
         "source": source,
         "kind": kind,
@@ -204,6 +222,14 @@ def summary(ev: dict) -> str:
         # (docs/specs/embodied-action-guard.md §5.3).
         return (f"{ev['decision']} action {d.get('tool', '?')} by {d.get('rail', '?')}"
                 + (f": {', '.join(d['reasons'])}" if isinstance(d.get("reasons"), list) else ""))
+    if ev["kind"] == "dlp" and d.get("event") == "enrollment_refused":
+        return (f"device enrollment refused: a device in fleet {d.get('fleet', '?')} with "
+                f"this serial ({d.get('device_id', '?')}) is still reporting")
+    if ev["kind"] == "dlp":
+        what = d.get("category") or d.get("rule_id") or "?"
+        where = d.get("destination") or "?"
+        return (f"dlp {d['verdict']} {what} to {where}"
+                + (f" from {d['device_id']}" if d.get("device_id") else ""))
     if ev["kind"] == "policy" and d.get("op"):
         where = d.get("instance") or ev["agent_instance_id"] or "?"
         text = {"applied": "runtime policy applied live", "reverted":
@@ -232,14 +258,18 @@ def telemetry_fields(ev: dict) -> dict:
         "votal.runtime.instance": ev["agent_instance_id"],
         "votal.session_id": ev["session_id"],
     }
-    for src, dst in (("host", "destination.domain"), ("port", "destination.port"),
-                     ("method", "http.request.method"), ("path", "votal.runtime.path"),
+    for src, dst in (("host", "destination.domain"), ("destination", "destination.domain"),
+                     ("port", "destination.port"), ("method", "http.request.method"), ("path", "votal.runtime.path"),
                      ("binary", "process.executable"), ("command", "process.command_line"),
                      ("finding", "votal.runtime.finding"), ("reason", "votal.runtime.reason")):
         if d.get(src) not in (None, ""):
             out[dst] = d[src]
     if ev["kind"] == "file" and d.get("path"):
         out["file.path"] = d["path"]
+    if ev["kind"] == "dlp":
+        for key in ("verdict", "category", "rule_id", "device_id", "app"):
+            if d.get(key) not in (None, ""):
+                out[f"votal.dlp.{key}"] = d[key]
     return out
 
 

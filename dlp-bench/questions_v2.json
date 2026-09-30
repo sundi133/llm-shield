@@ -1,0 +1,28 @@
+{
+  "questions": {
+    "category": {
+      "type": "choice",
+      "instructions": "Does the text itself include actual sensitive data taken from a real system, company or person? General questions, explanations, templates, placeholders, documentation examples, public information and fictional content are not sensitive. If actual data is present, which kind is it?",
+      "criteria": {
+        "none": "No actual sensitive data in the text: a general question, template, example, public or fictional content",
+        "credentials": "The text contains a real password, key, token or secret value",
+        "personal_data": "The text contains real personal details about an identifiable individual",
+        "customer_data": "The text contains real records about the company's customers or clients",
+        "source_code": "The text contains the company's own private source code",
+        "financial": "The text contains the company's non-public financial figures or plans",
+        "health": "The text contains health or medical details about a real, identifiable person"
+      }
+    },
+    "exfil_intent": {
+      "type": "noul",
+      "instructions": "Is the user asking for help to take company data, code or credentials out of the company, to hide that they are doing it, or to get around security controls?"
+    }
+  },
+  "thresholds": {
+    "block_categories": ["credentials", "customer_data"],
+    "block_p": 0.9,
+    "justify_p": 0.6,
+    "exfil_intent": 0.8,
+    "min_confidence": 0.3
+  }
+}

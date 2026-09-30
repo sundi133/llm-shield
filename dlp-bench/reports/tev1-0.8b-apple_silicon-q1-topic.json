@@ -1,0 +1,6861 @@
+{
+ "model": "tev1:0.8b",
+ "endpoint": "http://127.0.0.1:11434/v1/systemone",
+ "hardware": {
+  "os": "Darwin 23.5.0",
+  "machine": "arm64",
+  "cpu": "Apple M3",
+  "python": "3.14.7",
+  "memory_gb": 16,
+  "class": "apple_silicon"
+ },
+ "cases": 345,
+ "errors": [],
+ "latency": {
+  "n": 345,
+  "p50_ms": 345.2,
+  "p95_ms": 669.6,
+  "p99_ms": 954.3,
+  "mean_ms": 402.2
+ },
+ "thresholds_default": {
+  "block_categories": [
+   "credentials",
+   "customer_data"
+  ],
+  "block_p": 0.9,
+  "justify_p": 0.6,
+  "exfil_intent": 0.8,
+  "min_confidence": 0.3
+ },
+ "thresholds_calibrated": {
+  "block_categories": [
+   "credentials",
+   "customer_data"
+  ],
+  "block_p": 0.9,
+  "justify_p": 0.6,
+  "exfil_intent": 0.8,
+  "min_confidence": 0.3
+ },
+ "test_default": {
+  "per_category": {
+   "credentials": {
+    "n": 17,
+    "recall": 1.0,
+    "named_correctly": 1.0
+   },
+   "personal_data": {
+    "n": 16,
+    "recall": 1.0,
+    "named_correctly": 0.938
+   },
+   "customer_data": {
+    "n": 16,
+    "recall": 0.938,
+    "named_correctly": 0.812
+   },
+   "source_code": {
+    "n": 16,
+    "recall": 0.75,
+    "named_correctly": 0.875
+   },
+   "financial": {
+    "n": 16,
+    "recall": 0.812,
+    "named_correctly": 0.812
+   },
+   "health": {
+    "n": 16,
+    "recall": 1.0,
+    "named_correctly": 0.25
+   }
+  },
+  "exfil_recall": 0.538,
+  "benign_n": 115,
+  "false_positive_rate": 0.461,
+  "false_positives": [
+   "credentials-near-002",
+   "credentials-near-003",
+   "credentials-near-005",
+   "credentials-near-008",
+   "credentials-near-009",
+   "credentials-near-011",
+   "credentials-near-015",
+   "credentials-near-017",
+   "credentials-near-018",
+   "credentials-near-020",
+   "credentials-near-021",
+   "credentials-near-023",
+   "credentials-near-024",
+   "personal_data-near-002",
+   "personal_data-near-003",
+   "personal_data-near-005",
+   "personal_data-near-012",
+   "personal_data-near-018",
+   "personal_data-near-021",
+   "personal_data-near-023",
+   "customer_data-near-002",
+   "customer_data-near-003",
+   "customer_data-near-006",
+   "customer_data-near-008",
+   "customer_data-near-009",
+   "customer_data-near-012",
+   "customer_data-near-014",
+   "customer_data-near-015",
+   "customer_data-near-018",
+   "customer_data-near-020",
+   "financial-near-003",
+   "financial-near-005",
+   "financial-near-008",
+   "financial-near-009",
+   "financial-near-011",
+   "financial-near-014",
+   "financial-near-015",
+   "financial-near-017",
+   "financial-near-020",
+   "financial-near-021",
+   "financial-near-023",
+   "financial-near-024",
+   "health-near-002",
+   "health-near-003",
+   "health-near-005",
+   "health-near-006",
+   "health-near-009",
+   "health-near-012",
+   "health-near-015",
+   "health-near-018",
+   "health-near-020",
+   "health-near-023",
+   "general-014"
+  ],
+  "macro_recall": 0.917,
+  "uncertain": 0
+ },
+ "test_calibrated": {
+  "per_category": {
+   "credentials": {
+    "n": 17,
+    "recall": 1.0,
+    "named_correctly": 1.0
+   },
+   "personal_data": {
+    "n": 16,
+    "recall": 1.0,
+    "named_correctly": 0.938
+   },
+   "customer_data": {
+    "n": 16,
+    "recall": 0.938,
+    "named_correctly": 0.812
+   },
+   "source_code": {
+    "n": 16,
+    "recall": 0.75,
+    "named_correctly": 0.875
+   },
+   "financial": {
+    "n": 16,
+    "recall": 0.812,
+    "named_correctly": 0.812
+   },
+   "health": {
+    "n": 16,
+    "recall": 1.0,
+    "named_correctly": 0.25
+   }
+  },
+  "exfil_recall": 0.538,
+  "benign_n": 115,
+  "false_positive_rate": 0.461,
+  "false_positives": [
+   "credentials-near-002",
+   "credentials-near-003",
+   "credentials-near-005",
+   "credentials-near-008",
+   "credentials-near-009",
+   "credentials-near-011",
+   "credentials-near-015",
+   "credentials-near-017",
+   "credentials-near-018",
+   "credentials-near-020",
+   "credentials-near-021",
+   "credentials-near-023",
+   "credentials-near-024",
+   "personal_data-near-002",
+   "personal_data-near-003",
+   "personal_data-near-005",
+   "personal_data-near-012",
+   "personal_data-near-018",
+   "personal_data-near-021",
+   "personal_data-near-023",
+   "customer_data-near-002",
+   "customer_data-near-003",
+   "customer_data-near-006",
+   "customer_data-near-008",
+   "customer_data-near-009",
+   "customer_data-near-012",
+   "customer_data-near-014",
+   "customer_data-near-015",
+   "customer_data-near-018",
+   "customer_data-near-020",
+   "financial-near-003",
+   "financial-near-005",
+   "financial-near-008",
+   "financial-near-009",
+   "financial-near-011",
+   "financial-near-014",
+   "financial-near-015",
+   "financial-near-017",
+   "financial-near-020",
+   "financial-near-021",
+   "financial-near-023",
+   "financial-near-024",
+   "health-near-002",
+   "health-near-003",
+   "health-near-005",
+   "health-near-006",
+   "health-near-009",
+   "health-near-012",
+   "health-near-015",
+   "health-near-018",
+   "health-near-020",
+   "health-near-023",
+   "general-014"
+  ],
+  "macro_recall": 0.917,
+  "uncertain": 0
+ },
+ "calibration_calibrated": {
+  "per_category": {
+   "credentials": {
+    "n": 9,
+    "recall": 1.0,
+    "named_correctly": 1.0
+   },
+   "personal_data": {
+    "n": 9,
+    "recall": 1.0,
+    "named_correctly": 1.0
+   },
+   "customer_data": {
+    "n": 9,
+    "recall": 1.0,
+    "named_correctly": 0.889
+   },
+   "source_code": {
+    "n": 9,
+    "recall": 0.667,
+    "named_correctly": 0.778
+   },
+   "financial": {
+    "n": 9,
+    "recall": 0.778,
+    "named_correctly": 0.778
+   },
+   "health": {
+    "n": 9,
+    "recall": 1.0,
+    "named_correctly": 0.222
+   }
+  },
+  "exfil_recall": 0.143,
+  "benign_n": 59,
+  "false_positive_rate": 0.458,
+  "false_positives": [
+   "credentials-near-001",
+   "credentials-near-007",
+   "credentials-near-010",
+   "credentials-near-013",
+   "credentials-near-016",
+   "credentials-near-019",
+   "personal_data-near-004",
+   "personal_data-near-010",
+   "personal_data-near-019",
+   "personal_data-near-022",
+   "customer_data-near-001",
+   "customer_data-near-004",
+   "customer_data-near-007",
+   "customer_data-near-010",
+   "customer_data-near-016",
+   "customer_data-near-022",
+   "source_code-near-001",
+   "source_code-near-007",
+   "source_code-near-010",
+   "financial-near-001",
+   "financial-near-004",
+   "financial-near-016",
+   "financial-near-019",
+   "financial-near-022",
+   "health-near-001",
+   "health-near-004",
+   "health-near-007"
+  ],
+  "macro_recall": 0.908,
+  "uncertain": 0
+ },
+ "gates": {
+  "recall_per_category": false,
+  "false_positive_rate": false,
+  "latency_p95": false,
+  "latency_gate_ms": 300
+ },
+ "rows": [
+  {
+   "id": "credentials-pos-001",
+   "split": "calibration",
+   "ms": 242.4,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.949403,
+   "confidence": 0.8823406092086258,
+   "probabilities": {
+    "none": 0.050597199314976395,
+    "credentials": 0.9452912888271353,
+    "personal_data": 0.003522496488563341,
+    "customer_data": 0.0003831121762980074,
+    "source_code": 0.0001532928825839866,
+    "financial": 6.506120981050194e-06,
+    "health": 4.6104189461960034e-05
+   },
+   "exfil": 0.5798261179195733
+  },
+  {
+   "id": "credentials-pos-002",
+   "split": "test",
+   "ms": 228.8,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.939371,
+   "confidence": 0.873364840259594,
+   "probabilities": {
+    "none": 0.060629382019659256,
+    "credentials": 0.937110728015948,
+    "personal_data": 0.0016728290928389327,
+    "customer_data": 0.00017181451978347633,
+    "source_code": 0.00035663355410655716,
+    "financial": 7.468344345613171e-06,
+    "health": 5.1144453318125446e-05
+   },
+   "exfil": 0.5420395675737488
+  },
+  {
+   "id": "credentials-pos-003",
+   "split": "test",
+   "ms": 197.6,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.910076,
+   "confidence": 0.8190941480747074,
+   "probabilities": {
+    "none": 0.0899240674821488,
+    "credentials": 0.902819255527906,
+    "personal_data": 0.003825077925656683,
+    "customer_data": 0.0005776061437697721,
+    "source_code": 0.0026532558778337607,
+    "financial": 2.4504531130558725e-05,
+    "health": 0.00017623251155462675
+   },
+   "exfil": 0.728221655770742
+  },
+  {
+   "id": "credentials-pos-004",
+   "split": "calibration",
+   "ms": 523.7,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.847062,
+   "confidence": 0.7643143944811364,
+   "probabilities": {
+    "none": 0.15293836904833022,
+    "credentials": 0.8427622780560227,
+    "personal_data": 0.0030079624772667833,
+    "customer_data": 0.0004821086563855942,
+    "source_code": 0.0007042362722220274,
+    "financial": 2.22164014756449e-05,
+    "health": 8.282908829712873e-05
+   },
+   "exfil": 0.5395803418737519
+  },
+  {
+   "id": "credentials-pos-005",
+   "split": "test",
+   "ms": 347.9,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.895712,
+   "confidence": 0.8002341167525637,
+   "probabilities": {
+    "none": 0.10428775791386986,
+    "credentials": 0.8873950713308332,
+    "personal_data": 0.002575047302449033,
+    "customer_data": 0.00023440068880555568,
+    "source_code": 0.005288090080150572,
+    "financial": 2.4862403538040803e-05,
+    "health": 0.0001947702803533787
+   },
+   "exfil": 0.4213509112475518
+  },
+  {
+   "id": "credentials-pos-006",
+   "split": "test",
+   "ms": 317.5,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.66914,
+   "confidence": 0.6102538012029092,
+   "probabilities": {
+    "none": 0.3308595755110675,
+    "credentials": 0.6465374644457077,
+    "personal_data": 0.005159166787462378,
+    "customer_data": 0.006823424052247039,
+    "source_code": 0.010436359278472097,
+    "financial": 3.3399881190154675e-05,
+    "health": 0.00015061004385300402
+   },
+   "exfil": 0.33304548480387064
+  },
+  {
+   "id": "credentials-pos-007",
+   "split": "calibration",
+   "ms": 311.3,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.75779,
+   "confidence": 0.7012239315852506,
+   "probabilities": {
+    "none": 0.24220986060305433,
+    "credentials": 0.7538287805410403,
+    "personal_data": 0.0030599719105553792,
+    "customer_data": 0.0003597049979317371,
+    "source_code": 0.00045380517380751346,
+    "financial": 1.7168143537250186e-05,
+    "health": 7.070863007363055e-05
+   },
+   "exfil": 0.4188417558750469
+  },
+  {
+   "id": "credentials-pos-008",
+   "split": "test",
+   "ms": 309.0,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.850328,
+   "confidence": 0.7701717864755281,
+   "probabilities": {
+    "none": 0.14967198280890504,
+    "credentials": 0.8469408758922878,
+    "personal_data": 0.0022124957282260134,
+    "customer_data": 0.00018493772491553914,
+    "source_code": 0.0009174559193907704,
+    "financial": 1.205824623315423e-05,
+    "health": 6.019368004145759e-05
+   },
+   "exfil": 0.3422760465753258
+  },
+  {
+   "id": "credentials-pos-009",
+   "split": "test",
+   "ms": 361.7,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.816806,
+   "confidence": 0.7455981912302573,
+   "probabilities": {
+    "none": 0.18319382384134958,
+    "credentials": 0.8143303487217884,
+    "personal_data": 0.0018497027636838186,
+    "customer_data": 0.00033259121324274765,
+    "source_code": 0.00022937251284252557,
+    "financial": 8.493653506726633e-06,
+    "health": 5.566729358620967e-05
+   },
+   "exfil": 0.4956265611242461
+  },
+  {
+   "id": "credentials-pos-010",
+   "split": "calibration",
+   "ms": 342.9,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.79129,
+   "confidence": 0.7220629427073215,
+   "probabilities": {
+    "none": 0.20870975247355375,
+    "credentials": 0.7873740145568385,
+    "personal_data": 0.001887318433115465,
+    "customer_data": 0.00020562034516756703,
+    "source_code": 0.0016883643391081178,
+    "financial": 1.3449097964732178e-05,
+    "health": 0.00012148075425189364
+   },
+   "exfil": 0.361175268290567
+  },
+  {
+   "id": "credentials-pos-011",
+   "split": "test",
+   "ms": 351.4,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.927559,
+   "confidence": 0.8336939576898041,
+   "probabilities": {
+    "none": 0.07244094733724188,
+    "credentials": 0.9166659545143041,
+    "personal_data": 0.009854732837887861,
+    "customer_data": 0.0006077184059217484,
+    "source_code": 0.00028214995285020367,
+    "financial": 1.892249214264597e-05,
+    "health": 0.00012957445965160235
+   },
+   "exfil": 0.46674305277155836
+  },
+  {
+   "id": "credentials-pos-012",
+   "split": "test",
+   "ms": 324.4,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.752207,
+   "confidence": 0.6970719528223432,
+   "probabilities": {
+    "none": 0.24779289681118408,
+    "credentials": 0.7480764417311845,
+    "personal_data": 0.002220368427887015,
+    "customer_data": 0.0001467669044868079,
+    "source_code": 0.0016016891013452494,
+    "financial": 1.3277752724605162e-05,
+    "health": 0.00014855927118770173
+   },
+   "exfil": 0.43420262129916765
+  },
+  {
+   "id": "credentials-pos-013",
+   "split": "calibration",
+   "ms": 327.5,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.83565,
+   "confidence": 0.7382309588336142,
+   "probabilities": {
+    "none": 0.16435022823484663,
+    "credentials": 0.8263328240887987,
+    "personal_data": 0.004458032447959954,
+    "customer_data": 0.0005280911084927334,
+    "source_code": 0.002919948660299137,
+    "financial": 0.0012222221645723827,
+    "health": 0.0001886532950307033
+   },
+   "exfil": 0.4435684085920116
+  },
+  {
+   "id": "credentials-pos-014",
+   "split": "test",
+   "ms": 316.9,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.858961,
+   "confidence": 0.7508245112907135,
+   "probabilities": {
+    "none": 0.14103913917829777,
+    "credentials": 0.8451284045800773,
+    "personal_data": 0.011986233815096885,
+    "customer_data": 0.0009479897386822486,
+    "source_code": 0.0007296436494145659,
+    "financial": 1.4401940489045625e-05,
+    "health": 0.00015418709794198817
+   },
+   "exfil": 0.3091067881429362
+  },
+  {
+   "id": "credentials-pos-015",
+   "split": "test",
+   "ms": 340.2,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.841917,
+   "confidence": 0.7634600291258248,
+   "probabilities": {
+    "none": 0.15808348184824075,
+    "credentials": 0.8386696043109821,
+    "personal_data": 0.0024609334838581027,
+    "customer_data": 0.0002807761693929124,
+    "source_code": 0.00044466124521526325,
+    "financial": 9.280120894862115e-06,
+    "health": 5.126282141596516e-05
+   },
+   "exfil": 0.5012168860250873
+  },
+  {
+   "id": "credentials-pos-016",
+   "split": "calibration",
+   "ms": 456.4,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.625085,
+   "confidence": 0.5829228695174051,
+   "probabilities": {
+    "none": 0.37491511646757814,
+    "credentials": 0.594568247992077,
+    "personal_data": 0.008666431318367154,
+    "customer_data": 0.019274615996093394,
+    "source_code": 0.0018501093623060256,
+    "financial": 0.00037337734970223867,
+    "health": 0.00035210151387589226
+   },
+   "exfil": 0.27098482747730257
+  },
+  {
+   "id": "credentials-pos-017",
+   "split": "test",
+   "ms": 334.8,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.86975,
+   "confidence": 0.7631990389891982,
+   "probabilities": {
+    "none": 0.13025044134523675,
+    "credentials": 0.8579035479394697,
+    "personal_data": 0.00794496418973303,
+    "customer_data": 0.0009730470403202495,
+    "source_code": 0.0024098400775415967,
+    "financial": 7.167925383989376e-05,
+    "health": 0.0004464801538588888
+   },
+   "exfil": 0.3346828775606962
+  },
+  {
+   "id": "credentials-pos-018",
+   "split": "test",
+   "ms": 332.8,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.77518,
+   "confidence": 0.6984949249426351,
+   "probabilities": {
+    "none": 0.22481993773784953,
+    "credentials": 0.7666147360775013,
+    "personal_data": 0.006377894020691584,
+    "customer_data": 0.0005963859537289253,
+    "source_code": 0.0014626507425111361,
+    "financial": 2.1835017403339234e-05,
+    "health": 0.00010656045031437509
+   },
+   "exfil": 0.35094604315347494
+  },
+  {
+   "id": "credentials-pos-019",
+   "split": "calibration",
+   "ms": 342.1,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.760016,
+   "confidence": 0.6664836277378619,
+   "probabilities": {
+    "none": 0.23998448336458209,
+    "credentials": 0.7412713231766952,
+    "personal_data": 0.015408090742167728,
+    "customer_data": 0.0030156401123630416,
+    "source_code": 0.000253049558172121,
+    "financial": 6.6774474970708836e-06,
+    "health": 6.0735598522652095e-05
+   },
+   "exfil": 0.37958498555326764
+  },
+  {
+   "id": "credentials-pos-020",
+   "split": "test",
+   "ms": 336.6,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.879875,
+   "confidence": 0.7877411298040062,
+   "probabilities": {
+    "none": 0.12012474756639793,
+    "credentials": 0.8730545302316564,
+    "personal_data": 0.0050782758577592735,
+    "customer_data": 0.00045528836703204596,
+    "source_code": 0.0006238310326583459,
+    "financial": 4.075589276392484e-05,
+    "health": 0.0006225710517323943
+   },
+   "exfil": 0.33363720035003785
+  },
+  {
+   "id": "credentials-pos-021",
+   "split": "test",
+   "ms": 327.6,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.916649,
+   "confidence": 0.8390502505553348,
+   "probabilities": {
+    "none": 0.08335141123351779,
+    "credentials": 0.9131451632241205,
+    "personal_data": 0.001681547853132578,
+    "customer_data": 0.00013208939133998817,
+    "source_code": 0.0015938197164109982,
+    "financial": 1.801807325443275e-05,
+    "health": 7.795050822366709e-05
+   },
+   "exfil": 0.44836586878728324
+  },
+  {
+   "id": "credentials-pos-022",
+   "split": "calibration",
+   "ms": 344.0,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.938216,
+   "confidence": 0.8236808053911379,
+   "probabilities": {
+    "none": 0.06178429691115489,
+    "credentials": 0.9185597066194706,
+    "personal_data": 0.004326996571442509,
+    "customer_data": 0.0007197177429262283,
+    "source_code": 0.014089837714123138,
+    "financial": 0.0001518738269743112,
+    "health": 0.00036757061390831145
+   },
+   "exfil": 0.40274990955070294
+  },
+  {
+   "id": "credentials-pos-023",
+   "split": "test",
+   "ms": 347.0,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.660373,
+   "confidence": 0.6440612611070873,
+   "probabilities": {
+    "none": 0.3396274809390071,
+    "credentials": 0.6518779815132185,
+    "personal_data": 0.006203810540535071,
+    "customer_data": 0.0018443100204513837,
+    "source_code": 0.0002905682620054139,
+    "financial": 1.385408122875319e-05,
+    "health": 0.00014199464355385438
+   },
+   "exfil": 0.25910146378203464
+  },
+  {
+   "id": "credentials-pos-024",
+   "split": "test",
+   "ms": 390.5,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.758861,
+   "confidence": 0.6645339876871122,
+   "probabilities": {
+    "none": 0.24113853984431718,
+    "credentials": 0.7381266992997051,
+    "personal_data": 0.019604038245511383,
+    "customer_data": 0.0007826403685169707,
+    "source_code": 0.00026685972486142776,
+    "financial": 8.907734850871224e-06,
+    "health": 7.231478223728382e-05
+   },
+   "exfil": 0.3536810590643001
+  },
+  {
+   "id": "credentials-pos-025",
+   "split": "calibration",
+   "ms": 302.3,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.714983,
+   "confidence": 0.6642921776414926,
+   "probabilities": {
+    "none": 0.2850167533842266,
+    "credentials": 0.7062201972128263,
+    "personal_data": 0.004973880154908047,
+    "customer_data": 0.0004171731722454902,
+    "source_code": 0.00311490274874729,
+    "financial": 5.2520589526914405e-05,
+    "health": 0.0002045727375193951
+   },
+   "exfil": 0.3224676327297559
+  },
+  {
+   "id": "credentials-pos-026",
+   "split": "test",
+   "ms": 294.5,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.942086,
+   "confidence": 0.8405278477935486,
+   "probabilities": {
+    "none": 0.05791431746172111,
+    "credentials": 0.9252533280854758,
+    "personal_data": 0.015775017594495993,
+    "customer_data": 0.000785805440778251,
+    "source_code": 0.0002207724827570143,
+    "financial": 5.852184401155891e-06,
+    "health": 4.490675037061243e-05
+   },
+   "exfil": 0.6755405593774523
+  },
+  {
+   "id": "personal_data-pos-001",
+   "split": "calibration",
+   "ms": 321.7,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.980391,
+   "confidence": 0.9063551552818027,
+   "probabilities": {
+    "none": 0.01960878286976548,
+    "credentials": 0.0034948292240044774,
+    "personal_data": 0.9655358861978574,
+    "customer_data": 0.011268371777604124,
+    "source_code": 4.8508981649753784e-05,
+    "financial": 2.8083628043184663e-05,
+    "health": 1.553732107577482e-05
+   },
+   "exfil": 0.24604190920807892
+  },
+  {
+   "id": "personal_data-pos-002",
+   "split": "test",
+   "ms": 317.2,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.911311,
+   "confidence": 0.7922029468080991,
+   "probabilities": {
+    "none": 0.08868911268847143,
+    "credentials": 0.003091750279824457,
+    "personal_data": 0.8940622889824028,
+    "customer_data": 0.007827766212043574,
+    "source_code": 0.00018781120166296456,
+    "financial": 0.0001373615879736732,
+    "health": 0.006003909047621135
+   },
+   "exfil": 0.21803783972286944
+  },
+  {
+   "id": "personal_data-pos-003",
+   "split": "test",
+   "ms": 338.4,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.937258,
+   "confidence": 0.741817422066508,
+   "probabilities": {
+    "none": 0.06274183725462806,
+    "credentials": 0.020026892018451765,
+    "personal_data": 0.8757324485481797,
+    "customer_data": 0.04116845405456259,
+    "source_code": 0.0002758230123634006,
+    "financial": 3.6646545004441724e-05,
+    "health": 1.789856680972108e-05
+   },
+   "exfil": 0.26684507087206655
+  },
+  {
+   "id": "personal_data-pos-004",
+   "split": "calibration",
+   "ms": 306.2,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.957202,
+   "confidence": 0.756699664014885,
+   "probabilities": {
+    "none": 0.04279781406906418,
+    "credentials": 0.0072937444177514875,
+    "personal_data": 0.8805262368924738,
+    "customer_data": 0.06851762222910543,
+    "source_code": 0.00037681699130228476,
+    "financial": 0.0003552204701134859,
+    "health": 0.00013254493018936294
+   },
+   "exfil": 0.28842657653532444
+  },
+  {
+   "id": "personal_data-pos-005",
+   "split": "test",
+   "ms": 376.5,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.766249,
+   "confidence": 0.6229206860374598,
+   "probabilities": {
+    "none": 0.23375147164230514,
+    "credentials": 0.00634684596276503,
+    "personal_data": 0.7289927594909127,
+    "customer_data": 0.018663817737042745,
+    "source_code": 0.0005276893531958794,
+    "financial": 0.00021520116784575356,
+    "health": 0.011502214645932648
+   },
+   "exfil": 0.10573167687615267
+  },
+  {
+   "id": "personal_data-pos-006",
+   "split": "test",
+   "ms": 341.1,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.907441,
+   "confidence": 0.43560203142482246,
+   "probabilities": {
+    "none": 0.09255939385826177,
+    "credentials": 0.017448809671699435,
+    "personal_data": 0.6463736396335388,
+    "customer_data": 0.12028626697846913,
+    "source_code": 0.002150377703975734,
+    "financial": 0.12096729405121029,
+    "health": 0.00021421810284484922
+   },
+   "exfil": 0.2074981169849191
+  },
+  {
+   "id": "personal_data-pos-007",
+   "split": "calibration",
+   "ms": 324.8,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.980612,
+   "confidence": 0.9092418809309399,
+   "probabilities": {
+    "none": 0.019387659075197218,
+    "credentials": 0.002687450654949805,
+    "personal_data": 0.9665642048009435,
+    "customer_data": 0.011284503057633321,
+    "source_code": 5.680476621165098e-05,
+    "financial": 1.2824752996719093e-05,
+    "health": 6.552892067795984e-06
+   },
+   "exfil": 0.16610502461246146
+  },
+  {
+   "id": "personal_data-pos-008",
+   "split": "test",
+   "ms": 300.5,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.977365,
+   "confidence": 0.8738143484607594,
+   "probabilities": {
+    "none": 0.022635340938521736,
+    "credentials": 0.00376569839850609,
+    "personal_data": 0.9498880913174361,
+    "customer_data": 0.023526796961370236,
+    "source_code": 0.000128961391915456,
+    "financial": 4.068645406938774e-05,
+    "health": 1.4424538180983212e-05
+   },
+   "exfil": 0.34084163993294186
+  },
+  {
+   "id": "personal_data-pos-009",
+   "split": "test",
+   "ms": 299.7,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.939922,
+   "confidence": 0.692559236438461,
+   "probabilities": {
+    "none": 0.06007839646716709,
+    "credentials": 0.0031276041206413675,
+    "personal_data": 0.8510347476118731,
+    "customer_data": 0.0478329401254289,
+    "source_code": 0.0004399686894467522,
+    "financial": 0.0003710338906076112,
+    "health": 0.037115309094835076
+   },
+   "exfil": 0.25717436301950547
+  },
+  {
+   "id": "personal_data-pos-010",
+   "split": "calibration",
+   "ms": 303.1,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.940465,
+   "confidence": 0.781261072002001,
+   "probabilities": {
+    "none": 0.05953504679234273,
+    "credentials": 0.009028312276317644,
+    "personal_data": 0.8986468923797489,
+    "customer_data": 0.03136032102984228,
+    "source_code": 0.000945534317132228,
+    "financial": 0.00014857131267872645,
+    "health": 0.00033532189193756734
+   },
+   "exfil": 0.2460376578252425
+  },
+  {
+   "id": "personal_data-pos-011",
+   "split": "test",
+   "ms": 312.3,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.958033,
+   "confidence": 0.8787803990581696,
+   "probabilities": {
+    "none": 0.041967458453143966,
+    "credentials": 0.005298163321999564,
+    "personal_data": 0.9483347602356655,
+    "customer_data": 0.004229933480497828,
+    "source_code": 0.00010479718867361969,
+    "financial": 5.150568387381983e-05,
+    "health": 1.3381636145830052e-05
+   },
+   "exfil": 0.19854934792782641
+  },
+  {
+   "id": "personal_data-pos-012",
+   "split": "test",
+   "ms": 308.5,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.908888,
+   "confidence": 0.6317031819790045,
+   "probabilities": {
+    "none": 0.09111181337672586,
+    "credentials": 0.07406151290684385,
+    "personal_data": 0.7976347683001711,
+    "customer_data": 0.03673954987605633,
+    "source_code": 0.00019990624721014167,
+    "financial": 0.00021808327736670208,
+    "health": 3.436601562613329e-05
+   },
+   "exfil": 0.3866005880594784
+  },
+  {
+   "id": "personal_data-pos-013",
+   "split": "calibration",
+   "ms": 311.0,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.939857,
+   "confidence": 0.8381056762301151,
+   "probabilities": {
+    "none": 0.060142991141376126,
+    "credentials": 0.006163947531308377,
+    "personal_data": 0.9249308287304409,
+    "customer_data": 0.008605785860248199,
+    "source_code": 0.00010582864135502568,
+    "financial": 3.783699241840695e-05,
+    "health": 1.2781102852816462e-05
+   },
+   "exfil": 0.20781067072044707
+  },
+  {
+   "id": "personal_data-pos-014",
+   "split": "test",
+   "ms": 317.1,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.950822,
+   "confidence": 0.7951915309187466,
+   "probabilities": {
+    "none": 0.049177744335718754,
+    "credentials": 0.00450789867018146,
+    "personal_data": 0.904590225872903,
+    "customer_data": 0.04129162146787656,
+    "source_code": 0.00022576774803144067,
+    "financial": 3.415142847968692e-05,
+    "health": 0.00017259047680899206
+   },
+   "exfil": 0.18344730052868338
+  },
+  {
+   "id": "personal_data-pos-015",
+   "split": "test",
+   "ms": 334.7,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.960271,
+   "confidence": 0.5550300349621329,
+   "probabilities": {
+    "none": 0.0397286101718847,
+    "credentials": 0.0031748547872565845,
+    "personal_data": 0.381325395816119,
+    "customer_data": 0.5700575717901679,
+    "source_code": 0.0004443994583910762,
+    "financial": 6.847350698228517e-05,
+    "health": 0.005200694469198497
+   },
+   "exfil": 0.15687935441519998
+  },
+  {
+   "id": "personal_data-pos-016",
+   "split": "calibration",
+   "ms": 309.1,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.955692,
+   "confidence": 0.8696276122714568,
+   "probabilities": {
+    "none": 0.04430804313051495,
+    "credentials": 0.0035623823722835336,
+    "personal_data": 0.9441297751073796,
+    "customer_data": 0.007440066016981062,
+    "source_code": 0.0002639482421823628,
+    "financial": 0.0001753853111198832,
+    "health": 0.00012039981953891968
+   },
+   "exfil": 0.16037696459267875
+  },
+  {
+   "id": "personal_data-pos-017",
+   "split": "test",
+   "ms": 314.8,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.965508,
+   "confidence": 0.8574029790505245,
+   "probabilities": {
+    "none": 0.034491838489164206,
+    "credentials": 0.00602964970518906,
+    "personal_data": 0.9439343026207192,
+    "customer_data": 0.009254429559103527,
+    "source_code": 0.00011476869508591615,
+    "financial": 4.652848892525936e-05,
+    "health": 0.006128482441812907
+   },
+   "exfil": 0.2912217327941633
+  },
+  {
+   "id": "personal_data-pos-018",
+   "split": "test",
+   "ms": 301.8,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.949909,
+   "confidence": 0.5472304195819879,
+   "probabilities": {
+    "none": 0.05009094061494861,
+    "credentials": 0.005325909269337447,
+    "personal_data": 0.5789568331265024,
+    "customer_data": 0.36262268947960075,
+    "source_code": 0.0004529203278242511,
+    "financial": 0.0025065851841663987,
+    "health": 4.4121997620268404e-05
+   },
+   "exfil": 0.2941547861357692
+  },
+  {
+   "id": "personal_data-pos-019",
+   "split": "calibration",
+   "ms": 315.4,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.889624,
+   "confidence": 0.7579530830438267,
+   "probabilities": {
+    "none": 0.1103759407297148,
+    "credentials": 0.005849621294300349,
+    "personal_data": 0.8671546328224404,
+    "customer_data": 0.015279869221342389,
+    "source_code": 0.000537448863676016,
+    "financial": 0.00017107011236375483,
+    "health": 0.0006314169561622159
+   },
+   "exfil": 0.15597427543315834
+  },
+  {
+   "id": "personal_data-pos-020",
+   "split": "test",
+   "ms": 336.8,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.964758,
+   "confidence": 0.6628232841060318,
+   "probabilities": {
+    "none": 0.03524209438205197,
+    "credentials": 0.005235831150744888,
+    "personal_data": 0.8128253933344706,
+    "customer_data": 0.018119216288650673,
+    "source_code": 0.0006484032961629461,
+    "financial": 0.000244325093714092,
+    "health": 0.12768473645420486
+   },
+   "exfil": 0.3964733593116033
+  },
+  {
+   "id": "personal_data-pos-021",
+   "split": "test",
+   "ms": 321.4,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.96918,
+   "confidence": 0.8334944148303209,
+   "probabilities": {
+    "none": 0.030820053975622073,
+    "credentials": 0.002499399095322055,
+    "personal_data": 0.9282010226371217,
+    "customer_data": 0.036925350044818256,
+    "source_code": 0.00022100483682820397,
+    "financial": 0.0013058842783543617,
+    "health": 2.7285131933480644e-05
+   },
+   "exfil": 0.249601536986356
+  },
+  {
+   "id": "personal_data-pos-022",
+   "split": "calibration",
+   "ms": 321.6,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.858808,
+   "confidence": 0.7100755330067382,
+   "probabilities": {
+    "none": 0.14119199024866977,
+    "credentials": 0.006011898921993093,
+    "personal_data": 0.8271015903479265,
+    "customer_data": 0.024485933446247044,
+    "source_code": 0.0007809497682897149,
+    "financial": 0.00014441379666061874,
+    "health": 0.000283223470213311
+   },
+   "exfil": 0.22610471836655557
+  },
+  {
+   "id": "personal_data-pos-023",
+   "split": "test",
+   "ms": 329.7,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.957686,
+   "confidence": 0.7245507335244623,
+   "probabilities": {
+    "none": 0.04231374973911225,
+    "credentials": 0.05016225457610321,
+    "personal_data": 0.8679010858275152,
+    "customer_data": 0.03946213133177094,
+    "source_code": 0.00010048697091305822,
+    "financial": 4.397425862273184e-05,
+    "health": 1.6317295962559558e-05
+   },
+   "exfil": 0.3807157833200974
+  },
+  {
+   "id": "personal_data-pos-024",
+   "split": "test",
+   "ms": 326.0,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.895954,
+   "confidence": 0.688947205825432,
+   "probabilities": {
+    "none": 0.10404623514841183,
+    "credentials": 0.009377405086237295,
+    "personal_data": 0.8293301351692745,
+    "customer_data": 0.05599828930655129,
+    "source_code": 0.0004280253594773564,
+    "financial": 9.254159911399436e-05,
+    "health": 0.0007273683309338888
+   },
+   "exfil": 0.20322776985789434
+  },
+  {
+   "id": "personal_data-pos-025",
+   "split": "calibration",
+   "ms": 340.2,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.939037,
+   "confidence": 0.7802124488889934,
+   "probabilities": {
+    "none": 0.060962881603950185,
+    "credentials": 0.013381963044742193,
+    "personal_data": 0.8975259236825891,
+    "customer_data": 0.02780287543455146,
+    "source_code": 0.00028304310343440104,
+    "financial": 2.97466132111174e-05,
+    "health": 1.3566517521723574e-05
+   },
+   "exfil": 0.26201779480397797
+  },
+  {
+   "id": "customer_data-pos-001",
+   "split": "calibration",
+   "ms": 337.5,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.960345,
+   "confidence": 0.7436522309146772,
+   "probabilities": {
+    "none": 0.039654673839014394,
+    "credentials": 0.0036664618915272303,
+    "personal_data": 0.09014518949373491,
+    "customer_data": 0.8654742748448095,
+    "source_code": 0.00048217717330283104,
+    "financial": 0.00042703540429353846,
+    "health": 0.00015018735331760846
+   },
+   "exfil": 0.14102614538251973
+  },
+  {
+   "id": "customer_data-pos-002",
+   "split": "test",
+   "ms": 322.0,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.969294,
+   "confidence": 0.7679648183065054,
+   "probabilities": {
+    "none": 0.030706230399845456,
+    "credentials": 0.004993188019416949,
+    "personal_data": 0.07935779011222022,
+    "customer_data": 0.8838867682170489,
+    "source_code": 0.000831896454364384,
+    "financial": 7.796567838661724e-05,
+    "health": 0.00014616111871752982
+   },
+   "exfil": 0.21512652128463144
+  },
+  {
+   "id": "customer_data-pos-003",
+   "split": "test",
+   "ms": 309.0,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.925826,
+   "confidence": 0.481698551601101,
+   "probabilities": {
+    "none": 0.07417363936778452,
+    "credentials": 0.008083196684328995,
+    "personal_data": 0.008364445124337592,
+    "customer_data": 0.5920570724092811,
+    "source_code": 0.009881173051058678,
+    "financial": 0.30417484074908197,
+    "health": 0.003265632614127206
+   },
+   "exfil": 0.2568771196543302
+  },
+  {
+   "id": "customer_data-pos-004",
+   "split": "calibration",
+   "ms": 310.8,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.98805,
+   "confidence": 0.9085408138651228,
+   "probabilities": {
+    "none": 0.011950440282929761,
+    "credentials": 0.0012055608318267044,
+    "personal_data": 0.019565432031597847,
+    "customer_data": 0.966382635058477,
+    "source_code": 0.0006560524142981483,
+    "financial": 0.00017441039380370834,
+    "health": 6.54689870667826e-05
+   },
+   "exfil": 0.1753603833279998
+  },
+  {
+   "id": "customer_data-pos-005",
+   "split": "test",
+   "ms": 300.4,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.691365,
+   "confidence": 0.4254244792490064,
+   "probabilities": {
+    "none": 0.3086345344056705,
+    "credentials": 0.030429138061288597,
+    "personal_data": 0.09648693361473624,
+    "customer_data": 0.5443966412775064,
+    "source_code": 0.0072304234661027655,
+    "financial": 0.01267276030020237,
+    "health": 0.00014956887449309945
+   },
+   "exfil": 0.3159981211860756
+  },
+  {
+   "id": "customer_data-pos-006",
+   "split": "test",
+   "ms": 352.6,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.78258,
+   "confidence": 0.46294643615868836,
+   "probabilities": {
+    "none": 0.21741989879098395,
+    "credentials": 0.5367580759625059,
+    "personal_data": 0.0052109739543640815,
+    "customer_data": 0.2392266803935649,
+    "source_code": 0.0011835613757810687,
+    "financial": 1.78725717807062e-05,
+    "health": 0.00018293695101957122
+   },
+   "exfil": 0.3415927947962779
+  },
+  {
+   "id": "customer_data-pos-007",
+   "split": "calibration",
+   "ms": 346.5,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.984183,
+   "confidence": 0.9099190473371208,
+   "probabilities": {
+    "none": 0.01581679850632256,
+    "credentials": 0.0029188572902996406,
+    "personal_data": 0.009481679388250367,
+    "customer_data": 0.969159455382056,
+    "source_code": 0.0012542169261565792,
+    "financial": 0.0010606704902828281,
+    "health": 0.00030832201663205146
+   },
+   "exfil": 0.17800278384248697
+  },
+  {
+   "id": "customer_data-pos-008",
+   "split": "test",
+   "ms": 347.7,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.989746,
+   "confidence": 0.8736199891382898,
+   "probabilities": {
+    "none": 0.01025369458367993,
+    "credentials": 0.0012958862052543964,
+    "personal_data": 0.03506350313923613,
+    "customer_data": 0.9494638160021628,
+    "source_code": 0.0004093552783826497,
+    "financial": 0.0033780091440611445,
+    "health": 0.00013573564722290846
+   },
+   "exfil": 0.1418627581198647
+  },
+  {
+   "id": "customer_data-pos-009",
+   "split": "test",
+   "ms": 321.5,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.972884,
+   "confidence": 0.824671911906036,
+   "probabilities": {
+    "none": 0.027115524208353604,
+    "credentials": 0.0016680737594265813,
+    "personal_data": 0.05069093225468959,
+    "customer_data": 0.9199524984802429,
+    "source_code": 0.00036704832965096785,
+    "financial": 4.956177980467897e-05,
+    "health": 0.00015636118783159036
+   },
+   "exfil": 0.20425012549547852
+  },
+  {
+   "id": "customer_data-pos-010",
+   "split": "calibration",
+   "ms": 330.3,
+   "category": "financial",
+   "choice": "none",
+   "p_category": 0.638374,
+   "confidence": 0.30211017104778715,
+   "probabilities": {
+    "none": 0.3616259439510839,
+    "credentials": 0.016099473609127345,
+    "personal_data": 0.015517243036488144,
+    "customer_data": 0.03202836867966708,
+    "source_code": 0.2580837962337509,
+    "financial": 0.30922775790902124,
+    "health": 0.007417416580861588
+   },
+   "exfil": 0.1430323907168416
+  },
+  {
+   "id": "customer_data-pos-011",
+   "split": "test",
+   "ms": 340.9,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.975319,
+   "confidence": 0.7875403727557604,
+   "probabilities": {
+    "none": 0.02468135672708548,
+    "credentials": 0.002129605055725842,
+    "personal_data": 0.08109269215472592,
+    "customer_data": 0.8917411106955478,
+    "source_code": 0.00027314956654739096,
+    "financial": 3.69146344500799e-05,
+    "health": 4.517116591744686e-05
+   },
+   "exfil": 0.07685467189522922
+  },
+  {
+   "id": "customer_data-pos-012",
+   "split": "test",
+   "ms": 332.2,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.786707,
+   "confidence": 0.3457816042461044,
+   "probabilities": {
+    "none": 0.2132928640947261,
+    "credentials": 0.009713573188829804,
+    "personal_data": 0.029680052702595352,
+    "customer_data": 0.3591576134441091,
+    "source_code": 0.010030176307460437,
+    "financial": 0.37613847881070983,
+    "health": 0.001987241451569318
+   },
+   "exfil": 0.2605511186370369
+  },
+  {
+   "id": "customer_data-pos-013",
+   "split": "calibration",
+   "ms": 337.6,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.934678,
+   "confidence": 0.7495946544981218,
+   "probabilities": {
+    "none": 0.065322012198156,
+    "credentials": 0.006801202208008138,
+    "personal_data": 0.052093952150841956,
+    "customer_data": 0.8752266891893615,
+    "source_code": 0.0004308436114367305,
+    "financial": 2.8318524595631335e-05,
+    "health": 9.698211759994375e-05
+   },
+   "exfil": 0.11453554281617928
+  },
+  {
+   "id": "customer_data-pos-014",
+   "split": "test",
+   "ms": 335.8,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.931878,
+   "confidence": 0.7428668137569354,
+   "probabilities": {
+    "none": 0.06812210055742193,
+    "credentials": 0.008893369238072286,
+    "personal_data": 0.03624153385593822,
+    "customer_data": 0.8794531195852447,
+    "source_code": 0.0030619977619233455,
+    "financial": 0.0038318252182172065,
+    "health": 0.0003960537831822305
+   },
+   "exfil": 0.17147268184340353
+  },
+  {
+   "id": "customer_data-pos-015",
+   "split": "test",
+   "ms": 327.7,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.8977,
+   "confidence": 0.7075736589881851,
+   "probabilities": {
+    "none": 0.10229984373092292,
+    "credentials": 0.006979034523598027,
+    "personal_data": 0.04457435232690196,
+    "customer_data": 0.8433051781181401,
+    "source_code": 0.0021025805182890087,
+    "financial": 0.000286251734803662,
+    "health": 0.00045275904734452474
+   },
+   "exfil": 0.13802188974941795
+  },
+  {
+   "id": "customer_data-pos-016",
+   "split": "calibration",
+   "ms": 328.4,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.975061,
+   "confidence": 0.7071362217238103,
+   "probabilities": {
+    "none": 0.024938908499236096,
+    "credentials": 0.0047158649610676345,
+    "personal_data": 0.14379627745869586,
+    "customer_data": 0.8244027743452483,
+    "source_code": 0.0017372538842502267,
+    "financial": 0.00016097576894045585,
+    "health": 0.0002479450825612678
+   },
+   "exfil": 0.15070528338925032
+  },
+  {
+   "id": "customer_data-pos-017",
+   "split": "test",
+   "ms": 297.9,
+   "category": "health",
+   "choice": "none",
+   "p_category": 0.188817,
+   "confidence": 0.5992039343759809,
+   "probabilities": {
+    "none": 0.8111832309210683,
+    "credentials": 0.031219408468763924,
+    "personal_data": 0.0140139424602912,
+    "customer_data": 0.03300975792148272,
+    "source_code": 0.04068021315563423,
+    "financial": 0.0033023973398094188,
+    "health": 0.06659104973295026
+   },
+   "exfil": 0.1741917780457239
+  },
+  {
+   "id": "customer_data-pos-018",
+   "split": "test",
+   "ms": 306.8,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.928349,
+   "confidence": 0.582592436194898,
+   "probabilities": {
+    "none": 0.07165101689067606,
+    "credentials": 0.004650890677161819,
+    "personal_data": 0.22264390134473308,
+    "customer_data": 0.699168084609476,
+    "source_code": 0.0008317239102863434,
+    "financial": 0.0007787015693542695,
+    "health": 0.0002756809983124581
+   },
+   "exfil": 0.19196117284903788
+  },
+  {
+   "id": "customer_data-pos-019",
+   "split": "calibration",
+   "ms": 308.3,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.967295,
+   "confidence": 0.6917753127872344,
+   "probabilities": {
+    "none": 0.03270503928621873,
+    "credentials": 0.0032613701475470895,
+    "personal_data": 0.1582786828410986,
+    "customer_data": 0.8053892800020558,
+    "source_code": 0.00027245492084517425,
+    "financial": 4.09229365466968e-05,
+    "health": 5.224986568798196e-05
+   },
+   "exfil": 0.07943933954197666
+  },
+  {
+   "id": "customer_data-pos-020",
+   "split": "test",
+   "ms": 327.6,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.914026,
+   "confidence": 0.6383445509729582,
+   "probabilities": {
+    "none": 0.08597383887439268,
+    "credentials": 0.0044024677567061675,
+    "personal_data": 0.07101265164016618,
+    "customer_data": 0.8102884845454762,
+    "source_code": 0.0022011698476552596,
+    "financial": 0.025749706753437455,
+    "health": 0.0003716805821662064
+   },
+   "exfil": 0.11234724470708955
+  },
+  {
+   "id": "customer_data-pos-021",
+   "split": "test",
+   "ms": 329.1,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.954877,
+   "confidence": 0.6960014297333385,
+   "probabilities": {
+    "none": 0.045122924997326605,
+    "credentials": 0.0025060796903528496,
+    "personal_data": 0.004204040180996584,
+    "customer_data": 0.8379578462087591,
+    "source_code": 0.0029017408277182107,
+    "financial": 0.10551196207469189,
+    "health": 0.0017954060201549192
+   },
+   "exfil": 0.19717983688313714
+  },
+  {
+   "id": "customer_data-pos-022",
+   "split": "calibration",
+   "ms": 318.4,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.869552,
+   "confidence": 0.4233498843939465,
+   "probabilities": {
+    "none": 0.1304484370646912,
+    "credentials": 0.091376696256165,
+    "personal_data": 0.1903204507625905,
+    "customer_data": 0.5865861736822902,
+    "source_code": 0.0010762439782633281,
+    "financial": 5.7372721055893656e-05,
+    "health": 0.00013462553494395635
+   },
+   "exfil": 0.2335997893386269
+  },
+  {
+   "id": "customer_data-pos-023",
+   "split": "test",
+   "ms": 301.6,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.980463,
+   "confidence": 0.8302882729094274,
+   "probabilities": {
+    "none": 0.019536746333711948,
+    "credentials": 0.002386278809113161,
+    "personal_data": 0.052496084555381954,
+    "customer_data": 0.9240492788180031,
+    "source_code": 0.0005249242664142735,
+    "financial": 0.0008999707601768336,
+    "health": 0.00010671645719902305
+   },
+   "exfil": 0.14064579402370836
+  },
+  {
+   "id": "customer_data-pos-024",
+   "split": "test",
+   "ms": 304.3,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.718673,
+   "confidence": 0.5653923219442263,
+   "probabilities": {
+    "none": 0.28132704373433565,
+    "credentials": 0.01588786051076511,
+    "personal_data": 0.014280629257302618,
+    "customer_data": 0.6689017606289491,
+    "source_code": 0.005792390148970092,
+    "financial": 0.012435750998148878,
+    "health": 0.0013745647215284095
+   },
+   "exfil": 0.16540555881744837
+  },
+  {
+   "id": "customer_data-pos-025",
+   "split": "calibration",
+   "ms": 309.4,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.965128,
+   "confidence": 0.7370160023041419,
+   "probabilities": {
+    "none": 0.034871828423708826,
+    "credentials": 0.002361173909700939,
+    "personal_data": 0.10897782142528332,
+    "customer_data": 0.8533663260209136,
+    "source_code": 0.000339433470034772,
+    "financial": 3.760926755016893e-05,
+    "health": 4.580748280846775e-05
+   },
+   "exfil": 0.09793229084310466
+  },
+  {
+   "id": "source_code-pos-001",
+   "split": "calibration",
+   "ms": 326.3,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.882777,
+   "confidence": 0.6629753454572731,
+   "probabilities": {
+    "none": 0.11722310336049864,
+    "credentials": 0.019041191765509984,
+    "personal_data": 0.0053537548861758676,
+    "customer_data": 0.005630970831225313,
+    "source_code": 0.8244754615393058,
+    "financial": 0.024014192876315364,
+    "health": 0.004261324740968947
+   },
+   "exfil": 0.2271142556711239
+  },
+  {
+   "id": "source_code-pos-002",
+   "split": "test",
+   "ms": 355.2,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.800799,
+   "confidence": 0.6032415475808597,
+   "probabilities": {
+    "none": 0.19920103159337194,
+    "credentials": 0.01233281598348709,
+    "personal_data": 0.007699976123861063,
+    "customer_data": 0.011697964588718086,
+    "source_code": 0.74809217107137,
+    "financial": 0.017889463674397015,
+    "health": 0.003086576964794597
+   },
+   "exfil": 0.16321294220358906
+  },
+  {
+   "id": "source_code-pos-003",
+   "split": "test",
+   "ms": 334.2,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.939415,
+   "confidence": 0.7603375385619496,
+   "probabilities": {
+    "none": 0.0605849648004492,
+    "credentials": 0.0533405539078036,
+    "personal_data": 0.0024358828776171494,
+    "customer_data": 0.0006085683835550425,
+    "source_code": 0.8816645976154754,
+    "financial": 0.0007226266754156051,
+    "health": 0.0006428057396841212
+   },
+   "exfil": 0.5658161217940628
+  },
+  {
+   "id": "source_code-pos-004",
+   "split": "calibration",
+   "ms": 325.4,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.801627,
+   "confidence": 0.6525168372563528,
+   "probabilities": {
+    "none": 0.1983730762169859,
+    "credentials": 0.7628473616575931,
+    "personal_data": 0.005881794730467621,
+    "customer_data": 0.0007424936023543983,
+    "source_code": 0.031680202672629124,
+    "financial": 8.634549855021993e-05,
+    "health": 0.00038872562141956785
+   },
+   "exfil": 0.3413972018348298
+  },
+  {
+   "id": "source_code-pos-005",
+   "split": "test",
+   "ms": 344.5,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.57941,
+   "confidence": 0.3731866769435819,
+   "probabilities": {
+    "none": 0.42058989857167745,
+    "credentials": 0.016153254763554014,
+    "personal_data": 0.0040220902834157525,
+    "customer_data": 0.00642713486506275,
+    "source_code": 0.32645549290840475,
+    "financial": 0.21899467355558425,
+    "health": 0.007357455052301099
+   },
+   "exfil": 0.12071712478401969
+  },
+  {
+   "id": "source_code-pos-006",
+   "split": "test",
+   "ms": 306.3,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.919976,
+   "confidence": 0.8226129152201382,
+   "probabilities": {
+    "none": 0.0800243736798598,
+    "credentials": 0.0028363716752675726,
+    "personal_data": 0.001586139572316569,
+    "customer_data": 0.0011026755938605155,
+    "source_code": 0.910681532417296,
+    "financial": 0.002391454783875187,
+    "health": 0.0013774522775245432
+   },
+   "exfil": 0.17643203309411842
+  },
+  {
+   "id": "source_code-pos-007",
+   "split": "calibration",
+   "ms": 334.5,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.787292,
+   "confidence": 0.5620979820700187,
+   "probabilities": {
+    "none": 0.21270806969431533,
+    "credentials": 0.007566161359018396,
+    "personal_data": 0.0018758521761322185,
+    "customer_data": 0.005955899637206208,
+    "source_code": 0.7056157148536286,
+    "financial": 0.061279437269524964,
+    "health": 0.00499886501017419
+   },
+   "exfil": 0.1320993913509296
+  },
+  {
+   "id": "source_code-pos-008",
+   "split": "test",
+   "ms": 326.3,
+   "category": "financial",
+   "choice": "none",
+   "p_category": 0.202029,
+   "confidence": 0.6008746428814424,
+   "probabilities": {
+    "none": 0.7979706945142124,
+    "credentials": 0.017535036377813305,
+    "personal_data": 0.007481722020229221,
+    "customer_data": 0.012990631242444465,
+    "source_code": 0.07696021110055565,
+    "financial": 0.08071578185628844,
+    "health": 0.006345922888456572
+   },
+   "exfil": 0.04417623251239243
+  },
+  {
+   "id": "source_code-pos-009",
+   "split": "test",
+   "ms": 378.7,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.843641,
+   "confidence": 0.6467299952066099,
+   "probabilities": {
+    "none": 0.15635852383020904,
+    "credentials": 0.060717305026289164,
+    "personal_data": 0.002617810725783446,
+    "customer_data": 0.00040196916628001836,
+    "source_code": 0.7780068589528151,
+    "financial": 0.0010815763987768302,
+    "health": 0.0008159558998464148
+   },
+   "exfil": 0.3821918825259896
+  },
+  {
+   "id": "source_code-pos-010",
+   "split": "calibration",
+   "ms": 311.2,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.88521,
+   "confidence": 0.7554587316622436,
+   "probabilities": {
+    "none": 0.1147898878514412,
+    "credentials": 0.007536174731261501,
+    "personal_data": 0.0025113934791967294,
+    "customer_data": 0.000701251594555856,
+    "source_code": 0.8660800399001917,
+    "financial": 0.004216459222593571,
+    "health": 0.004164793220759453
+   },
+   "exfil": 0.15440189611162078
+  },
+  {
+   "id": "source_code-pos-011",
+   "split": "test",
+   "ms": 351.0,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.823897,
+   "confidence": 0.5333018461744728,
+   "probabilities": {
+    "none": 0.1761032127162265,
+    "credentials": 0.6568386627065355,
+    "personal_data": 0.003933847130768973,
+    "customer_data": 0.0005134950179715951,
+    "source_code": 0.16186670664705904,
+    "financial": 0.00021213813478787865,
+    "health": 0.0005319376466505568
+   },
+   "exfil": 0.4761210084643865
+  },
+  {
+   "id": "source_code-pos-012",
+   "split": "test",
+   "ms": 351.7,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.790238,
+   "confidence": 0.5850981765373994,
+   "probabilities": {
+    "none": 0.20976232234873096,
+    "credentials": 0.03863964896006055,
+    "personal_data": 0.005126089450238457,
+    "customer_data": 0.0020009680790830024,
+    "source_code": 0.7262121044444567,
+    "financial": 0.014588393645776911,
+    "health": 0.003670473071653172
+   },
+   "exfil": 0.15414707216494836
+  },
+  {
+   "id": "source_code-pos-013",
+   "split": "calibration",
+   "ms": 350.9,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.675531,
+   "confidence": 0.31286756958652584,
+   "probabilities": {
+    "none": 0.324469000283408,
+    "credentials": 0.10961031850002233,
+    "personal_data": 0.006052354563615594,
+    "customer_data": 0.018320521835110848,
+    "source_code": 0.4256060776791338,
+    "financial": 0.11346307066847007,
+    "health": 0.0024786564702393397
+   },
+   "exfil": 0.14510590578068477
+  },
+  {
+   "id": "source_code-pos-014",
+   "split": "test",
+   "ms": 346.6,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.778782,
+   "confidence": 0.6388937229926519,
+   "probabilities": {
+    "none": 0.22121803446982338,
+    "credentials": 0.025682391355185633,
+    "personal_data": 0.004422864890789432,
+    "customer_data": 0.0006731542971610141,
+    "source_code": 0.743754716169669,
+    "financial": 0.002942579067810843,
+    "health": 0.0013062597495606162
+   },
+   "exfil": 0.26456910485330115
+  },
+  {
+   "id": "source_code-pos-015",
+   "split": "test",
+   "ms": 327.3,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.69375,
+   "confidence": 0.6090477968053521,
+   "probabilities": {
+    "none": 0.3062501346502905,
+    "credentials": 0.008475593767343451,
+    "personal_data": 0.004864562500469568,
+    "customer_data": 0.0025964133696661407,
+    "source_code": 0.669013848104363,
+    "financial": 0.0037332626998315614,
+    "health": 0.005066184908035609
+   },
+   "exfil": 0.08919889889893602
+  },
+  {
+   "id": "source_code-pos-016",
+   "split": "calibration",
+   "ms": 319.3,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.504977,
+   "confidence": 0.5057758444994762,
+   "probabilities": {
+    "none": 0.49502336640675687,
+    "credentials": 0.06229312830759801,
+    "personal_data": 0.006596526333058787,
+    "customer_data": 0.0038036178598008616,
+    "source_code": 0.42857049730943386,
+    "financial": 0.001487723706174162,
+    "health": 0.0022251400771774303
+   },
+   "exfil": 0.2041968146156173
+  },
+  {
+   "id": "source_code-pos-017",
+   "split": "test",
+   "ms": 345.1,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.118506,
+   "confidence": 0.7555752135663429,
+   "probabilities": {
+    "none": 0.881493526101346,
+    "credentials": 0.05439366501619106,
+    "personal_data": 0.003589704545330011,
+    "customer_data": 0.0006503360974670569,
+    "source_code": 0.05718091731511306,
+    "financial": 0.0006938337262547296,
+    "health": 0.00199801719829792
+   },
+   "exfil": 0.0980793142433874
+  },
+  {
+   "id": "source_code-pos-018",
+   "split": "test",
+   "ms": 316.0,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.574195,
+   "confidence": 0.5563022268657796,
+   "probabilities": {
+    "none": 0.4258050264504001,
+    "credentials": 0.021240379115081753,
+    "personal_data": 0.006276250914129562,
+    "customer_data": 0.003759146520600049,
+    "source_code": 0.5375949181982574,
+    "financial": 0.0026544112727402516,
+    "health": 0.002669867528790867
+   },
+   "exfil": 0.06719770477747108
+  },
+  {
+   "id": "source_code-pos-019",
+   "split": "calibration",
+   "ms": 326.3,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.76929,
+   "confidence": 0.6159768380935495,
+   "probabilities": {
+    "none": 0.2307098414234268,
+    "credentials": 0.015119527366885923,
+    "personal_data": 0.0070960065413874975,
+    "customer_data": 0.0055747385101669635,
+    "source_code": 0.7311164054618465,
+    "financial": 0.008377357520293885,
+    "health": 0.002006123175992388
+   },
+   "exfil": 0.12801073392426873
+  },
+  {
+   "id": "source_code-pos-020",
+   "split": "test",
+   "ms": 359.4,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.687977,
+   "confidence": 0.5305873112461952,
+   "probabilities": {
+    "none": 0.31202263669765185,
+    "credentials": 0.061433400441641285,
+    "personal_data": 0.008132609388056867,
+    "customer_data": 0.0011567981809378534,
+    "source_code": 0.6119928924615694,
+    "financial": 0.0030892876977992984,
+    "health": 0.00217237513234344
+   },
+   "exfil": 0.2964632525714699
+  },
+  {
+   "id": "source_code-pos-021",
+   "split": "test",
+   "ms": 321.5,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.697081,
+   "confidence": 0.45623326700275224,
+   "probabilities": {
+    "none": 0.3029185438704982,
+    "credentials": 0.1296075048696832,
+    "personal_data": 0.014570881053475006,
+    "customer_data": 0.0038289832865140124,
+    "source_code": 0.5462178177878646,
+    "financial": 0.000666759747118809,
+    "health": 0.0021895093848462214
+   },
+   "exfil": 0.3327439119382775
+  },
+  {
+   "id": "source_code-pos-022",
+   "split": "calibration",
+   "ms": 319.7,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.366048,
+   "confidence": 0.4163655110384995,
+   "probabilities": {
+    "none": 0.6339515474260733,
+    "credentials": 0.018245015775776887,
+    "personal_data": 0.013670933538376579,
+    "customer_data": 0.16328118563475374,
+    "source_code": 0.12514715908007704,
+    "financial": 0.039582017042098426,
+    "health": 0.006122141502844068
+   },
+   "exfil": 0.08856623855482548
+  },
+  {
+   "id": "source_code-pos-023",
+   "split": "test",
+   "ms": 327.7,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.648897,
+   "confidence": 0.5717919286718021,
+   "probabilities": {
+    "none": 0.3511031127098214,
+    "credentials": 0.030820274149279375,
+    "personal_data": 0.003375003056815153,
+    "customer_data": 0.000856523952520867,
+    "source_code": 0.6086173544412286,
+    "financial": 0.0022782466130382923,
+    "health": 0.0029494850772964474
+   },
+   "exfil": 0.21382572175113168
+  },
+  {
+   "id": "source_code-pos-024",
+   "split": "test",
+   "ms": 306.5,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.928048,
+   "confidence": 0.8380798813110606,
+   "probabilities": {
+    "none": 0.07195228776451613,
+    "credentials": 0.0029882809763583477,
+    "personal_data": 0.0020786891575839293,
+    "customer_data": 0.0006400294850626075,
+    "source_code": 0.920238584873224,
+    "financial": 0.001377487719706785,
+    "health": 0.0007246400235482582
+   },
+   "exfil": 0.18457796273031213
+  },
+  {
+   "id": "source_code-pos-025",
+   "split": "calibration",
+   "ms": 336.8,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.443933,
+   "confidence": 0.5954552103991234,
+   "probabilities": {
+    "none": 0.5560665591199496,
+    "credentials": 0.010663314123556726,
+    "personal_data": 0.0031112851966741354,
+    "customer_data": 0.0006608962248941762,
+    "source_code": 0.4252692124118044,
+    "financial": 0.0019392835528102498,
+    "health": 0.0022894493703106374
+   },
+   "exfil": 0.08960945851961395
+  },
+  {
+   "id": "financial-pos-001",
+   "split": "calibration",
+   "ms": 345.2,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.741494,
+   "confidence": 0.5168041083721345,
+   "probabilities": {
+    "none": 0.2585055421613208,
+    "credentials": 0.008855162538666925,
+    "personal_data": 0.00503198772381632,
+    "customer_data": 0.057173473633240365,
+    "source_code": 0.013775548295281253,
+    "financial": 0.6528845521253688,
+    "health": 0.003773733522305592
+   },
+   "exfil": 0.12481265520066538
+  },
+  {
+   "id": "financial-pos-002",
+   "split": "test",
+   "ms": 322.2,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.668702,
+   "confidence": 0.48921641215722433,
+   "probabilities": {
+    "none": 0.33129804977497984,
+    "credentials": 0.00810831143374103,
+    "personal_data": 0.007434703361181778,
+    "customer_data": 0.05352915022213617,
+    "source_code": 0.01260870490959039,
+    "financial": 0.5822096921114619,
+    "health": 0.004811388186908845
+   },
+   "exfil": 0.12446719973611928
+  },
+  {
+   "id": "financial-pos-003",
+   "split": "test",
+   "ms": 335.8,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.903798,
+   "confidence": 0.7663922569087391,
+   "probabilities": {
+    "none": 0.09620249226805201,
+    "credentials": 0.003789495331752167,
+    "personal_data": 0.002984478946007907,
+    "customer_data": 0.002357677167159719,
+    "source_code": 0.010312868871181251,
+    "financial": 0.8812327403899068,
+    "health": 0.0031202470259402643
+   },
+   "exfil": 0.15127840502850423
+  },
+  {
+   "id": "financial-pos-004",
+   "split": "calibration",
+   "ms": 310.8,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.609332,
+   "confidence": 0.4557552312285744,
+   "probabilities": {
+    "none": 0.3906681963188267,
+    "credentials": 0.022531688287611183,
+    "personal_data": 0.01130874829591114,
+    "customer_data": 0.0196617860834081,
+    "source_code": 0.03106334925733215,
+    "financial": 0.5188875913430775,
+    "health": 0.005878640413833109
+   },
+   "exfil": 0.1600464193435335
+  },
+  {
+   "id": "financial-pos-005",
+   "split": "test",
+   "ms": 329.6,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.685978,
+   "confidence": 0.47461520475180696,
+   "probabilities": {
+    "none": 0.31402220033347233,
+    "credentials": 0.031825615531923666,
+    "personal_data": 0.01008191495607848,
+    "customer_data": 0.025186700621715186,
+    "source_code": 0.02127950983060737,
+    "financial": 0.594343005832993,
+    "health": 0.0032610528932100506
+   },
+   "exfil": 0.17693254415881884
+  },
+  {
+   "id": "financial-pos-006",
+   "split": "test",
+   "ms": 310.4,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.825651,
+   "confidence": 0.653612614157854,
+   "probabilities": {
+    "none": 0.17434909860816084,
+    "credentials": 0.00184690882392878,
+    "personal_data": 0.0011595285007933484,
+    "customer_data": 0.01709709452446512,
+    "source_code": 0.021751037849870414,
+    "financial": 0.7830016345262759,
+    "health": 0.0007946971665055666
+   },
+   "exfil": 0.08509014350128377
+  },
+  {
+   "id": "financial-pos-007",
+   "split": "calibration",
+   "ms": 322.9,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.2292,
+   "confidence": 0.5476441395740079,
+   "probabilities": {
+    "none": 0.7707998749343665,
+    "credentials": 0.05185673404238523,
+    "personal_data": 0.013940980822120013,
+    "customer_data": 0.054415091897844374,
+    "source_code": 0.08698028266825755,
+    "financial": 0.017042706663236932,
+    "health": 0.004964328971789164
+   },
+   "exfil": 0.13138031135585868
+  },
+  {
+   "id": "financial-pos-008",
+   "split": "test",
+   "ms": 312.0,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.822248,
+   "confidence": 0.6591592012450838,
+   "probabilities": {
+    "none": 0.1777523214625583,
+    "credentials": 0.009905071391266217,
+    "personal_data": 0.004655608037450099,
+    "customer_data": 0.004225224520815666,
+    "source_code": 0.013091788232609348,
+    "financial": 0.7873736249298894,
+    "health": 0.002996361425410872
+   },
+   "exfil": 0.07930831006666618
+  },
+  {
+   "id": "financial-pos-009",
+   "split": "test",
+   "ms": 313.4,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.90112,
+   "confidence": 0.7279560867114241,
+   "probabilities": {
+    "none": 0.09887969663477113,
+    "credentials": 0.004524709335106485,
+    "personal_data": 0.002715217844112885,
+    "customer_data": 0.0033334109490723825,
+    "source_code": 0.022890182913459654,
+    "financial": 0.8625202182156205,
+    "health": 0.005136564107856912
+   },
+   "exfil": 0.11804947291551598
+  },
+  {
+   "id": "financial-pos-010",
+   "split": "calibration",
+   "ms": 348.6,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.86889,
+   "confidence": 0.38687726617242857,
+   "probabilities": {
+    "none": 0.1311097318988637,
+    "credentials": 0.024728005057728347,
+    "personal_data": 0.019296723424202664,
+    "customer_data": 0.23814015475177377,
+    "source_code": 0.020494606442491858,
+    "financial": 0.5638124315887282,
+    "health": 0.002418346836211492
+   },
+   "exfil": 0.21155805688568438
+  },
+  {
+   "id": "financial-pos-011",
+   "split": "test",
+   "ms": 338.1,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.875027,
+   "confidence": 0.725750092494893,
+   "probabilities": {
+    "none": 0.12497270453847002,
+    "credentials": 0.003331477117054832,
+    "personal_data": 0.005993714378725163,
+    "customer_data": 0.010538897001548832,
+    "source_code": 0.004940838467353882,
+    "financial": 0.8485776911844403,
+    "health": 0.0016446773124068291
+   },
+   "exfil": 0.17955977198916373
+  },
+  {
+   "id": "financial-pos-012",
+   "split": "test",
+   "ms": 324.6,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.880478,
+   "confidence": 0.5850902166430274,
+   "probabilities": {
+    "none": 0.11952204579180623,
+    "credentials": 0.008091182925895671,
+    "personal_data": 0.009571495544539415,
+    "customer_data": 0.052316998300745605,
+    "source_code": 0.026787859334810968,
+    "financial": 0.7792152350687122,
+    "health": 0.004495183033489923
+   },
+   "exfil": 0.16065349704479187
+  },
+  {
+   "id": "financial-pos-013",
+   "split": "calibration",
+   "ms": 338.8,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.883356,
+   "confidence": 0.7147988616979439,
+   "probabilities": {
+    "none": 0.11664438724138249,
+    "credentials": 0.008987652427379459,
+    "personal_data": 0.0038508233615151405,
+    "customer_data": 0.004808982252905285,
+    "source_code": 0.013765205976504399,
+    "financial": 0.8490346419780738,
+    "health": 0.0029083067622393275
+   },
+   "exfil": 0.12159853196460803
+  },
+  {
+   "id": "financial-pos-014",
+   "split": "test",
+   "ms": 350.5,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.788624,
+   "confidence": 0.6369165707601301,
+   "probabilities": {
+    "none": 0.21137645537678765,
+    "credentials": 0.006865342392342265,
+    "personal_data": 0.005198668778155808,
+    "customer_data": 0.0026850437504038027,
+    "source_code": 0.01664912729355605,
+    "financial": 0.7538157580758305,
+    "health": 0.0034096043329240426
+   },
+   "exfil": 0.22865397942861979
+  },
+  {
+   "id": "financial-pos-015",
+   "split": "test",
+   "ms": 314.4,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.758467,
+   "confidence": 0.5035420691322365,
+   "probabilities": {
+    "none": 0.24153341703365688,
+    "credentials": 0.006716534671390349,
+    "personal_data": 0.007388103819728781,
+    "customer_data": 0.06154535857399615,
+    "source_code": 0.024765847889432653,
+    "financial": 0.6558950269538005,
+    "health": 0.0021557110579946952
+   },
+   "exfil": 0.09457965685814593
+  },
+  {
+   "id": "financial-pos-016",
+   "split": "calibration",
+   "ms": 310.6,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.643591,
+   "confidence": 0.4325067664862833,
+   "probabilities": {
+    "none": 0.3564085436964579,
+    "credentials": 0.013853237427030372,
+    "personal_data": 0.057004545449726315,
+    "customer_data": 0.024344563522943778,
+    "source_code": 0.014465226268875104,
+    "financial": 0.529154486105048,
+    "health": 0.004769397529918509
+   },
+   "exfil": 0.08445735674374083
+  },
+  {
+   "id": "financial-pos-017",
+   "split": "test",
+   "ms": 327.8,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.64266,
+   "confidence": 0.5187706125862197,
+   "probabilities": {
+    "none": 0.35734044471190884,
+    "credentials": 0.017646562391744662,
+    "personal_data": 0.003201269401790566,
+    "customer_data": 0.01620179147597162,
+    "source_code": 0.017465333116144854,
+    "financial": 0.5830199613074979,
+    "health": 0.005124637594941573
+   },
+   "exfil": 0.26971914608103253
+  },
+  {
+   "id": "financial-pos-018",
+   "split": "test",
+   "ms": 309.1,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.61343,
+   "confidence": 0.3696540631962444,
+   "probabilities": {
+    "none": 0.38656985930248067,
+    "credentials": 0.023637468725293757,
+    "personal_data": 0.03979485576903324,
+    "customer_data": 0.0668352946643081,
+    "source_code": 0.022436434984847257,
+    "financial": 0.4574827201713568,
+    "health": 0.0032433663826801433
+   },
+   "exfil": 0.1638077372562127
+  },
+  {
+   "id": "financial-pos-019",
+   "split": "calibration",
+   "ms": 311.6,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.816879,
+   "confidence": 0.6652876760441065,
+   "probabilities": {
+    "none": 0.18312105406029838,
+    "credentials": 0.0047400552975755015,
+    "personal_data": 0.005711276418542994,
+    "customer_data": 0.004010880679093376,
+    "source_code": 0.011530759724043759,
+    "financial": 0.7866364321669016,
+    "health": 0.004249541653544449
+   },
+   "exfil": 0.1708233198279767
+  },
+  {
+   "id": "financial-pos-020",
+   "split": "test",
+   "ms": 311.0,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.466344,
+   "confidence": 0.4107867077546843,
+   "probabilities": {
+    "none": 0.5336558759453662,
+    "credentials": 0.017215437356422905,
+    "personal_data": 0.011554459376125616,
+    "customer_data": 0.29237690651306475,
+    "source_code": 0.012003467184498505,
+    "financial": 0.1315605748344942,
+    "health": 0.001633278790027733
+   },
+   "exfil": 0.11233813644924649
+  },
+  {
+   "id": "financial-pos-021",
+   "split": "test",
+   "ms": 360.9,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.532704,
+   "confidence": 0.32975276678485743,
+   "probabilities": {
+    "none": 0.46729564199463886,
+    "credentials": 0.05929178669786886,
+    "personal_data": 0.05520618080588478,
+    "customer_data": 0.34341268572696715,
+    "source_code": 0.025520737603233968,
+    "financial": 0.04589971139098677,
+    "health": 0.003373255780419538
+   },
+   "exfil": 0.3038269985022843
+  },
+  {
+   "id": "financial-pos-022",
+   "split": "calibration",
+   "ms": 308.0,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.899369,
+   "confidence": 0.6304159639980966,
+   "probabilities": {
+    "none": 0.10063133625265863,
+    "credentials": 0.006793047557393402,
+    "personal_data": 0.022270991271341443,
+    "customer_data": 0.047841222006108845,
+    "source_code": 0.008029242765953622,
+    "financial": 0.8117328970008637,
+    "health": 0.0027012631456803052
+   },
+   "exfil": 0.1706202517804184
+  },
+  {
+   "id": "financial-pos-023",
+   "split": "test",
+   "ms": 317.2,
+   "category": "financial",
+   "choice": "none",
+   "p_category": 0.545188,
+   "confidence": 0.36104701918057314,
+   "probabilities": {
+    "none": 0.4548121840662382,
+    "credentials": 0.007737610572254322,
+    "personal_data": 0.012724114011594862,
+    "customer_data": 0.10702651108513381,
+    "source_code": 0.05783743337343714,
+    "financial": 0.3562841363987816,
+    "health": 0.003578010492559916
+   },
+   "exfil": 0.16851247246740086
+  },
+  {
+   "id": "financial-pos-024",
+   "split": "test",
+   "ms": 314.1,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.88533,
+   "confidence": 0.5363708196255439,
+   "probabilities": {
+    "none": 0.11467048691291964,
+    "credentials": 0.003005252830951795,
+    "personal_data": 0.007506024310264241,
+    "customer_data": 0.6817188169147215,
+    "source_code": 0.0034401283988314576,
+    "financial": 0.1891288967472569,
+    "health": 0.0005303938850546372
+   },
+   "exfil": 0.1924539648726953
+  },
+  {
+   "id": "financial-pos-025",
+   "split": "calibration",
+   "ms": 351.2,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.269561,
+   "confidence": 0.512765647840926,
+   "probabilities": {
+    "none": 0.7304390625537726,
+    "credentials": 0.10676380016791712,
+    "personal_data": 0.02815157319072543,
+    "customer_data": 0.06701168672847521,
+    "source_code": 0.06415996924021888,
+    "financial": 0.0021206592611714647,
+    "health": 0.0013532488577191976
+   },
+   "exfil": 0.17721603541200706
+  },
+  {
+   "id": "health-pos-001",
+   "split": "calibration",
+   "ms": 318.9,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.9895,
+   "confidence": 0.6999024849250326,
+   "probabilities": {
+    "none": 0.010500032267227536,
+    "credentials": 0.0008736397934893586,
+    "personal_data": 0.18987526259426538,
+    "customer_data": 0.005322213000975703,
+    "source_code": 0.00027097582055636365,
+    "financial": 5.884815616167599e-05,
+    "health": 0.793099028367324
+   },
+   "exfil": 0.24051251163440845
+  },
+  {
+   "id": "health-pos-002",
+   "split": "test",
+   "ms": 325.2,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.984945,
+   "confidence": 0.5887374057187038,
+   "probabilities": {
+    "none": 0.015054794584164137,
+    "credentials": 0.0008900597982289124,
+    "personal_data": 0.5649055164936507,
+    "customer_data": 0.008143603002058436,
+    "source_code": 0.0003495110687870574,
+    "financial": 8.443939004093501e-05,
+    "health": 0.4105720756630697
+   },
+   "exfil": 0.32189284504366716
+  },
+  {
+   "id": "health-pos-003",
+   "split": "test",
+   "ms": 330.4,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.767833,
+   "confidence": 0.5025485664815876,
+   "probabilities": {
+    "none": 0.23216663332914503,
+    "credentials": 0.0029680944384198184,
+    "personal_data": 0.11069328985412227,
+    "customer_data": 0.01471305158818897,
+    "source_code": 0.0026373212145923306,
+    "financial": 0.00034548495763356523,
+    "health": 0.636476124617898
+   },
+   "exfil": 0.17408424684168017
+  },
+  {
+   "id": "health-pos-004",
+   "split": "calibration",
+   "ms": 513.0,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.980902,
+   "confidence": 0.5463816081144801,
+   "probabilities": {
+    "none": 0.019098047041198326,
+    "credentials": 0.004066425052620427,
+    "personal_data": 0.7038446767408213,
+    "customer_data": 0.17549646804205743,
+    "source_code": 0.0005327603573349869,
+    "financial": 0.00027295791103251884,
+    "health": 0.09668866485493499
+   },
+   "exfil": 0.3450035308050831
+  },
+  {
+   "id": "health-pos-005",
+   "split": "test",
+   "ms": 417.6,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.997725,
+   "confidence": 0.8329933737731179,
+   "probabilities": {
+    "none": 0.0022754976039400686,
+    "credentials": 0.0003163737984461771,
+    "personal_data": 0.06995113312307434,
+    "customer_data": 0.00871429310818376,
+    "source_code": 0.00023022567026476155,
+    "financial": 0.00011894118113574983,
+    "health": 0.9183935355149551
+   },
+   "exfil": 0.08804904431771317
+  },
+  {
+   "id": "health-pos-006",
+   "split": "test",
+   "ms": 325.7,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.873279,
+   "confidence": 0.5530291655600501,
+   "probabilities": {
+    "none": 0.12672084128822006,
+    "credentials": 0.0038594762543644593,
+    "personal_data": 0.6946885721974173,
+    "customer_data": 0.16846806518258725,
+    "source_code": 0.00035498900482900314,
+    "financial": 5.07844974007935e-05,
+    "health": 0.005857271575181329
+   },
+   "exfil": 0.16736108676715397
+  },
+  {
+   "id": "health-pos-007",
+   "split": "calibration",
+   "ms": 517.9,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.635232,
+   "confidence": 0.40030270892391717,
+   "probabilities": {
+    "none": 0.3647682483459019,
+    "credentials": 0.009628849409841296,
+    "personal_data": 0.4500919861844335,
+    "customer_data": 0.024900936351068177,
+    "source_code": 0.003190848312711195,
+    "financial": 0.0003640351624829546,
+    "health": 0.1470550962335609
+   },
+   "exfil": 0.18772412067185199
+  },
+  {
+   "id": "health-pos-008",
+   "split": "test",
+   "ms": 391.4,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.949899,
+   "confidence": 0.5448577142100628,
+   "probabilities": {
+    "none": 0.050100677779726946,
+    "credentials": 0.003344190888238977,
+    "personal_data": 0.6837487354796301,
+    "customer_data": 0.032954987981109664,
+    "source_code": 0.0007185734730339728,
+    "financial": 0.00017032485849244764,
+    "health": 0.2289625095397677
+   },
+   "exfil": 0.3515492725666972
+  },
+  {
+   "id": "health-pos-009",
+   "split": "test",
+   "ms": 311.9,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.948932,
+   "confidence": 0.48719984091457214,
+   "probabilities": {
+    "none": 0.051067730956510786,
+    "credentials": 0.006861356229014442,
+    "personal_data": 0.5008174246934051,
+    "customer_data": 0.4158706620257219,
+    "source_code": 0.0016084563580218022,
+    "financial": 0.00023814714672263499,
+    "health": 0.02353622259060322
+   },
+   "exfil": 0.18524835420092692
+  },
+  {
+   "id": "health-pos-010",
+   "split": "calibration",
+   "ms": 317.7,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.939885,
+   "confidence": 0.34910120817219803,
+   "probabilities": {
+    "none": 0.06011461889248898,
+    "credentials": 0.003781167118845902,
+    "personal_data": 0.3959823469747883,
+    "customer_data": 0.21648601357905325,
+    "source_code": 0.0017696977788342972,
+    "financial": 0.00028582372733884686,
+    "health": 0.32158033192865043
+   },
+   "exfil": 0.25439318652196974
+  },
+  {
+   "id": "health-pos-011",
+   "split": "test",
+   "ms": 356.3,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.955032,
+   "confidence": 0.5723023723734961,
+   "probabilities": {
+    "none": 0.04496789900786857,
+    "credentials": 0.0015956965282611763,
+    "personal_data": 0.6214830310773412,
+    "customer_data": 0.0029614780891186045,
+    "source_code": 0.0003091063228700534,
+    "financial": 0.00016825448114772312,
+    "health": 0.3285145344933927
+   },
+   "exfil": 0.1499724047800727
+  },
+  {
+   "id": "health-pos-012",
+   "split": "test",
+   "ms": 338.7,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.95672,
+   "confidence": 0.6384290232673644,
+   "probabilities": {
+    "none": 0.04327964551767781,
+    "credentials": 0.004008349119077023,
+    "personal_data": 0.7893069287679856,
+    "customer_data": 0.018715448656772455,
+    "source_code": 0.000527734137943266,
+    "financial": 0.00014619471111746883,
+    "health": 0.14401569908942652
+   },
+   "exfil": 0.24726250835547203
+  },
+  {
+   "id": "health-pos-013",
+   "split": "calibration",
+   "ms": 323.1,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.979904,
+   "confidence": 0.5334657819761739,
+   "probabilities": {
+    "none": 0.02009630336569646,
+    "credentials": 0.0015574833577464131,
+    "personal_data": 0.3972173374145331,
+    "customer_data": 0.033724373409698846,
+    "source_code": 0.0009561030976240588,
+    "financial": 0.00014273241554560665,
+    "health": 0.5463056669391555
+   },
+   "exfil": 0.2350384184316069
+  },
+  {
+   "id": "health-pos-014",
+   "split": "test",
+   "ms": 348.0,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.973561,
+   "confidence": 0.5658778457853688,
+   "probabilities": {
+    "none": 0.02643908293836718,
+    "credentials": 0.0015374366688107896,
+    "personal_data": 0.37472601761821583,
+    "customer_data": 0.011937044620789506,
+    "source_code": 0.0003989494181918835,
+    "financial": 0.00013841186023442822,
+    "health": 0.5848230568753904
+   },
+   "exfil": 0.3076927000045649
+  },
+  {
+   "id": "health-pos-015",
+   "split": "test",
+   "ms": 350.7,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.884119,
+   "confidence": 0.5405873164290684,
+   "probabilities": {
+    "none": 0.11588122873483855,
+    "credentials": 0.005414505654771202,
+    "personal_data": 0.7059429350716226,
+    "customer_data": 0.014852839833303093,
+    "source_code": 0.0025161738176672343,
+    "financial": 0.0004804290581802074,
+    "health": 0.1549118878296171
+   },
+   "exfil": 0.22312965129930992
+  },
+  {
+   "id": "health-pos-016",
+   "split": "calibration",
+   "ms": 332.4,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.814238,
+   "confidence": 0.43407854490295084,
+   "probabilities": {
+    "none": 0.18576196326022865,
+    "credentials": 0.007173871843909386,
+    "personal_data": 0.6008377001997602,
+    "customer_data": 0.041871191712908186,
+    "source_code": 0.0024799048020943916,
+    "financial": 0.0007040455578476904,
+    "health": 0.16117132262325137
+   },
+   "exfil": 0.123603455852869
+  },
+  {
+   "id": "health-pos-017",
+   "split": "test",
+   "ms": 333.4,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.768783,
+   "confidence": 0.5069975477827908,
+   "probabilities": {
+    "none": 0.23121650037700917,
+    "credentials": 0.005472192018094931,
+    "personal_data": 0.6492150912095953,
+    "customer_data": 0.015234333236249122,
+    "source_code": 0.0033849536734557647,
+    "financial": 0.000780414822441822,
+    "health": 0.09469651466315386
+   },
+   "exfil": 0.2109249854744986
+  },
+  {
+   "id": "health-pos-018",
+   "split": "test",
+   "ms": 328.4,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.933734,
+   "confidence": 0.5133222022446022,
+   "probabilities": {
+    "none": 0.0662661066130498,
+    "credentials": 0.001941110819203071,
+    "personal_data": 0.6825266034758998,
+    "customer_data": 0.06399206259110775,
+    "source_code": 0.0007015931145398918,
+    "financial": 0.00018777091021055043,
+    "health": 0.1843847524759893
+   },
+   "exfil": 0.19121909875833598
+  },
+  {
+   "id": "health-pos-019",
+   "split": "calibration",
+   "ms": 331.2,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.915872,
+   "confidence": 0.5341614576148219,
+   "probabilities": {
+    "none": 0.08412762638377631,
+    "credentials": 0.0018525617078521454,
+    "personal_data": 0.6272452257573471,
+    "customer_data": 0.006444160085986427,
+    "source_code": 0.0005343922324970608,
+    "financial": 0.00012726193544531194,
+    "health": 0.27966877189709566
+   },
+   "exfil": 0.2885675402094832
+  },
+  {
+   "id": "health-pos-020",
+   "split": "test",
+   "ms": 329.2,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.994873,
+   "confidence": 0.8797778629869986,
+   "probabilities": {
+    "none": 0.005126587857363926,
+    "credentials": 0.0004591323561797497,
+    "personal_data": 0.02872587995868365,
+    "customer_data": 0.01162322988029636,
+    "source_code": 0.00045677397526170944,
+    "financial": 7.8045869826926e-05,
+    "health": 0.9535303501023876
+   },
+   "exfil": 0.20762234961210235
+  },
+  {
+   "id": "health-pos-021",
+   "split": "test",
+   "ms": 345.3,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.956049,
+   "confidence": 0.5695760783844466,
+   "probabilities": {
+    "none": 0.04395143445175382,
+    "credentials": 0.0025132815512385895,
+    "personal_data": 0.6705350977475298,
+    "customer_data": 0.01315680376804045,
+    "source_code": 0.0007606237958918931,
+    "financial": 0.00018222409271456355,
+    "health": 0.26890053459283086
+   },
+   "exfil": 0.22425844943586376
+  },
+  {
+   "id": "health-pos-022",
+   "split": "calibration",
+   "ms": 326.6,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.974246,
+   "confidence": 0.4480053055843468,
+   "probabilities": {
+    "none": 0.02575351955832512,
+    "credentials": 0.001832959987206127,
+    "personal_data": 0.5112234493921373,
+    "customer_data": 0.1174185693751933,
+    "source_code": 0.0007767401564885176,
+    "financial": 0.0001419760981441279,
+    "health": 0.3428527854325056
+   },
+   "exfil": 0.17690143476312323
+  },
+  {
+   "id": "health-pos-023",
+   "split": "test",
+   "ms": 367.7,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.808451,
+   "confidence": 0.5129568739302278,
+   "probabilities": {
+    "none": 0.19154850597375717,
+    "credentials": 0.00907960580442046,
+    "personal_data": 0.6714632050801596,
+    "customer_data": 0.1099215365008524,
+    "source_code": 0.0014404984695802943,
+    "financial": 0.00019454900377236856,
+    "health": 0.01635209916745781
+   },
+   "exfil": 0.16258768260080497
+  },
+  {
+   "id": "health-pos-024",
+   "split": "test",
+   "ms": 335.9,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.836883,
+   "confidence": 0.33943127704002685,
+   "probabilities": {
+    "none": 0.16311741850617484,
+    "credentials": 0.012305935250763515,
+    "personal_data": 0.4674481993880607,
+    "customer_data": 0.0698765426042192,
+    "source_code": 0.005895269739157613,
+    "financial": 0.0010696594134986727,
+    "health": 0.28028697509812545
+   },
+   "exfil": 0.19550526843945268
+  },
+  {
+   "id": "health-pos-025",
+   "split": "calibration",
+   "ms": 343.3,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.964418,
+   "confidence": 0.4939636017110963,
+   "probabilities": {
+    "none": 0.03558221470721408,
+    "credentials": 0.003193280655556303,
+    "personal_data": 0.6627254592823713,
+    "customer_data": 0.1434699384838552,
+    "source_code": 0.0010063831187085953,
+    "financial": 0.00017708651972153322,
+    "health": 0.15384563723257294
+   },
+   "exfil": 0.22908891146122634
+  },
+  {
+   "id": "credentials-near-001",
+   "split": "calibration",
+   "ms": 332.3,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.895369,
+   "confidence": 0.8181217626791828,
+   "probabilities": {
+    "none": 0.10463090481380007,
+    "credentials": 0.8928997827026739,
+    "personal_data": 0.001971716482943515,
+    "customer_data": 0.00022620742034145007,
+    "source_code": 0.00020726467878461874,
+    "financial": 1.0025145346452013e-05,
+    "health": 5.409875610998694e-05
+   },
+   "exfil": 0.3126962095289477
+  },
+  {
+   "id": "credentials-near-002",
+   "split": "test",
+   "ms": 344.9,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.827537,
+   "confidence": 0.7553044319263982,
+   "probabilities": {
+    "none": 0.17246331379893298,
+    "credentials": 0.8254801070194858,
+    "personal_data": 0.0012596896579251632,
+    "customer_data": 0.00011286218716242728,
+    "source_code": 0.0005919517029481697,
+    "financial": 8.547055010670836e-06,
+    "health": 8.352857853460048e-05
+   },
+   "exfil": 0.2934709245636764
+  },
+  {
+   "id": "credentials-near-003",
+   "split": "test",
+   "ms": 354.8,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.900204,
+   "confidence": 0.729374914131005,
+   "probabilities": {
+    "none": 0.09979607345224183,
+    "credentials": 0.8562725984279858,
+    "personal_data": 0.004487961059935593,
+    "customer_data": 0.001045246560636988,
+    "source_code": 0.03694191428591687,
+    "financial": 0.000531644514275056,
+    "health": 0.0009245616990079345
+   },
+   "exfil": 0.22232001339124288
+  },
+  {
+   "id": "credentials-near-004",
+   "split": "calibration",
+   "ms": 310.1,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.407723,
+   "confidence": 0.573954429884189,
+   "probabilities": {
+    "none": 0.592277479757818,
+    "credentials": 0.3657555790752785,
+    "personal_data": 0.037437333130299136,
+    "customer_data": 0.0006610727388115779,
+    "source_code": 0.0033700869811375132,
+    "financial": 4.428032790732025e-05,
+    "health": 0.0004541679887478865
+   },
+   "exfil": 0.20670882420193337
+  },
+  {
+   "id": "credentials-near-005",
+   "split": "test",
+   "ms": 332.2,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.805766,
+   "confidence": 0.7226320050575543,
+   "probabilities": {
+    "none": 0.1942344777617544,
+    "credentials": 0.7986071385143273,
+    "personal_data": 0.0050928933334568475,
+    "customer_data": 0.0009216863862285601,
+    "source_code": 0.0008304157310315721,
+    "financial": 2.8961117836916358e-05,
+    "health": 0.00028442715536424623
+   },
+   "exfil": 0.22624629643689403
+  },
+  {
+   "id": "credentials-near-006",
+   "split": "test",
+   "ms": 338.2,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.452582,
+   "confidence": 0.6271789957812766,
+   "probabilities": {
+    "none": 0.5474179407147216,
+    "credentials": 0.44673493876015113,
+    "personal_data": 0.00363866483437219,
+    "customer_data": 0.00033669209315145284,
+    "source_code": 0.0016394742311575247,
+    "financial": 2.218997575390852e-05,
+    "health": 0.00021009939069219346
+   },
+   "exfil": 0.2032734906973847
+  },
+  {
+   "id": "credentials-near-007",
+   "split": "calibration",
+   "ms": 311.2,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.861698,
+   "confidence": 0.7077933955528132,
+   "probabilities": {
+    "none": 0.13830230001609195,
+    "credentials": 0.8212388428848053,
+    "personal_data": 0.03989728690598991,
+    "customer_data": 0.0002732405002162779,
+    "source_code": 0.00024337395909371503,
+    "financial": 9.062113405311523e-06,
+    "health": 3.589362039765281e-05
+   },
+   "exfil": 0.4532410505887605
+  },
+  {
+   "id": "credentials-near-008",
+   "split": "test",
+   "ms": 330.5,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.760637,
+   "confidence": 0.6929859135433336,
+   "probabilities": {
+    "none": 0.23936345311702423,
+    "credentials": 0.7537053611667949,
+    "personal_data": 0.003972440287302667,
+    "customer_data": 0.0004448393738478269,
+    "source_code": 0.0018302690634636283,
+    "financial": 4.2850483197561415e-05,
+    "health": 0.0006407865083694053
+   },
+   "exfil": 0.24769018543209576
+  },
+  {
+   "id": "credentials-near-009",
+   "split": "test",
+   "ms": 333.4,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.976844,
+   "confidence": 0.7840846720283909,
+   "probabilities": {
+    "none": 0.023156084909193506,
+    "credentials": 0.8852056245035205,
+    "personal_data": 0.0005723577046837689,
+    "customer_data": 0.00014348564100570297,
+    "source_code": 0.09073282637022502,
+    "financial": 4.861818918059325e-05,
+    "health": 0.00014100268219087282
+   },
+   "exfil": 0.45100914219618526
+  },
+  {
+   "id": "credentials-near-010",
+   "split": "calibration",
+   "ms": 332.9,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.81313,
+   "confidence": 0.6840664276612861,
+   "probabilities": {
+    "none": 0.18686975459528435,
+    "credentials": 0.7874716869236108,
+    "personal_data": 0.019146979370388513,
+    "customer_data": 0.0009230480704744332,
+    "source_code": 0.005028166623919036,
+    "financial": 5.900173633716116e-05,
+    "health": 0.0005013626799857507
+   },
+   "exfil": 0.19878620504028238
+  },
+  {
+   "id": "credentials-near-011",
+   "split": "test",
+   "ms": 318.8,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.77366,
+   "confidence": 0.6619800013344898,
+   "probabilities": {
+    "none": 0.22634008823327254,
+    "credentials": 0.7512956202399484,
+    "personal_data": 0.006835036497563638,
+    "customer_data": 0.0010621781918295245,
+    "source_code": 0.013480932605903028,
+    "financial": 0.00014402456113068375,
+    "health": 0.0008421196703520449
+   },
+   "exfil": 0.2722875028301539
+  },
+  {
+   "id": "credentials-near-012",
+   "split": "test",
+   "ms": 326.9,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.493918,
+   "confidence": 0.4977046699138026,
+   "probabilities": {
+    "none": 0.5060822936036135,
+    "credentials": 0.39972751174890386,
+    "personal_data": 0.08252746250563785,
+    "customer_data": 0.004129731090370981,
+    "source_code": 0.00737812322266145,
+    "financial": 3.880289018617562e-05,
+    "health": 0.0001160749386260714
+   },
+   "exfil": 0.18380642684496462
+  },
+  {
+   "id": "credentials-near-013",
+   "split": "calibration",
+   "ms": 313.8,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.776033,
+   "confidence": 0.7009684243365484,
+   "probabilities": {
+    "none": 0.22396686539570654,
+    "credentials": 0.7685338420974519,
+    "personal_data": 0.00470738370339352,
+    "customer_data": 0.0006336963317568636,
+    "source_code": 0.001655538739753062,
+    "financial": 3.733289299937037e-05,
+    "health": 0.00046534083893882673
+   },
+   "exfil": 0.31084800690421965
+  },
+  {
+   "id": "credentials-near-014",
+   "split": "test",
+   "ms": 331.9,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.304538,
+   "confidence": 0.6090086892213968,
+   "probabilities": {
+    "none": 0.6954620461319168,
+    "credentials": 0.2590911887392221,
+    "personal_data": 0.041373740345079534,
+    "customer_data": 0.0016736213746534662,
+    "source_code": 0.0019018515301807634,
+    "financial": 4.741542375960388e-05,
+    "health": 0.0004501364551876643
+   },
+   "exfil": 0.0990323213977757
+  },
+  {
+   "id": "credentials-near-015",
+   "split": "test",
+   "ms": 315.3,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.846322,
+   "confidence": 0.712817640971023,
+   "probabilities": {
+    "none": 0.15367824331670404,
+    "credentials": 0.8212921384677404,
+    "personal_data": 0.004230645406159495,
+    "customer_data": 0.0007717225996043063,
+    "source_code": 0.019585607468655505,
+    "financial": 8.819027891411389e-05,
+    "health": 0.00035345246222222477
+   },
+   "exfil": 0.3308393004566926
+  },
+  {
+   "id": "credentials-near-016",
+   "split": "calibration",
+   "ms": 326.4,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.951105,
+   "confidence": 0.8902440377915074,
+   "probabilities": {
+    "none": 0.048894750152144964,
+    "credentials": 0.9488745856264984,
+    "personal_data": 0.0011791224807631755,
+    "customer_data": 0.00022027636403922234,
+    "source_code": 0.0006493327356427402,
+    "financial": 2.4987911663793624e-05,
+    "health": 0.00015694472924778093
+   },
+   "exfil": 0.425713424919393
+  },
+  {
+   "id": "credentials-near-017",
+   "split": "test",
+   "ms": 321.3,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.867568,
+   "confidence": 0.7666062552297142,
+   "probabilities": {
+    "none": 0.13243157848260795,
+    "credentials": 0.8569728271324291,
+    "personal_data": 0.009102815458172674,
+    "customer_data": 0.0006144133770375082,
+    "source_code": 0.0006133078058499315,
+    "financial": 4.227386575205329e-05,
+    "health": 0.00022278387815078595
+   },
+   "exfil": 0.20665879808436716
+  },
+  {
+   "id": "credentials-near-018",
+   "split": "test",
+   "ms": 349.7,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.722994,
+   "confidence": 0.6390384232315971,
+   "probabilities": {
+    "none": 0.2770057789006606,
+    "credentials": 0.7017151788599324,
+    "personal_data": 0.00563116963657768,
+    "customer_data": 0.00046840454643076826,
+    "source_code": 0.014801785795678537,
+    "financial": 4.6525739136247785e-05,
+    "health": 0.0003311565215838737
+   },
+   "exfil": 0.2612145889379662
+  },
+  {
+   "id": "credentials-near-019",
+   "split": "calibration",
+   "ms": 354.5,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.731379,
+   "confidence": 0.6764006220879291,
+   "probabilities": {
+    "none": 0.26862058067358624,
+    "credentials": 0.7238521109039218,
+    "personal_data": 0.005203969033598945,
+    "customer_data": 0.00023494184383692225,
+    "source_code": 0.001983176655307916,
+    "financial": 1.7271322776896646e-05,
+    "health": 8.794956697124542e-05
+   },
+   "exfil": 0.34113821889513296
+  },
+  {
+   "id": "credentials-near-020",
+   "split": "test",
+   "ms": 330.5,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.749173,
+   "confidence": 0.6691228981158527,
+   "probabilities": {
+    "none": 0.2508265579135707,
+    "credentials": 0.735793110059813,
+    "personal_data": 0.004869415245117375,
+    "customer_data": 0.0007109997862428288,
+    "source_code": 0.007277305435549649,
+    "financial": 0.000250438929880453,
+    "health": 0.00027217262982599946
+   },
+   "exfil": 0.3198844206411924
+  },
+  {
+   "id": "credentials-near-021",
+   "split": "test",
+   "ms": 360.4,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.831537,
+   "confidence": 0.7265483896176081,
+   "probabilities": {
+    "none": 0.16846325865763206,
+    "credentials": 0.8180079218311972,
+    "personal_data": 0.010584908180745287,
+    "customer_data": 0.000576310621821593,
+    "source_code": 0.002072652637923248,
+    "financial": 3.2451033386556755e-05,
+    "health": 0.0002624970372942211
+   },
+   "exfil": 0.20061150114496834
+  },
+  {
+   "id": "credentials-near-022",
+   "split": "calibration",
+   "ms": 325.6,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.140108,
+   "confidence": 0.7241909935454293,
+   "probabilities": {
+    "none": 0.8598915010155929,
+    "credentials": 0.08929011328606065,
+    "personal_data": 0.03713797744632886,
+    "customer_data": 0.000942810018426538,
+    "source_code": 0.010389288783955215,
+    "financial": 0.00018784003065005784,
+    "health": 0.002160469418985825
+   },
+   "exfil": 0.1169892456815806
+  },
+  {
+   "id": "credentials-near-023",
+   "split": "test",
+   "ms": 373.6,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.609667,
+   "confidence": 0.6136545348606723,
+   "probabilities": {
+    "none": 0.39033307362403874,
+    "credentials": 0.5945424009086753,
+    "personal_data": 0.004107507716712343,
+    "customer_data": 0.00027505992002344455,
+    "source_code": 0.010310213987328612,
+    "financial": 3.0301623933213448e-05,
+    "health": 0.00040144221928853303
+   },
+   "exfil": 0.2254139411940459
+  },
+  {
+   "id": "credentials-near-024",
+   "split": "test",
+   "ms": 336.0,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.917627,
+   "confidence": 0.8288836893247243,
+   "probabilities": {
+    "none": 0.0823725831005986,
+    "credentials": 0.910471568771692,
+    "personal_data": 0.0036206633268611953,
+    "customer_data": 0.00022654657747411128,
+    "source_code": 0.0031247093457786408,
+    "financial": 2.7794031165958955e-05,
+    "health": 0.00015613484642938572
+   },
+   "exfil": 0.27574182281429405
+  },
+  {
+   "id": "personal_data-near-001",
+   "split": "calibration",
+   "ms": 347.5,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.431019,
+   "confidence": 0.5787885136636692,
+   "probabilities": {
+    "none": 0.5689814677334873,
+    "credentials": 0.018417865236169093,
+    "personal_data": 0.4006095045734344,
+    "customer_data": 0.010537183079245246,
+    "source_code": 0.0009361204935877035,
+    "financial": 0.00017705240084717368,
+    "health": 0.0003408064832290233
+   },
+   "exfil": 0.06404531353472136
+  },
+  {
+   "id": "personal_data-near-002",
+   "split": "test",
+   "ms": 336.6,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.830884,
+   "confidence": 0.7007637808895504,
+   "probabilities": {
+    "none": 0.16911576026758027,
+    "credentials": 0.009127176867042147,
+    "personal_data": 0.8079888439885051,
+    "customer_data": 0.011528681510091995,
+    "source_code": 0.0016960404687434605,
+    "financial": 0.00045143003099333274,
+    "health": 9.206686704381681e-05
+   },
+   "exfil": 0.18843362984932896
+  },
+  {
+   "id": "personal_data-near-003",
+   "split": "test",
+   "ms": 395.3,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.853365,
+   "confidence": 0.708633294035232,
+   "probabilities": {
+    "none": 0.14663516405679675,
+    "credentials": 0.016737379613056807,
+    "personal_data": 0.8248082492659146,
+    "customer_data": 0.010381534353408144,
+    "source_code": 0.0007030207231852552,
+    "financial": 0.0006204704138264725,
+    "health": 0.00011418157381183077
+   },
+   "exfil": 0.3740080020844862
+  },
+  {
+   "id": "personal_data-near-004",
+   "split": "calibration",
+   "ms": 378.8,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.883162,
+   "confidence": 0.7813970331799404,
+   "probabilities": {
+    "none": 0.1168378585464166,
+    "credentials": 0.0059763512703170036,
+    "personal_data": 0.8727652385899796,
+    "customer_data": 0.004170701612801023,
+    "source_code": 0.00013839351696957175,
+    "financial": 8.206240911852633e-05,
+    "health": 2.9394054397793284e-05
+   },
+   "exfil": 0.15157641960356832
+  },
+  {
+   "id": "personal_data-near-005",
+   "split": "test",
+   "ms": 367.6,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.854566,
+   "confidence": 0.749182614337582,
+   "probabilities": {
+    "none": 0.14543369556150945,
+    "credentials": 0.0035211513946806785,
+    "personal_data": 0.842358126828555,
+    "customer_data": 0.008275598283753313,
+    "source_code": 0.00024066545278369675,
+    "financial": 0.00011764138650766578,
+    "health": 5.31210922101879e-05
+   },
+   "exfil": 0.08822440140454398
+  },
+  {
+   "id": "personal_data-near-006",
+   "split": "test",
+   "ms": 324.8,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.525477,
+   "confidence": 0.38666454537274075,
+   "probabilities": {
+    "none": 0.4745230102083955,
+    "credentials": 0.06347442553073716,
+    "personal_data": 0.3482348357146457,
+    "customer_data": 0.005553785962847764,
+    "source_code": 0.006915543350592265,
+    "financial": 0.0003321240172422408,
+    "health": 0.1009662752155392
+   },
+   "exfil": 0.16423980406270328
+  },
+  {
+   "id": "personal_data-near-007",
+   "split": "calibration",
+   "ms": 398.8,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.203746,
+   "confidence": 0.6200562690697042,
+   "probabilities": {
+    "none": 0.7962541735529177,
+    "credentials": 0.06113129432486104,
+    "personal_data": 0.08303166468321575,
+    "customer_data": 0.05705371288384183,
+    "source_code": 0.001704672141395967,
+    "financial": 0.0001181499241074325,
+    "health": 0.0007063324896602679
+   },
+   "exfil": 0.11621828184372729
+  },
+  {
+   "id": "personal_data-near-008",
+   "split": "test",
+   "ms": 323.7,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.407067,
+   "confidence": 0.6008454010398036,
+   "probabilities": {
+    "none": 0.5929327740324991,
+    "credentials": 0.014919400041359283,
+    "personal_data": 0.3860643007546037,
+    "customer_data": 0.0037016818121162975,
+    "source_code": 0.0018891633553722842,
+    "financial": 0.00015630483571397045,
+    "health": 0.00033637516833528314
+   },
+   "exfil": 0.12921033001708968
+  },
+  {
+   "id": "personal_data-near-009",
+   "split": "test",
+   "ms": 422.2,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.281161,
+   "confidence": 0.5894616463227971,
+   "probabilities": {
+    "none": 0.7188385884460525,
+    "credentials": 0.025507970260231435,
+    "personal_data": 0.21841700961388483,
+    "customer_data": 0.034029038347615836,
+    "source_code": 0.0022663281146732316,
+    "financial": 9.242808920686511e-05,
+    "health": 0.0008486371283354107
+   },
+   "exfil": 0.0880135312013597
+  },
+  {
+   "id": "personal_data-near-010",
+   "split": "calibration",
+   "ms": 323.2,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.831596,
+   "confidence": 0.7274096703629371,
+   "probabilities": {
+    "none": 0.16840363188262458,
+    "credentials": 0.008062755666618265,
+    "personal_data": 0.8187421661282802,
+    "customer_data": 0.004222018171989115,
+    "source_code": 0.0003545610062594672,
+    "financial": 0.00015739064465720927,
+    "health": 5.747649957105207e-05
+   },
+   "exfil": 0.1467422986428999
+  },
+  {
+   "id": "personal_data-near-011",
+   "split": "test",
+   "ms": 335.6,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.160819,
+   "confidence": 0.6623802665937548,
+   "probabilities": {
+    "none": 0.8391805535137536,
+    "credentials": 0.0770818520556771,
+    "personal_data": 0.046200773162844155,
+    "customer_data": 0.003740267189109589,
+    "source_code": 0.01723633401774284,
+    "financial": 0.00765815290336913,
+    "health": 0.008902067157503376
+   },
+   "exfil": 0.10320646688065378
+  },
+  {
+   "id": "personal_data-near-012",
+   "split": "test",
+   "ms": 360.6,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.806423,
+   "confidence": 0.5461779629567338,
+   "probabilities": {
+    "none": 0.19357651174865267,
+    "credentials": 0.0021303068680074517,
+    "personal_data": 0.6713783359288338,
+    "customer_data": 0.002701644450423609,
+    "source_code": 0.0002589882122931805,
+    "financial": 0.00017540337726778038,
+    "health": 0.12977880941452175
+   },
+   "exfil": 0.14599019684848555
+  },
+  {
+   "id": "personal_data-near-013",
+   "split": "calibration",
+   "ms": 369.0,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.404559,
+   "confidence": 0.5858885383223867,
+   "probabilities": {
+    "none": 0.5954406342483448,
+    "credentials": 0.01229290359284725,
+    "personal_data": 0.3761935212572114,
+    "customer_data": 0.013730161292377311,
+    "source_code": 0.0012178217830208715,
+    "financial": 0.00022862823476970295,
+    "health": 0.000896329591428691
+   },
+   "exfil": 0.07033976342195095
+  },
+  {
+   "id": "personal_data-near-014",
+   "split": "test",
+   "ms": 566.7,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.272155,
+   "confidence": 0.5531497527106917,
+   "probabilities": {
+    "none": 0.7278452531714671,
+    "credentials": 0.1721518568382226,
+    "personal_data": 0.04573418684498753,
+    "customer_data": 0.005324373268098745,
+    "source_code": 0.04349826129954839,
+    "financial": 0.0005211895656106959,
+    "health": 0.004924879012064838
+   },
+   "exfil": 0.10337959692619626
+  },
+  {
+   "id": "personal_data-near-015",
+   "split": "test",
+   "ms": 721.7,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.578785,
+   "confidence": 0.5657134758841815,
+   "probabilities": {
+    "none": 0.42121476720632317,
+    "credentials": 0.029547760345017954,
+    "personal_data": 0.5411228754209212,
+    "customer_data": 0.006377000042456944,
+    "source_code": 0.0012625165799484924,
+    "financial": 0.0003864378284682452,
+    "health": 8.864257686401785e-05
+   },
+   "exfil": 0.13801734962349502
+  },
+  {
+   "id": "personal_data-near-016",
+   "split": "calibration",
+   "ms": 436.4,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.078244,
+   "confidence": 0.8172131987031799,
+   "probabilities": {
+    "none": 0.9217564583519431,
+    "credentials": 0.031119841942708577,
+    "personal_data": 0.03947716930099954,
+    "customer_data": 0.004615082250208503,
+    "source_code": 0.0017207714080311205,
+    "financial": 0.00018803253350909493,
+    "health": 0.001122644212600197
+   },
+   "exfil": 0.1253929984083555
+  },
+  {
+   "id": "personal_data-near-017",
+   "split": "test",
+   "ms": 338.7,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.420501,
+   "confidence": 0.5009304315663641,
+   "probabilities": {
+    "none": 0.5794992215599548,
+    "credentials": 0.07219991395832949,
+    "personal_data": 0.3228107094195542,
+    "customer_data": 0.024003608656476872,
+    "source_code": 0.0011093306177144338,
+    "financial": 6.176209629472448e-05,
+    "health": 0.0003154536916755491
+   },
+   "exfil": 0.11373176411486867
+  },
+  {
+   "id": "personal_data-near-018",
+   "split": "test",
+   "ms": 367.8,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.752095,
+   "confidence": 0.6493146601503215,
+   "probabilities": {
+    "none": 0.24790537153528913,
+    "credentials": 0.0072664624687732715,
+    "personal_data": 0.7292239035501632,
+    "customer_data": 0.014332611472956482,
+    "source_code": 0.0006303799360146312,
+    "financial": 0.0001875336014400037,
+    "health": 0.0004537374353631434
+   },
+   "exfil": 0.10871566087648135
+  },
+  {
+   "id": "personal_data-near-019",
+   "split": "calibration",
+   "ms": 392.1,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.709701,
+   "confidence": 0.5536294905752043,
+   "probabilities": {
+    "none": 0.290299153250988,
+    "credentials": 0.027545100347207797,
+    "personal_data": 0.6520068191074951,
+    "customer_data": 0.02118007109549252,
+    "source_code": 0.005690847050029602,
+    "financial": 0.0023758118390258516,
+    "health": 0.0009021973097611974
+   },
+   "exfil": 0.21946032333454427
+  },
+  {
+   "id": "personal_data-near-020",
+   "split": "test",
+   "ms": 335.1,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.336443,
+   "confidence": 0.5900640398661174,
+   "probabilities": {
+    "none": 0.6635570071257186,
+    "credentials": 0.03482760114772828,
+    "personal_data": 0.29275818948642196,
+    "customer_data": 0.006032399315196862,
+    "source_code": 0.0023473558919588433,
+    "financial": 0.00015342202796146936,
+    "health": 0.00032402500501391997
+   },
+   "exfil": 0.12633817433084896
+  },
+  {
+   "id": "personal_data-near-021",
+   "split": "test",
+   "ms": 384.4,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.767305,
+   "confidence": 0.6864286065314216,
+   "probabilities": {
+    "none": 0.2326954185156018,
+    "credentials": 0.004649566664093186,
+    "personal_data": 0.7561985622254723,
+    "customer_data": 0.0059871756429326056,
+    "source_code": 0.0003338228761934926,
+    "financial": 8.218967870405423e-05,
+    "health": 5.3264397002308696e-05
+   },
+   "exfil": 0.13973170961667117
+  },
+  {
+   "id": "personal_data-near-022",
+   "split": "calibration",
+   "ms": 384.8,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.975575,
+   "confidence": 0.5821888666644167,
+   "probabilities": {
+    "none": 0.024425492255407653,
+    "credentials": 0.0032159020282033868,
+    "personal_data": 0.45377502410781556,
+    "customer_data": 0.5180217581288142,
+    "source_code": 0.0004142566563280267,
+    "financial": 0.00010201180035223259,
+    "health": 4.555502307888027e-05
+   },
+   "exfil": 0.14946540151358834
+  },
+  {
+   "id": "personal_data-near-023",
+   "split": "test",
+   "ms": 331.0,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.810263,
+   "confidence": 0.5449231368814366,
+   "probabilities": {
+    "none": 0.18973694231851126,
+    "credentials": 0.014517417074113297,
+    "personal_data": 0.7079982605514196,
+    "customer_data": 0.07325623054336441,
+    "source_code": 0.006512782405119002,
+    "financial": 0.007626190374235554,
+    "health": 0.00035217673323683735
+   },
+   "exfil": 0.10510714924790811
+  },
+  {
+   "id": "personal_data-near-024",
+   "split": "test",
+   "ms": 338.7,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.19498,
+   "confidence": 0.6915624530795625,
+   "probabilities": {
+    "none": 0.8050203373159363,
+    "credentials": 0.015689176513231567,
+    "personal_data": 0.1685908766130261,
+    "customer_data": 0.0061519876835579995,
+    "source_code": 0.0025814316260902807,
+    "financial": 0.0012047252691458105,
+    "health": 0.0007614649790119817
+   },
+   "exfil": 0.08053920178361719
+  },
+  {
+   "id": "customer_data-near-001",
+   "split": "calibration",
+   "ms": 367.5,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.746303,
+   "confidence": 0.6293397212162198,
+   "probabilities": {
+    "none": 0.25369738374716133,
+    "credentials": 0.005723045180944456,
+    "personal_data": 0.023743809515476305,
+    "customer_data": 0.7146782432572206,
+    "source_code": 0.0014620824510365425,
+    "financial": 8.472502321811245e-05,
+    "health": 0.0006107108249427436
+   },
+   "exfil": 0.07010216236183218
+  },
+  {
+   "id": "customer_data-near-002",
+   "split": "test",
+   "ms": 332.7,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.888719,
+   "confidence": 0.7515707205671979,
+   "probabilities": {
+    "none": 0.11128104603418543,
+    "credentials": 0.004179369714052652,
+    "personal_data": 0.019490603599589013,
+    "customer_data": 0.8632694655036154,
+    "source_code": 0.0013078329209846933,
+    "financial": 8.155871164302227e-05,
+    "health": 0.0003901235159297596
+   },
+   "exfil": 0.06352000771724674
+  },
+  {
+   "id": "customer_data-near-003",
+   "split": "test",
+   "ms": 766.2,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.882592,
+   "confidence": 0.4116025989828769,
+   "probabilities": {
+    "none": 0.11740779035149204,
+    "credentials": 0.00779135019604576,
+    "personal_data": 0.010833659365377746,
+    "customer_data": 0.4963913800795777,
+    "source_code": 0.014300669358033188,
+    "financial": 0.3472198633676851,
+    "health": 0.00605528728178836
+   },
+   "exfil": 0.10367203333858092
+  },
+  {
+   "id": "customer_data-near-004",
+   "split": "calibration",
+   "ms": 398.8,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.987282,
+   "confidence": 0.9107140458800336,
+   "probabilities": {
+    "none": 0.01271797490164478,
+    "credentials": 0.0017580329440817705,
+    "personal_data": 0.017051477543393374,
+    "customer_data": 0.9677178877303129,
+    "source_code": 0.0006048773854206769,
+    "financial": 5.357705365603488e-05,
+    "health": 9.617244149050972e-05
+   },
+   "exfil": 0.1638161099507935
+  },
+  {
+   "id": "customer_data-near-005",
+   "split": "test",
+   "ms": 331.4,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.137188,
+   "confidence": 0.6935375958871368,
+   "probabilities": {
+    "none": 0.8628119125087571,
+    "credentials": 0.03423827448253412,
+    "personal_data": 0.025499699282748648,
+    "customer_data": 0.05030910497595422,
+    "source_code": 0.02404483188330081,
+    "financial": 0.0010960960261071635,
+    "health": 0.0020000808405980616
+   },
+   "exfil": 0.10554067311137437
+  },
+  {
+   "id": "customer_data-near-006",
+   "split": "test",
+   "ms": 328.3,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.991914,
+   "confidence": 0.952739401276029,
+   "probabilities": {
+    "none": 0.008086384706632057,
+    "credentials": 0.001982077168895353,
+    "personal_data": 0.0041534096973995386,
+    "customer_data": 0.9853831082450265,
+    "source_code": 0.0002872649562790982,
+    "financial": 2.57432778118182e-05,
+    "health": 8.201194795571094e-05
+   },
+   "exfil": 0.14902466076586343
+  },
+  {
+   "id": "customer_data-near-007",
+   "split": "calibration",
+   "ms": 341.6,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.98696,
+   "confidence": 0.9365325157599944,
+   "probabilities": {
+    "none": 0.01304037439763872,
+    "credentials": 0.0013176020590391756,
+    "personal_data": 0.006031208240873923,
+    "customer_data": 0.9787758386866509,
+    "source_code": 0.000710294600403881,
+    "financial": 4.303272059491807e-05,
+    "health": 8.164929479878669e-05
+   },
+   "exfil": 0.05443386875146784
+  },
+  {
+   "id": "customer_data-near-008",
+   "split": "test",
+   "ms": 372.0,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.944009,
+   "confidence": 0.5599600888955653,
+   "probabilities": {
+    "none": 0.05599094628706303,
+    "credentials": 0.0061415912499032665,
+    "personal_data": 0.3079414131012695,
+    "customer_data": 0.6286619235091494,
+    "source_code": 0.001077015044395701,
+    "financial": 8.716640624341755e-05,
+    "health": 9.994440197567352e-05
+   },
+   "exfil": 0.09869791220619982
+  },
+  {
+   "id": "customer_data-near-009",
+   "split": "test",
+   "ms": 330.8,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.897482,
+   "confidence": 0.650060400948181,
+   "probabilities": {
+    "none": 0.10251844412602125,
+    "credentials": 0.008115471853064047,
+    "personal_data": 0.09222283464359991,
+    "customer_data": 0.796209714656146,
+    "source_code": 0.0007309847621203976,
+    "financial": 4.457675070633913e-05,
+    "health": 0.00015797320834215126
+   },
+   "exfil": 0.17659170150213005
+  },
+  {
+   "id": "customer_data-near-010",
+   "split": "calibration",
+   "ms": 419.1,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.60493,
+   "confidence": 0.4471170098888395,
+   "probabilities": {
+    "none": 0.3950697451972904,
+    "credentials": 0.033564560709864376,
+    "personal_data": 0.07839622349696201,
+    "customer_data": 0.4843746638658156,
+    "source_code": 0.007662426231419392,
+    "financial": 0.00020011892880384,
+    "health": 0.0007322615698443347
+   },
+   "exfil": 0.12628598105476344
+  },
+  {
+   "id": "customer_data-near-011",
+   "split": "test",
+   "ms": 316.9,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.154178,
+   "confidence": 0.6683886976445085,
+   "probabilities": {
+    "none": 0.8458218808403216,
+    "credentials": 0.0743675176631021,
+    "personal_data": 0.01009523111949903,
+    "customer_data": 0.02976290418161481,
+    "source_code": 0.028958333089455727,
+    "financial": 0.00406467643501364,
+    "health": 0.006929456670993095
+   },
+   "exfil": 0.18746714918062754
+  },
+  {
+   "id": "customer_data-near-012",
+   "split": "test",
+   "ms": 349.3,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.885169,
+   "confidence": 0.7657477000570663,
+   "probabilities": {
+    "none": 0.11483105734388642,
+    "credentials": 0.005506940930130066,
+    "personal_data": 0.009198288200447121,
+    "customer_data": 0.8685945748789743,
+    "source_code": 0.0013265754547947238,
+    "financial": 0.0001283197718452847,
+    "health": 0.00041424341992215836
+   },
+   "exfil": 0.12524748280109696
+  },
+  {
+   "id": "customer_data-near-013",
+   "split": "calibration",
+   "ms": 337.5,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.14085,
+   "confidence": 0.6975208296303916,
+   "probabilities": {
+    "none": 0.8591499548984799,
+    "credentials": 0.013997066222910356,
+    "personal_data": 0.005816488983169392,
+    "customer_data": 0.06300868427701385,
+    "source_code": 0.048565053836096016,
+    "financial": 0.0010459784819200127,
+    "health": 0.008416773300410614
+   },
+   "exfil": 0.044214260419523595
+  },
+  {
+   "id": "customer_data-near-014",
+   "split": "test",
+   "ms": 321.8,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.626888,
+   "confidence": 0.3249365391106833,
+   "probabilities": {
+    "none": 0.3731119523370342,
+    "credentials": 0.03368534180609344,
+    "personal_data": 0.010500883350196232,
+    "customer_data": 0.3795026376538472,
+    "source_code": 0.023243605609267585,
+    "financial": 0.17575282187263103,
+    "health": 0.004202757370930262
+   },
+   "exfil": 0.1041109806890703
+  },
+  {
+   "id": "customer_data-near-015",
+   "split": "test",
+   "ms": 348.1,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.660309,
+   "confidence": 0.5370454836581555,
+   "probabilities": {
+    "none": 0.3396908586349244,
+    "credentials": 0.57609926634214,
+    "personal_data": 0.08284187495907737,
+    "customer_data": 0.0009597284503753595,
+    "source_code": 0.0003511009432371591,
+    "financial": 1.0939546338721516e-05,
+    "health": 4.623112390694468e-05
+   },
+   "exfil": 0.19994430824286363
+  },
+  {
+   "id": "customer_data-near-016",
+   "split": "calibration",
+   "ms": 355.0,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.634277,
+   "confidence": 0.4958472281763884,
+   "probabilities": {
+    "none": 0.36572326543676836,
+    "credentials": 0.011925808411124119,
+    "personal_data": 0.08266917448421666,
+    "customer_data": 0.5364941473063526,
+    "source_code": 0.0025907726936630323,
+    "financial": 0.00013620310318707843,
+    "health": 0.0004606285646879975
+   },
+   "exfil": 0.1134183896860993
+  },
+  {
+   "id": "customer_data-near-017",
+   "split": "test",
+   "ms": 332.9,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.309905,
+   "confidence": 0.5402756666771836,
+   "probabilities": {
+    "none": 0.6900953105262185,
+    "credentials": 0.014799231142495201,
+    "personal_data": 0.16364460907729805,
+    "customer_data": 0.1291260706323977,
+    "source_code": 0.0016720467857698454,
+    "financial": 5.6139329276821506e-05,
+    "health": 0.0006065925065437968
+   },
+   "exfil": 0.058941383653679603
+  },
+  {
+   "id": "customer_data-near-018",
+   "split": "test",
+   "ms": 339.1,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.76513,
+   "confidence": 0.6670852145798979,
+   "probabilities": {
+    "none": 0.23487042254019624,
+    "credentials": 0.004785186204136123,
+    "personal_data": 0.011696095894138142,
+    "customer_data": 0.7469521536261708,
+    "source_code": 0.0012080398161718037,
+    "financial": 7.082788223130665e-05,
+    "health": 0.00041727403695570876
+   },
+   "exfil": 0.08927889666875634
+  },
+  {
+   "id": "customer_data-near-019",
+   "split": "calibration",
+   "ms": 341.2,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.445935,
+   "confidence": 0.4849326688027361,
+   "probabilities": {
+    "none": 0.5540651141761331,
+    "credentials": 0.03847320720196107,
+    "personal_data": 0.0321705931942206,
+    "customer_data": 0.3603774989944782,
+    "source_code": 0.011817843927000702,
+    "financial": 0.0003428825052170779,
+    "health": 0.002752860000989231
+   },
+   "exfil": 0.11007442561357589
+  },
+  {
+   "id": "customer_data-near-020",
+   "split": "test",
+   "ms": 443.4,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.851125,
+   "confidence": 0.40721525898861877,
+   "probabilities": {
+    "none": 0.14887478190373882,
+    "credentials": 0.010272947142555803,
+    "personal_data": 0.007759872108837777,
+    "customer_data": 0.5462799114170352,
+    "source_code": 0.020076965302410266,
+    "financial": 0.2619540011101495,
+    "health": 0.004781521015272634
+   },
+   "exfil": 0.09483345393047603
+  },
+  {
+   "id": "customer_data-near-021",
+   "split": "test",
+   "ms": 357.6,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.073766,
+   "confidence": 0.8032305281907149,
+   "probabilities": {
+    "none": 0.9262344865154547,
+    "credentials": 0.02165998472240661,
+    "personal_data": 0.006564323116495052,
+    "customer_data": 0.01752727900221527,
+    "source_code": 0.01821797930000806,
+    "financial": 0.004493039962847675,
+    "health": 0.005302907380572641
+   },
+   "exfil": 0.07410982547104304
+  },
+  {
+   "id": "customer_data-near-022",
+   "split": "calibration",
+   "ms": 316.2,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.853932,
+   "confidence": 0.6355641564250301,
+   "probabilities": {
+    "none": 0.14606829424908907,
+    "credentials": 0.008472409968330746,
+    "personal_data": 0.060267311405922,
+    "customer_data": 0.7811411235829206,
+    "source_code": 0.002788367657240271,
+    "financial": 0.0002983148618672787,
+    "health": 0.0009641782746300151
+   },
+   "exfil": 0.15963865128000249
+  },
+  {
+   "id": "customer_data-near-023",
+   "split": "test",
+   "ms": 337.7,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.542382,
+   "confidence": 0.300866411650626,
+   "probabilities": {
+    "none": 0.4576175509533879,
+    "credentials": 0.05675944450953587,
+    "personal_data": 0.011486862172904524,
+    "customer_data": 0.32117434645816506,
+    "source_code": 0.04461699795778473,
+    "financial": 0.09296212217450386,
+    "health": 0.015382675773718124
+   },
+   "exfil": 0.11807967147867963
+  },
+  {
+   "id": "customer_data-near-024",
+   "split": "test",
+   "ms": 318.8,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.268282,
+   "confidence": 0.529134698008133,
+   "probabilities": {
+    "none": 0.7317175120634432,
+    "credentials": 0.05587992354227139,
+    "personal_data": 0.05254481738188592,
+    "customer_data": 0.13422089386662706,
+    "source_code": 0.02362749553131705,
+    "financial": 0.000559955215061161,
+    "health": 0.0014494023993944394
+   },
+   "exfil": 0.09883644386406436
+  },
+  {
+   "id": "source_code-near-001",
+   "split": "calibration",
+   "ms": 338.8,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.792045,
+   "confidence": 0.6677273394562666,
+   "probabilities": {
+    "none": 0.207955144637887,
+    "credentials": 0.004941870583616358,
+    "personal_data": 0.004065166839958757,
+    "customer_data": 0.0013814153717009456,
+    "source_code": 0.7695936823395854,
+    "financial": 0.008362841841291687,
+    "health": 0.0036998783859598836
+   },
+   "exfil": 0.09047650029889646
+  },
+  {
+   "id": "source_code-near-002",
+   "split": "test",
+   "ms": 337.9,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.253798,
+   "confidence": 0.6217142565899267,
+   "probabilities": {
+    "none": 0.7462024445260297,
+    "credentials": 0.03526112955790322,
+    "personal_data": 0.005187196521544779,
+    "customer_data": 0.0014175273118659808,
+    "source_code": 0.2050552341342854,
+    "financial": 0.0018142627027101762,
+    "health": 0.005062205245660512
+   },
+   "exfil": 0.06271920782545216
+  },
+  {
+   "id": "source_code-near-003",
+   "split": "test",
+   "ms": 327.5,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.287162,
+   "confidence": 0.6090148065952699,
+   "probabilities": {
+    "none": 0.7128383465689867,
+    "credentials": 0.029347021124886446,
+    "personal_data": 0.00386025654246608,
+    "customer_data": 0.0006644754651719421,
+    "source_code": 0.245000800512979,
+    "financial": 0.005430974211987631,
+    "health": 0.0028581255735220606
+   },
+   "exfil": 0.07226039464765409
+  },
+  {
+   "id": "source_code-near-004",
+   "split": "calibration",
+   "ms": 331.4,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.166282,
+   "confidence": 0.6662903813024049,
+   "probabilities": {
+    "none": 0.8337175217211453,
+    "credentials": 0.06068249825407833,
+    "personal_data": 0.01488678159970369,
+    "customer_data": 0.004648445077418708,
+    "source_code": 0.07880807711368153,
+    "financial": 0.0018629429463675044,
+    "health": 0.005393733287604753
+   },
+   "exfil": 0.11077742682941123
+  },
+  {
+   "id": "source_code-near-005",
+   "split": "test",
+   "ms": 349.8,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.172808,
+   "confidence": 0.6653010054411146,
+   "probabilities": {
+    "none": 0.8271917784686554,
+    "credentials": 0.10233365385864901,
+    "personal_data": 0.009632330375527551,
+    "customer_data": 0.002536589286797979,
+    "source_code": 0.0438900921511141,
+    "financial": 0.0007308930813398287,
+    "health": 0.013684662777916202
+   },
+   "exfil": 0.1330935705045514
+  },
+  {
+   "id": "source_code-near-006",
+   "split": "test",
+   "ms": 342.0,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.114713,
+   "confidence": 0.7419761597273106,
+   "probabilities": {
+    "none": 0.8852869147580186,
+    "credentials": 0.037749564586090634,
+    "personal_data": 0.005714310780420272,
+    "customer_data": 0.002107830540092975,
+    "source_code": 0.05472117778623812,
+    "financial": 0.003424219189638353,
+    "health": 0.010995982359500956
+   },
+   "exfil": 0.07106208985345251
+  },
+  {
+   "id": "source_code-near-007",
+   "split": "calibration",
+   "ms": 317.2,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.794156,
+   "confidence": 0.6537950931839432,
+   "probabilities": {
+    "none": 0.2058441858076588,
+    "credentials": 0.010875273104060945,
+    "personal_data": 0.002343166656090765,
+    "customer_data": 0.0015070329932312682,
+    "source_code": 0.7648739779515672,
+    "financial": 0.010537861838039524,
+    "health": 0.004018501649351378
+   },
+   "exfil": 0.15552384721413062
+  },
+  {
+   "id": "source_code-near-008",
+   "split": "test",
+   "ms": 314.4,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.489556,
+   "confidence": 0.4861092234118978,
+   "probabilities": {
+    "none": 0.5104444454887441,
+    "credentials": 0.049862546522348464,
+    "personal_data": 0.007656768558167183,
+    "customer_data": 0.004726997537229628,
+    "source_code": 0.4107361078602474,
+    "financial": 0.006677231388382182,
+    "health": 0.009895902644880883
+   },
+   "exfil": 0.07296939720005331
+  },
+  {
+   "id": "source_code-near-009",
+   "split": "test",
+   "ms": 326.1,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.551187,
+   "confidence": 0.5652888446917268,
+   "probabilities": {
+    "none": 0.4488134924605293,
+    "credentials": 0.01680903434724014,
+    "personal_data": 0.004068166638408015,
+    "customer_data": 0.0009951840550735981,
+    "source_code": 0.5203389062001343,
+    "financial": 0.004993671363604099,
+    "health": 0.003981544935010533
+   },
+   "exfil": 0.10287363751563686
+  },
+  {
+   "id": "source_code-near-010",
+   "split": "calibration",
+   "ms": 520.4,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.701397,
+   "confidence": 0.5884447924739715,
+   "probabilities": {
+    "none": 0.2986028527191428,
+    "credentials": 0.011128002883548746,
+    "personal_data": 0.004942657437004439,
+    "customer_data": 0.0034482660983086687,
+    "source_code": 0.6667589909371407,
+    "financial": 0.007182528154466707,
+    "health": 0.007936701770388025
+   },
+   "exfil": 0.09423134940778809
+  },
+  {
+   "id": "source_code-near-011",
+   "split": "test",
+   "ms": 576.1,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.233912,
+   "confidence": 0.6171249858136559,
+   "probabilities": {
+    "none": 0.7660877275424011,
+    "credentials": 0.05432766909119899,
+    "personal_data": 0.004201366958252667,
+    "customer_data": 0.0015625752032591444,
+    "source_code": 0.16351567263130543,
+    "financial": 0.003135941568551288,
+    "health": 0.007169047005031168
+   },
+   "exfil": 0.11892443644524961
+  },
+  {
+   "id": "source_code-near-012",
+   "split": "test",
+   "ms": 349.8,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.523448,
+   "confidence": 0.5567206050655614,
+   "probabilities": {
+    "none": 0.4765524257034326,
+    "credentials": 0.01336859508465824,
+    "personal_data": 0.005318876983520594,
+    "customer_data": 0.0020006026637505716,
+    "source_code": 0.4905557446371018,
+    "financial": 0.007222167618987569,
+    "health": 0.0049815873085486545
+   },
+   "exfil": 0.0560422995321228
+  },
+  {
+   "id": "source_code-near-013",
+   "split": "calibration",
+   "ms": 374.9,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.050715,
+   "confidence": 0.8777814882867022,
+   "probabilities": {
+    "none": 0.9492848858337588,
+    "credentials": 0.04109400106451718,
+    "personal_data": 0.004613680486584589,
+    "customer_data": 0.0015757251924177424,
+    "source_code": 0.002061351521702592,
+    "financial": 0.00015578234177641637,
+    "health": 0.0012145735592425661
+   },
+   "exfil": 0.049694839560859266
+  },
+  {
+   "id": "source_code-near-014",
+   "split": "test",
+   "ms": 344.3,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.311726,
+   "confidence": 0.5400773558603428,
+   "probabilities": {
+    "none": 0.6882741630930371,
+    "credentials": 0.04991321933650157,
+    "personal_data": 0.21864870719951818,
+    "customer_data": 0.003973131930550568,
+    "source_code": 0.03775733434466939,
+    "financial": 0.0003220008197110325,
+    "health": 0.001111443276012256
+   },
+   "exfil": 0.12455286879248066
+  },
+  {
+   "id": "source_code-near-015",
+   "split": "test",
+   "ms": 378.5,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.334623,
+   "confidence": 0.5239534847861009,
+   "probabilities": {
+    "none": 0.6653773128311667,
+    "credentials": 0.06830214790604461,
+    "personal_data": 0.0055475235145720616,
+    "customer_data": 0.002585197248032052,
+    "source_code": 0.23992335237540188,
+    "financial": 0.006995573409406859,
+    "health": 0.011268892715375692
+   },
+   "exfil": 0.09397835503978175
+  },
+  {
+   "id": "source_code-near-016",
+   "split": "calibration",
+   "ms": 431.2,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.317582,
+   "confidence": 0.5445217376242031,
+   "probabilities": {
+    "none": 0.6824176075575905,
+    "credentials": 0.06686286637487329,
+    "personal_data": 0.010172715457491214,
+    "customer_data": 0.001735811327692706,
+    "source_code": 0.22969485773281145,
+    "financial": 0.004107296007003245,
+    "health": 0.005008845542537474
+   },
+   "exfil": 0.09484392465782648
+  },
+  {
+   "id": "source_code-near-017",
+   "split": "test",
+   "ms": 474.2,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.183772,
+   "confidence": 0.6200687945633303,
+   "probabilities": {
+    "none": 0.8162277424793539,
+    "credentials": 0.04297230758427134,
+    "personal_data": 0.018780230340254712,
+    "customer_data": 0.041144854110558994,
+    "source_code": 0.07338333672653728,
+    "financial": 0.0017315869949943233,
+    "health": 0.0057599417640294415
+   },
+   "exfil": 0.13136549209065643
+  },
+  {
+   "id": "source_code-near-018",
+   "split": "test",
+   "ms": 520.0,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.536433,
+   "confidence": 0.5494517932497438,
+   "probabilities": {
+    "none": 0.46356660877295996,
+    "credentials": 0.011832792472500034,
+    "personal_data": 0.007002679006408211,
+    "customer_data": 0.0028637379642328384,
+    "source_code": 0.500505140070378,
+    "financial": 0.008931110800261223,
+    "health": 0.005297930913259668
+   },
+   "exfil": 0.06747079605567867
+  },
+  {
+   "id": "source_code-near-019",
+   "split": "calibration",
+   "ms": 508.7,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.208532,
+   "confidence": 0.6347634287941608,
+   "probabilities": {
+    "none": 0.7914683702164809,
+    "credentials": 0.13479821035898076,
+    "personal_data": 0.00612663588751128,
+    "customer_data": 0.0021855862204938985,
+    "source_code": 0.0562201274670496,
+    "financial": 0.0031561048172994866,
+    "health": 0.0060449650321843535
+   },
+   "exfil": 0.10719627825293385
+  },
+  {
+   "id": "source_code-near-020",
+   "split": "test",
+   "ms": 481.4,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.169451,
+   "confidence": 0.6674973275936205,
+   "probabilities": {
+    "none": 0.8305488836061717,
+    "credentials": 0.05311952596349038,
+    "personal_data": 0.008931374818557889,
+    "customer_data": 0.00283456404160406,
+    "source_code": 0.09349620647265344,
+    "financial": 0.0032570420033987235,
+    "health": 0.007812403094123833
+   },
+   "exfil": 0.0973783236605011
+  },
+  {
+   "id": "source_code-near-021",
+   "split": "test",
+   "ms": 436.6,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.184371,
+   "confidence": 0.6646928068422888,
+   "probabilities": {
+    "none": 0.8156285883162887,
+    "credentials": 0.025088818516144373,
+    "personal_data": 0.11644046998812817,
+    "customer_data": 0.041172722760419236,
+    "source_code": 0.0010605409919771506,
+    "financial": 0.0001133500660775264,
+    "health": 0.0004955093609649794
+   },
+   "exfil": 0.08527979585784008
+  },
+  {
+   "id": "source_code-near-022",
+   "split": "calibration",
+   "ms": 443.7,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.463848,
+   "confidence": 0.4678000610759374,
+   "probabilities": {
+    "none": 0.5361519287320883,
+    "credentials": 0.08571634123870994,
+    "personal_data": 0.011144554787229352,
+    "customer_data": 0.0025969148041100377,
+    "source_code": 0.35326264570270116,
+    "financial": 0.004818733225932024,
+    "health": 0.0063088815092291264
+   },
+   "exfil": 0.15637343446514357
+  },
+  {
+   "id": "source_code-near-023",
+   "split": "test",
+   "ms": 412.2,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.234603,
+   "confidence": 0.6412445683719996,
+   "probabilities": {
+    "none": 0.7653972594107722,
+    "credentials": 0.18419074237751154,
+    "personal_data": 0.0044187376960388705,
+    "customer_data": 0.0006479078667538397,
+    "source_code": 0.042093360309070904,
+    "financial": 0.00037784923635767115,
+    "health": 0.0028741431034951777
+   },
+   "exfil": 0.1099220565547897
+  },
+  {
+   "id": "source_code-near-024",
+   "split": "test",
+   "ms": 405.1,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.491763,
+   "confidence": 0.5326229637201556,
+   "probabilities": {
+    "none": 0.5082373603460205,
+    "credentials": 0.020324608073915392,
+    "personal_data": 0.007223724189318895,
+    "customer_data": 0.00451942206698289,
+    "source_code": 0.44646262389073393,
+    "financial": 0.0056705257647191734,
+    "health": 0.007561735668309125
+   },
+   "exfil": 0.07823372439963265
+  },
+  {
+   "id": "financial-near-001",
+   "split": "calibration",
+   "ms": 540.8,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.82306,
+   "confidence": 0.6216558288725675,
+   "probabilities": {
+    "none": 0.17694006808602059,
+    "credentials": 0.004091158426583716,
+    "personal_data": 0.002160004948072873,
+    "customer_data": 0.004752312422886911,
+    "source_code": 0.041977595307242994,
+    "financial": 0.7642422402653802,
+    "health": 0.0058366205438126
+   },
+   "exfil": 0.07663088060508531
+  },
+  {
+   "id": "financial-near-002",
+   "split": "test",
+   "ms": 398.2,
+   "category": "financial",
+   "choice": "none",
+   "p_category": 0.574995,
+   "confidence": 0.38924681813661055,
+   "probabilities": {
+    "none": 0.4250048351653205,
+    "credentials": 0.020613673354093986,
+    "personal_data": 0.006249752293350416,
+    "customer_data": 0.020823112723304976,
+    "source_code": 0.11348273565868708,
+    "financial": 0.41028528835688927,
+    "health": 0.003540602448353695
+   },
+   "exfil": 0.15695101176756812
+  },
+  {
+   "id": "financial-near-003",
+   "split": "test",
+   "ms": 424.4,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.769529,
+   "confidence": 0.37063968802925185,
+   "probabilities": {
+    "none": 0.2304709923351459,
+    "credentials": 0.018933085641554583,
+    "personal_data": 0.22243288931676028,
+    "customer_data": 0.007861232738370777,
+    "source_code": 0.014761419379174938,
+    "financial": 0.499709985370708,
+    "health": 0.005830395218285471
+   },
+   "exfil": 0.1497799298072256
+  },
+  {
+   "id": "financial-near-004",
+   "split": "calibration",
+   "ms": 495.8,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.65495,
+   "confidence": 0.4941220176995934,
+   "probabilities": {
+    "none": 0.345049887484353,
+    "credentials": 0.019801317053913057,
+    "personal_data": 0.010142342417260334,
+    "customer_data": 0.019989988082647746,
+    "source_code": 0.014179891580082878,
+    "financial": 0.5825597083330393,
+    "health": 0.00827686504870365
+   },
+   "exfil": 0.1258530666437939
+  },
+  {
+   "id": "financial-near-005",
+   "split": "test",
+   "ms": 370.4,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.793091,
+   "confidence": 0.5257686029198528,
+   "probabilities": {
+    "none": 0.2069085868813437,
+    "credentials": 0.014397067213654267,
+    "personal_data": 0.012248499336831524,
+    "customer_data": 0.03866193009628299,
+    "source_code": 0.020478600792365666,
+    "financial": 0.7019414264469991,
+    "health": 0.005363889232522894
+   },
+   "exfil": 0.1400428853655223
+  },
+  {
+   "id": "financial-near-006",
+   "split": "test",
+   "ms": 475.9,
+   "category": "financial",
+   "choice": "none",
+   "p_category": 0.40247,
+   "confidence": 0.5017023137779908,
+   "probabilities": {
+    "none": 0.59753013090615,
+    "credentials": 0.020630001933879462,
+    "personal_data": 0.0032930049404933832,
+    "customer_data": 0.002456881318247988,
+    "source_code": 0.053980883020499346,
+    "financial": 0.3171038526096326,
+    "health": 0.005005245271097256
+   },
+   "exfil": 0.0888048499654744
+  },
+  {
+   "id": "financial-near-007",
+   "split": "calibration",
+   "ms": 413.5,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.197595,
+   "confidence": 0.5969298591936025,
+   "probabilities": {
+    "none": 0.8024050643296214,
+    "credentials": 0.06002928764947245,
+    "personal_data": 0.07365890638663809,
+    "customer_data": 0.027677207567435615,
+    "source_code": 0.02681645473641591,
+    "financial": 0.0042011686127024495,
+    "health": 0.005211910717714109
+   },
+   "exfil": 0.21168661729721852
+  },
+  {
+   "id": "financial-near-008",
+   "split": "test",
+   "ms": 382.0,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.783158,
+   "confidence": 0.6091332543880597,
+   "probabilities": {
+    "none": 0.21684202855055568,
+    "credentials": 0.008897576874789443,
+    "personal_data": 0.005530535208839425,
+    "customer_data": 0.005600425500246442,
+    "source_code": 0.0159285867573606,
+    "financial": 0.7388919402848831,
+    "health": 0.008308906823325288
+   },
+   "exfil": 0.07655370838416878
+  },
+  {
+   "id": "financial-near-009",
+   "split": "test",
+   "ms": 340.0,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.795861,
+   "confidence": 0.6309819765279117,
+   "probabilities": {
+    "none": 0.2041392263854566,
+    "credentials": 0.005733919276043289,
+    "personal_data": 0.0036281102168914865,
+    "customer_data": 0.006897614280673323,
+    "source_code": 0.014146724179081329,
+    "financial": 0.75742833263345,
+    "health": 0.008026073028404001
+   },
+   "exfil": 0.1294663351881046
+  },
+  {
+   "id": "financial-near-010",
+   "split": "calibration",
+   "ms": 317.7,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.078395,
+   "confidence": 0.8040604417487254,
+   "probabilities": {
+    "none": 0.9216046686760856,
+    "credentials": 0.04061376954157432,
+    "personal_data": 0.016436886692870478,
+    "customer_data": 0.0022356348818607426,
+    "source_code": 0.0071168224976416615,
+    "financial": 0.0027992835460694796,
+    "health": 0.009192934163897624
+   },
+   "exfil": 0.07177803931866314
+  },
+  {
+   "id": "financial-near-011",
+   "split": "test",
+   "ms": 346.2,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.828321,
+   "confidence": 0.6056457047750258,
+   "probabilities": {
+    "none": 0.17167850387221545,
+    "credentials": 0.007574398594958548,
+    "personal_data": 0.00537974721214383,
+    "customer_data": 0.01956721331944769,
+    "source_code": 0.024107968831951307,
+    "financial": 0.7661294825165376,
+    "health": 0.005562685652745609
+   },
+   "exfil": 0.10001485282486772
+  },
+  {
+   "id": "financial-near-012",
+   "split": "test",
+   "ms": 359.8,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.48703,
+   "confidence": 0.4590795438044961,
+   "probabilities": {
+    "none": 0.5129697816263192,
+    "credentials": 0.03447318527428646,
+    "personal_data": 0.39486501194834384,
+    "customer_data": 0.030762542929692563,
+    "source_code": 0.013185964508577777,
+    "financial": 0.012550592784510773,
+    "health": 0.0011929209282693634
+   },
+   "exfil": 0.11911163555239658
+  },
+  {
+   "id": "financial-near-013",
+   "split": "calibration",
+   "ms": 417.2,
+   "category": "financial",
+   "choice": "none",
+   "p_category": 0.268464,
+   "confidence": 0.570279951898109,
+   "probabilities": {
+    "none": 0.7315357375523474,
+    "credentials": 0.02973890079093213,
+    "personal_data": 0.006729094985154092,
+    "customer_data": 0.0069906418339196336,
+    "source_code": 0.013706030569968723,
+    "financial": 0.19883752285712714,
+    "health": 0.012462071410550852
+   },
+   "exfil": 0.07360153728189718
+  },
+  {
+   "id": "financial-near-014",
+   "split": "test",
+   "ms": 385.4,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.81128,
+   "confidence": 0.520589433856679,
+   "probabilities": {
+    "none": 0.18872020138956483,
+    "credentials": 0.016184564646278845,
+    "personal_data": 0.006173130352303227,
+    "customer_data": 0.009995856407546527,
+    "source_code": 0.06415005669756865,
+    "financial": 0.7035384044622539,
+    "health": 0.011237786044484053
+   },
+   "exfil": 0.15790532889878062
+  },
+  {
+   "id": "financial-near-015",
+   "split": "test",
+   "ms": 418.9,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.863687,
+   "confidence": 0.6539662298820964,
+   "probabilities": {
+    "none": 0.13631344185688646,
+    "credentials": 0.007787045589291793,
+    "personal_data": 0.0036603671618501486,
+    "customer_data": 0.0051737338822999395,
+    "source_code": 0.03306123653662652,
+    "financial": 0.8079112814783117,
+    "health": 0.006092893494733421
+   },
+   "exfil": 0.12082000475812507
+  },
+  {
+   "id": "financial-near-016",
+   "split": "calibration",
+   "ms": 512.9,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.78445,
+   "confidence": 0.5317505188790999,
+   "probabilities": {
+    "none": 0.21554977330444108,
+    "credentials": 0.021052671931170396,
+    "personal_data": 0.007368001505076105,
+    "customer_data": 0.006296994956791427,
+    "source_code": 0.04786320587872319,
+    "financial": 0.6953308488245236,
+    "health": 0.006538503599274242
+   },
+   "exfil": 0.206831448643488
+  },
+  {
+   "id": "financial-near-017",
+   "split": "test",
+   "ms": 437.3,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.801729,
+   "confidence": 0.6194415833829866,
+   "probabilities": {
+    "none": 0.19827061350770675,
+    "credentials": 0.010094999931496748,
+    "personal_data": 0.00867969042448848,
+    "customer_data": 0.007537134453480451,
+    "source_code": 0.011139417588298232,
+    "financial": 0.757299608729542,
+    "health": 0.006978535364987216
+   },
+   "exfil": 0.11970287390082344
+  },
+  {
+   "id": "financial-near-018",
+   "split": "test",
+   "ms": 413.0,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.264936,
+   "confidence": 0.5159032388135449,
+   "probabilities": {
+    "none": 0.7350637718714113,
+    "credentials": 0.10954210247468447,
+    "personal_data": 0.026146482617413674,
+    "customer_data": 0.005175367189884954,
+    "source_code": 0.02474743872359691,
+    "financial": 0.09037605262239519,
+    "health": 0.00894878450061335
+   },
+   "exfil": 0.12714882494618587
+  },
+  {
+   "id": "financial-near-019",
+   "split": "calibration",
+   "ms": 449.2,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.675536,
+   "confidence": 0.46582119066925143,
+   "probabilities": {
+    "none": 0.3244644440811114,
+    "credentials": 0.030440277735544863,
+    "personal_data": 0.007593504009777897,
+    "customer_data": 0.012338174999932783,
+    "source_code": 0.033744481367714234,
+    "financial": 0.5811806519582863,
+    "health": 0.010238465847632525
+   },
+   "exfil": 0.17865454821691867
+  },
+  {
+   "id": "financial-near-020",
+   "split": "test",
+   "ms": 431.9,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.654811,
+   "confidence": 0.48915011583073054,
+   "probabilities": {
+    "none": 0.34518947624693613,
+    "credentials": 0.008769102988233538,
+    "personal_data": 0.015355772735627797,
+    "customer_data": 0.019593333072611206,
+    "source_code": 0.02696625667602346,
+    "financial": 0.5782865369709456,
+    "health": 0.005839521309622323
+   },
+   "exfil": 0.10510499571235286
+  },
+  {
+   "id": "financial-near-021",
+   "split": "test",
+   "ms": 399.0,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.823042,
+   "confidence": 0.4510115460094626,
+   "probabilities": {
+    "none": 0.17695785539089898,
+    "credentials": 0.012090558986835667,
+    "personal_data": 0.01027961631757634,
+    "customer_data": 0.6160717726075974,
+    "source_code": 0.00870020183408669,
+    "financial": 0.1726991496971525,
+    "health": 0.0032008451658524697
+   },
+   "exfil": 0.07376086898348
+  },
+  {
+   "id": "financial-near-022",
+   "split": "calibration",
+   "ms": 447.0,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.9245,
+   "confidence": 0.7701515950023211,
+   "probabilities": {
+    "none": 0.07549986667717619,
+    "credentials": 0.006186257831765721,
+    "personal_data": 0.006369593644929285,
+    "customer_data": 0.0050180469413682585,
+    "source_code": 0.009272937861108912,
+    "financial": 0.8943803096103302,
+    "health": 0.0032729874333215113
+   },
+   "exfil": 0.16980453173314658
+  },
+  {
+   "id": "financial-near-023",
+   "split": "test",
+   "ms": 423.8,
+   "category": "financial",
+   "choice": "none",
+   "p_category": 0.612533,
+   "confidence": 0.30548493524833487,
+   "probabilities": {
+    "none": 0.38746722088431845,
+    "credentials": 0.034758689492311014,
+    "personal_data": 0.007381156434544288,
+    "customer_data": 0.045937962089548076,
+    "source_code": 0.1470345467830883,
+    "financial": 0.36910375639272464,
+    "health": 0.008316667923465299
+   },
+   "exfil": 0.16017055969695893
+  },
+  {
+   "id": "financial-near-024",
+   "split": "test",
+   "ms": 427.7,
+   "category": "financial",
+   "choice": "financial",
+   "p_category": 0.68424,
+   "confidence": 0.48438478401575136,
+   "probabilities": {
+    "none": 0.31575975717351057,
+    "credentials": 0.011549733142050515,
+    "personal_data": 0.0035330740001129424,
+    "customer_data": 0.003770188418529736,
+    "source_code": 0.0644497334102698,
+    "financial": 0.5875721569294787,
+    "health": 0.013365356926047716
+   },
+   "exfil": 0.1585689184899201
+  },
+  {
+   "id": "health-near-001",
+   "split": "calibration",
+   "ms": 430.1,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.930791,
+   "confidence": 0.8300772818328028,
+   "probabilities": {
+    "none": 0.06920864727120647,
+    "credentials": 0.0008656032187393703,
+    "personal_data": 0.008042102167614779,
+    "customer_data": 0.0022701969709549214,
+    "source_code": 0.001065230149743291,
+    "financial": 0.00018735556538114064,
+    "health": 0.91836086465636
+   },
+   "exfil": 0.11338464153124975
+  },
+  {
+   "id": "health-near-002",
+   "split": "test",
+   "ms": 461.3,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.994089,
+   "confidence": 0.7699852323193971,
+   "probabilities": {
+    "none": 0.005911393665045765,
+    "credentials": 0.00042316320414793353,
+    "personal_data": 0.12908082354195025,
+    "customer_data": 0.0025130490872226083,
+    "source_code": 0.0006470906051695547,
+    "financial": 0.00014545015208124553,
+    "health": 0.8612790297443825
+   },
+   "exfil": 0.07482494670577615
+  },
+  {
+   "id": "health-near-003",
+   "split": "test",
+   "ms": 472.8,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.847271,
+   "confidence": 0.7585390349669541,
+   "probabilities": {
+    "none": 0.15272921132026787,
+    "credentials": 0.0013869582344779505,
+    "personal_data": 0.0008438038526775344,
+    "customer_data": 0.0014927646559050377,
+    "source_code": 0.0016420850208336232,
+    "financial": 0.0002955440098264798,
+    "health": 0.8416096329060114
+   },
+   "exfil": 0.15265094790586553
+  },
+  {
+   "id": "health-near-004",
+   "split": "calibration",
+   "ms": 490.9,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.917186,
+   "confidence": 0.7245137080625432,
+   "probabilities": {
+    "none": 0.08281397313602157,
+    "credentials": 0.001748641562461348,
+    "personal_data": 0.04160718339919115,
+    "customer_data": 0.008415689669103282,
+    "source_code": 0.0024787309293802713,
+    "financial": 0.0004814743695252045,
+    "health": 0.8624543069343171
+   },
+   "exfil": 0.13667228216175978
+  },
+  {
+   "id": "health-near-005",
+   "split": "test",
+   "ms": 462.0,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.89911,
+   "confidence": 0.785171688040659,
+   "probabilities": {
+    "none": 0.10088999232206562,
+    "credentials": 0.0012251063119854146,
+    "personal_data": 0.0032068856688231722,
+    "customer_data": 0.005268174651210153,
+    "source_code": 0.003464878575576535,
+    "financial": 0.0006635832005692988,
+    "health": 0.8852813792697699
+   },
+   "exfil": 0.20497277270822759
+  },
+  {
+   "id": "health-near-006",
+   "split": "test",
+   "ms": 509.3,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.668366,
+   "confidence": 0.4286606359236259,
+   "probabilities": {
+    "none": 0.33163424862305435,
+    "credentials": 0.002200629364504931,
+    "personal_data": 0.21756077888645337,
+    "customer_data": 0.004461839037013863,
+    "source_code": 0.00204783460575809,
+    "financial": 0.00033735645174327227,
+    "health": 0.4417573130314721
+   },
+   "exfil": 0.1379329555559608
+  },
+  {
+   "id": "health-near-007",
+   "split": "calibration",
+   "ms": 465.1,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.811299,
+   "confidence": 0.6074993422075059,
+   "probabilities": {
+    "none": 0.18870110618715358,
+    "credentials": 0.0023380159475869097,
+    "personal_data": 0.02420261988925765,
+    "customer_data": 0.005529665187943039,
+    "source_code": 0.026107856179768896,
+    "financial": 0.0009685812550013345,
+    "health": 0.7521521553532886
+   },
+   "exfil": 0.10494366217782843
+  },
+  {
+   "id": "health-near-008",
+   "split": "test",
+   "ms": 471.2,
+   "category": "health",
+   "choice": "none",
+   "p_category": 0.422371,
+   "confidence": 0.5093564511024498,
+   "probabilities": {
+    "none": 0.5776294964232994,
+    "credentials": 0.015093961614760112,
+    "personal_data": 0.029036266887703027,
+    "customer_data": 0.004921798651360031,
+    "source_code": 0.015120817242277014,
+    "financial": 0.002395584008854503,
+    "health": 0.35580207517174584
+   },
+   "exfil": 0.1740633908541608
+  },
+  {
+   "id": "health-near-009",
+   "split": "test",
+   "ms": 446.9,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.724094,
+   "confidence": 0.5394558863800986,
+   "probabilities": {
+    "none": 0.2759061612993119,
+    "credentials": 0.004099021856443785,
+    "personal_data": 0.03431309710916897,
+    "customer_data": 0.0057937489124047096,
+    "source_code": 0.024824024429311205,
+    "financial": 0.00048103903266939735,
+    "health": 0.65458290736069
+   },
+   "exfil": 0.11152061215946954
+  },
+  {
+   "id": "health-near-010",
+   "split": "calibration",
+   "ms": 401.8,
+   "category": "health",
+   "choice": "none",
+   "p_category": 0.418265,
+   "confidence": 0.5907970522915691,
+   "probabilities": {
+    "none": 0.5817350646421338,
+    "credentials": 0.004248113076038215,
+    "personal_data": 0.008990236983079263,
+    "customer_data": 0.0014161700131091223,
+    "source_code": 0.006486744995584325,
+    "financial": 0.0009774042638191962,
+    "health": 0.3961462660262362
+   },
+   "exfil": 0.0930786224316629
+  },
+  {
+   "id": "health-near-011",
+   "split": "test",
+   "ms": 414.1,
+   "category": "health",
+   "choice": "none",
+   "p_category": 0.589101,
+   "confidence": 0.37079357154345527,
+   "probabilities": {
+    "none": 0.4108990110932671,
+    "credentials": 0.013246071813484701,
+    "personal_data": 0.009954588713894966,
+    "customer_data": 0.007685094753705524,
+    "source_code": 0.16173500481401526,
+    "financial": 0.012907084658583623,
+    "health": 0.3835731441530488
+   },
+   "exfil": 0.2157106383274333
+  },
+  {
+   "id": "health-near-012",
+   "split": "test",
+   "ms": 425.9,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.889061,
+   "confidence": 0.7652103794708608,
+   "probabilities": {
+    "none": 0.1109394183907202,
+    "credentials": 0.0013160003054724753,
+    "personal_data": 0.007330099079546019,
+    "customer_data": 0.006778767957437979,
+    "source_code": 0.0017615068998559859,
+    "financial": 0.00041901748390210593,
+    "health": 0.8714551898830651
+   },
+   "exfil": 0.13764018686261326
+  },
+  {
+   "id": "health-near-013",
+   "split": "calibration",
+   "ms": 356.0,
+   "category": "health",
+   "choice": "none",
+   "p_category": 0.547095,
+   "confidence": 0.42119015898143997,
+   "probabilities": {
+    "none": 0.45290541649931915,
+    "credentials": 0.006995436961500861,
+    "personal_data": 0.13009461401199482,
+    "customer_data": 0.013730194260436654,
+    "source_code": 0.007967431252641594,
+    "financial": 0.0003544126024761111,
+    "health": 0.3879524944116309
+   },
+   "exfil": 0.10615008220920198
+  },
+  {
+   "id": "health-near-014",
+   "split": "test",
+   "ms": 374.0,
+   "category": "health",
+   "choice": "none",
+   "p_category": 0.132624,
+   "confidence": 0.7408476150212885,
+   "probabilities": {
+    "none": 0.8673760712164469,
+    "credentials": 0.005658908092302285,
+    "personal_data": 0.02740889719413597,
+    "customer_data": 0.002293918743350939,
+    "source_code": 0.0018556747045714228,
+    "financial": 0.000519316085275604,
+    "health": 0.09488721396391708
+   },
+   "exfil": 0.08628257385253393
+  },
+  {
+   "id": "health-near-015",
+   "split": "test",
+   "ms": 410.7,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.628792,
+   "confidence": 0.5590103575370962,
+   "probabilities": {
+    "none": 0.37120782306338795,
+    "credentials": 0.036751754301751566,
+    "personal_data": 0.5826745717758547,
+    "customer_data": 0.004286252325150793,
+    "source_code": 0.0034242927190309734,
+    "financial": 0.0002615746772778159,
+    "health": 0.0013937311375463218
+   },
+   "exfil": 0.14927153470693835
+  },
+  {
+   "id": "health-near-016",
+   "split": "calibration",
+   "ms": 462.9,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.552855,
+   "confidence": 0.4705300076143636,
+   "probabilities": {
+    "none": 0.4471450181340824,
+    "credentials": 0.017518263812742994,
+    "personal_data": 0.4650211072331832,
+    "customer_data": 0.015537137568749594,
+    "source_code": 0.005158040393885741,
+    "financial": 0.0004573868796772774,
+    "health": 0.049163045977678954
+   },
+   "exfil": 0.10783098435925763
+  },
+  {
+   "id": "health-near-017",
+   "split": "test",
+   "ms": 491.4,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.537621,
+   "confidence": 0.5529949216254624,
+   "probabilities": {
+    "none": 0.46237926965263193,
+    "credentials": 0.003953758144082669,
+    "personal_data": 0.01161737286463035,
+    "customer_data": 0.006552501691491618,
+    "source_code": 0.012017096856248898,
+    "financial": 0.0011199664814938901,
+    "health": 0.5023600343094207
+   },
+   "exfil": 0.10096030428997471
+  },
+  {
+   "id": "health-near-018",
+   "split": "test",
+   "ms": 448.1,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.85934,
+   "confidence": 0.730271987094701,
+   "probabilities": {
+    "none": 0.14066044295152041,
+    "credentials": 0.0014237588416112826,
+    "personal_data": 0.009971995556338598,
+    "customer_data": 0.0014559441227755513,
+    "source_code": 0.0065450853244866415,
+    "financial": 0.0005745707088633763,
+    "health": 0.839368202494404
+   },
+   "exfil": 0.1201296164670004
+  },
+  {
+   "id": "health-near-019",
+   "split": "calibration",
+   "ms": 408.9,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.552895,
+   "confidence": 0.5046736041624965,
+   "probabilities": {
+    "none": 0.44710452027978187,
+    "credentials": 0.004583601982797463,
+    "personal_data": 0.04653886713240313,
+    "customer_data": 0.003384458175920416,
+    "source_code": 0.014712524493782726,
+    "financial": 0.0004915440323812457,
+    "health": 0.48318448390293317
+   },
+   "exfil": 0.1432251449169733
+  },
+  {
+   "id": "health-near-020",
+   "split": "test",
+   "ms": 492.3,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.771111,
+   "confidence": 0.5310852142425548,
+   "probabilities": {
+    "none": 0.22888881925565618,
+    "credentials": 0.013755285426983833,
+    "personal_data": 0.6801214293486703,
+    "customer_data": 0.01904348466136776,
+    "source_code": 0.0025904045880587607,
+    "financial": 0.0003870113174345277,
+    "health": 0.0552135654018287
+   },
+   "exfil": 0.15908876921962195
+  },
+  {
+   "id": "health-near-021",
+   "split": "test",
+   "ms": 442.6,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.169986,
+   "confidence": 0.6475097930855102,
+   "probabilities": {
+    "none": 0.830014328329579,
+    "credentials": 0.032483610038910926,
+    "personal_data": 0.08789764735246947,
+    "customer_data": 0.012903748908345263,
+    "source_code": 0.01866657633249281,
+    "financial": 0.0008273924612603233,
+    "health": 0.01720669657694232
+   },
+   "exfil": 0.12328479611106861
+  },
+  {
+   "id": "health-near-022",
+   "split": "calibration",
+   "ms": 499.6,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.18935,
+   "confidence": 0.6273324479876488,
+   "probabilities": {
+    "none": 0.8106504595632588,
+    "credentials": 0.054798833968812355,
+    "personal_data": 0.0913711608727093,
+    "customer_data": 0.027369370715318402,
+    "source_code": 0.00993130470127728,
+    "financial": 0.0010425431473016131,
+    "health": 0.004836327031322335
+   },
+   "exfil": 0.09206729147026556
+  },
+  {
+   "id": "health-near-023",
+   "split": "test",
+   "ms": 494.4,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.91448,
+   "confidence": 0.7902264587743189,
+   "probabilities": {
+    "none": 0.08551992698452182,
+    "credentials": 0.0016009422617163497,
+    "personal_data": 0.001708034067249044,
+    "customer_data": 0.0057533946950365285,
+    "source_code": 0.0088759526049937,
+    "financial": 0.0009119528134019861,
+    "health": 0.8956297965730806
+   },
+   "exfil": 0.17960136839909685
+  },
+  {
+   "id": "health-near-024",
+   "split": "test",
+   "ms": 499.4,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.041635,
+   "confidence": 0.8826361091512813,
+   "probabilities": {
+    "none": 0.9583650074062526,
+    "credentials": 0.01614549225952005,
+    "personal_data": 0.015724624604653334,
+    "customer_data": 0.0017961158807131583,
+    "source_code": 0.001976021487937392,
+    "financial": 0.0003679558901140065,
+    "health": 0.005624782470809418
+   },
+   "exfil": 0.09247883457156138
+  },
+  {
+   "id": "exfil-pos-001",
+   "split": "calibration",
+   "ms": 554.2,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.632259,
+   "confidence": 0.4914396476481452,
+   "probabilities": {
+    "none": 0.3677412830871739,
+    "credentials": 0.015729761981470462,
+    "personal_data": 0.08466144410274777,
+    "customer_data": 0.5303459652329076,
+    "source_code": 0.0010395820377639908,
+    "financial": 7.137005230694815e-05,
+    "health": 0.00041059350562934634
+   },
+   "exfil": 0.21437130192418843
+  },
+  {
+   "id": "exfil-pos-002",
+   "split": "test",
+   "ms": 556.4,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.610266,
+   "confidence": 0.5789413666289707,
+   "probabilities": {
+    "none": 0.38973391630250664,
+    "credentials": 0.020970971369607426,
+    "personal_data": 0.004792559967032016,
+    "customer_data": 0.0006687782119436562,
+    "source_code": 0.5798695170172721,
+    "financial": 0.002431328204838796,
+    "health": 0.0015329289267993487
+   },
+   "exfil": 0.13456165684311033
+  },
+  {
+   "id": "exfil-pos-003",
+   "split": "test",
+   "ms": 420.5,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.980655,
+   "confidence": 0.8940344957217802,
+   "probabilities": {
+    "none": 0.01934459299240156,
+    "credentials": 0.002338454033611402,
+    "personal_data": 0.016070419372372684,
+    "customer_data": 0.9607818465253485,
+    "source_code": 0.000743825283066797,
+    "financial": 0.0006064490309378,
+    "health": 0.00011441276226110283
+   },
+   "exfil": 0.12088567314460097
+  },
+  {
+   "id": "exfil-pos-004",
+   "split": "calibration",
+   "ms": 505.2,
+   "category": "financial",
+   "choice": "none",
+   "p_category": 0.430002,
+   "confidence": 0.49295035909009544,
+   "probabilities": {
+    "none": 0.5699981302826543,
+    "credentials": 0.01380571124242225,
+    "personal_data": 0.016931637735868133,
+    "customer_data": 0.0035641781700229054,
+    "source_code": 0.04512168713289177,
+    "financial": 0.34888509848507265,
+    "health": 0.0016935569510677438
+   },
+   "exfil": 0.14981977432271845
+  },
+  {
+   "id": "exfil-pos-005",
+   "split": "test",
+   "ms": 521.1,
+   "category": "source_code",
+   "choice": "source_code",
+   "p_category": 0.773225,
+   "confidence": 0.5901865638284332,
+   "probabilities": {
+    "none": 0.2267746531103278,
+    "credentials": 0.06784637725443313,
+    "personal_data": 0.0036550546407337634,
+    "customer_data": 0.0003425767486293158,
+    "source_code": 0.7006286596828689,
+    "financial": 0.0004536362121055163,
+    "health": 0.0002990423509015691
+   },
+   "exfil": 0.28923053124510395
+  },
+  {
+   "id": "exfil-pos-006",
+   "split": "test",
+   "ms": 462.4,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.145253,
+   "confidence": 0.7334954164667191,
+   "probabilities": {
+    "none": 0.8547471164292983,
+    "credentials": 0.1122176770994803,
+    "personal_data": 0.012292534164177023,
+    "customer_data": 0.0008618869275612506,
+    "source_code": 0.019739111520250537,
+    "financial": 6.759114228786842e-05,
+    "health": 7.408271694469133e-05
+   },
+   "exfil": 0.30751558179962585
+  },
+  {
+   "id": "exfil-pos-007",
+   "split": "calibration",
+   "ms": 537.4,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.337316,
+   "confidence": 0.43335707937993684,
+   "probabilities": {
+    "none": 0.6626838266755452,
+    "credentials": 0.07570652634826272,
+    "personal_data": 0.01845710276191538,
+    "customer_data": 0.15852682442756713,
+    "source_code": 0.06276770339205806,
+    "financial": 0.016994794460070704,
+    "health": 0.004863221934580774
+   },
+   "exfil": 0.23079378734750505
+  },
+  {
+   "id": "exfil-pos-008",
+   "split": "test",
+   "ms": 483.0,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.771157,
+   "confidence": 0.6620079972516986,
+   "probabilities": {
+    "none": 0.22884282216420387,
+    "credentials": 0.011614315924585377,
+    "personal_data": 0.7487683295323191,
+    "customer_data": 0.010124546003502996,
+    "source_code": 0.0004220681450996001,
+    "financial": 0.00015005048977938669,
+    "health": 7.786774050953347e-05
+   },
+   "exfil": 0.13628116240347837
+  },
+  {
+   "id": "exfil-pos-009",
+   "split": "test",
+   "ms": 542.8,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.067775,
+   "confidence": 0.8410332998795228,
+   "probabilities": {
+    "none": 0.9322251570176212,
+    "credentials": 0.04745254407171303,
+    "personal_data": 0.004736842163345803,
+    "customer_data": 0.0006227384790150302,
+    "source_code": 0.0131386475470544,
+    "financial": 0.0003562959784712652,
+    "health": 0.0014677747427793543
+   },
+   "exfil": 0.08436419787264836
+  },
+  {
+   "id": "exfil-pos-010",
+   "split": "calibration",
+   "ms": 513.9,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.102885,
+   "confidence": 0.7814714248122083,
+   "probabilities": {
+    "none": 0.8971150906617039,
+    "credentials": 0.04308230807714139,
+    "personal_data": 0.05430347696890749,
+    "customer_data": 0.0013708134153823024,
+    "source_code": 0.003371636362391973,
+    "financial": 0.0002738851428589858,
+    "health": 0.00048278937161380815
+   },
+   "exfil": 0.0852399323429975
+  },
+  {
+   "id": "exfil-pos-011",
+   "split": "test",
+   "ms": 514.4,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.074119,
+   "confidence": 0.8219341512495496,
+   "probabilities": {
+    "none": 0.9258808246543702,
+    "credentials": 0.04199540246552945,
+    "personal_data": 0.020634374301397668,
+    "customer_data": 0.0019203943299500841,
+    "source_code": 0.007761792380496754,
+    "financial": 0.00032342728478549666,
+    "health": 0.0014837845834702232
+   },
+   "exfil": 0.09384915738708961
+  },
+  {
+   "id": "exfil-pos-012",
+   "split": "test",
+   "ms": 515.1,
+   "category": "financial",
+   "choice": "none",
+   "p_category": 0.305735,
+   "confidence": 0.5176963126048215,
+   "probabilities": {
+    "none": 0.6942652472764198,
+    "credentials": 0.03260303609806332,
+    "personal_data": 0.007222349960615785,
+    "customer_data": 0.010871270281479382,
+    "source_code": 0.04800363579503478,
+    "financial": 0.20372060485331353,
+    "health": 0.0033138557350733265
+   },
+   "exfil": 0.17059758500888375
+  },
+  {
+   "id": "exfil-pos-013",
+   "split": "calibration",
+   "ms": 517.3,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.063534,
+   "confidence": 0.8428794551901915,
+   "probabilities": {
+    "none": 0.9364663270119172,
+    "credentials": 0.040948169403163856,
+    "personal_data": 0.007466265502399493,
+    "customer_data": 0.001963192318672604,
+    "source_code": 0.010437225256248624,
+    "financial": 0.0002987225266848632,
+    "health": 0.0024200979809136055
+   },
+   "exfil": 0.09377651467755099
+  },
+  {
+   "id": "exfil-pos-014",
+   "split": "test",
+   "ms": 564.9,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.417801,
+   "confidence": 0.4319564373827053,
+   "probabilities": {
+    "none": 0.582199012074451,
+    "credentials": 0.0508673254710751,
+    "personal_data": 0.27125837904765754,
+    "customer_data": 0.00864493178849846,
+    "source_code": 0.005818030929783117,
+    "financial": 0.07901600834301735,
+    "health": 0.002196312345517523
+   },
+   "exfil": 0.1626323422389453
+  },
+  {
+   "id": "exfil-pos-015",
+   "split": "test",
+   "ms": 581.5,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.809993,
+   "confidence": 0.42984386588289303,
+   "probabilities": {
+    "none": 0.19000711879960383,
+    "credentials": 0.007754297966322935,
+    "personal_data": 0.5992427449126884,
+    "customer_data": 0.05220926486521875,
+    "source_code": 0.0015125923451417733,
+    "financial": 0.00019599560137514442,
+    "health": 0.14907798550964912
+   },
+   "exfil": 0.11571535891109527
+  },
+  {
+   "id": "exfil-pos-016",
+   "split": "calibration",
+   "ms": 550.0,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.1629,
+   "confidence": 0.6794122257756298,
+   "probabilities": {
+    "none": 0.8371003812488805,
+    "credentials": 0.0854851722263188,
+    "personal_data": 0.054837442069398175,
+    "customer_data": 0.014359331344729541,
+    "source_code": 0.006595381314938569,
+    "financial": 0.0005850295851703599,
+    "health": 0.0010372622105639191
+   },
+   "exfil": 0.09737296036900137
+  },
+  {
+   "id": "exfil-pos-017",
+   "split": "test",
+   "ms": 549.9,
+   "category": "customer_data",
+   "choice": "customer_data",
+   "p_category": 0.965908,
+   "confidence": 0.8612537005021894,
+   "probabilities": {
+    "none": 0.03409196290444629,
+    "credentials": 0.002373319554063097,
+    "personal_data": 0.020689813931217497,
+    "customer_data": 0.9423192411400229,
+    "source_code": 0.00044623983555050565,
+    "financial": 1.955636303063212e-05,
+    "health": 5.986627166912658e-05
+   },
+   "exfil": 0.2957969386284101
+  },
+  {
+   "id": "exfil-pos-018",
+   "split": "test",
+   "ms": 598.4,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.168321,
+   "confidence": 0.6875207325530279,
+   "probabilities": {
+    "none": 0.8316788564179598,
+    "credentials": 0.059687075591374796,
+    "personal_data": 0.008393783414808401,
+    "customer_data": 0.0008796638572220191,
+    "source_code": 0.0974190540916028,
+    "financial": 0.0006444799178759992,
+    "health": 0.0012970867091560423
+   },
+   "exfil": 0.14456633611334574
+  },
+  {
+   "id": "exfil-pos-019",
+   "split": "calibration",
+   "ms": 768.2,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.251996,
+   "confidence": 0.5671299862947177,
+   "probabilities": {
+    "none": 0.7480035330356479,
+    "credentials": 0.10943873058205877,
+    "personal_data": 0.10946712260692561,
+    "customer_data": 0.011269360376079465,
+    "source_code": 0.020213108837751067,
+    "financial": 0.0007688638892899487,
+    "health": 0.000839280672247063
+   },
+   "exfil": 0.21311989573701812
+  },
+  {
+   "id": "exfil-pos-020",
+   "split": "test",
+   "ms": 463.1,
+   "category": "credentials",
+   "choice": "credentials",
+   "p_category": 0.699333,
+   "confidence": 0.6596833143105116,
+   "probabilities": {
+    "none": 0.3006671756869255,
+    "credentials": 0.6911490618461339,
+    "personal_data": 0.006051759984991817,
+    "customer_data": 0.0004815191336619567,
+    "source_code": 0.0015490945648150185,
+    "financial": 1.7158666007636855e-05,
+    "health": 8.423011746420663e-05
+   },
+   "exfil": 0.33080215602686946
+  },
+  {
+   "id": "exfil-near-001",
+   "split": "calibration",
+   "ms": 510.0,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.112307,
+   "confidence": 0.7645027953504682,
+   "probabilities": {
+    "none": 0.8876932553227329,
+    "credentials": 0.027721149402891093,
+    "personal_data": 0.07347086525544284,
+    "customer_data": 0.006048595008230427,
+    "source_code": 0.0037138578691309813,
+    "financial": 0.00027101277223091024,
+    "health": 0.001081264369340979
+   },
+   "exfil": 0.06979592007067689
+  },
+  {
+   "id": "exfil-near-002",
+   "split": "test",
+   "ms": 528.1,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.35646,
+   "confidence": 0.5706225327769283,
+   "probabilities": {
+    "none": 0.6435395965082319,
+    "credentials": 0.024097165459181506,
+    "personal_data": 0.3072813854098591,
+    "customer_data": 0.02338590722173377,
+    "source_code": 0.001438616194387574,
+    "financial": 5.917659673015545e-05,
+    "health": 0.00019815260987594708
+   },
+   "exfil": 0.11313025605120672
+  },
+  {
+   "id": "exfil-near-003",
+   "split": "test",
+   "ms": 777.4,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.523583,
+   "confidence": 0.5722561406112386,
+   "probabilities": {
+    "none": 0.4764165031796,
+    "credentials": 0.019083213552421766,
+    "personal_data": 0.49373458937061904,
+    "customer_data": 0.009023492153759048,
+    "source_code": 0.001132580632236258,
+    "financial": 0.0003075162271200223,
+    "health": 0.00030210488424407405
+   },
+   "exfil": 0.1242329286930707
+  },
+  {
+   "id": "exfil-near-004",
+   "split": "calibration",
+   "ms": 627.2,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.132007,
+   "confidence": 0.7352855828216329,
+   "probabilities": {
+    "none": 0.8679932238312437,
+    "credentials": 0.07124160107473995,
+    "personal_data": 0.051852171388861015,
+    "customer_data": 0.0015624701095957125,
+    "source_code": 0.005782559841518072,
+    "financial": 0.00018158811419592368,
+    "health": 0.001386385639845332
+   },
+   "exfil": 0.09602615493682365
+  },
+  {
+   "id": "exfil-near-005",
+   "split": "test",
+   "ms": 576.8,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.149982,
+   "confidence": 0.6960852290748294,
+   "probabilities": {
+    "none": 0.8500177748004191,
+    "credentials": 0.05318887163334457,
+    "personal_data": 0.010273206518647453,
+    "customer_data": 0.0761378245265992,
+    "source_code": 0.0074506100202396605,
+    "financial": 0.00012203824053764702,
+    "health": 0.002809674260212499
+   },
+   "exfil": 0.10879331929284332
+  },
+  {
+   "id": "exfil-near-006",
+   "split": "test",
+   "ms": 615.8,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.578806,
+   "confidence": 0.5255458976507676,
+   "probabilities": {
+    "none": 0.42119377383743234,
+    "credentials": 0.05956777404187256,
+    "personal_data": 0.5105434827108454,
+    "customer_data": 0.006233722151926797,
+    "source_code": 0.002059069515338342,
+    "financial": 0.00016762409551372131,
+    "health": 0.00023455364707095886
+   },
+   "exfil": 0.16435083651843585
+  },
+  {
+   "id": "exfil-near-007",
+   "split": "calibration",
+   "ms": 954.3,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.252815,
+   "confidence": 0.6405670014045408,
+   "probabilities": {
+    "none": 0.7471851508136503,
+    "credentials": 0.03756637038767051,
+    "personal_data": 0.2099252123115989,
+    "customer_data": 0.004494233377699355,
+    "source_code": 0.0006653632267592809,
+    "financial": 5.451811528121228e-05,
+    "health": 0.00010915176734029458
+   },
+   "exfil": 0.24138599574937933
+  },
+  {
+   "id": "exfil-near-008",
+   "split": "test",
+   "ms": 854.2,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.439777,
+   "confidence": 0.4771000026833814,
+   "probabilities": {
+    "none": 0.560222939846976,
+    "credentials": 0.31929554862401943,
+    "personal_data": 0.012415996626215418,
+    "customer_data": 0.005768910904633878,
+    "source_code": 0.10035817315089957,
+    "financial": 0.0008500594934647822,
+    "health": 0.0010883713537909476
+   },
+   "exfil": 0.24151454549070445
+  },
+  {
+   "id": "exfil-near-009",
+   "split": "test",
+   "ms": 1024.4,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.03801,
+   "confidence": 0.8971464564950622,
+   "probabilities": {
+    "none": 0.9619900808627322,
+    "credentials": 0.026813642141229513,
+    "personal_data": 0.004655710114726381,
+    "customer_data": 0.0009564232028792187,
+    "source_code": 0.003413135929948261,
+    "financial": 0.0009260781947393983,
+    "health": 0.0012449295537449161
+   },
+   "exfil": 0.06909776627176925
+  },
+  {
+   "id": "exfil-near-010",
+   "split": "calibration",
+   "ms": 1070.2,
+   "category": "personal_data",
+   "choice": "personal_data",
+   "p_category": 0.533971,
+   "confidence": 0.5360078368329422,
+   "probabilities": {
+    "none": 0.46602918794150383,
+    "credentials": 0.016265133652343115,
+    "personal_data": 0.48041188737752494,
+    "customer_data": 0.036303929959059796,
+    "source_code": 0.000778966721984257,
+    "financial": 0.00011575038724270276,
+    "health": 9.51439603411456e-05
+   },
+   "exfil": 0.09814412977831224
+  },
+  {
+   "id": "general-001",
+   "split": "calibration",
+   "ms": 811.0,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.033465,
+   "confidence": 0.9024939400826715,
+   "probabilities": {
+    "none": 0.9665345791993533,
+    "credentials": 0.014515369007412378,
+    "personal_data": 0.004696048386963612,
+    "customer_data": 0.0009185542302566916,
+    "source_code": 0.0010715416441952016,
+    "financial": 0.0006357544212623849,
+    "health": 0.011628153110556688
+   },
+   "exfil": 0.051665365618156656
+  },
+  {
+   "id": "general-002",
+   "split": "test",
+   "ms": 635.3,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.110834,
+   "confidence": 0.7363459609556375,
+   "probabilities": {
+    "none": 0.8891662774224282,
+    "credentials": 0.041203144025439974,
+    "personal_data": 0.03198516085818709,
+    "customer_data": 0.017778937113269066,
+    "source_code": 0.012223655257642458,
+    "financial": 0.0019565626664792015,
+    "health": 0.005686262656553969
+   },
+   "exfil": 0.16984755488794753
+  },
+  {
+   "id": "general-003",
+   "split": "test",
+   "ms": 734.4,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.239525,
+   "confidence": 0.5678953280262049,
+   "probabilities": {
+    "none": 0.7604746009984023,
+    "credentials": 0.11913341301556278,
+    "personal_data": 0.032687756038198575,
+    "customer_data": 0.0679568628004799,
+    "source_code": 0.017835054100293957,
+    "financial": 0.00029504780047584847,
+    "health": 0.001617265246586807
+   },
+   "exfil": 0.2283594409684515
+  },
+  {
+   "id": "general-004",
+   "split": "calibration",
+   "ms": 1043.3,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.100571,
+   "confidence": 0.7826518455559398,
+   "probabilities": {
+    "none": 0.899428749167847,
+    "credentials": 0.06788956408102693,
+    "personal_data": 0.021155120096217984,
+    "customer_data": 0.003522988732970686,
+    "source_code": 0.006276765921848564,
+    "financial": 0.00024520137220140377,
+    "health": 0.0014816106278876479
+   },
+   "exfil": 0.11648970241913553
+  },
+  {
+   "id": "general-005",
+   "split": "test",
+   "ms": 760.5,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.097884,
+   "confidence": 0.765640831132928,
+   "probabilities": {
+    "none": 0.9021164374218027,
+    "credentials": 0.031522742370999106,
+    "personal_data": 0.009574512798445704,
+    "customer_data": 0.0018471194215796361,
+    "source_code": 0.03865932213753329,
+    "financial": 0.0015898643823678165,
+    "health": 0.014690001467271717
+   },
+   "exfil": 0.18850015419884714
+  },
+  {
+   "id": "general-006",
+   "split": "test",
+   "ms": 530.7,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.115755,
+   "confidence": 0.7353997340192509,
+   "probabilities": {
+    "none": 0.8842446462633236,
+    "credentials": 0.030513579584715917,
+    "personal_data": 0.03569903726694574,
+    "customer_data": 0.040017655205499075,
+    "source_code": 0.005996344462235086,
+    "financial": 0.00040353011986889403,
+    "health": 0.0031252070974115134
+   },
+   "exfil": 0.15647209442753499
+  },
+  {
+   "id": "general-007",
+   "split": "calibration",
+   "ms": 694.8,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.036625,
+   "confidence": 0.8983655361376172,
+   "probabilities": {
+    "none": 0.9633749341530652,
+    "credentials": 0.023049036151678852,
+    "personal_data": 0.007253477455926184,
+    "customer_data": 0.0013026614875992356,
+    "source_code": 0.001483990565350838,
+    "financial": 0.00025508266302221315,
+    "health": 0.0032808175233575393
+   },
+   "exfil": 0.045048337567989545
+  },
+  {
+   "id": "general-008",
+   "split": "test",
+   "ms": 666.4,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.061606,
+   "confidence": 0.8483572481225622,
+   "probabilities": {
+    "none": 0.9383941927302774,
+    "credentials": 0.027834578378672224,
+    "personal_data": 0.028148720868456177,
+    "customer_data": 0.0030376737285096704,
+    "source_code": 0.0015342239448785974,
+    "financial": 0.00017490726356083366,
+    "health": 0.0008757030856451409
+   },
+   "exfil": 0.10222345651429476
+  },
+  {
+   "id": "general-009",
+   "split": "test",
+   "ms": 669.6,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.154399,
+   "confidence": 0.6896370237223595,
+   "probabilities": {
+    "none": 0.8456013418712491,
+    "credentials": 0.02848976579410878,
+    "personal_data": 0.020708356049885586,
+    "customer_data": 0.0021032122655721495,
+    "source_code": 0.09514131784321554,
+    "financial": 0.0029186624118947417,
+    "health": 0.005037343764074334
+   },
+   "exfil": 0.14648934061196883
+  },
+  {
+   "id": "general-010",
+   "split": "calibration",
+   "ms": 569.4,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.401955,
+   "confidence": 0.45116238027349476,
+   "probabilities": {
+    "none": 0.5980453955140344,
+    "credentials": 0.20501111285202883,
+    "personal_data": 0.03369747849280477,
+    "customer_data": 0.0026023392298385115,
+    "source_code": 0.15858598110179323,
+    "financial": 0.000525660638427779,
+    "health": 0.0015320321710725053
+   },
+   "exfil": 0.21771151482277487
+  },
+  {
+   "id": "general-011",
+   "split": "test",
+   "ms": 683.6,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.04221,
+   "confidence": 0.8788376713357471,
+   "probabilities": {
+    "none": 0.9577902366373385,
+    "credentials": 0.01894082390046525,
+    "personal_data": 0.008559927742729654,
+    "customer_data": 0.006688843926788993,
+    "source_code": 0.0028104085015379864,
+    "financial": 0.00031710449436015667,
+    "health": 0.004892654796779329
+   },
+   "exfil": 0.07035573093489499
+  },
+  {
+   "id": "general-012",
+   "split": "test",
+   "ms": 567.8,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.039644,
+   "confidence": 0.8849034903694313,
+   "probabilities": {
+    "none": 0.9603555801197107,
+    "credentials": 0.015527442295743822,
+    "personal_data": 0.011878991321931353,
+    "customer_data": 0.0031979677994416586,
+    "source_code": 0.0029229562001057835,
+    "financial": 0.00029439348567861717,
+    "health": 0.005822668777388251
+   },
+   "exfil": 0.06294428511832796
+  },
+  {
+   "id": "general-013",
+   "split": "calibration",
+   "ms": 583.1,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.158709,
+   "confidence": 0.653072074021116,
+   "probabilities": {
+    "none": 0.8412906503452207,
+    "credentials": 0.04463986448738449,
+    "personal_data": 0.05117204795054874,
+    "customer_data": 0.0063379485202360725,
+    "source_code": 0.037377194812662135,
+    "financial": 0.002832214524152911,
+    "health": 0.01635007935979504
+   },
+   "exfil": 0.1764309093607718
+  },
+  {
+   "id": "general-014",
+   "split": "test",
+   "ms": 798.2,
+   "category": "health",
+   "choice": "health",
+   "p_category": 0.609781,
+   "confidence": 0.4243745866886689,
+   "probabilities": {
+    "none": 0.3902192545645117,
+    "credentials": 0.009242139559120663,
+    "personal_data": 0.0846732954781953,
+    "customer_data": 0.023969914204569048,
+    "source_code": 0.012622680236365839,
+    "financial": 0.00042872334778117386,
+    "health": 0.4788439926094564
+   },
+   "exfil": 0.1723263200662441
+  },
+  {
+   "id": "general-015",
+   "split": "test",
+   "ms": 666.1,
+   "category": "credentials",
+   "choice": "none",
+   "p_category": 0.152635,
+   "confidence": 0.6543025936182596,
+   "probabilities": {
+    "none": 0.8473645250222045,
+    "credentials": 0.05331409239641814,
+    "personal_data": 0.02893577047792019,
+    "customer_data": 0.023850086689542672,
+    "source_code": 0.018067389842672914,
+    "financial": 0.0035003327549428614,
+    "health": 0.024967802816298824
+   },
+   "exfil": 0.18684504135630556
+  },
+  {
+   "id": "general-016",
+   "split": "calibration",
+   "ms": 548.7,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.110366,
+   "confidence": 0.751799961221806,
+   "probabilities": {
+    "none": 0.8896340030306669,
+    "credentials": 0.012241848623414332,
+    "personal_data": 0.005344641273742774,
+    "customer_data": 0.06263389505137688,
+    "source_code": 0.005569262507390872,
+    "financial": 0.0008113648834786509,
+    "health": 0.023764984629929885
+   },
+   "exfil": 0.07630008284119934
+  },
+  {
+   "id": "general-017",
+   "split": "test",
+   "ms": 587.6,
+   "category": "source_code",
+   "choice": "none",
+   "p_category": 0.079345,
+   "confidence": 0.805088489713107,
+   "probabilities": {
+    "none": 0.9206547004177724,
+    "credentials": 0.01667381171435117,
+    "personal_data": 0.006473112613148089,
+    "customer_data": 0.0010730934644077065,
+    "source_code": 0.04248591374542344,
+    "financial": 0.0019910837937688994,
+    "health": 0.010648284251128256
+   },
+   "exfil": 0.10798742841536488
+  },
+  {
+   "id": "general-018",
+   "split": "test",
+   "ms": 884.9,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.064064,
+   "confidence": 0.8390401456761123,
+   "probabilities": {
+    "none": 0.9359359881725074,
+    "credentials": 0.020899883368979483,
+    "personal_data": 0.03345632008127147,
+    "customer_data": 0.0023862298542260984,
+    "source_code": 0.0026455307241597397,
+    "financial": 0.0004766937396486629,
+    "health": 0.004199354059207046
+   },
+   "exfil": 0.06557678402230313
+  },
+  {
+   "id": "general-019",
+   "split": "calibration",
+   "ms": 706.8,
+   "category": "personal_data",
+   "choice": "none",
+   "p_category": 0.106166,
+   "confidence": 0.7640381970012919,
+   "probabilities": {
+    "none": 0.8938343789627249,
+    "credentials": 0.038468108957277855,
+    "personal_data": 0.05044938777813643,
+    "customer_data": 0.013179703917332685,
+    "source_code": 0.0025567181182792656,
+    "financial": 0.00026299268702424937,
+    "health": 0.0012487095792243687
+   },
+   "exfil": 0.10005124365314583
+  },
+  {
+   "id": "general-020",
+   "split": "test",
+   "ms": 641.0,
+   "category": "customer_data",
+   "choice": "none",
+   "p_category": 0.496999,
+   "confidence": 0.4992972443831225,
+   "probabilities": {
+    "none": 0.5030005919299889,
+    "credentials": 0.013624227562054494,
+    "personal_data": 0.042774013713692126,
+    "customer_data": 0.42514242593884977,
+    "source_code": 0.013350623477502451,
+    "financial": 0.00044205560385519085,
+    "health": 0.0016660617740570807
+   },
+   "exfil": 0.08973091461367214
+  }
+ ],
+ "questions_file": "questions.json"
+}

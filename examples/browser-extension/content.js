@@ -134,12 +134,72 @@
     el._t = setTimeout(() => (el.style.opacity = "0"), kind === "block" ? 6000 : 3500);
   }
 
+  // Replace the composer's text (the device agent's redaction). Returns whether
+  // the page now holds exactly that text; if not, the caller blocks instead of
+  // sending the unredacted prompt.
+  function setText(el, text) {
+    try {
+      el.focus();
+      if ("value" in el && typeof el.value === "string") {
+        const proto = Object.getPrototypeOf(el);
+        const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+        setter.call(el, text);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      } else {
+        // Rich editors (ProseMirror, Quill) follow execCommand, not textContent.
+        document.execCommand("selectAll", false, null);
+        document.execCommand("insertText", false, text);
+      }
+    } catch (_) {
+      return false;
+    }
+    return getText(el) === text.trim();
+  }
+
+  function justifyAsk(v) {
+    return new Promise((resolve) => {
+      const reason = window.prompt(
+        (v.reason || "This looks like sensitive data.") +
+          "\n\nTo send it anyway, say why (recorded with the decision):", "");
+      if (!reason || reason.trim().length < 3) return resolve(false);
+      try {
+        chrome.runtime.sendMessage(
+          { type: "shield-justify", prompt_sha256: v.prompt_sha256, destination: v.destination, reason },
+          (r) => resolve(!!(r && r.granted)));
+      } catch (_) {
+        resolve(false);
+      }
+    });
+  }
+
   // ── the interception core ─────────────────────────────────────────────────
   async function guard(getComposerEl) {
     const composer = getComposerEl();
     const text = getText(composer);
     if (!text) return { allow: true };
     const v = await screen(text);
+    if (v.source === "agent") {
+      // The device agent decided on this laptop.
+      if (v.block) {
+        banner("block", v.reason || "Blocked by your company's AI data policy");
+        return { allow: false };
+      }
+      if (v.redact) {
+        if (typeof v.text === "string" && setText(composer, v.text)) {
+          banner("warn", v.reason || "Sensitive values were replaced before sending");
+          return { allow: true };
+        }
+        banner("block", "Blocked: sensitive values could not be removed from this prompt");
+        return { allow: false };
+      }
+      if (v.justify) {
+        const granted = await justifyAsk(v);
+        if (!granted) banner("block", v.reason || "Not sent: a reason is needed");
+        return { allow: granted };
+      }
+      if (v.warn) banner("warn", "Flagged (" + (v.reason || v.verdict || "policy") + "), allowed in monitor mode");
+      return { allow: true };
+    }
     if (v.error) {
       banner("warn", "Shield unreachable — sent unscreened (" + v.error + ")");
       return { allow: true }; // fail-open

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>ExtensionInstallForcelist</key>
+			<array>
+				<string>__CHROME_EXTENSION_ID__;https://clients2.google.com/service/update2/crx</string>
+			</array>
+			<key>PayloadDisplayName</key>
+			<string>Chrome policy</string>
+			<key>PayloadIdentifier</key>
+			<string>ai.votal.device-agent.chrome.policy</string>
+			<key>PayloadType</key>
+			<string>com.google.Chrome</string>
+			<key>PayloadUUID</key>
+			<string>9839B374-EDD0-5691-B688-403AB99B9F54</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Installs the Votal extension in Chrome; it asks the device agent before a prompt is sent.</string>
+	<key>PayloadDisplayName</key>
+	<string>Votal device agent: Chrome extension</string>
+	<key>PayloadIdentifier</key>
+	<string>ai.votal.device-agent.chrome</string>
+	<key>PayloadOrganization</key>
+	<string>Votal AI</string>
+	<key>PayloadRemovalDisallowed</key>
+	<true/>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>04483EBA-301B-5384-BFC8-9B0246C3AF31</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>

@@ -498,7 +498,13 @@ def resolve_request_tenant_id(request) -> str:
 
 SCOPE_RUNTIME = "runtime"
 SCOPE_ADMIN = "admin"
-KEY_SCOPES = (SCOPE_RUNTIME, SCOPE_ADMIN)
+#: A laptop's DLP agent key (docs/specs/device-dlp-agent.md §5.2). It can pull
+#: its bundle, post heartbeats and events, and nothing else; the path limit is
+#: enforced from the key's prefix (core/dlp/devices.py), so only a key minted
+#: with DEVICE_KEY_PREFIX may carry this scope.
+SCOPE_DEVICE = "device"
+DEVICE_KEY_PREFIX = "vdk_"
+KEY_SCOPES = (SCOPE_RUNTIME, SCOPE_ADMIN, SCOPE_DEVICE)
 
 
 def _scope_key(key_hash: str) -> str:
@@ -514,6 +520,10 @@ def set_key_scope(api_key: str, scope: Optional[str]) -> None:
     if scope is not None and scope not in KEY_SCOPES:
         raise ValueError(
             f"scope must be one of {', '.join(KEY_SCOPES)}, or omitted")
+    if scope == SCOPE_DEVICE and not str(api_key or "").startswith(DEVICE_KEY_PREFIX):
+        # The device path limit keys off the prefix. A device-scoped key
+        # without it would be a device identity with no limit on where it goes.
+        raise ValueError("device scope is only for keys minted by device enrollment")
 
     key_hash = _hash_key(api_key)
     k = _scope_key(key_hash)
@@ -599,7 +609,8 @@ def track_usage_enabled() -> bool:
 
 
 def set_key_metadata(tenant_id: str, api_key: str, *, label: str = "",
-                     expires_in_days: Optional[int] = None) -> dict:
+                     expires_in_days: Optional[int] = None,
+                     device_id: Optional[str] = None) -> dict:
     """Record who this key is for and when it should stop working.
 
     Raises ValueError for a non-positive expiry: a key that expires in the past
@@ -624,6 +635,8 @@ def set_key_metadata(tenant_id: str, api_key: str, *, label: str = "",
         "expires_at": expires_at,
         "last_used": None,
     }
+    if device_id:
+        record["device_id"] = str(device_id)[:64]
     key_hash = _hash_key(api_key)
     # TTL slightly beyond the deadline so the record survives long enough to
     # explain an expiry rather than vanishing with the key it describes.
@@ -730,7 +743,8 @@ def list_tenant_api_keys(tenant_id: str) -> list:
 
 
 def add_api_key(tenant_id: str, api_key: str, scope: Optional[str] = None,
-                *, label: str = "", expires_in_days: Optional[int] = None):
+                *, label: str = "", expires_in_days: Optional[int] = None,
+                device_id: Optional[str] = None):
     """Add an API key for a tenant.
 
     scope=None keeps the pre-existing behaviour exactly: an unscoped key that
@@ -748,15 +762,21 @@ def add_api_key(tenant_id: str, api_key: str, scope: Optional[str] = None,
     # already carried a scope must not silently inherit the old one.
     set_key_scope(api_key, scope)
     set_key_metadata(tenant_id, api_key, label=label,
-                     expires_in_days=expires_in_days)
+                     expires_in_days=expires_in_days, device_id=device_id)
 
     logger.info(f"Added API key for tenant: {tenant_id} (scope={scope or 'unscoped'})")
 
 
 def remove_api_key(api_key: str):
     """Remove an API key and any scope recorded for it."""
-    key_hash = _hash_key(api_key)
+    remove_api_key_by_hash(_hash_key(api_key))
 
+
+def remove_api_key_by_hash(key_hash: str):
+    """Remove a key known only by its hash (a revoked device's key: Shield
+    never keeps the plaintext)."""
+    if not key_hash:
+        return
     r = _get_redis()
     if r:
         r.delete(f"apikey:{key_hash}")

@@ -2659,6 +2659,10 @@
           <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4a2 2 0 110 4 2 2 0 010-4zM8 21v-5l-2-3 2-4h8l2 4-2 3v5M9 13h6"/></svg>
           Embodied Guard
         </div>
+        <div class="nav-item" data-tab="device-dlp">
+          <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+          Device DLP
+        </div>
         <div class="nav-item" data-tab="cross-app-flow">
           <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
           Cross-App Flow
@@ -4929,6 +4933,52 @@ if __name__ == "__main__":
           <div class="card-desc">Recent refusals and approvals: from this server (<code>embodied_guard</code>) and uploaded from robots' audit logs (<code>runtime:action</code>).</div></div></div>
         <button class="small" onclick="emFleet()">Refresh</button>
         <div id="em-fleet" style="margin-top:0.75rem;font-size:13px;" class="muted">Not loaded.</div>
+      </div>
+    </div>
+
+    <!-- ── Enterprise: Device DLP (laptop agent) ── -->
+    <div id="tab-device-dlp" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Device DLP</div>
+        <div class="page-desc">An agent on each Mac and Windows laptop checks prompts to AI tools before they leave the device: your DLP rules first, then a small local model (Tev1 0.8B through Ollama) for what rules cannot see. Prompts are never sent to Shield for inspection; laptops report verdicts and hashes. Devices start in monitor mode.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Devices</div>
+          <div class="card-desc">Every enrolled laptop, its last heartbeat and what it runs. A device that stops reporting turns stale: uninstalled, blocked from reaching Shield, switched off, or tampered with.</div></div>
+          <button class="small" onclick="ddLoad()">Refresh</button></div>
+        <div id="dd-summary" style="font-size:13px;margin-bottom:0.6rem;"></div>
+        <div id="dd-list" style="font-size:13px;overflow-x:auto;">Loading...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Enrollment tokens</div>
+          <div class="card-desc">Put a token in the MDM install profile (Jamf, Kandji, Intune). Each laptop exchanges it once for its own key, bound to the token's fleet. Shield keeps only a hash: the token is shown once.</div></div></div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+          <input id="dd-fleet" type="text" placeholder="fleet, e.g. sales" style="flex:1;min-width:160px;">
+          <label style="font-size:13px;">Uses <input id="dd-uses" type="number" value="50" min="1" max="10000" style="width:90px;"></label>
+          <label style="font-size:13px;">Days <input id="dd-days" type="number" value="7" min="1" max="90" style="width:70px;"></label>
+          <button class="primary small" onclick="ddCreateToken()">Create token</button>
+        </div>
+        <div id="dd-token" style="margin-top:0.75rem;font-size:13px;"></div>
+        <div id="dd-tokens" style="margin-top:0.75rem;font-size:13px;overflow-x:auto;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">MDM settings</div>
+          <div class="card-desc">Values for the agent's MDM settings profile (macOS) or MSI properties (Windows). <code>PinnedPublicKey</code> is the key laptops check every policy bundle against; copy it from here into MDM, never from anywhere else.</div></div></div>
+        <div id="dd-mdm" style="font-size:13px;">Loading...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">DLP policy</div>
+          <div class="card-desc">What every laptop enforces, signed into its bundle. <code>mode</code> is monitor or enforce, per fleet in <code>fleet_modes</code>. <code>enforcement</code> sets which categories the model may act on; source code, financial data and exfiltration intent are monitor-only by default because Tev1 0.8B misses too many of them. Rules come from your Data Policies.</div></div></div>
+        <textarea id="dd-policy" spellcheck="false" style="width:100%;min-height:320px;"></textarea>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+          <button class="small" onclick="ddValidate()">Validate</button>
+          <button class="primary small" onclick="ddSave()">Save policy</button>
+        </div>
+        <div id="dd-msg" style="margin-top:0.75rem;font-size:13px;"></div>
       </div>
     </div>
 
@@ -14022,6 +14072,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'cross-app-flow') xfLoad();
     if (tab === 'runtime-profiles') rpLoad();
     if (tab === 'embodied-guard') emLoad();
+    if (tab === 'device-dlp') ddLoad();
     if (tab === 'guardrail-metrics') { loadGuardrailDashboard(); loadGuardrailMetrics(); }
     if (tab === 'board-report') loadBoardReport();
     if (tab === 'aibom') loadAibom();
@@ -17174,6 +17225,145 @@ async function emFleet() {
         <td style="padding:0.35rem 0.5rem;">${xfEsc(d.agent_key || '-')}</td><td style="padding:0.35rem 0.5rem;"><span class="badge ${d.action === 'block' ? 'badge-danger' : 'badge-warn'}">${xfEsc(d.action)}</span></td>
         <td style="padding:0.35rem 0.5rem;color:var(--text-dim);">${xfEsc(d.reason || '')}</td></tr>`).join('')}</tbody></table>`;
   } catch (e) { xfMsg('em-fleet', xfErrors(e), 'error'); }
+}
+// ── Device DLP (laptop agent) ─────────────────────────────
+// Spec: docs/specs/device-dlp-agent.md. Reuses xfEsc/xfErrors/xfMsg.
+async function ddApi(path, options = {}) {
+  options.headers = { ...(options.headers || {}), 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
+  const r = await fetch(`${BASE_URL}/v1/tenant/me${path}`, options);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = data.detail;
+    const err = new Error((d && d.message) || (typeof d === 'string' ? d : '') || `HTTP ${r.status}`);
+    err.errors = (d && d.errors) || [];
+    throw err;
+  }
+  return data;
+}
+function ddAgo(t) {
+  if (!t) return 'never';
+  const s = Math.max(0, Math.round(Date.now() / 1000 - t));
+  return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : s < 172800 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
+}
+const DD_TD = 'padding:0.4rem 0.6rem;';
+async function ddMdm() {
+  try {
+    const k = await ddApi('/dlp-policy/signing-key');
+    const tid = (TENANT_INFO && TENANT_INFO.tenant_id) || '';
+    document.getElementById('dd-mdm').innerHTML = `<table style="border-collapse:collapse;">
+      <tr><td style="${DD_TD}color:var(--text-dim);">ShieldURL</td><td style="${DD_TD}"><code>${xfEsc(BASE_URL || location.origin)}</code></td></tr>
+      <tr><td style="${DD_TD}color:var(--text-dim);">TenantID</td><td style="${DD_TD}"><code>${xfEsc(tid)}</code></td></tr>
+      <tr><td style="${DD_TD}color:var(--text-dim);">PinnedPublicKey</td><td style="${DD_TD}"><code style="word-break:break-all;user-select:all;">${xfEsc(k.public_key_hex)}</code></td></tr>
+      <tr><td style="${DD_TD}color:var(--text-dim);">Fleet, EnrollmentToken</td><td style="${DD_TD}">from an enrollment token below</td></tr></table>
+      <div id="dd-root" style="margin-top:0.75rem;"></div>`;
+    ddRoot();
+  } catch (e) { xfMsg('dd-mdm', xfErrors(e), 'error'); }
+}
+// macOS trusts a certificate silently only through MDM: the tenant root goes in
+// a profile, and each Mac gets a 7-day intermediate under it.
+async function ddRoot() {
+  const el = document.getElementById('dd-root');
+  try {
+    const r = await ddApi('/devices/root-ca');
+    const warn = r.covers_policy ? '' : `<div style="color:var(--danger);margin:0.4rem 0;">The policy has AI hosts this root does not cover: ${xfEsc(r.missing_hosts.join(', '))}. Reissue it and upload the new profile; until then those hosts are not inspected on Macs.</div>
+      <button class="small" onclick="ddReissueRoot()">Reissue root</button> `;
+    el.innerHTML = `<div><b>Root certificate for Macs</b> <span class="muted">(upload to Jamf or Kandji as a profile; Windows does not need it)</span></div>
+      <div class="muted" style="margin:0.3rem 0;">SHA-256 <code>${xfEsc(r.fingerprint_sha256.slice(0, 32))}...</code>, limited to ${r.hosts.length} AI hosts</div>
+      ${warn}<button class="small primary" onclick="ddDownloadRoot()">Download macOS profile</button>`;
+  } catch (e) { xfMsg('dd-root', xfErrors(e), 'error'); }
+}
+async function ddDownloadRoot() {
+  try {
+    const r = await fetch(`${BASE_URL}/v1/tenant/me/devices/root-ca.mobileconfig`, { headers: { 'X-API-Key': API_KEY } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const url = URL.createObjectURL(await r.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: 'votal-device-agent-root.mobileconfig' });
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  } catch (e) { xfMsg('dd-root', xfErrors(e), 'error'); }
+}
+async function ddReissueRoot() {
+  if (!confirm('Issue a new root covering the current AI hosts? Upload the new profile to your MDM afterwards.')) return;
+  try { await ddApi('/devices/root-ca/reissue', { method: 'POST' }); ddRoot(); }
+  catch (e) { xfMsg('dd-root', xfErrors(e), 'error'); }
+}
+async function ddLoad() {
+  ddDevices(); ddTokens(); ddMdm();
+  try {
+    const p = await ddApi('/dlp-policy');
+    document.getElementById('dd-policy').value = JSON.stringify(p.policy, null, 2);
+    xfMsg('dd-msg', p.stored ? `Saved policy ${xfEsc(p.hash.slice(0, 12))}, updated by ${xfEsc(p.updated_by || '?')}.`
+                             : 'Defaults (nothing saved yet). These are the values the task 1 benchmark chose for Tev1 0.8B.');
+  } catch (e) { xfMsg('dd-msg', xfErrors(e), 'error'); }
+}
+async function ddDevices() {
+  try {
+    const d = await ddApi('/devices');
+    const s = d.summary;
+    document.getElementById('dd-summary').innerHTML = `<b>${s.devices}</b> device(s), <b style="color:${s.stale ? 'var(--danger)' : 'inherit'};">${s.stale}</b> stale (no heartbeat for ${Math.round(s.stale_after_s / 60)} min). `
+      + Object.entries(s.by_fleet).map(([f, n]) => `<span class="badge">${xfEsc(f)}: ${n}</span>`).join(' ');
+    document.getElementById('dd-list').innerHTML = !d.devices.length
+      ? '<div class="muted">No devices yet. Create an enrollment token below and add it to your MDM install profile.</div>'
+      : `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
+          <th style="${DD_TD}">Device</th><th style="${DD_TD}">Fleet</th><th style="${DD_TD}">OS</th><th style="${DD_TD}">Agent</th><th style="${DD_TD}">Last seen</th><th style="${DD_TD}">State</th><th style="${DD_TD}">Mode</th><th style="${DD_TD}">Model</th><th style="${DD_TD}"></th></tr></thead>
+        <tbody>${d.devices.map(r => `<tr>
+          <td style="${DD_TD}"><b>${xfEsc(r.hostname)}</b><div class="muted" style="font-size:11px;"><code>${xfEsc(r.device_id)}</code></div></td>
+          <td style="${DD_TD}">${xfEsc(r.fleet)}</td>
+          <td style="${DD_TD}">${xfEsc(r.os)} ${xfEsc(r.os_version)}</td>
+          <td style="${DD_TD}">${xfEsc(r.agent_version)}</td>
+          <td style="${DD_TD}">${r.stale ? '<span class="badge badge-danger">stale</span> ' : ''}${xfEsc(ddAgo(r.last_seen))}</td>
+          <td style="${DD_TD}"><span class="badge ${r.state === 'ok' ? '' : 'badge-warn'}">${xfEsc(r.state)}</span></td>
+          <td style="${DD_TD}">${xfEsc(r.mode || '-')}</td>
+          <td style="${DD_TD}">${r.model_ok === null ? '-' : r.model_ok ? 'as pinned' : '<span class="badge badge-danger">digest differs</span>'}</td>
+          <td style="${DD_TD}"><button class="small danger" onclick="ddRevoke('${xfEsc(r.device_id)}','${xfEsc(r.hostname)}')">Revoke</button></td></tr>`).join('')}</tbody></table>`;
+  } catch (e) { xfMsg('dd-list', xfErrors(e), 'error'); }
+}
+async function ddTokens() {
+  try {
+    const t = (await ddApi('/devices/enrollment-tokens')).tokens;
+    document.getElementById('dd-tokens').innerHTML = !t.length ? '<div class="muted">No active enrollment tokens.</div>'
+      : `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);"><th style="${DD_TD}">Token</th><th style="${DD_TD}">Fleet</th><th style="${DD_TD}">Uses left</th><th style="${DD_TD}">Expires</th><th style="${DD_TD}">Created by</th><th style="${DD_TD}"></th></tr></thead>
+        <tbody>${t.map(k => `<tr><td style="${DD_TD}"><code>${xfEsc(k.token_id)}</code></td><td style="${DD_TD}">${xfEsc(k.fleet)}</td><td style="${DD_TD}">${k.uses_left} of ${k.uses}</td>
+          <td style="${DD_TD}">${xfEsc(new Date(k.expires_at * 1000).toLocaleString())}</td><td style="${DD_TD}">${xfEsc(k.created_by)}</td>
+          <td style="${DD_TD}"><button class="small danger" onclick="ddRevokeToken('${xfEsc(k.token_id)}')">Revoke</button></td></tr>`).join('')}</tbody></table>`;
+  } catch (e) { xfMsg('dd-tokens', xfErrors(e), 'error'); }
+}
+async function ddCreateToken() {
+  try {
+    const r = await ddApi('/devices/enrollment-tokens', { method: 'POST', body: JSON.stringify({
+      fleet: document.getElementById('dd-fleet').value.trim(),
+      uses: parseInt(document.getElementById('dd-uses').value, 10),
+      expires_in_days: parseInt(document.getElementById('dd-days').value, 10) }) });
+    xfMsg('dd-token', `Token for fleet <b>${xfEsc(r.fleet)}</b>, shown once. Copy it into the MDM install profile now:<div style="margin-top:0.4rem;"><code style="word-break:break-all;user-select:all;">${xfEsc(r.enrollment_token)}</code></div>`, 'ok');
+    ddTokens();
+  } catch (e) { xfMsg('dd-token', xfErrors(e), 'error'); }
+}
+async function ddRevokeToken(id) {
+  if (!confirm('Revoke this enrollment token? Devices it already enrolled keep working.')) return;
+  try { await ddApi(`/devices/enrollment-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }); ddTokens(); }
+  catch (e) { xfMsg('dd-tokens', xfErrors(e), 'error'); }
+}
+async function ddRevoke(id, host) {
+  if (!confirm(`Revoke ${host}? Its key stops working at once; the laptop must enroll again.`)) return;
+  try { await ddApi(`/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }); ddDevices(); }
+  catch (e) { xfMsg('dd-list', xfErrors(e), 'error'); }
+}
+function ddEditor() {
+  try { return JSON.parse(document.getElementById('dd-policy').value); }
+  catch (e) { throw Object.assign(new Error('Policy is not valid JSON: ' + e.message), { errors: [] }); }
+}
+async function ddValidate() {
+  try {
+    const r = await ddApi('/dlp-policy/validate', { method: 'POST', body: JSON.stringify(ddEditor()) });
+    if (r.valid) xfMsg('dd-msg', 'Valid. Hash ' + xfEsc(r.hash.slice(0, 12)), 'ok');
+    else xfMsg('dd-msg', xfErrors({ message: 'Invalid policy', errors: r.errors }), 'error');
+  } catch (e) { xfMsg('dd-msg', xfErrors(e), 'error'); }
+}
+async function ddSave() {
+  try {
+    const r = await ddApi('/dlp-policy', { method: 'PUT', body: JSON.stringify(ddEditor()) });
+    document.getElementById('dd-policy').value = JSON.stringify(r.policy, null, 2);
+    xfMsg('dd-msg', `Saved (${xfEsc(r.hash.slice(0, 12))}). Laptops pick it up on their next bundle poll.`, 'ok');
+  } catch (e) { xfMsg('dd-msg', xfErrors(e), 'error'); }
 }
 </script>
 </body>

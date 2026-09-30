@@ -1,0 +1,31 @@
+{
+  "questions": {
+    "category": {
+      "type": "choice",
+      "instructions": "Does this text contain real sensitive data (not a question, example, template or fiction)? If so, which kind?",
+      "criteria": {
+        "none": "No real sensitive data",
+        "credentials": "A real password, key or token",
+        "personal_data": "Real details about a named person",
+        "customer_data": "Real customer records",
+        "source_code": "The company's private code",
+        "financial": "The company's non-public finances",
+        "health": "Real medical details about a person"
+      }
+    },
+    "exfil_intent": {
+      "type": "noul",
+      "instructions": "Is the user trying to take company data out or get around security?"
+    }
+  },
+  "thresholds": {
+    "block_categories": [
+      "credentials",
+      "customer_data"
+    ],
+    "block_p": 0.9,
+    "justify_p": 0.6,
+    "exfil_intent": 0.8,
+    "min_confidence": 0.3
+  }
+}
