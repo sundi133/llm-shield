@@ -142,6 +142,10 @@ By default, even in enforce mode:
   silent hours the old device is replaced automatically. To go back to
   replacing immediately, set `SHIELD_DEVICE_REENROLL_LIVE=replace` on Shield.
 
+For day-to-day operation (leaked tokens, lost laptops, false blocks, emergency
+rollback, outages, key rotation, upgrades), see the
+[Device DLP runbook](/device-dlp-runbook/).
+
 ## Certificate trust on macOS
 
 To inspect AI traffic, the agent needs a certificate that apps trust. Since

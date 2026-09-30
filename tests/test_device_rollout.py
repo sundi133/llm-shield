@@ -1055,3 +1055,48 @@ def test_the_acceptance_run_covers_each_mdm_and_the_security_behaviours():
     for behaviour in ("not in the company inventory", "still reporting",
                       "invalid or expired enrollment token", "reissued"):
         assert behaviour in text, behaviour
+
+
+# ── the runbook ──────────────────────────────────────────────────────
+
+RUNBOOK = Path(ROOT) / "docs" / "device-dlp-runbook.md"
+
+
+def test_the_runbook_is_published_and_linked():
+    text = RUNBOOK.read_text()
+    assert text.startswith("---") and "permalink: /device-dlp-runbook/" in text
+    assert "—" not in text
+    assert "](/device-dlp-runbook/)" in GUIDE.read_text()
+    assert "](/device-dlp-agent/)" in text
+
+
+def test_the_runbook_timings_are_the_codes():
+    """5 minutes, an hour, 24 hours, 7 days: each number the runbook gives."""
+    import inspect
+    from core.dlp import device_policy, devices
+    from votal_device_agent.agent import Agent
+    text = RUNBOOK.read_text()
+    assert inspect.signature(Agent.start).parameters["sync_every_s"].default == 300
+    assert "within about 5 minutes" in text
+    assert devices.stale_after_s() == 3600 and "after an hour" in text
+    from api.routes_device_dlp import _valid_s
+    assert _valid_s() == 86400 and "24 hours" in text
+    assert device_policy.DEFAULT_POLICY["grace_s"] == 7 * 86400 and "7 days of grace" in text
+    assert devices.LIVE_WINDOW_S == 24 * 3600 and "last 24 hours" in text
+
+
+def test_the_runbook_commands_and_apis_exist():
+    text = RUNBOOK.read_text()
+    wxs = (PKG / "packaging" / "windows" / "votal-device-agent.wxs").read_text()
+    plist = (PKG / "packaging" / "macos" / "ai.votal.device-agent.plist").read_text()
+    assert "Restart-Service VotalDeviceAgent" in text and 'Name="VotalDeviceAgent"' in wxs
+    assert "system/ai.votal.device-agent" in text and "<string>ai.votal.device-agent</string>" in plist
+    routes = ((Path(ROOT) / "api" / "routes_devices.py").read_text()
+              + (Path(ROOT) / "api" / "routes_device_dlp.py").read_text()
+              + (Path(ROOT) / "api" / "routes_decisions.py").read_text())
+    for path in ("/rollout-kits", "/inventory", "/root-ca", "/root-ca/reissue",
+                 '"/v1/tenant/me/devices"', '"/v1/tenant/me/dlp-policy"', '"/v1/shield/decisions"'):
+        assert path in routes, path
+    assert "enrollment_token_id" in (Path(ROOT) / "core" / "dlp" / "devices.py").read_text()
+    assert "SHIELD_DEVICE_AGENT=off" in text and '"SHIELD_DEVICE_AGENT", "on"' in (
+        Path(ROOT) / "core" / "dlp" / "devices.py").read_text()

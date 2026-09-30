@@ -17309,7 +17309,14 @@ async function ddRoot() {
     el.innerHTML = `<div><b>Root certificate for Macs</b> <span class="muted">(upload to Jamf or Kandji as a profile; Windows does not need it)</span></div>
       <div class="muted" style="margin:0.3rem 0;">SHA-256 <code>${xfEsc(r.fingerprint_sha256.slice(0, 32))}...</code>, limited to ${r.hosts.length} AI hosts</div>
       ${warn}<button class="small primary" onclick="ddDownloadRoot()">Download macOS profile</button>`;
-  } catch (e) { xfMsg('dd-root', xfErrors(e), 'error'); }
+  } catch (e) {
+    // After SHIELD_DEVICE_CA_MASTER_KEY changes, the stored root no longer
+    // matches the key: the only way forward is to reissue it (runbook).
+    xfMsg('dd-root', xfErrors(e), 'error');
+    if (/reissue/i.test(e.message || '')) {
+      el.insertAdjacentHTML('beforeend', '<button class="small" style="margin-top:0.4rem;" onclick="ddReissueRoot()">Reissue root</button>');
+    }
+  }
 }
 async function ddDownloadRoot() {
   try {
