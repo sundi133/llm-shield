@@ -8,7 +8,7 @@ description: One endpoint on Shield that speaks LiteLLM's Generic Guardrail API,
 
 # Spec: LiteLLM Generic Guardrail API
 
-> Status: **APPROVED 2026-10-01** (user: "approved"). Task 1 built; tasks 2 and 3 open.
+> Status: **APPROVED 2026-10-01** (user: "approved"). Tasks 1 and 2 built; task 3 open.
 > Branch: `litellm_integration` (from main at 43058d3).
 > Contract source: LiteLLM `main` on 2026-10-01,
 > `litellm/proxy/guardrails/guardrail_hooks/generic_guardrail_api/generic_guardrail_api.py`
@@ -170,10 +170,13 @@ prompt unless the operator excludes it. Screening all of them would re-run the
 model guardrails over the whole history each turn and would judge the
 operator's own system prompt as if a user had typed it.
 
-- **`input_type: request`.** Screen the texts of the **latest user message**
-  only (normally one text). Earlier user and assistant messages go to the
-  pipeline as `conversation_history`, which is what `/guardrails/input` is
-  already shaped for. The latest user message is found by walking
+- **`input_type: request`.** Screen what is new this turn: the messages
+  **after the last assistant message** that are from the user or from a tool
+  (normally one user message, or the results of the tools the assistant just
+  called). Earlier user and assistant messages go to the pipeline as
+  `conversation_history`, which is what `/guardrails/input` is already shaped
+  for. If the conversation ends on an assistant turn, the latest user message
+  is screened. Messages are matched to `texts` by walking
   `structured_messages` with the same flattening LiteLLM uses (a string
   content is one text; a list content is one text per non-empty text part).
   - If `structured_messages` is absent or does not line up with `texts`
@@ -195,15 +198,33 @@ The worst action across the screened texts decides the response.
 
 ### 4.4 Tool calls (task 2)
 
-For `input_type: response` with `tool_calls`, each call goes through the
-existing tool path of `/guardrails/output` (`context.tool_name`, `tool_input`,
-`stage: "input"`): role-based tool authorization, the tool's data policy, then
-the output guardrails on the arguments. This is what `votal_guardrail.py` does
-today. A denied tool call answers `BLOCKED`.
+**Tool calls in a response.** For `input_type: response`, each entry of
+`tool_calls` goes through the existing tool path of `/guardrails/output`
+(`context.tool_name`, `tool_input`, `stage: "input"`): role-based tool
+authorization, the tool's data policy, then the output guardrails on the
+arguments. This is what `votal_guardrail.py` does today. A denied tool call
+answers `BLOCKED`.
 
-For `input_type: request`, texts from `tool` role messages (tool results going
-into the model) are screened through the same path with `stage: "output"`, so
-indirect injection and data policies apply to them.
+- Tool calls are allowed or refused, never rewritten. LiteLLM's response has
+  no field for changed arguments, and a tool needs real values. A redact
+  verdict on arguments is recorded and does not block.
+- Authorization needs an agent: without a forwarded `x-agent-key` (or
+  `agent_key` param) the data policy and guardrails still run, and role-based
+  authorization does not.
+- Arguments that are not valid JSON (a stream sampled mid-call) are checked as
+  raw text.
+
+**Tool results in a request.** Texts from `tool` role messages after the last
+assistant message are screened through the same path with `stage: "output"`
+and the tool's name, found from the assistant turn that made the call. The
+tool's data policy and the output guardrails apply; a redacted result goes back
+to LiteLLM in place, so the model sees the redacted version. A result whose
+tool cannot be named still gets the output guardrails.
+
+Not covered: `tool_calls` on a request are the assistant's earlier turns
+(checked when they were responses, and already executed), so they are not
+re-checked. The indirect prompt injection detector is not part of
+`/guardrails/output` and does not run here; it runs on the MCP gateway path.
 
 ## 5. Security & backward compatibility
 

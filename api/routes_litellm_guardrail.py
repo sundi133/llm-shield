@@ -8,8 +8,8 @@ model. This route reshapes that call into the ones /guardrails/input and
 actions.
 
 It IS a guard path. The adapter itself does JSON reshaping only: no store read,
-no model call, no network call. Each screened text is one in-process call to
-the existing handler function, so tenant policy, monitor mode, metrics, the
+no model call, no network call. Each screened text, tool call or tool result
+is one in-process call to the existing handler function, so tenant policy, monitor mode, metrics, the
 audit row and auto-revoke are the ones a direct call gets.
 
 The tenant always comes from the API key (LiteLLM sends its api_key as
@@ -19,6 +19,7 @@ x-api-key). Nothing in the body selects a tenant.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any, Optional
 
@@ -81,25 +82,71 @@ def _plain(content: Any) -> str:
     return ""
 
 
-def _select_request(texts: list, messages: Any) -> tuple[list[int], list[dict]]:
-    """(indexes of `texts` to screen, conversation history).
+def _role(msg: Any) -> str:
+    return str(msg.get("role") or "").lower() if isinstance(msg, dict) else ""
 
-    LiteLLM sends every in-scope message on every turn. Only the latest user
-    message is new; the earlier turns are history, and the system prompt is the
+
+def _tool_names(messages: list) -> dict[str, str]:
+    """tool_call_id -> tool name, from the assistant turns that made the calls.
+    A tool result names its call, not its tool."""
+    names: dict[str, str] = {}
+    for msg in messages:
+        calls = msg.get("tool_calls") if _role(msg) == "assistant" else None
+        for call in calls if isinstance(calls, list) else ():
+            name, _args = _call_parts(call)
+            if name and isinstance(call.get("id"), str):
+                names[call["id"]] = name
+    return names
+
+
+def _select_request(texts: list, messages: Any) -> tuple[list[tuple[int, Optional[str]]], list[dict]]:
+    """(texts to screen, conversation history). Each text to screen is
+    (index into `texts`, None) for something a user typed, or (index, tool
+    name) for a tool result on its way into the model ("" when the tool cannot
+    be named).
+
+    LiteLLM sends every in-scope message on every turn. What is new this turn
+    is whatever follows the last assistant message: the user's message, or the
+    results of the tools the assistant called. Everything before it was
+    screened on an earlier turn and is history; the system prompt is the
     operator's, not something a user typed.
     """
     if isinstance(messages, list) and messages:
         slots = _text_slots(messages)
-        users = [i for i, m in enumerate(messages)
-                 if isinstance(m, dict) and str(m.get("role") or "").lower() == "user"]
-        if len(slots) == len(texts) and users:
-            last = users[-1]
-            history = [{"role": m["role"], "content": _plain(m.get("content"))}
-                       for m in messages[:last]
-                       if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
-            return [i for i, s in enumerate(slots) if s == last], history
+        if len(slots) == len(texts):
+            assistants = [i for i, m in enumerate(messages) if _role(m) == "assistant"]
+            start = assistants[-1] + 1 if assistants else 0
+            new = [i for i in range(start, len(messages)) if _role(messages[i]) in ("user", "tool")]
+            if not new:
+                # Ends on an assistant turn (a prefill): the latest user message.
+                new = [i for i, m in enumerate(messages) if _role(m) == "user"][-1:]
+            if new:
+                names = _tool_names(messages)
+                kind: dict[int, Optional[str]] = {}
+                for i in new:
+                    m = messages[i]
+                    kind[i] = None if _role(m) == "user" else str(
+                        m.get("name") or names.get(str(m.get("tool_call_id") or ""), ""))
+                history = [{"role": m["role"], "content": _plain(m.get("content"))}
+                           for m in messages[:new[0]] if _role(m) in ("user", "assistant")]
+                return [(t, kind[s]) for t, s in enumerate(slots) if s in kind], history
     # No roles, or they do not line up with texts (completions, rerank, audio).
-    return list(range(len(texts)))[-_last_k():], []
+    return [(i, None) for i in range(len(texts))][-_last_k():], []
+
+
+def _call_parts(call: Any) -> tuple[str, Any]:
+    """(tool name, arguments) of one OpenAI tool call. Arguments that are not
+    JSON (a stream caught mid-call) are kept raw rather than dropped."""
+    fn = call.get("function") if isinstance(call, dict) else None
+    if not isinstance(fn, dict):
+        return "", {}
+    args = fn.get("arguments")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args) if args.strip() else {}
+        except ValueError:
+            args = {"_raw": args}
+    return str(fn.get("name") or "").strip(), args if args is not None else {}
 
 
 def _header(headers: Any, name: str) -> str:
@@ -153,7 +200,8 @@ def _reason(results: list[dict]) -> str:
     return f"Blocked by Votal Shield: {detail}"[:_REASON_MAX]
 
 
-async def _record(request: Request, body: dict, action: str, screened: int, session: str) -> None:
+async def _record(request: Request, body: dict, action: str, screened: int, session: str,
+                  tool_calls: int = 0) -> None:
     """One summary row per LiteLLM call, carrying what the handlers' own rows
     cannot: who LiteLLM says the caller is, and its call and trace ids. Its own
     kind, so dashboards counting guardrail decisions do not count it twice."""
@@ -178,6 +226,7 @@ async def _record(request: Request, body: dict, action: str, screened: int, sess
             "litellm_version": str(body.get("litellm_version") or ""),
             "model": str(body.get("model") or ""),
             "texts_screened": screened,
+            "tool_calls_checked": tool_calls,
             "user": {k[len("user_api_key_"):]: str(v)[:256] for k, v in data.items()
                      if isinstance(k, str) and k.startswith("user_api_key_") and v is not None},
         },
@@ -201,41 +250,77 @@ async def litellm_basic_guardrail(request: Request, body: dict):
     agent_key, user_role = _identity(body)
     session = str(body.get("litellm_trace_id") or body.get("litellm_call_id") or "")
 
-    if input_type == "request":
-        indexes, history = _select_request(texts, body.get("structured_messages"))
-    else:
-        indexes, history = list(range(len(texts))), []
-    indexes = [i for i in indexes if texts[i].strip()]
-    if not indexes:
-        return {"action": "NONE"}
+    def context(**extra) -> dict:
+        # Fresh per call: the handlers add to it.
+        ctx = {"source": "litellm", "session_id": session, **extra}
+        if agent_key:
+            ctx["agent_id"] = agent_key
+        if user_role:
+            ctx["user_role"] = user_role
+        return ctx
 
-    def call(text: str):
-        # A fresh body per call: the handlers add to `context`.
-        if input_type == "request":
-            payload = {"message": text, "session_id": session, "agent_key": agent_key,
+    calls = []           # coroutines, one handler call each
+    slots = []           # the `texts` index each one screens; None for a tool call
+    history: list[dict] = []
+    if input_type == "request":
+        # tool_calls on a request are the assistant's earlier turns: checked
+        # when they were responses, and already executed.
+        selected, history = _select_request(texts, body.get("structured_messages"))
+    else:
+        selected = [(i, None) for i in range(len(texts))]
+    for i, tool in selected:
+        if not texts[i].strip():
+            continue
+        if input_type == "request" and tool is None:
+            payload = {"message": texts[i], "session_id": session, "agent_key": agent_key,
                        "user_role": user_role, "context": {"source": "litellm"}}
             if history:
                 payload["messages"] = [dict(m) for m in history]
-            return classify(request, payload)
-        context = {"source": "litellm", "session_id": session}
-        if agent_key:
-            context["agent_id"] = agent_key
-        if user_role:
-            context["user_role"] = user_role
-        return classify_output(request, {"output": text, "context": context})
+            calls.append(classify(request, payload))
+        elif input_type == "request":
+            # A tool result going into the model: the tool's data policy, then
+            # the output guardrails, as for a tool response checked directly.
+            ctx = context(stage="output", **({"tool_name": tool} if tool else {}))
+            calls.append(classify_output(request, {"output": texts[i], "context": ctx}))
+        else:
+            calls.append(classify_output(request, {"output": texts[i], "context": context()}))
+        slots.append(i)
+
+    tool_calls = body.get("tool_calls") if input_type == "response" else None
+    checked_tools = 0
+    for tc in tool_calls if isinstance(tool_calls, list) else ():
+        name, args = _call_parts(tc)
+        if not name:
+            continue
+        # Arguments about to be executed: tool authorization, the tool's data
+        # policy, then the output guardrails on the arguments.
+        calls.append(classify_output(request, {
+            "output": json.dumps(args, default=str),
+            "context": context(tool_name=name, tool_input=args, stage="input")}))
+        slots.append(None)
+        checked_tools += 1
+
+    if not calls:
+        return {"action": "NONE"}
+    screened = len(calls) - checked_tools
 
     # An exception here is a 500, never a silent NONE: LiteLLM's fail_on_error
     # (the operator's choice) decides what an error means for the request.
-    results = await asyncio.gather(*(call(texts[i]) for i in indexes))
+    results = await asyncio.gather(*calls)
 
     if any(_blocked(r) for r in results):
-        await _record(request, body, "block", len(indexes), session)
+        await _record(request, body, "block", screened, session, checked_tools)
         return {"action": "BLOCKED",
                 "blocked_reason": _reason([r for r in results if _blocked(r)])}
 
     out = list(texts)
     changed, unredactable = False, []
-    for i, result in zip(indexes, results):
+    for i, result in zip(slots, results):
+        if i is None:
+            # A tool call can only be allowed or refused: LiteLLM's response
+            # has no field for rewritten arguments, and a tool needs real
+            # values. A redact verdict on arguments is recorded, not enforced.
+            continue
         new = _redacted(result)
         if new is not None and new != texts[i]:
             out[i], changed = new, True
@@ -247,12 +332,12 @@ async def litellm_basic_guardrail(request: Request, body: dict):
     # monitor mode is never blocked.
     monitor = resolve_mode(getattr(request.state, "tenant_config", None)) == MONITOR
     if unredactable and _unredactable_blocks() and not monitor:
-        await _record(request, body, "block", len(indexes), session)
+        await _record(request, body, "block", screened, session, checked_tools)
         return {"action": "BLOCKED",
                 "blocked_reason": _reason(unredactable) + " (redaction required, not available)"}
 
     if changed:
-        await _record(request, body, "redact", len(indexes), session)
+        await _record(request, body, "redact", screened, session, checked_tools)
         return {"action": "GUARDRAIL_INTERVENED", "texts": out}
-    await _record(request, body, "pass", len(indexes), session)
+    await _record(request, body, "pass", screened, session, checked_tools)
     return {"action": "NONE"}

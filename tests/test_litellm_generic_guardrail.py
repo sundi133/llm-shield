@@ -182,14 +182,32 @@ def test_text_parts_map_to_the_right_indexes(client, spy):
     spy.verdict = lambda t: _failed("redact", redacted_text=t.upper())
     messages = [
         {"role": "user", "content": "earlier"},
+        {"role": "assistant", "content": "reply"},
         {"role": "user", "content": [
             {"type": "text", "text": "part one"},
             {"type": "image_url", "image_url": {"url": "https://x/y.png"}},
             {"type": "text", "text": "part two"}]},
     ]
-    out = client.post(PATH, json=_req(["earlier", "part one", "part two"], messages)).json()
+    texts = ["earlier", "reply", "part one", "part two"]
+    out = client.post(PATH, json=_req(texts, messages)).json()
     assert out == {"action": "GUARDRAIL_INTERVENED",
-                   "texts": ["earlier", "PART ONE", "PART TWO"]}
+                   "texts": ["earlier", "reply", "PART ONE", "PART TWO"]}
+
+
+def test_every_user_message_since_the_last_assistant_turn_is_screened(client, spy):
+    messages = [{"role": "user", "content": "old"},
+                {"role": "assistant", "content": "reply"},
+                {"role": "user", "content": "new one"},
+                {"role": "user", "content": "new two"}]
+    client.post(PATH, json=_req([m["content"] for m in messages], messages))
+    assert [b["message"] for _k, b in spy.calls] == ["new one", "new two"]
+
+
+def test_a_trailing_assistant_turn_falls_back_to_the_latest_user_message(client, spy):
+    messages = [{"role": "user", "content": "question"},
+                {"role": "assistant", "content": "Sure, here"}]
+    client.post(PATH, json=_req([m["content"] for m in messages], messages))
+    assert [b["message"] for _k, b in spy.calls] == ["question"]
 
 
 def test_fallback_without_roles_screens_the_last_three(client, spy):
@@ -228,6 +246,140 @@ def test_nothing_to_screen_runs_no_pipeline(client, spy, texts):
 def test_empty_texts_among_others_are_skipped(client, spy):
     client.post(PATH, json=_resp(["", "real"]))
     assert [b["output"] for _k, b in spy.calls] == ["real"]
+
+
+# ── tool calls and tool results (task 2) ──────────────────────────────────
+
+def _tool_call(name, arguments, call_id="call_1"):
+    return {"id": call_id, "type": "function",
+            "function": {"name": name, "arguments": arguments}}
+
+
+def test_response_tool_calls_take_the_tool_path(client, spy):
+    body = _resp([], tool_calls=[_tool_call("patient_lookup", '{"patient_id": "12"}'),
+                                 _tool_call("send_email", "", "call_2")],
+                 request_headers={"x-agent-key": "care-bot", "x-user-role": "nurse"},
+                 litellm_trace_id="t1")
+    assert client.post(PATH, json=body).json() == {"action": "NONE"}
+    assert [k for k, _b in spy.calls] == ["output", "output"]
+    first = spy.calls[0][1]
+    assert json.loads(first["output"]) == {"patient_id": "12"}
+    assert first["context"] == {
+        "source": "litellm", "session_id": "t1", "agent_id": "care-bot", "user_role": "nurse",
+        "tool_name": "patient_lookup", "tool_input": {"patient_id": "12"}, "stage": "input"}
+    assert spy.calls[1][1]["context"]["tool_input"] == {}
+
+
+def test_a_denied_tool_call_blocks_the_response(client, spy):
+    def verdict(text):
+        if "wire" in text:
+            return {"safe": False, "action": "block", "guardrail_results": [
+                {"guardrail": "tool_authorization", "passed": False, "action": "block",
+                 "message": "role 'nurse' may not call wire_transfer"}]}
+        return {"safe": True, "action": "pass", "guardrail_results": []}
+    spy.verdict = verdict
+    body = _resp(["Calling tools."], tool_calls=[
+        _tool_call("lookup", '{"q": "x"}'), _tool_call("wire_transfer", '{"to": "wire"}', "c2")])
+    out = client.post(PATH, json=body).json()
+    assert out["action"] == "BLOCKED"
+    assert "tool_authorization: role 'nurse' may not call wire_transfer" in out["blocked_reason"]
+
+
+def test_a_redact_verdict_on_tool_arguments_does_not_block_or_rewrite(client, spy):
+    """LiteLLM has no field for rewritten arguments, and a tool needs real
+    values: an email address in send_email's arguments is not a leak."""
+    spy.verdict = lambda t: _failed("redact", redacted_text="{}") if t.startswith("{") \
+        else {"safe": True, "action": "pass", "guardrail_results": []}
+    body = _resp(["ok"], tool_calls=[_tool_call("send_email", '{"to": "a@b.co"}')])
+    assert client.post(PATH, json=body).json() == {"action": "NONE"}
+
+
+def test_partial_streamed_arguments_are_checked_raw(client, spy):
+    client.post(PATH, json=_resp([], tool_calls=[_tool_call("lookup", '{"q": "ali')]))
+    assert spy.calls[0][1]["context"]["tool_input"] == {"_raw": '{"q": "ali'}
+
+
+@pytest.mark.parametrize("tool_calls", [
+    [{"id": "c", "type": "function"}], [{"function": {"name": "", "arguments": "{}"}}],
+    ["junk"], "junk", None])
+def test_tool_calls_without_a_name_are_ignored(client, spy, tool_calls):
+    assert client.post(PATH, json=_resp([], tool_calls=tool_calls)).json() == {"action": "NONE"}
+    assert spy.calls == []
+
+
+def test_request_tool_calls_are_history_and_not_rechecked(client, spy):
+    messages = [{"role": "user", "content": "find alice"}]
+    client.post(PATH, json=_req(["find alice"], messages,
+                                tool_calls=[_tool_call("lookup", '{"q": "alice"}')]))
+    assert [k for k, _b in spy.calls] == ["input"]
+
+
+_AGENT_TURN = [
+    {"role": "system", "content": "be helpful"},
+    {"role": "user", "content": "look up alice and bob"},
+    {"role": "assistant", "content": None, "tool_calls": [
+        _tool_call("crm_lookup", '{"q": "alice"}', "call_a"),
+        _tool_call("hr_lookup", '{"q": "bob"}', "call_b")]},
+    {"role": "tool", "tool_call_id": "call_a", "content": "alice: ssn 123"},
+    {"role": "tool", "tool_call_id": "call_b", "content": "bob: fine"},
+]
+_AGENT_TEXTS = ["be helpful", "look up alice and bob", "alice: ssn 123", "bob: fine"]
+
+
+def test_tool_results_are_screened_with_their_tool_name(client, spy):
+    """After the assistant called tools, the new content is the tool results:
+    the user message before them was screened on the turn it arrived."""
+    client.post(PATH, json=_req(_AGENT_TEXTS, _AGENT_TURN, litellm_trace_id="t2"))
+    assert [(k, b["output"]) for k, b in spy.calls] == [
+        ("output", "alice: ssn 123"), ("output", "bob: fine")]
+    assert spy.calls[0][1]["context"] == {
+        "source": "litellm", "session_id": "t2", "stage": "output", "tool_name": "crm_lookup"}
+    assert spy.calls[1][1]["context"]["tool_name"] == "hr_lookup"
+
+
+def test_a_sanitized_tool_result_goes_back_in_place(client, spy):
+    spy.verdict = lambda t: {"safe": True, "action": "pass", "guardrail_results": [],
+                             **({"sanitized_output": "alice: ssn [SSN]"} if "ssn" in t else {})}
+    out = client.post(PATH, json=_req(_AGENT_TEXTS, _AGENT_TURN)).json()
+    assert out == {"action": "GUARDRAIL_INTERVENED", "texts": [
+        "be helpful", "look up alice and bob", "alice: ssn [SSN]", "bob: fine"]}
+
+
+def test_a_blocked_tool_result_blocks_the_request(client, spy):
+    spy.verdict = lambda t: _failed("block", "critical rule") if "ssn" in t else _failed("log")
+    out = client.post(PATH, json=_req(_AGENT_TEXTS, _AGENT_TURN)).json()
+    assert out == {"action": "BLOCKED",
+                   "blocked_reason": "Blocked by Votal Shield: g1: critical rule"}
+
+
+def test_a_tool_result_whose_tool_is_unknown_is_still_screened(client, spy):
+    messages = [{"role": "user", "content": "go"},
+                {"role": "assistant", "content": "calling"},
+                {"role": "tool", "tool_call_id": "nope", "content": "result text"}]
+    client.post(PATH, json=_req(["go", "calling", "result text"], messages))
+    assert [(k, b["output"]) for k, b in spy.calls] == [("output", "result text")]
+    assert "tool_name" not in spy.calls[0][1]["context"]
+
+
+def test_tool_data_policy_runs_for_real(client, monkeypatch):
+    """Not the spy: the tenant's data policy for the tool redacts its result,
+    and blocks the same tool's arguments when a rule says block."""
+    from api import routes_classify_output as rco
+
+    policy = {"sanitization_mode": "regex", "sanitization_rules": [
+        {"pattern_id": "ssn", "pattern": r"\d{3}-\d{2}-\d{4}", "action": "redact"}]}
+    monkeypatch.setattr(rco, "_load_tool_data_policy",
+                        lambda tenant, tool: policy if tool == "crm_lookup" else {})
+    messages = [dict(m) for m in _AGENT_TURN]
+    messages[3] = {**messages[3], "content": "alice: 123-45-6789"}
+    texts = list(_AGENT_TEXTS)
+    texts[2] = "alice: 123-45-6789"
+    with patch("core.middleware._get_cached_tenant",
+               return_value=(TENANT, {"tenant_id": TENANT})):
+        out = client.post(PATH, json=_req(texts, messages), headers={"x-api-key": "k"}).json()
+    assert out["action"] == "GUARDRAIL_INTERVENED"
+    assert "123-45-6789" not in out["texts"][2]
+    assert out["texts"][3] == "bob: fine"
 
 
 # ── verdict mapping ───────────────────────────────────────────────────────
@@ -405,6 +557,7 @@ def test_summary_row_carries_the_litellm_caller(client, monkeypatch):
     assert meta["session_id"] == "trace-7"
     assert meta["model"] == "gpt-4o"
     assert meta["user"] == {"user_id": "alice", "team_id": "eng"}
+    assert (meta["texts_screened"], meta["tool_calls_checked"]) == (1, 0)
     # The decision itself is the input handler's row, tied by the same session.
     decision = [x for x in rows if x["endpoint"] == "/guardrails/input"]
     assert len(decision) == 1
