@@ -8,7 +8,7 @@ description: One endpoint on Shield that speaks LiteLLM's Generic Guardrail API,
 
 # Spec: LiteLLM Generic Guardrail API
 
-> Status: **APPROVED 2026-10-01** (user: "approved"). Tasks 1 and 2 built; task 3 open.
+> Status: **APPROVED 2026-10-01** (user: "approved"). **BUILT** (tasks 1 to 3). Checked live against LiteLLM 1.103.2 on 2026-10-01: blocked prompt, redacted response, tool call, streamed response.
 > Branch: `litellm_integration` (from main at 43058d3).
 > Contract source: LiteLLM `main` on 2026-10-01,
 > `litellm/proxy/guardrails/guardrail_hooks/generic_guardrail_api/generic_guardrail_api.py`
@@ -339,5 +339,7 @@ All on branch `litellm_integration`, one PR.
 2. **Tool calls.** `tool_calls` in responses and tool-result messages in
    requests through the existing tool path, with tests.
 3. **Docs and example.** Customer page, example config, streaming guidance,
-   and the end-to-end check against a real LiteLLM proxy (needs `litellm`
-   installed in a scratch venv, which I will ask about first).
+   and the end-to-end check against a real LiteLLM proxy. Found in that check:
+   LiteLLM expands `os.environ/` only for `api_key` and `api_base`, not for
+   `headers`; and streamed text is redacted only with
+   `streaming_transform_mode: incremental_diff`.

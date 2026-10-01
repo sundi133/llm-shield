@@ -89,6 +89,7 @@ permalink: /
 | Use Shield in your IDE (Cursor / Claude / VS Code) | [Connect Shield to Your IDE]({{ "/connect-your-ide/" | relative_url }}) |
 | Use your existing IdP (Okta / Entra / Google) | [Identity Provider Interoperability]({{ "/idp-interoperability/" | relative_url }}) |
 | Add guardrails at your AI gateway (LiteLLM / Portkey / Kong) | [AI Gateway & Proxy Interoperability]({{ "/ai-gateway-interoperability/" | relative_url }}) |
+| Add Shield to a LiteLLM proxy with config only | [LiteLLM guardrail (config only)]({{ "/litellm-generic-guardrail/" | relative_url }}) |
 | Stop data leaking into web AI (ChatGPT / Gemini / Claude) | [Edge Fast-Path (Browser DLP)]({{ "/edge-fast-path/" | relative_url }}) |
 | Lock down where agents run (OpenShell, Kubernetes, Cilium, Squid) from one profile | [Infrastructure Guardrails]({{ "/infra-guardrails/" | relative_url }}) |
 | Stop agents moving data between apps (Drive to public GitHub, CRM to external mail) | [Cross-App Flow Control]({{ "/cross-app-flow-control/" | relative_url }}) |
