@@ -35,6 +35,7 @@ from api.routes_mcp import router as mcp_router
 from api.routes_action import router as action_router
 from api.routes_topic import router as topic_router
 from api.routes_classify_output import router as classify_output_router
+from api.routes_litellm_guardrail import router as litellm_guardrail_router
 from api.routes_tool import router as tool_router
 from api.routes_memory import router as memory_router
 from api.routes_agent import router as agent_router
@@ -117,6 +118,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(classify_router)
     app.include_router(classify_output_router)
+    app.include_router(litellm_guardrail_router)
     app.include_router(gateway_router)
     app.include_router(config_router)
     app.include_router(audit_router)
