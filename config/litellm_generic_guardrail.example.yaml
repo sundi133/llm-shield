@@ -1,0 +1,48 @@
+# LiteLLM proxy + Votal Shield through LiteLLM's Generic Guardrail API.
+# Config only: no plugin file in the LiteLLM image.
+#
+# Start:  litellm --config config/litellm_generic_guardrail.example.yaml --port 4000
+# Needs:  VOTAL_API_KEY (your Shield tenant key) and your model provider key(s).
+# Guide:  docs/litellm-generic-guardrail.md
+# Checked against LiteLLM 1.103.2.
+
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+guardrails:
+  - guardrail_name: votal-shield
+    litellm_params:
+      guardrail: generic_guardrail_api
+      # pre_call checks the prompt, post_call checks the response and its tool calls.
+      mode: [pre_call, post_call]
+      # Your Shield data plane. LiteLLM appends /beta/litellm_basic_guardrail_api.
+      api_base: https://api.guardrails.votal.ai
+      # Sent to Shield as the x-api-key header. Selects the tenant and its policy.
+      api_key: os.environ/VOTAL_API_KEY
+      # Run on every request, so clients need not send a "guardrails" field.
+      default_on: true
+
+      # Forward these client headers to Shield (LiteLLM hides all others).
+      # x-agent-key is needed for role-based tool authorization.
+      extra_headers: [x-agent-key, x-user-role]
+
+      # Streaming. The default checks every 5th chunk and can only stop a
+      # stream, not redact it. This setting redacts streamed text as well.
+      streaming_transform_mode: incremental_diff
+      # Fewer checks per stream (default 5). Each check is a full Shield pass.
+      streaming_sampling_rate: 20
+
+      # What LiteLLM does when Shield cannot be reached or returns an error.
+      # These defaults block the request. Set fail_open / false to let it through.
+      unreachable_fallback: fail_closed
+      fail_on_error: true
+
+      # Shield on RunPod (on-prem model) also needs the RunPod bearer:
+      # headers:
+      #   Authorization: "Bearer <RUNPOD_TOKEN>"
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

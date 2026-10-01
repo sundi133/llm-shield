@@ -256,7 +256,10 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         # The DLP agent's heartbeat resolves its tenant the same way.
         "/v1/devices",
     )
-    _GUARDED_EXACT = {"/classify", "/classify_output", "/guardrails/input", "/guardrails/output", "/guardrails/file", "/v1/chat/completions"}
+    _GUARDED_EXACT = {"/classify", "/classify_output", "/guardrails/input", "/guardrails/output", "/guardrails/file", "/v1/chat/completions",
+                      # LiteLLM's Generic Guardrail API: an adapter over the two
+                      # routes above, so it needs the same tenant enrichment.
+                      "/beta/litellm_basic_guardrail_api"}
 
     # Paths that must carry a resolvable tenant key when
     # SHIELD_GUARD_REQUIRE_KEY is enforcing.
@@ -284,6 +287,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         "/classify", "/classify_output",
         "/v1/shield/tool/check", "/v1/shield/tool/output",
         "/v1/chat/completions",
+        "/beta/litellm_basic_guardrail_api",
     }
 
     async def dispatch(self, request: Request, call_next) -> Response:
