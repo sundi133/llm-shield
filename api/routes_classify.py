@@ -2,6 +2,7 @@
 
 import io
 import os
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -409,6 +410,7 @@ _TEXTLIKE_EXTS = {
     "txt", "csv", "tsv", "json", "jsonl", "md", "markdown", "xml", "html",
     "htm", "yaml", "yml", "log", "sql", "sh", "py", "js", "ts", "java",
     "c", "cpp", "go", "rb", "rs", "php", "ini", "cfg", "toml", "env",
+    "mkd", "mdown", "mdx", "rst", "text",
 }
 _TEXTLIKE_CONTENT_TYPES = ("application/json", "application/xml", "text/")
 
@@ -466,6 +468,40 @@ def _extract_xlsx(data: bytes, max_chars: int) -> str:
     return "\n".join(parts)
 
 
+_PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+_PPTX_TEXT = re.compile(r"<a:t(?:\s[^>]*)?>(.*?)</a:t>", re.S)
+_PPTX_PART = re.compile(r"^ppt/(slides|notesSlides)/(?:slide|notesSlide)(\d+)\.xml$")
+#: Read at most this much of one slide's XML. A slide is small; a part that
+#: inflates past this is a decompression bomb, not a slide.
+_PPTX_PART_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _extract_pptx(data: bytes, max_chars: int) -> str:
+    """Slide text, then speaker notes, in slide order. A .pptx is a zip of XML
+    parts, so this needs no library: text runs are the <a:t> elements."""
+    import html
+    import zipfile
+    parts: list[str] = []
+    total = 0
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        found = []
+        for name in z.namelist():
+            m = _PPTX_PART.match(name)
+            if m:
+                found.append((m.group(1) != "slides", int(m.group(2)), name))
+        for _notes, _n, name in sorted(found):
+            with z.open(name) as f:
+                xml = f.read(_PPTX_PART_MAX_BYTES).decode("utf-8", errors="replace")
+            for run in _PPTX_TEXT.findall(xml):
+                text = html.unescape(run)
+                if text.strip():
+                    parts.append(text)
+                    total += len(text)
+            if total > max_chars:  # stop before reading a 500-slide deck in full
+                break
+    return "\n".join(parts)
+
+
 def _extract_file_text(filename: str, content_type: str, data: bytes,
                        max_chars: int) -> tuple[str, Optional[str]]:
     """Best-effort text extraction. Returns (text, note). Never raises."""
@@ -480,6 +516,8 @@ def _extract_file_text(filename: str, content_type: str, data: bytes,
             return _extract_docx(data, max_chars), None
         if ext == "xlsx" or ctype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
             return _extract_xlsx(data, max_chars), None
+        if ext == "pptx" or ctype == _PPTX_CONTENT_TYPE:
+            return _extract_pptx(data, max_chars), None
         return "", "content not screenable (unsupported type)"
     except ImportError:
         return "", "extraction unavailable (missing library)"
