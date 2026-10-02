@@ -6,6 +6,8 @@
 
 // The on-laptop Votal device agent, when present, decides first (agent_client.js).
 importScripts("agent_client.js");
+// Turns a verdict into the line the user reads (verdict_text.js).
+importScripts("verdict_text.js");
 
 const DEFAULTS = {
   shieldUrl: "https://api.guardrails.votal.ai",
@@ -117,13 +119,11 @@ async function screen(text, origin) {
     if (!resp.ok) return { block: false, warn: false, reason: "", error: "HTTP " + resp.status, mode: cfg.mode, identity };
     const data = await resp.json();
     const flagged = data.safe === false || data.action === "block";
-    const reason =
-      (data.guardrail_results || [])
-        .filter((g) => g && g.passed === false)
-        .map((g) => g.guardrail)
-        .join(", ") || (data.action || "");
-    if (cfg.mode === "warn") return { block: false, warn: flagged, reason, mode: "warn", identity };
-    return { block: flagged, warn: false, reason, mode: "enforce", identity };
+    // `reason` is what the banner shows: the policy and why. `blocked_by`
+    // keeps each failed guardrail for an exception request.
+    const { reason, items: blocked_by } = explainVerdict(data);
+    if (cfg.mode === "warn") return { block: false, warn: flagged, reason, blocked_by, mode: "warn", identity };
+    return { block: flagged, warn: false, reason, blocked_by, mode: "enforce", identity };
   } catch (e) {
     // A timeout is not an approval. In enforce mode the prompt is held unless
     // the operator has explicitly opted into failing open.
@@ -193,14 +193,12 @@ async function screenFile(meta) {
     if (!resp.ok) return { block: false, warn: false, reason: "", error: "HTTP " + resp.status, mode: cfg.mode, identity };
     const data = await resp.json();
     const flagged = data.safe === false || data.action === "block";
-    const reason =
-      (data.guardrail_results || [])
-        .filter((g) => g && g.passed === false)
-        .map((g) => g.guardrail)
-        .join(", ") || (data.action || "");
+    // `reason` is what the banner shows: the policy and why. `blocked_by`
+    // keeps each failed guardrail for an exception request.
+    const { reason, items: blocked_by } = explainVerdict(data);
     const note = data.file && data.file.note ? data.file.note : undefined;
-    if (cfg.mode === "warn") return { block: false, warn: flagged, reason, note, mode: "warn", identity };
-    return { block: flagged, warn: false, reason, note, mode: "enforce", identity };
+    if (cfg.mode === "warn") return { block: false, warn: flagged, reason, blocked_by, note, mode: "warn", identity };
+    return { block: flagged, warn: false, reason, blocked_by, note, mode: "enforce", identity };
   } catch (e) {
     return { block: false, warn: false, reason: "", error: String(e), mode: cfg.mode, identity };
   }

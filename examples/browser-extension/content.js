@@ -131,7 +131,9 @@
     el.textContent = msg;
     el.style.opacity = "1";
     clearTimeout(el._t);
-    el._t = setTimeout(() => (el.style.opacity = "0"), kind === "block" ? 6000 : 3500);
+    // A block explains which policy and why: long enough to read.
+    const ms = kind === "block" ? Math.min(20000, 6000 + 40 * String(msg || "").length) : 3500;
+    el._t = setTimeout(() => (el.style.opacity = "0"), ms);
   }
 
   // Replace the composer's text (the device agent's redaction). Returns whether

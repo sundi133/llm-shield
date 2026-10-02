@@ -46,6 +46,8 @@ jobs:
         run: |
           node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"
           node --test extension/test/*.mjs
+      - name: Browser extension (VotalAI Guardrails) unit tests
+        run: node --test examples/browser-extension/test/*.test.js
 
   mcp-scan-npm:
     name: mcp-scan npm wrapper (node)
