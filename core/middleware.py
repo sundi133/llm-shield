@@ -9,12 +9,12 @@ from typing import Optional
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-_JSON = JSONResponse
 
 from core.rbac import enforcer
 from core.dlp.devices import DEVICE_PATHS
 from storage.tenant_store import DEVICE_KEY_PREFIX, resolve_tenant_by_api_key, get_tenant
 from storage.rate_limiter import check_and_increment
+from storage.tenant_models import effective_quota
 from core.feature_flags import CERT_IDENTITY_ENABLED
 
 logger = logging.getLogger(__name__)
@@ -300,9 +300,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         _presented = _extract_api_key(request)
         if _presented and _presented.startswith(DEVICE_KEY_PREFIX) \
                 and (request.method.upper(), path.rstrip("/")) not in DEVICE_PATHS:
-            # _JSON: dispatch re-imports JSONResponse locally further down,
-            # which makes the bare name local to this whole function.
-            return _JSON(status_code=403, content={
+            return JSONResponse(status_code=403, content={
                 "error": "device_key_scope",
                 "detail": "A device key may only fetch its DLP bundle, send heartbeats, "
                           "renew its CA and post runtime events."})
@@ -404,7 +402,6 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                         # Check explicit blocklist first (works regardless of registration)
                         blocked_agents = tenant_config.get("blocked_agents", [])
                         if agent_key in blocked_agents:
-                            from starlette.responses import JSONResponse
                             _record_shadow_agent(tenant_id, agent_key, path, user_role)
                             return JSONResponse(
                                 status_code=403,
@@ -424,7 +421,6 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                         # seconds; registry writes invalidate the cache.
                         _agent_status = registered.get(agent_key)
                         if _agent_status is not None and _agent_status != "active":
-                            from starlette.responses import JSONResponse
                             return JSONResponse(
                                 status_code=403,
                                 content={
@@ -444,7 +440,6 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                             )
                             # Block ALL unregistered agents if tenant opted in
                             if tenant_config.get("block_unregistered_agents", False):
-                                from starlette.responses import JSONResponse
                                 return JSONResponse(
                                     status_code=403,
                                     content={
@@ -458,8 +453,8 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                             request.state.shadow_agent = False
 
                     # Per-tenant rate limiting based on quota
-                    quota = tenant_config.get("quota") or {}
-                    max_per_min = quota.get("max_requests_per_minute", 60)
+                    quota = effective_quota(tenant_config.get("quota"))
+                    max_per_min = quota["max_requests_per_minute"]
                     max_per_day = quota.get("max_requests_per_day", 100_000)
                     max_tokens = quota.get("max_tokens_per_day", 0)
 

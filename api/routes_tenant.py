@@ -16,7 +16,7 @@ from storage.tenant_store import (
     clear_tenant_parent,
     get_tenant_ancestors,
 )
-from storage.tenant_models import TenantCreateRequest, TenantUpdateRequest
+from storage.tenant_models import TenantCreateRequest, TenantUpdateRequest, effective_quota
 from storage.admin_audit import log_admin_action, query_admin_audit
 from storage.rate_limiter import get_usage
 from core.policy_inheritance import get_effective_policies
@@ -208,7 +208,7 @@ async def get_tenant_usage(tenant_id: str):
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
 
     usage = get_usage(tenant_id)
-    quota = existing.get("quota", {})
+    quota = effective_quota(existing.get("quota"))
     return {
         "tenant_id": tenant_id,
         "usage": usage,
@@ -367,7 +367,7 @@ async def get_admin_dashboard():
             continue
 
         usage = get_usage(tid)
-        quota = config.get("quota") or {}
+        quota = effective_quota(config.get("quota"))
 
         req_today = usage.get("requests_today", 0)
         tok_today = usage.get("tokens_today", 0)

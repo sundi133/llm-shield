@@ -21,7 +21,7 @@ chance of working.
 - Intercepts the send action on each site (Enter key + send button).
 - **Intercepts file attachments** (file picker, drag-and-drop, paste) and
   screens them through Shield's `/guardrails/file` **before** the site
-  receives the file. Text-like files, PDF, DOCX and XLSX are extracted
+  receives the file. Text-like files, PDF, DOCX, XLSX and PPTX are extracted
   server-side and run through the same input guardrails; other types are
   screened by filename. Blocked files never reach the site.
 - Sends the composer text to Shield from the **background service worker**
