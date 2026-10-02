@@ -51,6 +51,24 @@ upload both files. Upload the package first, then `update.xml`, so the
 manifest never names a file that is not there yet. Every enrolled fleet updates
 within hours; no customer action is needed.
 
+## Ready-made MDM files
+
+Votal publishes the files for every MDM next to the package, already filled in
+with the extension ID and update URL. Each installs the extension in Chrome and
+Edge and sets its configuration (section 4). Replace `REPLACE_WITH_TENANT_KEY`,
+`REPLACE_WITH_USER_ID` and `REPLACE_WITH_DEVICE_ID` before uploading.
+
+| MDM | File |
+|---|---|
+| Jamf Pro, Kandji, Intune for Mac | [`votalai-guardrails.mobileconfig`](https://storage.googleapis.com/votal-public/extension/mdm/votalai-guardrails.mobileconfig) |
+| Intune (Windows), Group Policy | [`install-votalai-guardrails.ps1`](https://storage.googleapis.com/votal-public/extension/mdm/install-votalai-guardrails.ps1) or [`votalai-guardrails.reg`](https://storage.googleapis.com/votal-public/extension/mdm/votalai-guardrails.reg) |
+| Linux | [`votalai-guardrails-linux.json`](https://storage.googleapis.com/votal-public/extension/mdm/votalai-guardrails-linux.json) |
+| Google Admin console | [`google-admin-policy.json`](https://storage.googleapis.com/votal-public/extension/mdm/google-admin-policy.json) |
+| All of the above, with a README | [`votalai-guardrails-mdm.zip`](https://storage.googleapis.com/votal-public/extension/mdm/votalai-guardrails-mdm.zip) |
+
+Votal regenerates them with `scripts/build_extension_mdm.py` when the ID or
+update URL changes; a new extension version needs no new MDM files.
+
 ## 3. Customer IT: force-install policy
 
 One policy line, delivered through whatever already manages Chrome:
