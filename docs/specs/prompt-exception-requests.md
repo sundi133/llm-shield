@@ -8,7 +8,7 @@ description: A user whose prompt was blocked can ask for an exception. An admin 
 
 # Spec: Prompt exception requests
 
-> Status: **APPROVED 2026-10-02** (user: "approved"). Task 1 built; tasks 2 to 6 open.
+> Status: **APPROVED 2026-10-02** (user: "approved"). Tasks 1 and 2 built; tasks 3 to 6 open.
 > Builds on: `docs/spec-hitl-breakglass.md` (signed approval grants and the
 > approval queue, shipped), the browser extension
 > (`examples/browser-extension`), `/guardrails/input`.
@@ -91,8 +91,9 @@ moving to a personal device.
 |---|---|---|
 | `prompt_exc:{tenant}:{request_id}` | the request (below) | `request_ttl_s` + 7 days |
 | `prompt_exc_idx:{tenant}` | sorted set of `request_id` by `created_at` | trimmed with the requests |
-| `prompt_exc_user:{tenant}:{user_hash}` | count of pending requests, for the per-user limit | `request_ttl_s` |
-| `prompt_exc_fp:{tenant}:{guardrail}:{policy}` | counters: `requested`, `approved`, `false_positive` | none |
+| `prompt_exc_user:{tenant}:{user_hash}` | this user's open request ids, for the per-user limit and for finding a duplicate | 7 days |
+| `prompt_exc_fp:{tenant}` | one hash of counters per guardrail and policy: `requested`, `approved`, `false_positive` | none |
+| `prompt_exc_settings:{tenant}` | the tenant's settings | none |
 
 Request record:
 
@@ -112,13 +113,18 @@ grant_id
   the user before they submit that reviewers will see the prompt.
 - **Tenant scoping:** keys are prefixed by the tenant resolved from the API
   key. A request id from another tenant is a 404.
-- Tenant settings live in the existing agentic control-plane config:
+- Tenant settings have their own key and their own routes
+  (`GET` and `PUT /v1/tenant/me/exceptions/settings`), not the agentic
+  control-plane config: a `PUT` there replaces every section it is not given,
+  so a settings change here could have reset a tenant's tool approval rules.
 
 ```json
-{"exceptions": {"enabled": false, "non_appealable": ["keyword_blocklist"],
-                "request_ttl_s": 86400, "grant_ttl_s": 900,
-                "max_pending_per_user": 3, "auto_review": false}}
+{"enabled": false, "non_appealable": [], "request_ttl_s": 86400,
+ "grant_ttl_s": 900, "max_pending_per_user": 3, "auto_review": false}
 ```
+
+  A request's status is decided by the deadline stored in the request, never
+  by a Redis expiry.
 
 ## 4. API / interface
 
@@ -183,7 +189,7 @@ outer whitespace, so the user must resend the same prompt.
 
 ### 4.5 Notification
 
-A webhook event `exception.requested` (and `exception.decided`) through the
+A webhook event `exception_requested` (and `exception_decided`) through the
 existing webhook delivery, with the request id, user, policy and a link to the
 portal. Never the prompt text.
 
@@ -221,10 +227,12 @@ portal. Never the prompt text.
 
 ## 6. Packaging & deploy
 
-- New modules `core/prompt_exceptions.py` (store, hashing, grant check) and
-  `api/routes_exceptions.py`. The review routes are mounted by `admin_app.py`,
-  so both files go into `Dockerfile.admin`'s COPY list
-  (`tests/test_admin_dockerfile_imports.py` enforces it).
+- New modules `core/prompt_exceptions.py` (store, hashing, grant check),
+  `api/routes_exceptions.py` (ask and poll, data plane only, because asking
+  runs the screening pipeline) and `api/routes_exception_review.py` (settings
+  and review, both planes). `admin_app.py` mounts the review module, so it and
+  `core/prompt_exceptions.py` are in `Dockerfile.admin`'s COPY list; the two
+  admin image tests enforce it.
 - No new pip dependency.
 - Requires `SHIELD_APPROVAL_TOKEN_PRIVATE_KEY` on both planes (already needed
   for tool approvals).

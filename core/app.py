@@ -47,6 +47,8 @@ from api.routes_runtime_policy import router as runtime_profiles_router, edge_ro
 from api.routes_embodied import router as embodied_profiles_router, edge_router as embodied_bundle_router
 from api.routes_embodied_check import router as embodied_check_router
 from api.routes_device_dlp import router as device_dlp_router, edge_router as device_dlp_bundle_router
+from api.routes_exceptions import router as exceptions_router
+from api.routes_exception_review import tenant_router as exceptions_tenant_router
 from api.routes_devices import router as device_agent_router, tenant_router as devices_router
 from api.routes_runtime import router as runtime_events_router
 from api.routes_custom_policies import router as custom_policies_router
@@ -143,6 +145,8 @@ def create_app() -> FastAPI:
     app.include_router(embodied_bundle_router)
     app.include_router(embodied_check_router)   # data plane only
     app.include_router(device_dlp_router)
+    app.include_router(exceptions_router)          # ask and poll: data plane only
+    app.include_router(exceptions_tenant_router)   # /v1/tenant/me/exceptions
     app.include_router(device_dlp_bundle_router)   # data plane only: laptops poll it
     app.include_router(device_agent_router)        # data plane only: enroll, heartbeat
     app.include_router(devices_router)
