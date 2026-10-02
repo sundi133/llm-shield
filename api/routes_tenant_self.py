@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field, model_validator, validator
 
 from storage.tenant_store import get_tenant, update_tenant, set_tenant_policies, _get_redis
-from storage.tenant_models import GuardrailPolicy
+from storage.tenant_models import GuardrailPolicy, effective_quota
 from storage.rate_limiter import get_usage
 from storage.admin_audit import log_admin_action
 from storage.audit_log import audit_logger
@@ -296,7 +296,8 @@ async def get_my_usage(request: Request):
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     usage = get_usage(tenant_id)
-    quota = config.get("quota") or {}
+    # The quota as enforced: the per-minute floor may be above the stored number.
+    quota = effective_quota(config.get("quota"))
     max_min = quota.get("max_requests_per_minute") or 1
     max_day = quota.get("max_requests_per_day") or 1
     return {
