@@ -38,7 +38,8 @@ def client():
     reg._discovered = False
 
 
-def test_over_quota_is_429_with_retry_after(client):
+def test_over_quota_is_429_with_retry_after(client, monkeypatch):
+    monkeypatch.setenv("SHIELD_MIN_REQUESTS_PER_MINUTE", "0")   # enforce the stored 1
     tenant = {"tenant_id": "quota-test-tenant", "quota": {"max_requests_per_minute": 1}}
     with patch("core.middleware._get_cached_tenant",
                return_value=("quota-test-tenant", tenant)):
@@ -66,3 +67,43 @@ def test_dispatch_does_not_import_names_the_module_already_has():
                     shadowed += [f"{fn.name}: {a.asname or a.name}" for a in n.names
                                  if (a.asname or a.name) in module_names]
     assert shadowed == []
+
+
+# ── the per-minute floor ──────────────────────────────────────────────────
+
+def test_no_tenant_is_limited_below_the_floor(monkeypatch):
+    from storage.tenant_models import _PLAN_QUOTA_DEFAULTS, TenantQuota, effective_quota
+
+    monkeypatch.delenv("SHIELD_MIN_REQUESTS_PER_MINUTE", raising=False)
+    # A record written under the old basic plan.
+    assert effective_quota({"max_requests_per_minute": 60, "max_requests_per_day": 5}) == {
+        "max_requests_per_minute": 10_000, "max_requests_per_day": 5}
+    assert effective_quota(None)["max_requests_per_minute"] == 10_000
+    assert effective_quota({"max_requests_per_minute": "junk"})["max_requests_per_minute"] == 10_000
+    # A tenant given more keeps it.
+    assert effective_quota({"max_requests_per_minute": 50_000})["max_requests_per_minute"] == 50_000
+    # New tenants are created at or above it, on every plan.
+    assert TenantQuota().max_requests_per_minute == 10_000
+    assert {p: q["max_requests_per_minute"] for p, q in _PLAN_QUOTA_DEFAULTS.items()} == {
+        "basic": 10_000, "pro": 10_000, "enterprise": 10_000}
+
+
+def test_floor_is_configurable_and_zero_enforces_the_stored_number(monkeypatch):
+    from storage.tenant_models import effective_quota
+
+    monkeypatch.setenv("SHIELD_MIN_REQUESTS_PER_MINUTE", "500")
+    assert effective_quota({"max_requests_per_minute": 60})["max_requests_per_minute"] == 500
+    monkeypatch.setenv("SHIELD_MIN_REQUESTS_PER_MINUTE", "0")
+    assert effective_quota({"max_requests_per_minute": 60})["max_requests_per_minute"] == 60
+    monkeypatch.setenv("SHIELD_MIN_REQUESTS_PER_MINUTE", "not a number")
+    assert effective_quota({"max_requests_per_minute": 60})["max_requests_per_minute"] == 10_000
+
+
+def test_a_tenant_stored_at_60_a_minute_is_not_refused_at_61(client, monkeypatch):
+    monkeypatch.delenv("SHIELD_MIN_REQUESTS_PER_MINUTE", raising=False)
+    tenant = {"tenant_id": "floor-test-tenant", "quota": {"max_requests_per_minute": 2}}
+    with patch("core.middleware._get_cached_tenant",
+               return_value=("floor-test-tenant", tenant)):
+        codes = [client.post("/guardrails/input", json={"message": "hello"},
+                             headers={"x-api-key": "k"}).status_code for _ in range(4)]
+    assert codes == [200, 200, 200, 200]

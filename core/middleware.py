@@ -14,6 +14,7 @@ from core.rbac import enforcer
 from core.dlp.devices import DEVICE_PATHS
 from storage.tenant_store import DEVICE_KEY_PREFIX, resolve_tenant_by_api_key, get_tenant
 from storage.rate_limiter import check_and_increment
+from storage.tenant_models import effective_quota
 from core.feature_flags import CERT_IDENTITY_ENABLED
 
 logger = logging.getLogger(__name__)
@@ -452,8 +453,8 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                             request.state.shadow_agent = False
 
                     # Per-tenant rate limiting based on quota
-                    quota = tenant_config.get("quota") or {}
-                    max_per_min = quota.get("max_requests_per_minute", 60)
+                    quota = effective_quota(tenant_config.get("quota"))
+                    max_per_min = quota["max_requests_per_minute"]
                     max_per_day = quota.get("max_requests_per_day", 100_000)
                     max_tokens = quota.get("max_tokens_per_day", 0)
 
