@@ -12,65 +12,64 @@ management tooling).
 ## 1. Votal: pack and sign the extension (once per release)
 
 ```bash
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --pack-extension=examples/browser-extension \
-  --pack-extension-key=shield-prompt-guard.pem   # omit on the very first pack
+python scripts/pack_extension.py \
+  --key ~/.votal/extension-signing/votalai-guardrails.pem \
+  --base-url https://storage.googleapis.com/votal-public/extension \
+  --out dist/extension
 ```
 
-- The first pack (without `--pack-extension-key`) generates
-  `shield-prompt-guard.pem`. **Guard this key.** It determines the extension
-  ID, and every future update must be signed with the same key. Store it in a
-  secret manager, never in git.
-- Output is `browser-extension.crx`. Rename it
-  `shield-prompt-guard-<version>.crx`.
-- The extension ID (a 32-char string like `abcdefghijklmnopabcdefghijklmnop`)
-  is stable across versions. Read it by dragging the `.crx` onto
-  `chrome://extensions` on any machine, or from the packing output.
+It writes `votalai-guardrails-<version>.crx` and `update.xml`, and prints the
+extension ID and the force-install line. It needs no browser, so it also runs
+in CI.
+
+- **Guard the key.** It determines the extension ID, and every future update
+  must be signed with the same key. Keep it in a secret manager, never in git
+  (the script refuses a key inside the repository). Add `--new-key` on the very
+  first pack only: a new key is a new ID, and every customer's policy would
+  point at one you can no longer publish.
+- The extension ID is stable across versions:
+  `gcbcablddjeicimnfipalnckffoiihnb`.
 
 ## 2. Votal: host two files over HTTPS
 
-Host on any static HTTPS endpoint (for example `https://downloads.votal.ai`):
+Any static HTTPS host works. Votal's are in a public storage bucket:
 
-| File | Purpose |
+| File | URL |
 |---|---|
-| `shield-prompt-guard.crx` | the signed extension package |
-| `update.xml` | update manifest Chrome polls (roughly every 5 hours) |
+| the signed package | `https://storage.googleapis.com/votal-public/extension/votalai-guardrails-<version>.crx` |
+| the update manifest Chrome polls (roughly every 5 hours) | `https://storage.googleapis.com/votal-public/extension/update.xml` |
 
-`update.xml`:
-
-```xml
-<?xml version='1.0' encoding='UTF-8'?>
-<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
-  <app appid='EXTENSION_ID'>
-    <updatecheck codebase='https://downloads.votal.ai/shield-prompt-guard.crx'
-                 version='1.0.0'/>
-  </app>
-</gupdate>
+```bash
+gsutil -h "Content-Type:application/x-chrome-extension" \
+  cp dist/extension/votalai-guardrails-*.crx gs://votal-public/extension/
+gsutil -h "Content-Type:application/xml" -h "Cache-Control:no-cache, max-age=0" \
+  cp dist/extension/update.xml gs://votal-public/extension/
 ```
 
-Shipping an update: bump `version` in `manifest.json`, repack with the same
-`.pem`, replace both files. Every enrolled fleet updates automatically within
-hours; no customer action is needed.
+Shipping an update: bump `version` in `manifest.json`, pack with the same key,
+upload both files. Upload the package first, then `update.xml`, so the
+manifest never names a file that is not there yet. Every enrolled fleet updates
+within hours; no customer action is needed.
 
 ## 3. Customer IT: force-install policy
 
 One policy line, delivered through whatever already manages Chrome:
 
 ```
-ExtensionInstallForcelist = ["EXTENSION_ID;https://downloads.votal.ai/update.xml"]
+ExtensionInstallForcelist = ["gcbcablddjeicimnfipalnckffoiihnb;https://storage.googleapis.com/votal-public/extension/update.xml"]
 ```
 
 Per platform:
 
 - **Windows (GPO / Intune)**: registry value under
   `HKLM\Software\Policies\Google\Chrome\ExtensionInstallForcelist`
-  (string value `1` = `EXTENSION_ID;https://downloads.votal.ai/update.xml`).
+  (string value `1` = `gcbcablddjeicimnfipalnckffoiihnb;https://storage.googleapis.com/votal-public/extension/update.xml`).
   Google publishes ADMX templates for Group Policy.
 - **macOS (Jamf / Intune / other MDM)**: configuration profile targeting
   `com.google.Chrome`, key `ExtensionInstallForcelist`, array of the same
   string.
 - **Linux**: JSON file in `/etc/opt/chrome/policies/managed/`, e.g.
-  `{"ExtensionInstallForcelist": ["EXTENSION_ID;https://downloads.votal.ai/update.xml"]}`.
+  `{"ExtensionInstallForcelist": ["gcbcablddjeicimnfipalnckffoiihnb;https://storage.googleapis.com/votal-public/extension/update.xml"]}`.
 - **Chrome Browser Cloud Management** (Google Admin console, free): Devices >
   Chrome > Apps & extensions, add by ID with a custom update URL. Works across
   all desktop platforms from one console.
@@ -82,7 +81,7 @@ Per platform:
 ### Microsoft Edge (same extension, no rebuild)
 
 The extension is standard Chromium MV3 and runs on Edge with **no code
-changes** — the `chrome.*` APIs and every manifest key it uses are supported
+changes**: the `chrome.*` APIs and every manifest key it uses are supported
 identically. Only two things differ, and both are the admin's, not the
 extension's:
 
@@ -93,28 +92,40 @@ extension's:
 - **Distribution**: to force-install by ID, either publish to the
   **Microsoft Edge Add-ons** store (a separate Partner Center submission from
   the Chrome Web Store) or self-host the `.crx` + `update.xml` and point the
-  Edge forcelist at the update URL — the same self-host path described above.
+  Edge forcelist at the update URL, the same self-host path described above.
   Edge can also install from the Chrome Web Store, but only if the user
   enables "Allow extensions from other stores," which is not suitable for a
   managed control.
 
 ## 4. Customer IT: configuration policy (managed storage)
 
-The extension reads its config from Chrome managed storage (schema:
-`examples/browser-extension/managed_schema.json`). Push values under the
-`3rdparty` policy namespace:
+Every setting, including the tenant key, is pushed by MDM. Nothing is typed on
+the laptop, and a value set by policy overrides anything entered locally.
+
+| Setting | Required | What it is |
+|---|---|---|
+| `tenantKey` | yes | Your Shield tenant API key. It selects your tenant and its policy |
+| `mode` | yes | `enforce` blocks, `warn` shows a warning and lets the user continue, `off` disables screening |
+| `userId` | recommended | Who the user is, shown in Shield Telemetry (employee id, AD account or email: your choice) |
+| `deviceId` | recommended | The machine, for example `${machine_name}` or an asset tag |
+| `shieldUrl` | no | Defaults to `https://api.guardrails.votal.ai` |
+| `proxyToken` | no | Bearer token for a proxy in front of Shield (RunPod deployments) |
+| `timeoutMs` | no | How long to wait for a verdict, in milliseconds (default 45000) |
+| `failOpen` | no | If Shield cannot be reached in enforce mode: `false` (default) blocks the prompt, `true` sends it unscreened |
+
+The schema is `examples/browser-extension/managed_schema.json`. The values go
+under the extension's ID in the `3rdparty` policy namespace:
 
 ```json
 {
   "3rdparty": {
     "extensions": {
-      "EXTENSION_ID": {
+      "gcbcablddjeicimnfipalnckffoiihnb": {
         "policy": {
-          "shieldUrl":  "https://api.guardrails.votal.ai",
           "tenantKey":  "acme-tenant-key",
-          "deviceId":   "${machine_name}",
+          "mode":       "enforce",
           "userId":     "jane.doe@acme.com",
-          "mode":       "enforce"
+          "deviceId":   "${machine_name}"
         }
       }
     }
@@ -122,17 +133,49 @@ The extension reads its config from Chrome managed storage (schema:
 }
 ```
 
-Notes:
+Per platform:
 
-- `shieldUrl` is optional; it defaults to `https://api.guardrails.votal.ai`.
-  A self-hosted Shield endpoint also requires adding that host to
-  `host_permissions` in `manifest.json` and repacking.
-- `userId` and `deviceId` are the attribution fields shown in Shield
-  Telemetry. The extension collects no identity on its own; what to inject
-  (employee id, AD account, email, asset tag) is the customer's decision.
-  Policy variables such as `${machine_name}` are expanded by the OS/MDM.
-- Managed values override anything a user enters locally, and `mode` set to
-  `enforce` cannot be turned off by the user.
+- **Windows (GPO / Intune)**: string values under
+  `HKLM\Software\Policies\Google\Chrome\3rdparty\extensions\gcbcablddjeicimnfipalnckffoiihnb\policy`,
+  one per setting (`tenantKey`, `mode`, `userId`, `deviceId`). In Intune, push
+  them with a PowerShell script or a custom OMA-URI registry policy.
+- **macOS (Jamf / Kandji / Intune)**: a configuration profile whose preference
+  domain is `com.google.Chrome.extensions.gcbcablddjeicimnfipalnckffoiihnb`, with the settings as keys.
+  In Jamf this is "Application & Custom Settings"; in Kandji and Intune, a
+  custom profile.
+- **Linux**: the JSON above as a file in `/etc/opt/chrome/policies/managed/`.
+- **Chrome Browser Cloud Management** (Google Admin console): on the
+  extension's page under Apps & extensions, paste the inner `policy` object
+  into "Policy for extensions". Each setting is wrapped as
+  `{"tenantKey": {"Value": "acme-tenant-key"}, "mode": {"Value": "enforce"}}`.
+- **Microsoft Edge**: the same settings under
+  `HKLM\Software\Policies\Microsoft\Edge\3rdparty\extensions\gcbcablddjeicimnfipalnckffoiihnb\policy`
+  (Windows) or the domain `com.microsoft.Edge.extensions.gcbcablddjeicimnfipalnckffoiihnb` (macOS).
+
+### About the tenant key
+
+- **Use a key made for this.** Create a separate tenant key for the extension
+  with the `runtime` scope, not an admin key. A managed setting can be read by
+  anyone with administrator rights on the laptop, and in `chrome://policy`.
+- **One key per fleet, or one for the company.** The key identifies the
+  tenant, not the person: `userId` and `deviceId` say who and where. Separate
+  keys per fleet let you rotate one group without touching the others.
+- **To rotate:** create the new key, push it by MDM, wait until laptops have
+  picked it up (`chrome://policy` shows the new value), then revoke the old
+  key in the Shield portal. Chrome applies a changed policy without a restart.
+- **A missing or wrong key** does not stop the browser. The extension's Test
+  connection reports it, and Shield applies its default policy or refuses the
+  call, depending on how your Shield is configured.
+
+Other notes:
+
+- A self-hosted Shield endpoint needs more than `shieldUrl`: that host must
+  also be in `host_permissions` in `manifest.json`, and the extension repacked.
+- The extension collects no identity on its own. What to put in `userId` and
+  `deviceId` is your decision. Variables such as `${machine_name}` are
+  expanded by the OS or MDM where it supports them; otherwise your MDM's own
+  variables (for example Jamf's `$COMPUTERNAME`) do the same job.
+- `mode` set to `enforce` by policy cannot be turned off by the user.
 
 ## 5. Verify a rollout
 
