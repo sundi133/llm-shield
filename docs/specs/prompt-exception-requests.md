@@ -8,7 +8,7 @@ description: A user whose prompt was blocked can ask for an exception. An admin 
 
 # Spec: Prompt exception requests
 
-> Status: **APPROVED 2026-10-02** (user: "approved"). Tasks 1 and 2 built; tasks 3 to 6 open.
+> Status: **APPROVED 2026-10-02** (user: "approved"). Tasks 1 to 3 built; tasks 4 to 6 open.
 > Builds on: `docs/spec-hitl-breakglass.md` (signed approval grants and the
 > approval queue, shipped), the browser extension
 > (`examples/browser-extension`), `/guardrails/input`.
@@ -76,11 +76,13 @@ moving to a personal device.
 - **Guard path: `/guardrails/input` is touched, minimally.**
   - A request without the grant header pays one header lookup. Nothing else
     changes.
-  - A request with the header pays an Ed25519 signature check (microseconds)
-    and one Redis write to burn the grant's nonce, and only when the pipeline's
-    verdict is a block. The pipeline always runs in full first; a grant never
-    skips screening.
-  - Budget: under 1 ms added without a grant; under 5 ms with one.
+  - A request with the header pays the grant check only when the pipeline's
+    verdict is a block: an Ed25519 signature check, then about six store
+    operations (settings, two revocation checks, the request, the single-use
+    marker, the request's new status). The pipeline always runs in full first;
+    a grant never skips screening.
+  - Budget: under 1 ms added without a grant. With one, a handful of store
+    round trips, once per approved request.
 - Creating a request re-screens the prompt once (§4.1). That is a pipeline run
   on a request the user is waiting on anyway, not on the inline guard call, and
   it is rate-limited.
@@ -161,11 +163,16 @@ same `X-Agent-Key` may read it.
 - `POST /v1/tenant/me/exceptions/{id}/approve` `{reason, false_positive}`
 - `POST /v1/tenant/me/exceptions/{id}/deny` `{reason}`
 
-Approval mints the grant with the existing `core.approvals.mint_grant`:
-`tool = "prompt_exception"`, `resource = "prompt:<sha256>@<destination>"`,
-`agent_id = <user_id>`, the approver's verified identity, and the tenant's
-`grant_ttl_s`. Writes go through the registry write gate; the approver must
-not be the requester.
+Approval records the decision. The grant is minted by the data plane when the
+requester polls an approved request, so its short lifetime (`grant_ttl_s`)
+starts when they are there to use it, not when the reviewer clicked. It uses
+the existing `core.approvals.mint_grant`: `tool = "prompt_exception"`,
+`resource = "prompt:<sha256>@<destination>"`, `agent_id = <user_id>`, the
+approver's identity, and a hash of the guardrails it may waive. Each poll mints
+a fresh grant; the request can still be redeemed only once, because redeeming
+claims a per-request marker atomically. Writes go through the registry write
+gate; the approver must not be the requester; the first decision stands (a
+second gets 409).
 
 ### 4.4 Using the grant (guard path)
 
@@ -178,11 +185,16 @@ After the pipeline has run, and only if its verdict is a block:
    this destination, and its `agent_id` equals this caller's user id.
 3. Check every guardrail that failed now is in the request's `blocked_by` and
    none is non-appealable.
-4. Burn the nonce.
+4. Claim the request's single-use marker.
 
-If all four pass, the response is `safe: true`, `action: "pass"`, with the
-failed results kept and marked `exception_granted`, and the request becomes
-`used`. If any fails, the block stands and the reason is recorded.
+Nothing is spent until every check has passed, so a resend that does not match
+leaves the approval usable. If all four pass, the response is `safe: true`, `action: "pass"`, with the
+failed results kept and marked `exception_granted`, an `exception` object
+naming the request and approver, and the request becomes `used`. If any fails,
+the block stands and the response carries `exception_error` with the reason
+(`grant_mismatch`, `grant_expired`, `grant_used`, `grant_invalid`,
+`new_violation`, `not_appealable`, `exceptions_disabled`,
+`store_unavailable`).
 
 The prompt hash is over the text after Unicode NFC normalisation and trimming
 outer whitespace, so the user must resend the same prompt.

@@ -216,6 +216,24 @@ def _resolve_request_identity(request, body=None):
         return ResolvedIdentity()
 
 
+def _apply_exception_grant(request, message: str, result: dict, token: str) -> dict:
+    """Release a blocked prompt that carries a valid, unused grant for exactly
+    this prompt, user and destination. Anything else leaves the block in place
+    and says why. Never raises: a broken grant must not turn a block into a 500."""
+    try:
+        from core import prompt_exceptions as pe
+        tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
+        user_id, _device = pe.requester(request)
+        rec, why = pe.redeem(token, tenant_id=tenant_id or "", user_id=user_id,
+                             destination=(request.headers.get("x-shield-destination") or "").strip(),
+                             message=message, result=result)
+        if rec is not None:
+            return pe.release(result, rec)
+    except Exception:
+        why = "grant_check_failed"
+    return {**result, "exception_error": why}
+
+
 @router.post("/guardrails/input")
 async def classify(request: Request, body: dict):
     """Classify a message through all specified guardrails in a single call.
@@ -268,6 +286,13 @@ async def classify(request: Request, body: dict):
     # Apply the tenant's enforcement mode (monitor = dry-run, enforce = block).
     # No-op for requests without a tenant policy.
     result = apply_policy_mode(result, resolve_mode(tenant_config))
+
+    # An approved exception request (docs/specs/prompt-exception-requests.md).
+    # Without the header this is one lookup. With it, the grant is checked only
+    # after the pipeline has run in full and only if the verdict is a block.
+    _grant = request.headers.get("x-shield-exception-grant") if hasattr(request, "headers") else None
+    if _grant and (result.get("safe") is False or result.get("action") == "block"):
+        result = _apply_exception_grant(request, message, result, _grant)
 
     # Record guardrail effectiveness metrics. Resolve the tenant from the API
     # key when middleware didn't set request.state.tenant_id (e.g. data plane
@@ -329,6 +354,7 @@ async def classify(request: Request, body: dict):
             "blocked": blocked,
             "block_reason": "; ".join(gr.get("message", "") for gr in guardrail_results if not gr.get("passed")) if blocked else None,
             "session_id": body.get("session_id", ""),
+            "exception": result.get("exception") or result.get("exception_error"),
             "tool_calls": [],
             "tool_call_count": 0,
             "input_guardrails": [{"guardrail": gr["guardrail"], "passed": gr["passed"], "action": gr["action"], "message": gr.get("message", "")} for gr in guardrail_results],

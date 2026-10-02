@@ -5,7 +5,8 @@ here is called by /guardrails/*, cap/mint or tools/call. Creating a request
 screens the prompt once, on a call the user is waiting on anyway.
 
   POST /v1/shield/exceptions                 a blocked prompt, with a reason
-  GET  /v1/shield/exceptions/{request_id}    its status, for the person who asked
+  GET  /v1/shield/exceptions/{request_id}    its status, for the person who asked;
+                                             once approved, the signed grant
 
 Data plane only: asking screens the prompt, and the admin image does not ship
 the screening pipeline. The tenant's side (settings, review) is
@@ -32,15 +33,6 @@ router = APIRouter(prefix="/v1/shield/exceptions", tags=["exceptions"])
 
 PROMPT_MAX = 200_000
 _DESTINATION = re.compile(r"^[\w .:/@-]{1,100}$")
-
-
-def _requester(request: Request) -> tuple[str, str]:
-    """(user id, device id) as the extension sends them. The user id is what
-    ties a request to the person allowed to read it back."""
-    user = (getattr(request.state, "agent_key", None) or request.headers.get("x-agent-key")
-            or "").strip()
-    device = (request.headers.get("x-device-id") or "").strip()
-    return user or device, device
 
 
 def _settings_or_404(tenant_id: str) -> dict:
@@ -93,7 +85,7 @@ async def request_exception(request: Request, body: dict = Body(...)):
         errors.append(f"reason: at most {pe.REASON_MAX} characters")
     if not _DESTINATION.match(destination):
         errors.append("destination: the AI tool the prompt was going to (up to 100 characters)")
-    user_id, device_id = _requester(request)
+    user_id, device_id = pe.requester(request)
     if not user_id:
         errors.append("X-Agent-Key or X-Device-Id: who is asking")
     if errors:
@@ -141,10 +133,20 @@ async def request_exception(request: Request, body: dict = Body(...)):
 async def exception_status(request_id: str, request: Request):
     tenant_id = _tenant(request)
     _settings_or_404(tenant_id)
-    user_id, _device = _requester(request)
+    user_id, _device = pe.requester(request)
     rec = pe.get(tenant_id, request_id)
     # One answer for "no such request" and "not yours": no oracle for ids.
     if not rec or not user_id or rec["user_id"] != user_id[:256]:
         raise HTTPException(status_code=404, detail={"error": "not_found",
                                                      "message": "No such exception request."})
-    return pe.for_requester(rec)
+    out = pe.for_requester(rec)
+    if rec["status"] == "approved":
+        # Minted now, not at approval: the grant's short life starts when the
+        # person who asked is here to use it.
+        try:
+            out["grant"], out["grant_expires_at"] = pe.mint_for(rec, pe.get_settings(tenant_id))
+        except Exception:
+            raise HTTPException(status_code=503, detail={
+                "error": "approvals_not_configured",
+                "message": "The request is approved, but this Shield cannot sign the grant."})
+    return out

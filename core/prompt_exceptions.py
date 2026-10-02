@@ -312,3 +312,155 @@ def for_requester(rec: dict) -> dict:
         "decision": {"reason": decision.get("reason", ""),
                      "approver": decision.get("approver", "")} if decision else None,
     }
+
+
+# ── who is asking ────────────────────────────────────────────────────
+
+def requester(request) -> tuple[str, str]:
+    """(user id, device id) as the extension sends them. The user id ties a
+    request, and later its grant, to one person."""
+    state = getattr(request, "state", None)
+    user = (getattr(state, "agent_key", None) or request.headers.get("x-agent-key") or "").strip()
+    device = (request.headers.get("x-device-id") or "").strip()
+    return (user or device)[:256], device[:256]
+
+
+# ── deciding ─────────────────────────────────────────────────────────
+
+GRANT_TOOL = "prompt_exception"
+GRANT_HEADER = "x-shield-exception-grant"
+
+
+def grant_resource(sha: str, destination: str) -> str:
+    return f"prompt:{sha}@{destination}"
+
+
+def _waived_hash(blocked_by: list[dict]) -> str:
+    """Binds a grant to the set of guardrails it may waive."""
+    names = sorted({b.get("guardrail", "") for b in blocked_by})
+    return "sha256:" + hashlib.sha256("\n".join(names).encode()).hexdigest()
+
+
+def decide(tenant_id: str, request_id: str, *, approve: bool, approver: str, method: str,
+           reason: str = "", false_positive: bool = False) -> dict:
+    """Approve or deny a pending request. The first decision stands: a request
+    that is no longer pending is returned as it is, with `changed: False`."""
+    rec = get(tenant_id, request_id)
+    if rec is None:
+        raise ExceptionError(404, "not_found", "No such exception request.")
+    if rec["status"] != "pending":
+        return {**rec, "changed": False}
+    who = approver.split(":", 1)[-1].strip().lower()
+    if who and who == rec["user_id"].strip().lower():
+        raise ExceptionError(403, "self_approval",
+                             "The person who asked cannot decide their own request.")
+    rec["status"] = "approved" if approve else "denied"
+    rec["decided_at"] = int(time.time())
+    rec["decision"] = {"approver": approver[:200], "method": method, "reason": reason[:REASON_MAX],
+                       "false_positive": bool(false_positive)}
+    _save(rec)
+    if approve:
+        count(tenant_id, rec["blocked_by"], "approved")
+    if false_positive:
+        count(tenant_id, rec["blocked_by"], "false_positive")
+    return {**rec, "changed": True}
+
+
+def mint_for(rec: dict, settings: dict) -> tuple[str, int]:
+    """(grant token, its expiry) for an approved request, minted when the
+    requester collects it so the short lifetime starts when they can use it.
+    Any number may be minted: the request itself can be redeemed only once."""
+    from core.approvals import mint_grant
+    decision = rec.get("decision") or {}
+    ttl = max(60, min(settings["grant_ttl_s"], rec["expires_at"] - int(time.time())))
+    token = mint_grant(
+        tenant_id=rec["tenant_id"], agent_id=rec["user_id"], agent_instance_id=rec["user_id"],
+        session_id=rec["request_id"], tool=GRANT_TOOL,
+        resource=grant_resource(rec["prompt_sha256"], rec["destination"]),
+        params_hash=_waived_hash(rec["blocked_by"]),
+        approvers=[{"sub": decision.get("approver", ""), "method": decision.get("method", ""),
+                    "at": rec.get("decided_at")}],
+        request_id=rec["request_id"], ttl_seconds=ttl)
+    return token, int(time.time()) + ttl
+
+
+# ── redeeming a grant (called by /guardrails/input on a blocked resend) ──
+
+def redeem(token: str, *, tenant_id: str, user_id: str, destination: str, message: str,
+           result: dict) -> tuple[Optional[dict], str]:
+    """(request, "") when the grant releases this exact blocked prompt, once;
+    (None, why) otherwise, and the block stands.
+
+    Order matters: everything that can be checked is checked before anything
+    is burned, so a mismatched resend does not spend the approval.
+    """
+    from core.approvals import ApprovalError, verify_grant
+    from core.nonce_store import NonceStoreUnavailable, burn_nonce_if_unused
+
+    if not tenant_id:
+        return None, "no_tenant"
+    settings = get_settings(tenant_id)
+    if not settings["enabled"]:
+        return None, "exceptions_disabled"
+    try:
+        claims = verify_grant(
+            token, expected_tool=GRANT_TOOL,
+            expected_resource=grant_resource(prompt_sha256(message), destination),
+            allow_breakglass=False, burn_nonce=False)
+    except ApprovalError as e:
+        text = str(e).lower()
+        if "resource mismatch" in text:
+            return None, "grant_mismatch"       # another prompt or destination
+        if "expired" in text or "exp" in text.split():
+            return None, "grant_expired"
+        return None, "grant_invalid"
+    if claims.tenant_id != tenant_id or not user_id or claims.agent_id != user_id:
+        return None, "grant_mismatch"
+    rec = get(tenant_id, claims.request_id)
+    if rec is None:
+        return None, "grant_invalid"
+    if rec["status"] != "approved":
+        return None, "grant_used" if rec["status"] == "used" else "grant_invalid"
+    if time.time() >= rec["expires_at"]:
+        return None, "grant_expired"
+
+    # A grant waives what blocked the prompt when it was requested, and nothing
+    # else: a guardrail that blocks now but did not then still blocks.
+    now_blocking = {b["guardrail"] for b in blocking_results(result)}
+    allowed = {b["guardrail"] for b in rec["blocked_by"]}
+    if claims.params_hash != _waived_hash(rec["blocked_by"]) or not now_blocking <= allowed:
+        return None, "new_violation"
+    if now_blocking & set(settings["non_appealable"]):
+        return None, "not_appealable"
+
+    try:
+        once = burn_nonce_if_unused(f"shield:prompt_exc:used:{tenant_id}:{rec['request_id']}",
+                                    max(60, rec["expires_at"] - int(time.time()) + 3600))
+    except NonceStoreUnavailable:
+        return None, "store_unavailable"        # fail closed: it could be replayed
+    if not once:
+        return None, "grant_used"
+    rec["status"] = "used"
+    rec["used_at"] = int(time.time())
+    rec["grant_id"] = claims.grant_id
+    _save(rec)
+    return rec, ""
+
+
+def release(result: dict, rec: dict) -> dict:
+    """The blocked result, turned into a pass by an approved exception. The
+    failed results stay, marked: the record of what was waived is the point."""
+    out = dict(result)
+    waived = []
+    results = []
+    for gr in result.get("guardrail_results") or ():
+        if isinstance(gr, dict) and not gr.get("passed", True) \
+                and gr.get("action") in BLOCKING_ACTIONS:
+            gr = {**gr, "enforced": False, "exception_granted": True}
+            waived.append(gr.get("guardrail", ""))
+        results.append(gr)
+    out["guardrail_results"] = results
+    out["safe"], out["action"] = True, "pass"
+    out["exception"] = {"request_id": rec["request_id"], "waived": waived,
+                        "approver": (rec.get("decision") or {}).get("approver", "")}
+    return out
