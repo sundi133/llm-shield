@@ -46,6 +46,14 @@ function explainResult(g) {
   };
 }
 
+// "Label: why", without saying the same thing twice: a message that already
+// starts with its label ("Blocked keyword(s) detected: ...") stands alone.
+function line(i) {
+  if (!i.why) return i.label;
+  const plain = (t) => t.toLowerCase().replace(/\(s\)/g, "").replace(/[^a-z0-9 ]/g, "");
+  return plain(i.why).startsWith(plain(i.label)) ? i.why : i.label + ": " + i.why;
+}
+
 // The whole response -> { reason, items, guardrails }.
 //   reason      one line for the banner
 //   items       every failed guardrail, explained (for an exception request)
@@ -55,7 +63,7 @@ function explainVerdict(data) {
   const items = failed.map(explainResult);
   const guardrails = items.map((i) => i.guardrail).join(", ");
   if (!items.length) return { reason: String((data && data.action) || ""), items, guardrails };
-  const shown = items.slice(0, SHOWN_MAX).map((i) => (i.why ? i.label + ": " + i.why : i.label));
+  const shown = items.slice(0, SHOWN_MAX).map(line);
   const more = items.length - SHOWN_MAX;
   const reason = shown.join("; ") + (more > 0 ? " (+" + more + " more)" : "");
   return { reason, items, guardrails };

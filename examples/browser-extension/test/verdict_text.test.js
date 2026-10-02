@@ -75,3 +75,9 @@ test("a failed result with no message still says which check", () => {
   const out = explainVerdict({ guardrail_results: [{ guardrail: "pii_detection", passed: false }] });
   assert.strictEqual(out.reason, "Personal data");
 });
+
+test("a message that already names its check is not prefixed again", () => {
+  const out = explainVerdict({ guardrail_results: [{
+    guardrail: "keyword_blocklist", passed: false, message: "Blocked keyword(s) detected: supplier cost" }] });
+  assert.strictEqual(out.reason, "Blocked keyword(s) detected: supplier cost");
+});

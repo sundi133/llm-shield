@@ -5034,14 +5034,14 @@ if __name__ == "__main__":
       </div>
 
       <div class="card">
-        <div class="card-header"><div><div class="card-title">Waiting for review</div>
+        <div class="card-header"><div><div class="card-title" id="ex-list-title">Waiting for review</div>
           <div class="card-desc">Approve when the user is authorised to send it. Tick "policy was wrong" when the prompt should never have been blocked: it is counted against the policy below.</div></div>
           <div style="display:flex;gap:0.5rem;align-items:center;">
-            <select id="ex-filter" onchange="exList()">
+            <select id="ex-filter" onchange="exList()" style="min-width:160px;">
               <option value="pending">Pending</option>
               <option value="">All</option>
-              <option value="approved">Approved, not yet sent</option>
-              <option value="used">Approved and sent</option>
+              <option value="approved">Approved</option>
+              <option value="used">Sent</option>
               <option value="denied">Denied</option>
               <option value="expired">Expired</option>
             </select>
@@ -17555,8 +17555,16 @@ async function ddSave() {
 
 // ── Prompt exception requests ─────────────────────────────
 // Spec: docs/specs/prompt-exception-requests.md. Reuses ddApi/ddAgo/xfEsc/xfMsg.
-const EX_STATUS = { pending: 'badge-warn', approved: '', used: '', denied: 'badge-danger', expired: 'badge-danger' };
-const EX_LABEL = { pending: 'Pending', approved: 'Approved, not yet sent', used: 'Approved and sent', denied: 'Denied', expired: 'Expired' };
+// One word per status: the badge style capitalises every word.
+const EX_STATUS = { pending: 'badge-warn', approved: 'badge-success', used: '', denied: 'badge-danger', expired: '' };
+const EX_LABEL = { pending: 'Pending', approved: 'Approved', used: 'Sent', denied: 'Denied', expired: 'Expired' };
+// "user:carol@co.com" -> "carol@co.com"; a decision made with a tenant key has no person behind it.
+function exWho(approver) {
+  const a = String(approver || '');
+  if (a.startsWith('user:')) return a.slice(5);
+  if (a.startsWith('tenant:')) return 'an admin API key';
+  return a || 'an admin';
+}
 let EX_SETTINGS = null;
 async function exLoad() { exSettings(); exList(); }
 async function exSettings() {
@@ -17597,7 +17605,7 @@ function exCard(rec) {
   const left = rec.expires_at - Date.now() / 1000;
   const waits = rec.status === 'pending'
     ? (left > 3600 ? `expires in ${Math.round(left / 3600)}h` : `expires in ${Math.max(1, Math.round(left / 60))}m`) : '';
-  const decided = d ? `<div class="muted" style="margin-top:0.4rem;">${rec.status === 'denied' ? 'Denied' : 'Approved'} by ${xfEsc(d.approver)} ${ddAgo(rec.decided_at)}${d.reason ? ': ' + xfEsc(d.reason) : ''}${d.false_positive ? ' <span class="badge badge-warn">policy was wrong</span>' : ''}</div>` : '';
+  const decided = d ? `<div class="muted" style="margin-top:0.5rem;">${rec.status === 'denied' ? 'Denied' : 'Approved'} by ${xfEsc(exWho(d.approver))} ${ddAgo(rec.decided_at)}${d.reason ? ': ' + xfEsc(d.reason.replace(/[.\s]+$/, '')) : ''}.${rec.status === 'used' ? ' The user has sent it.' : rec.status === 'approved' ? ' Waiting for the user to send it.' : ''}${d.false_positive ? ' <span class="badge badge-warn">Policy was wrong</span>' : ''}</div>` : '';
   const actions = rec.status !== 'pending' ? '' : `
     <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:0.6rem;">
       <input id="ex-r-${rec.request_id}" type="text" maxlength="500" placeholder="Note for the user (optional for approve)" style="flex:1;min-width:220px;">
@@ -17622,6 +17630,8 @@ function exCard(rec) {
 }
 async function exList() {
   const status = document.getElementById('ex-filter').value;
+  document.getElementById('ex-list-title').textContent = status === 'pending' ? 'Waiting for review'
+    : status ? `${EX_LABEL[status]} requests` : 'All requests';
   try {
     const r = await ddApi('/exceptions' + (status ? `?status=${status}` : ''));
     const empty = status === 'pending' ? 'Nothing is waiting for review.' : 'No requests.';

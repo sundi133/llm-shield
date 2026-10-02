@@ -112,29 +112,169 @@
   }
 
   // ── minimal in-page banner ────────────────────────────────────────────────
-  function banner(kind, msg) {
+  // One banner for everything the extension tells the user, so every message
+  // looks the same: an optional bold title, the detail, then any buttons.
+  //   msg:  "text", or { title, detail }
+  //   kind: "block" (red), "warn" (amber) or "ok" (green)
+  //   opts.actions: [{ label, onClick, primary }]
+  //   opts.sticky:  stay until the user acts or dismisses it
+  const BANNER_KINDS = {
+    block: { bg: "#fef2f2", fg: "#991b1b", line: "#ef4444", button: "#b91c1c" },
+    warn: { bg: "#fffbeb", fg: "#92400e", line: "#f59e0b", button: "#b45309" },
+    ok: { bg: "#f0fdf4", fg: "#166534", line: "#22c55e", button: "#15803d" },
+  };
+  const BANNER_FONT = "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif";
+
+  function banner(kind, msg, opts = {}) {
+    const k = BANNER_KINDS[kind] || BANNER_KINDS.warn;
     let el = document.getElementById("shield-guard-banner");
     if (!el) {
       el = document.createElement("div");
       el.id = "shield-guard-banner";
-      el.style.cssText =
-        "position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 16px;" +
-        "font:600 13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;text-align:center;" +
-        "box-shadow:0 2px 8px rgba(0,0,0,.15);transition:opacity .2s;";
+      el.setAttribute("role", "status");
       document.documentElement.appendChild(el);
     }
-    const styles = {
-      block: "background:#fee2e2;color:#991b1b;border-bottom:2px solid #ef4444;",
-      warn: "background:#fef9c3;color:#854d0e;border-bottom:2px solid #eab308;",
-    };
-    el.style.cssText += styles[kind] || styles.warn;
-    el.textContent = msg;
+    el.style.cssText =
+      "position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:10px 16px;" +
+      "display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px 14px;" +
+      "font:400 13px/1.45 " + BANNER_FONT + ";box-shadow:0 2px 8px rgba(0,0,0,.12);transition:opacity .2s;" +
+      `background:${k.bg};color:${k.fg};border-bottom:2px solid ${k.line};`;
+    el.replaceChildren();
+    const { title, detail } = typeof msg === "string" ? { title: "", detail: msg } : msg;
+    // Text nodes only: the detail can contain the user's own words.
+    const text = document.createElement("span");
+    text.style.cssText = "max-width:920px;";
+    if (title) {
+      const t = document.createElement("strong");
+      t.style.fontWeight = "600";
+      t.textContent = title;
+      text.appendChild(t);
+      if (detail) text.appendChild(document.createTextNode(" "));
+    }
+    if (detail) text.appendChild(document.createTextNode(detail));
+    el.appendChild(text);
+    const actions = document.createElement("span");
+    actions.style.cssText = "display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;";
+    for (const a of opts.actions || []) actions.appendChild(bannerButton(a.label, a.onClick, a.primary, k));
+    if (opts.sticky && !opts.noDismiss) actions.appendChild(bannerButton(opts.dismissLabel || "Dismiss", hideBanner, false, k));
+    if (actions.childNodes.length) el.appendChild(actions);
     el.style.opacity = "1";
+    el.style.pointerEvents = "auto";
     clearTimeout(el._t);
+    if (opts.sticky) return el;
     // A block explains which policy and why: long enough to read.
-    const ms = kind === "block" ? Math.min(20000, 6000 + 40 * String(msg || "").length) : 3500;
-    el._t = setTimeout(() => (el.style.opacity = "0"), ms);
+    const len = String(title || "").length + String(detail || "").length;
+    const ms = kind === "block" ? Math.min(20000, 6000 + 40 * len) : 4000;
+    el._t = setTimeout(hideBanner, ms);
+    return el;
   }
+
+  function hideBanner() {
+    const el = document.getElementById("shield-guard-banner");
+    if (el) { el.style.opacity = "0"; el.style.pointerEvents = "none"; }
+  }
+
+  function bannerButton(label, onClick, primary, k) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.style.cssText =
+      "padding:4px 12px;border-radius:6px;font:600 12px/1.4 " + BANNER_FONT + ";cursor:pointer;" +
+      (primary ? `background:${k.button};color:#fff;border:1px solid ${k.button};`
+               : `background:transparent;color:${k.fg};border:1px solid ${k.line};`);
+    b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); onClick(); });
+    return b;
+  }
+
+  // Our own banner's controls are never the site's composer or send button.
+  function inBanner(el) {
+    return !!(el && el.closest && el.closest("#shield-guard-banner"));
+  }
+
+  // Every detail ends as a sentence, whatever the server's message did.
+  function sentence(t) {
+    const s = String(t || "").trim();
+    return !s || /[.!?]$/.test(s) ? s : s + ".";
+  }
+
+  // ── exception requests (docs/specs/prompt-exception-requests.md) ─────────
+  function excSend(msg) {
+    return new Promise((resolve) => {
+      try { chrome.runtime.sendMessage(msg, (r) => resolve(r)); } catch (_) { resolve(null); }
+    });
+  }
+
+  // The block banner, with what the user can do next about this prompt.
+  function blockBanner(text, v) {
+    const title = "Blocked by Shield.";
+    const why = sentence(v.reason || "This prompt breaks your organisation's AI policy");
+    const ex = v.exception || {};
+    const ask = { label: "Request exception", primary: true, onClick: () => askForm(text) };
+    if (ex.error === "new_violation") {
+      return banner("block", { title, detail: why + " Your approved exception does not cover this." }, { sticky: true });
+    }
+    if (ex.status === "pending") {
+      return banner("block", { title, detail: why + " Your exception request is waiting for review." }, { sticky: true });
+    }
+    if (ex.status === "denied") {
+      const note = ex.decision && ex.decision.reason ? ": " + ex.decision.reason : "";
+      return banner("block", { title, detail: why + " Your earlier request was denied" + sentence(note || ".") },
+                    { sticky: true, actions: [{ ...ask, label: "Ask again" }] });
+    }
+    return banner("block", { title, detail: why }, { sticky: true, actions: [ask] });
+  }
+
+  // The reason form, in the banner itself.
+  function askForm(text) {
+    const el = banner("block", { title: "Request an exception.",
+                                 detail: "Say why this prompt should be sent. Reviewers will see the prompt and your reason." },
+                      { sticky: true, dismissLabel: "Cancel" });
+    const k = BANNER_KINDS.block;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.maxLength = 500;
+    input.placeholder = "For example: the partner is under NDA";
+    input.setAttribute("aria-label", "Reason for the exception");
+    input.style.cssText = `width:min(380px,70vw);padding:4px 10px;border-radius:6px;border:1px solid ${k.line};` +
+      `font:400 13px/1.4 ${BANNER_FONT};color:#111827;background:#fff;outline:none;`;
+    // The page's own Enter handling must not see keys typed here.
+    input.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") submit(); }, true);
+    const submit = async () => {
+      const reason = input.value.trim();
+      if (reason.length < 3) { input.focus(); input.style.borderColor = k.button; return; }
+      banner("warn", { title: "Sending your request..." }, { sticky: true, noDismiss: true });
+      const r = await excSend({ type: "shield-exception-request", text, origin: CFG.name, reason });
+      if (r && r.ok) {
+        banner("warn", { title: "Request sent.",
+                         detail: "You will see the answer here. You can also come back later and send the same prompt again." },
+               { sticky: true });
+      } else {
+        banner("block", { title: "Request not sent.", detail: sentence((r && r.message) || "Try again") },
+               { sticky: true });
+      }
+    };
+    const actions = el.lastChild;
+    actions.insertBefore(bannerButton("Send request", submit, true, k), actions.firstChild);
+    actions.insertBefore(input, actions.firstChild);
+    setTimeout(() => input.focus(), 0);
+  }
+
+  // Answers arrive while the tab is open: ask every 30 seconds. The background
+  // only calls Shield when this site has a request waiting.
+  setInterval(async () => {
+    const changes = await excSend({ type: "shield-exception-poll", origin: CFG.name });
+    for (const c of changes || []) {
+      if (c.status === "approved") {
+        banner("ok", { title: "Exception approved.", detail: "Send the same prompt again to send it once." }, { sticky: true });
+      } else if (c.status === "denied") {
+        const note = c.decision && c.decision.reason ? c.decision.reason : "No reason was given";
+        banner("block", { title: "Exception denied.", detail: sentence(note) }, { sticky: true });
+      } else if (c.status === "expired") {
+        banner("block", { title: "Exception request expired.", detail: "Nobody reviewed it in time. You can ask again." },
+               { sticky: true });
+      }
+    }
+  }, 30000);
 
   // Replace the composer's text (the device agent's redaction). Returns whether
   // the page now holds exactly that text; if not, the caller blocks instead of
@@ -199,18 +339,22 @@
         if (!granted) banner("block", v.reason || "Not sent: a reason is needed");
         return { allow: granted };
       }
-      if (v.warn) banner("warn", "Flagged (" + (v.reason || v.verdict || "policy") + "), allowed in monitor mode");
+      if (v.warn) banner("warn", { title: "Flagged.", detail: sentence(v.reason || v.verdict || "Policy") + " Allowed because your policy is in monitor mode." });
       return { allow: true };
     }
     if (v.error) {
-      banner("warn", "Shield unreachable — sent unscreened (" + v.error + ")");
+      banner("warn", { title: "Shield unreachable.", detail: "Sent without screening (" + v.error + ")." });
       return { allow: true }; // fail-open
     }
     if (v.block) {
-      banner("block", "Blocked by Shield: " + (v.reason || "policy violation"));
+      blockBanner(text, v);
       return { allow: false };
     }
-    if (v.warn) banner("warn", "Shield flagged (" + (v.reason || "flagged") + ") — allowed in monitor mode");
+    if (v.exception && v.exception.released) {
+      banner("ok", { title: "Sent with an approved exception.", detail: "It covered this prompt once." });
+      return { allow: true };
+    }
+    if (v.warn) banner("warn", { title: "Flagged by Shield.", detail: sentence(v.reason || "Flagged") + " Allowed because Shield is in monitor mode." });
     return { allow: true };
   }
 
@@ -219,6 +363,7 @@
     "keydown",
     async (e) => {
       if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+      if (inBanner(e.target)) return;   // Enter in the exception reason field
       const composer = getComposer(e.target);
       if (!composer) return;
       if (bypassNext) { bypassNext = false; return; } // our approved replay
@@ -239,7 +384,7 @@
     "click",
     async (e) => {
       const btn = e.target && e.target.closest && e.target.closest("button");
-      if (!isSendButton(btn)) return;
+      if (inBanner(btn) || !isSendButton(btn)) return;
       if (bypassNext) { bypassNext = false; return; }
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -325,20 +470,20 @@
     for (let i = 0; i < list.length; i++) {
       const f = list[i], v = verdicts[i];
       if (v.block) {
-        banner("block", "Blocked by Shield: attachment '" + f.name + "' (" + (v.reason || "policy violation") + ")");
+        banner("block", { title: "Blocked by Shield.", detail: "Attachment '" + f.name + "': " + sentence(v.reason || "policy violation") });
         return { allow: false };
       }
     }
     for (let i = 0; i < list.length; i++) {
       const f = list[i], v = verdicts[i];
       if (v.error) {
-        banner("warn", "Shield unreachable — attachment '" + f.name + "' sent unscreened (" + v.error + ")");
+        banner("warn", { title: "Shield unreachable.", detail: "Attachment '" + f.name + "' sent without screening (" + v.error + ")." });
       } else if (v.note === "too large to screen") {
-        banner("warn", "Attachment '" + f.name + "' too large to screen — sent unscreened");
+        banner("warn", { title: "Attachment not screened.", detail: "'" + f.name + "' is too large to screen and was sent without screening." });
       } else if (v.note && !v.warn) {
         banner("warn", "Attachment '" + f.name + "': " + v.note + " (filename screened)");
       } else if (v.warn) {
-        banner("warn", "Shield flagged attachment '" + f.name + "' (" + (v.reason || "flagged") + ") — allowed in monitor mode");
+        banner("warn", { title: "Flagged by Shield.", detail: "Attachment '" + f.name + "': " + sentence(v.reason || "flagged") + " Allowed because Shield is in monitor mode." });
       }
     }
     return { allow: true };
@@ -411,7 +556,7 @@
         approvedEvents.add(replay);
         target.dispatchEvent(replay);
       } catch (_) {
-        banner("warn", "Attachment approved — please drop it again");
+        banner("ok", { title: "Attachment allowed.", detail: "Drop it again to attach it." });
       }
     },
     true
@@ -440,7 +585,7 @@
         approvedEvents.add(replay);
         target.dispatchEvent(replay);
       } catch (_) {
-        banner("warn", "Attachment approved — please paste it again");
+        banner("ok", { title: "Attachment allowed.", detail: "Paste it again to attach it." });
       }
     },
     true

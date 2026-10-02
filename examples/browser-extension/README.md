@@ -29,6 +29,13 @@ chance of working.
   bearer + tenant `X-API-Key` headers).
 - **monitor** mode: flags (yellow banner) but always sends. **enforce** mode:
   blocks on a Shield block verdict (red banner). **off**: does nothing.
+- The block banner names the policy and says why. If your organisation has
+  turned on exception requests, it also has **Request exception**: the user
+  gives a reason, an admin approves or denies it in the portal
+  (Enterprise Controls, then Exception Requests), and the answer appears in the
+  banner. An approval lets that exact prompt through once, for that user and
+  that site, when they send it again. Reviewers see the prompt; the form says
+  so before anything is sent.
 - **Fail-open**: if Shield is unreachable/slow (12s timeout for text; 12s +
   2s/MB up to 30s for files) the content sends unscreened with a "Shield
   unreachable" banner — it never traps your chat. Attachments over **10 MB**
@@ -118,6 +125,8 @@ inject the device identifier. Cross-platform: same code on Chrome/Edge for
 |---|---|
 | `manifest.json` | MV3 manifest, permissions, content-script + background wiring |
 | `background.js` | calls Shield `/guardrails/input` with headers; verdict logic |
-| `content.js` | intercepts send on claude.ai; banner UI; approved-replay |
+| `content.js` | intercepts send on the AI sites; banner UI; exception request form; approved-replay |
+| `verdict_text.js` | turns a verdict into the policy name and reason the banner shows |
+| `exception_client.js` | exception requests: ask, poll, and attach an approval's grant to the resend |
 | `options.html/js` | config (URL, keys, mode) |
 | `popup.html/js` | mode toggle + Test connection |

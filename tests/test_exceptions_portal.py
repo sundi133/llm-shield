@@ -66,7 +66,7 @@ def test_everything_a_user_typed_is_escaped():
     escapes, or a fixed label."""
     body = SCRIPT[SCRIPT.index("function exBlockedBy"):SCRIPT.index("function exBadge")]
     safe = re.compile(
-        r"^(xfEsc\(|ddAgo\(|exBlockedBy\(|DD_TD$|EX_STATUS\[|p\.(requested|approved|false_positive)$"
+        r"^(xfEsc\(|ddAgo\(|exBlockedBy\(|DD_TD$|EX_STATUS\[|EX_LABEL\[|p\.(requested|approved|false_positive)$"
         r"|rec\.prompt(_len)?\.(length\.)?toLocaleString\(\)$|Math\.|rows$|empty$|decided$|actions$|cut$|waits\b"
         r"|rec\.request_id$|rec\.status === |d\.(reason|false_positive) \?|b\.policy \?|p\.policy \?"
         r"|rec\.device_id && |status \?|status$)")   # status: the filter's own option

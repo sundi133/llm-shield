@@ -38,8 +38,13 @@ from tests.test_embodied_sdk import _clean, _pubkey, app, client  # noqa: E402,F
 
 def test_an_unchanged_robot_profile_is_re_signed_before_it_expires(client):
     url = "/v1/edge/embodied-bundle?profile=bench&fleet=hospital-east"
-    start = time.time()
-    first = client.get(url)
+    # Start a minute into a freshness window. Windows are aligned to the clock
+    # (every 12 h for a 24 h bundle), so starting at the real time failed
+    # whenever the test ran in the hour before a window boundary.
+    half = 12 * 3600
+    start = (int(time.time()) // half) * half + 60
+    with patch("time.time", return_value=start):
+        first = client.get(url)
     etag, expires = first.headers["ETag"], first.json()["header"]["expires_at"]
     with patch("time.time", return_value=start + 3600):
         assert client.get(url, headers={"If-None-Match": etag}).status_code == 304
