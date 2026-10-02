@@ -110,6 +110,17 @@ def _decode(v) -> str:
     return v.decode("utf-8", "replace") if isinstance(v, (bytes, bytearray)) else str(v)
 
 
+def scan_keys(r, pattern: str) -> list[str]:
+    """Every key matching `pattern`. Uses SCAN, not scan_iter: the Upstash REST
+    client (production) has no scan_iter, and calling it was a 500."""
+    keys, cursor = [], 0
+    while True:
+        cursor, batch = r.scan(cursor, match=pattern, count=200)
+        keys.extend(_decode(k) for k in batch)
+        if int(cursor) == 0:
+            return keys
+
+
 def _hgetall(key: str) -> dict[str, dict]:
     r = _redis()
     raw = dict(_mem_hash.get(key, {})) if r is None else (r.hgetall(key) or {})
@@ -233,12 +244,7 @@ def list_enrollment_tokens(tenant_id: str) -> list[dict]:
     if r is None:
         keys = [k for k in list(_fallback_store) if k.startswith(prefix)]
     else:
-        keys, cursor = [], 0
-        while True:
-            cursor, batch = r.scan(cursor, match=prefix + "*", count=200)
-            keys.extend(_decode(k) for k in batch)
-            if cursor == 0:
-                break
+        keys = scan_keys(r, prefix + "*")
     now, out = int(time.time()), []
     for k in keys:
         rec = kv_get(k)
@@ -256,7 +262,7 @@ def revoke_enrollment_token(tenant_id: str, token_id: str) -> bool:
         return False
     r = _redis()
     keys = ([k for k in list(_fallback_store) if k.startswith(prefix + token_id)] if r is None
-            else [_decode(k) for k in r.scan_iter(match=f"{prefix}{token_id}*")])
+            else scan_keys(r, f"{prefix}{token_id}*"))
     for k in keys:
         if r is None:
             _fallback_store.pop(k, None)

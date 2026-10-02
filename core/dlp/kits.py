@@ -61,7 +61,7 @@ def _scan(prefix: str) -> list[str]:
     r = dv._redis()
     if r is None:
         return [k for k in list(_fallback_store) if k.startswith(prefix)]
-    return [dv._decode(k) for k in r.scan_iter(match=prefix + "*")]
+    return dv.scan_keys(r, prefix + "*")
 
 
 def parse_body(body: dict) -> dict:
