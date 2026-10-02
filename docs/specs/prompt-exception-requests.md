@@ -8,7 +8,7 @@ description: A user whose prompt was blocked can ask for an exception. An admin 
 
 # Spec: Prompt exception requests
 
-> Status: **APPROVED 2026-10-02** (user: "approved"). Tasks 1 to 3 built; tasks 4 to 6 open.
+> Status: **APPROVED 2026-10-02** (user: "approved"). Tasks 1 to 4 built; tasks 5 and 6 open.
 > Builds on: `docs/spec-hitl-breakglass.md` (signed approval grants and the
 > approval queue, shipped), the browser extension
 > (`examples/browser-extension`), `/guardrails/input`.
