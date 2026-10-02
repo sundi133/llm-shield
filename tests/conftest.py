@@ -145,3 +145,24 @@ def _deterministic_guardrail_metrics(monkeypatch):
     per-test to exercise the async path it is there to verify.
     """
     monkeypatch.setenv("SHIELD_METRICS_INLINE", "1")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limiter_guardrail_window():
+    """Start every test with an empty rate_limiter guardrail window.
+
+    The guardrail counts requests per client in a module-level store, and a
+    request with no agent key counts as "anonymous". The whole suite runs
+    inside one 60 second window, so once it made more than 100 such requests
+    the tests that happened to run last were blocked by the guardrail: adding a
+    test file anywhere failed unrelated tests elsewhere.
+    """
+    try:
+        from guardrails.input.rate_limiter import _state_store
+        # The counters are sliding windows, which keys() does not list.
+        with _state_store._lock:
+            for key in [k for k in _state_store._windows if k.startswith("rate_limit:")]:
+                del _state_store._windows[key]
+    except Exception:
+        pass
+    yield

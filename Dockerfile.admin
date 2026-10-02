@@ -40,6 +40,7 @@ COPY core/policy_inheritance.py core/
 # Imported at module load by api/routes_tool.py (which this image COPYs), so
 # their absence crash-loops the admin container at boot.
 COPY core/policy_mode.py core/
+COPY core/prompt_exceptions.py core/
 COPY core/run_context.py core/
 # Shared redaction contract (modified_text / usable_redaction), imported at
 # module load by guardrails/agentic/tool/tool_output_sanitization.py via
@@ -118,6 +119,7 @@ COPY api/routes_flow_control.py api/
 COPY api/routes_runtime_policy.py api/
 COPY api/routes_embodied.py api/
 COPY api/routes_device_dlp.py api/
+COPY api/routes_exception_review.py api/
 COPY api/routes_devices.py api/
 COPY api/routes_guardrail_metrics.py api/
 COPY api/routes_siem.py api/

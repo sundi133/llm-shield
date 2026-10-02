@@ -2663,6 +2663,11 @@
           <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
           Device DLP
         </div>
+        <div class="nav-item" data-tab="exception-requests">
+          <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/></svg>
+          Exception Requests
+          <span id="ex-nav-count" class="badge badge-warn" style="margin-left:auto;display:none;"></span>
+        </div>
         <div class="nav-item" data-tab="cross-app-flow">
           <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
           Cross-App Flow
@@ -5021,6 +5026,54 @@ if __name__ == "__main__":
       </div>
     </div>
 
+    <!-- ── Enterprise: prompt exception requests ── -->
+    <div id="tab-exception-requests" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Exception Requests</div>
+        <div class="page-desc">When Shield blocks a prompt, the user can ask for an exception and say why. You see the prompt, the reason and the policy that blocked it. Approving lets that exact prompt through once, for that user and that AI tool. Nothing else is released.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title" id="ex-list-title">Waiting for review</div>
+          <div class="card-desc">Approve when the user is authorised to send it. Tick "policy was wrong" when the prompt should never have been blocked: it is counted against the policy below.</div></div>
+          <div style="display:flex;gap:0.5rem;align-items:center;">
+            <select id="ex-filter" onchange="exList()" style="min-width:160px;">
+              <option value="pending">Pending</option>
+              <option value="">All</option>
+              <option value="approved">Approved</option>
+              <option value="used">Sent</option>
+              <option value="denied">Denied</option>
+              <option value="expired">Expired</option>
+            </select>
+            <button class="small" onclick="exLoad()">Refresh</button>
+          </div></div>
+        <div id="ex-list" style="font-size:13px;">Loading...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">By policy</div>
+          <div class="card-desc">How often each policy's blocks were questioned, approved, and marked wrong. A policy with many "wrong" marks needs rewording.</div></div></div>
+        <div id="ex-policies" style="font-size:13px;overflow-x:auto;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Settings</div>
+          <div class="card-desc">Off until you turn it on. Hard rules are guardrails whose blocks can never be requested or released.</div></div></div>
+        <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;font-size:13px;">
+          <label><input type="checkbox" id="ex-enabled"> Let users request exceptions</label>
+          <label>Open requests per user <input id="ex-maxp" type="number" min="1" max="20" style="width:70px;"></label>
+          <label>A request waits up to <input id="ex-rttl" type="number" min="1" max="168" style="width:70px;"> hours</label>
+          <label>An approval must be used within <input id="ex-gttl" type="number" min="1" max="60" style="width:70px;"> minutes of the user seeing it</label>
+        </div>
+        <div style="margin-top:0.6rem;font-size:13px;">
+          <label>Hard rules (guardrail names, comma separated)
+            <input id="ex-hard" type="text" placeholder="for example keyword_blocklist" style="width:100%;margin-top:0.3rem;"></label>
+        </div>
+        <div style="margin-top:0.6rem;"><button class="primary small" onclick="exSave()">Save settings</button></div>
+        <div id="ex-msg" style="margin-top:0.6rem;font-size:13px;"></div>
+      </div>
+    </div>
+
     <!-- ── Enterprise: Decision Audit ──────────────── -->
     <div id="tab-decisions" class="tab-pane hidden">
       <div class="page-header">
@@ -6622,6 +6675,7 @@ async function logout() {
 }
 
 function showApp() {
+  setTimeout(() => { if (typeof exBadgeLoad === 'function') exBadgeLoad(); }, 800);
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
   loadSession();
@@ -14112,6 +14166,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'runtime-profiles') rpLoad();
     if (tab === 'embodied-guard') emLoad();
     if (tab === 'device-dlp') ddLoad();
+    if (tab === 'exception-requests') exLoad();
     if (tab === 'guardrail-metrics') { loadGuardrailDashboard(); loadGuardrailMetrics(); }
     if (tab === 'board-report') loadBoardReport();
     if (tab === 'aibom') loadAibom();
@@ -17496,6 +17551,122 @@ async function ddSave() {
     document.getElementById('dd-policy').value = JSON.stringify(r.policy, null, 2);
     xfMsg('dd-msg', `Saved (${xfEsc(r.hash.slice(0, 12))}). Laptops pick it up on their next bundle poll.`, 'ok');
   } catch (e) { xfMsg('dd-msg', xfErrors(e), 'error'); }
+}
+
+// ── Prompt exception requests ─────────────────────────────
+// Spec: docs/specs/prompt-exception-requests.md. Reuses ddApi/ddAgo/xfEsc/xfMsg.
+// One word per status: the badge style capitalises every word.
+const EX_STATUS = { pending: 'badge-warn', approved: 'badge-success', used: '', denied: 'badge-danger', expired: '' };
+const EX_LABEL = { pending: 'Pending', approved: 'Approved', used: 'Sent', denied: 'Denied', expired: 'Expired' };
+// "user:carol@co.com" -> "carol@co.com"; a decision made with a tenant key has no person behind it.
+function exWho(approver) {
+  const a = String(approver || '');
+  if (a.startsWith('user:')) return a.slice(5);
+  if (a.startsWith('tenant:')) return 'an admin API key';
+  return a || 'an admin';
+}
+let EX_SETTINGS = null;
+async function exLoad() { exSettings(); exList(); }
+async function exSettings() {
+  try {
+    const r = await ddApi('/exceptions/settings');
+    EX_SETTINGS = r.settings;
+    document.getElementById('ex-enabled').checked = r.settings.enabled;
+    document.getElementById('ex-maxp').value = r.settings.max_pending_per_user;
+    document.getElementById('ex-rttl').value = Math.round(r.settings.request_ttl_s / 3600);
+    document.getElementById('ex-gttl').value = Math.round(r.settings.grant_ttl_s / 60);
+    document.getElementById('ex-hard').value = r.settings.non_appealable.join(', ');
+    if (!r.signing_configured) xfMsg('ex-msg', 'Approvals cannot be signed on this Shield yet: SHIELD_APPROVAL_TOKEN_PRIVATE_KEY is not set. Users cannot request exceptions until it is.', 'error');
+    else if (!r.settings.enabled) xfMsg('ex-msg', 'Exception requests are off. Users see the block and cannot ask for a review.', '');
+    else xfMsg('ex-msg', '', '');
+  } catch (e) { xfMsg('ex-msg', xfErrors(e), 'error'); }
+}
+async function exSave() {
+  try {
+    const body = {
+      ...(EX_SETTINGS || {}),
+      enabled: document.getElementById('ex-enabled').checked,
+      max_pending_per_user: parseInt(document.getElementById('ex-maxp').value, 10),
+      request_ttl_s: Math.round(parseFloat(document.getElementById('ex-rttl').value) * 3600),
+      grant_ttl_s: Math.round(parseFloat(document.getElementById('ex-gttl').value) * 60),
+      non_appealable: document.getElementById('ex-hard').value.split(',').map(x => x.trim()).filter(Boolean),
+    };
+    const r = await ddApi('/exceptions/settings', { method: 'PUT', body: JSON.stringify(body) });
+    EX_SETTINGS = r.settings;
+    xfMsg('ex-msg', r.settings.enabled ? 'Saved. Users can request exceptions.' : 'Saved. Exception requests are off.', 'ok');
+  } catch (e) { xfMsg('ex-msg', xfErrors(e), 'error'); }
+}
+function exBlockedBy(rec) {
+  return (rec.blocked_by || []).map(b =>
+    `<div><b>${xfEsc(b.policy || b.guardrail)}</b>${b.policy ? ` <span class="muted">(${xfEsc(b.guardrail)})</span>` : ''}: ${xfEsc(b.message)}</div>`).join('');
+}
+function exCard(rec) {
+  const d = rec.decision;
+  const left = rec.expires_at - Date.now() / 1000;
+  const waits = rec.status === 'pending'
+    ? (left > 3600 ? `expires in ${Math.round(left / 3600)}h` : `expires in ${Math.max(1, Math.round(left / 60))}m`) : '';
+  const decided = d ? `<div class="muted" style="margin-top:0.5rem;">${rec.status === 'denied' ? 'Denied' : 'Approved'} by ${xfEsc(exWho(d.approver))} ${ddAgo(rec.decided_at)}${d.reason ? ': ' + xfEsc(d.reason.replace(/[.\s]+$/, '')) : ''}.${rec.status === 'used' ? ' The user has sent it.' : rec.status === 'approved' ? ' Waiting for the user to send it.' : ''}${d.false_positive ? ' <span class="badge badge-warn">Policy was wrong</span>' : ''}</div>` : '';
+  const actions = rec.status !== 'pending' ? '' : `
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:0.6rem;">
+      <input id="ex-r-${rec.request_id}" type="text" maxlength="500" placeholder="Note for the user (optional for approve)" style="flex:1;min-width:220px;">
+      <label style="white-space:nowrap;"><input type="checkbox" id="ex-fp-${rec.request_id}"> policy was wrong</label>
+      <button class="primary small" onclick="exDecide('${rec.request_id}', true)">Approve once</button>
+      <button class="small danger" onclick="exDecide('${rec.request_id}', false)">Deny</button>
+    </div>
+    <div id="ex-e-${rec.request_id}" style="margin-top:0.4rem;"></div>`;
+  const cut = rec.prompt_len > rec.prompt.length
+    ? `<div class="muted">Showing the first ${rec.prompt.length.toLocaleString()} of ${rec.prompt_len.toLocaleString()} characters. The approval covers the whole prompt.</div>` : '';
+  return `<div style="border:1px solid var(--border);border-radius:8px;padding:0.8rem;margin-bottom:0.7rem;">
+    <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
+      <span class="badge ${EX_STATUS[rec.status] || ''}">${xfEsc(EX_LABEL[rec.status] || rec.status)}</span>
+      <b>${xfEsc(rec.user_id)}</b>
+      <span class="muted">to ${xfEsc(rec.destination)}${rec.device_id && rec.device_id !== rec.user_id ? ' from ' + xfEsc(rec.device_id) : ''}, asked ${ddAgo(rec.created_at)}${waits ? ', ' + waits : ''}</span>
+    </div>
+    <div style="margin-top:0.5rem;"><span class="muted">Blocked by</span>${exBlockedBy(rec)}</div>
+    <div style="margin-top:0.5rem;"><span class="muted">Their reason</span><div>${xfEsc(rec.reason)}</div></div>
+    <div style="margin-top:0.5rem;"><span class="muted">Prompt</span>
+      <pre style="white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:0.2rem 0 0;padding:0.6rem;background:var(--bg-soft, rgba(127,127,127,0.08));border-radius:6px;font-size:12.5px;">${xfEsc(rec.prompt)}</pre>${cut}</div>
+    ${decided}${actions}</div>`;
+}
+async function exList() {
+  const status = document.getElementById('ex-filter').value;
+  document.getElementById('ex-list-title').textContent = status === 'pending' ? 'Waiting for review'
+    : status ? `${EX_LABEL[status]} requests` : 'All requests';
+  try {
+    const r = await ddApi('/exceptions' + (status ? `?status=${status}` : ''));
+    const empty = status === 'pending' ? 'Nothing is waiting for review.' : 'No requests.';
+    document.getElementById('ex-list').innerHTML = r.requests.length ? r.requests.map(exCard).join('') : `<div class="muted">${empty}</div>`;
+    const rows = r.by_policy.map(p => `<tr><td style="${DD_TD}">${xfEsc(p.policy || p.guardrail)}${p.policy ? ` <span class="muted">(${xfEsc(p.guardrail)})</span>` : ''}</td>
+      <td style="${DD_TD}text-align:right;">${p.requested}</td><td style="${DD_TD}text-align:right;">${p.approved}</td>
+      <td style="${DD_TD}text-align:right;">${p.false_positive}</td></tr>`).join('');
+    document.getElementById('ex-policies').innerHTML = rows
+      ? `<table style="border-collapse:collapse;width:100%;"><tr class="muted"><td style="${DD_TD}">Policy</td><td style="${DD_TD}text-align:right;">Requests</td><td style="${DD_TD}text-align:right;">Approved</td><td style="${DD_TD}text-align:right;">Policy was wrong</td></tr>${rows}</table>`
+      : '<div class="muted">No requests yet.</div>';
+    if (status === 'pending') exBadge(r.requests.length);
+  } catch (e) { xfMsg('ex-list', xfErrors(e), 'error'); }
+}
+// The count beside the nav item, without opening the page. Quiet on failure:
+// a tenant with the feature off, or an older Shield, simply shows no badge.
+async function exBadgeLoad() {
+  try { exBadge((await ddApi('/exceptions?status=pending&limit=100')).requests.length); }
+  catch (e) { /* no badge */ }
+}
+function exBadge(n) {
+  const el = document.getElementById('ex-nav-count');
+  el.style.display = n ? 'inline-flex' : 'none';
+  el.textContent = n;
+}
+async function exDecide(id, approve) {
+  const reason = document.getElementById('ex-r-' + id).value.trim();
+  if (!approve && !reason) { xfMsg('ex-e-' + id, 'Tell the user why it is denied.', 'error'); return; }
+  try {
+    await ddApi(`/exceptions/${id}/${approve ? 'approve' : 'deny'}`, { method: 'POST',
+      body: JSON.stringify({ reason, false_positive: document.getElementById('ex-fp-' + id).checked }) });
+    exList();
+  } catch (e) {
+    xfMsg('ex-e-' + id, xfErrors(e), 'error');
+    if (/already/i.test(e.message || '')) setTimeout(exList, 1500);
+  }
 }
 </script>
 </body>

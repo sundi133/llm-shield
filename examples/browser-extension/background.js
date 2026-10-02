@@ -6,6 +6,10 @@
 
 // The on-laptop Votal device agent, when present, decides first (agent_client.js).
 importScripts("agent_client.js");
+// Turns a verdict into the line the user reads (verdict_text.js).
+importScripts("verdict_text.js");
+// Exception requests and the grant that releases an approved prompt once.
+importScripts("exception_client.js");
 
 const DEFAULTS = {
   shieldUrl: "https://api.guardrails.votal.ai",
@@ -70,6 +74,36 @@ async function getInstallId() {
   return id;
 }
 
+// Where exception requests are remembered: session storage (gone when the
+// browser closes), or local storage on a Chrome without it.
+const EXC_AREA = (chrome.storage && chrome.storage.session) || chrome.storage.local;
+const excStore = {
+  async get(k) { return (await EXC_AREA.get(k))[k] || null; },
+  async set(k, v) { await EXC_AREA.set({ [k]: v }); },
+  async remove(k) { await EXC_AREA.remove(k); },
+  async all() { return (await EXC_AREA.get(null)) || {}; },
+};
+
+// The headers every call to Shield carries: tenant key, proxy bearer, and who
+// is asking from where. An exception request is bound to the same identity.
+function shieldHeaders(cfg, identity, origin) {
+  const headers = {};
+  if (cfg.tenantKey) headers["X-API-Key"] = cfg.tenantKey;
+  if (cfg.proxyToken) headers["Authorization"] = "Bearer " + cfg.proxyToken;
+  const who = identity.userId || identity.deviceId;
+  if (who) headers["X-Agent-Key"] = who;
+  if (identity.deviceId) headers["X-Device-Id"] = identity.deviceId;
+  if (origin) headers["X-Shield-Destination"] = origin;
+  return headers;
+}
+
+async function excDeps(origin) {
+  const cfg = await getConfig();
+  const identity = await resolveIdentity();
+  return { fetch: (...a) => fetch(...a), store: excStore, base: cfg.shieldUrl || "",
+           headers: shieldHeaders(cfg, identity, origin), now: () => Date.now() / 1000 };
+}
+
 // Who + which device sent this prompt. The extension itself collects no PII;
 // identity is whatever the org's MDM policy injects (storage.managed):
 //  - userId:   employee id / AD account / email — the org's choice
@@ -92,15 +126,15 @@ async function screen(text, origin) {
   if (local) return { ...local, identity };
   if (!cfg.shieldUrl) return { block: false, warn: false, reason: "", error: "no shieldUrl configured", mode: cfg.mode, identity };
 
-  const headers = { "Content-Type": "application/json" };
-  if (cfg.tenantKey) headers["X-API-Key"] = cfg.tenantKey;
-  if (cfg.proxyToken) headers["Authorization"] = "Bearer " + cfg.proxyToken;
   // Attribution: X-Agent-Key drives the Telemetry "agent" column; device and
   // destination (the AI site being sent to) are carried alongside for audit.
-  const who = identity.userId || identity.deviceId;
-  if (who) headers["X-Agent-Key"] = who;
-  if (identity.deviceId) headers["X-Device-Id"] = identity.deviceId;
-  if (origin) headers["X-Shield-Destination"] = origin;
+  const headers = { "Content-Type": "application/json", ...shieldHeaders(cfg, identity, origin) };
+  // An approved exception for exactly this prompt and site travels with it.
+  const deps = { fetch: (...a) => fetch(...a), store: excStore, base: cfg.shieldUrl,
+                 headers: shieldHeaders(cfg, identity, origin), now: () => Date.now() / 1000 };
+  let exc = { grant: "", rec: null };
+  try { exc = await grantFor(deps, text, origin); } catch (_) {}
+  if (exc.grant) headers[GRANT_HEADER] = exc.grant;
 
   const url = cfg.shieldUrl.replace(/\/+$/, "") + "/guardrails/input";
   const body = JSON.stringify({
@@ -117,13 +151,19 @@ async function screen(text, origin) {
     if (!resp.ok) return { block: false, warn: false, reason: "", error: "HTTP " + resp.status, mode: cfg.mode, identity };
     const data = await resp.json();
     const flagged = data.safe === false || data.action === "block";
-    const reason =
-      (data.guardrail_results || [])
-        .filter((g) => g && g.passed === false)
-        .map((g) => g.guardrail)
-        .join(", ") || (data.action || "");
-    if (cfg.mode === "warn") return { block: false, warn: flagged, reason, mode: "warn", identity };
-    return { block: flagged, warn: false, reason, mode: "enforce", identity };
+    // `reason` is what the banner shows: the policy and why. `blocked_by`
+    // keeps each failed guardrail for an exception request.
+    const { reason, items: blocked_by } = explainVerdict(data);
+    let outcome = "";
+    if (exc.grant) { try { outcome = await afterSend(deps, text, origin, data); } catch (_) {} }
+    const exception = {
+      released: outcome === "released",                 // sent on an approval
+      error: outcome && outcome !== "released" ? outcome : "",
+      status: exc.rec && outcome !== "released" ? exc.rec.status : "",   // earlier request for this prompt
+      decision: (exc.rec && exc.rec.decision) || null,
+    };
+    if (cfg.mode === "warn") return { block: false, warn: flagged, reason, blocked_by, exception, mode: "warn", identity };
+    return { block: flagged, warn: false, reason, blocked_by, exception, mode: "enforce", identity };
   } catch (e) {
     // A timeout is not an approval. In enforce mode the prompt is held unless
     // the operator has explicitly opted into failing open.
@@ -193,14 +233,12 @@ async function screenFile(meta) {
     if (!resp.ok) return { block: false, warn: false, reason: "", error: "HTTP " + resp.status, mode: cfg.mode, identity };
     const data = await resp.json();
     const flagged = data.safe === false || data.action === "block";
-    const reason =
-      (data.guardrail_results || [])
-        .filter((g) => g && g.passed === false)
-        .map((g) => g.guardrail)
-        .join(", ") || (data.action || "");
+    // `reason` is what the banner shows: the policy and why. `blocked_by`
+    // keeps each failed guardrail for an exception request.
+    const { reason, items: blocked_by } = explainVerdict(data);
     const note = data.file && data.file.note ? data.file.note : undefined;
-    if (cfg.mode === "warn") return { block: false, warn: flagged, reason, note, mode: "warn", identity };
-    return { block: flagged, warn: false, reason, note, mode: "enforce", identity };
+    if (cfg.mode === "warn") return { block: false, warn: flagged, reason, blocked_by, note, mode: "warn", identity };
+    return { block: flagged, warn: false, reason, blocked_by, note, mode: "enforce", identity };
   } catch (e) {
     return { block: false, warn: false, reason: "", error: String(e), mode: cfg.mode, identity };
   }
@@ -217,6 +255,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // channel open forever and hang the content script fail-closed.
     screenFile(msg.file || {}).then(sendResponse, () =>
       sendResponse({ block: false, warn: false, reason: "", error: "file screening failed" }));
+    return true;
+  }
+  if (msg && msg.type === "shield-exception-request") {
+    excDeps(msg.origin)
+      .then((deps) => requestException(deps, { text: String(msg.text || ""), destination: String(msg.origin || ""),
+                                               reason: String(msg.reason || "") }))
+      .then(sendResponse, () => sendResponse({ ok: false, message: "The request could not be sent." }));
+    return true;
+  }
+  if (msg && msg.type === "shield-exception-poll") {
+    excDeps(msg.origin).then((deps) => poll(deps, String(msg.origin || ""))).then(sendResponse, () => sendResponse([]));
     return true;
   }
   if (msg && msg.type === "shield-justify") {
