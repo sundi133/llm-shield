@@ -9,7 +9,6 @@ from typing import Optional
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-_JSON = JSONResponse
 
 from core.rbac import enforcer
 from core.dlp.devices import DEVICE_PATHS
@@ -300,9 +299,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         _presented = _extract_api_key(request)
         if _presented and _presented.startswith(DEVICE_KEY_PREFIX) \
                 and (request.method.upper(), path.rstrip("/")) not in DEVICE_PATHS:
-            # _JSON: dispatch re-imports JSONResponse locally further down,
-            # which makes the bare name local to this whole function.
-            return _JSON(status_code=403, content={
+            return JSONResponse(status_code=403, content={
                 "error": "device_key_scope",
                 "detail": "A device key may only fetch its DLP bundle, send heartbeats, "
                           "renew its CA and post runtime events."})
@@ -404,7 +401,6 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                         # Check explicit blocklist first (works regardless of registration)
                         blocked_agents = tenant_config.get("blocked_agents", [])
                         if agent_key in blocked_agents:
-                            from starlette.responses import JSONResponse
                             _record_shadow_agent(tenant_id, agent_key, path, user_role)
                             return JSONResponse(
                                 status_code=403,
@@ -424,7 +420,6 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                         # seconds; registry writes invalidate the cache.
                         _agent_status = registered.get(agent_key)
                         if _agent_status is not None and _agent_status != "active":
-                            from starlette.responses import JSONResponse
                             return JSONResponse(
                                 status_code=403,
                                 content={
@@ -444,7 +439,6 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                             )
                             # Block ALL unregistered agents if tenant opted in
                             if tenant_config.get("block_unregistered_agents", False):
-                                from starlette.responses import JSONResponse
                                 return JSONResponse(
                                     status_code=403,
                                     content={
