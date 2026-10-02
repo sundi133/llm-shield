@@ -38,9 +38,41 @@ class TenantRBAC(BaseModel):
     agents: dict[str, str] = Field(default_factory=dict)
 
 
+#: No tenant is limited below this many requests a minute, whatever its
+#: record says: 60 a minute (the old basic plan) is one busy agent, and a
+#: tenant that hits it sees its guardrail calls refused. Records written before
+#: this floor still hold the old numbers, so it is applied when the quota is
+#: read, not only when a tenant is created.
+DEFAULT_MIN_REQUESTS_PER_MINUTE = 10_000
+
+
+def min_requests_per_minute() -> int:
+    """The floor, from SHIELD_MIN_REQUESTS_PER_MINUTE (default 10000). Set it
+    to 0 to enforce each tenant's stored number exactly."""
+    import os
+    try:
+        return max(0, int(os.environ.get("SHIELD_MIN_REQUESTS_PER_MINUTE",
+                                         str(DEFAULT_MIN_REQUESTS_PER_MINUTE))))
+    except ValueError:
+        return DEFAULT_MIN_REQUESTS_PER_MINUTE
+
+
+def effective_quota(quota: Optional[dict]) -> dict:
+    """A tenant's quota as it is enforced: the stored one, with the per-minute
+    request limit raised to the floor."""
+    out = dict(quota or {})
+    try:
+        stored = int(out.get("max_requests_per_minute") or 0)
+    except (TypeError, ValueError):
+        stored = 0
+    out["max_requests_per_minute"] = max(stored or DEFAULT_MIN_REQUESTS_PER_MINUTE,
+                                         min_requests_per_minute())
+    return out
+
+
 class TenantQuota(BaseModel):
     """Per-tenant usage quotas tied to plan."""
-    max_requests_per_minute: int = Field(default=60, ge=1)
+    max_requests_per_minute: int = Field(default=DEFAULT_MIN_REQUESTS_PER_MINUTE, ge=1)
     max_requests_per_day: int = Field(default=100_000, ge=1)
     max_tokens_per_day: int = Field(default=10_000_000, ge=1)
 
@@ -74,17 +106,17 @@ class TenantConfig(BaseModel):
             return v
         plan = info.data.get("plan", "basic")
         defaults = {
-            "basic":      {"max_requests_per_minute": 60,  "max_requests_per_day": 100_000,    "max_tokens_per_day": 10_000_000},
-            "pro":        {"max_requests_per_minute": 300, "max_requests_per_day": 1_000_000,  "max_tokens_per_day": 100_000_000},
-            "enterprise": {"max_requests_per_minute": 1000, "max_requests_per_day": 10_000_000, "max_tokens_per_day": 1_000_000_000},
+            "basic":      {"max_requests_per_minute": 10_000, "max_requests_per_day": 100_000,    "max_tokens_per_day": 10_000_000},
+            "pro":        {"max_requests_per_minute": 10_000, "max_requests_per_day": 1_000_000,  "max_tokens_per_day": 100_000_000},
+            "enterprise": {"max_requests_per_minute": 10_000, "max_requests_per_day": 10_000_000, "max_tokens_per_day": 1_000_000_000},
         }
         return defaults.get(plan, defaults["basic"])
 
 
 _PLAN_QUOTA_DEFAULTS = {
-    "basic":      {"max_requests_per_minute": 60,   "max_requests_per_day": 100_000,     "max_tokens_per_day": 10_000_000},
-    "pro":        {"max_requests_per_minute": 300,  "max_requests_per_day": 1_000_000,   "max_tokens_per_day": 100_000_000},
-    "enterprise": {"max_requests_per_minute": 1000, "max_requests_per_day": 10_000_000,  "max_tokens_per_day": 1_000_000_000},
+    "basic":      {"max_requests_per_minute": 10_000, "max_requests_per_day": 100_000,     "max_tokens_per_day": 10_000_000},
+    "pro":        {"max_requests_per_minute": 10_000, "max_requests_per_day": 1_000_000,   "max_tokens_per_day": 100_000_000},
+    "enterprise": {"max_requests_per_minute": 10_000, "max_requests_per_day": 10_000_000,  "max_tokens_per_day": 1_000_000_000},
 }
 
 
