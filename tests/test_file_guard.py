@@ -324,6 +324,89 @@ def test_docx_content_type_without_extension(client):
     assert r.json()["action"] == "block"
 
 
+# ── PowerPoint and extra text types ───────────────────────────────────────
+
+_PPTX_CT = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+def _slide_xml(*runs):
+    body = "".join(f'<a:p><a:r><a:rPr lang="en-US"/><a:t>{r}</a:t></a:r></a:p>' for r in runs)
+    return ('<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:a="http://schemas.openxmlformats'
+            '.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/'
+            f'presentationml/2006/main"><p:cSld><p:spTree>{body}</p:spTree></p:cSld></p:sld>')
+
+
+def _pptx_bytes(slides, notes=None):
+    """A .pptx is a zip of XML parts; this builds the parts the extractor reads."""
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+        for i, runs in enumerate(slides, 1):
+            z.writestr(f"ppt/slides/slide{i}.xml", _slide_xml(*runs))
+        for i, runs in (notes or {}).items():
+            z.writestr(f"ppt/notesSlides/notesSlide{i}.xml", _slide_xml(*runs))
+    return buf.getvalue()
+
+
+def test_pptx_slide_text_feeds_pipeline(client):
+    r = _upload(client, "deck.pptx", _pptx_bytes([["Q3 plan"], [f"margin {BAD} 62%"]]))
+    body = r.json()
+    assert body["action"] == "block"
+    assert body["file"].get("note") is None
+    assert body["file"]["extracted_chars"] > 0
+
+
+def test_pptx_speaker_notes_are_screened(client):
+    r = _upload(client, "deck.pptx", _pptx_bytes([["public slide"]], notes={1: [f"{BAD} note"]}))
+    assert r.json()["action"] == "block"
+
+
+def test_clean_pptx_passes(client):
+    r = _upload(client, "deck.pptx", _pptx_bytes([["Why care about AI security"], ["Agenda"]]))
+    assert r.json()["action"] == "pass"
+    assert r.json()["file"].get("note") is None
+
+
+def test_pptx_by_content_type_without_extension(client):
+    r = _upload(client, "upload", _pptx_bytes([[f"{BAD} inside"]]), _PPTX_CT)
+    assert r.json()["action"] == "block"
+
+
+def test_pptx_extraction_order_entities_and_slide_numbering():
+    from api.routes_classify import _extract_pptx
+    slides = [[f"s{i}"] for i in range(1, 12)]            # slide10 must follow slide9
+    slides[0] = ["R&amp;D &lt;draft&gt;", "s1"]
+    text = _extract_pptx(_pptx_bytes(slides, notes={2: ["n2"]}), 10_000)
+    lines = text.split("\n")
+    assert lines[0] == "R&D <draft>"
+    assert lines[1:12] == [f"s{i}" for i in range(1, 12)]
+    assert lines[-1] == "n2"                               # notes after every slide
+
+
+def test_corrupt_pptx_fails_open_with_note(client):
+    r = _upload(client, "broken.pptx", b"not a real pptx at all")
+    body = r.json()
+    assert r.status_code == 200
+    assert body["action"] == "pass"
+    assert body["file"]["note"].startswith("extraction failed")
+
+
+def test_oversized_pptx_part_is_read_only_up_to_the_cap(monkeypatch):
+    """A slide that inflates far past any real slide is cut off, not expanded."""
+    import api.routes_classify as rc
+    monkeypatch.setattr(rc, "_PPTX_PART_MAX_BYTES", 2000)
+    data = _pptx_bytes([["x" * 50_000 + f" {BAD}"]])
+    assert BAD not in rc._extract_pptx(data, 1_000_000)
+
+
+@pytest.mark.parametrize("name", ["notes.mkd", "readme.mdown", "page.mdx", "doc.rst"])
+def test_more_markdown_like_extensions_are_text(client, name):
+    r = _upload(client, name, f"# title\n{BAD} here".encode())
+    assert r.json()["action"] == "block"
+    assert r.json()["file"].get("note") is None
+
+
 # ── side effects: audit metadata + guardrail metrics ──────────────────────
 
 class FakeRedis:
