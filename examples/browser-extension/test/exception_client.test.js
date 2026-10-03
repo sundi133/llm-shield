@@ -137,3 +137,32 @@ test("a request Shield no longer knows is forgotten; an outage changes nothing",
   assert.deepStrictEqual(await ex.refresh(d, rec), rec);
   assert.ok(d.data[key]);
 });
+
+test("a resend right after approval collects the grant without waiting for the poll", async () => {
+  // The production report: approved at 12:09:33, resent at 12:09:48, blocked,
+  // because the tab still held "pending" and only asked Shield every 30 s.
+  const d = deps([{ body: { status: "approved", grant: "g-now", grant_expires_at: 1900 } }]);
+  d.data[ex.keyFor(sha(PROMPT), "chatgpt.com")] = { request_id: "pex_1", status: "pending",
+                                                    destination: "chatgpt.com", hash: sha(PROMPT) };
+  const out = await ex.grantFor(d, PROMPT, "chatgpt.com");
+  assert.strictEqual(out.grant, "g-now");
+  assert.strictEqual(d.calls.length, 1);
+});
+
+test("a resend while still pending asks once and sends nothing", async () => {
+  const d = deps([{ body: { status: "pending" } }]);
+  d.data[ex.keyFor(sha(PROMPT), "chatgpt.com")] = { request_id: "pex_1", status: "pending",
+                                                    destination: "chatgpt.com", hash: sha(PROMPT) };
+  const out = await ex.grantFor(d, PROMPT, "chatgpt.com");
+  assert.deepStrictEqual([out.grant, out.rec.status], ["", "pending"]);
+});
+
+test("a denial learned at send time is kept for the banner", async () => {
+  const d = deps([{ body: { status: "denied", decision: { reason: "No NDA" } } }]);
+  d.data[ex.keyFor(sha(PROMPT), "chatgpt.com")] = { request_id: "pex_1", status: "pending",
+                                                    destination: "chatgpt.com", hash: sha(PROMPT) };
+  const out = await ex.grantFor(d, PROMPT, "chatgpt.com");
+  assert.strictEqual(out.grant, "");
+  assert.strictEqual(out.rec.status, "denied");
+  assert.strictEqual(out.rec.decision.reason, "No NDA");
+});

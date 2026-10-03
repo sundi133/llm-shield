@@ -92,14 +92,17 @@ async function refresh(deps, rec) {
 
 // The grant to attach when sending this prompt, if an approval is waiting for
 // it. Returns { grant, rec }: grant is "" when there is nothing to attach.
+//
+// A request still pending here is asked about now, not at the next poll: an
+// admin who approves and tells the user "send it again" must not see the
+// resend blocked because the tab had not checked yet.
 async function grantFor(deps, text, destination) {
   const hash = await promptHash(text);
   let rec = await deps.store.get(keyFor(hash, destination));
   if (!rec) return { grant: "", rec: null };
-  if (rec.status === "approved" &&
-      (!rec.grant || (rec.grant_expires_at || 0) - deps.now() < GRANT_MARGIN_S)) {
-    rec = await refresh(deps, rec);
-  }
+  const stale = rec.status === "approved" &&
+    (!rec.grant || (rec.grant_expires_at || 0) - deps.now() < GRANT_MARGIN_S);
+  if (rec.status === "pending" || stale) rec = await refresh(deps, rec);
   return { grant: rec.status === "approved" && rec.grant ? rec.grant : "", rec };
 }
 
