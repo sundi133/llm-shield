@@ -217,6 +217,22 @@ def _resolve_request_identity(request, body=None):
         return ResolvedIdentity()
 
 
+def _remember_block_bg(request, message: str, result: dict) -> None:
+    try:
+        import asyncio
+        from core import prompt_exceptions as pe
+        tenant_id = getattr(request.state, "tenant_id", None) if hasattr(request, "state") else None
+        blocked_by = pe.blocking_results(result)
+        if not tenant_id or not blocked_by:
+            return
+        user_id, _device = pe.requester(request)
+        destination = (request.headers.get("x-shield-destination") or "").strip()
+        asyncio.get_running_loop().run_in_executor(
+            None, pe.remember_block, tenant_id, user_id, destination, message, blocked_by)
+    except Exception:
+        pass
+
+
 def _apply_exception_grant(request, message: str, result: dict, token: str) -> dict:
     """Release a blocked prompt that carries a valid, unused grant for exactly
     this prompt, user and destination. Anything else leaves the block in place
@@ -294,6 +310,11 @@ async def classify(request: Request, body: dict):
     _grant = request.headers.get("x-shield-exception-grant") if hasattr(request, "headers") else None
     if _grant and (result.get("safe") is False or result.get("action") == "block"):
         result = _apply_exception_grant(request, message, result, _grant)
+    # Remember what blocked it, so an exception request can name the block even
+    # if a model-judged policy would answer differently a moment later. Written
+    # in the background: the response does not wait for the store.
+    if result.get("safe") is False or result.get("action") == "block":
+        _remember_block_bg(request, message, result)
 
     # Record guardrail effectiveness metrics. Resolve the tenant from the API
     # key when middleware didn't set request.state.tenant_id (e.g. data plane

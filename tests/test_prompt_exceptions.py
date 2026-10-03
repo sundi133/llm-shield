@@ -535,3 +535,80 @@ def test_no_header_means_the_input_route_answers_as_before(client, enabled):
     assert blocked["action"] == "block"
     assert "exception" not in blocked and "exception_error" not in blocked
     assert not [g for g in blocked["guardrail_results"] if "exception_granted" in g]
+
+
+# ══ a model-judged policy that answers differently the second time ═══════
+
+def _wait_for_block(user, destination, prompt, timeout=2.0):
+    """The input route records a block in the background."""
+    import time as _t
+    from core import prompt_exceptions as pe
+    end = _t.time() + timeout
+    while _t.time() < end:
+        found = pe.recent_block(TENANT, user, destination, prompt)
+        if found:
+            return found
+        _t.sleep(0.02)
+    return None
+
+
+def test_the_input_route_remembers_a_block_but_not_a_pass(client, enabled):
+    assert _send(client, prompt="hello there")["action"] == "pass"
+    assert _send(client)["action"] == "block"
+    remembered = _wait_for_block("alice@co.com", "ChatGPT", PROMPT)
+    assert [b["guardrail"] for b in remembered] == ["keyword_blocklist"]
+    from core import prompt_exceptions as pe
+    assert pe.recent_block(TENANT, "alice@co.com", "ChatGPT", "hello there") is None
+
+
+def test_a_request_uses_the_block_the_user_saw_even_if_a_new_screen_passes(client, enabled):
+    """The bug: a model-judged policy blocked the prompt, passed it on the
+    re-screen, and the request was refused as no longer blocked."""
+    assert _send(client)["action"] == "block"
+    assert _wait_for_block("alice@co.com", "ChatGPT", PROMPT)
+
+    async def now_it_passes(request, body):
+        raise AssertionError("must not re-screen when Shield remembers the block")
+    with patch("api.routes_exceptions.classify", side_effect=now_it_passes):
+        r = _ask(client)
+    assert r.status_code == 201, r.text
+    assert [b["guardrail"] for b in r.json()["blocked_by"]] == ["keyword_blocklist"]
+
+
+def test_a_remembered_block_counts_only_for_that_user_destination_and_prompt(client, enabled):
+    from core import prompt_exceptions as pe
+    flaky = "the margin on this handbag is 62%"            # the keyword rule passes it
+    pe.remember_block(TENANT, "alice@co.com", "ChatGPT", flaky,
+                      [{"guardrail": "custom_policy_input", "policy": "Pricing",
+                        "policy_id": "p1", "message": "shares margin"}])
+    assert _ask(client, prompt=flaky).status_code == 201
+    assert _ask(client, prompt=flaky, headers=BOB).status_code == 409
+    assert _ask(client, prompt=flaky, destination="Claude").status_code == 409
+    assert _ask(client, prompt=flaky + " today").status_code == 409
+
+
+def test_a_remembered_block_expires(client, enabled):
+    from core import prompt_exceptions as pe
+    flaky = "the margin on this handbag is 62%"
+    pe.remember_block(TENANT, "alice@co.com", "ChatGPT", flaky,
+                      [{"guardrail": "custom_policy_input", "policy": "", "policy_id": "", "message": ""}])
+    import time as _t
+    assert pe.recent_block(TENANT, "alice@co.com", "ChatGPT", flaky,
+                           now=_t.time() + pe.BLOCK_MEMORY_S + 1) is None
+    with patch("core.prompt_exceptions.time.time", return_value=_t.time() + pe.BLOCK_MEMORY_S + 1):
+        assert _ask(client, prompt=flaky).status_code == 409
+
+
+def test_a_remembered_hard_rule_is_still_not_appealable(client):
+    from core import prompt_exceptions as pe
+    client.put(SETTINGS, json={"enabled": True, "non_appealable": ["custom_policy_input"]},
+               headers=KEY)
+    flaky = "the margin on this handbag is 62%"
+    pe.remember_block(TENANT, "alice@co.com", "ChatGPT", flaky,
+                      [{"guardrail": "custom_policy_input", "policy": "", "policy_id": "", "message": ""}])
+    assert _ask(client, prompt=flaky).status_code == 403
+
+
+def test_remembering_never_breaks_the_input_route(client, enabled):
+    with patch("core.prompt_exceptions.remember_block", side_effect=RuntimeError("store down")):
+        assert _send(client)["action"] == "block"
