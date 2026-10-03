@@ -4973,7 +4973,7 @@ if __name__ == "__main__":
         </div>
         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;margin-top:0.5rem;font-size:13px;">
           <label title="Leave off if your laptops already have a proxy (PAC) configuration; the kit then includes the lines to add to it."><input type="checkbox" id="dk-proxy" checked> Include the proxy setting</label>
-          <label>Extension ids <input id="dk-ext" type="text" placeholder="none" style="width:260px;"></label>
+          <label title="Chrome and Edge install it from the location shown under Rollout kits">Extension ids <input id="dk-ext" type="text" placeholder="none" style="width:260px;"></label>
           <label>Days <input id="dk-days" type="number" value="180" min="1" max="365" style="width:70px;"></label>
           <label>Laptops <input id="dk-uses" type="number" value="5000" min="1" max="100000" style="width:90px;"></label>
           <label><input type="checkbox" id="dk-prev"> Revoke this fleet's earlier kits for this MDM</label>
@@ -17399,8 +17399,12 @@ async function dkLoad() {
     if (!DK_DEFAULTS) {
       DK_DEFAULTS = d.defaults;
       document.getElementById('dk-ext').value = (d.defaults.extension_ids || []).join(',');
+      if (d.defaults.votal_extension_id) {
+        document.getElementById('dk-ext').placeholder = `none, or ${d.defaults.votal_extension_id} for VotalAI Guardrails`;
+      }
     }
-    const note = d.defaults.signed_release ? '' : '<div class="muted" style="margin-bottom:0.4rem;">Installers are not signed yet: kits work for a pilot with Jamf or Kandji (the kit explains the unsigned option); Intune for Mac needs a signed release.</div>';
+    const note = (d.defaults.signed_release ? '' : '<div class="muted" style="margin-bottom:0.4rem;">Installers are not signed yet: kits work for a pilot with Jamf or Kandji (the kit explains the unsigned option); Intune for Mac needs a signed release.</div>')
+      + (d.defaults.extension_update_url ? `<div class="muted" style="margin-bottom:0.4rem;">Kits that include the browser extension install it from <code>${xfEsc(d.defaults.extension_update_url)}</code>.</div>` : '');
     document.getElementById('dk-list').innerHTML = note + (!d.kits.length ? '<div class="muted">No rollout kits yet.</div>'
       : `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
           <th style="${DD_TD}">Kit</th><th style="${DD_TD}">Fleet</th><th style="${DD_TD}">MDM</th><th style="${DD_TD}">Laptops left</th><th style="${DD_TD}">Expires</th><th style="${DD_TD}">Status</th><th style="${DD_TD}"></th></tr></thead>

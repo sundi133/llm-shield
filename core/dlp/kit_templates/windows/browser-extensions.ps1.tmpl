@@ -8,9 +8,12 @@ $Keys = @("HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist",
 foreach ($Key in $Keys) {
   New-Item -Path $Key -Force | Out-Null
   foreach ($Id in $Ids) {
-    $Value = "$Id;https://clients2.google.com/service/update2/crx"
+    $Value = "$Id;{{extension_update_url}}"
     $Current = (Get-ItemProperty -Path $Key).PSObject.Properties | Where-Object { $_.Name -match '^\d+$' }
     if ($Current | Where-Object { $_.Value -eq $Value }) { continue }
+    # The same extension from another location (an older kit): replace it.
+    $Old = $Current | Where-Object { $_.Value -like "$Id;*" }
+    if ($Old) { Set-ItemProperty -Path $Key -Name $Old[0].Name -Value $Value; continue }
     $N = 1
     while ($Current.Name -contains "$N") { $N++ }
     New-ItemProperty -Path $Key -Name "$N" -Value $Value -PropertyType String -Force | Out-Null

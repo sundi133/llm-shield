@@ -31,7 +31,8 @@ with sensitive values masked are opt-in.
   | `SHIELD_RUNTIME_BUNDLE_PRIVATE_KEY` | Signs the policy laptops enforce. Without it laptops do not enroll. |
   | `SHIELD_DEVICE_CA_MASTER_KEY` | 64 hex characters (for example from `openssl rand -hex 32`). Each company's Mac root certificate is derived from it; no two companies share one. |
   | `SHIELD_DEVICE_AGENT_SHIELD_URL` | The https address laptops use to reach Shield. Rollout kits carry it. |
-  | `SHIELD_BROWSER_EXTENSION_IDS` | Optional: the Votal browser extension, included in every kit. |
+  | `SHIELD_BROWSER_EXTENSION_IDS` | Optional: the Votal browser extension, included in every kit. Votal's is `gcbcablddjeicimnfipalnckffoiihnb`. |
+  | `SHIELD_BROWSER_EXTENSION_UPDATE_URL` | Optional: where Chrome and Edge install the extension from. Defaults to Votal's hosted package, `https://storage.googleapis.com/votal-public/extension/update.xml`. Set the Chrome Web Store's update URL only for an extension installed from the store. |
 
 - **The browser extension is optional.** Without it, browser prompts are still
   checked by the agent's local proxy.

@@ -160,6 +160,11 @@ def readme(ext_id: str, update_url: str, version: str) -> str:
 Extension id:  {ext_id}
 Update URL:    {update_url}
 Force-install: {ext_id};{update_url}
+Package:       {update_url.rsplit("/", 1)[0]}/votalai-guardrails-{version}.crx
+MDM files:     {base}/
+
+Chrome and Edge fetch the package themselves from the update URL, and update
+it when a new version is published there: upload these files once.
 
 Every file installs the extension in Chrome and Edge and sets its settings.
 Before uploading, replace:
