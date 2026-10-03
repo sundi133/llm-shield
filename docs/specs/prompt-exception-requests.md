@@ -96,6 +96,7 @@ moving to a personal device.
 | `prompt_exc_user:{tenant}:{user_hash}` | this user's open request ids, for the per-user limit and for finding a duplicate | 7 days |
 | `prompt_exc_fp:{tenant}` | one hash of counters per guardrail and policy: `requested`, `approved`, `false_positive` | none |
 | `prompt_exc_settings:{tenant}` | the tenant's settings | none |
+| `prompt_exc_block:{tenant}:{user_hash}:{destination_hash}:{sha256}` | `{at, blocked_by}`: what blocked this prompt, written by `/guardrails/input` in the background | 1 hour |
 
 Request record:
 
@@ -139,8 +140,14 @@ grant_id
 {"prompt": "...", "destination": "chatgpt.com", "reason": "Partner is under NDA"}
 ```
 
-Shield screens the prompt itself with the tenant's input policy, so the list
-of what blocked it is the server's, not the caller's.
+What blocked the prompt is always Shield's finding, never the caller's. When
+`/guardrails/input` blocks a prompt it records, in the background, what blocked
+it for that tenant, user, destination and prompt hash, for an hour
+(`prompt_exc_block:*`). A request uses that record. Only without one does Shield
+screen the prompt again. This matters for policies judged by a model: they can
+block a prompt and pass the same prompt a moment later, and a request that
+relied on a second screen was refused as "no longer blocked" (found in the
+first production test, 2026-10-02).
 
 | Result | Status |
 |---|---|

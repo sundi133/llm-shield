@@ -314,6 +314,49 @@ def for_requester(rec: dict) -> dict:
     }
 
 
+# ── what blocked a prompt, remembered briefly ────────────────────────
+#
+# A request names the prompt; what blocked it must come from Shield, not the
+# caller. Re-screening it at request time is not enough on its own: a policy
+# judged by a model can block a prompt and pass the same prompt a moment later,
+# and the request was then refused as "no longer blocked". So when
+# /guardrails/input blocks, it records what blocked the prompt, keyed by
+# tenant, user, destination and prompt hash, for BLOCK_MEMORY_S.
+
+BLOCK_MEMORY_S = 3600
+
+
+def _block_key(tenant_id: str, user_id: str, destination: str, sha: str) -> str:
+    dest = hashlib.sha256(destination.encode()).hexdigest()[:16]
+    return f"prompt_exc_block:{tenant_id}:{_user_hash(user_id)}:{dest}:{sha}"
+
+
+def remember_block(tenant_id: str, user_id: str, destination: str, message: str,
+                   blocked_by: list[dict]) -> None:
+    """Never raises: this runs after the verdict, in the background."""
+    if not (tenant_id and user_id and blocked_by):
+        return
+    try:
+        from storage.tenant_store import kv_set
+        kv_set(_block_key(tenant_id, user_id, destination, prompt_sha256(message)),
+               {"at": int(time.time()), "blocked_by": blocked_by}, ttl=BLOCK_MEMORY_S)
+    except Exception:
+        pass
+
+
+def recent_block(tenant_id: str, user_id: str, destination: str, prompt: str,
+                 now: Optional[float] = None) -> Optional[list[dict]]:
+    """What blocked this exact prompt for this user and destination in the last
+    BLOCK_MEMORY_S, or None. The value's own time decides, not a Redis TTL."""
+    from storage.tenant_store import kv_get
+    rec = kv_get(_block_key(tenant_id, user_id, destination, prompt_sha256(prompt)))
+    now = time.time() if now is None else now
+    if not isinstance(rec, dict) or now - rec.get("at", 0) > BLOCK_MEMORY_S:
+        return None
+    blocked_by = rec.get("blocked_by")
+    return blocked_by if isinstance(blocked_by, list) and blocked_by else None
+
+
 # ── who is asking ────────────────────────────────────────────────────
 
 def requester(request) -> tuple[str, str]:

@@ -101,14 +101,17 @@ async def request_exception(request: Request, body: dict = Body(...)):
     except pe.ExceptionError as e:
         _fail(e)
 
-    # What blocked it is decided here, by the tenant's own policy, not taken
-    # from the caller.
-    result = await classify(request, {"message": prompt, "agent_key": user_id,
-                                      "device_id": device_id,
-                                      "context": {"source": "exception_request"}})
-    blocked_by = pe.blocking_results(result)
-    blocked = result.get("safe") is False or result.get("action") in pe.BLOCKING_ACTIONS
-    if not blocked or not blocked_by:
+    # What blocked it comes from Shield, never from the caller: the block
+    # /guardrails/input recorded for this user, destination and prompt, or,
+    # without one, a fresh screen with the tenant's own policy.
+    blocked_by = pe.recent_block(tenant_id, user_id, destination, prompt)
+    if blocked_by is None:
+        result = await classify(request, {"message": prompt, "agent_key": user_id,
+                                          "device_id": device_id,
+                                          "context": {"source": "exception_request"}})
+        blocked = result.get("safe") is False or result.get("action") in pe.BLOCKING_ACTIONS
+        blocked_by = pe.blocking_results(result) if blocked else []
+    if not blocked_by:
         raise HTTPException(status_code=409, detail={
             "error": "not_blocked",
             "message": "This prompt is not blocked by the current policy. Send it again."})
