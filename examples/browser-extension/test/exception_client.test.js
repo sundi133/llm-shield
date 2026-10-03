@@ -166,3 +166,18 @@ test("a denial learned at send time is kept for the banner", async () => {
   assert.strictEqual(out.rec.status, "denied");
   assert.strictEqual(out.rec.decision.reason, "No NDA");
 });
+
+test("requests past their expiry are dropped from storage, for every site", async () => {
+  const d = deps([], 10_000);
+  const put = (text, dest, status, expires_at) =>
+    (d.data[ex.keyFor(sha(text), dest)] = { request_id: "pex_" + text, status, destination: dest,
+                                            hash: sha(text), expires_at });
+  put("old-approved", "chatgpt.com", "approved", 9_000);
+  put("old-denied", "claude.ai", "denied", 9_999);
+  put("live", "chatgpt.com", "approved", 20_000);
+  d.data.tenantKey = "k";                                   // the extension's own settings stay
+  assert.deepStrictEqual(await ex.poll(d, "chatgpt.com"), []);
+  assert.deepStrictEqual(Object.keys(d.data).sort(),
+                         [ex.keyFor(sha("live"), "chatgpt.com"), "tenantKey"].sort());
+  assert.strictEqual(d.calls.length, 0);                    // nothing pending: no call to Shield
+});

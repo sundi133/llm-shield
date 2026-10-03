@@ -74,9 +74,11 @@ async function getInstallId() {
   return id;
 }
 
-// Where exception requests are remembered: session storage (gone when the
-// browser closes), or local storage on a Chrome without it.
-const EXC_AREA = (chrome.storage && chrome.storage.session) || chrome.storage.local;
+// Where exception requests are remembered: local storage, so an approval
+// survives the browser being closed before the user sends the prompt again.
+// Each entry holds a request id, a prompt hash, a status and at most one
+// short-lived grant; never the prompt. Entries go when the request expires.
+const EXC_AREA = chrome.storage.local;
 const excStore = {
   async get(k) { return (await EXC_AREA.get(k))[k] || null; },
   async set(k, v) { await EXC_AREA.set({ [k]: v }); },
