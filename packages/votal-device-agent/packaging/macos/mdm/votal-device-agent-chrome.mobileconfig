@@ -7,7 +7,7 @@
 		<dict>
 			<key>ExtensionInstallForcelist</key>
 			<array>
-				<string>__CHROME_EXTENSION_ID__;https://clients2.google.com/service/update2/crx</string>
+				<string>__CHROME_EXTENSION_ID__;https://storage.googleapis.com/votal-public/extension/update.xml</string>
 			</array>
 			<key>PayloadDisplayName</key>
 			<string>Chrome policy</string>

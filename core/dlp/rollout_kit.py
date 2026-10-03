@@ -32,7 +32,12 @@ DEFAULT_PLATFORMS = {"jamf": ("macos",), "kandji": ("macos",), "intune": ("windo
 LOCAL_PORT, PROXY_PORT = 47823, 47824
 PAC_URL = f"http://127.0.0.1:{LOCAL_PORT}/proxy.pac"
 AGENT_LABEL = "ai.votal.device-agent"
+#: Where Chrome and Edge fetch the extension. The Chrome Web Store's update URL
+#: works only for a store listing; Votal's self-hosted VotalAI Guardrails is
+#: served from its own update manifest (docs/enterprise-install.md).
 CRX_UPDATE_URL = "https://clients2.google.com/service/update2/crx"
+VOTAL_EXTENSION_ID = "gcbcablddjeicimnfipalnckffoiihnb"
+VOTAL_EXTENSION_UPDATE_URL = "https://storage.googleapis.com/votal-public/extension/update.xml"
 PROFILE_NAME = "Votal-Device-Agent.mobileconfig"
 _NS = uuid.UUID("0b6f1e62-3a0f-4c1e-8e51-6a8c2f4d9b17")
 
@@ -46,6 +51,7 @@ _PATTERNS = {
     "pinned_public_key": r"^[0-9a-f]{64}$",
     "agent_version": r"^\d+\.\d+\.\d+$",
     "release_base": r"^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/-]*)?$",
+    "extension_update_url": r"^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/-]*)?$",
     "apple_team_id": r"^([A-Z0-9]{10})?$",
     "windows_signer": r"^[A-Za-z0-9 .,&()-]{0,100}$",
 }
@@ -75,6 +81,7 @@ class KitRequest:
     platforms: tuple = ()
     include_proxy: bool = True
     extension_ids: list = field(default_factory=list)
+    extension_update_url: str = VOTAL_EXTENSION_UPDATE_URL
     root_pem: str = ""                # the tenant root (macOS)
     root_fingerprint: str = ""
     apple_team_id: str = ""           # Votal's Apple Team ID, once the release is signed
@@ -148,6 +155,7 @@ def _values(req: KitRequest) -> dict:
         "apple_team_id": req.apple_team_id, "windows_signer": req.windows_signer,
         "extension_ids_csv": ",".join(ids),
         "extension_ids_ps": ", ".join(f"'{i}'" for i in ids),
+        "extension_update_url": req.extension_update_url,
         "pac_url": PAC_URL, "proxy_port": PROXY_PORT, "local_port": LOCAL_PORT,
         "root_fingerprint": req.root_fingerprint or "(no macOS in this kit)",
         "pac_snippet": _pac_snippet(hosts),
@@ -243,7 +251,7 @@ def mac_profile(req: KitRequest) -> bytes:
             "Proxies": {"ProxyAutoConfigEnable": 1, "ProxyAutoConfigURLString": PAC_URL,
                         "FallBackAllowed": 1, "ProxyCaptiveLoginAllowed": 1}}))
     if req.extension_ids:
-        forcelist = [f"{i};{CRX_UPDATE_URL}" for i in req.extension_ids]
+        forcelist = [f"{i};{req.extension_update_url}" for i in req.extension_ids]
         content.append(payload("com.google.Chrome", "chrome", {
             "_display": "Chrome: Votal extension", "ExtensionInstallForcelist": forcelist}))
         content.append(payload("com.microsoft.Edge", "edge", {
@@ -320,7 +328,8 @@ def manifest(req: KitRequest) -> dict:
     return {"kit_id": req.kit_id, "tenant_id": req.tenant_id, "fleet": req.fleet,
             "mdm": req.mdm, "platforms": list(req.resolved_platforms()),
             "agent_version": req.agent_version, "include_proxy": req.include_proxy,
-            "extension_ids": list(req.extension_ids), "shield_url": req.shield_url,
+            "extension_ids": list(req.extension_ids),
+            "extension_update_url": req.extension_update_url, "shield_url": req.shield_url,
             "root_fingerprint_sha256": req.root_fingerprint, "token_id": req.token_id,
             "created_at": req.created_at, "expires_at": req.expires_at}
 

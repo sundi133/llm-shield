@@ -278,6 +278,8 @@ async def list_rollout_kits(request: Request):
     s = kits.settings()
     return {"tenant_id": tenant_id, "kits": kits.list_kits(tenant_id),
             "defaults": {"agent_version": s["agent_version"], "extension_ids": s["extension_ids"],
+                         "extension_update_url": s["extension_update_url"],
+                         "votal_extension_id": kits.rk.VOTAL_EXTENSION_ID,
                          "signed_release": bool(s["apple_team_id"]),
                          "mdms": list(kits.rk.MDMS),
                          "platforms": {m: list(p) for m, p in kits.rk.PLATFORMS.items()}}}

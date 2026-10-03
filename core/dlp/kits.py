@@ -49,7 +49,11 @@ def settings() -> dict:
             or DEFAULT_RELEASE_BASE,
             "apple_team_id": os.environ.get("SHIELD_APPLE_TEAM_ID", "").strip(),
             "windows_signer": os.environ.get("SHIELD_WINDOWS_SIGNER", "Votal").strip(),
-            "extension_ids": ids}
+            "extension_ids": ids,
+            # Votal's self-hosted VotalAI Guardrails by default. Set it to the
+            # Chrome Web Store's update URL for an extension installed from the store.
+            "extension_update_url": os.environ.get("SHIELD_BROWSER_EXTENSION_UPDATE_URL", "").strip()
+            or rk.VOTAL_EXTENSION_UPDATE_URL}
 
 
 def _key(tenant_id: str, kit_id: str) -> str:
@@ -120,7 +124,8 @@ def create_kit(tenant_id: str, body: dict, *, shield_url: str, actor: str) -> di
         pinned_public_key=pinned, agent_version=s["agent_version"],
         release_base=s["release_base"], ai_hosts=list(hosts),
         platforms=req_in["platforms"], include_proxy=req_in["include_proxy"],
-        extension_ids=req_in["extension_ids"], apple_team_id=s["apple_team_id"],
+        extension_ids=req_in["extension_ids"], extension_update_url=s["extension_update_url"],
+        apple_team_id=s["apple_team_id"],
         windows_signer=s["windows_signer"], root_pem="-----BEGIN CERTIFICATE-----" if
         "macos" in req_in["platforms"] else "")
     try:

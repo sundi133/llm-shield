@@ -271,7 +271,7 @@ def test_the_profile_is_everything_a_mac_needs(root_pem):
     assert (rule["RuleType"], rule["RuleValue"], rule["TeamIdentifier"]) == \
         ("Label", "ai.votal.device-agent", "ABCDE12345")
     assert by["com.google.Chrome"]["ExtensionInstallForcelist"] == [
-        f"{EXT};https://clients2.google.com/service/update2/crx"]
+        f"{EXT};https://storage.googleapis.com/votal-public/extension/update.xml"]
     # The agent itself accepts these settings, as it reads them from MDM.
     settings = {k: v for k, v in by["ai.votal.device-agent"].items() if not k.startswith("Payload")}
     assert managed.validate(settings)["EnrollmentToken"] == TOKEN
@@ -313,6 +313,40 @@ def test_no_extension_id_leaves_the_extension_out(root_pem):
     assert not types & {"com.google.Chrome", "com.microsoft.Edge"}
     assert "windows/browser-extensions.ps1" not in files
     assert "does not install the Votal browser extension" in files["README.md"].decode()
+
+
+def test_the_extension_installs_from_the_configured_location(root_pem):
+    """Votal's self-hosted package by default; a store listing when the
+    operator sets the Chrome Web Store's update URL."""
+    store = "https://clients2.google.com/service/update2/crx"
+    for url, expected in ((None, rk.VOTAL_EXTENSION_UPDATE_URL), (store, store)):
+        req = kit_req(root_pem, mdm="intune") if url is None else \
+            kit_req(root_pem, mdm="intune", extension_update_url=url)
+        files = rk.files(req)
+        profile = plistlib.loads(files["macos/Votal-Device-Agent.mobileconfig"])["PayloadContent"]
+        for p in profile:
+            if p["PayloadType"] in ("com.google.Chrome", "com.microsoft.Edge"):
+                assert p["ExtensionInstallForcelist"] == [f"{EXT};{expected}"]
+        ps1 = files["windows/browser-extensions.ps1"].decode()
+        assert f'$Value = "$Id;{expected}"' in ps1
+        # An older kit's line for the same extension is replaced, not duplicated.
+        assert '$Old = $Current | Where-Object { $_.Value -like "$Id;*" }' in ps1
+        assert rk.manifest(req)["extension_update_url"] == expected
+
+
+def test_the_extension_location_must_be_https(root_pem):
+    with pytest.raises(rk.KitError) as e:
+        rk.validate(kit_req(root_pem, extension_update_url="http://example.com/update.xml"))
+    assert any(x.startswith("extension_update_url") for x in e.value.errors)
+
+
+def test_kit_settings_default_to_votals_hosted_extension(monkeypatch):
+    from core.dlp import kits
+    monkeypatch.delenv("SHIELD_BROWSER_EXTENSION_UPDATE_URL", raising=False)
+    assert kits.settings()["extension_update_url"] == \
+        "https://storage.googleapis.com/votal-public/extension/update.xml"
+    monkeypatch.setenv("SHIELD_BROWSER_EXTENSION_UPDATE_URL", "https://downloads.example.com/u.xml")
+    assert kits.settings()["extension_update_url"] == "https://downloads.example.com/u.xml"
 
 
 def test_the_windows_arguments_are_the_msis_properties(root_pem):
