@@ -5,7 +5,11 @@ rules; nothing here runs on the guard path. Routes: api/routes_exceptions.py.
 
   prompt_exc_settings:{tenant}            the tenant's settings
   prompt_exc:{tenant}:{request_id}        one request, with the prompt text
-  prompt_exc_idx:{tenant}                 sorted set of request ids by time
+  prompt_exc_idx:{tenant}                 sorted set of request ids by time (all)
+  prompt_exc_st:{tenant}:{status}         sorted set of ids in one status, score expires_at
+  prompt_exc_pol:{tenant}:{policy_key}    sorted set of pending ids one policy blocked
+  prompt_exc_pols:{tenant}                hash policy_key -> the policy's names
+  prompt_exc_v2:{tenant}                  marker: the status indexes are built
   prompt_exc_user:{tenant}:{user_hash}    this user's open request ids
   prompt_exc_fp:{tenant}                  hash of per-policy counters
 
@@ -199,6 +203,196 @@ def counters(tenant_id: str) -> list[dict]:
     return sorted(rows.values(), key=lambda x: -x["requested"])
 
 
+# ── status and policy indexes (docs/specs/prompt-exception-queue-at-scale.md)
+#
+# One sorted set per status and one per policy (pending only), all scored by the
+# request's expires_at: "still pending" is then a count from now, with no sweep.
+# The record is the truth; an index that disagrees with it is repaired when a
+# page meets the id.
+
+STATUS_KEEP = 5000
+SCAN_MAX = 1000
+_mem_z: dict[str, dict[str, float]] = {}
+_mem_h: dict[str, dict[str, str]] = {}
+
+
+def _st_key(tenant_id: str, status: str) -> str:
+    return f"prompt_exc_st:{tenant_id}:{status}"
+
+
+def policy_key(b: dict) -> str:
+    ident = f"{b.get('guardrail', '')}|{b.get('policy_id') or b.get('policy', '')}"
+    return hashlib.sha256(ident.encode()).hexdigest()[:16]
+
+
+def _pol_key(tenant_id: str, pk: str) -> str:
+    return f"prompt_exc_pol:{tenant_id}:{pk}"
+
+
+def _zadd(key: str, member: str, score: float) -> None:
+    r = _redis()
+    if r is None:
+        _mem_z.setdefault(key, {})[member] = float(score)
+    else:
+        r.zadd(key, {member: float(score)})
+
+
+def _zrem(key: str, *members: str) -> None:
+    if not members:
+        return
+    r = _redis()
+    if r is None:
+        for m in members:
+            _mem_z.get(key, {}).pop(m, None)
+    else:
+        r.zrem(key, *members)
+
+
+def _zcard(key: str) -> int:
+    r = _redis()
+    return len(_mem_z.get(key, {})) if r is None else int(r.zcard(key) or 0)
+
+
+def _zcount(key: str, lo: float, hi: float = float("inf")) -> int:
+    r = _redis()
+    if r is None:
+        return sum(1 for v in _mem_z.get(key, {}).values() if lo <= v <= hi)
+    return int(r.zcount(key, lo, "+inf" if hi == float("inf") else hi) or 0)
+
+
+def _zrange(key: str, lo: float, hi: float, n: int, desc: bool) -> list[str]:
+    """Up to n members with lo <= score <= hi; ascending, or descending."""
+    r = _redis()
+    if r is None:
+        items = sorted(((v, m) for m, v in _mem_z.get(key, {}).items() if lo <= v <= hi),
+                       reverse=desc)
+        return [m for _v, m in items[:n]]
+    lo_s, hi_s = ("-inf" if lo == float("-inf") else lo), ("+inf" if hi == float("inf") else hi)
+    try:      # Upstash REST client
+        out = (r.zrevrangebyscore(key, hi_s, lo_s, offset=0, count=n) if desc
+               else r.zrangebyscore(key, lo_s, hi_s, offset=0, count=n))
+    except TypeError:     # redis-py
+        out = (r.zrevrangebyscore(key, hi_s, lo_s, start=0, num=n) if desc
+               else r.zrangebyscore(key, lo_s, hi_s, start=0, num=n))
+    return [_decode(m) for m in (out or [])]
+
+
+def _trim(key: str) -> None:
+    r = _redis()
+    if r is None:
+        z = _mem_z.get(key, {})
+        for m in sorted(z, key=z.get)[:-STATUS_KEEP]:
+            z.pop(m, None)
+        return
+    n = int(r.zcard(key) or 0)
+    if n > STATUS_KEEP:
+        r.zremrangebyrank(key, 0, n - STATUS_KEEP - 1)
+
+
+def _hset(key: str, field: str, value: dict) -> None:
+    import json
+    r = _redis()
+    if r is None:
+        _mem_h.setdefault(key, {})[field] = json.dumps(value)
+    else:
+        r.hset(key, field, json.dumps(value))
+
+
+def _hgetall(key: str) -> dict[str, dict]:
+    import json
+    r = _redis()
+    raw = dict(_mem_h.get(key, {})) if r is None else (r.hgetall(key) or {})
+    out = {}
+    for k, v in raw.items():
+        try:
+            out[_decode(k)] = json.loads(_decode(v))
+        except ValueError:
+            continue
+    return out
+
+
+def _mget(tenant_id: str, ids: list[str]) -> list[Optional[dict]]:
+    """The records for ids, in order, in one call."""
+    import json
+    from storage.tenant_store import _fallback_store
+    if not ids:
+        return []
+    keys = [_key(tenant_id, i) for i in ids]
+    r = _redis()
+    raw = [_fallback_store.get(k) for k in keys] if r is None else (r.mget(*keys) or [])
+    out = []
+    for v in raw:
+        try:
+            rec = json.loads(_decode(v)) if v is not None else None
+        except ValueError:
+            rec = None
+        out.append(rec if isinstance(rec, dict) and rec.get("tenant_id") == tenant_id else None)
+    return out
+
+
+def _index_new(rec: dict) -> None:
+    t, rid = rec["tenant_id"], rec["request_id"]
+    _zadd(_st_key(t, "pending"), rid, rec["expires_at"])
+    for b in rec["blocked_by"]:
+        pk = policy_key(b)
+        _zadd(_pol_key(t, pk), rid, rec["expires_at"])
+        _hset(f"prompt_exc_pols:{t}", pk, {"guardrail": b.get("guardrail", ""),
+                                           "policy": b.get("policy", ""),
+                                           "policy_id": b.get("policy_id", "")})
+
+
+def _index_move(rec: dict, frm: str, to: str) -> None:
+    """Move a request between status indexes. Never raises: the record is the
+    truth, and a page repairs an index that missed a move."""
+    try:
+        t, rid = rec["tenant_id"], rec["request_id"]
+        _zrem(_st_key(t, frm), rid)
+        _zadd(_st_key(t, to), rid, rec["expires_at"])
+        if frm == "pending":
+            for b in rec["blocked_by"]:
+                _zrem(_pol_key(t, policy_key(b)), rid)
+        if to != "pending":
+            _trim(_st_key(t, to))
+    except Exception:
+        pass
+
+
+def _ensure_indexes(tenant_id: str) -> None:
+    """Build the status and policy indexes from the old all-requests index,
+    once per tenant. Idempotent, so two planes doing it at once is harmless."""
+    from storage.tenant_store import kv_get, kv_set
+    marker = f"prompt_exc_v2:{tenant_id}"
+    if kv_get(marker):
+        return
+    ids = _index_ids(tenant_id, INDEX_MAX)
+    now = time.time()
+    for start in range(0, len(ids), 100):
+        batch = ids[start:start + 100]
+        for rid, rec in zip(batch, _mget(tenant_id, batch)):
+            if not rec:
+                continue
+            status = rec.get("status", "pending")
+            if status == "pending" and now >= rec.get("expires_at", 0):
+                status = "expired"
+            _zadd(_st_key(tenant_id, status), rid, rec["expires_at"])
+            if status == "pending":
+                for b in rec.get("blocked_by") or []:
+                    _zadd(_pol_key(tenant_id, policy_key(b)), rid, rec["expires_at"])
+                    _hset(f"prompt_exc_pols:{tenant_id}", policy_key(b), {
+                        "guardrail": b.get("guardrail", ""), "policy": b.get("policy", ""),
+                        "policy_id": b.get("policy_id", "")})
+    kv_set(marker, {"at": int(now)})
+
+
+def _sweep_expired(tenant_id: str, limit: int = 200) -> None:
+    """Pending ids whose time has passed go to expired (their records too)."""
+    stale = _zrange(_st_key(tenant_id, "pending"), float("-inf"), time.time() - 0.001, limit, False)
+    for rid in stale:
+        rec = get(tenant_id, rid)            # marks the record expired and moves it
+        if rec is None:
+            _zrem(_st_key(tenant_id, "pending"), rid)
+
+
 # ── requests ─────────────────────────────────────────────────────────
 
 def _key(tenant_id: str, request_id: str) -> str:
@@ -224,6 +418,7 @@ def get(tenant_id: str, request_id: str, now: Optional[float] = None) -> Optiona
     if rec.get("status") == "pending" and now >= rec.get("expires_at", 0):
         rec["status"] = "expired"
         _save(rec)
+        _index_move(rec, "pending", "expired")
     return rec
 
 
@@ -281,6 +476,10 @@ def create(tenant_id: str, *, user_id: str, device_id: str, destination: str, pr
     }
     _save(rec)
     _index_add(tenant_id, rec["request_id"], now)
+    try:
+        _index_new(rec)
+    except Exception:
+        pass                                 # repaired by _ensure_indexes / a page
     ukey = f"prompt_exc_user:{tenant_id}:{_user_hash(user_id)}"
     ids = kv_get(ukey)
     kv_set(ukey, ([i for i in ids if isinstance(i, str)] if isinstance(ids, list) else [])
@@ -289,15 +488,155 @@ def create(tenant_id: str, *, user_id: str, device_id: str, destination: str, pr
     return rec
 
 
-def list_requests(tenant_id: str, status: Optional[str] = None, limit: int = 100) -> list[dict]:
+def _matches(rec: dict, policy: Optional[str], user: Optional[str],
+             destination: Optional[str], q: Optional[str]) -> bool:
+    if policy and policy not in {policy_key(b) for b in rec.get("blocked_by") or []}:
+        return False
+    if user and rec.get("user_id") != user:
+        return False
+    if destination and rec.get("destination") != destination:
+        return False
+    if q:
+        needle = q.lower()
+        hay = " ".join(str(rec.get(k) or "") for k in
+                       ("prompt", "reason", "user_id", "device_id", "destination")).lower()
+        if needle not in hay:
+            return False
+    return True
+
+
+def _cursor(rec: dict) -> str:
+    return f"{rec['expires_at']}:{rec['request_id']}"
+
+
+def _parse_cursor(cursor: Optional[str]) -> Optional[tuple[float, str]]:
+    if not cursor:
+        return None
+    try:
+        score, rid = cursor.split(":", 1)
+        if not _ID.match(rid):
+            return None
+        return float(score), rid
+    except ValueError:
+        return None
+
+
+def list_page(tenant_id: str, status: str = "pending", *, policy: Optional[str] = None,
+              user: Optional[str] = None, destination: Optional[str] = None,
+              q: Optional[str] = None, limit: int = 25, cursor: Optional[str] = None) -> dict:
+    """{requests, next_cursor, total, searched?}. Pending is oldest first, the
+    others newest first. A page is one range read and one batch read, unless a
+    user, site or text filter makes it scan (at most SCAN_MAX ids)."""
+    if status not in STATUSES + ("all",):
+        raise ExceptionError(400, "invalid_status", "status: " + ", ".join(STATUSES + ("all",)))
+    limit = max(1, min(int(limit), 100))
+    _ensure_indexes(tenant_id)
+    if status in ("pending", "expired"):
+        _sweep_expired(tenant_id)
+    if status == "all":
+        return _list_all(tenant_id, policy=policy, user=user, destination=destination, q=q,
+                         limit=limit, cursor=cursor)
     now = time.time()
-    out = []
-    for request_id in _index_ids(tenant_id, INDEX_MAX):
-        rec = get(tenant_id, request_id, now)
-        if rec and (status is None or rec["status"] == status):
-            out.append(rec)
-            if len(out) >= limit:
+    desc = status != "pending"
+    key = _pol_key(tenant_id, policy) if (policy and status == "pending") else _st_key(tenant_id, status)
+    lo = now if status == "pending" else float("-inf")
+    total = _zcount(key, lo) if status == "pending" else _zcard(key)
+    scanning = bool(user or destination or q or (policy and status != "pending"))
+    after = _parse_cursor(cursor)
+    budget = SCAN_MAX if scanning else limit + 100
+    out: list[dict] = []
+    searched = 0
+    examined: Optional[dict] = None          # the last record looked at
+    while len(out) < limit and searched < budget:
+        lo_b, hi_b = lo, float("inf")
+        if after:
+            if desc:
+                hi_b = after[0]
+            else:
+                lo_b = max(lo, after[0])
+        want = min(100, budget - searched) if scanning else limit + 50
+        ids = _zrange(key, lo_b, hi_b, want, desc)
+        recs = _mget(tenant_id, ids)          # one batch read per round
+        pairs = list(zip(ids, recs))
+        if after:
+            # Ties on the cursor's score are ordered by id: drop the ones
+            # already returned (ascending: ids <= the cursor's; descending: >=).
+            pairs = [(i, r) for i, r in pairs
+                     if not (r and float(r["expires_at"]) == after[0]
+                             and ((i <= after[1]) if not desc else (i >= after[1])))]
+        if not pairs:
+            break
+        for rid, rec in pairs:
+            if searched >= budget:
                 break
+            searched += 1
+            if rec is None:                      # the record has expired: drop the id
+                _zrem(key, rid)
+                continue
+            examined = rec
+            if rec.get("status") == "pending" and now >= rec.get("expires_at", 0):
+                rec = get(tenant_id, rid) or rec    # becomes expired, index moved
+            if rec.get("status") != status:          # the record is the truth
+                _index_move(rec, status, rec.get("status", status))
+                continue
+            if _matches(rec, policy if scanning else None, user, destination, q):
+                out.append(rec)
+                if len(out) >= limit:
+                    break
+        if examined is None or len(ids) < want:
+            break
+        after = (float(examined["expires_at"]), examined["request_id"])
+    more = len(out) >= limit or (scanning and searched >= budget)
+    page = {"requests": out,
+            "next_cursor": _cursor(examined) if more and examined else None,
+            "total": total}
+    if scanning:
+        page["searched"] = searched
+    return page
+
+
+def _list_all(tenant_id: str, *, policy, user, destination, q, limit: int,
+              cursor: Optional[str]) -> dict:
+    """Every status, newest first, from the all-requests index, by offset."""
+    try:
+        offset = max(0, int(cursor or 0))
+    except ValueError:
+        offset = 0
+    ids = _index_ids(tenant_id, INDEX_MAX)
+    out, i = [], offset
+    while i < len(ids) and len(out) < limit:
+        batch = ids[i:i + 100]
+        for rid, rec in zip(batch, _mget(tenant_id, batch)):
+            i += 1
+            if rec and _matches(rec, policy, user, destination, q):
+                out.append(rec)
+                if len(out) >= limit:
+                    break
+    return {"requests": out, "next_cursor": str(i) if i < len(ids) and len(out) >= limit else None,
+            "total": len(ids), "searched": i - offset}
+
+
+def list_requests(tenant_id: str, status: Optional[str] = None, limit: int = 100) -> list[dict]:
+    return list_page(tenant_id, status or "all", limit=min(limit, 100))["requests"]
+
+
+def counts(tenant_id: str) -> dict:
+    """Requests per status, and pending per policy, in a few store calls."""
+    _ensure_indexes(tenant_id)
+    _sweep_expired(tenant_id)
+    now = time.time()
+    out = {s: (_zcount(_st_key(tenant_id, s), now) if s == "pending"
+               else _zcard(_st_key(tenant_id, s))) for s in STATUSES}
+    history = {(c["guardrail"], c["policy"]): c for c in counters(tenant_id)}
+    by_policy = []
+    for pk, meta in _hgetall(f"prompt_exc_pols:{tenant_id}").items():
+        h = history.get((meta.get("guardrail", ""), meta.get("policy", "")), {})
+        by_policy.append({"policy_key": pk, "guardrail": meta.get("guardrail", ""),
+                          "policy": meta.get("policy", ""),
+                          "pending": _zcount(_pol_key(tenant_id, pk), now),
+                          "requested": h.get("requested", 0), "approved": h.get("approved", 0),
+                          "false_positive": h.get("false_positive", 0)})
+    out["by_policy"] = sorted(by_policy, key=lambda x: (-x["pending"], -x["requested"]))
     return out
 
 
@@ -399,6 +738,7 @@ def decide(tenant_id: str, request_id: str, *, approve: bool, approver: str, met
                              "The person who asked cannot decide their own request.")
     rec["status"] = "approved" if approve else "denied"
     rec["decided_at"] = int(time.time())
+    _index_move(rec, "pending", rec["status"])
     rec["decision"] = {"approver": approver[:200], "method": method, "reason": reason[:REASON_MAX],
                        "false_positive": bool(false_positive)}
     _save(rec)
@@ -485,6 +825,7 @@ def redeem(token: str, *, tenant_id: str, user_id: str, destination: str, messag
         return None, "grant_used"
     rec["status"] = "used"
     rec["used_at"] = int(time.time())
+    _index_move(rec, "approved", "used")
     rec["grant_id"] = claims.grant_id
     _save(rec)
     return rec, ""
