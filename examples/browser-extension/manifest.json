@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VotalAI Guardrails",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Screens prompts and file attachments to Claude, ChatGPT, Gemini and Copilot through your organization's Votal Shield guardrails, or the Votal device agent on managed laptops.",
   "permissions": [
     "storage",

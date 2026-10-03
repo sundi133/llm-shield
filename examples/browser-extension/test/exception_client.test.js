@@ -137,3 +137,47 @@ test("a request Shield no longer knows is forgotten; an outage changes nothing",
   assert.deepStrictEqual(await ex.refresh(d, rec), rec);
   assert.ok(d.data[key]);
 });
+
+test("a resend right after approval collects the grant without waiting for the poll", async () => {
+  // The production report: approved at 12:09:33, resent at 12:09:48, blocked,
+  // because the tab still held "pending" and only asked Shield every 30 s.
+  const d = deps([{ body: { status: "approved", grant: "g-now", grant_expires_at: 1900 } }]);
+  d.data[ex.keyFor(sha(PROMPT), "chatgpt.com")] = { request_id: "pex_1", status: "pending",
+                                                    destination: "chatgpt.com", hash: sha(PROMPT) };
+  const out = await ex.grantFor(d, PROMPT, "chatgpt.com");
+  assert.strictEqual(out.grant, "g-now");
+  assert.strictEqual(d.calls.length, 1);
+});
+
+test("a resend while still pending asks once and sends nothing", async () => {
+  const d = deps([{ body: { status: "pending" } }]);
+  d.data[ex.keyFor(sha(PROMPT), "chatgpt.com")] = { request_id: "pex_1", status: "pending",
+                                                    destination: "chatgpt.com", hash: sha(PROMPT) };
+  const out = await ex.grantFor(d, PROMPT, "chatgpt.com");
+  assert.deepStrictEqual([out.grant, out.rec.status], ["", "pending"]);
+});
+
+test("a denial learned at send time is kept for the banner", async () => {
+  const d = deps([{ body: { status: "denied", decision: { reason: "No NDA" } } }]);
+  d.data[ex.keyFor(sha(PROMPT), "chatgpt.com")] = { request_id: "pex_1", status: "pending",
+                                                    destination: "chatgpt.com", hash: sha(PROMPT) };
+  const out = await ex.grantFor(d, PROMPT, "chatgpt.com");
+  assert.strictEqual(out.grant, "");
+  assert.strictEqual(out.rec.status, "denied");
+  assert.strictEqual(out.rec.decision.reason, "No NDA");
+});
+
+test("requests past their expiry are dropped from storage, for every site", async () => {
+  const d = deps([], 10_000);
+  const put = (text, dest, status, expires_at) =>
+    (d.data[ex.keyFor(sha(text), dest)] = { request_id: "pex_" + text, status, destination: dest,
+                                            hash: sha(text), expires_at });
+  put("old-approved", "chatgpt.com", "approved", 9_000);
+  put("old-denied", "claude.ai", "denied", 9_999);
+  put("live", "chatgpt.com", "approved", 20_000);
+  d.data.tenantKey = "k";                                   // the extension's own settings stay
+  assert.deepStrictEqual(await ex.poll(d, "chatgpt.com"), []);
+  assert.deepStrictEqual(Object.keys(d.data).sort(),
+                         [ex.keyFor(sha("live"), "chatgpt.com"), "tenantKey"].sort());
+  assert.strictEqual(d.calls.length, 0);                    // nothing pending: no call to Shield
+});

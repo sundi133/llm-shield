@@ -92,14 +92,17 @@ async function refresh(deps, rec) {
 
 // The grant to attach when sending this prompt, if an approval is waiting for
 // it. Returns { grant, rec }: grant is "" when there is nothing to attach.
+//
+// A request still pending here is asked about now, not at the next poll: an
+// admin who approves and tells the user "send it again" must not see the
+// resend blocked because the tab had not checked yet.
 async function grantFor(deps, text, destination) {
   const hash = await promptHash(text);
   let rec = await deps.store.get(keyFor(hash, destination));
   if (!rec) return { grant: "", rec: null };
-  if (rec.status === "approved" &&
-      (!rec.grant || (rec.grant_expires_at || 0) - deps.now() < GRANT_MARGIN_S)) {
-    rec = await refresh(deps, rec);
-  }
+  const stale = rec.status === "approved" &&
+    (!rec.grant || (rec.grant_expires_at || 0) - deps.now() < GRANT_MARGIN_S);
+  if (rec.status === "pending" || stale) rec = await refresh(deps, rec);
   return { grant: rec.status === "approved" && rec.grant ? rec.grant : "", rec };
 }
 
@@ -130,8 +133,13 @@ async function poll(deps, destination) {
   const all = await deps.store.all();
   const changed = [];
   for (const [key, rec] of Object.entries(all || {})) {
-    if (!key.startsWith(EXC_PREFIX) || !rec || rec.destination !== destination ||
-        rec.status !== "pending") continue;
+    if (!key.startsWith(EXC_PREFIX) || !rec) continue;
+    // Storage outlives the browser session: drop what can no longer be used.
+    if (rec.expires_at && deps.now() > rec.expires_at) {
+      await deps.store.remove(key);
+      continue;
+    }
+    if (rec.destination !== destination || rec.status !== "pending") continue;
     const next = await refresh(deps, rec);
     if (next.status !== "pending") {
       changed.push({ request_id: next.request_id, status: next.status, decision: next.decision || null });

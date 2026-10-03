@@ -259,9 +259,10 @@
     setTimeout(() => input.focus(), 0);
   }
 
-  // Answers arrive while the tab is open: ask every 30 seconds. The background
-  // only calls Shield when this site has a request waiting.
-  setInterval(async () => {
+  // Answers arrive while the tab is open: ask when the page opens, then every
+  // 30 seconds. The background only calls Shield when this site has a request
+  // waiting. (Sending the prompt again also asks, so nobody waits for this.)
+  const pollExceptions = async () => {
     const changes = await excSend({ type: "shield-exception-poll", origin: CFG.name });
     for (const c of changes || []) {
       if (c.status === "approved") {
@@ -274,7 +275,9 @@
                { sticky: true });
       }
     }
-  }, 30000);
+  };
+  setTimeout(pollExceptions, 1500);
+  setInterval(pollExceptions, 30000);
 
   // Replace the composer's text (the device agent's redaction). Returns whether
   // the page now holds exactly that text; if not, the caller blocks instead of
