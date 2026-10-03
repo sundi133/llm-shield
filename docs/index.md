@@ -92,6 +92,7 @@ permalink: /
 | Add Shield to a LiteLLM proxy with config only | [LiteLLM guardrail (config only)]({{ "/litellm-generic-guardrail/" | relative_url }}) |
 | Stop data leaking into web AI (ChatGPT / Gemini / Claude) | [Edge Fast-Path (Browser DLP)]({{ "/edge-fast-path/" | relative_url }}) |
 | Lock down where agents run (OpenShell, Kubernetes, Cilium, Squid) from one profile | [Infrastructure Guardrails]({{ "/infra-guardrails/" | relative_url }}) |
+| Stop Claude Code on laptops from encrypting files, reading credentials or writing outside the project | [Claude Code guardrails]({{ "/claude-code-runtime-guardrails/" | relative_url }}) |
 | Stop agents moving data between apps (Drive to public GitHub, CRM to external mail) | [Cross-App Flow Control]({{ "/cross-app-flow-control/" | relative_url }}) |
 | Enforce MCP tool allowlists at runtime (not just client-side) | [MCP Runtime Enforcement]({{ "/mcp-runtime-enforcement/" | relative_url }}) |
 | Plan an enterprise rollout / cover agents you didn't build | [Enterprise Integration Architecture]({{ "/enterprise-integration-architecture/" | relative_url }}) |

@@ -67,6 +67,7 @@ from api.routes_runtime_policy import router as runtime_profiles_router, edge_ro
 from api.routes_embodied import router as embodied_profiles_router, edge_router as embodied_bundle_router
 from api.routes_device_dlp import router as device_dlp_router
 from api.routes_exception_review import tenant_router as exceptions_tenant_router
+from api.routes_hooks_portal import router as hooks_portal_router
 from api.routes_devices import tenant_router as devices_router
 from api.routes_guardrail_metrics import router as guardrail_metrics_router
 from api.routes_siem import router as siem_router
@@ -1058,6 +1059,7 @@ def create_admin_app() -> FastAPI:
     app.include_router(embodied_bundle_router)        # /v1/edge/embodied-bundle
     app.include_router(device_dlp_router)             # /v1/tenant/me/dlp-policy
     app.include_router(exceptions_tenant_router)      # /v1/tenant/me/exceptions
+    app.include_router(hooks_portal_router)           # /v1/tenant/me/hooks/claude-code
     app.include_router(devices_router)                # /v1/tenant/me/devices/*
     app.include_router(identity_config_router)   # /v1/tenant/me/identity/role-binding
     app.include_router(guardrail_metrics_router)       # /v1/tenant/me/guardrails/metrics
