@@ -6,7 +6,9 @@ asking and polling live in api/routes_exceptions.py (data plane).
 
   GET  /v1/tenant/me/exceptions/settings          the tenant's settings
   PUT  /v1/tenant/me/exceptions/settings
-  GET  /v1/tenant/me/exceptions                   the review queue, with the prompts
+  GET  /v1/tenant/me/exceptions                   the review queue, paged, with the prompts
+  GET  /v1/tenant/me/exceptions/counts            requests per status, pending per policy
+  POST /v1/tenant/me/exceptions/deny              deny up to 100 at once, one reason
   GET  /v1/tenant/me/exceptions/{id}
   POST /v1/tenant/me/exceptions/{id}/approve      {reason?, false_positive?}
   POST /v1/tenant/me/exceptions/{id}/deny         {reason?, false_positive?}
@@ -116,14 +118,67 @@ def _notify_decided(tenant_id: str, rec: dict) -> None:
 
 
 @tenant_router.get("")
-async def list_exception_requests(request: Request, status: str = Query(None),
-                                  limit: int = Query(100, ge=1, le=500)):
+async def list_exception_requests(
+        request: Request, status: str = Query("pending"),
+        policy: str = Query(None, max_length=32), user: str = Query(None, max_length=256),
+        destination: str = Query(None, max_length=100), q: str = Query(None, max_length=200),
+        limit: int = Query(25, ge=1, le=100), cursor: str = Query(None, max_length=120)):
+    """One page. Pending oldest first; the other statuses newest first."""
     tenant_id = tenant_of(request)
-    if status is not None and status not in pe.STATUSES:
-        raise HTTPException(status_code=400, detail=f"status: one of {', '.join(pe.STATUSES)}")
-    return {"tenant_id": tenant_id,
-            "requests": [_for_reviewer(r) for r in pe.list_requests(tenant_id, status, limit)],
+    try:
+        page = pe.list_page(tenant_id, status, policy=policy or None, user=user or None,
+                            destination=destination or None, q=(q or "").strip() or None,
+                            limit=limit, cursor=cursor)
+    except pe.ExceptionError as e:
+        fail(e)
+    # by_policy: the all-time counters, as before; /counts has pending per policy.
+    return {"tenant_id": tenant_id, **page,
+            "requests": [_for_reviewer(r) for r in page["requests"]],
             "by_policy": pe.counters(tenant_id)}
+
+
+@tenant_router.get("/counts")
+async def exception_counts(request: Request):
+    tenant_id = tenant_of(request)
+    return {"tenant_id": tenant_id, **pe.counts(tenant_id)}
+
+
+@tenant_router.post("/deny")
+async def deny_exception_requests(request: Request, body: dict = Body(...)):
+    """Deny many at once, one reason. Each is decided exactly as a single deny:
+    first decision stands, its own audit row and webhook. There is no bulk
+    approve: each approval releases one prompt and is read first."""
+    tenant_id = tenant_of(request)
+    require_registry_write(request, tenant_id, "decide prompt exception requests")
+    ids, reason = body.get("request_ids"), body.get("reason")
+    errors = []
+    if not isinstance(ids, list) or not ids or len(ids) > 100 \
+            or not all(isinstance(i, str) for i in ids):
+        errors.append("request_ids: 1 to 100 request ids")
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > pe.REASON_MAX:
+        errors.append(f"reason: why they are denied (up to {pe.REASON_MAX} characters)")
+    if errors:
+        raise HTTPException(status_code=400, detail={"error": "invalid_request", "errors": errors})
+    actor = _actor(request, tenant_id)
+    method = "portal" if actor.startswith("user:") else "tenant_key"
+    denied, skipped = [], []
+    for rid in dict.fromkeys(ids):               # once each, in the order given
+        try:
+            rec = pe.decide(tenant_id, rid, approve=False, approver=actor, method=method,
+                            reason=reason.strip(), false_positive=body.get("false_positive") is True)
+        except pe.ExceptionError as e:
+            skipped.append({"request_id": rid, "status": "not_found" if e.status == 404 else e.code})
+            continue
+        if not rec["changed"]:
+            skipped.append({"request_id": rid, "status": rec["status"]})
+            continue
+        audit(request, "prompt_exception_denied", tenant_id, actor,
+              {"request_id": rid, "user_id": rec["user_id"], "prompt_sha256": rec["prompt_sha256"],
+               "false_positive": rec["decision"]["false_positive"], "bulk": True,
+               "blocked_by": [b["guardrail"] for b in rec["blocked_by"]]})
+        _notify_decided(tenant_id, rec)
+        denied.append(rid)
+    return {"tenant_id": tenant_id, "denied": denied, "skipped": skipped}
 
 
 @tenant_router.get("/{request_id}")

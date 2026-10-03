@@ -43,6 +43,8 @@ def app(monkeypatch):
     monkeypatch.setattr(tenant_store, "_fallback_store", {})
     pe._mem_index.clear()
     pe._mem_counts.clear()
+    pe._mem_z.clear()
+    pe._mem_h.clear()
     monkeypatch.setenv("SHIELD_APPROVAL_TOKEN_PRIVATE_KEY", "11" * 32)
     with patch("config.schema.load_config", return_value=cfg):
         from core.app import create_app
