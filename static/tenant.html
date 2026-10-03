@@ -5033,26 +5033,44 @@ if __name__ == "__main__":
         <div class="page-desc">When Shield blocks a prompt, the user can ask for an exception and say why. You see the prompt, the reason and the policy that blocked it. Approving lets that exact prompt through once, for that user and that AI tool. Nothing else is released.</div>
       </div>
 
+      <div id="ex-lead"></div>
+
       <div class="card">
-        <div class="card-header"><div><div class="card-title" id="ex-list-title">Waiting for review</div>
-          <div class="card-desc">Approve when the user is authorised to send it. Tick "policy was wrong" when the prompt should never have been blocked: it is counted against the policy below.</div></div>
-          <div style="display:flex;gap:0.5rem;align-items:center;">
-            <select id="ex-filter" onchange="exList()" style="min-width:160px;">
-              <option value="pending">Pending</option>
-              <option value="">All</option>
-              <option value="approved">Approved</option>
-              <option value="used">Sent</option>
-              <option value="denied">Denied</option>
-              <option value="expired">Expired</option>
-            </select>
-            <button class="small" onclick="exLoad()">Refresh</button>
-          </div></div>
-        <div id="ex-list" style="font-size:13px;">Loading...</div>
+        <div class="card-header"><div><div class="card-title">Requests</div>
+          <div class="card-desc">Open a request to read the prompt and decide. Approve when the user is authorised to send it; tick "policy was wrong" when it should never have been blocked. Pending requests are oldest first.</div></div>
+          <button class="small" onclick="exLoad()">Refresh</button></div>
+        <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:0.8rem;flex-wrap:wrap;">
+          <button class="ex-tab" data-status="pending" onclick="exTab('pending')" style="padding:0.5rem 1rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;">Pending <span class="ex-tab-n muted"></span></button>
+          <button class="ex-tab" data-status="approved" onclick="exTab('approved')" style="padding:0.5rem 1rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;">Approved <span class="ex-tab-n muted"></span></button>
+          <button class="ex-tab" data-status="used" onclick="exTab('used')" style="padding:0.5rem 1rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;">Sent <span class="ex-tab-n muted"></span></button>
+          <button class="ex-tab" data-status="denied" onclick="exTab('denied')" style="padding:0.5rem 1rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;">Denied <span class="ex-tab-n muted"></span></button>
+          <button class="ex-tab" data-status="expired" onclick="exTab('expired')" style="padding:0.5rem 1rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;">Expired <span class="ex-tab-n muted"></span></button>
+          <button class="ex-tab" data-status="all" onclick="exTab('all')" style="padding:0.5rem 1rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;">All <span class="ex-tab-n muted"></span></button>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.7rem;font-size:13px;">
+          <select id="ex-f-policy" onchange="exList(true)" style="min-width:200px;"><option value="">All policies</option></select>
+          <input id="ex-f-user" type="text" placeholder="User" style="width:180px;" onkeydown="if(event.key==='Enter')exList(true)">
+          <input id="ex-f-site" type="text" placeholder="AI site, e.g. chatgpt.com" style="width:180px;" onkeydown="if(event.key==='Enter')exList(true)">
+          <input id="ex-f-q" type="text" placeholder="Search prompt, reason, user" style="flex:1;min-width:200px;" onkeydown="if(event.key==='Enter')exList(true)">
+          <button class="small" onclick="exList(true)">Search</button>
+          <button class="small" onclick="exClearFilters()">Clear</button>
+        </div>
+        <div id="ex-bulk" style="display:none;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem;font-size:13px;">
+          <span id="ex-sel-n" class="muted">0 selected</span>
+          <input id="ex-bulk-reason" type="text" maxlength="500" placeholder="Reason, shown to each user" style="flex:1;min-width:220px;">
+          <button class="small danger" onclick="exBulkDeny()">Deny selected</button>
+          <span id="ex-bulk-msg"></span>
+        </div>
+        <div id="ex-list" style="font-size:13px;overflow-x:auto;">Loading...</div>
+        <div style="display:flex;gap:0.8rem;align-items:center;margin-top:0.6rem;font-size:13px;">
+          <button id="ex-more" class="small" style="display:none;" onclick="exList(false)">Load more</button>
+          <span id="ex-foot" class="muted"></span>
+        </div>
       </div>
 
       <div class="card">
         <div class="card-header"><div><div class="card-title">By policy</div>
-          <div class="card-desc">How often each policy's blocks were questioned, approved, and marked wrong. A policy with many "wrong" marks needs rewording.</div></div></div>
+          <div class="card-desc">How many requests each policy has waiting, and how often its blocks were questioned, approved and marked wrong. A policy with many requests or many "wrong" marks needs rewording.</div></div></div>
         <div id="ex-policies" style="font-size:13px;overflow-x:auto;"></div>
       </div>
 
@@ -17570,7 +17588,6 @@ function exWho(approver) {
   return a || 'an admin';
 }
 let EX_SETTINGS = null;
-async function exLoad() { exSettings(); exList(); }
 async function exSettings() {
   try {
     const r = await ddApi('/exceptions/settings');
@@ -17600,16 +17617,93 @@ async function exSave() {
     xfMsg('ex-msg', r.settings.enabled ? 'Saved. Users can request exceptions.' : 'Saved. Exception requests are off.', 'ok');
   } catch (e) { xfMsg('ex-msg', xfErrors(e), 'error'); }
 }
-function exBlockedBy(rec) {
-  return (rec.blocked_by || []).map(b =>
-    `<div><b>${xfEsc(b.policy || b.guardrail)}</b>${b.policy ? ` <span class="muted">(${xfEsc(b.guardrail)})</span>` : ''}: ${xfEsc(b.message)}</div>`).join('');
+// The policy's own reason, without the custom policy guardrail's wrapper
+// ("1 custom input policy violation(s). Worst: Custom input policy 'X': ...").
+function exReason(msg) {
+  return String(msg || '')
+    .replace(/^\d+ custom (?:input|output) policy violation\(s\)\. Worst: /i, '')
+    .replace(/^Custom (?:input|output) policy '[^']*': /i, '');
 }
-function exCard(rec) {
+function exPolicyName(b) { return b.policy || b.guardrail; }
+let EX = { status: 'pending', cursor: null, rows: [], selected: new Set(), counts: null };
+function exTab(status) {
+  EX.status = status;
+  document.querySelectorAll('.ex-tab').forEach(b => {
+    const on = b.dataset.status === status;
+    b.style.borderBottomColor = on ? 'var(--primary)' : 'transparent';
+    b.style.color = on ? 'var(--text)' : 'var(--text-muted)';
+  });
+  exList(true);
+}
+function exClearFilters() {
+  for (const id of ['ex-f-policy', 'ex-f-user', 'ex-f-site', 'ex-f-q']) document.getElementById(id).value = '';
+  exList(true);
+}
+async function exLoad() { exSettings(); exCounts(); exTab(EX.status); }
+async function exCounts() {
+  try {
+    const c = await ddApi('/exceptions/counts');
+    EX.counts = c;
+    exBadge(c.pending);
+    document.querySelectorAll('.ex-tab').forEach(b => {
+      const n = b.dataset.status === 'all' ? null : c[b.dataset.status];
+      b.querySelector('.ex-tab-n').textContent = n ? String(n) : '';
+    });
+    // The policy filter, and the "By policy" table.
+    const sel = document.getElementById('ex-f-policy');
+    const keep = sel.value;
+    sel.innerHTML = '<option value="">All policies</option>' + c.by_policy.map(p =>
+      `<option value="${xfEsc(p.policy_key)}">${xfEsc(exPolicyName(p))}${p.pending ? ` (${p.pending} pending)` : ''}</option>`).join('');
+    sel.value = keep;
+    const rows = c.by_policy.map(p => `<tr>
+        <td style="${DD_TD}">${xfEsc(exPolicyName(p))}${p.policy ? ` <span class="muted">(${xfEsc(p.guardrail)})</span>` : ''}</td>
+        <td style="${DD_TD}text-align:right;">${p.pending ? `<a href="#" onclick="exShowPolicy('${xfEsc(p.policy_key)}');return false;">${p.pending}</a>` : 0}</td>
+        <td style="${DD_TD}text-align:right;">${p.requested}</td><td style="${DD_TD}text-align:right;">${p.approved}</td>
+        <td style="${DD_TD}text-align:right;">${p.false_positive}</td></tr>`).join('');
+    document.getElementById('ex-policies').innerHTML = rows
+      ? `<table style="border-collapse:collapse;width:100%;"><tr class="muted"><td style="${DD_TD}">Policy</td><td style="${DD_TD}text-align:right;">Pending</td><td style="${DD_TD}text-align:right;">Requests</td><td style="${DD_TD}text-align:right;">Approved</td><td style="${DD_TD}text-align:right;">Policy was wrong</td></tr>${rows}</table>`
+      : '<div class="muted">No requests yet.</div>';
+    // Lead with the policy when one is producing the queue.
+    const top = c.by_policy.find(p => p.pending >= 10);
+    document.getElementById('ex-lead').innerHTML = !top ? '' : `<div class="card" style="border-left:3px solid var(--warning, #f59e0b);">
+      <div style="font-size:14px;"><b>${top.pending} requests are waiting for "${xfEsc(exPolicyName(top))}".</b>
+      Many requests for one policy usually mean the policy needs rewording, not that each request needs a decision.</div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.6rem;">
+        <button class="small primary" onclick="exShowPolicy('${xfEsc(top.policy_key)}')">Show them</button>
+        <button class="small" onclick="document.querySelector('.nav-item[data-tab=policies]').click()">Open policies</button>
+      </div></div>`;
+  } catch (e) { document.getElementById('ex-lead').innerHTML = ''; }
+}
+function exShowPolicy(pk) {
+  document.getElementById('ex-f-policy').value = pk;
+  exTab('pending');
+}
+function exRow(rec) {
+  const first = String(rec.reason || '').split('\n')[0];
+  const policies = (rec.blocked_by || []).map(exPolicyName).join(', ');
+  const pick = rec.status === 'pending'
+    ? `<input type="checkbox" class="ex-pick" data-id="${rec.request_id}" ${EX.selected.has(rec.request_id) ? 'checked' : ''} onclick="event.stopPropagation();exPick(this)">` : '';
+  return `<tr class="ex-row" data-id="${rec.request_id}" onclick="exToggle('${rec.request_id}')" style="cursor:pointer;border-top:1px solid var(--border);">
+      <td style="${DD_TD}width:28px;">${pick}</td>
+      <td style="${DD_TD}"><b>${xfEsc(rec.user_id)}</b></td>
+      <td style="${DD_TD}">${xfEsc(rec.destination)}</td>
+      <td style="${DD_TD}">${xfEsc(policies)}</td>
+      <td style="${DD_TD}white-space:nowrap;" class="muted">${ddAgo(rec.created_at)}</td>
+      <td style="${DD_TD}max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${xfEsc(first)}</td>
+      <td style="${DD_TD}"><span class="badge ${EX_STATUS[rec.status] || ''}">${xfEsc(EX_LABEL[rec.status] || rec.status)}</span></td>
+    </tr>
+    <tr class="ex-detail" id="ex-d-${rec.request_id}" style="display:none;"><td></td><td colspan="6" style="${DD_TD}">${exDetail(rec)}</td></tr>`;
+}
+function exDetail(rec) {
   const d = rec.decision;
+  const blocked = (rec.blocked_by || []).map(b =>
+    `<div><b>${xfEsc(exPolicyName(b))}</b>${b.policy ? ` <span class="muted">(${xfEsc(b.guardrail)})</span>` : ''}: ${xfEsc(exReason(b.message))}</div>`).join('');
   const left = rec.expires_at - Date.now() / 1000;
   const waits = rec.status === 'pending'
-    ? (left > 3600 ? `expires in ${Math.round(left / 3600)}h` : `expires in ${Math.max(1, Math.round(left / 60))}m`) : '';
+    ? `<div class="muted">From ${xfEsc(rec.device_id || 'an unknown device')}; expires in ${left > 3600 ? Math.round(left / 3600) + 'h' : Math.max(1, Math.round(left / 60)) + 'm'}.</div>` : '';
   const decided = d ? `<div class="muted" style="margin-top:0.5rem;">${rec.status === 'denied' ? 'Denied' : 'Approved'} by ${xfEsc(exWho(d.approver))} ${ddAgo(rec.decided_at)}${d.reason ? ': ' + xfEsc(d.reason.replace(/[.\s]+$/, '')) : ''}.${rec.status === 'used' ? ' The user has sent it.' : rec.status === 'approved' ? ' Waiting for the user to send it.' : ''}${d.false_positive ? ' <span class="badge badge-warn">Policy was wrong</span>' : ''}</div>` : '';
+  const cut = rec.prompt_len > rec.prompt.length
+    ? `<div class="muted">Showing the first ${rec.prompt.length.toLocaleString()} of ${rec.prompt_len.toLocaleString()} characters. The approval covers the whole prompt.</div>` : '';
   const actions = rec.status !== 'pending' ? '' : `
     <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:0.6rem;">
       <input id="ex-r-${rec.request_id}" type="text" maxlength="500" placeholder="Note for the user (optional for approve)" style="flex:1;min-width:220px;">
@@ -17618,41 +17712,86 @@ function exCard(rec) {
       <button class="small danger" onclick="exDecide('${rec.request_id}', false)">Deny</button>
     </div>
     <div id="ex-e-${rec.request_id}" style="margin-top:0.4rem;"></div>`;
-  const cut = rec.prompt_len > rec.prompt.length
-    ? `<div class="muted">Showing the first ${rec.prompt.length.toLocaleString()} of ${rec.prompt_len.toLocaleString()} characters. The approval covers the whole prompt.</div>` : '';
-  return `<div style="border:1px solid var(--border);border-radius:8px;padding:0.8rem;margin-bottom:0.7rem;">
-    <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
-      <span class="badge ${EX_STATUS[rec.status] || ''}">${xfEsc(EX_LABEL[rec.status] || rec.status)}</span>
-      <b>${xfEsc(rec.user_id)}</b>
-      <span class="muted">to ${xfEsc(rec.destination)}${rec.device_id && rec.device_id !== rec.user_id ? ' from ' + xfEsc(rec.device_id) : ''}, asked ${ddAgo(rec.created_at)}${waits ? ', ' + waits : ''}</span>
-    </div>
-    <div style="margin-top:0.5rem;"><span class="muted">Blocked by</span>${exBlockedBy(rec)}</div>
-    <div style="margin-top:0.5rem;"><span class="muted">Their reason</span><div>${xfEsc(rec.reason)}</div></div>
+  return `${waits}
+    <div style="margin-top:0.4rem;"><span class="muted">Blocked by</span>${blocked}</div>
+    <div style="margin-top:0.5rem;"><span class="muted">Their reason</span><div style="white-space:pre-wrap;">${xfEsc(rec.reason)}</div></div>
     <div style="margin-top:0.5rem;"><span class="muted">Prompt</span>
       <pre style="white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:0.2rem 0 0;padding:0.6rem;background:var(--bg-soft, rgba(127,127,127,0.08));border-radius:6px;font-size:12.5px;">${xfEsc(rec.prompt)}</pre>${cut}</div>
-    ${decided}${actions}</div>`;
+    ${decided}${actions}`;
 }
-async function exList() {
-  const status = document.getElementById('ex-filter').value;
-  document.getElementById('ex-list-title').textContent = status === 'pending' ? 'Waiting for review'
-    : status ? `${EX_LABEL[status]} requests` : 'All requests';
+function exToggle(id) {
+  const row = document.getElementById('ex-d-' + id);
+  if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+function exPick(box) {
+  if (box.checked) EX.selected.add(box.dataset.id); else EX.selected.delete(box.dataset.id);
+  exBulkBar();
+}
+function exPickAll(box) {
+  document.querySelectorAll('.ex-pick').forEach(b => { b.checked = box.checked; exPick(b); });
+}
+function exBulkBar() {
+  const show = EX.status === 'pending' && EX.rows.length > 0;
+  document.getElementById('ex-bulk').style.display = show ? 'flex' : 'none';
+  document.getElementById('ex-sel-n').textContent = `${EX.selected.size} selected`;
+}
+async function exList(reset) {
+  if (reset) { EX.cursor = null; EX.rows = []; EX.selected.clear(); }
+  const params = new URLSearchParams({ status: EX.status, limit: '25' });
+  const f = { policy: 'ex-f-policy', user: 'ex-f-user', destination: 'ex-f-site', q: 'ex-f-q' };
+  for (const [k, id] of Object.entries(f)) {
+    const v = document.getElementById(id).value.trim();
+    if (v) params.set(k, v);
+  }
+  if (EX.cursor) params.set('cursor', EX.cursor);
   try {
-    const r = await ddApi('/exceptions' + (status ? `?status=${status}` : ''));
-    const empty = status === 'pending' ? 'Nothing is waiting for review.' : 'No requests.';
-    document.getElementById('ex-list').innerHTML = r.requests.length ? r.requests.map(exCard).join('') : `<div class="muted">${empty}</div>`;
-    const rows = r.by_policy.map(p => `<tr><td style="${DD_TD}">${xfEsc(p.policy || p.guardrail)}${p.policy ? ` <span class="muted">(${xfEsc(p.guardrail)})</span>` : ''}</td>
-      <td style="${DD_TD}text-align:right;">${p.requested}</td><td style="${DD_TD}text-align:right;">${p.approved}</td>
-      <td style="${DD_TD}text-align:right;">${p.false_positive}</td></tr>`).join('');
-    document.getElementById('ex-policies').innerHTML = rows
-      ? `<table style="border-collapse:collapse;width:100%;"><tr class="muted"><td style="${DD_TD}">Policy</td><td style="${DD_TD}text-align:right;">Requests</td><td style="${DD_TD}text-align:right;">Approved</td><td style="${DD_TD}text-align:right;">Policy was wrong</td></tr>${rows}</table>`
-      : '<div class="muted">No requests yet.</div>';
-    if (status === 'pending') exBadge(r.requests.length);
+    const r = await ddApi('/exceptions?' + params.toString());
+    EX.rows = EX.rows.concat(r.requests);
+    EX.cursor = r.next_cursor;
+    const pickAll = EX.status === 'pending' ? `<input type="checkbox" title="Select all shown" onclick="exPickAll(this)">` : '';
+    const head = `<tr class="muted"><td style="${DD_TD}">${pickAll}</td><td style="${DD_TD}">User</td><td style="${DD_TD}">AI site</td><td style="${DD_TD}">Policy</td><td style="${DD_TD}">Asked</td><td style="${DD_TD}">Reason</td><td style="${DD_TD}">Status</td></tr>`;
+    const empty = EX.status === 'pending' ? 'Nothing is waiting for review.' : 'No requests.';
+    document.getElementById('ex-list').innerHTML = EX.rows.length
+      ? `<table style="border-collapse:collapse;width:100%;">${head}${EX.rows.map(exRow).join('')}</table>`
+      : `<div class="muted">${empty}</div>`;
+    document.getElementById('ex-more').style.display = EX.cursor ? '' : 'none';
+    // A filtered list says what matched and how far it looked, not "of total".
+    document.getElementById('ex-foot').textContent = r.searched !== undefined
+      ? `${EX.rows.length.toLocaleString()} matching. Looked through ${r.searched.toLocaleString()} request${r.searched === 1 ? '' : 's'}${EX.cursor ? '; "Load more" looks further' : ''}.`
+      : (EX.rows.length ? `Showing ${EX.rows.length.toLocaleString()} of ${r.total.toLocaleString()}.` : '');
+    exBulkBar();
   } catch (e) { xfMsg('ex-list', xfErrors(e), 'error'); }
+}
+async function exDecide(id, approve) {
+  const reason = document.getElementById('ex-r-' + id).value.trim();
+  if (!approve && !reason) { xfMsg('ex-e-' + id, 'Tell the user why it is denied.', 'error'); return; }
+  try {
+    await ddApi(`/exceptions/${id}/${approve ? 'approve' : 'deny'}`, { method: 'POST',
+      body: JSON.stringify({ reason, false_positive: document.getElementById('ex-fp-' + id).checked }) });
+    exCounts(); exList(true);
+  } catch (e) {
+    xfMsg('ex-e-' + id, xfErrors(e), 'error');
+    if (/already/i.test(e.message || '')) setTimeout(() => exList(true), 1500);
+  }
+}
+async function exBulkDeny() {
+  const ids = [...EX.selected];
+  const reason = document.getElementById('ex-bulk-reason').value.trim();
+  if (!ids.length) { xfMsg('ex-bulk-msg', 'Select requests first.', 'error'); return; }
+  if (!reason) { xfMsg('ex-bulk-msg', 'Give a reason; each user sees it.', 'error'); return; }
+  if (!confirm(`Deny ${ids.length} request${ids.length === 1 ? '' : 's'}? Each user sees your reason.`)) return;
+  try {
+    const r = await ddApi('/exceptions/deny', { method: 'POST', body: JSON.stringify({ request_ids: ids, reason }) });
+    document.getElementById('ex-bulk-reason').value = '';
+    exCounts(); await exList(true);
+    const n = r.skipped.length;
+    xfMsg('ex-bulk-msg', `Denied ${r.denied.length}.` + (n ? ` ${n} ${n === 1 ? 'was' : 'were'} already decided and left as ${n === 1 ? 'it was' : 'they were'}.` : ''), 'ok');
+  } catch (e) { xfMsg('ex-bulk-msg', xfErrors(e), 'error'); }
 }
 // The count beside the nav item, without opening the page. Quiet on failure:
 // a tenant with the feature off, or an older Shield, simply shows no badge.
 async function exBadgeLoad() {
-  try { exBadge((await ddApi('/exceptions?status=pending&limit=100')).requests.length); }
+  try { exBadge((await ddApi('/exceptions/counts')).pending); }
   catch (e) { /* no badge */ }
 }
 function exBadge(n) {

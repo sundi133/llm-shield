@@ -8,7 +8,7 @@ description: Keep the Exception Requests page fast and usable with hundreds of r
 
 # Spec: Exception queue at scale
 
-> Status: **APPROVED 2026-10-03** (user: "approved"). Task 1 built; task 2 open.
+> Status: **APPROVED 2026-10-03** (user: "approved"). Tasks 1 and 2 built.
 > Builds on: `docs/specs/prompt-exception-requests.md` (approved, shipped in
 > #454, #456 and #457).
 
