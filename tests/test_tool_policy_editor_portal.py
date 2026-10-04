@@ -148,7 +148,26 @@ def test_everything_a_user_typed_is_escaped():
     assert html.count("&lt;img src=x onerror=alert(1)&gt;") == 6
 
 
+def test_the_json_view_shows_the_whole_policy_escaped():
+    """JSON stays a first-class way to edit: the view holds the full policy,
+    and policy text cannot break out of the textarea."""
+    evil = '</textarea><script>alert(1)</script>'
+    html = _js(f"peRenderHtml('gdp', Object.assign(peStateFrom({{}}, LIB, '*'), {{"
+               f" view: 'json', ticked: ['call.T21'], calls: [{json.dumps(evil)}] }}), LIB)")
+    assert "<script>" not in html and html.count("</textarea>") == 2   # the JSON box and Try it
+    assert "[T21 Command injection]" in html and "&lt;/textarea&gt;" in html
+    assert 'onclick="peSaveJson(this)"' in html and 'data-view="form"' in html
+
+
+def test_what_you_type_in_the_json_view_is_what_it_shows():
+    st = "Object.assign(peStateFrom({}, LIB, '*'), {view: 'json', jsonText: '{\"enabled\": false}'})"
+    assert _js(f"peJsonText({st}, LIB)") == '{"enabled": false}'
+    fresh = _js("JSON.parse(peJsonText(peStateFrom({}, LIB, '*'), LIB))")
+    assert fresh["enabled"] is True and fresh["role_policies"] == []
+
+
 def test_the_page_uses_the_form_and_the_new_endpoints():
-    assert 'id="global-policy-json"' not in HTML          # the raw JSON box is gone
+    assert 'id="global-policy-json"' not in HTML          # the old raw JSON box is gone
+    assert "Advanced: edit as JSON" not in HTML           # JSON is a view now, not a fold-out
     assert "peMount('gdp-editor', 'gdp'" in HTML
     assert "/v1/data-policies/library" in HTML and "/v1/data-policies/try" in HTML

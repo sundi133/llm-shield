@@ -189,3 +189,14 @@ validated for the default policy. Secret patterns are saved as
   reload: the form rebuilt from the stored policy matches. Note for local runs:
   data-policy storage needs Redis (no in-memory fallback), so saving fails with
   "Redis connection not available" without one; this predates the editor.
+
+## JSON as a first-class view (user request, 2026-10-04)
+
+JSON is not tucked under "Advanced": a **Form | JSON** switch sits at the top
+of the editor. The JSON view holds the whole stored policy; **Save JSON** saves
+exactly what is written (the server validates it; a blocking default still
+asks to confirm), **Show as form** loads it into the form, and invalid JSON is
+refused with the parse error while the typed text is kept. Try it works in
+both views (in the JSON view it tests the JSON as written). The chosen view is
+remembered per browser (`localStorage`, a convenience only). The per-tool
+editor (task 3) gets the same switch.

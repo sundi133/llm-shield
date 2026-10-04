@@ -10102,8 +10102,31 @@ function peRenderHtml(id, st, library) {
       <button class="small" title="Remove" data-pe="${_esc(id)}" data-list="patterns" data-i="${i}" onclick="peRemove(this)">✕</button></div>`).join('')}
     <button class="small" data-pe="${_esc(id)}" data-list="patterns" onclick="peAdd(this)">+ Add pattern</button>`;
   const hidden = peHiddenSettings(st);
-  return `
-    <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.6rem;">
+  const tab = (v, label) => `<button class="small${st.view === v ? ' primary' : ''}" aria-pressed="${st.view === v}"
+      data-pe="${_esc(id)}" data-view="${v}" onclick="peView(this)">${label}</button>`;
+  const switcher = `<div style="display:flex;gap:0.35rem;margin-top:0.6rem;">${tab('form', 'Form')}${tab('json', 'JSON')}</div>`;
+  const tryIt = `
+    ${head('Try it')}
+    <div style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center;">
+      <select id="${_esc(id)}-try-side" style="${box}width:auto;"><option value="call">a tool call</option><option value="result">a tool result</option></select>
+      <input type="text" id="${_esc(id)}-try-tool" placeholder="tool name, e.g. send_email" style="${box}width:14rem;">
+      <button class="small" data-pe="${_esc(id)}" onclick="peTry(this)">Check</button></div>
+    <textarea id="${_esc(id)}-try-input" rows="3" placeholder='Call: arguments as JSON, e.g. {"to": "x@evil.example"}. Result: the text the tool returned.'
+      style="${box}width:100%;margin-top:0.35rem;font-family:ui-monospace,monospace;min-height:0;height:4.5rem;"></textarea>
+    <div id="${_esc(id)}-try-out" style="font-size:12px;margin-top:0.35rem;"></div>`;
+  if (st.view === 'json') {
+    return `${switcher}
+    <div class="muted" style="font-size:11px;margin:0.5rem 0 0.3rem;">The whole policy as it is stored.
+      Save JSON saves exactly this; the server checks it first.</div>
+    <textarea id="${_esc(id)}-json" spellcheck="false" data-pe="${_esc(id)}" oninput="peJsonInput(this)"
+      style="${box}width:100%;font-family:ui-monospace,monospace;font-size:11px;min-height:0;height:24rem;">${_esc(peJsonText(st, library))}</textarea>
+    <div style="margin-top:0.5rem;display:flex;gap:0.4rem;">
+      <button class="primary small" data-pe="${_esc(id)}" onclick="peSaveJson(this)">Save JSON</button>
+      <button class="small" data-pe="${_esc(id)}" data-view="form" onclick="peView(this)">Show as form</button></div>
+    ${tryIt}`;
+  }
+  return `${switcher}
+    <div style="display:flex;align-items:center;gap:0.5rem;">
       ${head('Ready-made protections')}
       <span style="margin-left:auto;display:flex;gap:0.35rem;">
         <button class="small" data-pe="${_esc(id)}" onclick="peRecommended(this)">Tick recommended</button>
@@ -10112,26 +10135,27 @@ function peRenderHtml(id, st, library) {
       ${group('call', 'Tool calls')}${group('result', 'Tool results')}${group('secret', 'Secrets')}</div>
     ${head('Your rules')}
     ${list('calls', 'Tool calls')}${list('results', 'Tool results')}${patterns}
-    ${hidden.length ? `<div class="muted" style="font-size:11px;margin-top:0.6rem;">Also contains ${_esc(hidden.join(', '))}; kept as they are. Edit them under Advanced.</div>` : ''}
-    ${head('Try it')}
-    <div style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center;">
-      <select id="${_esc(id)}-try-side" style="${box}width:auto;"><option value="call">a tool call</option><option value="result">a tool result</option></select>
-      <input type="text" id="${_esc(id)}-try-tool" placeholder="tool name, e.g. send_email" style="${box}width:14rem;">
-      <button class="small" data-pe="${_esc(id)}" onclick="peTry(this)">Check</button></div>
-    <textarea id="${_esc(id)}-try-input" rows="3" placeholder='Call: arguments as JSON, e.g. {"to": "x@evil.example"}. Result: the text the tool returned.'
-      style="${box}width:100%;margin-top:0.35rem;font-family:ui-monospace,monospace;min-height:0;height:4.5rem;"></textarea>
-    <div id="${_esc(id)}-try-out" style="font-size:12px;margin-top:0.35rem;"></div>
-    <details style="margin-top:0.8rem;" data-pe="${_esc(id)}" ontoggle="peShowJson(this)">
-      <summary style="cursor:pointer;font-size:12px;">Advanced: edit as JSON</summary>
-      <textarea id="${_esc(id)}-json" rows="10" style="${box}width:100%;margin-top:0.4rem;font-family:ui-monospace,monospace;font-size:11px;"></textarea>
-      <button class="small" data-pe="${_esc(id)}" onclick="peApplyJson(this)">Apply JSON to the form</button></details>
+    ${hidden.length ? `<div class="muted" style="font-size:11px;margin-top:0.6rem;">Also contains ${_esc(hidden.join(', '))}; kept as they are. Edit them in the JSON view.</div>` : ''}
+    ${tryIt}
     <div style="margin-top:0.8rem;"><button class="primary small" data-pe="${_esc(id)}" onclick="peSave(this)">Save</button></div>`;
+}
+
+// The JSON view's text: what the operator is typing, else the form's policy.
+function peJsonText(st, library) {
+  return st.jsonText != null ? st.jsonText : JSON.stringify(pePolicyFrom(st, library), null, 2);
 }
 
 // ── wiring ──────────────────────────────────────────────────────────────────
 
+const PE_VIEW_KEY = 'votal_policy_editor_view';   // per-viewer convenience only
+
+function pePreferredView() {
+  try { return localStorage.getItem(PE_VIEW_KEY) === 'json' ? 'json' : 'form'; } catch (e) { return 'form'; }
+}
+
 function peMount(containerId, id, policy, opts) {
-  PE[id] = { ...peStateFrom(policy, PE_LIBRARY || [], (opts && opts.role) || '*'), opts: opts || {}, containerId };
+  PE[id] = { ...peStateFrom(policy, PE_LIBRARY || [], (opts && opts.role) || '*'),
+             opts: opts || {}, containerId, view: pePreferredView(), jsonText: null };
   peRerender(id);
 }
 
@@ -10166,20 +10190,43 @@ function peRecommended(el) {
 }
 function peClear(el) { PE[el.dataset.pe].ticked = []; peRerender(el.dataset.pe); }
 
-function peShowJson(el) {
-  if (!el.open) return;
-  const id = el.dataset.pe;
-  document.getElementById(`${id}-json`).value = JSON.stringify(pePolicyFrom(PE[id], PE_LIBRARY || []), null, 2);
+// The policy the JSON view holds, or null (with a toast) when it is not JSON.
+function peParsedJson(id) {
+  try { return JSON.parse(peJsonText(PE[id], PE_LIBRARY || [])); }
+  catch (e) { showToast('Not valid JSON: ' + e.message, 'error'); return null; }
 }
-function peApplyJson(el) {
-  const id = el.dataset.pe;
-  let parsed;
-  try { parsed = JSON.parse(document.getElementById(`${id}-json`).value); }
-  catch (e) { showToast('Not valid JSON: ' + e.message, 'error'); return; }
-  const { opts, containerId } = PE[id];
-  PE[id] = { ...peStateFrom(parsed, PE_LIBRARY || [], PE[id].role), opts, containerId };
+
+function peView(el) {
+  const id = el.dataset.pe, st = PE[id], target = el.dataset.view;
+  if (target === st.view) return;
+  if (target === 'json') {
+    st.jsonText = JSON.stringify(pePolicyFrom(st, PE_LIBRARY || []), null, 2);
+  } else {
+    const parsed = peParsedJson(id);
+    if (!parsed) return;                       // stay in JSON until it parses
+    const { opts, containerId } = st;
+    PE[id] = { ...peStateFrom(parsed, PE_LIBRARY || [], st.role), opts, containerId, jsonText: null };
+  }
+  PE[id].view = target;
+  try { localStorage.setItem(PE_VIEW_KEY, target); } catch (e) { /* preference only */ }
   peRerender(id);
-  showToast('Applied to the form. Save to keep it.', 'success');
+}
+function peJsonInput(el) { PE[el.dataset.pe].jsonText = el.value; }
+
+async function peSaveJson(el) {
+  const id = el.dataset.pe, parsed = peParsedJson(id);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (parsed) showToast('The policy must be a JSON object.', 'error');
+    return;
+  }
+  delete parsed.created_at; delete parsed.updated_at; delete parsed.tool_name;
+  await PE[id].opts.onSave(parsed);
+}
+
+// The policy under edit, from whichever view is showing.
+function peCurrentPolicy(id) {
+  const st = PE[id];
+  return st.view === 'json' ? peParsedJson(id) : pePolicyFrom(st, PE_LIBRARY || []);
 }
 
 function peErrorText(raw) {
@@ -10195,7 +10242,9 @@ async function peTry(el) {
   const side = document.getElementById(`${id}-try-side`).value;
   const tool = document.getElementById(`${id}-try-tool`).value.trim();
   const input = document.getElementById(`${id}-try-input`).value;
-  const body = { policy: pePolicyFrom(PE[id], PE_LIBRARY || []), tool_name: tool || 'any_tool',
+  const policy = peCurrentPolicy(id);
+  if (!policy) return;
+  const body = { policy, tool_name: tool || 'any_tool',
                  user_role: PE[id].role === '*' ? '' : PE[id].role };
   if (side === 'call') {
     try { body.arguments = input.trim() ? JSON.parse(input) : {}; }
