@@ -7,7 +7,10 @@ POST /v1/tenant/me/hooks/claude-code/kit   rollout files for laptops WITHOUT the
                                            .mobileconfig, install script, hook)
 POST /v1/tenant/me/hooks/enable            profile + agent binding + coverage, once
 GET  /v1/tenant/me/hooks/fleets            each fleet's mode, laptops and hook states
-PUT  /v1/tenant/me/hooks/fleets            set the modes (device policy agent_hooks)
+PUT  /v1/tenant/me/hooks/fleets            set the modes (device policy agent_hooks,
+                                           and agent_os_events per fleet)
+GET  /v1/tenant/me/hooks/os-events         what agents did: outside-profile events
+                                           and per-laptop counts (agent-os-events)
 
 Specs: docs/specs/agent-hook-adapter.md task 3, and
 docs/specs/claude-code-fleet-rollout.md task 2. Not on any guard path: the
@@ -18,6 +21,7 @@ posted to /kit builds the files and is never stored or logged.
 from __future__ import annotations
 
 import copy
+from typing import Optional
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
@@ -170,67 +174,128 @@ async def enable(request: Request, body: dict = Body(default={})):
 # ── per-fleet modes ──────────────────────────────────────────────────
 
 
-def _fleet_rows(tenant_id: str, block: dict) -> list[dict]:
-    """Every fleet that has laptops or a setting: its resolved setting, its
-    laptop count, and laptops by hook state (per coding agent)."""
+def _fleet_rows(tenant_id: str, block: dict, os_block: Optional[dict] = None) -> list[dict]:
+    """Every fleet that has laptops or a setting: its hook setting and OS
+    events mode, its laptop count, and laptops by hook state (per coding
+    agent) and by OS event collector state."""
     from core.dlp import devices as dv
     from core.dlp.agent_hooks import CODING_AGENTS, DEFAULT_SETTING
     rows = dv.list_devices(tenant_id)["devices"]
-    fleets = sorted({r.get("fleet") or "" for r in rows} | set((block or {}).get("fleets", {})))
+    block, os_block = block or {}, os_block or {}
+    fleets = sorted({r.get("fleet") or "" for r in rows} | set(block.get("fleets", {}))
+                    | set(os_block.get("fleets", {})))
     out = []
     for fleet in fleets:
         if not fleet:
             continue
-        setting = ((block or {}).get("fleets") or {}).get(fleet) \
-            or (block or {}).get("default") or DEFAULT_SETTING
+        setting = (block.get("fleets") or {}).get(fleet) or block.get("default") or DEFAULT_SETTING
+        os_mode = ((os_block.get("fleets") or {}).get(fleet)
+                   or os_block.get("default") or {"mode": "off"})["mode"]
         mine = [r for r in rows if r.get("fleet") == fleet]
         states = {ca: {} for ca in CODING_AGENTS}
+        os_states: dict = {}
         for r in mine:
             for ca in CODING_AGENTS:
                 st = ((r.get("agent_hooks") or {}).get(ca) or {}).get("state") or "not_reported"
                 states[ca][st] = states[ca].get(st, 0) + 1
+            st = (r.get("os_events") or {}).get("state") or "not_reported"
+            os_states[st] = os_states.get(st, 0) + 1
         out.append({"fleet": fleet, "mode": setting["mode"],
                     "on_unreachable": setting["on_unreachable"],
-                    "explicit": fleet in ((block or {}).get("fleets") or {}),
-                    "laptops": len(mine), "states": states})
+                    "explicit": fleet in (block.get("fleets") or {}),
+                    "laptops": len(mine), "states": states,
+                    "os_events": os_mode, "os_states": os_states})
     return out
+
+
+def _os_block(tenant_id: str):
+    from core.dlp import device_store
+    try:
+        return device_store.get_policy(tenant_id).get("agent_os_events")
+    except Exception:
+        return None
 
 
 @router.get("/fleets")
 async def get_fleets(request: Request):
+    from core.dlp import agent_os_events
     from core.dlp.agent_hooks import DEFAULT_SETTING, disabled
     tenant_id = get_tenant_from_request(request)
     block = _hooks_block(tenant_id)
+    os_block = _os_block(tenant_id)
     return {"configured": block is not None,
             "agents": (block or {}).get("agents", {}),
             "default": (block or {}).get("default", DEFAULT_SETTING),
-            "fleets": _fleet_rows(tenant_id, block or {}),
-            "disabled_by_server": disabled()}
+            "fleets": _fleet_rows(tenant_id, block or {}, os_block),
+            "disabled_by_server": disabled(),
+            "os_events_configured": os_block is not None,
+            "os_events_disabled_by_server": agent_os_events.disabled()}
 
 
 @router.put("/fleets")
 async def put_fleets(request: Request, body: dict = Body(...)):
-    """Body: {default?: {mode, on_unreachable}, fleets: {fleet: {mode,
-    on_unreachable}}}. Replaces the fleet settings; which coding agents are
-    covered is kept (set by /enable)."""
+    """Body: {default?: {mode, on_unreachable}, fleets?: {fleet: {mode,
+    on_unreachable}}, os_events?: {fleet: "on" | "off"}}. Replaces what is
+    sent and keeps the rest: hook fleets only when `fleets` is sent, OS event
+    fleets only when `os_events` is sent. Which coding agents the hooks cover
+    is kept (set by /enable)."""
     from core.dlp import device_store
     from core.dlp.device_policy import PolicyError
     tenant_id = get_tenant_from_request(request)
     require_registry_write(request, tenant_id, "change coding-agent hook modes")
-    policy = device_store.get_policy(tenant_id)
-    block = copy.deepcopy(policy.get("agent_hooks") or {})
     for k in body:
-        if k not in ("default", "fleets"):
+        if k not in ("default", "fleets", "os_events"):
             raise HTTPException(status_code=422, detail={
-                "message": "Could not save.", "errors": [f"unknown field '{k}' (default, fleets)"]})
-    if "default" in body:
-        block["default"] = body["default"]
-    block["fleets"] = body.get("fleets", {})
+                "message": "Could not save.",
+                "errors": [f"unknown field '{k}' (default, fleets, os_events)"]})
+    policy = copy.deepcopy(device_store.get_policy(tenant_id))
+    if "default" in body or "fleets" in body:
+        block = copy.deepcopy(policy.get("agent_hooks") or {})
+        if "default" in body:
+            block["default"] = body["default"]
+        if "fleets" in body:
+            block["fleets"] = body["fleets"]
+        policy["agent_hooks"] = block
+    if "os_events" in body:
+        os_events = body["os_events"]
+        if not isinstance(os_events, dict):
+            raise HTTPException(status_code=422, detail={
+                "message": "Could not save.",
+                "errors": ["os_events: an object of fleet -> \"on\" or \"off\""]})
+        os_block = copy.deepcopy(policy.get("agent_os_events") or {})
+        os_block["fleets"] = {f: {"mode": m} for f, m in os_events.items()}
+        policy["agent_os_events"] = os_block
     try:
-        saved = device_store.save_policy(tenant_id, {**policy, "agent_hooks": block},
-                                         actor=f"tenant:{tenant_id}")
+        saved = device_store.save_policy(tenant_id, policy, actor=f"tenant:{tenant_id}")
     except PolicyError as e:
         raise HTTPException(status_code=422, detail={"message": "Could not save.",
                                                      "errors": e.errors})
-    return {"agents": saved["agent_hooks"]["agents"], "default": saved["agent_hooks"]["default"],
-            "fleets": _fleet_rows(tenant_id, saved["agent_hooks"])}
+    hooks_block = saved.get("agent_hooks") or {}
+    from core.dlp.agent_hooks import DEFAULT_SETTING
+    return {"agents": hooks_block.get("agents", {}),
+            "default": hooks_block.get("default", DEFAULT_SETTING),
+            "fleets": _fleet_rows(tenant_id, hooks_block, saved.get("agent_os_events"))}
+
+
+# ── what agents did (agent OS events, docs/specs/agent-os-events.md) ──
+
+
+@router.get("/os-events")
+async def os_events_overview(request: Request, since: float = 0):
+    """Recent outside_profile events, and per-laptop, per-agent counts for the
+    last 24 hours."""
+    from core.runtime_policy import os_events
+    tenant_id = get_tenant_from_request(request)
+    out = os_events.summary(tenant_id, since=since)
+    # Name agent-managed laptops, as the hook overview does.
+    try:
+        from core.dlp import devices as dv
+        enrolled = dv._hgetall(dv._devices_key(tenant_id))
+    except Exception:
+        enrolled = {}
+    for row in out["laptops"] + out["alerts"]:
+        rec = enrolled.get(row.get("device") or "")
+        if rec:
+            row["hostname"] = rec.get("hostname") or ""
+            row["fleet"] = rec.get("fleet") or ""
+    return out
