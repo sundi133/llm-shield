@@ -144,6 +144,12 @@ as before.
 On the laptop, `votal-device-agent claude-code-hook` (as an administrator)
 shows where the agent writes Claude Code's settings and which hook it ships.
 
+To check a whole deployment from the outside instead (the routes exist,
+ordinary work is allowed, a denied command is denied), run
+`scripts/smoke_agent_hooks.sh` with `SHIELD_URL` and a tenant key, or the
+**Smoke check coding-agent hooks** workflow (`gh workflow run
+smoke-agent-hooks.yml`) once the `SHIELD_SMOKE_TENANT_KEY` secret is set.
+
 ### 6. Watch
 
 - The **Fleets** table shows, per fleet, how many laptops have the hook
