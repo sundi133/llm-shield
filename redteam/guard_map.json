@@ -1,0 +1,16 @@
+{
+  "_comment": "Guards (runtime names, as reported in guardrail_results) that can catch each threat class on each stage. A missed case is labelled dormant only when none of these, nor the case's own guards/guards_hint, ran. Keep the sets broad: a broad set makes dormant conservative. indirect_injection is absent on purpose: it runs on the MCP gateway path, not on /guardrails/output.",
+  "input": {
+    "prompt-injection": ["adversarial_detection", "system_prompt_leak", "custom_policy_input",
+                         "keyword_blocklist", "regex_pattern", "topic_restriction", "topic_enforcement"],
+    "harmful-content": ["toxicity", "adversarial_detection", "custom_policy_input",
+                        "keyword_blocklist", "regex_pattern", "topic_restriction", "topic_enforcement"],
+    "sensitive-disclosure": ["pii_detection", "custom_policy_input", "regex_pattern"]
+  },
+  "output": {
+    "tool-poisoning": ["custom_policy_output", "tool_output_sanitization"],
+    "prompt-injection": ["custom_policy_output", "tool_output_sanitization"],
+    "sensitive-disclosure": ["pii_leakage", "role_redaction", "custom_policy_output",
+                             "custom_policy_output_redaction", "tool_output_sanitization"]
+  }
+}

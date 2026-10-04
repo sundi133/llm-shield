@@ -50,6 +50,12 @@ class Fake:
         self.block_all = False
         self.status = 200
         self.resets = 0   # drop this many connections with a TCP reset first
+        self.mode = "enforce"   # "monitor": would-be blocks come back as action "monitor"
+        self.ran = {"input": ["adversarial_detection"], "output": ["pii_leakage"]}
+        self.list_results = True   # False: responses omit guardrail_results
+        self.fail_open = set()     # guards that report "LLM call failed, allowing by default"
+        self.idle = set()          # guards that report running with nothing configured
+        self.agents = {"claude-code": {"runtime_profile": "coding-agent-baseline"}}  # None: 401
         self.seen = []
 
 
@@ -86,6 +92,28 @@ def shield():
             if state.status != 200:
                 return self._send(state.status, {"detail": "nope"})
             on = state.guard_on
+            if self.path == "/v1/shield/cap/mint":
+                if not self.headers.get("X-Agent-Token"):
+                    return self._send(401, {"detail": "No verified agent identity."})
+                if "MISMATCH" in text:
+                    return self._send(403, {"detail": "tenant mismatch: agent token tenant ..."})
+                if on and "DENYME" in text:
+                    return self._send(403, {"detail": {"error": "authz_denied", "request_id": "r1"}})
+                return self._send(200, {"cap_token": "cap-secret", "expires_in": 60, "decision": {}})
+            if self.path.startswith("/gateway/"):
+                rid = body.get("id")
+                if self.path != "/gateway/sandbox/mcp":
+                    return self._send(200, {"jsonrpc": "2.0", "id": rid,
+                                            "error": {"code": -32004, "message": "no such route"}})
+                if on and "DENYME" in text:
+                    return self._send(200, {"jsonrpc": "2.0", "id": rid, "result": {"isError": True,
+                        "content": [{"type": "text", "text": "Blocked by Shield: role may not call it"}]}})
+                if on and "ASKME" in text:
+                    return self._send(200, {"jsonrpc": "2.0", "id": rid,
+                                            "error": {"code": -32002, "message": "confirm"}})
+                err = "TOOLERR" in text   # the upstream tool failed; Shield let it through
+                return self._send(200, {"jsonrpc": "2.0", "id": rid, "result": {"isError": err,
+                    "content": [{"type": "text", "text": "upstream exploded" if err else "ok"}]}})
             if self.path == "/v1/shield/hooks/claude-code":
                 cmd = json.dumps(body.get("tool_input"))
                 if state.block_all or (on and "DENYME" in cmd):
@@ -96,11 +124,40 @@ def shield():
                     return self._send(200, {"hookSpecificOutput": {"permissionDecision": "ask"}})
                 return self._send(200, {})
             if self.path in ("/guardrails/input", "/guardrails/output"):
+                ran = state.ran["input" if self.path.endswith("input") else "output"]
+                results = [{"guardrail": g, "passed": True, "action": "pass"} for g in ran]
+                for r in results:
+                    if r["guardrail"] in state.fail_open:
+                        r["message"] = "LLM call failed, allowing by default: connect refused"
+                    elif r["guardrail"] in state.idle:
+                        r.update(message="No custom input policies configured",
+                                 details={"policy_count": 0})
+
+                def reply(action, failed_action=None, **extra):
+                    if failed_action and results:
+                        results[0].update(passed=False, action=failed_action)
+                    resp = {"action": action, "safe": action != "block", **extra}
+                    if state.list_results:
+                        resp["guardrail_results"] = results
+                    return self._send(200, resp)
+
                 if state.block_all or (on and "BLOCKME" in text):
-                    return self._send(200, {"action": "block", "safe": False})
+                    if state.mode == "monitor":
+                        return reply("monitor", "block", mode="monitor", would_block=ran[:1])
+                    return reply("block", "block")
+                if on and "WARNME" in text:
+                    return reply("warn", "warn")
                 if on and "REDACTME" in text and self.path == "/guardrails/output":
-                    return self._send(200, {"action": "pass", "sanitized_output": "[REDACTED]"})
-                return self._send(200, {"action": "pass", "safe": True})
+                    return reply("pass", sanitized_output="[REDACTED]")
+                return reply("pass")
+            self._send(404, {"detail": "not found"})
+
+        def do_GET(self):
+            state.seen.append((self.path, dict(self.headers), None))
+            if self.path == "/v1/tenant/me/agents":
+                if state.agents is None:
+                    return self._send(401, {"detail": "Invalid tenant context."})
+                return self._send(200, {"tenant_id": "t", "agent_registry": state.agents})
             self._send(404, {"detail": "not found"})
 
     class Server(ThreadingHTTPServer):
@@ -123,9 +180,11 @@ def _case(cid, cls, stage, expect, **payload):
     return {"id": cid, "threat_class": cls, "stage": stage, "expect": expect, "payload": payload}
 
 
-def _run(url, corpus, *extra, key="sk-test-redteam", timeout=60):
-    env = dict(os.environ, SHIELD_URL=url, TENANT_KEY=key)
+def _run(url, corpus, *extra, key="sk-test-redteam", timeout=60, env_extra=None):
+    env = dict(os.environ, SHIELD_URL=url, TENANT_KEY=key, **(env_extra or {}))
     env.pop("NO_COLOR", None)
+    if not env_extra or "AGENT_TOKEN" not in env_extra:
+        env.pop("AGENT_TOKEN", None)
     p = subprocess.run([sys.executable, SCRIPT, "--corpus", corpus, *extra],
                        capture_output=True, text=True, env=env, timeout=timeout)
     return p.returncode, p.stdout + p.stderr
@@ -206,7 +265,7 @@ def test_a_server_error_is_inconclusive_not_missed(shield, tmp_path):
     shield.status = 500
     code, out = _run(shield.url, _write(tmp_path, MIXED[:1]))
     assert code == 1, out
-    assert "got HTTP 500" in out
+    assert "-> inconclusive (HTTP 500)" in out
     assert "missed" not in out
 
 
@@ -223,12 +282,230 @@ def test_nothing_selected_is_a_usage_error(shield, tmp_path):
     assert shield.seen == []
 
 
-def test_later_stages_are_skipped_not_run(shield, tmp_path):
-    cases = MIXED[:1] + [_case("cap-1", "excessive-agency", "cap", "deny", action="x")]
-    code, out = _run(shield.url, _write(tmp_path, cases), "--stages", "input,cap")
+def test_stages_not_asked_for_are_not_run(shield, tmp_path):
+    cases = MIXED[:1] + [_case("cap-1", "excessive-agency", "cap", "deny", tool="t", resource="r")]
+    code, out = _run(shield.url, _write(tmp_path, cases))   # default stages: input,output,hook
     assert code == 0, out
-    assert "not run by this version" in out
     assert [p for p, _, _ in shield.seen] == ["/guardrails/input"]
+
+
+# ── task 2: why a case was missed ───────────────────────────────────────────
+
+def _report(shield, tmp_path, cases, *extra, env=None):
+    report = tmp_path / "r.json"
+    code, out = _run(shield.url, _write(tmp_path, cases), "--report", str(report), *extra, env_extra=env)
+    return code, out, {c["id"]: c for c in json.loads(report.read_text())["cases"]}, \
+        json.loads(report.read_text())
+
+
+PI = _case("pi-1", "prompt-injection", "input", "block", message="BLOCKME ignore previous")
+
+
+def test_monitor_mode_is_unenforced_not_missed(shield, tmp_path):
+    shield.mode = "monitor"
+    code, out, cases, r = _report(shield, tmp_path, [PI])
+    assert code == 1, out
+    assert cases["pi-1"]["outcome"] == "unenforced"
+    assert "adversarial_detection (monitor mode)" in cases["pi-1"]["detail"]
+    assert r["classes"]["prompt-injection"]["rate"] == 0.0   # not enforced is not caught
+
+
+def test_a_warn_action_is_unenforced(shield, tmp_path):
+    case = _case("pi-w", "prompt-injection", "input", "block", message="WARNME")
+    code, out, cases, _ = _report(shield, tmp_path, [case])
+    assert code == 1, out
+    assert cases["pi-w"]["outcome"] == "unenforced"
+    assert cases["pi-w"]["detail"] == "flagged by adversarial_detection (warn/log action)"
+
+
+def test_unenforced_says_when_the_flagging_guard_is_off_class(shield, tmp_path):
+    shield.ran["input"] = ["sentiment"]   # flags it, but is not a prompt-injection guard
+    case = _case("pi-w", "prompt-injection", "input", "block", message="WARNME")
+    code, out, cases, _ = _report(shield, tmp_path, [case])
+    assert cases["pi-w"]["outcome"] == "unenforced"
+    assert cases["pi-w"]["detail"].endswith("; not a guard mapped to this class")
+
+
+def test_no_relevant_guard_running_is_dormant(shield, tmp_path):
+    shield.guard_on = False
+    shield.ran["input"] = ["sentiment", "length_limit"]
+    code, out, cases, r = _report(shield, tmp_path, [PI])
+    assert code == 1, out
+    assert cases["pi-1"]["outcome"] == "dormant"
+    assert "adversarial_detection" in cases["pi-1"]["detail"]
+    assert r["guards_seen"] == {"input": ["length_limit", "sentiment"]}
+    assert "1 dormant" in out
+
+
+def test_a_relevant_guard_that_ran_and_passed_it_is_missed(shield, tmp_path):
+    shield.guard_on = False
+    code, out, cases, _ = _report(shield, tmp_path, [PI])
+    assert cases["pi-1"]["outcome"] == "missed"
+    assert cases["pi-1"]["detail"] == "ran adversarial_detection and did not flag it"
+
+
+def test_without_evidence_a_miss_is_never_called_dormant(shield, tmp_path):
+    shield.guard_on = False
+    shield.list_results = False
+    shield.ran["input"] = []
+    code, out, cases, _ = _report(shield, tmp_path, [PI])
+    assert cases["pi-1"]["outcome"] == "missed"
+    assert "did not list the guards" in cases["pi-1"]["detail"]
+
+
+def test_suite_hints_count_in_request_style_names(shield, tmp_path):
+    shield.guard_on = False
+    shield.ran["input"] = ["topic_restriction"]
+    case = dict(PI, guards_hint=["adversarial-prompt-detection"])
+    gmap = tmp_path / "gm.json"   # empty map, so only the hint decides what is relevant
+    gmap.write_text(json.dumps({"input": {}}))
+    code, out, cases, _ = _report(shield, tmp_path, [case], "--guard-map", str(gmap))
+    assert cases["pi-1"]["outcome"] == "dormant"
+    assert cases["pi-1"]["detail"] == "none of adversarial_detection ran"
+
+
+def test_a_guard_that_failed_open_is_not_a_detection_gap(shield, tmp_path):
+    shield.guard_on = False
+    shield.fail_open = {"adversarial_detection"}
+    bn = _case("bn-1", "benign", "input", "allow", message="hours?")
+    code, out, cases, r = _report(shield, tmp_path, [PI, bn])
+    assert cases["pi-1"]["outcome"] == "failed_open"
+    assert "adversarial_detection failed open" in cases["pi-1"]["detail"]
+    assert "adversarial_detection failed open in 2 of 2 responses" in out   # benign counts too
+    assert r["guards_seen"] == {}                                          # it never checked
+
+
+def test_a_guard_with_nothing_configured_does_not_count_as_running(shield, tmp_path):
+    shield.guard_on = False
+    shield.ran["input"] = ["custom_policy_input"]
+    shield.idle = {"custom_policy_input"}
+    code, out, cases, _ = _report(shield, tmp_path, [PI])
+    assert cases["pi-1"]["outcome"] == "dormant"
+    assert "(custom_policy_input ran with nothing configured)" in cases["pi-1"]["detail"]
+
+
+@pytest.mark.parametrize("result,bucket", [
+    ({"passed": True, "message": "LLM call failed, allowing by default: boom"}, "failed_open"),
+    ({"passed": True, "message": "Toxicity check failed, allowing by default: x"}, "failed_open"),
+    ({"passed": True, "message": "error", "details": {"fail_open": True}}, "failed_open"),
+    ({"passed": True, "message": "No topic restrictions configured"}, "idle"),
+    ({"passed": True, "message": "Missing context, skipping"}, "idle"),
+    ({"passed": True, "message": "x", "details": {"policy_count": 0}}, "idle"),
+    ({"passed": True, "message": "No regex patterns matched."}, "ran"),   # a real check
+    ({"passed": True, "message": "No adversarial content detected (checked 1 chunks)"}, "ran"),
+    ({"passed": False, "action": "warn", "message": "skipping nothing, flagged"}, "ran"),
+])
+def test_what_counts_as_a_guard_that_checked(result, bucket):
+    info = rt.decide("input", 200, {"action": "pass",
+                                    "guardrail_results": [dict(result, guardrail="g")]})
+    assert {"failed_open": info["failed_open"], "idle": info["idle"],
+            "ran": info["ran"]}[bucket] == {"g"}
+
+
+def test_hook_agent_without_a_profile_is_dormant(shield, tmp_path):
+    shield.guard_on = False
+    shield.agents = {"claude-code": {"agent_id": "claude-code"}}
+    code, out, cases, r = _report(shield, tmp_path, [MIXED[3]])
+    assert cases["ea-1"]["outcome"] == "dormant"
+    assert cases["ea-1"]["detail"] == "agent claude-code has no runtime profile"
+    assert r["agent_profiles"] == {"claude-code": ""}
+
+
+def test_hook_agent_with_a_profile_that_allows_it_is_missed(shield, tmp_path):
+    shield.guard_on = False
+    code, out, cases, _ = _report(shield, tmp_path, [MIXED[3]])
+    assert cases["ea-1"]["outcome"] == "missed"
+    assert "profile coding-agent-baseline allowed it" in cases["ea-1"]["detail"]
+
+
+def test_unreadable_agent_registry_leaves_hook_misses_missed(shield, tmp_path):
+    shield.guard_on = False
+    shield.agents = None
+    code, out, cases, r = _report(shield, tmp_path, [MIXED[3]])
+    assert cases["ea-1"]["outcome"] == "missed"
+    assert "agent registry unreadable (HTTP 401)" in out
+    assert r["agent_profiles"] == {"error": "HTTP 401"}
+
+
+@pytest.mark.parametrize("data,ran", [
+    ({"action": "pass", "guardrail_results": [], "sanitization": {"mode": "regex"}},
+     {"tool_output_sanitization"}),
+    ({"action": "pass", "guardrail_results": [], "sanitization": {"mode": None}}, set()),
+    ({"action": "pass"}, None),
+])
+def test_output_sanitization_counts_as_a_guard_that_ran(data, ran):
+    assert rt.decide("output", 200, data)["ran"] == ran
+
+
+# ── task 2: cap and gateway stages ──────────────────────────────────────────
+
+CAP = [
+    _case("cap-deny", "excessive-agency", "cap", "deny", tool="wire_DENYME", resource="acct:1"),
+    _case("cap-miss", "excessive-agency", "cap", "deny", tool="wire_transfer", resource="acct:1"),
+    _case("cap-ok", "benign", "cap", "allow", tool="balance_get", resource="acct:1"),
+]
+
+
+def test_cap_needs_an_agent_token(shield, tmp_path):
+    code, out = _run(shield.url, _write(tmp_path, CAP), "--stages", "cap")
+    assert code == 2 and "needs AGENT_TOKEN" in out
+    assert shield.seen == []
+
+
+def test_cap_stage_scores_mint_decisions(shield, tmp_path):
+    code, out, cases, r = _report(shield, tmp_path, CAP, "--stages", "cap",
+                                  env={"AGENT_TOKEN": "agent-tok"})
+    assert cases["cap-deny"]["outcome"] == "caught"
+    assert cases["cap-miss"]["outcome"] == "missed"
+    assert cases["cap-ok"]["outcome"] == "ok"
+    path, h, b = next(s for s in shield.seen if s[2] and s[2].get("tool") == "wire_transfer")
+    assert path == "/v1/shield/cap/mint"
+    assert h["X-Agent-Token"] == "agent-tok" and h["X-Api-Key"] == "sk-test-redteam"
+    assert b["resource"] == "acct:1" and b["session_id"].startswith("redteam-")
+    assert "cap-secret" not in json.dumps(r)   # a minted cap never lands in the report
+
+
+def test_cap_tenant_mismatch_is_inconclusive(shield, tmp_path):
+    case = _case("cap-x", "excessive-agency", "cap", "deny", tool="MISMATCH", resource="r")
+    code, out, cases, _ = _report(shield, tmp_path, [case], "--stages", "cap",
+                                  env={"AGENT_TOKEN": "agent-tok"})
+    assert code == 1
+    assert cases["cap-x"]["outcome"] == "inconclusive"
+    assert "tenant mismatch" in cases["cap-x"]["detail"]
+
+
+GW = [
+    _case("gw-deny", "excessive-agency", "gateway", "deny", name="wire_DENYME", arguments={"amount": 5}),
+    _case("gw-ask", "excessive-agency", "gateway", "deny", name="ASKME_transfer"),
+    _case("gw-toolerr", "excessive-agency", "gateway", "deny", name="TOOLERR"),
+    _case("gw-ok", "benign", "gateway", "allow", name="balance_get", arguments={}),
+]
+
+
+def test_gateway_needs_a_route(shield, tmp_path):
+    code, out = _run(shield.url, _write(tmp_path, GW), "--stages", "gateway")
+    assert code == 2 and "--gateway-route" in out
+
+
+def test_gateway_stage_scores_tool_calls(shield, tmp_path):
+    code, out, cases, _ = _report(shield, tmp_path, GW, "--stages", "gateway",
+                                  "--gateway-route", "sandbox")
+    assert "calls the real upstream tool" in out
+    assert cases["gw-deny"]["outcome"] == "caught"
+    assert cases["gw-ask"]["outcome"] == "partial"
+    assert cases["gw-toolerr"]["outcome"] == "missed"   # a tool error is not a Shield block
+    assert cases["gw-ok"]["outcome"] == "ok"
+    path, h, b = next(s for s in shield.seen if s[2] and s[2]["params"]["name"] == "wire_DENYME")
+    assert path == "/gateway/sandbox/mcp" and h["X-Agent-Key"] == "claude-code"
+    assert b["method"] == "tools/call" and b["params"]["arguments"] == {"amount": 5}
+
+
+def test_a_case_route_overrides_the_flag(shield, tmp_path):
+    case = dict(GW[0], route="elsewhere")
+    code, out, cases, _ = _report(shield, tmp_path, [case], "--stages", "gateway",
+                                  "--gateway-route", "sandbox")
+    assert cases["gw-deny"]["outcome"] == "inconclusive"
+    assert "JSON-RPC -32004" in cases["gw-deny"]["detail"]
 
 
 def test_each_stage_goes_to_its_endpoint_with_its_headers(shield, tmp_path):
@@ -239,7 +516,7 @@ def test_each_stage_goes_to_its_endpoint_with_its_headers(shield, tmp_path):
     ]
     code, out = _run(shield.url, _write(tmp_path, cases), "--concurrency", "1")
     assert code == 0, out
-    seen = {path: (h, b) for path, h, b in shield.seen}
+    seen = {path: (h, b) for path, h, b in shield.seen if b is not None}   # POSTs only
     for path, (h, b) in seen.items():
         assert h["X-Api-Key"] == "sk-test-redteam"
         assert h["X-Shield-User"] == "redteam-check"
@@ -344,12 +621,42 @@ def test_stdlib_only(path):
     assert mods - {"__future__"} <= set(sys.stdlib_module_names), mods - set(sys.stdlib_module_names)
 
 
+def test_guard_aliases_match_the_server():
+    """guards_hint uses request-style names; the harness must normalise them the
+    way /guardrails/input does, or dormant labels drift."""
+    from api.routes_classify import _NAME_MAP
+    assert {k: rt.guard_name(k) for k in _NAME_MAP} == _NAME_MAP
+
+
+def _runtime_guard_names():
+    names = set()
+    for dirpath, _, files in os.walk(os.path.join(ROOT, "guardrails")):
+        for f in files:
+            if f.endswith(".py"):
+                text = open(os.path.join(dirpath, f), encoding="utf-8").read()
+                names |= set(re.findall(r'(?:\bname\s*=|guardrail_name\s*=)\s*"([a-z_]+)"', text))
+    return names
+
+
+def test_guard_map_names_are_real_guards():
+    """A typo in redteam/guard_map.json would make every miss look dormant."""
+    real = _runtime_guard_names() | {"tool_output_sanitization"}
+    gmap = rt.load_guard_map(rt.DEFAULT_GUARD_MAP)
+    unknown = {g for classes in gmap.values() for gs in classes.values() for g in gs} - real
+    assert not unknown, unknown
+
+
 def test_committed_corpus_is_valid():
     cases = rt.load_corpus([CORPUS])
     assert len(cases) > 27000
     assert all("input" not in c["payload"] for c in cases)
     assert {"prompt-injection", "benign", "harmful-content", "tool-poisoning",
             "sensitive-disclosure", "excessive-agency"} <= {c["threat_class"] for c in cases}
+
+
+def test_example_corpora_are_valid():
+    cases = rt.load_corpus([os.path.join(ROOT, "redteam", "examples")])
+    assert {c["stage"] for c in cases} == {"cap", "gateway"}
 
 
 def test_converted_suite_matches_the_suite_scripts():

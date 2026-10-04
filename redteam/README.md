@@ -26,6 +26,45 @@ more benign probes are blocked than `max_false_positive_rate` allows, or when
 any case is inconclusive (no answer, timeout, non-200): coverage that could not
 be measured is not counted as coverage.
 
+## Reading a miss
+
+Every attack that got through is labelled with what to fix:
+
+| label | meaning | fix |
+|---|---|---|
+| `dormant` | none of the guards that should catch it ran (input/output: none of them in the response's `guardrail_results`; hook: the agent has no runtime profile) | enable a guard |
+| `unenforced` | a guard flagged it, but monitor mode or a `warn`/`log` action let it through | switch to enforce, or set the action to block |
+| `failed_open` | a guard that should catch it could not check it and allowed by default ("LLM call failed, allowing by default") | the model backend; it is waving everything through |
+| `missed` | the guards that should catch it ran and did not flag it | a detection gap |
+
+All four count against the class score. A guard that reports passing without
+checking (failed open, or "No ... configured" / "... skipping") does not count
+as having run. When any guard fails open, in any response, the report adds a
+note naming them. `dormant` is only claimed on evidence;
+if the harness cannot see what ran, the miss stays `missed`. Which guards
+"should catch" a case comes from `guard_map.json` (by stage and threat class),
+plus the case's own `guards` and `guards_hint`.
+
+## The cap and gateway stages
+
+Both are off by default (`--stages` defaults to `input,output,hook`) because
+their cases name a tenant's own agents and tools. `examples/bank-demo.jsonl` is
+a worked example for the MCP gateway bank demo's `customer-service-agent`; copy
+it and use your own tool names.
+
+```bash
+AGENT_TOKEN=<signed agent token> SHIELD_URL=... TENANT_KEY=... \
+  python scripts/redteam_tenant.py --corpus redteam/examples/bank-demo.jsonl \
+    --stages cap,gateway --gateway-route <sandbox-route>
+```
+
+- `cap` posts to `/v1/shield/cap/mint` and needs `AGENT_TOKEN` (mint one with
+  `POST /v1/tenant/me/agent-auth/agent-token`). Allowed cases mint a
+  short-lived, single-use capability.
+- `gateway` sends JSON-RPC `tools/call` to `/gateway/<route>/mcp`. **When Shield
+  allows a call, the real upstream tool runs**, so use a route whose upstream is
+  a sandbox.
+
 ## Case format
 
 One JSON object per line:
@@ -37,10 +76,12 @@ One JSON object per line:
 
 | field | meaning |
 |---|---|
-| `stage` | `input` -> `POST /guardrails/input` (`payload.message`); `output` -> `POST /guardrails/output` (`payload.output`, optional `context`); `hook` -> `POST /v1/shield/hooks/claude-code` (`payload.tool_name`, `payload.tool_input`). `cap` and `gateway` are reserved for a later version and skipped. |
-| `expect` | `block` / `redact` (input, output), `deny` (hook), or `allow`: a benign probe that must not be blocked. |
-| `agent_key`, `user_role` | optional; sent as `X-Agent-Key` (`X-Agent-ID` on output) and `X-User-Role`. Hook cases default to `--agent` (`claude-code`). |
-| `technique`, `section`, `source`, `note`, `guards_hint` | metadata for the report; not sent. |
+| `stage` | `input` -> `POST /guardrails/input` (`payload.message`); `output` -> `POST /guardrails/output` (`payload.output`, optional `context`); `hook` -> `POST /v1/shield/hooks/claude-code` (`payload.tool_name`, `payload.tool_input`); `cap` -> `POST /v1/shield/cap/mint` (`payload.tool`, `payload.resource`); `gateway` -> `tools/call` on `/gateway/<route>/mcp` (`payload.name`, `payload.arguments`). |
+| `expect` | `block` / `redact` (input, output), `deny` (hook, cap, gateway), or `allow`: a benign probe that must not be blocked. |
+| `agent_key`, `user_role` | optional; sent as `X-Agent-Key` (`X-Agent-ID` on output) and `X-User-Role`. Hook and gateway cases default to `--agent` (`claude-code`). |
+| `route` | gateway only; overrides `--gateway-route`. |
+| `guards`, `guards_hint` | guards that can catch this case (request-style or runtime names); widen the set used to tell `dormant` from `missed`. |
+| `technique`, `section`, `source`, `note` | metadata for the report; not sent. |
 
 A payload must not carry per-request guard settings (an `input` block). The
 server honours those only when the tenant has no config of its own, so they

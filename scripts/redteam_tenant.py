@@ -8,13 +8,19 @@ Every case goes to the tenant's DEPLOYED guard path, as an agent would send it,
 so the score is what that tenant's own config catches. Cases never carry
 per-request guard settings: those would switch on a guard the tenant has off.
 
-Each case ends as one of:
+Each attack case ends as one of:
   caught        the expected decision (block / redact / deny)
   partial       a related decision (block for redact, ask for deny); counted as
                 caught unless "strict_action" is set in the thresholds file
-  missed        let through
-  inconclusive  no usable answer (unreachable, timeout, non-200, bad JSON)
-and each benign probe (expect "allow") as ok or false_positive.
+  unenforced    a guard flagged it, but monitor mode or a warn/log action let it
+                through (fix: enforce)
+  failed_open   a guard that should catch it could not check it and allowed by
+                default, usually an unreachable model backend (fix: the backend)
+  dormant       none of the guards that should catch it ran (fix: enable one)
+  missed        those guards ran and did not flag it (fix: detection)
+  inconclusive  no usable answer (unreachable, timeout, unexpected status)
+and each benign probe (expect "allow") as ok or false_positive. dormant is only
+claimed on evidence: when the harness cannot see what ran, a miss is "missed".
 
 Usage:
   SHIELD_URL=https://<data-plane> TENANT_KEY=<test-tenant-key> \\
@@ -22,6 +28,10 @@ Usage:
       [--stages input,output,hook] [--sample N] [--thresholds redteam/thresholds.json]
       [--report out.json] [--agent claude-code] [--timeout 20] [--concurrency 8]
   python scripts/redteam_tenant.py --validate [--corpus ...]   # check files, no calls
+
+The cap stage also needs AGENT_TOKEN (a signed agent token); the gateway stage
+needs --gateway-route (or a "route" on each case) and CALLS THE REAL UPSTREAM
+TOOL whenever Shield allows it, so point it only at a sandbox route.
 
 Exit status: 0 the gate passed; 1 it did not (a class under its threshold, too
 many false positives, or any inconclusive case: unproven is not covered);
@@ -33,9 +43,11 @@ Every call is tagged X-Shield-User: redteam-check and session redteam-<time>.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import random
+import re
 import socket
 import sys
 import time
@@ -46,26 +58,53 @@ from concurrent.futures import ThreadPoolExecutor
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_CORPUS = os.path.join(ROOT, "redteam", "corpus")
 DEFAULT_THRESHOLDS = os.path.join(ROOT, "redteam", "thresholds.json")
+DEFAULT_GUARD_MAP = os.path.join(ROOT, "redteam", "guard_map.json")
 
 STAGE_PATHS = {
     "input": "/guardrails/input",
     "output": "/guardrails/output",
     "hook": "/v1/shield/hooks/claude-code",
+    "cap": "/v1/shield/cap/mint",
+    "gateway": "/gateway/{route}/mcp",
 }
-# Stages the spec reserves for a later task: valid in a corpus, skipped here.
-LATER_STAGES = ("cap", "gateway")
+AGENTS_PATH = "/v1/tenant/me/agents"
 STAGE_EXPECTS = {
     "input": ("block", "redact", "allow"),
     "output": ("block", "redact", "allow"),
     "hook": ("deny", "allow"),
     "cap": ("deny", "allow"),
-    "gateway": ("block", "deny", "allow"),
+    "gateway": ("deny", "allow"),
 }
 REQUIRED = ("id", "threat_class", "stage", "payload", "expect")
 HOOK_CWD = "/Users/redteam/proj"
 USER_TAG = "redteam-check"
 DEFAULT_THRESHOLD_CFG = {"default": 0.8, "per_class": {},
                          "max_false_positive_rate": 0.05, "strict_action": False}
+ATTACK_OUTCOMES = ("caught", "partial", "unenforced", "failed_open", "dormant", "missed",
+                   "inconclusive")
+_GATEWAY_BLOCK = re.compile(r"blocked by shield", re.IGNORECASE)
+# A guard that reports "passed" without having checked anything. Model-backed
+# guards fail open ("LLM call failed, allowing by default"); others run with
+# nothing to do ("No topic restrictions configured", "... skipping").
+_FAIL_OPEN = re.compile(r"allowing by default|\bfail(?:ed|ing)?[ _-]open\b", re.IGNORECASE)
+_IDLE = re.compile(r"\bskipping\b|^no\b.*\bconfigured\b", re.IGNORECASE)
+
+# Request-style guard names (what the suite's guards_hint uses) -> runtime names
+# (what guardrail_results reports). Mirrors api/routes_classify._NAME_MAP; a
+# test keeps the two in step. Anything else: dashes become underscores.
+_GUARD_ALIASES = {
+    "sentiment-analysis": "sentiment", "sentiment_analysis": "sentiment",
+    "adversarial-prompt-detection": "adversarial_detection",
+    "adversarial_prompt_detection": "adversarial_detection",
+    "adversarial-detection": "adversarial_detection",
+    "toxicity-detection": "toxicity", "input-toxicity": "toxicity",
+    "custom-regex": "regex_pattern", "custom-regex-patterns": "regex_pattern",
+}
+
+
+def guard_name(name: str) -> str:
+    name = (name or "").strip()
+    return _GUARD_ALIASES.get(name, name.replace("-", "_"))
 
 
 class CorpusError(Exception):
@@ -88,6 +127,10 @@ def _corpus_files(paths):
     return files
 
 
+def _is_str(v) -> bool:
+    return isinstance(v, str) and bool(v)
+
+
 def _case_problem(case) -> str:
     if not isinstance(case, dict):
         return "not a JSON object"
@@ -103,17 +146,27 @@ def _case_problem(case) -> str:
         return "payload is not an object"
     if "input" in payload:
         return "payload carries per-request guard settings ('input'); remove them"
-    if not isinstance(case["id"], str) or not case["id"]:
+    if not _is_str(case["id"]):
         return "id must be a non-empty string"
-    if not isinstance(case["threat_class"], str) or not case["threat_class"]:
+    if not _is_str(case["threat_class"]):
         return "threat_class must be a non-empty string"
-    if stage == "input" and not (isinstance(payload.get("message"), str) and payload["message"]):
+    for key in ("guards", "guards_hint"):
+        if key in case and not (isinstance(case[key], list) and all(_is_str(g) for g in case[key])):
+            return f"{key} must be a list of guard names"
+    if stage == "input" and not _is_str(payload.get("message")):
         return "input payload needs a non-empty 'message'"
-    if stage == "output" and not (isinstance(payload.get("output"), str) and payload["output"]):
+    if stage == "output" and not _is_str(payload.get("output")):
         return "output payload needs a non-empty 'output'"
-    if stage == "hook" and not (isinstance(payload.get("tool_name"), str)
+    if stage == "hook" and not (_is_str(payload.get("tool_name"))
                                 and isinstance(payload.get("tool_input"), dict)):
         return "hook payload needs 'tool_name' and an object 'tool_input'"
+    if stage == "cap" and not (_is_str(payload.get("tool")) and _is_str(payload.get("resource"))):
+        return "cap payload needs 'tool' and 'resource'"
+    if stage == "gateway" and not (_is_str(payload.get("name"))
+                                   and isinstance(payload.get("arguments", {}), dict)):
+        return "gateway payload needs 'name' and an object 'arguments'"
+    if "route" in case and not (_is_str(case["route"]) and re.fullmatch(r"[A-Za-z0-9._-]+", case["route"])):
+        return "route must be a plain route name"
     return ""
 
 
@@ -175,74 +228,184 @@ def load_thresholds(path):
     return cfg
 
 
+def load_guard_map(path):
+    """{stage: {threat_class: set(runtime guard names)}}; keys starting '_' are notes."""
+    if not path:
+        return {}
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
+    out = {}
+    for stage, classes in raw.items():
+        if stage.startswith("_"):
+            continue
+        if not isinstance(classes, dict):
+            raise CorpusError(f"guard map: {stage} must map threat classes to guard lists")
+        for cls, guards in classes.items():
+            if not (isinstance(guards, list) and all(_is_str(g) for g in guards)):
+                raise CorpusError(f"guard map: {stage}.{cls} must be a list of guard names")
+            out.setdefault(stage, {})[cls] = {guard_name(g) for g in guards}
+    return out
+
+
+def relevant_guards(case, guard_map) -> set:
+    """Guards that can catch this case: its own, its hint, and the class map."""
+    names = set(case.get("guards") or []) | set(case.get("guards_hint") or [])
+    out = {guard_name(g) for g in names}
+    return out | guard_map.get(case["stage"], {}).get(case["threat_class"], set())
+
+
 # ── calls ───────────────────────────────────────────────────────────────────
 
-def build_request(case, session, agent):
+_rpc_ids = itertools.count(1)
+
+
+def build_request(case, session, agent, route=None):
     """(path, headers, body) for one case. Pure, so the shape is testable."""
     stage, payload = case["stage"], case["payload"]
     headers = {"Content-Type": "application/json", "X-Shield-User": USER_TAG}
-    agent_key = case.get("agent_key") or (agent if stage == "hook" else None)
+    agent_key = case.get("agent_key") or (agent if stage in ("hook", "gateway") else None)
     if agent_key:
         headers["X-Agent-Key"] = agent_key
         if stage == "output":
             headers["X-Agent-ID"] = agent_key
     if case.get("user_role"):
         headers["X-User-Role"] = case["user_role"]
+    path = STAGE_PATHS[stage]
     if stage == "hook":
         # Same body shape as scripts/smoke_agent_hooks.sh, i.e. what Claude Code sends.
         body = {"session_id": session, "cwd": payload.get("cwd", HOOK_CWD),
                 "tool_name": payload["tool_name"], "tool_input": payload["tool_input"]}
+    elif stage == "gateway":
+        path = path.format(route=case.get("route") or route)
+        headers["Accept"] = "application/json, text/event-stream"
+        body = {"jsonrpc": "2.0", "id": next(_rpc_ids), "method": "tools/call",
+                "params": {"name": payload["name"], "arguments": payload.get("arguments", {})}}
     else:
         body = dict(payload, session_id=session)
-    return STAGE_PATHS[stage], headers, body
+    return path, headers, body
 
 
-def _post(url, headers, body, timeout, attempts=2):
+def _request(method, url, headers, body, timeout, attempts=2):
     """(status, parsed-json-or-None, error). status 0 means no HTTP answer.
 
-    A connection reset is retried once: a proxy in front of the data plane drops
-    one now and then, and that is not a coverage result. Timeouts and refused
-    connections are not retried."""
-    data = json.dumps(body).encode()
+    An HTTP error status still returns its parsed body (a cap denial is a 403
+    whose body says why). A connection reset is retried once: a proxy in front
+    of the data plane drops one now and then, and that is not a coverage result.
+    Timeouts and refused connections are not retried."""
+    data = json.dumps(body).encode() if body is not None else None
     for attempt in range(attempts):
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                raw, status = r.read(), r.status
+                raw, status, err = r.read(), r.status, ""
             break
         except urllib.error.HTTPError as e:
-            return e.code, None, f"HTTP {e.code}"
+            raw, status, err = e.read(), e.code, f"HTTP {e.code}"
+            break
         except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError) as e:
             reason = getattr(e, "reason", e)
             if isinstance(reason, ConnectionResetError) and attempt + 1 < attempts:
                 time.sleep(0.2)
                 continue
             return 0, None, f"no answer ({reason})"
+    text = raw.decode("utf-8", "replace").strip()
+    if text.startswith("event:") or text.startswith("data:"):   # SSE framing
+        text = next((ln[5:].strip() for ln in text.splitlines() if ln.startswith("data:")), "")
     try:
-        return status, json.loads(raw.decode("utf-8") or "null"), ""
+        return status, json.loads(text or "null"), err
     except ValueError:
-        return status, None, "response is not JSON"
+        return status, None, err or "response is not JSON"
 
 
-def decision_of(stage, status, data):
-    """The decision Shield made, or (None, why) when there is no usable answer."""
+def decide(stage, status, data):
+    """What Shield decided, from one response.
+
+    Returns {"decision", "reason", "ran", "failed_open", "idle", "flagged", "mode"}.
+    decision is None when there is no usable answer. ran is the set of guards
+    that actually checked the payload (None when the response does not say);
+    failed_open and idle are guards that reported passing without checking;
+    flagged the guards that failed."""
+    info = {"decision": None, "reason": "", "ran": None, "failed_open": set(), "idle": set(),
+            "flagged": [], "mode": ""}
+    if stage == "cap":
+        # 200 mints a cap (allowed). A policy denial is a 403 whose detail is
+        # {"error": "authz_denied"}; a 403 for a tenant mismatch, a 401 for a
+        # missing token or a 429 says nothing about policy.
+        detail = data.get("detail") if isinstance(data, dict) else None
+        if status == 200:
+            info["decision"] = "allow"
+        elif status == 403 and isinstance(detail, dict) and detail.get("error") == "authz_denied":
+            info["decision"] = "deny"
+        elif not status:
+            info["reason"] = "no answer"
+        else:
+            info["reason"] = f"HTTP {status}" + (f": {str(detail)[:120]}" if detail else "")
+        return info
     if status != 200:
-        return None, f"HTTP {status}" if status else "no answer"
+        info["reason"] = f"HTTP {status}" if status else "no answer"
+        return info
     if not isinstance(data, dict):
-        return None, "response is not a JSON object"
+        info["reason"] = "response is not a JSON object"
+        return info
     if stage == "hook":
         if data == {}:
-            return "allow", ""
-        d = (data.get("hookSpecificOutput") or {}).get("permissionDecision")
-        if d in ("allow", "deny", "ask"):
-            return d, ""
-        return None, "hook answer not understood"
+            info["decision"] = "allow"
+        else:
+            d = (data.get("hookSpecificOutput") or {}).get("permissionDecision")
+            if d in ("allow", "deny", "ask"):
+                info["decision"] = d
+            else:
+                info["reason"] = "hook answer not understood"
+        return info
+    if stage == "gateway":
+        if "error" in data:
+            err = data["error"] or {}
+            if err.get("code") == -32002:
+                info["decision"] = "ask"
+            else:
+                info["reason"] = f"JSON-RPC {err.get('code')}: {str(err.get('message'))[:120]}"
+            return info
+        result = data.get("result") or {}
+        texts = " ".join(c.get("text", "") for c in result.get("content") or [] if isinstance(c, dict))
+        blocked = result.get("isError") and _GATEWAY_BLOCK.search(texts)
+        info["decision"] = "deny" if blocked else "allow"
+        return info
+
+    # input / output
+    results = data.get("guardrail_results")
+    if isinstance(results, list):
+        info["ran"] = set()
+        for r in results:
+            if not (isinstance(r, dict) and r.get("guardrail")):
+                continue
+            name, msg = guard_name(r["guardrail"]), str(r.get("message") or "")
+            details = r.get("details") if isinstance(r.get("details"), dict) else {}
+            if r.get("passed") is False:
+                info["ran"].add(name)
+                info["flagged"].append(name)
+            elif details.get("fail_open") is True or _FAIL_OPEN.search(msg):
+                info["failed_open"].add(name)
+            elif details.get("policy_count") == 0 or _IDLE.search(msg):
+                info["idle"].add(name)
+            else:
+                info["ran"].add(name)
+        info["flagged"].sort()
+    if stage == "output" and (data.get("sanitization") or {}).get("mode"):
+        info["ran"] = (info["ran"] or set()) | {"tool_output_sanitization"}
+    would = [guard_name(g) for g in data.get("would_block") or []]
+    info["mode"] = data.get("mode") or ""
     action = data.get("action", "pass")
     if action == "block":
-        return "block", ""
-    if action == "redact" or (stage == "output" and "sanitized_output" in data):
-        return "redact", ""
-    return "allow", ""
+        info["decision"] = "block"
+    elif action == "redact" or (stage == "output" and "sanitized_output" in data):
+        info["decision"] = "redact"
+    elif action == "monitor" or (info["mode"] == "monitor" and would):
+        info["decision"], info["flagged"] = "monitor", sorted(set(info["flagged"]) | set(would))
+    elif info["flagged"]:
+        info["decision"] = "flag"     # a guard failed with a warn/log action
+    else:
+        info["decision"] = "allow"
+    return info
 
 
 def outcome_of(expect, decision):
@@ -254,28 +417,88 @@ def outcome_of(expect, decision):
         return "caught"
     if {expect, decision} == {"block", "redact"} or (expect == "deny" and decision == "ask"):
         return "partial"
+    if decision in ("monitor", "flag"):
+        return "unenforced"
     return "missed"
 
 
-def run_case(case, base_url, tenant_key, session, agent, timeout):
-    path, headers, body = build_request(case, session, agent)
-    headers["X-API-Key"] = tenant_key
-    status, data, err = _post(base_url + path, headers, body, timeout)
-    decision, why = decision_of(case["stage"], status, data)
+def label_miss(case, info, guard_map, profiles, agent):
+    """Refine a plain miss into failed_open or dormant (with evidence), or leave it missed.
+
+    failed_open wins: when a guard that should catch the case did not get to
+    check it, the miss says nothing about detection."""
+    stage = case["stage"]
+    if stage in ("input", "output"):
+        want = relevant_guards(case, guard_map)
+        if info["ran"] is None:
+            return "missed", "response did not list the guards that ran"
+        down = want & info["failed_open"]
+        if down:
+            return "failed_open", f"{', '.join(sorted(down))} failed open (is the model backend reachable?)"
+        if want and not (want & info["ran"]):
+            idle = want & info["idle"]
+            return "dormant", f"none of {', '.join(sorted(want))} ran" + (
+                f" ({', '.join(sorted(idle))} ran with nothing configured)" if idle else "")
+        ran = sorted(want & info["ran"]) or sorted(info["ran"])
+        return "missed", f"ran {', '.join(ran) or 'no guards'} and did not flag it"
+    if stage == "hook":
+        name = case.get("agent_key") or agent
+        if profiles is None:
+            return "missed", "agent registry unreadable, dormancy unknown"
+        if not profiles.get(name):
+            return "dormant", f"agent {name} has no runtime profile"
+        return "missed", f"agent {name} profile {profiles[name]} allowed it"
+    return "missed", ""
+
+
+def run_case(case, ctx):
+    path, headers, body = build_request(case, ctx["session"], ctx["agent"], ctx["route"])
+    headers["X-API-Key"] = ctx["tenant_key"]
+    if case["stage"] in ("cap", "gateway") and ctx["agent_token"]:
+        headers["X-Agent-Token"] = ctx["agent_token"]
+    status, data, err = _request("POST", ctx["base_url"] + path, headers, body, ctx["timeout"])
+    info = decide(case["stage"], status, data)
+    outcome = outcome_of(case["expect"], info["decision"])
+    detail = ""
+    if info["decision"] is None:   # no HTTP answer: the transport error says more
+        detail = err if not status else (info["reason"] or err)
+    if outcome == "missed":
+        outcome, detail = label_miss(case, info, ctx["guard_map"], ctx["profiles"], ctx["agent"])
+    elif outcome == "unenforced":
+        why = "monitor mode" if info["decision"] == "monitor" else "warn/log action"
+        detail = f"flagged by {', '.join(info['flagged']) or 'a guard'} ({why})"
+        want = relevant_guards(case, ctx["guard_map"])
+        if want and info["flagged"] and not (want & set(info["flagged"])):
+            # e.g. pii_leakage flagging the email in an injection: enforcing it
+            # would block this case, but not because it recognised the attack.
+            detail += "; not a guard mapped to this class"
     return {
         "id": case["id"], "threat_class": case["threat_class"], "stage": case["stage"],
-        "expect": case["expect"], "decision": decision,
-        "outcome": outcome_of(case["expect"], decision),
-        "http": status, "reason": err or why,
+        "expect": case["expect"], "decision": info["decision"], "outcome": outcome,
+        "detail": detail, "http": status,
+        "ran": sorted(info["ran"]) if info["ran"] is not None else None,
+        "failed_open": sorted(info["failed_open"]),
         "technique": case.get("technique", ""), "source": case.get("source", ""),
         "excerpt": _excerpt(case),
     }
 
 
+def fetch_agent_profiles(base_url, tenant_key, timeout):
+    """({agent_id: runtime_profile}, "") or (None, why) when the registry is unreadable."""
+    status, data, err = _request("GET", base_url + AGENTS_PATH,
+                                 {"X-API-Key": tenant_key, "X-Shield-User": USER_TAG}, None, timeout)
+    reg = data.get("agent_registry") if isinstance(data, dict) else None
+    if status != 200 or not isinstance(reg, dict):
+        return None, err or f"HTTP {status}"
+    return {aid: ((rec or {}).get("runtime_profile") or "") if isinstance(rec, dict) else ""
+            for aid, rec in reg.items()}, ""
+
+
 def _excerpt(case, n=140):
     p = case["payload"]
     text = p.get("message") or p.get("output") or json.dumps(
-        {"tool_name": p.get("tool_name"), "tool_input": p.get("tool_input")})
+        {k: p.get(k) for k in ("tool_name", "tool_input", "tool", "resource", "name", "arguments")
+         if k in p})
     text = " ".join(str(text).split())
     return text if len(text) <= n else text[: n - 1] + "…"
 
@@ -290,14 +513,13 @@ def score(results, thresholds):
             fp["probes"] += 1
             fp[r["outcome"]] += 1
             continue
-        c = classes.setdefault(r["threat_class"], {
-            "cases": 0, "caught": 0, "partial": 0, "missed": 0, "inconclusive": 0})
+        c = classes.setdefault(r["threat_class"], dict.fromkeys(("cases",) + ATTACK_OUTCOMES, 0))
         c["cases"] += 1
         c[r["outcome"]] += 1
 
     reasons = []
     for name, c in sorted(classes.items()):
-        decided = c["caught"] + c["partial"] + c["missed"]
+        decided = c["cases"] - c["inconclusive"]
         hits = c["caught"] + (0 if strict else c["partial"])
         c["rate"] = hits / decided if decided else None
         c["threshold"] = thresholds["per_class"].get(name, thresholds["default"])
@@ -316,6 +538,26 @@ def score(results, thresholds):
             "gate": {"passed": not reasons, "reasons": reasons}}
 
 
+def guards_seen(results) -> dict:
+    """{stage: sorted guards that checked the payload in at least one response}."""
+    seen = {}
+    for r in results:
+        if r["ran"]:
+            seen.setdefault(r["stage"], set()).update(r["ran"])
+    return {stage: sorted(g) for stage, g in sorted(seen.items())}
+
+
+def fail_open_note(results):
+    """One line when guards failed open anywhere, attack or benign: the model
+    backend is the usual cause, and it silently waves everything through."""
+    hit = [r for r in results if r.get("failed_open")]
+    if not hit:
+        return None
+    names = sorted({g for r in hit for g in r["failed_open"]})
+    return (f"{', '.join(names)} failed open in {len(hit)} of {len(results)} responses:"
+            " is the model backend reachable?")
+
+
 # ── output ──────────────────────────────────────────────────────────────────
 
 def _colors(enabled):
@@ -324,20 +566,14 @@ def _colors(enabled):
     return "\033[32m", "\033[31m", "\033[33m", "\033[0m"
 
 
-def print_report(summary, results, skipped, show_misses, out=sys.stdout):
+def print_report(summary, results, skipped, show_misses, notes=(), out=sys.stdout):
     G, R, Y, Z = _colors(out.isatty())
     w = max([len(n) for n in summary["classes"]] + [len("false positives")])
     for name, c in sorted(summary["classes"].items()):
-        decided = c["caught"] + c["partial"] + c["missed"]
+        decided = c["cases"] - c["inconclusive"]
         tag = f"{G}PASS{Z}" if c["passed"] else f"{R}FAIL{Z}"
         rate = f"{c['rate']:.1%}" if c["rate"] is not None else "n/a"
-        extra = []
-        if c["partial"]:
-            extra.append(f"{c['partial']} partial")
-        if c["missed"]:
-            extra.append(f"{c['missed']} missed")
-        if c["inconclusive"]:
-            extra.append(f"{c['inconclusive']} inconclusive")
+        extra = [f"{c[k]} {k}" for k in ATTACK_OUTCOMES[1:] if c[k]]
         print(f"  {tag} {name:<{w}}  {c['caught'] + c['partial']}/{decided} caught  {rate:>6}"
               f"  (threshold {c['threshold']:.0%})" + (f"  {', '.join(extra)}" if extra else ""),
               file=out)
@@ -351,26 +587,33 @@ def print_report(summary, results, skipped, show_misses, out=sys.stdout):
               + (f"  {fp['inconclusive']} inconclusive" if fp["inconclusive"] else ""), file=out)
     for name, n in sorted(skipped.items()):
         print(f"  {Y}SKIP{Z} {name}: {n}", file=out)
+    for note in notes:
+        print(f"  {Y}NOTE{Z} {note}", file=out)
 
-    misses = [r for r in results if r["outcome"] in ("missed", "false_positive", "inconclusive")]
-    if misses and show_misses:
-        print(f"\nFirst {min(show_misses, len(misses))} of {len(misses)} not as expected:", file=out)
-        for r in misses[:show_misses]:
-            got = r["decision"] or r["reason"]
-            print(f"  {r['id']} [{r['threat_class']}/{r['stage']}] expected {r['expect']}, "
-                  f"got {got}: {r['excerpt']}", file=out)
+    bad = [r for r in results if r["outcome"] not in ("caught", "partial", "ok")]
+    if bad and show_misses:
+        print(f"\nFirst {min(show_misses, len(bad))} of {len(bad)} not as expected:", file=out)
+        for r in bad[:show_misses]:
+            got = r["decision"] or "no decision"
+            print(f"  {r['id']} [{r['threat_class']}/{r['stage']}] expected {r['expect']}, got {got}"
+                  f" -> {r['outcome']}" + (f" ({r['detail']})" if r["detail"] else "")
+                  + f": {r['excerpt']}", file=out)
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Score a Shield tenant against an attack corpus.")
     ap.add_argument("--corpus", action="append", help=f"file or directory (default {os.path.relpath(DEFAULT_CORPUS, ROOT)})")
     ap.add_argument("--classes", help="comma-separated threat classes to run")
-    ap.add_argument("--stages", default="input,output,hook", help="comma-separated stages")
+    ap.add_argument("--stages", default="input,output,hook",
+                    help="comma-separated: input,output,hook,cap,gateway")
     ap.add_argument("--sample", type=int, default=0, help="at most N cases per class (0: all)")
     ap.add_argument("--seed", type=int, default=0, help="sampling seed")
     ap.add_argument("--thresholds", default=DEFAULT_THRESHOLDS if os.path.exists(DEFAULT_THRESHOLDS) else None)
+    ap.add_argument("--guard-map", default=DEFAULT_GUARD_MAP if os.path.exists(DEFAULT_GUARD_MAP) else None)
     ap.add_argument("--report", help="write the full JSON report here")
-    ap.add_argument("--agent", default="claude-code", help="X-Agent-Key for hook cases without one")
+    ap.add_argument("--agent", default="claude-code",
+                    help="X-Agent-Key for hook and gateway cases without one")
+    ap.add_argument("--gateway-route", help="gateway route for gateway cases without a 'route'")
     ap.add_argument("--timeout", type=float, default=20.0, help="seconds per call")
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--show-misses", type=int, default=10)
@@ -380,6 +623,7 @@ def main(argv=None) -> int:
     try:
         cases = load_corpus(args.corpus or [DEFAULT_CORPUS])
         thresholds = load_thresholds(args.thresholds)
+        guard_map = load_guard_map(args.guard_map)
     except (CorpusError, OSError, ValueError) as e:
         print(f"redteam: {e}", file=sys.stderr)
         return 2
@@ -389,6 +633,7 @@ def main(argv=None) -> int:
 
     base_url = (os.environ.get("SHIELD_URL") or "").rstrip("/")
     tenant_key = os.environ.get("TENANT_KEY") or ""
+    agent_token = os.environ.get("AGENT_TOKEN") or ""
     if not base_url or not tenant_key:
         print("redteam: set SHIELD_URL and TENANT_KEY", file=sys.stderr)
         return 2
@@ -399,34 +644,56 @@ def main(argv=None) -> int:
     if unknown:
         print(f"redteam: unknown stage(s): {', '.join(sorted(unknown))}", file=sys.stderr)
         return 2
+    if args.gateway_route and not re.fullmatch(r"[A-Za-z0-9._-]+", args.gateway_route):
+        print("redteam: --gateway-route must be a plain route name", file=sys.stderr)
+        return 2
 
     chosen = select(cases, classes, stages, args.sample, args.seed)
-    skipped = {}
-    for cls in sorted((classes or set()) - {c["threat_class"] for c in chosen}):
-        skipped[f"class {cls}"] = "no cases"
-    later = [c for c in chosen if c["stage"] in LATER_STAGES]
-    if later:
-        skipped["stages " + ",".join(sorted({c['stage'] for c in later}))] = \
-            f"{len(later)} case(s), not run by this version"
-    chosen = [c for c in chosen if c["stage"] not in LATER_STAGES]
+    skipped = {f"class {cls}": "no cases"
+               for cls in sorted((classes or set()) - {c["threat_class"] for c in chosen})}
     if not chosen:
         print("redteam: no cases selected", file=sys.stderr)
+        return 2
+    if any(c["stage"] == "cap" for c in chosen) and not agent_token:
+        print("redteam: the cap stage needs AGENT_TOKEN, a signed agent token "
+              "(POST /v1/tenant/me/agent-auth/agent-token)", file=sys.stderr)
+        return 2
+    gateway_cases = [c for c in chosen if c["stage"] == "gateway"]
+    if any(not (c.get("route") or args.gateway_route) for c in gateway_cases):
+        print("redteam: gateway cases need --gateway-route or a 'route' on the case", file=sys.stderr)
         return 2
 
     session = f"redteam-{int(time.time())}"
     print(f"Red-team check: {base_url} ({len(chosen)} cases, session {session})")
+    if gateway_cases:
+        print("  the gateway stage calls the real upstream tool whenever Shield allows it;"
+              " use a sandbox route")
+
+    notes, profiles, profiles_err = [], None, ""
+    if any(c["stage"] == "hook" for c in chosen):
+        profiles, profiles_err = fetch_agent_profiles(base_url, tenant_key, args.timeout)
+        if profiles is None:
+            notes.append(f"agent registry unreadable ({profiles_err}): hook misses are not "
+                         "split into dormant and missed")
+
+    ctx = {"base_url": base_url, "tenant_key": tenant_key, "agent_token": agent_token,
+           "session": session, "agent": args.agent, "route": args.gateway_route,
+           "timeout": args.timeout, "guard_map": guard_map, "profiles": profiles}
     started = time.time()
     with ThreadPoolExecutor(max_workers=max(1, args.concurrency)) as pool:
-        results = list(pool.map(
-            lambda c: run_case(c, base_url, tenant_key, session, args.agent, args.timeout), chosen))
+        results = list(pool.map(lambda c: run_case(c, ctx), chosen))
     summary = score(results, thresholds)
-    print_report(summary, results, skipped, args.show_misses)
+    if fail_open_note(results):
+        notes.append(fail_open_note(results))
+    print_report(summary, results, skipped, args.show_misses, notes)
 
     if args.report:
         with open(args.report, "w", encoding="utf-8") as f:
             json.dump({"shield_url": base_url, "session": session,
                        "duration_s": round(time.time() - started, 1),
-                       "thresholds": thresholds, "skipped": skipped,
+                       "thresholds": thresholds, "skipped": skipped, "notes": notes,
+                       "guards_seen": guards_seen(results),
+                       "agent_profiles": profiles if profiles is not None else {"error": profiles_err},
                        **summary, "cases": results}, f, indent=2)
     gate = summary["gate"]
     print(f"\nResult: {'PASS' if gate['passed'] else 'FAIL'}"

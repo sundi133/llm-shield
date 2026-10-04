@@ -9,6 +9,8 @@ description: An external, corpus-driven red-team harness that runs a labeled att
 # Spec: Per-Tenant Red-Team Harness
 
 > Status: **APPROVED.** Task 1 implemented (corpus, converter, runner, tests).
+> Task 2 implemented (miss labels, `cap` and `gateway` stages); §4 and §7 were
+> corrected against the code during task 2, see "Task 2 corrections" at the end.
 > Generalizes `scripts/smoke_agent_hooks.sh` (one hook, 7 checks) into a
 > corpus-driven, per-threat-class coverage check across the guard path.
 
@@ -110,8 +112,8 @@ endpoints (verified present in `api/routes_classify.py`, `api/routes_cap.py`,
 | `input` | `POST /guardrails/input` | response `action == "block"` (or `redact`) |
 | `output` | `POST /guardrails/output` | response `action` ∈ `block`/`redact` |
 | `hook` | `POST /v1/shield/hooks/claude-code` | `hookSpecificOutput.permissionDecision == "deny"` |
-| `cap` | `POST /cap/mint` | non-2xx / explicit refusal for a disallowed action |
-| `gateway` | `POST /gateway/<route>/mcp` (`tools/call`) | JSON-RPC error / blocked verdict |
+| `cap` | `POST /v1/shield/cap/mint` (needs `X-Agent-Token`) | 403 `authz_denied` |
+| `gateway` | `POST /gateway/<route>/mcp` (`tools/call`) | `isError` result "Blocked by Shield…" |
 
 CLI:
 
@@ -243,3 +245,61 @@ is tested — no network, no deploy.
 4. **(Deferred — separate spec, not built here.)** Portal persistence of runs +
    a trend endpoint (Redis keys, per-tenant history). Explicitly out of scope so
    this harness stays a zero-state client.
+
+## Task 2 corrections (verified against the code)
+
+**Four miss labels, not one.** Each points at a different fix:
+
+| label | meaning | evidence | fix |
+|---|---|---|---|
+| `dormant` | none of the guards that should catch it ran | input/output: no relevant guard in the response's `guardrail_results`; hook: the agent has no `runtime_profile` in `GET /v1/tenant/me/agents` | enable a guard |
+| `unenforced` | a guard flagged it but policy let it through | `action == "monitor"` / `would_block` (monitor mode), or a failed guard whose action is `warn`/`log` | enforce mode / action block |
+| `failed_open` | a guard that should catch it reported passing without checking | `details.fail_open` or "allowing by default" in its result | the model backend |
+| `missed` | the guards that should catch it ran and did not | everything else | detection gap |
+
+All four count against the class score. `failed_open` was found running task 2
+against the real app with no model backend: model-backed guards return
+`passed: true` with "LLM call failed, allowing by default", so without this
+label an outage reads as a detection gap. Guards that report "No ...
+configured", "... skipping" or `policy_count: 0` likewise did not check
+anything and do not count as running. `dormant` is claimed only on positive
+evidence; when the harness cannot see what ran (no `guardrail_results`, agent
+registry unreadable) the label is `missed`, never `dormant`, so the report never
+says "just enable it" without knowing.
+
+**Introspection is per response, not a config pre-pass.** §4 named
+`GET /v1/tenant/me/guardrails`; that path is only a metrics prefix. The input
+pipeline for a tenant with config is exactly its configured list (REPLACE mode),
+and both `/guardrails/input` and `/guardrails/output` return every guard that
+ran in `guardrail_results`, so the response is better evidence than the stored
+config: it is what actually ran, including server defaults for a tenant with no
+config. The output stage also counts `tool_output_sanitization` as running when
+`response.sanitization.mode` is set. The only pre-pass is
+`GET /v1/tenant/me/agents` (agent registry, `runtime_profile`) for hook cases.
+
+Relevant guards per case: the union of the case's `guards`, its `guards_hint`,
+and `redteam/guard_map.json[stage][threat_class]`, in runtime names (the
+request-style aliases the suite uses are normalised the way
+`api/routes_classify._NAME_MAP` does; a test keeps them in step). The union is
+deliberate: a broad set makes `dormant` conservative.
+
+`indirect_injection` runs only on the MCP gateway path
+(`core/mcp/enforcement.py`), not on `/guardrails/output`, so it is not in the
+output-stage map: a tenant relying on it is measured on the `gateway` stage.
+
+**`cap` stage:** `POST /v1/shield/cap/mint` (not `/cap/mint`). Needs a signed
+agent token in `X-Agent-Token` (operator supplies `AGENT_TOKEN`, minted with
+`POST /v1/tenant/me/agent-auth/agent-token`); the harness never mints
+credentials. 200 = allowed; 403 with `authz_denied` = deny; any other answer
+(401 no token, 403 tenant mismatch, 429) is inconclusive. An allowed case mints
+a short-lived, single-use capability token: a side effect, harmless on a test
+tenant.
+
+**`gateway` stage:** JSON-RPC `tools/call` on `POST /gateway/<route>/mcp`
+(route from the case or `--gateway-route`). A Shield block is a result with
+`isError` and text "Blocked by Shield" / "Output blocked by Shield data policy";
+`-32002` (confirmation required) is `ask` (partial for `deny`); other JSON-RPC
+errors (`-32004` no route, `-32603` upstream failure) are inconclusive. **When
+Shield allows a call, the real upstream tool runs.** Only point this stage at a
+route whose upstream is a sandbox; the harness prints that warning when the
+stage runs.
