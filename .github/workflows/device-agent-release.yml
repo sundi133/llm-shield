@@ -117,6 +117,9 @@ jobs:
           BASE="$RUNNER_TEMP/pkg/Payload/Library/Application Support/Votal/DeviceAgent"
           test "$("$BASE/bin/votal-device-agent" version)" = "${{ needs.version.outputs.version }}"
           test -x "$BASE/ollama/ollama"
+          # The Claude Code hook scripts are in the frozen binary (agent_hooks.py).
+          GOT=$("$BASE/bin/votal-device-agent" claude-code-hook | python3 -c "import json,sys; print(json.load(sys.stdin)['sh_sha256'])")
+          test "$GOT" = "$(shasum -a 256 core/runtime_policy/hook_scripts/claude_code_hook.sh | cut -d' ' -f1)"
           if [ "${{ steps.sign.outputs.signed }}" = "true" ]; then
             pkgutil --check-signature "$PKG" | grep -q "Developer ID Installer"
             spctl -a -vv -t install "$PKG"
@@ -172,6 +175,9 @@ jobs:
           Start-Process msiexec -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=C:\votal-extract" -Wait
           $exe = Get-ChildItem -Recurse C:\votal-extract -Filter votal-device-agent.exe | Select-Object -First 1
           if ((& $exe.FullName version) -ne "${{ needs.version.outputs.version }}") { throw "wrong version" }
+          $text = [IO.File]::ReadAllText("core/runtime_policy/hook_scripts/claude_code_hook.ps1").Replace("`r`n", "`n")
+          $want = -join ([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($text)) | ForEach-Object { $_.ToString("x2") })
+          if ((& $exe.FullName claude-code-hook | ConvertFrom-Json).ps1_sha256 -ne $want) { throw "Claude Code hook script not bundled" }
           if (-not (Get-ChildItem -Recurse C:\votal-extract -Filter ollama.exe)) { throw "Ollama not bundled" }
           if ("${{ steps.sign.outputs.signed }}" -eq "true") {
             if ((Get-AuthenticodeSignature $msi.FullName).Status -ne "Valid") { throw "msi signature invalid" }

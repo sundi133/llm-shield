@@ -771,6 +771,63 @@ async def seed_test_data():
         raise HTTPException(status_code=500, detail=f"Failed to seed test data: {str(e)}")
 
 
+def new_agent_record(request: Request, tenant_id: str, agent_id: str, body: dict) -> dict:
+    """A new registry entry from a create body: sanitized, timestamped, and
+    constrained for a non-admin caller. Shared by POST /registry and the Claude
+    Code "turn on" route (api/routes_hooks_portal.py)."""
+    import time as _time
+    now = int(_time.time())
+    record = {
+        "agent_id": agent_id,
+        "name": _sanitize_string(body.get("name", agent_id)),
+        "description": _sanitize_string(body.get("description", "")),
+        "tools": [_sanitize_string(t, _MAX_TOOL_NAME_LEN) for t in body.get("tools", [])],
+        "role_permissions": _sanitize_value(body.get("role_permissions", {})),
+        "agent_permissions": _sanitize_value(body.get("agent_permissions", {})),
+        # Object-level (target) authorization. allowed_resources are fnmatch
+        # patterns (may use {user_sub}/{tenant_id}) the cap-mint path enforces
+        # against the requested resource. Backward compatible: enforcement is
+        # opt-in — declaring allowed_resources turns it on (strict deny when
+        # the requested resource is out of scope); an agent with no resource
+        # policy keeps its prior behavior unless require_resource_scope is set
+        # explicitly or SHIELD_REQUIRE_RESOURCE_SCOPE=true globally.
+        "allowed_resources": [
+            _sanitize_string(r, _MAX_STRING_LEN) for r in body.get("allowed_resources", [])
+        ],
+        "require_resource_scope": bool(
+            body.get("require_resource_scope", bool(body.get("allowed_resources")))
+        ),
+        # Who to ask about this agent. Free text on purpose: as likely to
+        # be a Slack channel or a rota as a person, and a format check
+        # would only teach people to lie to it.
+        # `or` rather than a get() default: a client that sends an explicit
+        # null means "unset", and .get(k, default) returns the null. Without
+        # this the list comprehension iterates None and the create 500s.
+        "owner": _sanitize_string(body.get("owner") or "", _MAX_OWNER_LEN),
+        "owner_contact": _sanitize_string(
+            body.get("owner_contact") or "", _MAX_OWNER_CONTACT_LEN),
+        "environments": [
+            _sanitize_string(e, _MAX_ENVIRONMENT_LEN).strip()
+            for e in (body.get("environments") or [])
+        ],
+        "runtime_profile": body.get("runtime_profile") or "",
+        "action_profile": body.get("action_profile") or "",
+        "status": body.get("status", "active"),
+        "created_at": now,
+        "updated_at": now,
+        # Empty unless a human is signed in. Falling back to the tenant
+        # would put "created_by: tenant:acme" on every row — attribution
+        # in shape only, and it would make the rows that DO name a person
+        # harder to spot. An empty field is honest.
+        "created_by": _acting_user_sub(request),
+        "updated_by": _acting_user_sub(request),
+    }
+    # A non-admin caller may declare an agent but not grant it anything.
+    # Applied to the built entry rather than the body so it cannot be
+    # skipped by a field the construction above adds later.
+    return _constrain_self_registration(request, tenant_id, record)
+
+
 @router.post("/registry")
 async def create_agent(request: Request):
     """Create a new agent."""
@@ -795,59 +852,7 @@ async def create_agent(request: Request):
         if agent_id in agents:
             raise HTTPException(status_code=409, detail=f"Agent '{agent_id}' already exists")
 
-        import time as _time
-        now = int(_time.time())
-        agents[agent_id] = {
-            "agent_id": agent_id,
-            "name": _sanitize_string(body.get("name", agent_id)),
-            "description": _sanitize_string(body.get("description", "")),
-            "tools": [_sanitize_string(t, _MAX_TOOL_NAME_LEN) for t in body.get("tools", [])],
-            "role_permissions": _sanitize_value(body.get("role_permissions", {})),
-            "agent_permissions": _sanitize_value(body.get("agent_permissions", {})),
-            # Object-level (target) authorization. allowed_resources are fnmatch
-            # patterns (may use {user_sub}/{tenant_id}) the cap-mint path enforces
-            # against the requested resource. Backward compatible: enforcement is
-            # opt-in — declaring allowed_resources turns it on (strict deny when
-            # the requested resource is out of scope); an agent with no resource
-            # policy keeps its prior behavior unless require_resource_scope is set
-            # explicitly or SHIELD_REQUIRE_RESOURCE_SCOPE=true globally.
-            "allowed_resources": [
-                _sanitize_string(r, _MAX_STRING_LEN) for r in body.get("allowed_resources", [])
-            ],
-            "require_resource_scope": bool(
-                body.get("require_resource_scope", bool(body.get("allowed_resources")))
-            ),
-            # Who to ask about this agent. Free text on purpose: as likely to
-            # be a Slack channel or a rota as a person, and a format check
-            # would only teach people to lie to it.
-            # `or` rather than a get() default: a client that sends an explicit
-            # null means "unset", and .get(k, default) returns the null. Without
-            # this the list comprehension iterates None and the create 500s.
-            "owner": _sanitize_string(body.get("owner") or "", _MAX_OWNER_LEN),
-            "owner_contact": _sanitize_string(
-                body.get("owner_contact") or "", _MAX_OWNER_CONTACT_LEN),
-            "environments": [
-                _sanitize_string(e, _MAX_ENVIRONMENT_LEN).strip()
-                for e in (body.get("environments") or [])
-            ],
-            "runtime_profile": body.get("runtime_profile") or "",
-            "action_profile": body.get("action_profile") or "",
-            "status": body.get("status", "active"),
-            "created_at": now,
-            "updated_at": now,
-            # Empty unless a human is signed in. Falling back to the tenant
-            # would put "created_by: tenant:acme" on every row — attribution
-            # in shape only, and it would make the rows that DO name a person
-            # harder to spot. An empty field is honest.
-            "created_by": _acting_user_sub(request),
-            "updated_by": _acting_user_sub(request),
-        }
-
-        # A non-admin caller may declare an agent but not grant it anything.
-        # Applied to the built entry rather than the body so it cannot be
-        # skipped by a field the construction above adds later.
-        agents[agent_id] = _constrain_self_registration(
-            request, tenant_id, agents[agent_id])
+        agents[agent_id] = new_agent_record(request, tenant_id, agent_id, body)
 
         _save_agents(tenant_id, agents)
 

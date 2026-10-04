@@ -234,8 +234,14 @@ def validate_policy(raw: Any) -> dict:
     if not isinstance(raw, dict):
         raise PolicyError(["policy: an object"])
     errors: list[str] = []
-    _unknown(raw, DEFAULT_POLICY, "", errors)
+    # agent_hooks is optional and stored only when set (core/dlp/agent_hooks.py),
+    # so tenants that never use it keep their policy hash and bundles.
+    _unknown(raw, {*DEFAULT_POLICY, "agent_hooks"}, "", errors)
     p = {**default_policy(), **copy.deepcopy(raw)}
+    if "agent_hooks" in p:
+        from core.dlp import agent_hooks
+        p["agent_hooks"] = agent_hooks.validate(p["agent_hooks"], errors,
+                                                valid_fleet=valid_fleet, max_fleets=MAX_FLEETS)
 
     _one_of(p["mode"], MODES, "mode", errors)
 
@@ -351,7 +357,13 @@ def validate_policy(raw: Any) -> dict:
 
 def for_fleet(policy: dict, fleet: str) -> dict:
     """The policy as one fleet's devices enforce it: `mode` resolved from
-    fleet_modes, the per-fleet map itself left out (a device needs only its own)."""
-    out = {k: v for k, v in policy.items() if k != "fleet_modes"}
+    fleet_modes, the per-fleet maps themselves left out (a device needs only
+    its own). agent_hooks, when set, becomes this fleet's
+    {"agents", "mode", "on_unreachable"}."""
+    from core.dlp import agent_hooks
+    out = {k: v for k, v in policy.items() if k not in ("fleet_modes", "agent_hooks")}
     out["mode"] = policy.get("fleet_modes", {}).get(fleet, policy["mode"])
+    resolved = agent_hooks.resolve(policy, fleet)
+    if resolved is not None:
+        out["agent_hooks"] = resolved
     return out

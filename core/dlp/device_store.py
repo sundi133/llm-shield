@@ -40,4 +40,6 @@ def save_policy(tenant_id: str, policy: dict, actor: str = "") -> dict:
     normalized = validate_policy(policy)
     kv_set(_key(tenant_id), {"policy": normalized, "updated_at": int(time.time()),
                              "updated_by": actor[:200]})
+    from core.dlp import agent_hooks
+    agent_hooks.invalidate(tenant_id)
     return normalized

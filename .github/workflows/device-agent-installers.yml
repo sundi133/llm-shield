@@ -10,6 +10,7 @@ on:
       - "packages/votal-device-agent/**"
       - "icap/**"
       - "packages/shield-mavlink/**"
+      - "core/runtime_policy/hook_scripts/**"
       - ".github/workflows/device-agent-installers.yml"
   workflow_dispatch:
     inputs:
@@ -46,6 +47,10 @@ jobs:
           WANT=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' packages/votal-device-agent/votal_device_agent/_version.py)
           test "$("$BIN" version)" = "$WANT"     # the binary reports votal_device_agent/_version.py
           printf '\x11\x00\x00\x00{"type": "hello"}' | "$BIN" native-host --config=/nonexistent | tail -c +5
+          # The frozen binary carries the Claude Code hook scripts (bundled as
+          # a module: PyInstaller does not collect data files).
+          GOT=$("$BIN" claude-code-hook | python3 -c "import json,sys; print(json.load(sys.stdin)['sh_sha256'])")
+          test "$GOT" = "$(shasum -a 256 core/runtime_policy/hook_scripts/claude_code_hook.sh | cut -d' ' -f1)"
       - uses: actions/upload-artifact@v4
         with:
           name: votal-device-agent-macos
@@ -74,6 +79,12 @@ jobs:
           Start-Process msiexec -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=C:\votal-extract" -Wait
           $exe = Get-ChildItem -Recurse C:\votal-extract -Filter votal-device-agent.exe | Select-Object -First 1
           & $exe.FullName version
+          # The frozen binary carries the Claude Code hook scripts.
+          $got = (& $exe.FullName claude-code-hook | ConvertFrom-Json).ps1_sha256
+          # Line endings normalized: the checkout may have CRLF, the bundled copy has LF.
+          $text = [IO.File]::ReadAllText("core/runtime_policy/hook_scripts/claude_code_hook.ps1").Replace("`r`n", "`n")
+          $want = -join ([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($text)) | ForEach-Object { $_.ToString("x2") })
+          if ($got -ne $want) { Write-Error "bundled ps1 $got != repo $want"; exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: votal-device-agent-windows

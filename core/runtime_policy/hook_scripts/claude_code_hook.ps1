@@ -13,8 +13,11 @@
 #
 # Config: C:\ProgramData\Votal\hook.conf (or -Config <path>), KEY=value lines:
 #   SHIELD_URL, SHIELD_API_KEY, SHIELD_AGENT (default claude-code),
-#   SHIELD_TIMEOUT (seconds, 1 to 30, default 4). Never read from the
-#   environment. Windows PowerShell 5.1 or later; nothing else.
+#   SHIELD_TIMEOUT (seconds, 1 to 30, default 4), ON_UNREACHABLE (deny, the
+#   default, or allow: what a FAILURE means; Shield's own denials always deny),
+#   SHIELD_LOCAL_SECRET_FILE (set by the Votal device agent: ask the agent on
+#   127.0.0.1 with its local secret instead of Shield with a tenant key).
+#   Never read from the environment. Windows PowerShell 5.1 or later.
 
 param([string]$Config = "$env:ProgramData\Votal\hook.conf")
 
@@ -25,13 +28,25 @@ function Deny([string]$Why) {
     exit 2
 }
 
-trap { Deny "the hook failed ($($_.Exception.Message)), so this action is not allowed" }
+# A failure (no answer, bad answer, bad setup): denied unless the config says
+# ON_UNREACHABLE=allow. Shield's own denials go through Deny, never here.
+$script:OnUnreachable = "deny"
+function Fail([string]$Why) {
+    if ($script:OnUnreachable -eq "allow") {
+        [Console]::Error.WriteLine("Votal Shield: $($Why -replace ', so this action is not allowed$', ''); allowed, because this fleet lets actions through when Shield cannot answer")
+        exit 0
+    }
+    Deny $Why
+}
+
+trap { Fail "the hook failed ($($_.Exception.Message)), so this action is not allowed" }
 
 if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
     Deny "hook config $Config is missing or unreadable, so this action is not allowed"
 }
 
-$settings = @{ SHIELD_URL = ""; SHIELD_API_KEY = ""; SHIELD_AGENT = "claude-code"; SHIELD_TIMEOUT = "4" }
+$settings = @{ SHIELD_URL = ""; SHIELD_API_KEY = ""; SHIELD_AGENT = "claude-code"; SHIELD_TIMEOUT = "4";
+              SHIELD_LOCAL_SECRET_FILE = ""; ON_UNREACHABLE = "deny" }
 foreach ($line in Get-Content -LiteralPath $Config) {
     $l = $line.Trim()
     if ($l -eq "" -or $l.StartsWith("#") -or -not $l.Contains("=")) { continue }
@@ -43,11 +58,23 @@ foreach ($line in Get-Content -LiteralPath $Config) {
     if ($settings.ContainsKey($k)) { $settings[$k] = $v }
 }
 
+if ($settings.ON_UNREACHABLE -eq "allow") { $script:OnUnreachable = "allow" }
 $url = $settings.SHIELD_URL
-if (-not $url) { Deny "SHIELD_URL is not set in $Config, so this action is not allowed" }
-if (-not $settings.SHIELD_API_KEY) { Deny "SHIELD_API_KEY is not set in $Config, so this action is not allowed" }
-if (-not ($url -match '^https://' -or $url -match '^http://(127\.0\.0\.1|localhost)([:/]|$)')) {
-    Deny "SHIELD_URL must be https (or a localhost address for testing)"
+$local = [bool]$settings.SHIELD_LOCAL_SECRET_FILE
+if (-not $url) { Fail "SHIELD_URL is not set in $Config, so this action is not allowed" }
+if ($local) {
+    # The Votal device agent on this laptop: loopback only, its local secret.
+    if (-not ($url -match '^http://(127\.0\.0\.1|localhost):\d+/?$')) {
+        Fail "SHIELD_URL must be the local agent (http://127.0.0.1:<port>) when SHIELD_LOCAL_SECRET_FILE is set"
+    }
+    $secret = ""
+    try { $secret = (Get-Content -LiteralPath $settings.SHIELD_LOCAL_SECRET_FILE -Raw).Trim() } catch { }
+    if (-not $secret) { Fail "the Votal agent's local secret could not be read, so this action is not allowed" }
+} else {
+    if (-not $settings.SHIELD_API_KEY) { Fail "SHIELD_API_KEY is not set in $Config, so this action is not allowed" }
+    if (-not ($url -match '^https://' -or $url -match '^http://(127\.0\.0\.1|localhost)([:/]|$)')) {
+        Fail "SHIELD_URL must be https (or a localhost address for testing)"
+    }
 }
 $timeout = 4
 [int]::TryParse($settings.SHIELD_TIMEOUT, [ref]$timeout) | Out-Null
@@ -57,26 +84,32 @@ if ($timeout -lt 1 -or $timeout -gt 30) { $timeout = 4 }
 $body = [Console]::In.ReadToEnd()
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$headers = @{
-    "X-API-Key"     = $settings.SHIELD_API_KEY
-    "X-Agent-Key"   = $settings.SHIELD_AGENT
-    "X-Shield-User" = $env:USERNAME
-    "X-Device-Id"   = $env:COMPUTERNAME
+if ($local) {
+    $headers = @{ "X-Votal-Local-Secret" = $secret; "X-Shield-User" = $env:USERNAME }
+    $endpoint = $url.TrimEnd("/") + "/v1/local/claude-code/hook"
+} else {
+    $headers = @{
+        "X-API-Key"     = $settings.SHIELD_API_KEY
+        "X-Agent-Key"   = $settings.SHIELD_AGENT
+        "X-Shield-User" = $env:USERNAME
+        "X-Device-Id"   = $env:COMPUTERNAME
+    }
+    $endpoint = $url.TrimEnd("/") + "/v1/shield/hooks/claude-code"
 }
 try {
-    $resp = Invoke-WebRequest -Uri ($url.TrimEnd("/") + "/v1/shield/hooks/claude-code") -Method Post `
+    $resp = Invoke-WebRequest -Uri $endpoint -Method Post `
         -Headers $headers -ContentType "application/json" `
         -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec $timeout -UseBasicParsing
 } catch {
     $code = $null
     if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
-    if ($code) { Deny "Shield answered HTTP $code, so this action is not allowed" }
-    Deny "Shield could not be reached at $url, so this action is not allowed"
+    if ($code) { Fail "Shield answered HTTP $code, so this action is not allowed" }
+    Fail "Shield could not be reached at $url, so this action is not allowed"
 }
-if ([int]$resp.StatusCode -ne 200) { Deny "Shield answered HTTP $($resp.StatusCode), so this action is not allowed" }
+if ([int]$resp.StatusCode -ne 200) { Fail "Shield answered HTTP $($resp.StatusCode), so this action is not allowed" }
 
-try { $answer = $resp.Content | ConvertFrom-Json } catch { Deny "Shield's answer was not understood, so this action is not allowed" }
-if ($null -eq $answer) { Deny "Shield's answer was not understood, so this action is not allowed" }
+try { $answer = $resp.Content | ConvertFrom-Json } catch { Fail "Shield's answer was not understood, so this action is not allowed" }
+if ($null -eq $answer) { Fail "Shield's answer was not understood, so this action is not allowed" }
 $names = @($answer.PSObject.Properties | ForEach-Object { $_.Name })
 if ($names.Count -eq 0) { exit 0 }                                  # {} = allow
 
@@ -98,4 +131,4 @@ if ($decision -eq "ask") {
     [Console]::Out.WriteLine(($ask | ConvertTo-Json -Compress -Depth 4))
     exit 0
 }
-Deny "Shield's answer was not understood, so this action is not allowed"
+Fail "Shield's answer was not understood, so this action is not allowed"

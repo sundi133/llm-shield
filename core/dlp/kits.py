@@ -28,7 +28,7 @@ DEFAULT_RELEASE_BASE = "https://github.com/sundi133/llm-shield/releases/download
 #: The agent version kits pin by default: the device agent's own
 #: packages/votal-device-agent/votal_device_agent/_version.py (a test holds
 #: them equal; the server images do not ship the agent package).
-DEFAULT_AGENT_VERSION = "0.1.0"
+DEFAULT_AGENT_VERSION = "0.2.0"
 BODY_KEYS = ("fleet", "mdm", "platforms", "include_proxy", "extension_ids", "expires_in_days",
              "uses", "revoke_previous")
 

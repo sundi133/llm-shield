@@ -45,7 +45,15 @@ SHIELD_URL=https://api.guardrails.votal.ai
 SHIELD_API_KEY=<tenant key with the runtime scope>
 SHIELD_AGENT=claude-code
 SHIELD_TIMEOUT=4
+# Optional: what a failure means (deny, the default, or allow). Shield's own
+# denials always deny.
+ON_UNREACHABLE=deny
 ```
+
+Laptops with the Votal device agent need none of this: the agent writes the
+hook, its `hook.conf` (pointing at the agent on `127.0.0.1` with
+`SHIELD_LOCAL_SECRET_FILE`) and Claude Code's managed settings itself, per
+fleet, from the portal's "Coding agents on laptops" card.
 
 Make the config readable by the user (the hook runs as the user) and writable
 only by root: `chown root:wheel hook.conf && chmod 644 hook.conf` on macOS.

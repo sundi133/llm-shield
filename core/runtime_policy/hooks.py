@@ -375,10 +375,13 @@ _KIND_EVENT = {"exec": "process", "file": "file", "net": "network", "tool": "act
 
 
 def runtime_event(d: Decision, payload: dict, *, agent_id: str, profile: Optional[rc.CompiledProfile],
-                  user: str = "", device_id: str = "") -> dict:
+                  user: str = "", device_id: str = "", fleet: str = "",
+                  monitor: bool = False) -> dict:
     """The runtime event (core/runtime_policy/events.py shape) for this
     decision. Never file contents or the command's output: the command line,
-    path or URL only, capped. `ask` is recorded as an audit decision."""
+    path or URL only, capped. `ask` is recorded as an audit decision; so is a
+    deny in monitor mode, which did not block anything (detail.monitor and
+    detail.would_decide say what enforce would have done)."""
     tool = (_str(payload.get("tool_name")) or "")[:200]
     detail: dict = {"tool": tool, "hook": "PreToolUse", "user": user[:200],
                     "device_id": device_id[:200],
@@ -399,9 +402,15 @@ def runtime_event(d: Decision, payload: dict, *, agent_id: str, profile: Optiona
                       path=(u.path or "/")[:300], method=d.method)
     if d.decision == "ask":
         detail["asked"] = True
+    if fleet:
+        detail["fleet"] = fleet[:64]
+    decision = {"allow": "allow", "deny": "deny", "ask": "audit"}[d.decision]
+    if monitor:
+        detail["monitor"], detail["would_decide"] = True, d.decision
+        decision = "allow" if d.decision == "allow" else "audit"
     return {"source": SOURCE, "kind": _KIND_EVENT[d.kind],
-            "decision": {"allow": "allow", "deny": "deny", "ask": "audit"}[d.decision],
-            "severity": "medium" if d.decision == "deny" else "info",
+            "decision": decision,
+            "severity": "medium" if decision == "deny" else "info",
             "agent_id": agent_id[:200], "agent_instance_id": device_id[:200],
             "session_id": (_str(payload.get("session_id")) or "")[:512],
             "profile": profile.name if profile else "",
