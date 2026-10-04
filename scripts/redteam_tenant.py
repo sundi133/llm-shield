@@ -103,6 +103,30 @@ _GUARD_ALIASES = {
 }
 
 
+# Where SecOps fixes each kind of miss, in the tenant portal (static/tenant.html).
+# Two fixes are not theirs to make: enforce mode is set only through the admin
+# API, and no portal setting governs a model guard that fails open.
+FIXES = {
+    ("dormant", "input"): "Policies: enable a guard for this class (input guardrails)",
+    ("dormant", "output"): "Policies: add an output custom policy, or Tool policies: set a sanitization mode",
+    ("dormant", "hook"): "Runtime profiles: bind the agent to a profile (Turn on for Claude Code)",
+    ("unenforced", "flag"): "Policies: set the flagging guard's action to Block or Redact",
+    ("unenforced", "monitor"): "Not in the portal: the tenant is in monitor mode; the platform "
+                               "admin API sets enforce (PUT /v1/admin/tenants/{id}/policy-mode)",
+    ("failed_open", None): "Not in the portal: restore the model backend; model guards allow "
+                           "by default while it is down",
+    ("missed", None): "Policies: write a custom policy for this attack, or report a detection gap",
+}
+
+
+def fix_for(result) -> str:
+    """The portal fix for one case's outcome, or ""."""
+    outcome = result["outcome"]
+    if outcome == "unenforced":
+        return FIXES[("unenforced", "monitor" if result["decision"] == "monitor" else "flag")]
+    return FIXES.get((outcome, result["stage"])) or FIXES.get((outcome, None), "")
+
+
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 
@@ -492,7 +516,7 @@ def run_case(case, ctx):
             # e.g. pii_leakage flagging the email in an injection: enforcing it
             # would block this case, but not because it recognised the attack.
             detail += "; not a guard mapped to this class"
-    return {
+    result = {
         "id": case["id"], "threat_class": case["threat_class"], "stage": case["stage"],
         "expect": case["expect"], "decision": info["decision"], "outcome": outcome,
         "detail": detail, "http": status,
@@ -501,6 +525,8 @@ def run_case(case, ctx):
         "technique": case.get("technique", ""), "source": case.get("source", ""),
         "excerpt": _excerpt(case),
     }
+    result["fix"] = fix_for(result)
+    return result
 
 
 def fetch_agent_profiles(base_url, tenant_key, timeout):
@@ -619,6 +645,57 @@ def print_report(summary, results, skipped, show_misses, notes=(), out=sys.stdou
                   f" -> {r['outcome']}" + (f" ({r['detail']})" if r["detail"] else "")
                   + f": {r['excerpt']}", file=out)
 
+    fixes = {}
+    for r in results:
+        if r.get("fix"):
+            fixes[r["fix"]] = fixes.get(r["fix"], 0) + 1
+    if fixes:
+        print("\nWhat to fix:", file=out)
+        for fix, n in sorted(fixes.items(), key=lambda kv: -kv[1]):
+            print(f"  {n:>5}  {fix}", file=out)
+
+
+def _md(text) -> str:
+    return str(text).replace("|", "\\|").replace("\n", " ")
+
+
+def to_markdown(base_url, session, summary, results, notes=()) -> str:
+    """The report as Markdown, for a CI job summary: per-class results, then
+    what to fix grouped by where in the portal it is fixed."""
+    gate = summary["gate"]
+    out = [f"## Red-team check: {'PASS' if gate['passed'] else 'FAIL'}", "",
+           f"`{_md(base_url)}`, {len(results)} cases, session `{session}`", "",
+           "| Class | Caught | Rate | Threshold | Result | Not caught |",
+           "| --- | ---: | ---: | ---: | --- | --- |"]
+    for name, c in sorted(summary["classes"].items()):
+        decided = c["cases"] - c["inconclusive"]
+        rate = f"{c['rate']:.1%}" if c["rate"] is not None else "n/a"
+        extra = ", ".join(f"{c[k]} {k}" for k in ATTACK_OUTCOMES[2:] if c[k])
+        out.append(f"| {_md(name)} | {c['caught'] + c['partial']}/{decided} | {rate} "
+                   f"| {c['threshold']:.0%} | {'PASS' if c['passed'] else 'FAIL'} | {extra} |")
+    fp = summary["false_positives"]
+    if fp["probes"]:
+        rate = f"{fp['rate']:.1%}" if fp["rate"] is not None else "n/a"
+        ok = fp["rate"] is not None and fp["rate"] <= fp["max"] and not fp["inconclusive"]
+        out.append(f"| benign probes blocked | {fp['false_positive']}/{fp['probes']} | {rate} "
+                   f"| max {fp['max']:.0%} | {'PASS' if ok else 'FAIL'} | |")
+    if notes:
+        out += [""] + [f"> {_md(n)}" for n in notes]
+
+    by_fix = {}
+    for r in results:
+        if r.get("fix"):
+            by_fix.setdefault(r["fix"], []).append(r)
+    if by_fix:
+        out += ["", "### What to fix", "", "| Fix | Cases | Example |", "| --- | ---: | --- |"]
+        for fix, rs in sorted(by_fix.items(), key=lambda kv: -len(kv[1])):
+            ex = rs[0]
+            out.append(f"| {_md(fix)} | {len(rs)} | `{_md(ex['id'])}` "
+                       f"({_md(ex['threat_class'])}, {_md(ex['outcome'])}): {_md(ex['excerpt'])} |")
+    if gate["reasons"]:
+        out += ["", "**Gate:** " + _md("; ".join(gate["reasons"]))]
+    return "\n".join(out) + "\n"
+
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Score a Shield tenant against an attack corpus.")
@@ -631,6 +708,7 @@ def main(argv=None) -> int:
     ap.add_argument("--thresholds", default=DEFAULT_THRESHOLDS if os.path.exists(DEFAULT_THRESHOLDS) else None)
     ap.add_argument("--guard-map", default=DEFAULT_GUARD_MAP if os.path.exists(DEFAULT_GUARD_MAP) else None)
     ap.add_argument("--report", help="write the full JSON report here")
+    ap.add_argument("--markdown", help="write a Markdown summary here (e.g. $GITHUB_STEP_SUMMARY)")
     ap.add_argument("--agent", default="claude-code",
                     help="X-Agent-Key for hook and gateway cases without one")
     ap.add_argument("--gateway-route", help="gateway route for gateway cases without a 'route'")
@@ -720,6 +798,9 @@ def main(argv=None) -> int:
                        "guards_seen": guards_seen(results),
                        "agent_profiles": profiles if profiles is not None else {"error": profiles_err},
                        **summary, "cases": results}, f, indent=2)
+    if args.markdown:
+        with open(args.markdown, "a", encoding="utf-8") as f:   # append: a job summary may hold more
+            f.write(to_markdown(base_url, session, summary, results, notes))
     gate = summary["gate"]
     print(f"\nResult: {'PASS' if gate['passed'] else 'FAIL'}"
           + ("" if gate["passed"] else " - " + "; ".join(gate["reasons"])))

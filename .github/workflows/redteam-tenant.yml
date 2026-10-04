@@ -1,0 +1,105 @@
+name: Red-team a tenant
+
+# Runs scripts/redteam_tenant.py against a deployed Shield: a sample of the
+# attack corpus in redteam/corpus/ goes to a test tenant's guard path, and the
+# job fails when a threat class is under its threshold (redteam/thresholds.json),
+# too many benign probes are blocked, or any case gets no usable answer. The run
+# summary lists what got through and where in the portal each is fixed; the
+# full per-case report is kept as an artifact.
+#
+#   gh workflow run redteam-tenant.yml
+#   gh workflow run redteam-tenant.yml -f sample=0        # the whole corpus, ~30 min
+#   gh workflow run redteam-tenant.yml -f shield_url=https://<other-shield>
+#
+# A deploy job in Actions can gate on it:
+#
+#   redteam:
+#     needs: deploy
+#     uses: ./.github/workflows/redteam-tenant.yml
+#     secrets: inherit
+#
+# Needs the repository secret SHIELD_REDTEAM_TENANT_KEY: a TEST tenant's key,
+# never a customer's. The run writes audit rows tagged redteam-check to that
+# tenant. The cap and gateway stages are not run here: they need a short-lived
+# agent token and a sandbox gateway route.
+on:
+  workflow_dispatch:
+    inputs:
+      shield_url:
+        description: "Shield data-plane URL (https)"
+        default: "https://api.guardrails.votal.ai"
+      sample:
+        description: "Cases per threat class (0: the whole corpus)"
+        default: "50"
+      classes:
+        description: "Threat classes, comma-separated (empty: all)"
+        default: ""
+      stages:
+        description: "Stages, comma-separated (input,output,hook)"
+        default: "input,output,hook"
+  workflow_call:
+    inputs:
+      shield_url:
+        type: string
+        default: "https://api.guardrails.votal.ai"
+      sample:
+        type: string
+        default: "50"
+      classes:
+        type: string
+        default: ""
+      stages:
+        type: string
+        default: "input,output,hook"
+    secrets:
+      SHIELD_REDTEAM_TENANT_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  redteam:
+    name: Red-team check
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the secret is set
+        env:
+          TENANT_KEY: ${{ secrets.SHIELD_REDTEAM_TENANT_KEY }}
+        run: |
+          if [ -z "$TENANT_KEY" ]; then
+            echo "::error::Add the repository secret SHIELD_REDTEAM_TENANT_KEY (a test tenant's key) first."
+            exit 1
+          fi
+
+      # Inputs reach the script only through env, never interpolated into the
+      # shell, so a crafted input cannot inject commands.
+      - name: Run scripts/redteam_tenant.py
+        env:
+          SHIELD_URL: ${{ inputs.shield_url }}
+          TENANT_KEY: ${{ secrets.SHIELD_REDTEAM_TENANT_KEY }}
+          SAMPLE: ${{ inputs.sample }}
+          CLASSES: ${{ inputs.classes }}
+          STAGES: ${{ inputs.stages }}
+        run: |
+          args=(--sample "$SAMPLE" --stages "$STAGES"
+                --report redteam-report.json --markdown "$GITHUB_STEP_SUMMARY")
+          if [ -n "$CLASSES" ]; then args+=(--classes "$CLASSES"); fi
+          python scripts/redteam_tenant.py "${args[@]}"
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redteam-report
+          path: redteam-report.json
+          if-no-files-found: ignore
+          retention-days: 30

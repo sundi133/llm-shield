@@ -109,17 +109,37 @@ policy: never by pattern-matching the poison.
 
 ## Assurance loop: how you *ensure* coverage (not assert it)
 
-Coverage is a number you measure continuously, per tenant, against the **live** policy:
+Coverage is a number you measure, per tenant, against the **live** policy:
 
-1. **Attack corpus** per threat class: rewordings, encodings, multi-step
-   (`advbench.json`, `harmbench.json`, `guardrails-red-team-suite/` are the seed).
-2. **Run against the deployed tenant**: same philosophy as `scripts/smoke_agent_hooks.sh`:
-   external, post-deploy, and it *fails* if the decisive deny doesn't happen. Generalize
-   it to a scheduled per-tenant red-team run.
-3. **Gate deploys** on catch-rate; alert on regressions; track per-class over time.
-4. **Escalate the residual** to HITL; **record every decision** in the tamper-evident
-   audit so the result is provable after the fact.
+1. **Run the attack corpus against the tenant.** `scripts/redteam_tenant.py` sends
+   about 27,000 attacks (prompt injection, harmful content, tool poisoning, sensitive
+   disclosure, excessive agency) and benign probes to the tenant's guard path, exactly
+   as an agent would, using a test tenant's key:
+
+   ```bash
+   SHIELD_URL=https://<your-shield> TENANT_KEY=<test tenant key> \
+     python scripts/redteam_tenant.py --sample 50 --report report.json
+   ```
+
+2. **Read the score per threat class.** Each class passes or fails against its
+   threshold, and blocking benign requests counts against the run too, so "block
+   everything" cannot pass.
+3. **Fix what got through.** Every attack that was not stopped is labelled with the
+   reason and the fix:
+
+   | label | meaning | fix |
+   |---|---|---|
+   | `dormant` | no guard that can catch it was running | enable one in the portal (Policies, Tool policies, or Runtime profiles) |
+   | `unenforced` | a guard flagged it, but its action was warn or log, or the tenant is in monitor mode | set the guard's action to Block or Redact in Policies; ask Votal to switch the tenant to enforce mode |
+   | `failed_open` | the guard could not reach its model and allowed the request by default | restore the model backend |
+   | `missed` | the right guard ran and did not flag it | add a custom policy in Policies for that attack |
+
+4. **Run it after every deploy.** The `redteam-tenant.yml` workflow runs the same
+   check, fails when a class drops below its threshold, and posts the "what to fix"
+   list on the run.
+5. **Escalate the residual** to a human approver, and **record every decision** in the
+   tamper-evident audit so the result is provable after the fact.
 
 A control is only "covered" for a tenant when (a) it is enabled and (b) the corpus proves
 it denies. Everything marked `configured` / `dormant-risk` above is covered *only* once
-this loop is green for that tenant.
+this check passes for that tenant.

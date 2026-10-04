@@ -11,6 +11,7 @@ description: An external, corpus-driven red-team harness that runs a labeled att
 > Status: **APPROVED.** Task 1 implemented (corpus, converter, runner, tests).
 > Task 2 implemented (miss labels, `cap` and `gateway` stages); §4 and §7 were
 > corrected against the code during task 2, see "Task 2 corrections" at the end.
+> Task 3 implemented (workflow, fixes per miss, Markdown summary); see "Task 3 notes".
 > Generalizes `scripts/smoke_agent_hooks.sh` (one hook, 7 checks) into a
 > corpus-driven, per-threat-class coverage check across the guard path.
 
@@ -303,3 +304,41 @@ errors (`-32004` no route, `-32603` upstream failure) are inconclusive. **When
 Shield allows a call, the real upstream tool runs.** Only point this stage at a
 route whose upstream is a sandbox; the harness prints that warning when the
 stage runs.
+
+## Task 3 notes
+
+**There is no deploy workflow in Actions.** `build.yml` builds and pushes
+images on push to `main`; deploys (Railway, GCP, RunPod) happen outside
+GitHub. So `.github/workflows/redteam-tenant.yml` is `workflow_dispatch` (run it
+after a deploy, like `smoke-agent-hooks.yml`) and `workflow_call` (a deploy job
+that moves into Actions gates on it with `uses:` + `secrets: inherit`). No
+schedule: the spec did not ask for one, and a nightly full run is ~27k guard
+calls on the data plane, a cost to decide on separately.
+
+The workflow samples 50 cases per class by default, runs only `input`,
+`output` and `hook` (no live tool calls), passes inputs through `env` (never
+`${{ }}` inside `run:`), posts `--markdown` to `$GITHUB_STEP_SUMMARY` and keeps
+`--report` as an artifact for 30 days. Secret: `SHIELD_REDTEAM_TENANT_KEY`.
+
+**Every miss names its fix** (`fix` in the JSON, grouped in both summaries),
+mapped to the tenant portal (`static/tenant.html`):
+
+| miss | fix | where |
+|---|---|---|
+| dormant, input | enable a guard | Policies |
+| dormant, output | output custom policy or tool sanitization mode | Policies, Tool policies |
+| dormant, hook | bind a runtime profile | Runtime profiles |
+| unenforced, warn/log | action Block/Redact | Policies |
+| unenforced, monitor | enforce mode | admin API only |
+| failed_open | restore the model backend | none |
+| missed | custom policy, or a detection gap | Policies |
+
+**Open, found while mapping fixes (each its own spec if pursued):**
+- **Enforce mode is not self-service.** `policy_mode` is set only by
+  `PUT /v1/admin/tenants/{id}/policy-mode` (platform admin); the tenant portal
+  has no control, so SecOps cannot act on an `unenforced (monitor mode)` result.
+- **No fail-closed option for model guards.** `adversarial_detection`,
+  `toxicity`, `bias_detection`, `tone_enforcement` and others return
+  `passed: true` ("allowing by default") when the model backend is down, and no
+  tenant setting changes that. Custom policies already carry a `fail_open`
+  flag; the built-in model guards do not.

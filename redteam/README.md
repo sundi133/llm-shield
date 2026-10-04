@@ -17,6 +17,8 @@ SHIELD_URL=https://<data-plane> TENANT_KEY=<test-tenant-key> \
   run the whole set on a schedule.
 - `--classes prompt-injection,excessive-agency` and `--stages input,hook` narrow it.
 - `--validate` checks the corpus files and makes no calls.
+- `--markdown FILE` appends a Markdown summary (per-class results, then what to
+  fix); CI points it at `$GITHUB_STEP_SUMMARY`.
 - `SHIELD_URL` must be `https://`, or `http://` on localhost: the tenant key and
   agent token travel in headers. `--allow-http` permits plain http to another
   host on a network you trust.
@@ -47,6 +49,37 @@ note naming them. `dormant` is only claimed on evidence;
 if the harness cannot see what ran, the miss stays `missed`. Which guards
 "should catch" a case comes from `guard_map.json` (by stage and threat class),
 plus the case's own `guards` and `guards_hint`.
+
+## Fixing what it finds
+
+Each miss in the report carries a `fix`: where in the tenant portal SecOps
+fixes it. The terminal report and the Markdown summary group misses by fix.
+
+| report says | fix | where |
+|---|---|---|
+| `dormant` (input) | enable a guard for that class | Policies (input guardrails) |
+| `dormant` (output) | add an output custom policy, or set a tool's sanitization mode | Policies (custom policies), Tool policies |
+| `dormant` (hook) | bind the agent to a runtime profile | Runtime profiles (Turn on for Claude Code) |
+| `unenforced`, warn/log | set the flagging guard's action to Block or Redact | Policies |
+| `unenforced`, monitor mode | switch the tenant to enforce | **not in the portal**: `PUT /v1/admin/tenants/{id}/policy-mode` (platform admin) |
+| `failed_open` | restore the model backend | **not in the portal**: no setting makes model guards fail closed |
+| `missed` | write a custom policy for that attack, or report a detection gap | Policies (custom policies) |
+
+Two fixes are not in a tenant's hands: enforce mode and fail-open behaviour.
+
+## In CI
+
+`.github/workflows/redteam-tenant.yml` runs it with `--sample 50` against a
+test tenant (repository secret `SHIELD_REDTEAM_TENANT_KEY`), posts the Markdown
+summary on the run page and keeps the JSON report as an artifact.
+
+```bash
+gh workflow run redteam-tenant.yml                  # sampled, after a deploy
+gh workflow run redteam-tenant.yml -f sample=0      # the whole corpus
+```
+
+A deploy job in Actions gates on it with `uses: ./.github/workflows/redteam-tenant.yml`
+and `secrets: inherit`. Today deploys happen outside Actions, so run it after one.
 
 ## The cap and gateway stages
 

@@ -618,6 +618,96 @@ def test_sampling_caps_each_class_and_is_repeatable():
     assert [c["id"] for c in one] == [c["id"] for c in rt.select(cases, sample=10, seed=7)]
 
 
+# ── task 3: what to fix, the summary, and the workflow ──────────────────────
+
+def _r(outcome, stage="input", decision="allow", **kw):
+    return dict({"id": "x", "threat_class": "c", "stage": stage, "expect": "block",
+                 "decision": decision, "outcome": outcome, "excerpt": "e"}, **kw)
+
+
+@pytest.mark.parametrize("result,start", [
+    (_r("dormant", "input"), "Policies: enable a guard"),
+    (_r("dormant", "output"), "Policies: add an output custom policy"),
+    (_r("dormant", "hook"), "Runtime profiles: bind the agent"),
+    (_r("unenforced", decision="flag"), "Policies: set the flagging guard's action"),
+    (_r("unenforced", decision="monitor"), "Not in the portal: the tenant is in monitor mode"),
+    (_r("failed_open"), "Not in the portal: restore the model backend"),
+    (_r("missed", "output"), "Policies: write a custom policy"),
+    (_r("caught", decision="block"), ""),
+    (_r("ok"), ""),
+    (_r("inconclusive"), ""),
+])
+def test_each_miss_names_where_it_is_fixed(result, start):
+    fix = rt.fix_for(result)
+    assert fix.startswith(start) if start else fix == ""
+
+
+def test_markdown_groups_failures_by_fix():
+    results = [_r("dormant", id="a", threat_class="tool-poisoning", excerpt="x | y"),
+               _r("dormant", id="b", threat_class="tool-poisoning"),
+               _r("failed_open", id="c")]
+    for r in results:
+        r["fix"] = rt.fix_for(r)
+    summary = rt.score(results, dict(rt.DEFAULT_THRESHOLD_CFG))
+    md = rt.to_markdown("https://shield.example", "redteam-1", summary, results, ["a note"])
+    assert md.startswith("## Red-team check: FAIL")
+    assert "| tool-poisoning | 0/2 | 0.0% | 80% | FAIL | 2 dormant |" in md
+    assert "### What to fix" in md
+    dormant_row = next(line for line in md.splitlines() if line.startswith("| Policies: enable"))
+    assert "| 2 |" in dormant_row and "x \\| y" in dormant_row   # pipes escaped
+    assert "> a note" in md
+
+
+def test_markdown_flag_appends_the_summary(shield, tmp_path):
+    md = tmp_path / "summary.md"
+    md.write_text("earlier step\n")
+    shield.guard_on = False
+    shield.ran["input"] = ["sentiment"]
+    code, out = _run(shield.url, _write(tmp_path, [PI]), "--markdown", str(md))
+    text = md.read_text()
+    assert text.startswith("earlier step\n## Red-team check: FAIL")
+    assert "Policies: enable a guard for this class" in text
+    assert "What to fix:" in out and "Policies: enable a guard" in out
+
+
+WORKFLOW = os.path.join(ROOT, ".github", "workflows", "redteam-tenant.yml")
+
+
+def _workflow():
+    import yaml
+    wf = yaml.safe_load(open(WORKFLOW))
+    return wf, wf.get("on", wf.get(True))   # YAML 1.1 reads a bare `on` key as True
+
+
+def test_workflow_runs_on_demand_and_from_a_deploy_job():
+    wf, on = _workflow()
+    assert set(on) == {"workflow_dispatch", "workflow_call"}
+    assert set(on["workflow_dispatch"]["inputs"]) == set(on["workflow_call"]["inputs"])
+    assert on["workflow_call"]["secrets"]["SHIELD_REDTEAM_TENANT_KEY"]["required"] is False
+    assert wf["permissions"] == {"contents": "read"}
+    for trigger in ("workflow_dispatch", "workflow_call"):
+        stages = on[trigger]["inputs"]["stages"]["default"]
+        assert set(stages.split(",")) == {"input", "output", "hook"}   # no live tool calls
+
+
+def test_workflow_inputs_never_reach_the_shell_directly():
+    """`${{ inputs.x }}` inside run: is expanded before bash sees it: a script
+    injection. Inputs must arrive through env."""
+    wf, _ = _workflow()
+    for step in wf["jobs"]["redteam"]["steps"]:
+        assert "${{" not in step.get("run", ""), step.get("name")
+
+
+def test_workflow_passes_only_flags_the_script_has():
+    wf, _ = _workflow()
+    run = next(s["run"] for s in wf["jobs"]["redteam"]["steps"] if "redteam_tenant.py" in s.get("run", ""))
+    flags = set(re.findall(r"(--[a-z-]+)", run))
+    help_text = subprocess.run([sys.executable, SCRIPT, "--help"], capture_output=True,
+                               text=True, timeout=30).stdout
+    assert flags and all(f in help_text for f in flags), flags
+    assert '--markdown "$GITHUB_STEP_SUMMARY"' in run and "--report" in run
+
+
 # ── regression guards ───────────────────────────────────────────────────────
 
 def test_hook_body_matches_the_smoke_check():
