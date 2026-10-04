@@ -9,8 +9,6 @@ description: Let a tenant's SecOps see and switch their guardrail policy between
 # Spec: Tenant self-service enforce mode
 
 > Status: **APPROVED** 2026-10-04. Task 1 (API) implemented.
-> Found by the red-team harness (docs/specs/redteam-tenant-harness.md, task 3
-> notes): an `unenforced (monitor mode)` result had no fix a tenant could make.
 
 ## 1. Problem & outcome
 
@@ -25,8 +23,7 @@ Today only the platform admin API changes it:
 
 The tenant portal (`static/tenant.html`) neither shows the mode nor changes it.
 So a tenant onboarded from a template is unprotected until Votal staff flip it,
-SecOps cannot see that they are in monitor mode, and when the red-team harness
-reports `unenforced (monitor mode)` they cannot act on it.
+and SecOps can neither see that they are in monitor mode nor switch out of it.
 
 **Outcome.** SecOps sees the current mode in the portal's Policies tab and
 switches it themselves, with the change audited (who, when, why) and taking
@@ -34,8 +31,8 @@ effect on the guard path within the tenant cache TTL.
 
 **Observable success condition.** A tenant in monitor mode opens Policies, sees
 "Monitor: would-be blocks are recorded, not enforced", clicks Enforce, and
-within the propagation bound (about 2 minutes by default, §2) a red-team run that reported
-`unenforced (monitor mode)` reports `caught`. The admin audit shows
+within the propagation bound (about 2 minutes by default, §2) a request that
+came back `action: monitor` comes back `action: block`. The admin audit shows
 `tenant_self_set_policy_mode` with before, after, actor and reason.
 
 **Non-goals.**
@@ -198,7 +195,6 @@ store:
    `tests/test_tenant_policy_mode.py`.
 2. **Portal.** The Enforcement mode panel in the Policies tab (badge, coverage
    note, propagation note, reason and confirm), plus its wiring test.
-3. **Harness pointer.** In `scripts/redteam_tenant.py`, change the
-   `unenforced (monitor mode)` fix from "Not in the portal" to "Policies:
-   Enforcement mode", and the coverage matrix's "ask Votal" line to match. After
-   tasks 1 and 2 merge.
+
+(A third task pointed the red-team harness at the new panel; the harness was
+dropped on 2026-10-04, red teaming being covered by another product.)
