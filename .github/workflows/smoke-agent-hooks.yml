@@ -1,0 +1,47 @@
+name: Smoke check coding-agent hooks
+
+# Runs scripts/smoke_agent_hooks.sh against a deployed Shield: the hook route
+# exists, the portal routes answer, ordinary work is allowed, and a denied
+# command is denied. Read-only apart from its own audit rows (tagged
+# smoke-check). Run it after a deploy:
+#
+#   gh workflow run smoke-agent-hooks.yml
+#   gh workflow run smoke-agent-hooks.yml -f shield_url=https://<other-shield>
+#
+# Needs the repository secret SHIELD_SMOKE_TENANT_KEY: a tenant key for a tenant
+# whose agent claude-code (or the agent given) is bound to a runtime profile
+# that denies the checked command. Use a dedicated test tenant, not a customer's.
+on:
+  workflow_dispatch:
+    inputs:
+      shield_url:
+        description: "Shield data-plane URL"
+        default: "https://api.guardrails.votal.ai"
+      agent:
+        description: "Agent id checked (its profile must deny the command)"
+        default: "claude-code"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Smoke check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the secret is set
+        env:
+          TENANT_KEY: ${{ secrets.SHIELD_SMOKE_TENANT_KEY }}
+        run: |
+          if [ -z "$TENANT_KEY" ]; then
+            echo "::error::Add the repository secret SHIELD_SMOKE_TENANT_KEY (a test tenant's key) first."
+            exit 1
+          fi
+      - name: Run scripts/smoke_agent_hooks.sh
+        env:
+          SHIELD_URL: ${{ inputs.shield_url }}
+          TENANT_KEY: ${{ secrets.SHIELD_SMOKE_TENANT_KEY }}
+          SMOKE_AGENT: ${{ inputs.agent }}
+        run: ./scripts/smoke_agent_hooks.sh
