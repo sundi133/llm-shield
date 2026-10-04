@@ -5172,6 +5172,7 @@ if __name__ == "__main__":
           <label style="font-size:12px;margin-right:0.75rem;color:var(--text-dim);"><input type="checkbox" class="wh-event" value="policy_changed"> policy_changed</label>
           <label style="font-size:12px;margin-right:0.75rem;color:var(--text-dim);"><input type="checkbox" class="wh-event" value="budget_exceeded"> budget_exceeded</label>
           <label style="font-size:12px;margin-right:0.75rem;color:var(--text-dim);"><input type="checkbox" class="wh-event" value="shadow_agent_detected" checked> shadow_agent_detected</label>
+          <label style="font-size:12px;margin-right:0.75rem;color:var(--text-dim);" title="A tool policy check could not run (model error or timeout). At most one alert per 5 minutes, with a count."><input type="checkbox" class="wh-event" value="check_unavailable"> check_unavailable</label>
         </div>
       </div>
       <div class="card">
@@ -10007,6 +10008,8 @@ function peStateFrom(policy, library, role) {
                        replacement: r.replacement || '[REDACTED]', enabled: r.enabled !== false,
                        block: r.action === 'block' || r.severity === 'critical' });
   }
+  // '' = not set, 'through' = false, 'block' = true (docs/specs/tool-policy-fail-safe.md)
+  st.failClosed = base.fail_closed === true ? 'block' : base.fail_closed === false ? 'through' : '';
   return st;
 }
 
@@ -10043,7 +10046,48 @@ function pePolicyFrom(st, library) {
   // Mode "ai" skips the patterns entirely (core/dlp floor runs in regex|both).
   if (p.sanitization_rules.length && (p.sanitization_mode || 'regex') === 'ai') p.sanitization_mode = 'both';
   if (p.enabled === undefined) p.enabled = true;
+  if (st.failClosed === 'block') p.fail_closed = true;
+  else if (st.failClosed === 'through') p.fail_closed = false;
+  else delete p.fail_closed;
   return p;
+}
+
+// Whether the default policy's "block" reaches this tool. A tool that opted
+// out of the default (inherit_global: false) decides alone.
+function peInheritsBlock(st) {
+  return !!st.embedded && !!st.inheritedFailClosed && (st.base || {}).inherit_global !== false;
+}
+
+// The "If a check can't run" choices. The default policy has two; a tool also
+// has "same as the default", and cannot pick "let through" under a default
+// that blocks (the guard would ignore it: the default is a floor).
+function peFailOptions(st) {
+  if (!st.embedded) {
+    return { value: st.failClosed === 'block' ? 'block' : 'through', options: [
+      { value: 'through', label: 'Let the call through' },
+      { value: 'block', label: 'Block the call' }] };
+  }
+  const inherited = peInheritsBlock(st);
+  return { value: st.failClosed, options: [
+    { value: '', label: `Same as the default policy (${inherited ? 'block' : 'let through'})` },
+    { value: 'through', label: 'Let the call through', disabled: inherited },
+    { value: 'block', label: 'Block the call' }] };
+}
+
+// The default policy card's status line, from GET /v1/data-policies/status.
+// Says what is true now, not just that a policy exists.
+function peStatusLine(s) {
+  if (!s) return null;
+  const monitor = s.policy_mode === 'monitor';
+  const mode = monitor ? 'Monitor only: tool calls are checked and reported, not blocked.' : 'Enforcing.';
+  const fail = s.default_policy
+    ? `If a check can't run, the call is ${s.fail_closed ? 'blocked' : 'let through'}.`
+    : "If a check can't run, the call is let through unless the tool's own policy says block.";
+  const u = s.unjudged || {}, c = u.tool_calls || {}, r = u.tool_results || {};
+  const week = (c['7d'] || 0) + (r['7d'] || 0);
+  const counts = week === 0 ? 'Every check ran in the last 7 days.'
+    : `${c.today || 0} tool call(s) and ${r.today || 0} tool result(s) went unchecked today (UTC); ${week} in the last 7 days.`;
+  return { text: `${mode} ${fail} ${counts}`, warn: monitor || (week > 0 && !s.fail_closed) };
 }
 
 function peValidate(st, library) {
@@ -10054,6 +10098,8 @@ function peValidate(st, library) {
   st.patterns.forEach((r, i) => {
     if (r.regex.trim() && !r.name.trim()) problems.push(`Secret pattern ${i + 1} needs a name.`);
   });
+  if (st.failClosed === 'through' && peInheritsBlock(st))
+    problems.push("The default policy blocks when a check can't run; a tool cannot switch that off.");
   return problems;
 }
 
@@ -10100,27 +10146,44 @@ function peRenderHtml(id, st, library) {
       const threats = e.threats.map(t => 'T' + t).join(' ');
       const detail = e.side === 'secret' ? e.pattern.regex : e.rule;
       const needs = e.needs && on ? `<input type="text" placeholder="your domains, e.g. acme.com, acme.co.uk" value="${_esc(st.domains)}"
-            data-pe="${_esc(id)}" data-field="domains" oninput="peSet(this)" style="${box}width:100%;margin-top:0.3rem;">` : '';
-      return `<div style="padding:0.25rem 0;">
-        <label style="display:flex;gap:0.45rem;align-items:flex-start;font-size:12.5px;cursor:pointer;">
-          <input type="checkbox" ${on ? 'checked' : ''} data-pe="${_esc(id)}" data-entry="${_esc(e.id)}" onchange="peToggle(this)">
-          <span>${_esc(e.name)} <span class="muted" style="font-size:10.5px;">${_esc(threats)}</span>
-            ${e.recommended ? '' : '<span class="muted" style="font-size:10.5px;">· needs your input</span>'}</span>
-        </label>
-        <details style="margin-left:1.6rem;"><summary class="muted" style="font-size:10.5px;cursor:pointer;">rule</summary>
-          <div class="muted" style="font-size:11px;white-space:pre-wrap;">${_esc(detail)}</div></details>
+            data-pe="${_esc(id)}" data-field="domains" oninput="peSet(this)" style="${box}width:calc(100% - 1.45rem);margin:0.3rem 0 0 1.45rem;">` : '';
+      // One line per protection: checkbox, name, threats, and a "rule" toggle
+      // on the same line; the rule text opens underneath. The checkbox's top
+      // margin centres it on the first line of a name that wraps.
+      return `<div style="padding:0.2rem 0;min-width:0;">
+        <div style="display:flex;gap:0.45rem;align-items:flex-start;font-size:12.5px;line-height:1.4;">
+          <input type="checkbox" id="${_esc(id)}-pe-${_esc(e.id)}" ${on ? 'checked' : ''} data-pe="${_esc(id)}" data-entry="${_esc(e.id)}" onchange="peToggle(this)"
+            style="margin:2px 0 0;flex:none;cursor:pointer;">
+          <label for="${_esc(id)}-pe-${_esc(e.id)}" style="cursor:pointer;flex:0 1 auto;min-width:0;">${_esc(e.name)}
+            <span class="muted" style="font-size:10.5px;">${_esc(threats)}</span>${e.recommended ? '' : '<span class="muted" style="font-size:10.5px;"> · needs your input</span>'}</label>
+          <button type="button" class="muted" aria-expanded="false" onclick="peRuleToggle(this)"
+            style="flex:none;background:none;border:0;padding:0 0.1rem;font-size:10.5px;cursor:pointer;color:var(--text-2,#888);text-decoration:underline dotted;">rule</button>
+        </div>
+        <div class="muted pe-rule" hidden style="font-size:11px;white-space:pre-wrap;margin:0.2rem 0 0 1.45rem;">${_esc(detail)}</div>
         ${needs}
       </div>`;
-    }).join('');
-    return `<div style="flex:1 1 280px;min-width:240px;"><div style="font-size:12px;font-weight:600;margin-bottom:0.2rem;">${label}</div>${items || '<div class="muted" style="font-size:11px;">Library unavailable.</div>'}</div>`;
+    });
+    const count = library.filter(e => e.side === side && st.ticked.includes(e.id)).length;
+    return `<div style="margin-bottom:0.6rem;">
+      <div style="font-size:12px;font-weight:600;margin-bottom:0.2rem;">${label}
+        <span class="muted" style="font-weight:400;font-size:11px;">${count} of ${items.length} on</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr));column-gap:1.25rem;">
+        ${items.join('') || '<div class="muted" style="font-size:11px;">Library unavailable.</div>'}</div></div>`;
   };
-  const list = (key, label) => `
-    <div style="margin-bottom:0.6rem;"><div style="font-size:12px;font-weight:600;margin-bottom:0.25rem;">${label}</div>
-      ${st[key].map((rule, i) => `<div style="display:flex;gap:0.35rem;margin-bottom:0.3rem;">
-        <input type="text" value="${_esc(rule)}" maxlength="1000" placeholder="e.g. BLOCK sending email outside acme.com"
-          data-pe="${_esc(id)}" data-list="${key}" data-i="${i}" oninput="peSetItem(this)" style="${box}flex:1;">
-        <button class="small" title="Remove" data-pe="${_esc(id)}" data-list="${key}" data-i="${i}" onclick="peRemove(this)">✕</button></div>`).join('')}
-      <button class="small" data-pe="${_esc(id)}" data-list="${key}" onclick="peAdd(this)">+ Add rule</button></div>`;
+  // One box per side, one rule per line: the storage contract the old
+  // Configure screen had (split on newlines, trimmed, blanks dropped), so a
+  // policy written as a block of markdown reads as one document again instead
+  // of one input per line.
+  const list = (key, label, example) => {
+    const text = st[key].join('\n');
+    const rows = Math.max(3, Math.min(st[key].length + 1, 18));
+    return `
+    <div style="margin-bottom:0.6rem;"><div style="font-size:12px;font-weight:600;margin-bottom:0.25rem;">${label}
+        <span class="muted" style="font-weight:400;font-size:11px;">one rule per line</span></div>
+      <textarea rows="${rows}" spellcheck="false" placeholder="${_esc(example)}"
+        data-pe="${_esc(id)}" data-list="${key}" oninput="peLines(this)"
+        style="${box}width:100%;min-height:0;line-height:1.45;resize:vertical;">${_esc(text)}</textarea></div>`;
+  };
   const patterns = `
     <div style="font-size:12px;font-weight:600;margin-bottom:0.25rem;">Secret patterns</div>
     ${st.patterns.map((r, i) => `<div style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap;margin-bottom:0.3rem;">
@@ -10156,6 +10219,7 @@ function peRenderHtml(id, st, library) {
     ${tryIt}`;
   }
   const opt = (v, label, cur) => `<option value="${_esc(v)}" ${v === cur ? 'selected' : ''}>${_esc(label)}</option>`;
+  const fail = peFailOptions(st);
   const presets = [['full_access', 'Full access'], ['read_only', 'Read-only + PII masked'],
                    ['pii_safe', 'Strict PII-safe'], ['audit', 'Audit'], ['blocked', 'Blocked']];
   const roleBar = st.roleChoices ? `
@@ -10176,15 +10240,22 @@ function peRenderHtml(id, st, library) {
         <option value="">Apply preset…</option>${presets.map(([v, l]) => opt(v, l, '')).join('')}</select>
     </div>` : '';
   return `${switcher}${roleBar}
-    <div style="display:flex;align-items:center;gap:0.5rem;">
-      ${head('Ready-made protections')}
+    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin:0.9rem 0 0.45rem;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-2,#888);">Ready-made protections</div>
       <span style="margin-left:auto;display:flex;gap:0.35rem;">
         <button class="small" data-pe="${_esc(id)}" onclick="peRecommended(this)">Tick recommended</button>
         <button class="small" data-pe="${_esc(id)}" onclick="peClear(this)">Clear</button></span></div>
-    <div style="display:flex;gap:1rem;flex-wrap:wrap;">
-      ${group('call', 'Tool calls')}${group('result', 'Tool results')}${group('secret', 'Secrets')}</div>
+    ${group('call', 'Tool calls')}${group('result', 'Tool results')}${group('secret', 'Secrets')}
+    ${head("If a check can't run")}
+    <div style="display:flex;gap:0.45rem;align-items:center;flex-wrap:wrap;">
+      <select data-pe="${_esc(id)}" data-field="failClosed" onchange="peSet(this)" style="${box}width:auto;">
+        ${fail.options.map(o => `<option value="${_esc(o.value)}" ${o.value === fail.value ? 'selected' : ''} ${o.disabled ? 'disabled' : ''}>${_esc(o.label)}</option>`).join('')}</select>
+      <span class="muted" style="font-size:11px;flex:1 1 20rem;">The model that checks these rules can fail or time out.
+        Blocking is safer for tools that move money or data; letting through keeps agents working.
+        Either way it is counted, and alerted to webhooks subscribed to <code>check_unavailable</code>.</span></div>
     ${head('Your rules')}
-    ${list('calls', 'Tool calls')}${list('results', 'Tool results')}${patterns}
+    ${list('calls', 'Tool calls', 'e.g. BLOCK sending email outside acme.com\nBLOCK attachments larger than 10 MB')}
+    ${list('results', 'Tool results', 'e.g. Mask account numbers except the last 4 digits')}${patterns}
     ${hidden.length ? `<div class="muted" style="font-size:11px;margin-top:0.6rem;">Also contains ${_esc(hidden.join(', '))}; kept as they are. Edit them in the JSON view.</div>` : ''}
     ${tryIt}
     ${st.embedded ? '' : `<div style="margin-top:0.8rem;"><button class="primary small" data-pe="${_esc(id)}" onclick="peSave(this)">Save</button></div>`}`;
@@ -10205,7 +10276,9 @@ function pePreferredView() {
 
 // opts: onSave(policy); role (initial); roles (registered roles, turns on the
 // role picker); embedded (the host saves, so no Save buttons; it shows the
-// floor and compliance itself); onView(view), told whenever the view changes.
+// floor and compliance itself); onView(view), told whenever the view changes;
+// inheritedFailClosed (a tool's editor: the default policy blocks when a check
+// can't run).
 function peMount(containerId, id, policy, opts) {
   opts = opts || {};
   PE[id] = peRebuild({ opts, containerId, view: pePreferredView() }, policy, opts.role || '*');
@@ -10218,6 +10291,7 @@ function peRebuild(prev, policy, role) {
   const o = prev.opts || {};
   return { ...peStateFrom(policy, PE_LIBRARY || [], role), opts: o, containerId: prev.containerId,
            view: prev.view || 'form', jsonText: null, embedded: !!o.embedded,
+           inheritedFailClosed: !!o.inheritedFailClosed,
            roleChoices: o.roles ? peRoleChoices(policy, o.roles) : null };
 }
 
@@ -10246,7 +10320,12 @@ function peToggle(el) {
   peRerender(el.dataset.pe);   // a rule that needs input shows its field
 }
 function peSet(el) { PE[el.dataset.pe][el.dataset.field] = el.value; }
-function peSetItem(el) { PE[el.dataset.pe][el.dataset.list][+el.dataset.i] = el.value; }
+function peRuleToggle(btn) {
+  const rule = btn.parentElement.parentElement.querySelector('.pe-rule');
+  rule.hidden = !rule.hidden;
+  btn.setAttribute('aria-expanded', String(!rule.hidden));
+}
+function peLines(el) { PE[el.dataset.pe][el.dataset.list] = el.value.split('\n'); }
 function peAdd(el) {
   const st = PE[el.dataset.pe];
   st[el.dataset.list].push(el.dataset.list === 'patterns'
@@ -10384,9 +10463,25 @@ async function loadGlobalDataPolicy() {
         the default cannot be cancelled from below. Start at
         <code>warn</code> and escalate once Telemetry looks right.
       </div>
+      <div id="gdp-status" style="font-size:12px;margin-top:0.45rem;"></div>
       <div id="gdp-editor"></div>
     </div>`;
   peMount('gdp-editor', 'gdp', { ...p, enabled: on }, { onSave: saveGlobalDataPolicy });
+  loadToolPolicyStatus();
+}
+
+async function peFetchStatus() {
+  try {
+    const res = await fetch('/v1/data-policies/status', { headers: { 'X-API-Key': API_KEY } });
+    return res.ok ? await res.json() : null;
+  } catch (e) { return null; }
+}
+
+async function loadToolPolicyStatus() {
+  const line = peStatusLine(await peFetchStatus());
+  const el = document.getElementById('gdp-status');
+  if (!el || !line) return;
+  el.innerHTML = `<span style="color:${line.warn ? 'var(--warning,#d4a017)' : 'var(--text-2,#888)'};">${_esc(line.text)}</span>`;
 }
 
 async function saveGlobalDataPolicy(body) {
@@ -10586,6 +10681,7 @@ async function openDataPolicyModal(toolName) {
   // on save. The allowlist and compliance sections below are unchanged.
   const dp = DATA_POLICIES_CACHE[toolName] || {};
   await peLoadLibrary();
+  const status = await peFetchStatus();
   const compliance = (dp.compliance_framework || '').toLowerCase();
   const auditOn    = !!dp.audit_required;
   const retention  = dp.retention_days || '';
@@ -10705,6 +10801,7 @@ async function openDataPolicyModal(toolName) {
   document.body.insertAdjacentHTML('beforeend', html);
   peMount('dp-editor', 'tdp', dp, {
     role: initialRole, roles: [...REGISTERED_AGENT_ROLES], embedded: true,
+    inheritedFailClosed: !!(status && status.fail_closed),
     // In the JSON view the whole policy is the one source: hide the sections
     // that would otherwise also edit the floor and compliance fields.
     onView: v => { const x = document.getElementById('dp-extras'); if (x) x.style.display = v === 'json' ? 'none' : ''; },

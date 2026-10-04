@@ -229,3 +229,11 @@ editor (task 3) gets the same switch.
   `addDPSanitizationExample`, `dpUpdateSanCount`, `dpSelectMode`,
   `_dpCurrentMode`, `applyDPRoleTemplate`, `insertDPRoleExample`,
   `dpRemoveSanRule`, `dpUpdateEffective`).
+
+Follow-up (after task 3): "Your rules" was one input per stored rule. The old
+Configure screen stored rules one per line and showed them back as one block,
+so a policy written as markdown came back as one input per line. Each side is
+one box again, one rule per line, with the old screen's storage contract (split
+on newlines, trimmed, blanks dropped), so existing policies load and save
+unchanged. Tests: `tests/test_tool_policy_editor_portal.py`, "rules written as
+a block".

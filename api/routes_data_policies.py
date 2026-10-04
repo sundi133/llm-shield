@@ -129,6 +129,11 @@ class ToolDataPolicy(BaseModel):
     # AI pass on whatever's left. Default stays "regex" so existing policies
     # keep their behavior untouched.
     sanitization_mode: str = "regex"
+    #: What happens when the model that judges this tool's rules cannot answer
+    #: (error, timeout, unreadable verdict). True blocks the call or result;
+    #: False or unset lets it through, labelled unchecked. A default policy
+    #: set to True cannot be cancelled here. Spec: docs/specs/tool-policy-fail-safe.md
+    fail_closed: Optional[bool] = None
 
 
 class PreviewSanitizationRequest(BaseModel):
@@ -361,6 +366,9 @@ class GlobalDataPolicy(BaseModel):
     #: Author a policy and turn it off without deleting it. What an operator
     #: wants when narrowing a false positive under time pressure.
     enabled: bool = True
+    #: True: a check that cannot run blocks, for every tool that inherits this
+    #: default. No tool policy can switch it back off.
+    fail_closed: Optional[bool] = None
 
 
 @router.get("/global/policy")
@@ -820,6 +828,37 @@ async def preview_sanitization(
 
 # ── Policy editor: ready-made protections and a dry run ─────────────────────
 # Spec: docs/specs/tool-policy-editor.md, task 1.
+
+@router.get("/status")
+async def get_tool_policy_status(tenant_id: str = Depends(get_tenant_from_request)):
+    """What the tool policies actually do right now, for the default policy
+    card: the tenant's mode, what happens when a check cannot run, and how
+    many checks could not run (today, UTC, and the last 7 days).
+
+    Deliberately silent on SHIELD_DLP_FAIL_CLOSED: that is the data plane's
+    env, which this plane cannot see. Spec: docs/specs/tool-policy-fail-safe.md
+    """
+    from core.policy_mode import resolve_mode
+    from storage.guardrail_metrics import get_unjudged_counts
+    from storage.tenant_store import get_tenant
+    try:
+        default = _load_all(tenant_id).get(GLOBAL_POLICY_KEY) or {}
+    except Exception:
+        default = {}
+    active = bool(default) and default.get("enabled", True) is not False
+    return {
+        "tenant_id": tenant_id,
+        "policy_mode": resolve_mode(get_tenant(tenant_id) or {}),
+        "default_policy": active,
+        # A turned-off default is not loaded on the guard path, so its choice
+        # does not apply either.
+        "fail_closed": active and default.get("fail_closed") is True,
+        "unjudged": {
+            "tool_calls": get_unjudged_counts(tenant_id, "tool_call_validation"),
+            "tool_results": get_unjudged_counts(tenant_id, "tool_output_sanitization"),
+        },
+    }
+
 
 @router.get("/library")
 async def get_policy_library(tenant_id: str = Depends(get_tenant_from_request)):

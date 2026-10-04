@@ -237,7 +237,11 @@ _CALL_SITE_LABELS = {
     "api/routes_agent_chat.py": {"agent chat"},
     "api/routes_litellm_guardrail.py": {"LiteLLM"},
 }
-_NOT_GUARD_PATHS = {"core/policy_mode.py", "api/routes_tenant_self.py"}   # define / display only
+# define / display only. routes_data_policies.py reports the mode on GET
+# /v1/data-policies/status (docs/specs/tool-policy-fail-safe.md) and applies it
+# nowhere: its dry run (/try) deliberately ignores mode.
+_NOT_GUARD_PATHS = {"core/policy_mode.py", "api/routes_tenant_self.py",
+                    "api/routes_data_policies.py"}
 _CALL = re.compile(r"\b(?:resolve_mode|apply_policy_mode|policy_mode\.apply|apply_to_response)\(")
 
 

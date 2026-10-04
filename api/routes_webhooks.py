@@ -53,6 +53,10 @@ VALID_EVENTS = [
     "aibom_drift_detected",
     "exception_requested",
     "exception_decided",
+    # A tool policy check could not run (model error, timeout, no verdict).
+    # At most one per tenant per side per 5 minutes per worker, with a count.
+    # Spec: docs/specs/tool-policy-fail-safe.md
+    "check_unavailable",
 ]
 
 
