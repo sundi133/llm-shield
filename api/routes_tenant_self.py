@@ -17,6 +17,7 @@ from storage.tenant_models import GuardrailPolicy, effective_quota
 from storage.rate_limiter import get_usage
 from storage.admin_audit import log_admin_action
 from storage.audit_log import audit_logger
+from core.policy_mode import ENFORCE, MONITOR, resolve_mode
 from storage.custom_policies import (
     save_custom_policy,
     get_custom_policy,
@@ -376,6 +377,118 @@ async def update_my_policies(request: Request, body: TenantSelfUpdateRequest):
         "input_guardrails": config.get("input_guardrails", {}),
         "output_guardrails": config.get("output_guardrails", {}),
     }
+
+
+# ── Enforcement mode (monitor / enforce) ─────────────────────────────────────
+# Spec: docs/specs/tenant-enforce-mode.md. The platform admin API
+# (PUT /v1/admin/tenants/{id}/policy-mode) writes the same field; these let the
+# tenant's own SecOps see and change it.
+
+# Where policy_mode takes effect. tests/test_tenant_policy_mode.py checks these
+# against the call sites of core.policy_mode, so the portal cannot misstate what
+# monitor mode covers.
+POLICY_MODE_APPLIES_TO = ["/guardrails/input", "/guardrails/file", "tool and MCP calls",
+                          "gateway", "OpenAI-compatible proxy", "agent chat", "LiteLLM"]
+POLICY_MODE_NOT_APPLIED_TO = ["/guardrails/output"]
+_MODE_REASON_MAX = 500
+
+
+def _mode_self_service() -> bool:
+    """SHIELD_TENANT_POLICY_MODE_SELF_SERVICE: on unless set off. Read from the
+    process, never the request; off keeps the mode admin-only, as before."""
+    import os
+    value = os.environ.get("SHIELD_TENANT_POLICY_MODE_SELF_SERVICE", "on").strip().lower()
+    return value not in ("off", "0", "false", "no")
+
+
+def _mode_propagation_seconds() -> int:
+    """Worst case before every guard-path process uses a new mode: the
+    middleware's per-key tenant cache, then tenant_store's cache behind it."""
+    from core.middleware import _CACHE_TTL_SECONDS
+    from storage import tenant_store
+    return int(_CACHE_TTL_SECONDS + tenant_store._CACHE_TTL)
+
+
+class PolicyModeUpdate(BaseModel):
+    mode: str
+    reason: Optional[str] = None
+
+
+@router.get("/me/policy-mode")
+async def get_my_policy_mode(request: Request):
+    """The tenant's enforcement mode, whether it may change it, and what it covers."""
+    tenant_id = _require_tenant(request)
+    config = get_tenant(tenant_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return {
+        "tenant_id": tenant_id,
+        "policy_mode": resolve_mode(config),
+        "self_service": _mode_self_service(),
+        "takes_effect_within_seconds": _mode_propagation_seconds(),
+        "applies_to": POLICY_MODE_APPLIES_TO,
+        "not_applied_to": POLICY_MODE_NOT_APPLIED_TO,
+    }
+
+
+@router.put("/me/policy-mode")
+async def set_my_policy_mode(request: Request, body: PolicyModeUpdate):
+    """Switch between monitor (would-be blocks are recorded, not enforced) and
+    enforce. Switching to monitor needs a reason; every change is audited."""
+    await _reject_tenant_id_spoof(request, body.model_dump())
+    tenant_id = _require_tenant(request)
+    if not _mode_self_service():
+        raise HTTPException(status_code=403,
+                            detail="The enforcement mode is managed by your Shield administrator.")
+    from core.auth import _store_is_degraded, require_registry_write
+    require_registry_write(request, tenant_id, "change the enforcement mode")
+
+    if body.mode not in (MONITOR, ENFORCE):
+        raise HTTPException(status_code=400, detail="mode must be 'monitor' or 'enforce'")
+    reason = (body.reason or "").strip()
+    if len(reason) > _MODE_REASON_MAX:
+        raise HTTPException(status_code=400,
+                            detail=f"reason must be at most {_MODE_REASON_MAX} characters")
+    if body.mode == MONITOR and not reason:
+        raise HTTPException(status_code=400,
+                            detail="A reason is required to switch to monitor: blocks stop being enforced.")
+
+    existing = get_tenant(tenant_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    previous = resolve_mode(existing)
+    result = {"tenant_id": tenant_id, "policy_mode": body.mode, "previous": previous,
+              "takes_effect_within_seconds": _mode_propagation_seconds()}
+    if previous == body.mode:
+        return {"status": "unchanged", **result}
+
+    # Without Redis, update_tenant falls back to this process's memory: the
+    # change would reach one process and vanish on restart while we reported
+    # success. Refuse instead.
+    if _store_is_degraded():
+        raise HTTPException(status_code=503,
+                            detail="The tenant store is unavailable, so the mode was not "
+                                   "changed. Try again shortly.")
+
+    update_tenant(tenant_id, {"policy_mode": body.mode})
+    # update_tenant rewrites the whole tenant record, so a write landing at the
+    # same moment can replace ours. It also dropped this process's cache entry,
+    # so this read comes from the store. It narrows, not closes, the window.
+    if resolve_mode(get_tenant(tenant_id)) != body.mode:
+        raise HTTPException(status_code=409,
+                            detail="The tenant settings changed at the same time and the "
+                                   "mode was not kept. Reload and try again.")
+
+    log_admin_action(
+        action="tenant_self_set_policy_mode",
+        actor=_actor(request, tenant_id),
+        tenant_id=tenant_id,
+        source_ip=request.client.host if request.client else "",
+        before={"policy_mode": previous},
+        after={"policy_mode": body.mode},
+        metadata={"reason": reason} if reason else {},
+    )
+    return {"status": "updated", **result}
 
 
 @router.get("/me/audit")
