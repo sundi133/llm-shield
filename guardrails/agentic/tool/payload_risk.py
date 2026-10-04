@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Any, Optional
 
-from core.dlp_settings import confidence_floor
+from core.dlp_settings import confidence_floor, dlp_fail_closed, dlp_llm_timeout_s
 from core.llm_backend import async_llm_call, parse_csv_response
 from guardrails.base import safe_float
 
@@ -43,6 +43,26 @@ _TOOL_SYSTEM = (
     "Example: false,0.90,none,low,all parameters comply with policies"
 )
 
+class PolicyCheckUnavailable(RuntimeError):
+    """The model answered, but not with a verdict. Treated like an error: the
+    rules were not checked, which is not the same as "no rule was broken"."""
+
+
+def fail_closed_for(policies: list[dict[str, Any]] | None) -> bool:
+    """Whether a check that could not run blocks, for this tool.
+
+    SHIELD_DLP_FAIL_CLOSED is the deployment floor, and the only thing that
+    applies when the policies could not be read. Otherwise any loaded policy
+    set to True decides: the default policy is loaded beneath the tool's own,
+    so a tool cannot switch a default of True back off, and a tool with
+    inherit_global: false never loads the default. Spec:
+    docs/specs/tool-policy-fail-safe.md
+    """
+    if dlp_fail_closed():
+        return True
+    return any(p.get("fail_closed") is True for p in policies or [])
+
+
 _MSG_SYSTEM = (
     "You are a strict data policy enforcement engine. Analyze user messages for "
     "data exfiltration or policy violation intent BEFORE the AI agent acts.\n"
@@ -64,9 +84,10 @@ async def evaluate_payload_policy_llm(
     """Use the LLM to evaluate whether a tool call payload violates data policies.
 
     Returns None both when the call is allowed and when the model could not be
-    asked (fail open, the guard path's behaviour). ``raise_errors=True`` makes
-    the second case raise instead, so the policy editor's dry run can say "not
-    checked" rather than "allowed".
+    asked or gave no verdict. ``raise_errors=True`` makes the second case raise
+    instead, so callers can tell "not checked" from "allowed": the guard
+    (which then applies the tenant's fail_closed choice) and the policy
+    editor's dry run.
     """
     payload = payload or {}
     if not payload and not tool_name:
@@ -100,12 +121,18 @@ async def evaluate_payload_policy_llm(
             max_tokens=80,
             temperature=0,
             guardrail_name="payload_risk",
+            # Was unset, so a stalled model held a tool call for the shared
+            # client's 300 s. Same bound as the result side.
+            timeout=dlp_llm_timeout_s(),
         )
 
         raw = (llm_response.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
         result = parse_csv_response(raw, _TOOL_CSV_FIELDS)
 
-        if not result.get("violates_policy"):
+        # A reply with no true/false used to parse as "no violation".
+        if not isinstance(result.get("violates_policy"), bool):
+            raise PolicyCheckUnavailable("model reply had no verdict")
+        if not result["violates_policy"]:
             return None
 
         confidence = safe_float(result.get("confidence"), 0.5)
@@ -257,6 +284,7 @@ def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, A
                 "role_policies": policy.get("role_policies", []),
                 "compliance_framework": policy.get("compliance_framework", ""),
                 "policy_source": "tool",
+                "fail_closed": policy.get("fail_closed"),
                 **_floor_fields(policy),
             })
 
@@ -276,6 +304,7 @@ def _load_data_policies(tenant_id: str, tool_name: str = "") -> list[dict[str, A
                     "role_policies": global_policy.get("role_policies", []),
                     "compliance_framework": global_policy.get("compliance_framework", ""),
                     "policy_source": "global",
+                    "fail_closed": global_policy.get("fail_closed"),
                     **_floor_fields(global_policy),
                 })
         return policies

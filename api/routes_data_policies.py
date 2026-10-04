@@ -129,6 +129,11 @@ class ToolDataPolicy(BaseModel):
     # AI pass on whatever's left. Default stays "regex" so existing policies
     # keep their behavior untouched.
     sanitization_mode: str = "regex"
+    #: What happens when the model that judges this tool's rules cannot answer
+    #: (error, timeout, unreadable verdict). True blocks the call or result;
+    #: False or unset lets it through, labelled unchecked. A default policy
+    #: set to True cannot be cancelled here. Spec: docs/specs/tool-policy-fail-safe.md
+    fail_closed: Optional[bool] = None
 
 
 class PreviewSanitizationRequest(BaseModel):
@@ -361,6 +366,9 @@ class GlobalDataPolicy(BaseModel):
     #: Author a policy and turn it off without deleting it. What an operator
     #: wants when narrowing a false positive under time pressure.
     enabled: bool = True
+    #: True: a check that cannot run blocks, for every tool that inherits this
+    #: default. No tool policy can switch it back off.
+    fail_closed: Optional[bool] = None
 
 
 @router.get("/global/policy")

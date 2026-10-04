@@ -473,11 +473,16 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             ])
         except Exception as e:
             logger.error(f"LLM output sanitization error: {e}")
-            if dlp_fail_closed():
+            # The deployment env, or the tenant's own choice on the policies
+            # already loaded above (docs/specs/tool-policy-fail-safe.md).
+            from guardrails.agentic.tool.payload_risk import fail_closed_for
+            if fail_closed_for(policies):
+                why = ("SHIELD_DLP_FAIL_CLOSED=on" if dlp_fail_closed()
+                       else "the data policy blocks when a check cannot run")
                 return GuardrailResult(
                     passed=False, action="block", guardrail_name=self.name,
-                    message=f"Output sanitization unavailable and SHIELD_DLP_FAIL_CLOSED=on: {e}",
-                    details={"error": str(e), "fail_closed": True,
+                    message=f"Output sanitization unavailable and {why}: {e}",
+                    details={"error": str(e), "fail_closed": True, "unjudged": True,
                              "sanitized_output": "[CONTENT BLOCKED DUE TO DATA POLICY]",
                              **base_details},
                 )
@@ -489,7 +494,7 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             return GuardrailResult(
                 passed=True, action="warn", guardrail_name=self.name,
                 message=f"Output sanitization error (delivered unjudged): {e}",
-                details={"error": str(e), "fail_closed": False,
+                details={"error": str(e), "fail_closed": False, "unjudged": True,
                          "sanitized_output": tool_output, **base_details},
             )
 
