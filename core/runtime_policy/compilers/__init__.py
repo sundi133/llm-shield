@@ -52,4 +52,13 @@ def compile_profile(target: str, profile: dict, ctx: ExportContext) -> Compiled:
     compilers = _registry()
     if target not in compilers:
         raise KeyError(f"unknown target {target!r}; supported: {', '.join(sorted(compilers))}")
-    return compilers[target](profile, ctx)
+    out = compilers[target](profile, ctx)
+    # Coding-agent hook rules (docs/specs/agent-hook-adapter.md): no sandbox,
+    # cluster or proxy has them, and none may silently drop them.
+    if profile.get("process", {}).get("ask_commands"):
+        out.unsupported.append("process.ask_commands: asks the person at the laptop. Enforced "
+                               "by Shield's coding-agent hook checks only")
+    for k in sorted(profile.get("limits") or {}):
+        out.unsupported.append(f"limits.{k}: per-session limit on file changes. Enforced by "
+                               f"Shield's coding-agent hook checks only")
+    return out

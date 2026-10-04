@@ -24,6 +24,7 @@ import re
 import yaml
 
 from core.runtime_policy.compilers import Compiled, ExportContext
+from core.runtime_policy.model import is_session_path
 
 TARGET = "openshell"
 
@@ -48,15 +49,21 @@ def compile_profile(profile: dict, ctx: ExportContext) -> Compiled:
     proc = profile["process"]
     net = profile["network"]
 
-    ro = [p for p in fs["read_only"] if not p.startswith("~")]
-    rw = [p for p in fs["read_write"] if not p.startswith("~")]
+    ro = [p for p in fs["read_only"] if not p.startswith(("~", "@"))]
+    rw = [p for p in fs["read_write"] if not p.startswith(("~", "@"))]
     for p in fs["read_only"] + fs["read_write"]:
-        if p.startswith("~"):
+        if is_session_path(p):
+            unsupported.append(f"filesystem path {p}: a coding agent's project folder, known "
+                               f"only at a hook call. Enforced by Shield's hook checks only")
+        elif p.startswith("~"):
             unsupported.append(f"filesystem path {p}: OpenShell (Landlock) needs an absolute "
                                f"path; use the sandbox user's home directory")
     for d in fs["deny"]:
-        roots = [r for r in ro + rw if not d.startswith("~") and _within(d, r)]
-        if d.startswith("~"):
+        roots = [r for r in ro + rw if not d.startswith(("~", "@")) and _within(d, r)]
+        if is_session_path(d):
+            unsupported.append(f"filesystem.deny {d}: project-relative. Enforced by Shield's "
+                               f"hook checks only")
+        elif d.startswith("~"):
             unsupported.append(f"filesystem.deny {d}: home-relative; OpenShell cannot resolve "
                                f"it. Enforced by Shield's tool checks only")
         elif roots:

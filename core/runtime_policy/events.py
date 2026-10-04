@@ -23,7 +23,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-SOURCES = ("openshell", "k8s", "cilium", "falco", "squid", "envoy", "custom")
+SOURCES = ("openshell", "k8s", "cilium", "falco", "squid", "envoy", "claude_code", "custom")
 KINDS = ("network", "file", "process", "resource", "policy", "action", "dlp")
 DECISIONS = ("deny", "allow", "audit")
 SEVERITIES = ("info", "low", "medium", "high", "critical")

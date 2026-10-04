@@ -24,6 +24,7 @@ import re
 import yaml
 
 from core.runtime_policy.compilers import Compiled, ExportContext
+from core.runtime_policy.model import is_session_path
 
 TARGET = "k8s"
 LABEL = "shield.votal.ai/profile"
@@ -115,11 +116,14 @@ def compile_profile(profile: dict, ctx: ExportContext) -> Compiled:
     c_sc = {"allowPrivilegeEscalation": not proc["no_new_privileges"],
             "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}}
     mounts, volumes = [], []
-    for i, p in enumerate([p for p in fs["read_write"] if not p.startswith("~")]):
+    for i, p in enumerate([p for p in fs["read_write"] if not p.startswith(("~", "@"))]):
         mounts.append({"name": f"rw-{i}", "mountPath": p})
         volumes.append({"name": f"rw-{i}", "emptyDir": {}})
     for p in fs["read_write"]:
-        if p.startswith("~"):
+        if is_session_path(p):
+            unsupported.append(f"filesystem.read_write {p}: a coding agent's project folder. "
+                               f"Enforced by Shield's hook checks only")
+        elif p.startswith("~"):
             unsupported.append(f"filesystem.read_write {p}: needs an absolute mount path")
     notes.append("filesystem: the root filesystem is read-only; only read_write paths are "
                  "writable (emptyDir). Reads are not restricted to read_only paths")

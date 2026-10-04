@@ -40,12 +40,19 @@ _MEM_RE = re.compile(r"^\d+(Ki|Mi|Gi|Ti|K|M|G|T)?$")
 _GLOB_CHARS = set("*?[")
 
 _TOP_KEYS = {"description", "network", "filesystem", "process", "tools", "identity",
-             "resources", "fail_closed"}
+             "resources", "fail_closed", "limits"}
+#: Per-session limits on file changes, enforced by coding-agent hooks only
+#: (docs/specs/agent-hook-adapter.md section 10).
+_LIMIT_KEYS = {"max_writes_per_minute", "max_deletes_per_session"}
+MAX_LIMIT = 100_000
 _NET_KEYS = {"default", "allow"}
 _ALLOW_KEYS = {"host", "port", "methods", "paths", "description"}
 _FS_KEYS = {"read_only", "read_write", "deny", "classified", "kernel_enforcement"}
 KERNEL_ENFORCEMENT = ("required", "best_effort")
-_PROC_KEYS = {"run_as", "allow_binaries", "deny_commands", "no_new_privileges"}
+_PROC_KEYS = {"run_as", "allow_binaries", "deny_commands", "ask_commands", "no_new_privileges"}
+#: The coding agent's project folder in filesystem paths, resolved per hook
+#: call to the session's cwd (docs/specs/agent-hook-adapter.md section 4.1).
+SESSION_ROOT = "@project"
 _TOOLS_KEYS = {"from_registry", "extract"}
 _EXTRACT_KEYS = {"tools", "param", "kind"}
 _ID_KEYS = {"require_agent_token", "max_token_ttl_seconds", "spiffe_id",
@@ -150,15 +157,17 @@ def _strs(v: Any, where: str, errors: list[str], *, max_len: int = 200) -> list[
 
 
 def _path(p: str, where: str, errors: list[str], *, glob_ok: bool) -> Optional[str]:
-    """A filesystem path: absolute or home-relative, no '..', no NUL."""
+    """A filesystem path: absolute, home-relative or project-relative
+    (@project/...), no '..', no NUL."""
     if "\x00" in p:
         errors.append(f"{where}: contains a NUL byte")
         return None
     if len(p) > MAX_PATH:
         errors.append(f"{where}: longer than {MAX_PATH} characters")
         return None
-    if not (p.startswith("/") or p == "~" or p.startswith("~/")):
-        errors.append(f"{where}: '{p}' must be absolute (/...) or home-relative (~/...)")
+    if not (p.startswith("/") or p == "~" or p.startswith("~/") or is_session_path(p)):
+        errors.append(f"{where}: '{p}' must be absolute (/...), home-relative (~/...) or "
+                      f"project-relative ({SESSION_ROOT}/...)")
         return None
     if ".." in p.split("/"):
         errors.append(f"{where}: '{p}' must not contain '..'")
@@ -169,6 +178,12 @@ def _path(p: str, where: str, errors: list[str], *, glob_ok: bool) -> Optional[s
     if len(p) > 1:
         p = p.rstrip("/") or "/"
     return p
+
+
+def is_session_path(p: str) -> bool:
+    """True for @project and @project/...: meaningful only to coding-agent
+    hooks, so every sandbox compiler skips it."""
+    return p == SESSION_ROOT or p.startswith(SESSION_ROOT + "/")
 
 
 def _paths(v: Any, where: str, errors: list[str], *, glob_ok: bool) -> list[str]:
@@ -271,13 +286,30 @@ def _process(raw: Any, errors: list[str]) -> dict:
             errors.append(f"process.allow_binaries[{i}]: '{b}' must be an absolute literal path")
             continue
         bins.append(b)
-    return {
+    out = {
         "run_as": run_as,
         "allow_binaries": bins,
         "deny_commands": _strs(pr.get("deny_commands"), "process.deny_commands", errors),
         "no_new_privileges": _bool(pr.get("no_new_privileges"), True,
                                    "process.no_new_privileges", errors),
     }
+    # Coding-agent hooks ask the person at the laptop instead of denying.
+    # Stored only when set, so existing profiles keep their hash.
+    ask = _strs(pr.get("ask_commands"), "process.ask_commands", errors)
+    if ask:
+        out["ask_commands"] = ask
+    return out
+
+
+def _limits(raw: Any, errors: list[str]) -> dict:
+    lim = _obj(raw, "limits", errors)
+    _unknown(lim, _LIMIT_KEYS, "limits", errors)
+    out = {}
+    for k in sorted(_LIMIT_KEYS):
+        v = _int(lim.get(k), 1, MAX_LIMIT, f"limits.{k}", errors)
+        if v is not None:
+            out[k] = v
+    return out
 
 
 def _tools(raw: Any, errors: list[str]) -> dict:
@@ -384,6 +416,10 @@ def validate_profile(raw: Any) -> dict:
         "resources": _resources(raw.get("resources"), errors),
         "fail_closed": _bool(raw.get("fail_closed"), False, "fail_closed", errors),
     }
+    # Stored only when set, so existing profiles keep their hash.
+    limits = _limits(raw.get("limits"), errors)
+    if limits:
+        profile["limits"] = limits
     desc = raw.get("description")
     if desc is not None:
         if not isinstance(desc, str) or len(desc) > MAX_TEXT:
@@ -462,6 +498,71 @@ TEMPLATES: dict[str, dict] = {
                      "require_attestation": "warn"},
         "resources": {"cpu": "4", "memory": "8Gi", "gpu": 0, "max_pids": 1024,
                       "wall_clock_seconds": 7200, "llm_tokens_per_hour": 500000},
+    },
+    # Claude Code on employee laptops, through the hook adapter
+    # (docs/specs/agent-hook-adapter.md section 10). A starting point to
+    # copy and edit, never applied by itself. Command patterns catch the
+    # usual tools; the write paths and the network allow-list are the limit.
+    "coding-agent-baseline": {
+        "description": "Claude Code on a laptop: writes only in the project and /tmp, no "
+                       "credential stores, no encryption, recovery, wipe, evasion, remote "
+                       "shell or remote-access tools; fetches only from named developer hosts.",
+        "network": {"default": "deny", "allow": [
+            {"host": "github.com", "port": 443},
+            {"host": "api.github.com", "port": 443, "methods": ["GET"]},
+            {"host": "raw.githubusercontent.com", "port": 443, "methods": ["GET"]},
+            {"host": "pypi.org", "port": 443, "methods": ["GET"]},
+            {"host": "files.pythonhosted.org", "port": 443, "methods": ["GET"]},
+            {"host": "registry.npmjs.org", "port": 443, "methods": ["GET"]},
+            {"host": "docs.python.org", "port": 443, "methods": ["GET"]},
+            {"host": "developer.mozilla.org", "port": 443, "methods": ["GET"]},
+        ]},
+        "filesystem": {
+            "read_write": ["@project", "/tmp"],
+            "deny": [
+                # T1552 / T1555: credentials in files and stores
+                "~/.ssh/**", "~/.aws/**", "~/.azure/**", "~/.config/gcloud/**", "~/.kube/**",
+                "~/.docker/config.json", "~/.netrc", "~/.npmrc", "~/.pypirc", "~/.gnupg/**",
+                "~/.config/gh/**", "~/Library/Keychains/**", "~/Library/Cookies/**",
+                "~/Library/Application Support/Google/Chrome/**",
+                "~/Library/Application Support/Firefox/**", "~/.mozilla/**",
+                "~/.config/google-chrome/**", "@project/.env", "@project/**/.env",
+                # T1562: the agent must not edit its own guardrails
+                "~/.claude/settings*.json", "@project/.claude/settings*.json",
+                "/Library/Application Support/ClaudeCode/**", "/etc/claude-code/**",
+                "/Library/Application Support/Votal/**", "/etc/votal/**", "/opt/votal/**",
+            ],
+            "kernel_enforcement": "best_effort",
+        },
+        "process": {
+            "deny_commands": [
+                # T1486: encryption for impact
+                "openssl enc*", "openssl aes*", "gpg -c*", "gpg --symmetric*", "gpg -e *",
+                "gpg --encrypt*", "zip -e*", "zip -p *", "zip --encrypt*", "7z a * -p*",
+                # T1490: recovery and snapshots
+                "tmutil delete*", "tmutil disable*", "vssadmin delete*", "wbadmin delete*",
+                "bcdedit*", "diskutil apfs deletesnapshot*",
+                # T1485: destruction outside the project
+                "rm -rf /*", "rm -rf ~*", "rm -rf $home*", "diskutil erase*",
+                "diskutil zerodisk*", "dd * of=/dev/*", "shred *", "mkfs*",
+                # T1562 / T1070: impair defenses, remove indicators
+                "launchctl unload*", "launchctl bootout*", "systemctl stop*",
+                "systemctl disable*", "spctl --master-disable*", "csrutil disable*",
+                "history -c*", "*_history*", "log erase*", "wevtutil cl*",
+                # T1021: remote services
+                "ssh *", "scp *", "sftp *", "rsync *@*:*", "telnet *", "nc *", "ncat *",
+                "socat *", "psexec*", "winrm*",
+                # T1219: remote-access tools and piped installers
+                "*anydesk*", "*teamviewer*", "*screenconnect*", "*rustdesk*", "*ngrok*",
+                "*cloudflared tunnel*", "curl * | sh", "curl * | bash", "wget * | sh",
+                "wget * | bash",
+                # T1552: keychain queries
+                "security find-generic-password*", "security find-internet-password*",
+                "security dump-keychain*",
+            ],
+            "ask_commands": ["sudo *", "git push --force*", "git push -f*", "npm publish*",
+                             "twine upload*"],
+        },
     },
     "support-bot": {
         "description": "Answers customers; talks only to Shield. No shell, no files "

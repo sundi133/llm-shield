@@ -110,6 +110,7 @@ class CompiledProfile:
     bins: set = field(default_factory=set)            # full paths
     bin_names: set = field(default_factory=set)       # basenames
     deny_cmd: list = field(default_factory=list)      # (pattern, has_pipe)
+    ask_cmd: list = field(default_factory=list)       # (pattern, has_pipe): coding-agent hooks only
     net: list = field(default_factory=list)           # (host_re, port, methods, path_re)
     classified: list = field(default_factory=list)    # (path_re, classification)
     fail_closed: bool = False
@@ -125,10 +126,13 @@ def compile_checks(name: str, profile: dict) -> CompiledProfile:
     cp.classified = [(_path_re([c["path"]]), c["classification"]) for c in fs["classified"]]
     cp.fs_read = fs["read_only"] + fs["read_write"]
     cp.fs_write = list(fs["read_write"])
-    cp.workdir = next((r for r in fs["read_write"] if not r.startswith("~")), "/sandbox")
+    # "@project" is the coding agent's project folder, known only per hook call
+    # (core/runtime_policy/hooks.py); it is never a sandbox's work directory.
+    cp.workdir = next((r for r in fs["read_write"] if not r.startswith(("~", "@"))), "/sandbox")
     cp.bins = set(proc["allow_binaries"])
     cp.bin_names = {posixpath.basename(b) for b in proc["allow_binaries"]}
     cp.deny_cmd = [(_norm_cmd(p), "|" in p) for p in proc["deny_commands"]]
+    cp.ask_cmd = [(_norm_cmd(p), "|" in p) for p in proc.get("ask_commands", [])]
     for a in profile["network"]["allow"]:
         cp.net.append((_glob_re([a["host"]]), a["port"], set(a["methods"]),
                        _path_re(a["paths"])))
@@ -138,13 +142,15 @@ def compile_checks(name: str, profile: dict) -> CompiledProfile:
 # ── normalization ────────────────────────────────────────────────────
 
 
-def normalize_path(value: str, workdir: str) -> str:
+def normalize_path(value: str, workdir: str, *, collapse_home: bool = True) -> str:
     """Lexical normalization: home prefixes -> ~, relative -> under workdir,
-    '.', '..' and '//' collapsed (never above the root)."""
+    '.', '..' and '//' collapsed (never above the root). collapse_home=False
+    leaves /Users/<name> alone, for a caller that knows the real home."""
     v = value.strip().replace("\\", "/")
     if v.startswith("file://"):
         v = v[7:]
-    v = _HOME_PREFIX.sub("~", v)
+    if collapse_home:
+        v = _HOME_PREFIX.sub("~", v)
     if not (v.startswith("/") or v == "~" or v.startswith("~/")):
         v = posixpath.join(workdir, v)
     home = v.startswith("~")
@@ -197,14 +203,25 @@ def _check_file(cp: CompiledProfile, value: str, tool: str) -> Optional[str]:
     return None
 
 
+def match_command(patterns: list, value: str) -> Optional[str]:
+    """The first (pattern, has_pipe) pattern the command matches, whole or by
+    segment (a pattern with a pipe only matches the whole command), or None."""
+    full = _norm_cmd(value)
+    segments = [s.strip() for s in _SEGMENT_SPLIT.split(full) if s.strip()]
+    for pat, has_pipe in patterns:
+        if fnmatch.fnmatchcase(full, pat):
+            return pat
+        if not has_pipe and any(fnmatch.fnmatchcase(seg, pat) for seg in segments):
+            return pat
+    return None
+
+
 def _check_exec(cp: CompiledProfile, value: str) -> Optional[str]:
     full = _norm_cmd(value)
     segments = [s.strip() for s in _SEGMENT_SPLIT.split(full) if s.strip()]
-    for pat, has_pipe in cp.deny_cmd:
-        if fnmatch.fnmatchcase(full, pat):
-            return f"command matches denied pattern '{pat}'"
-        if not has_pipe and any(fnmatch.fnmatchcase(seg, pat) for seg in segments):
-            return f"command matches denied pattern '{pat}'"
+    pat = match_command(cp.deny_cmd, value)
+    if pat is not None:
+        return f"command matches denied pattern '{pat}'"
     if cp.bins:
         for seg in segments:
             try:
@@ -391,5 +408,5 @@ def check_tool_call(tenant_id: Optional[str], *, agent_key: Optional[str], tool_
 
 
 __all__ = ["GUARDRAIL", "CompiledProfile", "ProfileError", "check_tool_call", "classified_read", "classify_path",
-           "compile_checks", "enabled", "evaluate", "invalidate", "normalize_path",
-           "profile_for"]
+           "compile_checks", "enabled", "evaluate", "invalidate", "match_command",
+           "normalize_path", "profile_for"]
