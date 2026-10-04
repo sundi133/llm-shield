@@ -317,3 +317,27 @@ def test_the_box_escapes_what_is_typed():
     html = _js(f"peRenderHtml('gdp', Object.assign(peStateFrom({json.dumps(_email_send(['</textarea><img src=x onerror=alert(1)>']))}, LIB, '*'),"
                " {view: 'form'}), LIB)")
     assert "<img" not in html and "&lt;/textarea&gt;" in html
+
+
+# ── layout ──────────────────────────────────────────────────────────────────
+#
+# The groups were three side-by-side columns of very different lengths (20
+# tool-call protections beside 9 and 8) with a "rule" line under every item, so
+# most of the card was empty space. Each group is now a full-width grid, and the
+# rule toggle sits on the item's own line.
+
+def test_each_group_is_its_own_grid_with_a_count():
+    html = _js("peRenderHtml('gdp', Object.assign(peStateFrom({}, LIB, '*'), {view: 'form'}), LIB)")
+    assert html.count("grid-template-columns:repeat(auto-fill") == 3
+    n = {side: sum(1 for e in lib.ENTRIES if e["side"] == side) for side in ("call", "result", "secret")}
+    for label, side in (("Tool calls", "call"), ("Tool results", "result"), ("Secrets", "secret")):
+        assert f"{label}\n        <span class=\"muted\" style=\"font-weight:400;font-size:11px;\">0 of {n[side]} on</span>" in html
+
+
+def test_every_protection_has_a_labelled_checkbox_and_a_hidden_rule():
+    html = _js("peRenderHtml('gdp', Object.assign(peStateFrom({}, LIB, '*'), {view: 'form'}), LIB)")
+    for e in lib.ENTRIES:
+        assert f'id="gdp-pe-{e["id"]}"' in html and f'for="gdp-pe-{e["id"]}"' in html
+    assert html.count('onclick="peRuleToggle(this)"') == len(lib.ENTRIES)
+    assert html.count('class="muted pe-rule" hidden') == len(lib.ENTRIES)
+    assert "<details" not in html.split("Ready-made protections")[1].split("If a check can")[0]

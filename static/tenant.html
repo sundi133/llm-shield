@@ -10146,19 +10146,29 @@ function peRenderHtml(id, st, library) {
       const threats = e.threats.map(t => 'T' + t).join(' ');
       const detail = e.side === 'secret' ? e.pattern.regex : e.rule;
       const needs = e.needs && on ? `<input type="text" placeholder="your domains, e.g. acme.com, acme.co.uk" value="${_esc(st.domains)}"
-            data-pe="${_esc(id)}" data-field="domains" oninput="peSet(this)" style="${box}width:100%;margin-top:0.3rem;">` : '';
-      return `<div style="padding:0.25rem 0;">
-        <label style="display:flex;gap:0.45rem;align-items:flex-start;font-size:12.5px;cursor:pointer;">
-          <input type="checkbox" ${on ? 'checked' : ''} data-pe="${_esc(id)}" data-entry="${_esc(e.id)}" onchange="peToggle(this)">
-          <span>${_esc(e.name)} <span class="muted" style="font-size:10.5px;">${_esc(threats)}</span>
-            ${e.recommended ? '' : '<span class="muted" style="font-size:10.5px;">· needs your input</span>'}</span>
-        </label>
-        <details style="margin-left:1.6rem;"><summary class="muted" style="font-size:10.5px;cursor:pointer;">rule</summary>
-          <div class="muted" style="font-size:11px;white-space:pre-wrap;">${_esc(detail)}</div></details>
+            data-pe="${_esc(id)}" data-field="domains" oninput="peSet(this)" style="${box}width:calc(100% - 1.45rem);margin:0.3rem 0 0 1.45rem;">` : '';
+      // One line per protection: checkbox, name, threats, and a "rule" toggle
+      // on the same line; the rule text opens underneath. The checkbox's top
+      // margin centres it on the first line of a name that wraps.
+      return `<div style="padding:0.2rem 0;min-width:0;">
+        <div style="display:flex;gap:0.45rem;align-items:flex-start;font-size:12.5px;line-height:1.4;">
+          <input type="checkbox" id="${_esc(id)}-pe-${_esc(e.id)}" ${on ? 'checked' : ''} data-pe="${_esc(id)}" data-entry="${_esc(e.id)}" onchange="peToggle(this)"
+            style="margin:2px 0 0;flex:none;cursor:pointer;">
+          <label for="${_esc(id)}-pe-${_esc(e.id)}" style="cursor:pointer;flex:0 1 auto;min-width:0;">${_esc(e.name)}
+            <span class="muted" style="font-size:10.5px;">${_esc(threats)}</span>${e.recommended ? '' : '<span class="muted" style="font-size:10.5px;"> · needs your input</span>'}</label>
+          <button type="button" class="muted" aria-expanded="false" onclick="peRuleToggle(this)"
+            style="flex:none;background:none;border:0;padding:0 0.1rem;font-size:10.5px;cursor:pointer;color:var(--text-2,#888);text-decoration:underline dotted;">rule</button>
+        </div>
+        <div class="muted pe-rule" hidden style="font-size:11px;white-space:pre-wrap;margin:0.2rem 0 0 1.45rem;">${_esc(detail)}</div>
         ${needs}
       </div>`;
-    }).join('');
-    return `<div style="flex:1 1 280px;min-width:240px;"><div style="font-size:12px;font-weight:600;margin-bottom:0.2rem;">${label}</div>${items || '<div class="muted" style="font-size:11px;">Library unavailable.</div>'}</div>`;
+    });
+    const count = library.filter(e => e.side === side && st.ticked.includes(e.id)).length;
+    return `<div style="margin-bottom:0.6rem;">
+      <div style="font-size:12px;font-weight:600;margin-bottom:0.2rem;">${label}
+        <span class="muted" style="font-weight:400;font-size:11px;">${count} of ${items.length} on</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr));column-gap:1.25rem;">
+        ${items.join('') || '<div class="muted" style="font-size:11px;">Library unavailable.</div>'}</div></div>`;
   };
   // One box per side, one rule per line: the storage contract the old
   // Configure screen had (split on newlines, trimmed, blanks dropped), so a
@@ -10230,13 +10240,12 @@ function peRenderHtml(id, st, library) {
         <option value="">Apply preset…</option>${presets.map(([v, l]) => opt(v, l, '')).join('')}</select>
     </div>` : '';
   return `${switcher}${roleBar}
-    <div style="display:flex;align-items:center;gap:0.5rem;">
-      ${head('Ready-made protections')}
+    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin:0.9rem 0 0.45rem;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-2,#888);">Ready-made protections</div>
       <span style="margin-left:auto;display:flex;gap:0.35rem;">
         <button class="small" data-pe="${_esc(id)}" onclick="peRecommended(this)">Tick recommended</button>
         <button class="small" data-pe="${_esc(id)}" onclick="peClear(this)">Clear</button></span></div>
-    <div style="display:flex;gap:1rem;flex-wrap:wrap;">
-      ${group('call', 'Tool calls')}${group('result', 'Tool results')}${group('secret', 'Secrets')}</div>
+    ${group('call', 'Tool calls')}${group('result', 'Tool results')}${group('secret', 'Secrets')}
     ${head("If a check can't run")}
     <div style="display:flex;gap:0.45rem;align-items:center;flex-wrap:wrap;">
       <select data-pe="${_esc(id)}" data-field="failClosed" onchange="peSet(this)" style="${box}width:auto;">
@@ -10311,6 +10320,11 @@ function peToggle(el) {
   peRerender(el.dataset.pe);   // a rule that needs input shows its field
 }
 function peSet(el) { PE[el.dataset.pe][el.dataset.field] = el.value; }
+function peRuleToggle(btn) {
+  const rule = btn.parentElement.parentElement.querySelector('.pe-rule');
+  rule.hidden = !rule.hidden;
+  btn.setAttribute('aria-expanded', String(!rule.hidden));
+}
 function peLines(el) { PE[el.dataset.pe][el.dataset.list] = el.value.split('\n'); }
 function peAdd(el) {
   const st = PE[el.dataset.pe];
