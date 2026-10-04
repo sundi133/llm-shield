@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Optional, Any
 
+from core.check_alerts import note_unchecked
 from guardrails.base import BaseGuardrail, safe_float
 from core.models import GuardrailResult
 from core.llm_backend import async_llm_call, parse_csv_response
@@ -327,6 +328,12 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
     async def check(self, content: str, context: Optional[dict] = None) -> GuardrailResult:
         result = await self._check_inner(content, context)
         _record_taint_for(context or {}, result)
+        details = result.details or {}
+        if details.get("unjudged"):
+            ctx = context or {}
+            note_unchecked(details.get("tenant_id") or "", "tool_result",
+                           ctx.get("tool_name", ""), not result.passed,
+                           details.get("error_type", ""))
         return result
 
     @staticmethod
@@ -482,7 +489,8 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
                 return GuardrailResult(
                     passed=False, action="block", guardrail_name=self.name,
                     message=f"Output sanitization unavailable and {why}: {e}",
-                    details={"error": str(e), "fail_closed": True, "unjudged": True,
+                    details={"error": str(e), "error_type": type(e).__name__,
+                         "fail_closed": True, "unjudged": True,
                              "sanitized_output": "[CONTENT BLOCKED DUE TO DATA POLICY]",
                              **base_details},
                 )
@@ -494,7 +502,8 @@ class ToolOutputSanitizationGuardrail(BaseGuardrail):
             return GuardrailResult(
                 passed=True, action="warn", guardrail_name=self.name,
                 message=f"Output sanitization error (delivered unjudged): {e}",
-                details={"error": str(e), "fail_closed": False, "unjudged": True,
+                details={"error": str(e), "error_type": type(e).__name__,
+                         "fail_closed": False, "unjudged": True,
                          "sanitized_output": tool_output, **base_details},
             )
 

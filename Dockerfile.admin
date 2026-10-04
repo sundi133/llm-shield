@@ -60,6 +60,9 @@ COPY core/mcp_scan.py core/
 COPY core/mcp_oauth.py core/
 COPY core/mcp_credentials.py core/
 COPY core/webhook_dispatcher.py core/
+# "A tool policy check could not run" alert, imported at module load by the
+# tool guards (guardrails/agentic/tool/, copied below). Stdlib only.
+COPY core/check_alerts.py core/
 COPY core/models.py core/
 COPY core/llm_backend.py core/
 # Security hardening — IEMLabs VAPT fixes (May 2026)

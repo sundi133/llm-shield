@@ -264,6 +264,11 @@ All tasks: full suite green in a clean venv; CI `pytest` gate passes.
    bounds the model call, treats errors and unreadable verdicts as unjudged,
    applies the effective rule; result guard applies the same rule.
 2. **Alert and count.** `check_unavailable` webhook with in-process de-dup;
-   `unjudged` metric counter.
+   `unjudged` metric counter. Done. Notes from building it: the portal's
+   webhook form lists events by hand, so it gained a `check_unavailable`
+   checkbox (on by default), or no one could subscribe from the UI; the result
+   guard alerts from `check()`, not `_check_inner()`, so the editor's dry run
+   never pages anyone; result details gained `error_type` (class name) so the
+   alert never carries the exception text.
 3. **Portal.** The setting in the editor, `GET /v1/data-policies/status`, the
    card's status line.

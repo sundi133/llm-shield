@@ -152,6 +152,7 @@ curl -X POST http://localhost:8080/v1/shield/webhooks/acme \
 | `tool_enabled` | A tool is re-enabled |
 | `policy_changed` | A data protection policy is created/updated/deleted |
 | `budget_exceeded` | An agent exceeds token/cost budget |
+| `check_unavailable` | A tool policy check could not run (model error, timeout or no verdict). Payload: `side` (`tool_call` / `tool_result`), `tool`, `decision` (`let_through` / `blocked`), `error` (exception class), `count`, `window_seconds`. At most one per tenant per side every 5 minutes per worker |
 
 ### Webhook payload
 ```json

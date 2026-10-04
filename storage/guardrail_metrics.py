@@ -173,8 +173,14 @@ def record_result(
     passed: bool,
     action: str,
     latency_ms: float = 0.0,
+    unjudged: bool = False,
 ) -> None:
-    """Record a single guardrail check result. Fire-and-forget."""
+    """Record a single guardrail check result. Fire-and-forget.
+
+    ``unjudged``: the check could not run (docs/specs/tool-policy-fail-safe.md).
+    Counted on its own as well as under passed/blocked, because a let-through
+    failure is ``passed`` and would otherwise be indistinguishable from a clean
+    check."""
     if not tenant_id or not guardrail_name:
         return
 
@@ -200,6 +206,8 @@ def record_result(
             r.hincrby(key, "warned", 1)
         else:
             r.hincrby(key, "logged", 1)
+        if unjudged:
+            r.hincrby(key, "unjudged", 1)
         if latency_ms > 0:
             r.hincrbyfloat(key, "latency_sum_ms", latency_ms)
             r.hincrby(key, "latency_count", 1)
@@ -220,6 +228,7 @@ def record_results_batch(tenant_id: str, guardrail_results: list) -> None:
             passed=gr.get("passed", True),
             action=gr.get("action", "pass"),
             latency_ms=gr.get("latency_ms", 0.0),
+            unjudged=bool((gr.get("details") or {}).get("unjudged")),
         )
 
 

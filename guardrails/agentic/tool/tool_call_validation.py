@@ -8,6 +8,7 @@ No hardcoded patterns.
 import logging
 from typing import Optional
 
+from core.check_alerts import note_unchecked
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from guardrails.agentic.tool import payload_risk
@@ -47,7 +48,7 @@ class ToolCallValidationGuardrail(BaseGuardrail):
                 raise_errors=True,
             )
         except Exception as e:
-            return self._not_checked(tool_name, e, policies)
+            return self._not_checked(tool_name, e, policies, tenant_id)
         if payload_issue:
             return GuardrailResult(
                 passed=False,
@@ -60,7 +61,8 @@ class ToolCallValidationGuardrail(BaseGuardrail):
         return GuardrailResult(passed=True, action="pass", guardrail_name=self.name,
                                message=f"Tool '{tool_name}' parameters valid")
 
-    def _not_checked(self, tool_name: str, error: Exception, policies) -> GuardrailResult:
+    def _not_checked(self, tool_name: str, error: Exception, policies,
+                     tenant_id: str = "") -> GuardrailResult:
         """The rules were not checked. This used to report "parameters valid",
         so an outage and a clean call were the same result, audit entry and
         metric. Blocks only when the tenant (or the deployment) chose that; a
@@ -73,6 +75,7 @@ class ToolCallValidationGuardrail(BaseGuardrail):
         closed = fail_closed_for(policies)
         # The exception class only: never the arguments or the model's reply.
         details = {"tool": tool_name, "unjudged": True, "fail_closed": closed, "error": err}
+        note_unchecked(tenant_id, "tool_call", tool_name, closed, err)
         if closed:
             return GuardrailResult(
                 passed=False, action=self.configured_action, guardrail_name=self.name,
