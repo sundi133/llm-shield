@@ -264,3 +264,56 @@ def test_the_tool_modal_uses_the_editor_and_never_rebuilds_from_missing_fields()
     assert "#dp-san-rules" not in save and "dp-intent" not in save    # the fields that wiped data
     assert "pePolicyFrom(st" in save and "peParsedJson('tdp')" in save
     assert "openDataPolicyModal(this.dataset.tool)" in HTML          # tool name not inlined in JS
+
+
+# ── rules written as a block ────────────────────────────────────────────────
+#
+# The old Configure screen stored rules one per line (textarea split on
+# newlines) and showed them back as one block. The first version of this form
+# rendered one input per stored line, so a policy written as markdown came back
+# as thirty boxes. One box per side again, same storage.
+
+EMAIL_SEND_LINES = [
+    "### Core input policy",
+    "- Allow email only to approved internal domains",
+    "- Block any recipient outside the approved allowlist",
+    "### Approved domain examples",
+    "- bank.ae",
+    "- ops.bank.ae",
+    "### Blocked domain examples",
+    "- gmail.com",
+    "Block if subject, body, or attachments contain:",
+    "- full IBAN",
+]
+
+
+def _email_send(lines=EMAIL_SEND_LINES):
+    return {"role_policies": [{"role": "*", "action": "block", "input_rules": lines}],
+            "sanitization_rules": [], "enabled": True}
+
+
+def test_a_block_of_rules_renders_as_one_box_per_side():
+    html = _js(f"peRenderHtml('tdp', Object.assign(peStateFrom({json.dumps(_email_send())}, LIB, '*'),"
+               " {view: 'form', embedded: true}), LIB)")
+    assert html.count('data-list="calls"') == 1 and html.count('data-list="results"') == 1
+    assert "peSetItem" not in html and "+ Add rule" not in html
+    block = html.split('data-list="calls"')[1].split(">", 1)[1].split("</textarea>")[0]
+    assert block == "\n".join(EMAIL_SEND_LINES)
+
+
+def test_a_block_of_rules_saves_back_unchanged():
+    assert _round_trip(_email_send())["role_policies"][0]["input_rules"] == EMAIL_SEND_LINES
+
+
+def test_typing_a_block_stores_one_rule_per_line_like_the_old_screen():
+    """Same contract as main's saveDataPolicy: split on newlines, trim, drop blanks."""
+    typed = "### Core input policy\n\n  - bank.ae  \n- gmail.com\n\n"
+    out = _js(f"(() => {{ const s = peStateFrom({{}}, LIB, '*'); s.calls = {json.dumps(typed)}.split('\\n');"
+              " return pePolicyFrom(s, LIB); })()")
+    assert out["role_policies"][0]["input_rules"] == ["### Core input policy", "- bank.ae", "- gmail.com"]
+
+
+def test_the_box_escapes_what_is_typed():
+    html = _js(f"peRenderHtml('gdp', Object.assign(peStateFrom({json.dumps(_email_send(['</textarea><img src=x onerror=alert(1)>']))}, LIB, '*'),"
+               " {view: 'form'}), LIB)")
+    assert "<img" not in html and "&lt;/textarea&gt;" in html

@@ -10160,13 +10160,20 @@ function peRenderHtml(id, st, library) {
     }).join('');
     return `<div style="flex:1 1 280px;min-width:240px;"><div style="font-size:12px;font-weight:600;margin-bottom:0.2rem;">${label}</div>${items || '<div class="muted" style="font-size:11px;">Library unavailable.</div>'}</div>`;
   };
-  const list = (key, label) => `
-    <div style="margin-bottom:0.6rem;"><div style="font-size:12px;font-weight:600;margin-bottom:0.25rem;">${label}</div>
-      ${st[key].map((rule, i) => `<div style="display:flex;gap:0.35rem;margin-bottom:0.3rem;">
-        <input type="text" value="${_esc(rule)}" maxlength="1000" placeholder="e.g. BLOCK sending email outside acme.com"
-          data-pe="${_esc(id)}" data-list="${key}" data-i="${i}" oninput="peSetItem(this)" style="${box}flex:1;">
-        <button class="small" title="Remove" data-pe="${_esc(id)}" data-list="${key}" data-i="${i}" onclick="peRemove(this)">✕</button></div>`).join('')}
-      <button class="small" data-pe="${_esc(id)}" data-list="${key}" onclick="peAdd(this)">+ Add rule</button></div>`;
+  // One box per side, one rule per line: the storage contract the old
+  // Configure screen had (split on newlines, trimmed, blanks dropped), so a
+  // policy written as a block of markdown reads as one document again instead
+  // of one input per line.
+  const list = (key, label, example) => {
+    const text = st[key].join('\n');
+    const rows = Math.max(3, Math.min(st[key].length + 1, 18));
+    return `
+    <div style="margin-bottom:0.6rem;"><div style="font-size:12px;font-weight:600;margin-bottom:0.25rem;">${label}
+        <span class="muted" style="font-weight:400;font-size:11px;">one rule per line</span></div>
+      <textarea rows="${rows}" spellcheck="false" placeholder="${_esc(example)}"
+        data-pe="${_esc(id)}" data-list="${key}" oninput="peLines(this)"
+        style="${box}width:100%;min-height:0;line-height:1.45;resize:vertical;">${_esc(text)}</textarea></div>`;
+  };
   const patterns = `
     <div style="font-size:12px;font-weight:600;margin-bottom:0.25rem;">Secret patterns</div>
     ${st.patterns.map((r, i) => `<div style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap;margin-bottom:0.3rem;">
@@ -10238,7 +10245,8 @@ function peRenderHtml(id, st, library) {
         Blocking is safer for tools that move money or data; letting through keeps agents working.
         Either way it is counted, and alerted to webhooks subscribed to <code>check_unavailable</code>.</span></div>
     ${head('Your rules')}
-    ${list('calls', 'Tool calls')}${list('results', 'Tool results')}${patterns}
+    ${list('calls', 'Tool calls', 'e.g. BLOCK sending email outside acme.com\nBLOCK attachments larger than 10 MB')}
+    ${list('results', 'Tool results', 'e.g. Mask account numbers except the last 4 digits')}${patterns}
     ${hidden.length ? `<div class="muted" style="font-size:11px;margin-top:0.6rem;">Also contains ${_esc(hidden.join(', '))}; kept as they are. Edit them in the JSON view.</div>` : ''}
     ${tryIt}
     ${st.embedded ? '' : `<div style="margin-top:0.8rem;"><button class="primary small" data-pe="${_esc(id)}" onclick="peSave(this)">Save</button></div>`}`;
@@ -10303,7 +10311,7 @@ function peToggle(el) {
   peRerender(el.dataset.pe);   // a rule that needs input shows its field
 }
 function peSet(el) { PE[el.dataset.pe][el.dataset.field] = el.value; }
-function peSetItem(el) { PE[el.dataset.pe][el.dataset.list][+el.dataset.i] = el.value; }
+function peLines(el) { PE[el.dataset.pe][el.dataset.list] = el.value.split('\n'); }
 function peAdd(el) {
   const st = PE[el.dataset.pe];
   st[el.dataset.list].push(el.dataset.list === 'patterns'
