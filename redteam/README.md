@@ -17,6 +17,9 @@ SHIELD_URL=https://<data-plane> TENANT_KEY=<test-tenant-key> \
   run the whole set on a schedule.
 - `--classes prompt-injection,excessive-agency` and `--stages input,hook` narrow it.
 - `--validate` checks the corpus files and makes no calls.
+- `SHIELD_URL` must be `https://`, or `http://` on localhost: the tenant key and
+  agent token travel in headers. `--allow-http` permits plain http to another
+  host on a network you trust.
 - Use a **test** tenant. Every call is tagged `X-Shield-User: redteam-check` and
   session `redteam-<time>`, so its audit rows are easy to tell apart.
 

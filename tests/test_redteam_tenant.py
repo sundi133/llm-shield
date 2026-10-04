@@ -550,6 +550,27 @@ def test_per_request_guard_settings_are_refused(tmp_path):
         rt.load_corpus([_write(tmp_path, [case])])
 
 
+@pytest.mark.parametrize("url,allow_http,ok", [
+    ("https://shield.example", False, True),
+    ("http://127.0.0.1:8080", False, True),
+    ("http://localhost:8080", False, True),
+    ("http://[::1]:8080", False, True),
+    ("http://shield.localhost", False, True),
+    ("http://shield.internal:8080", False, False),   # keys would cross the network in clear
+    ("http://shield.internal:8080", True, True),
+    ("file:///etc/passwd", True, False),             # never, even with --allow-http
+    ("ftp://shield.example", False, False),
+    ("https://", False, False),
+])
+def test_shield_url_must_protect_the_keys(url, allow_http, ok):
+    assert (rt.url_problem(url, allow_http) == "") is ok
+
+
+def test_a_plain_http_remote_url_is_refused_before_any_call(shield, tmp_path):
+    code, out = _run("http://shield.internal:1", _write(tmp_path, MIXED[:1]))
+    assert code == 2 and "must be https://" in out
+
+
 def test_needs_url_and_key(tmp_path):
     env = {k: v for k, v in os.environ.items() if k not in ("SHIELD_URL", "TENANT_KEY")}
     p = subprocess.run([sys.executable, SCRIPT, "--corpus", _write(tmp_path, MIXED)],

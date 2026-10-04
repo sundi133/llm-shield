@@ -52,6 +52,7 @@ import socket
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
@@ -100,6 +101,25 @@ _GUARD_ALIASES = {
     "toxicity-detection": "toxicity", "input-toxicity": "toxicity",
     "custom-regex": "regex_pattern", "custom-regex-patterns": "regex_pattern",
 }
+
+
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def url_problem(url: str, allow_http: bool = False) -> str:
+    """Why SHIELD_URL is refused, or "". The tenant key and agent token ride in
+    headers, so they go only over https, or plain http to this machine (the
+    rule the Claude Code hook script in votal_device_agent/hook_scripts.py
+    applies). urllib would also follow file://."""
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname or ""
+    if parts.scheme == "https" and host:
+        return ""
+    if parts.scheme == "http" and host and (allow_http or host in _LOCAL_HOSTS
+                                            or host.endswith(".localhost")):
+        return ""
+    return ("SHIELD_URL must be https://, or http:// on localhost "
+            "(--allow-http for a trusted internal network)")
 
 
 def guard_name(name: str) -> str:
@@ -618,6 +638,8 @@ def main(argv=None) -> int:
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--show-misses", type=int, default=10)
     ap.add_argument("--validate", action="store_true", help="check the corpus and exit; no calls")
+    ap.add_argument("--allow-http", action="store_true",
+                    help="allow plain http to a non-local SHIELD_URL (sends the keys unencrypted)")
     args = ap.parse_args(argv)
 
     try:
@@ -636,6 +658,9 @@ def main(argv=None) -> int:
     agent_token = os.environ.get("AGENT_TOKEN") or ""
     if not base_url or not tenant_key:
         print("redteam: set SHIELD_URL and TENANT_KEY", file=sys.stderr)
+        return 2
+    if url_problem(base_url, args.allow_http):
+        print(f"redteam: {url_problem(base_url, args.allow_http)}", file=sys.stderr)
         return 2
 
     classes = {c.strip() for c in args.classes.split(",") if c.strip()} if args.classes else None
