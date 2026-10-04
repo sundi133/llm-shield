@@ -8,7 +8,7 @@ description: Replace the raw JSON on the Tool Policies screen with a form for th
 
 # Spec: Tool policy editor
 
-> Status: **APPROVED** 2026-10-04. Tasks 1 and 2 implemented; see the notes at the end.
+> Status: **APPROVED** 2026-10-04. Tasks 1, 2 and 3 implemented; see the notes at the end.
 
 ## 1. Problem & outcome
 
@@ -200,3 +200,32 @@ refused with the parse error while the typed text is kept. Try it works in
 both views (in the JSON view it tests the JSON as written). The chosen view is
 remembered per browser (`localStorage`, a convenience only). The per-tool
 editor (task 3) gets the same switch.
+
+## Task 3 notes (as built)
+
+- **Fixes a data-loss bug in the old Configure modal.** `saveDataPolicy` rebuilt
+  the tool's policy from the page, but the page no longer rendered the
+  sanitization section: every save posted `sanitization_rules: []` and
+  `sanitization_intent: null`, wiping patterns set by Upload Config or the API,
+  and roles without a registered-role card (`*`, unregistered roles) were
+  dropped. The modal now uses the editor, which starts from the whole stored
+  policy; verified in the portal (seeded policy saved unchanged keeps its
+  pattern, intent, `*` and unregistered roles) and pinned by
+  `test_loading_and_saving_a_tool_policy_loses_nothing`.
+- **One editor, a role picker.** "Rules for" lists everyone (`*`), the
+  registered roles, and any role the stored policy already has rules for. The
+  role bar carries that role's action, redaction level, data scope and the
+  existing presets (`DP_ROLE_TEMPLATES`); secret patterns are per tool, shared
+  across roles, as stored. A role entry is created only when it says something
+  (rules or non-default settings).
+- **Embedded:** the modal's footer saves whichever view is showing; the
+  editor's own Save buttons are hidden. In the JSON view the whole policy is the
+  one source, so the allowlist and compliance sections hide. Those two
+  sections are otherwise unchanged.
+- The tool name is no longer inlined into the modal's markup or into the
+  Configure button's handler (`data-tool` instead).
+- Left for a cleanup PR: helpers only the removed markup used, some already
+  dead before this change (`dpSanRuleRow`, `addDPSanitizationRule`,
+  `addDPSanitizationExample`, `dpUpdateSanCount`, `dpSelectMode`,
+  `_dpCurrentMode`, `applyDPRoleTemplate`, `insertDPRoleExample`,
+  `dpRemoveSanRule`, `dpUpdateEffective`).

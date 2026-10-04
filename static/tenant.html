@@ -9987,6 +9987,9 @@ function peStateFrom(policy, library, role) {
   const base = JSON.parse(JSON.stringify(policy || {}));
   const st = { role: role || '*', base, ticked: [], domains: '', calls: [], results: [], patterns: [] };
   const rp = (base.role_policies || []).find(r => r.role === st.role) || {};
+  // The role's own settings; shown only where the editor offers a role picker.
+  st.rs = { action: rp.action || 'redact', redaction_level: rp.redaction_level || 'partial',
+            data_scope: (rp.data_scope || []).join(', ') };
   const sides = { call: rp.input_rules || [], result: rp.output_rules || [] };
   for (const side of ['call', 'result']) {
     for (const raw of sides[side]) {
@@ -10016,10 +10019,13 @@ function pePolicyFrom(st, library) {
   const results = picked('result').map(text).concat(st.results.map(s => s.trim()).filter(Boolean));
   const roles = p.role_policies || [];
   const at = roles.findIndex(r => r.role === st.role);
-  if (at >= 0) roles[at] = { ...roles[at], input_rules: calls, output_rules: results };
-  else if (calls.length || results.length)
-    roles.push({ role: st.role, action: 'redact', data_scope: [], redaction_level: 'partial',
-                 input_rules: calls, output_rules: results });
+  const rs = st.rs || { action: 'redact', redaction_level: 'partial', data_scope: '' };
+  const settings = { action: rs.action, redaction_level: rs.redaction_level,
+                     data_scope: String(rs.data_scope || '').split(',').map(s => s.trim()).filter(Boolean) };
+  const customised = rs.action !== 'redact' || rs.redaction_level !== 'partial' || settings.data_scope.length;
+  if (at >= 0) roles[at] = { ...roles[at], ...settings, input_rules: calls, output_rules: results };
+  else if (calls.length || results.length || customised)
+    roles.push({ role: st.role, ...settings, input_rules: calls, output_rules: results });
   p.role_policies = roles;
   const used = new Set();
   const custom = st.patterns.filter(r => r.regex.trim()).map((r, i) => {
@@ -10051,13 +10057,37 @@ function peValidate(st, library) {
   return problems;
 }
 
-// Settings the form does not show, which it keeps as they are.
+// Settings the form does not show, which it keeps as they are. An embedded
+// editor (the tool modal) shows the floor and compliance itself, and one with
+// a role picker shows the other roles.
 function peHiddenSettings(st) {
   const b = st.base || {}, out = [];
-  for (const k of ['allowlist', 'thresholds', 'exact_match']) if ((b[k] || []).length) out.push(k.replace('_', ' '));
-  if (b.compliance_framework) out.push('compliance framework');
+  if (!st.embedded) {
+    for (const k of ['allowlist', 'thresholds', 'exact_match']) if ((b[k] || []).length) out.push(k.replace('_', ' '));
+    if (b.compliance_framework) out.push('compliance framework');
+  }
   if (b.sanitization_intent) out.push('sanitization intent');
-  if ((b.role_policies || []).some(r => r.role !== st.role)) out.push('rules for specific roles');
+  if (!st.roleChoices && (b.role_policies || []).some(r => r.role !== st.role)) out.push('rules for specific roles');
+  return out;
+}
+
+// A role preset (DP_ROLE_TEMPLATES) applied to the role under edit: its
+// settings, and its rules as the role's own rules. Ready-made ticks stay.
+function peApplyPreset(st, tpl) {
+  st.rs = { action: tpl.action, redaction_level: tpl.redaction_level,
+            data_scope: (tpl.data_scope || []).join(', ') };
+  st.calls = [...(tpl.input_rules || [])];
+  st.results = [...(tpl.output_rules || [])];
+  return st;
+}
+
+// Roles a tool's editor offers: everyone, the registered roles, and any role
+// the stored policy already has rules for (so nothing stored is unreachable).
+function peRoleChoices(policy, registered) {
+  const seen = new Set(['*']), out = ['*'];
+  for (const r of [...[...(registered || [])].sort(), ...((policy || {}).role_policies || []).map(x => x.role)]) {
+    if (r && !seen.has(r)) { seen.add(r); out.push(r); }
+  }
   return out;
 }
 
@@ -10121,11 +10151,31 @@ function peRenderHtml(id, st, library) {
     <textarea id="${_esc(id)}-json" spellcheck="false" data-pe="${_esc(id)}" oninput="peJsonInput(this)"
       style="${box}width:100%;font-family:ui-monospace,monospace;font-size:11px;min-height:0;height:24rem;">${_esc(peJsonText(st, library))}</textarea>
     <div style="margin-top:0.5rem;display:flex;gap:0.4rem;">
-      <button class="primary small" data-pe="${_esc(id)}" onclick="peSaveJson(this)">Save JSON</button>
+      ${st.embedded ? '' : `<button class="primary small" data-pe="${_esc(id)}" onclick="peSaveJson(this)">Save JSON</button>`}
       <button class="small" data-pe="${_esc(id)}" data-view="form" onclick="peView(this)">Show as form</button></div>
     ${tryIt}`;
   }
-  return `${switcher}
+  const opt = (v, label, cur) => `<option value="${_esc(v)}" ${v === cur ? 'selected' : ''}>${_esc(label)}</option>`;
+  const presets = [['full_access', 'Full access'], ['read_only', 'Read-only + PII masked'],
+                   ['pii_safe', 'Strict PII-safe'], ['audit', 'Audit'], ['blocked', 'Blocked']];
+  const roleBar = st.roleChoices ? `
+    <div style="display:flex;gap:0.45rem;align-items:center;flex-wrap:wrap;margin-top:0.7rem;">
+      <span style="font-size:12px;font-weight:600;">Rules for</span>
+      <select data-pe="${_esc(id)}" onchange="peRole(this)" style="${box}width:auto;">
+        ${st.roleChoices.map(r => opt(r, r === '*' ? 'Everyone (*)' : r, st.role)).join('')}</select>
+      <span class="muted" style="font-size:11px;margin-left:0.4rem;">when a rule is broken</span>
+      <select data-pe="${_esc(id)}" data-field="action" onchange="peRoleSet(this)" style="${box}width:auto;"
+        title="allow = full access, redact = mask sensitive fields, mask = partial mask, block = deny">
+        ${['allow', 'redact', 'mask', 'block'].map(a => opt(a, a, st.rs.action)).join('')}</select>
+      <select data-pe="${_esc(id)}" data-field="redaction_level" onchange="peRoleSet(this)" style="${box}width:auto;">
+        ${[['none', 'no redaction'], ['partial', 'partial redaction'], ['full', 'full redaction']]
+          .map(([v, l]) => opt(v, l, st.rs.redaction_level)).join('')}</select>
+      <input type="text" value="${_esc(st.rs.data_scope)}" placeholder="data scope, e.g. personal, contact"
+        data-pe="${_esc(id)}" data-field="data_scope" oninput="peRoleSet(this)" style="${box}width:16rem;">
+      <select data-pe="${_esc(id)}" onchange="pePreset(this)" style="${box}width:auto;">
+        <option value="">Apply preset…</option>${presets.map(([v, l]) => opt(v, l, '')).join('')}</select>
+    </div>` : '';
+  return `${switcher}${roleBar}
     <div style="display:flex;align-items:center;gap:0.5rem;">
       ${head('Ready-made protections')}
       <span style="margin-left:auto;display:flex;gap:0.35rem;">
@@ -10137,7 +10187,7 @@ function peRenderHtml(id, st, library) {
     ${list('calls', 'Tool calls')}${list('results', 'Tool results')}${patterns}
     ${hidden.length ? `<div class="muted" style="font-size:11px;margin-top:0.6rem;">Also contains ${_esc(hidden.join(', '))}; kept as they are. Edit them in the JSON view.</div>` : ''}
     ${tryIt}
-    <div style="margin-top:0.8rem;"><button class="primary small" data-pe="${_esc(id)}" onclick="peSave(this)">Save</button></div>`;
+    ${st.embedded ? '' : `<div style="margin-top:0.8rem;"><button class="primary small" data-pe="${_esc(id)}" onclick="peSave(this)">Save</button></div>`}`;
 }
 
 // The JSON view's text: what the operator is typing, else the form's policy.
@@ -10153,10 +10203,35 @@ function pePreferredView() {
   try { return localStorage.getItem(PE_VIEW_KEY) === 'json' ? 'json' : 'form'; } catch (e) { return 'form'; }
 }
 
+// opts: onSave(policy); role (initial); roles (registered roles, turns on the
+// role picker); embedded (the host saves, so no Save buttons; it shows the
+// floor and compliance itself); onView(view), told whenever the view changes.
 function peMount(containerId, id, policy, opts) {
-  PE[id] = { ...peStateFrom(policy, PE_LIBRARY || [], (opts && opts.role) || '*'),
-             opts: opts || {}, containerId, view: pePreferredView(), jsonText: null };
+  opts = opts || {};
+  PE[id] = peRebuild({ opts, containerId, view: pePreferredView() }, policy, opts.role || '*');
   peRerender(id);
+  if (opts.onView) opts.onView(PE[id].view);
+}
+
+// Fresh state for `role` from `policy`, keeping how the editor was mounted.
+function peRebuild(prev, policy, role) {
+  const o = prev.opts || {};
+  return { ...peStateFrom(policy, PE_LIBRARY || [], role), opts: o, containerId: prev.containerId,
+           view: prev.view || 'form', jsonText: null, embedded: !!o.embedded,
+           roleChoices: o.roles ? peRoleChoices(policy, o.roles) : null };
+}
+
+function peRole(el) {
+  const id = el.dataset.pe, st = PE[id];
+  PE[id] = peRebuild(st, pePolicyFrom(st, PE_LIBRARY || []), el.value);
+  peRerender(id);
+}
+function peRoleSet(el) { PE[el.dataset.pe].rs[el.dataset.field] = el.value; }
+function pePreset(el) {
+  const tpl = (typeof DP_ROLE_TEMPLATES !== 'undefined') && DP_ROLE_TEMPLATES[el.value];
+  if (!tpl) return;
+  peApplyPreset(PE[el.dataset.pe], tpl);
+  peRerender(el.dataset.pe);
 }
 
 function peRerender(id) {
@@ -10204,12 +10279,12 @@ function peView(el) {
   } else {
     const parsed = peParsedJson(id);
     if (!parsed) return;                       // stay in JSON until it parses
-    const { opts, containerId } = st;
-    PE[id] = { ...peStateFrom(parsed, PE_LIBRARY || [], st.role), opts, containerId, jsonText: null };
+    PE[id] = peRebuild(st, parsed, st.role);
   }
   PE[id].view = target;
   try { localStorage.setItem(PE_VIEW_KEY, target); } catch (e) { /* preference only */ }
   peRerender(id);
+  if (PE[id].opts.onView) PE[id].opts.onView(target);
 }
 function peJsonInput(el) { PE[el.dataset.pe].jsonText = el.value; }
 
@@ -10455,7 +10530,7 @@ function displayDataPolicies() {
               <span>Audit: <span style="font-weight:600;color:${auditReq ? '#10b981' : 'var(--text-muted)'};">${auditReq ? 'On' : 'Off'}</span></span>
             </div>
           </div>
-          <button class="primary small" onclick="event.stopPropagation();openDataPolicyModal('${toolName}')" style="font-size:11px;padding:0.3rem 0.7rem;flex-shrink:0;">Configure</button>
+          <button class="primary small" data-tool="${_esc(toolName)}" onclick="event.stopPropagation();openDataPolicyModal(this.dataset.tool)" style="font-size:11px;padding:0.3rem 0.7rem;flex-shrink:0;">Configure</button>
         </div>
         <div id="${dpId}" class="hidden" style="padding:0 1rem 0.85rem 1rem;">
           ${roles.length ? `
@@ -10504,90 +10579,19 @@ function displayDataPolicies() {
   container.innerHTML = html;
 }
 
-function openDataPolicyModal(toolName) {
+async function openDataPolicyModal(toolName) {
+  // The tool's rules use the same editor as the default policy
+  // (docs/specs/tool-policy-editor.md, task 3). It starts from the whole stored
+  // policy and changes only what it edits, so nothing it does not show is lost
+  // on save. The allowlist and compliance sections below are unchanged.
   const dp = DATA_POLICIES_CACHE[toolName] || {};
-  const roles = [...REGISTERED_AGENT_ROLES].sort();
-  const rolePolicies = {};
-  (dp.role_policies || []).forEach(rp => { rolePolicies[rp.role] = rp; });
-
-  const actionOpts = (selected) => ['allow','redact','mask','block']
-    .map(a => `<option value="${a}" ${a === selected ? 'selected' : ''}>${a}</option>`).join('');
-
-  const prettyName = toolName;
-  const sanCount   = (dp.sanitization_rules || []).length;
+  await peLoadLibrary();
   const compliance = (dp.compliance_framework || '').toLowerCase();
   const auditOn    = !!dp.audit_required;
   const retention  = dp.retention_days || '';
-
-  const rolesHtml = roles.length ? roles.map(r => {
-    const rp = rolePolicies[r] || {};
-    const currentAction = rp.action || 'block';
-    const inputRules  = (rp.input_rules  || []).join('\n');
-    const outputRules = (rp.output_rules || []).join('\n');
-    const scopeVal = (rp.data_scope || []).join(', ');
-    return `
-      <div class="dp-role-card" data-role="${r}" data-action="${currentAction}" style="margin-bottom:1rem;">
-        <div class="dp-role-head" style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-          <span class="dp-role-name" style="font-size:14px;font-weight:700;">${r}</span>
-          <div class="dp-role-controls" style="display:flex;gap:0.35rem;flex-wrap:wrap;">
-            <select class="dp-role-action" title="What happens when rules are violated"
-                    onchange="this.closest('.dp-role-card').setAttribute('data-action', this.value)"
-                    style="font-size:12px;padding:3px 6px;">
-              ${actionOpts(currentAction)}
-            </select>
-            <select class="dp-role-redaction" title="How to mask sensitive fields"
-                    style="font-size:12px;padding:3px 6px;">
-              <option value="none"    ${rp.redaction_level === 'none'    ? 'selected' : ''}>no redaction</option>
-              <option value="partial" ${(!rp.redaction_level || rp.redaction_level === 'partial') ? 'selected' : ''}>partial redaction</option>
-              <option value="full"    ${rp.redaction_level === 'full'    ? 'selected' : ''}>full redaction</option>
-            </select>
-            <select class="dp-role-template" onchange="applyDPRoleTemplate(this)"
-                    title="Apply a preset" style="font-size:12px;padding:3px 6px;">
-              <option value="">Apply template...</option>
-              <option value="full_access">Full access</option>
-              <option value="read_only">Read-only + PII masked</option>
-              <option value="pii_safe">Strict PII-safe</option>
-              <option value="blocked">Blocked</option>
-            </select>
-          </div>
-        </div>
-
-        <div style="margin-top:0.75rem;">
-          <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.35rem;">Data scope</div>
-          <input type="text" class="dp-role-scope" value="${scopeVal}"
-                 placeholder="e.g. personal, contact, financial, medical (comma-separated)"
-                 title="Comma-separated data categories visible to this role"
-                 style="width:100%;font-size:12.5px;padding:0.4rem 0.6rem;">
-        </div>
-
-        <div class="dp-role-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-top:0.75rem;">
-          <div>
-            <div class="dp-role-field-label" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;">
-              <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Input rules</span>
-              <button type="button" class="dp-ghost-btn" onclick="insertDPRoleExample(this, 'input')" title="Insert an example rule" style="font-size:10px;">+ example</button>
-            </div>
-            <textarea class="dp-role-input-rules" rows="6"
-                      placeholder="One rule per line. These are checked by the LLM against every tool call input.&#10;&#10;Examples:&#10;- Allow only one exact customer_id&#10;- Block name-only lookup&#10;- Block bulk retrieval"
-                      style="font-size:12px;line-height:1.5;font-family:inherit;width:100%;padding:0.5rem 0.6rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);resize:vertical;">${inputRules}</textarea>
-          </div>
-          <div>
-            <div class="dp-role-field-label" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;">
-              <span style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Output rules</span>
-              <button type="button" class="dp-ghost-btn" onclick="insertDPRoleExample(this, 'output')" title="Insert an example rule" style="font-size:10px;">+ example</button>
-            </div>
-            <textarea class="dp-role-output-rules" rows="6"
-                      placeholder="One rule per line. These are checked by the LLM against every tool output.&#10;&#10;Examples:&#10;- Allow only name and status&#10;- Redact or mask passport number&#10;- Block full customer profile"
-                      style="font-size:12px;line-height:1.5;font-family:inherit;width:100%;padding:0.5rem 0.6rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);resize:vertical;">${outputRules}</textarea>
-          </div>
-        </div>
-      </div>`;
-  }).join('') : `<div class="dp-empty">No agent roles registered yet. Register agents &amp; roles first, then return here to configure per-role access.</div>`;
-
-  const sanRulesHtml = sanCount
-    ? (dp.sanitization_rules || []).map((sr, i) => dpSanRuleRow(sr, i)).join('')
-    : `<div class="dp-empty">No rules yet. Start from a template above, or click <strong>+ Add rule</strong>.</div>`;
-
   const complianceOpt = (val, label) => `<option value="${val}" ${compliance === val ? 'selected' : ''}>${label}</option>`;
+  const stored = (dp.role_policies || []).map(r => r.role);
+  const initialRole = stored.includes('*') || !stored.length ? '*' : stored[0];
 
   const html = `
   <div class="dp-overlay" id="dp-modal-overlay" onclick="if(event.target===this)this.remove()">
@@ -10595,8 +10599,8 @@ function openDataPolicyModal(toolName) {
       <div class="dp-header">
         <div class="dp-eyebrow">Data Policy</div>
         <h2 class="dp-title" id="dp-title">
-          <span>${prettyName}</span>
-          <code>${toolName}</code>
+          <span>${_esc(toolName)}</span>
+          <code>${_esc(toolName)}</code>
         </h2>
         <div class="dp-subtitle">Configure data protection, role access, and compliance for this tool.</div>
         <button class="dp-close" type="button" onclick="document.getElementById('dp-modal-overlay').remove()" aria-label="Close">×</button>
@@ -10604,28 +10608,19 @@ function openDataPolicyModal(toolName) {
 
       <div class="dp-body">
 
-        <!-- Section 1 — Role Access -->
+        <!-- Section 1 — Rules, per role -->
         <section class="dp-section">
           <div class="dp-section-head">
             <div class="dp-section-title-block">
-              <div class="dp-section-title">
-                Role access
-                <span class="dp-count-pill">${roles.length} ${roles.length === 1 ? 'role' : 'roles'}</span>
-              </div>
-              <div class="dp-section-desc">Control what each role can do with this tool and what data they can see.</div>
+              <div class="dp-section-title">Rules</div>
+              <div class="dp-section-desc">What this tool may be asked to do and what may come back, for everyone or per role.
+                Checked on every call, together with the default policy.</div>
             </div>
           </div>
-
-          <div style="font-size:12px;color:var(--text-muted);padding:0 0 0.75rem;line-height:1.6;">
-            <span class="dp-kbd allow">allow</span> = full access &nbsp;
-            <span class="dp-kbd redact">redact</span> = mask sensitive fields &nbsp;
-            <span class="dp-kbd mask">mask</span> = partial mask &nbsp;
-            <span class="dp-kbd block">block</span> = deny if rules violated
-          </div>
-
-          <div id="dp-roles-body">${rolesHtml}</div>
+          <div id="dp-editor"></div>
         </section>
 
+        <div id="dp-extras">
         <!-- Section 2b — Deterministic floor: allowlist, thresholds, exact match -->
         <section class="dp-section">
           <details class="dp-advanced-wrap" id="dp-floor-block" ${dpFloorHasContent(dp) ? 'open' : ''}>
@@ -10694,44 +10689,26 @@ function openDataPolicyModal(toolName) {
           </details>
         </section>
 
+        </div>
       </div>
 
       <div class="dp-footer">
         <div class="dp-footer-hint">Nothing is saved until you click <strong>Save data policy</strong>.</div>
         <div class="dp-footer-actions">
           <button type="button" onclick="document.getElementById('dp-modal-overlay').remove()">Cancel</button>
-          <button class="primary" type="button" onclick="saveDataPolicy('${toolName}')">Save data policy</button>
+          <button class="primary" type="button" data-tool="${_esc(toolName)}" onclick="saveDataPolicy(this.dataset.tool)">Save data policy</button>
         </div>
       </div>
     </div>
   </div>`;
 
   document.body.insertAdjacentHTML('beforeend', html);
-
-  // Initialise state that depends on the current rule count (Test button
-  // enabled/disabled, count pill). Must run after the modal is in the DOM.
-  dpUpdateSanCount();
-
-  // Hydrate the AI policy fields from the stored policy (or defaults) and
-  // apply the initial mode so the right blocks are visible.
-  //
-  // Mode selection precedence:
-  //   1. Explicit `sanitization_mode` from the stored policy wins.
-  //   2. Intent present but no mode   → "both" (they want AI; keep regex too).
-  //   3. Legacy policy with regex rules only → "regex" (don't surprise users).
-  //   4. Brand-new policy              → "both" (our recommended default —
-  //      matches the messaging that regex alone is easy to bypass).
-  const intentEl = document.getElementById('dp-intent');
-  if (intentEl) intentEl.value = dp.sanitization_intent || '';
-  const initialMode =
-    dp.sanitization_mode
-    || (dp.sanitization_intent ? 'both' : null)
-    || ((dp.sanitization_rules && dp.sanitization_rules.length) ? 'regex' : 'both');
-  dpSelectMode(initialMode);
-  const regexDetailsEl = document.getElementById('dp-regex-block');
-  if (regexDetailsEl) {
-    regexDetailsEl.open = initialMode === 'regex' || !!(dp.sanitization_rules && dp.sanitization_rules.length);
-  }
+  peMount('dp-editor', 'tdp', dp, {
+    role: initialRole, roles: [...REGISTERED_AGENT_ROLES], embedded: true,
+    // In the JSON view the whole policy is the one source: hide the sections
+    // that would otherwise also edit the floor and compliance fields.
+    onView: v => { const x = document.getElementById('dp-extras'); if (x) x.style.display = v === 'json' ? 'none' : ''; },
+  });
 
   // Dismiss on Escape — bound once, cleaned up when the overlay goes away.
   const onEsc = (e) => {
@@ -11587,74 +11564,43 @@ async function dpRunAIReview(stage, toolName) {
 }
 
 async function saveDataPolicy(toolName) {
-  const compliance = document.getElementById('dp-compliance').value || null;
-  const audit = document.getElementById('dp-audit').checked;
-  const retention = parseInt(document.getElementById('dp-retention').value) || null;
-  const intent = (document.getElementById('dp-intent')?.value || '').trim() || null;
-  const mode = _dpCurrentMode || 'regex';
-
-  // Collect role policies
-  const rolePolicies = [];
-  document.querySelectorAll('#dp-roles-body [data-role]').forEach(row => {
-    const role = row.getAttribute('data-role');
-    const action = row.querySelector('.dp-role-action').value;
-    const scopeStr = row.querySelector('.dp-role-scope').value.trim();
-    const scope = scopeStr ? scopeStr.split(',').map(s => s.trim()).filter(Boolean) : [];
-    const redaction = row.querySelector('.dp-role-redaction').value;
-    const inputRulesRaw = row.querySelector('.dp-role-input-rules')?.value.trim() || '';
-    const outputRulesRaw = row.querySelector('.dp-role-output-rules')?.value.trim() || '';
-    const inputRules = inputRulesRaw ? inputRulesRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
-    const outputRules = outputRulesRaw ? outputRulesRaw.split('\n').map(s => s.trim()).filter(Boolean) : [];
-    rolePolicies.push({ role, action, data_scope: scope, redaction_level: redaction,
-                        input_rules: inputRules, output_rules: outputRules });
-  });
-
-  // Collect sanitization rules
-  const sanRules = [];
-  document.querySelectorAll('#dp-san-rules .dp-san-row').forEach(row => {
-    const actionVal = row.querySelector('.dp-san-action')?.value || '';
-    const rule = {
-      pattern_id: row.querySelector('.dp-san-id').value.trim(),
-      regex: row.querySelector('.dp-san-regex').value,
-      replacement: row.querySelector('.dp-san-replacement').value,
-      description: row.querySelector('.dp-san-desc').value.trim(),
-      enabled: true,
-      severity: row.querySelector('.dp-san-severity').value,
-    };
-    if (actionVal) rule.action = actionVal;
-    sanRules.push(rule);
-  });
-
-  // Deterministic floor fields (allowlist / thresholds / exact_match). A
-  // textarea that fails to parse must stop the save: posting without the
-  // fields would wipe what is stored, since the API treats absent as empty.
-  let floorFields = { allowlist: [], thresholds: [], exact_match: [] };
-  const floorEl = document.getElementById('dp-floor-json');
-  if (floorEl && floorEl.value.trim()) {
-    try {
-      const parsed = JSON.parse(floorEl.value);
-      floorFields = {
-        allowlist:   Array.isArray(parsed.allowlist)   ? parsed.allowlist   : [],
-        thresholds:  Array.isArray(parsed.thresholds)  ? parsed.thresholds  : [],
-        exact_match: Array.isArray(parsed.exact_match) ? parsed.exact_match : [],
-      };
-    } catch (e) {
-      showToast('Allowlist / thresholds / exact match is not valid JSON: ' + e.message, 'error');
+  const st = PE.tdp;
+  if (!st) return;
+  let policy;
+  if (st.view === 'json') {
+    // The JSON view is the whole policy, saved as written.
+    policy = peParsedJson('tdp');
+    if (!policy) return;
+    if (typeof policy !== 'object' || Array.isArray(policy)) {
+      showToast('The policy must be a JSON object.', 'error');
       return;
     }
-  }
+  } else {
+    const problems = peValidate(st, PE_LIBRARY || []);
+    if (problems.length) { showToast(problems.join(' '), 'error'); return; }
+    policy = pePolicyFrom(st, PE_LIBRARY || []);
 
-  const policy = {
-    tool_name: toolName,
-    sanitization_rules: sanRules,
-    role_policies: rolePolicies,
-    compliance_framework: compliance,
-    audit_required: audit,
-    retention_days: retention,
-    sanitization_intent: intent,
-    sanitization_mode: mode,
-    ...floorFields,
-  };
+    // Deterministic floor fields (allowlist / thresholds / exact_match). A
+    // textarea that fails to parse must stop the save: posting without the
+    // fields would wipe what is stored, since the API treats absent as empty.
+    const floorEl = document.getElementById('dp-floor-json');
+    if (floorEl && floorEl.value.trim()) {
+      try {
+        const parsed = JSON.parse(floorEl.value);
+        policy.allowlist   = Array.isArray(parsed.allowlist)   ? parsed.allowlist   : [];
+        policy.thresholds  = Array.isArray(parsed.thresholds)  ? parsed.thresholds  : [];
+        policy.exact_match = Array.isArray(parsed.exact_match) ? parsed.exact_match : [];
+      } catch (e) {
+        showToast('Allowlist / thresholds / exact match is not valid JSON: ' + e.message, 'error');
+        return;
+      }
+    }
+    policy.compliance_framework = document.getElementById('dp-compliance').value || null;
+    policy.audit_required = document.getElementById('dp-audit').checked;
+    policy.retention_days = parseInt(document.getElementById('dp-retention').value) || null;
+  }
+  delete policy.created_at; delete policy.updated_at;
+  policy.tool_name = toolName;
 
   try {
     const res = await fetch(`/v1/data-policies/tools/${encodeURIComponent(toolName)}/policy`, {

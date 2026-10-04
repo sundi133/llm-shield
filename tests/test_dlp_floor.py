@@ -431,8 +431,7 @@ def test_the_portal_edits_and_round_trips_the_floor_fields():
     save = html.split("async function saveDataPolicy(")[1].split("\n}\n")[0]
     assert "dp-floor-json" in save
     for key in ("allowlist", "thresholds", "exact_match"):
-        assert key in save
-    assert "...floorFields" in save
+        assert f"policy.{key} " in save   # assigned from the floor textarea on every form save
 
 
 def test_the_portal_hash_helper_calls_the_endpoint_and_is_defined():

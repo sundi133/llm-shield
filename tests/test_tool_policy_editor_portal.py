@@ -171,3 +171,96 @@ def test_the_page_uses_the_form_and_the_new_endpoints():
     assert "Advanced: edit as JSON" not in HTML           # JSON is a view now, not a fold-out
     assert "peMount('gdp-editor', 'gdp'" in HTML
     assert "/v1/data-policies/library" in HTML and "/v1/data-policies/try" in HTML
+
+
+# ── task 3: the per-tool editor ─────────────────────────────────────────────
+
+def _role(role, action="redact", inputs=(), outputs=(), scope=(), level="partial"):
+    return {"role": role, "action": action, "data_scope": list(scope), "redaction_level": level,
+            "input_rules": list(inputs), "output_rules": list(outputs)}
+
+
+TOOL_POLICY = {
+    "tool_name": "customer_profile_get",
+    "role_policies": [
+        _role("*", inputs=["Allow only one exact customer_id"]),
+        _role("support", "redact", outputs=["Mask SSN"], scope=["contact"]),
+        _role("auditor", "allow", outputs=["Counts only"], level="full"),   # not a registered role
+    ],
+    "sanitization_rules": [{"pattern_id": "ssn", "regex": "\\d{3}-\\d{2}-\\d{4}",
+                            "replacement": "[SSN]", "description": "SSN", "severity": "high",
+                            "action": "redact", "enabled": True}],
+    "sanitization_intent": "keep national ids out",
+    "sanitization_mode": "both",
+    "allowlist": [{"value": "000-00-0000", "reason": "test value"}],
+    "compliance_framework": "gdpr", "audit_required": True, "retention_days": 90,
+    "enabled": True,
+}
+
+
+def test_loading_and_saving_a_tool_policy_loses_nothing():
+    """The old modal posted sanitization_rules: [] and sanitization_intent:
+    null on every save, and dropped roles without a registered card. The
+    editor starts from the whole policy, so a load-then-save is a no-op."""
+    stored = {k: v for k, v in TOOL_POLICY.items() if k != "tool_name"}   # saveDataPolicy sets it
+    for role in ("*", "support", "auditor"):
+        assert _normal(_round_trip(TOOL_POLICY, role)) == _normal(stored), role
+    saved = {**_round_trip(TOOL_POLICY, "support"), "tool_name": TOOL_POLICY["tool_name"]}
+    rdp._reject_invalid_floor(rdp.ToolDataPolicy(**saved).model_dump())
+
+
+def test_editing_one_role_leaves_the_others_alone():
+    out = _js(f"(() => {{ const s = peStateFrom({json.dumps(TOOL_POLICY)}, LIB, 'support');"
+              " s.calls.push('BLOCK bulk exports'); s.rs.action = 'block';"
+              " return pePolicyFrom(s, LIB); })()")
+    roles = {r["role"]: r for r in out["role_policies"]}
+    assert roles["support"]["input_rules"] == ["BLOCK bulk exports"]
+    assert roles["support"]["action"] == "block" and roles["support"]["data_scope"] == ["contact"]
+    assert roles["*"] == TOOL_POLICY["role_policies"][0]
+    assert roles["auditor"] == TOOL_POLICY["role_policies"][2]
+
+
+def test_a_role_entry_is_created_only_when_it_says_something():
+    empty = _js(f"pePolicyFrom(peStateFrom({{}}, LIB, 'sales'), LIB)")
+    assert empty["role_policies"] == []
+    blocked = _js("(() => { const s = peStateFrom({}, LIB, 'sales'); s.rs.action = 'block';"
+                  " return pePolicyFrom(s, LIB); })()")
+    assert blocked["role_policies"] == [_role("sales", "block")]
+
+
+def test_the_role_list_has_everyone_registered_roles_and_stored_ones():
+    choices = _js(f"peRoleChoices({json.dumps(TOOL_POLICY)}, ['teller', 'support'])")
+    assert choices == ["*", "support", "teller", "auditor"]
+
+
+def test_a_preset_sets_the_role_and_its_rules_but_keeps_ticks():
+    tpl = {"action": "block", "data_scope": [], "redaction_level": "full",
+           "input_rules": ["This role is not authorized to invoke this tool"],
+           "output_rules": ["This role must not receive any data produced by this tool"]}
+    st = _js(f"peApplyPreset(Object.assign(peStateFrom({{}}, LIB, 'sales'), {{ticked: ['call.T21']}}),"
+             f" {json.dumps(tpl)})")
+    assert st["rs"] == {"action": "block", "redaction_level": "full", "data_scope": ""}
+    assert st["calls"] == tpl["input_rules"] and st["results"] == tpl["output_rules"]
+    assert st["ticked"] == ["call.T21"]
+
+
+def test_the_embedded_editor_has_a_role_picker_and_leaves_saving_to_the_modal():
+    st = (f"Object.assign(peStateFrom({json.dumps(TOOL_POLICY)}, LIB, '*'),"
+          f" {{embedded: true, roleChoices: ['*', 'support', '<b>x</b>']}})")
+    form = _js(f"peRenderHtml('tdp', {st}, LIB)")
+    assert "Everyone (*)" in form and "&lt;b&gt;x&lt;/b&gt;" in form and "<b>x</b>" not in form
+    assert "peRole(this)" in form and "pePreset(this)" in form
+    assert 'onclick="peSave(this)"' not in form
+    json_view = _js(f"peRenderHtml('tdp', Object.assign({st}, {{view: 'json'}}), LIB)")
+    assert "peSaveJson" not in json_view and 'data-view="form"' in json_view
+    hidden = _js(f"peHiddenSettings({st})")
+    assert hidden == ["sanitization intent"]      # the modal shows the floor and compliance
+
+
+def test_the_tool_modal_uses_the_editor_and_never_rebuilds_from_missing_fields():
+    modal = HTML[HTML.index("async function openDataPolicyModal(toolName)"):HTML.index("let _dpSanIdx = 0;")]
+    assert "peMount('dp-editor', 'tdp', dp" in modal and "embedded: true" in modal
+    save = HTML[HTML.index("async function saveDataPolicy(toolName)"):HTML.index("// ── Roles Overview")]
+    assert "#dp-san-rules" not in save and "dp-intent" not in save    # the fields that wiped data
+    assert "pePolicyFrom(st" in save and "peParsedJson('tdp')" in save
+    assert "openDataPolicyModal(this.dataset.tool)" in HTML          # tool name not inlined in JS
