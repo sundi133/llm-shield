@@ -10008,6 +10008,8 @@ function peStateFrom(policy, library, role) {
                        replacement: r.replacement || '[REDACTED]', enabled: r.enabled !== false,
                        block: r.action === 'block' || r.severity === 'critical' });
   }
+  // '' = not set, 'through' = false, 'block' = true (docs/specs/tool-policy-fail-safe.md)
+  st.failClosed = base.fail_closed === true ? 'block' : base.fail_closed === false ? 'through' : '';
   return st;
 }
 
@@ -10044,7 +10046,48 @@ function pePolicyFrom(st, library) {
   // Mode "ai" skips the patterns entirely (core/dlp floor runs in regex|both).
   if (p.sanitization_rules.length && (p.sanitization_mode || 'regex') === 'ai') p.sanitization_mode = 'both';
   if (p.enabled === undefined) p.enabled = true;
+  if (st.failClosed === 'block') p.fail_closed = true;
+  else if (st.failClosed === 'through') p.fail_closed = false;
+  else delete p.fail_closed;
   return p;
+}
+
+// Whether the default policy's "block" reaches this tool. A tool that opted
+// out of the default (inherit_global: false) decides alone.
+function peInheritsBlock(st) {
+  return !!st.embedded && !!st.inheritedFailClosed && (st.base || {}).inherit_global !== false;
+}
+
+// The "If a check can't run" choices. The default policy has two; a tool also
+// has "same as the default", and cannot pick "let through" under a default
+// that blocks (the guard would ignore it: the default is a floor).
+function peFailOptions(st) {
+  if (!st.embedded) {
+    return { value: st.failClosed === 'block' ? 'block' : 'through', options: [
+      { value: 'through', label: 'Let the call through' },
+      { value: 'block', label: 'Block the call' }] };
+  }
+  const inherited = peInheritsBlock(st);
+  return { value: st.failClosed, options: [
+    { value: '', label: `Same as the default policy (${inherited ? 'block' : 'let through'})` },
+    { value: 'through', label: 'Let the call through', disabled: inherited },
+    { value: 'block', label: 'Block the call' }] };
+}
+
+// The default policy card's status line, from GET /v1/data-policies/status.
+// Says what is true now, not just that a policy exists.
+function peStatusLine(s) {
+  if (!s) return null;
+  const monitor = s.policy_mode === 'monitor';
+  const mode = monitor ? 'Monitor only: tool calls are checked and reported, not blocked.' : 'Enforcing.';
+  const fail = s.default_policy
+    ? `If a check can't run, the call is ${s.fail_closed ? 'blocked' : 'let through'}.`
+    : "If a check can't run, the call is let through unless the tool's own policy says block.";
+  const u = s.unjudged || {}, c = u.tool_calls || {}, r = u.tool_results || {};
+  const week = (c['7d'] || 0) + (r['7d'] || 0);
+  const counts = week === 0 ? 'Every check ran in the last 7 days.'
+    : `${c.today || 0} tool call(s) and ${r.today || 0} tool result(s) went unchecked today (UTC); ${week} in the last 7 days.`;
+  return { text: `${mode} ${fail} ${counts}`, warn: monitor || (week > 0 && !s.fail_closed) };
 }
 
 function peValidate(st, library) {
@@ -10055,6 +10098,8 @@ function peValidate(st, library) {
   st.patterns.forEach((r, i) => {
     if (r.regex.trim() && !r.name.trim()) problems.push(`Secret pattern ${i + 1} needs a name.`);
   });
+  if (st.failClosed === 'through' && peInheritsBlock(st))
+    problems.push("The default policy blocks when a check can't run; a tool cannot switch that off.");
   return problems;
 }
 
@@ -10157,6 +10202,7 @@ function peRenderHtml(id, st, library) {
     ${tryIt}`;
   }
   const opt = (v, label, cur) => `<option value="${_esc(v)}" ${v === cur ? 'selected' : ''}>${_esc(label)}</option>`;
+  const fail = peFailOptions(st);
   const presets = [['full_access', 'Full access'], ['read_only', 'Read-only + PII masked'],
                    ['pii_safe', 'Strict PII-safe'], ['audit', 'Audit'], ['blocked', 'Blocked']];
   const roleBar = st.roleChoices ? `
@@ -10184,6 +10230,13 @@ function peRenderHtml(id, st, library) {
         <button class="small" data-pe="${_esc(id)}" onclick="peClear(this)">Clear</button></span></div>
     <div style="display:flex;gap:1rem;flex-wrap:wrap;">
       ${group('call', 'Tool calls')}${group('result', 'Tool results')}${group('secret', 'Secrets')}</div>
+    ${head("If a check can't run")}
+    <div style="display:flex;gap:0.45rem;align-items:center;flex-wrap:wrap;">
+      <select data-pe="${_esc(id)}" data-field="failClosed" onchange="peSet(this)" style="${box}width:auto;">
+        ${fail.options.map(o => `<option value="${_esc(o.value)}" ${o.value === fail.value ? 'selected' : ''} ${o.disabled ? 'disabled' : ''}>${_esc(o.label)}</option>`).join('')}</select>
+      <span class="muted" style="font-size:11px;flex:1 1 20rem;">The model that checks these rules can fail or time out.
+        Blocking is safer for tools that move money or data; letting through keeps agents working.
+        Either way it is counted, and alerted to webhooks subscribed to <code>check_unavailable</code>.</span></div>
     ${head('Your rules')}
     ${list('calls', 'Tool calls')}${list('results', 'Tool results')}${patterns}
     ${hidden.length ? `<div class="muted" style="font-size:11px;margin-top:0.6rem;">Also contains ${_esc(hidden.join(', '))}; kept as they are. Edit them in the JSON view.</div>` : ''}
@@ -10206,7 +10259,9 @@ function pePreferredView() {
 
 // opts: onSave(policy); role (initial); roles (registered roles, turns on the
 // role picker); embedded (the host saves, so no Save buttons; it shows the
-// floor and compliance itself); onView(view), told whenever the view changes.
+// floor and compliance itself); onView(view), told whenever the view changes;
+// inheritedFailClosed (a tool's editor: the default policy blocks when a check
+// can't run).
 function peMount(containerId, id, policy, opts) {
   opts = opts || {};
   PE[id] = peRebuild({ opts, containerId, view: pePreferredView() }, policy, opts.role || '*');
@@ -10219,6 +10274,7 @@ function peRebuild(prev, policy, role) {
   const o = prev.opts || {};
   return { ...peStateFrom(policy, PE_LIBRARY || [], role), opts: o, containerId: prev.containerId,
            view: prev.view || 'form', jsonText: null, embedded: !!o.embedded,
+           inheritedFailClosed: !!o.inheritedFailClosed,
            roleChoices: o.roles ? peRoleChoices(policy, o.roles) : null };
 }
 
@@ -10385,9 +10441,25 @@ async function loadGlobalDataPolicy() {
         the default cannot be cancelled from below. Start at
         <code>warn</code> and escalate once Telemetry looks right.
       </div>
+      <div id="gdp-status" style="font-size:12px;margin-top:0.45rem;"></div>
       <div id="gdp-editor"></div>
     </div>`;
   peMount('gdp-editor', 'gdp', { ...p, enabled: on }, { onSave: saveGlobalDataPolicy });
+  loadToolPolicyStatus();
+}
+
+async function peFetchStatus() {
+  try {
+    const res = await fetch('/v1/data-policies/status', { headers: { 'X-API-Key': API_KEY } });
+    return res.ok ? await res.json() : null;
+  } catch (e) { return null; }
+}
+
+async function loadToolPolicyStatus() {
+  const line = peStatusLine(await peFetchStatus());
+  const el = document.getElementById('gdp-status');
+  if (!el || !line) return;
+  el.innerHTML = `<span style="color:${line.warn ? 'var(--warning,#d4a017)' : 'var(--text-2,#888)'};">${_esc(line.text)}</span>`;
 }
 
 async function saveGlobalDataPolicy(body) {
@@ -10587,6 +10659,7 @@ async function openDataPolicyModal(toolName) {
   // on save. The allowlist and compliance sections below are unchanged.
   const dp = DATA_POLICIES_CACHE[toolName] || {};
   await peLoadLibrary();
+  const status = await peFetchStatus();
   const compliance = (dp.compliance_framework || '').toLowerCase();
   const auditOn    = !!dp.audit_required;
   const retention  = dp.retention_days || '';
@@ -10706,6 +10779,7 @@ async function openDataPolicyModal(toolName) {
   document.body.insertAdjacentHTML('beforeend', html);
   peMount('dp-editor', 'tdp', dp, {
     role: initialRole, roles: [...REGISTERED_AGENT_ROLES], embedded: true,
+    inheritedFailClosed: !!(status && status.fail_closed),
     // In the JSON view the whole policy is the one source: hide the sections
     // that would otherwise also edit the floor and compliance fields.
     onView: v => { const x = document.getElementById('dp-extras'); if (x) x.style.display = v === 'json' ? 'none' : ''; },

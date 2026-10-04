@@ -302,6 +302,27 @@ def record_results_batch_bg(tenant_id: str, guardrail_results: list) -> None:
     task.add_done_callback(_BG_TASKS.discard)
 
 
+def get_unjudged_counts(tenant_id: str, guardrail_name: str, days: int = 7) -> dict:
+    """How many checks by `guardrail_name` could not run: today (UTC) and over
+    the last `days` days including today. Buckets are daily, so "today" is the
+    UTC calendar day, not a rolling 24 hours. One batched read; zeros when the
+    store is unavailable. Spec: docs/specs/tool-policy-fail-safe.md, task 3."""
+    r = _get_redis()
+    if not tenant_id or not r:
+        return {"today": 0, f"{days}d": 0}
+    now = datetime.utcnow()
+    dates = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+    keys = [_key(tenant_id, guardrail_name, d) for d in dates]
+    data = _batch_hgetall(r, keys)
+
+    def n(k):
+        try:
+            return int(float(_decode_hash(data.get(k) or {}).get("unjudged", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+    return {"today": n(keys[0]), f"{days}d": sum(n(k) for k in keys)}
+
+
 def get_effectiveness(
     tenant_id: str,
     guardrail_name: str,

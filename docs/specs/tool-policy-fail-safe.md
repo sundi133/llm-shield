@@ -135,14 +135,16 @@ Admin plane, new:
   wherever the router is (both apps; it is a read).
 
   ```json
-  {"policy_mode": "enforce",
-   "fail_closed": false,
-   "unjudged": {"tool_calls": {"24h": 3, "7d": 41},
-                "tool_results": {"24h": 0, "7d": 2}}}
+  {"tenant_id": "acme", "policy_mode": "enforce",
+   "default_policy": true, "fail_closed": false,
+   "unjudged": {"tool_calls": {"today": 3, "7d": 41},
+                "tool_results": {"today": 0, "7d": 2}}}
   ```
 
   `policy_mode` comes from the tenant config, `fail_closed` from the stored
-  default policy, and counts from `guardrail_metrics`. It does not report
+  default policy (false when the default is turned off, since the guard path
+  does not load it then), and counts from `guardrail_metrics`. Metrics are
+  daily buckets, so "today" is the UTC calendar day, not a rolling 24 hours. It does not report
   `SHIELD_DLP_FAIL_CLOSED`: the admin plane cannot see the data plane's env,
   and showing a guess is worse than showing nothing.
 
@@ -271,4 +273,9 @@ All tasks: full suite green in a clean venv; CI `pytest` gate passes.
    never pages anyone; result details gained `error_type` (class name) so the
    alert never carries the exception text.
 3. **Portal.** The setting in the editor, `GET /v1/data-policies/status`, the
-   card's status line.
+   card's status line. Done. Notes: the status line sits under the card's
+   ACTIVE / DISABLED badge rather than replacing it, since the badge answers a
+   different question (is the default turned on); "24h" became "today (UTC)"
+   to match the daily metric buckets. Checked in the portal against the local
+   harness: default set to block, then a tool's editor showing "Same as the
+   default policy (block)" with "Let the call through" disabled.
