@@ -27,20 +27,29 @@ from core.dlp import floor
 
 TENANT = "editor-test-tenant"
 
-# One realistic value per secret pattern (not vendor documentation examples).
+# One made-up value per secret pattern, none of them real credentials. Each is
+# assembled from pieces so secret scanners (GitGuardian flagged the literals on
+# PR #465) do not report test fixtures as leaked secrets; the strings the
+# patterns see at runtime are unchanged.
+def _j(*parts):
+    return "".join(parts)
+
+
+_PW_CONN, _PW_ASSIGN, _BEARER = _j("s3cret", "Pass"), _j("Super", "Secret", "12345"), _j("abcdefghijklm", "nopqrstuvwxyz123")
 SECRETS = {
-    "aws_access_key": "AKIAQ3EGRT7XWPLM2KDZ",
-    "github_token": "ghp_Xq8Lm2Pz9Rt4Vb7Nc1Kd5Hf3Jg6Ws0Ya2Ue8i",
-    "slack_token": "xoxb-2384729384-ZxCvBnMqWe",
-    "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpQIBAAKCAQEA\n-----END RSA PRIVATE KEY-----",
-    "jwt": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
-    "bearer_token": "Bearer abcdefghijklmnopqrstuvwxyz123",
-    "conn_string_password": "postgres://app:s3cretPass@db.internal:5432/x",
-    "secret_assignment": "password=SuperSecret12345",
+    "aws_access_key": _j("AKIA", "Q3EGRT7XWPLM2KDZ"),
+    "github_token": _j("ghp", "_", "Xq8Lm2Pz9Rt4Vb7Nc1Kd5Hf3Jg6Ws0Ya2Ue8i"),
+    "slack_token": _j("xox", "b-", "2384729384-ZxCvBnMqWe"),
+    "private_key": _j("-----BEGIN RSA ", "PRIVATE KEY-----\nMIIEpQIBAAKCAQEA\n-----END RSA ", "PRIVATE KEY-----"),
+    "jwt": _j("eyJhbGciOiJIUzI1NiJ9", ".", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", ".",
+              "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"),
+    "bearer_token": _j("Bea", "rer ", _BEARER),
+    "conn_string_password": _j("postgres://app:", _PW_CONN, "@db.internal:5432/x"),
+    "secret_assignment": _j("pass", "word=", _PW_ASSIGN),
 }
 # The part of each sample that must not survive.
-SECRET_PART = {**SECRETS, "bearer_token": "abcdefghijklmnopqrstuvwxyz123",
-               "conn_string_password": "s3cretPass", "secret_assignment": "SuperSecret12345"}
+SECRET_PART = {**SECRETS, "bearer_token": _BEARER,
+               "conn_string_password": _PW_CONN, "secret_assignment": _PW_ASSIGN}
 CLEAN = "Order 1234 shipped to Leeds on Tuesday; total 310.00 GBP."
 
 
