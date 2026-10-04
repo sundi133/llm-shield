@@ -229,12 +229,22 @@ def build(variant: str, os_name: str, *, shield_url: str, key: str, agent: str,
 
 
 def public_url(request_base: Optional[str] = None) -> str:
-    """The data-plane URL laptops should call: SHIELD_PUBLIC_URL, else the
-    caller's own base URL."""
-    url = (os.getenv("SHIELD_PUBLIC_URL") or "").strip() or (request_base or "")
-    return url.rstrip("/")
+    return public_url_and_source(request_base)[0]
+
+
+def public_url_and_source(request_base: Optional[str] = None) -> tuple[str, str]:
+    """The data-plane URL laptops should call, and where it came from:
+    SHIELD_DEVICE_AGENT_SHIELD_URL (the URL rollout kits already give device
+    agents), else SHIELD_PUBLIC_URL, else the caller's own base URL. The last
+    is often the portal, which does not serve the hook route, so the portal
+    says so (docs/specs/claude-code-fleet-rollout.md section 4.4)."""
+    for env in ("SHIELD_DEVICE_AGENT_SHIELD_URL", "SHIELD_PUBLIC_URL"):
+        url = (os.getenv(env) or "").strip()
+        if url:
+            return url.rstrip("/"), env
+    return (request_base or "").rstrip("/"), "request"
 
 
 __all__ = ["COMMAND_TIMEOUT_S", "KitError", "MATCHER", "OSES", "PATHS", "SCRIPT_FILES",
            "VARIANTS", "build", "check_inputs", "hook_conf", "install_script",
-           "managed_settings", "mobileconfig", "public_url"]
+           "managed_settings", "mobileconfig", "public_url", "public_url_and_source"]

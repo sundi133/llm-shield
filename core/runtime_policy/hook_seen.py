@@ -29,7 +29,8 @@ def _key(tenant_id: str) -> str:
 
 
 def record(tenant_id: str, *, agent: str, user: str, device: str, decision: str, tool: str,
-           profile: Optional[str], session_id: str, now: Optional[float] = None) -> bool:
+           profile: Optional[str], session_id: str, now: Optional[float] = None,
+           fleet: str = "", monitor: bool = False) -> bool:
     """Store this laptop's latest call. Returns True when it was written.
     Never raises: the hook has already answered."""
     from core.dlp.devices import _hset
@@ -48,7 +49,7 @@ def record(tenant_id: str, *, agent: str, user: str, device: str, decision: str,
         _hset(_key(tenant_id), field, {
             "at": int(now), "agent": agent[:200], "user": user[:200], "device": device[:200],
             "decision": decision, "tool": tool[:200], "profile": profile or "",
-            "session_id": session_id[:200]})
+            "session_id": session_id[:200], "fleet": fleet[:64], "monitor": bool(monitor)})
         return True
     except Exception:
         return False

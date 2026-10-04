@@ -4867,23 +4867,36 @@ if __name__ == "__main__":
       </div>
 
       <div class="card" id="cc-card">
-        <div class="card-header"><div><div class="card-title">Claude Code on laptops</div>
-          <div class="card-desc">Claude Code asks Shield before it runs a command, writes a file or fetches a URL, and the agent's runtime profile decides. Register an agent (for example <code>claude-code</code>) in the Agent Registry with a profile (the <b>coding-agent-baseline</b> template is a starting point), then deploy these files to laptops by MDM. <b>HTTP hook</b>: nothing to install, but if a laptop cannot reach Shield, Claude Code goes ahead. <b>Fail-closed hook</b>: a small script that denies whenever Shield cannot answer.</div></div></div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem;">
-          <select id="cc-variant"><option value="http">HTTP hook</option><option value="command">Fail-closed hook</option></select>
-          <select id="cc-os"><option value="macos">macOS</option><option value="linux">Linux</option><option value="windows">Windows</option></select>
-          <input id="cc-agent" type="text" value="claude-code" placeholder="agent id">
-          <input id="cc-url" type="text" placeholder="Shield URL laptops reach">
-          <input id="cc-key" type="password" autocomplete="off" placeholder="tenant key for laptops (not stored)">
-        </div>
+        <div class="card-header"><div><div class="card-title">Coding agents on laptops</div>
+          <div class="card-desc">Claude Code asks Shield before it runs a command, writes a file or fetches a URL, and its runtime profile decides. On laptops with the Votal device agent, turn it on here and choose a mode for each fleet: the agent installs and maintains the hook, so there is nothing new to push by MDM and no key to hand out.</div></div></div>
+        <div id="cc-status" style="font-size:13px;" class="muted">Loading...</div>
+        <div class="card-title" style="margin-top:1.25rem;">Fleets</div>
+        <div class="card-desc" style="margin-bottom:0.5rem;"><b>Monitor</b> records what Shield would block and lets everything through, for a pilot. <b>Enforce</b> lets Shield decide. <b>If Shield can't be reached</b> applies when a laptop gets no answer. A fleet turned on for the first time covers Claude Code sessions started after its laptops' next sync (a few minutes); sessions already open are covered once restarted.</div>
+        <div id="cc-fleets" style="font-size:13px;" class="muted">Loading...</div>
         <div style="display:flex;gap:0.5rem;margin-top:0.6rem;">
-          <button class="primary small" onclick="ccBuild()">Build files</button>
+          <button class="primary small" onclick="ccSaveFleets()">Save fleet modes</button>
         </div>
-        <div id="cc-msg" style="margin-top:0.75rem;font-size:13px;"></div>
-        <div id="cc-files" style="font-size:13px;"></div>
+        <div id="cc-fleet-msg" style="margin-top:0.75rem;font-size:13px;"></div>
         <div class="card-title" style="margin-top:1.25rem;">Laptops</div>
         <div class="card-desc" style="margin-bottom:0.5rem;">The latest hook call from each laptop, updated at most once a minute. A laptop whose last call keeps getting older while people use Claude Code may have lost its hook or its route to Shield.</div>
         <div id="cc-laptops" style="font-size:13px;" class="muted">Loading...</div>
+        <details id="cc-standalone" style="margin-top:1.25rem;">
+          <summary style="cursor:pointer;font-weight:600;font-size:14px;">Laptops without the Votal agent</summary>
+          <div class="card-desc" style="margin:0.5rem 0;">Build files to deploy by MDM yourself. <b>HTTP hook</b>: nothing to install, but if a laptop cannot reach Shield, Claude Code goes ahead. <b>Fail-closed hook</b>: a small script that denies whenever Shield cannot answer.</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem;">
+            <select id="cc-variant"><option value="http">HTTP hook</option><option value="command">Fail-closed hook</option></select>
+            <select id="cc-os"><option value="macos">macOS</option><option value="linux">Linux</option><option value="windows">Windows</option></select>
+            <input id="cc-agent" type="text" value="claude-code" placeholder="agent id">
+            <input id="cc-url" type="text" placeholder="Shield URL laptops reach">
+            <input id="cc-key" type="password" autocomplete="off" placeholder="tenant key for laptops (not stored)">
+          </div>
+          <div id="cc-url-note" style="margin-top:0.4rem;font-size:12px;"></div>
+          <div style="display:flex;gap:0.5rem;margin-top:0.6rem;">
+            <button class="primary small" onclick="ccBuild()">Build files</button>
+          </div>
+          <div id="cc-msg" style="margin-top:0.75rem;font-size:13px;"></div>
+          <div id="cc-files" style="font-size:13px;"></div>
+        </details>
       </div>
 
       <div class="card">
@@ -6050,6 +6063,14 @@ openssl x509 -in agent.crt -fingerprint -sha256 -noout
         <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.375rem;">
           Enforced only where <code>SHIELD_ENVIRONMENT</code> is set on the Shield
           deployment. Guards against a copied config, not against an attacker.
+        </div>
+        <div class="field" style="margin-top: 0.75rem; margin-bottom: 0;">
+          <label style="font-size: 12px; font-weight: 600;">Runtime profile</label>
+          <select id="agent-modal-runtime-profile" style="font-size: 13px;"><option value="">None: not checked</option></select>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.375rem;">
+          The boundary this agent runs under: what it may run, write and reach (Runtime Profiles).
+          Coding agents on laptops, such as Claude Code, are checked against it.
         </div>
       </div>
 
@@ -8778,6 +8799,7 @@ async function editAgent(agentId) {
     document.getElementById('agent-modal-owner').value = agent.owner || '';
     document.getElementById('agent-modal-owner-contact').value = agent.owner_contact || '';
     document.getElementById('agent-modal-environments').value = (agent.environments || []).join(', ');
+    agentModalProfiles(agent.runtime_profile || '');
     document.getElementById('agent-modal-tools').value = (agent.tools || []).join(', ');
     document.getElementById('agent-modal-roles').innerHTML = '';
     const perms = agent.role_permissions || {};
@@ -8803,9 +8825,27 @@ function showAddAgentModal() {
   document.getElementById('agent-modal-tools').value = '';
   document.getElementById('agent-modal-roles').innerHTML = '';
   document.getElementById('agent-modal-agent-perms').innerHTML = '';
+  agentModalProfiles('');
   updateToolCount();
   updateRolesEmptyState();
   document.getElementById('agent-modal').classList.remove('hidden');
+}
+
+// The runtime profile select. Sent only once the list has loaded, so a
+// failed load never clears an agent's existing binding on save.
+async function agentModalProfiles(selected) {
+  const sel = document.getElementById('agent-modal-runtime-profile');
+  sel.dataset.loaded = '';
+  sel.innerHTML = '<option value="">None: not checked</option>';
+  try {
+    const names = Object.keys((await rpApi('')).profiles || {}).sort();
+    if (selected && !names.includes(selected)) names.unshift(selected);
+    sel.innerHTML += names.map(n => `<option value="${xfEsc(n)}">${xfEsc(n)}</option>`).join('');
+    sel.value = selected || '';
+    sel.dataset.loaded = '1';
+  } catch (e) {
+    sel.innerHTML = `<option value="">Could not load profiles: ${xfEsc(e.message)}</option>`;
+  }
 }
 
 const _TOOL_TEMPLATES = {
@@ -8968,6 +9008,8 @@ async function saveAgentFromModal() {
                       environments,
                       tools, role_permissions: rolePermissions,
                       agent_permissions: agentPermissions, status: 'active' };
+  const rpSel = document.getElementById('agent-modal-runtime-profile');
+  if (rpSel.dataset.loaded === '1') agentData.runtime_profile = rpSel.value;
 
   try {
     const method = EDITING_AGENT_ID ? 'PUT' : 'POST';
@@ -17358,37 +17400,111 @@ async function emFleet() {
         <td style="padding:0.35rem 0.5rem;color:var(--text-dim);">${xfEsc(d.reason || '')}</td></tr>`).join('')}</tbody></table>`;
   } catch (e) { xfMsg('em-fleet', xfErrors(e), 'error'); }
 }
-// ── Claude Code on laptops ────────────────────────────────
-// Spec: docs/specs/agent-hook-adapter.md task 3. Reuses ddApi, ddAgo, DD_TD,
-// xfEsc, xfMsg, xfErrors. The key typed here builds the files and is not kept.
+// ── Coding agents on laptops ──────────────────────────────
+// Specs: docs/specs/agent-hook-adapter.md task 3, docs/specs/claude-code-fleet-rollout.md
+// task 2. Reuses ddApi, ddAgo, DD_TD, xfEsc, xfMsg, xfErrors. The key typed in
+// the standalone section builds the files and is not kept.
 let CC_FILES = {};
 const CC_DECISION = { allow: ['allowed', 'var(--success, #15803d)'],
                       deny: ['denied', 'var(--danger, #b91c1c)'],
                       ask: ['asked', 'var(--warning, #b45309)'] };
+const CC_STATE = { active: ['hook active', 'var(--success, #15803d)'],
+                   conflict: ['settings conflict', 'var(--warning, #b45309)'],
+                   error: ['error', 'var(--danger, #b91c1c)'],
+                   off: ['off', 'var(--text-dim)'],
+                   not_reported: ['not reported', 'var(--text-dim)'] };
+const CC_MODES = ['off', 'monitor', 'enforce'];
 async function ccLoad() {
   try {
     const d = await ddApi('/hooks/claude-code');
     const url = document.getElementById('cc-url');
     if (!url.value) url.value = d.shield_url || '';
+    document.getElementById('cc-url-note').innerHTML = d.shield_url_source === 'request'
+      ? '<span style="color:var(--warning, #b45309);">This is the portal\'s own address, which may not be where laptops reach Shield. Use your Shield API URL, or set SHIELD_DEVICE_AGENT_SHIELD_URL on the portal service.</span>' : '';
+    ccStatus(d.status || {});
     const rows = d.laptops || [];
     document.getElementById('cc-laptops').classList.remove('muted');
-    if (!rows.length) {
-      document.getElementById('cc-laptops').innerHTML = '<div class="muted">No laptop has called Shield yet.</div>';
+    document.getElementById('cc-laptops').innerHTML = rows.length ? `<table style="width:100%;border-collapse:collapse;">
+      <thead><tr style="text-align:left;color:var(--text-dim);"><th style="${DD_TD}">Laptop</th><th style="${DD_TD}">Fleet</th><th style="${DD_TD}">User</th><th style="${DD_TD}">Profile</th><th style="${DD_TD}">Last call</th><th style="${DD_TD}">When</th></tr></thead>
+      <tbody>${rows.map(ccRow).join('')}</tbody></table>` : '<div class="muted">No laptop has called Shield yet.</div>';
+  } catch (e) { xfMsg('cc-laptops', xfErrors(e), 'error'); }
+  ccFleets();
+}
+function ccStatus(st) {
+  const c = st.claude_code || {};
+  const el = document.getElementById('cc-status');
+  el.classList.remove('muted');
+  if (c.covered && c.profile) {
+    el.innerHTML = `Claude Code is checked as agent <b>${xfEsc(c.agent)}</b> against runtime profile <b>${xfEsc(c.profile)}</b>. Set each fleet's mode below.`;
+    return;
+  }
+  el.innerHTML = `<div>Claude Code is not set up yet. Turning it on creates the <b>coding-agent-baseline</b> profile (or keeps yours), binds it to agent <b>${xfEsc(c.agent || 'claude-code')}</b>, and covers Claude Code on your fleets. Every fleet stays off until you set its mode.</div>
+    <div style="margin-top:0.6rem;"><button class="primary small" onclick="ccEnable()">Turn on for Claude Code</button></div>`;
+}
+async function ccEnable(profile) {
+  try {
+    await ddApi('/hooks/enable', { method: 'POST', body: JSON.stringify(
+      profile ? { coding_agent: 'claude_code', profile } : { coding_agent: 'claude_code' }) });
+    xfMsg('cc-fleet-msg', 'Turned on. Now set a mode for each fleet.', 'ok');
+    ccLoad();
+  } catch (e) {
+    const current = e.detail && e.detail.current_profile;
+    if (current) {
+      document.getElementById('cc-status').innerHTML = `<div>${xfEsc(e.message)} Keep it, or move the agent to <b>coding-agent-baseline</b> in the Agent Registry.</div>
+        <div style="margin-top:0.6rem;"><button class="primary small" onclick="ccEnable('${xfEsc(current)}')">Turn on with ${xfEsc(current)}</button></div>`;
+    } else { xfMsg('cc-status', xfErrors(e), 'error'); }
+  }
+}
+function ccStates(states) {
+  const parts = Object.entries(states || {}).filter(([, n]) => n > 0)
+    .map(([k, n]) => { const s = CC_STATE[k] || [xfEsc(k), 'var(--text-dim)']; return `<span style="color:${s[1]};white-space:nowrap;">${n} ${s[0]}</span>`; });
+  return parts.join(', ') || '<span class="muted">none</span>';
+}
+async function ccFleets() {
+  const el = document.getElementById('cc-fleets');
+  try {
+    const d = await ddApi('/hooks/fleets');
+    el.classList.remove('muted');
+    const banner = d.disabled_by_server ? '<div style="color:var(--warning, #b45309);margin-bottom:0.5rem;">Turned off on this Shield (SHIELD_DEVICE_AGENT_HOOKS=off): every fleet is off whatever is set here.</div>' : '';
+    if (!(d.fleets || []).length) {
+      el.innerHTML = banner + '<div class="muted">No device fleets yet. Fleets come from the Votal device agent\'s rollout kits (Device DLP).</div>';
       return;
     }
-    document.getElementById('cc-laptops').innerHTML = `<table style="width:100%;border-collapse:collapse;">
-      <thead><tr style="text-align:left;color:var(--text-dim);"><th style="${DD_TD}">Laptop</th><th style="${DD_TD}">User</th><th style="${DD_TD}">Agent</th><th style="${DD_TD}">Profile</th><th style="${DD_TD}">Last call</th><th style="${DD_TD}">When</th></tr></thead>
-      <tbody>${rows.map(ccRow).join('')}</tbody></table>`;
-  } catch (e) { xfMsg('cc-laptops', xfErrors(e), 'error'); }
+    el.innerHTML = banner + `<table style="width:100%;border-collapse:collapse;">
+      <thead><tr style="text-align:left;color:var(--text-dim);"><th style="${DD_TD}">Fleet</th><th style="${DD_TD}">Laptops</th><th style="${DD_TD}">Mode</th><th style="${DD_TD}">If Shield can't be reached</th><th style="${DD_TD}">Claude Code hook</th></tr></thead>
+      <tbody>${d.fleets.map(ccFleetRow).join('')}</tbody></table>`;
+  } catch (e) { xfMsg('cc-fleets', xfErrors(e), 'error'); }
+}
+function ccFleetRow(f) {
+  const opt = (v, cur, label) => `<option value="${v}"${v === cur ? ' selected' : ''}>${label}</option>`;
+  return `<tr data-fleet="${xfEsc(f.fleet)}">
+    <td style="${DD_TD}"><b>${xfEsc(f.fleet)}</b></td>
+    <td style="${DD_TD}">${Number(f.laptops) || 0}</td>
+    <td style="${DD_TD}"><select class="cc-mode" style="min-width:120px;">${CC_MODES.map(m => opt(m, f.mode, m)).join('')}</select></td>
+    <td style="${DD_TD}"><select class="cc-unreach" style="min-width:100px;">${opt('allow', f.on_unreachable, 'allow')}${opt('deny', f.on_unreachable, 'deny')}</select></td>
+    <td style="${DD_TD}">${ccStates((f.states || {}).claude_code)}</td></tr>`;
+}
+async function ccSaveFleets() {
+  const fleets = {};
+  document.querySelectorAll('#cc-fleets tr[data-fleet]').forEach(tr => {
+    fleets[tr.dataset.fleet] = { mode: tr.querySelector('.cc-mode').value,
+                                 on_unreachable: tr.querySelector('.cc-unreach').value };
+  });
+  try {
+    await ddApi('/hooks/fleets', { method: 'PUT', body: JSON.stringify({ fleets }) });
+    xfMsg('cc-fleet-msg', 'Saved. Laptops pick it up at their next sync; Shield applies it at once.', 'ok');
+    ccFleets();
+  } catch (e) { xfMsg('cc-fleet-msg', xfErrors(e), 'error'); }
 }
 function ccRow(r) {
   const dec = CC_DECISION[r.decision] || [xfEsc(r.decision || '-'), 'var(--text-dim)'];
+  const what = r.monitor ? `would be ${dec[0]}` : dec[0];
   return `<tr>
-    <td style="${DD_TD}">${xfEsc(r.device || '-')}</td>
+    <td style="${DD_TD}">${xfEsc(r.hostname || r.device || '-')}</td>
+    <td style="${DD_TD}">${xfEsc(r.fleet || '-')}</td>
     <td style="${DD_TD}">${xfEsc(r.user || '-')}</td>
-    <td style="${DD_TD}white-space:nowrap;">${xfEsc(r.agent || '-')}</td>
     <td style="${DD_TD}">${r.profile ? xfEsc(r.profile) : '<span class="muted">none: not checked</span>'}</td>
-    <td style="${DD_TD}">${xfEsc(r.tool || '-')} <span style="color:${dec[1]};">${dec[0]}</span></td>
+    <td style="${DD_TD}">${xfEsc(r.tool || '-')} <span style="color:${dec[1]};">${what}</span></td>
     <td style="${DD_TD}white-space:nowrap;" title="${xfEsc(rpWhen(r.at))}">${ddAgo(r.at)}</td></tr>`;
 }
 const CC_FILE_NOTES = {
@@ -17442,6 +17558,7 @@ async function ddApi(path, options = {}) {
     const d = data.detail;
     const err = new Error((d && d.message) || (typeof d === 'string' ? d : '') || `HTTP ${r.status}`);
     err.errors = (d && d.errors) || [];
+    err.status = r.status; err.detail = d;
     throw err;
   }
   return data;

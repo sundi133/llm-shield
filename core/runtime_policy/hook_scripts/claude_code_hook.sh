@@ -30,6 +30,13 @@
 #   SHIELD_AGENT=claude-code          (optional, default claude-code)
 #   SHIELD_TIMEOUT=4                  (optional, seconds, 1 to 30; keep it
 #                                      below the hook's timeout in settings)
+#   ON_UNREACHABLE=deny               (optional: deny, the default, or allow;
+#                                      what a FAILURE means. Shield's own
+#                                      denials always deny.)
+#   SHIELD_LOCAL_SECRET_FILE=<path>   (set by the Votal device agent: ask the
+#                                      agent on 127.0.0.1 with its local secret
+#                                      instead of Shield with a tenant key;
+#                                      docs/specs/claude-code-fleet-rollout.md)
 #
 # Needs only sh, curl, sed, tr and mktemp: no Python, which on a Mac without
 # developer tools is a stub that fails, and would fail open.
@@ -37,6 +44,17 @@
 deny() {
     printf 'Blocked by Votal Shield: %s\n' "$1" >&2
     exit 2
+}
+
+# A failure (no answer, bad answer, bad setup): denied unless the config says
+# ON_UNREACHABLE=allow. Shield's own denials go through deny(), never here.
+ON_UNREACHABLE=deny
+fail() {
+    if [ "$ON_UNREACHABLE" = "allow" ]; then
+        printf 'Votal Shield: %s; allowed, because this fleet lets actions through when Shield cannot answer\n' "${1%, so this action is not allowed}" >&2
+        exit 0
+    fi
+    deny "$1"
 }
 
 CONF=""
@@ -50,7 +68,7 @@ fi
 [ -n "$CONF" ] && [ -r "$CONF" ] || deny "hook config $CONF is missing or unreadable, so this action is not allowed"
 
 # Parse KEY=value lines; never source the file.
-URL="" KEY="" AGENT="claude-code" TIMEOUT="4"
+URL="" KEY="" AGENT="claude-code" TIMEOUT="4" SECRET_FILE="" UNREACH="deny"
 while IFS= read -r line || [ -n "$line" ]; do
     line=$(printf '%s' "$line" | tr -d '\r')
     case "$line" in
@@ -67,44 +85,62 @@ while IFS= read -r line || [ -n "$line" ]; do
         SHIELD_API_KEY) KEY=$v ;;
         SHIELD_AGENT) AGENT=$v ;;
         SHIELD_TIMEOUT) TIMEOUT=$v ;;
+        SHIELD_LOCAL_SECRET_FILE) SECRET_FILE=$v ;;
+        ON_UNREACHABLE) UNREACH=$v ;;
     esac
 done < "$CONF"
+[ "$UNREACH" = "allow" ] && ON_UNREACHABLE=allow
 
-[ -n "$URL" ] || deny "SHIELD_URL is not set in $CONF, so this action is not allowed"
-[ -n "$KEY" ] || deny "SHIELD_API_KEY is not set in $CONF, so this action is not allowed"
-case "$URL" in
-    https://*|http://127.0.0.1|http://127.0.0.1[:/]*|http://localhost|http://localhost[:/]*) ;;
-    *) deny "SHIELD_URL must be https (or a localhost address for testing)" ;;
-esac
+[ -n "$URL" ] || fail "SHIELD_URL is not set in $CONF, so this action is not allowed"
+if [ -n "$SECRET_FILE" ]; then
+    # The Votal device agent on this laptop: loopback only, its local secret.
+    case "$URL" in
+        http://127.0.0.1:*|http://localhost:*) ;;
+        *) fail "SHIELD_URL must be the local agent (http://127.0.0.1:<port>) when SHIELD_LOCAL_SECRET_FILE is set" ;;
+    esac
+    SECRET=$(tr -d '\r\n' < "$SECRET_FILE" 2>/dev/null)
+    [ -n "$SECRET" ] || fail "the Votal agent's local secret could not be read, so this action is not allowed"
+else
+    [ -n "$KEY" ] || fail "SHIELD_API_KEY is not set in $CONF, so this action is not allowed"
+    case "$URL" in
+        https://*|http://127.0.0.1|http://127.0.0.1[:/]*|http://localhost|http://localhost[:/]*) ;;
+        *) fail "SHIELD_URL must be https (or a localhost address for testing)" ;;
+    esac
+fi
 case "$TIMEOUT" in
     ''|*[!0-9]*) TIMEOUT=4 ;;
 esac
 [ "$TIMEOUT" -ge 1 ] 2>/dev/null && [ "$TIMEOUT" -le 30 ] || TIMEOUT=4
-command -v curl >/dev/null 2>&1 || deny "curl is not installed, so Shield cannot be asked and this action is not allowed"
+command -v curl >/dev/null 2>&1 || fail "curl is not installed, so Shield cannot be asked and this action is not allowed"
 
 ENDPOINT="${URL%/}/v1/shield/hooks/claude-code"
+[ -n "$SECRET_FILE" ] && ENDPOINT="${URL%/}/v1/local/claude-code/hook"
 USER_NAME=${USER:-$(id -un 2>/dev/null)}
 HOST_NAME=$(hostname 2>/dev/null)
 
 # Headers go through a private file (curl -H @file) so the key never appears
 # in the process list.
-BODY=$(mktemp "${TMPDIR:-/tmp}/votal-hook.XXXXXX") || deny "could not create a temporary file"
-HDRS=$(mktemp "${TMPDIR:-/tmp}/votal-hook.XXXXXX") || { rm -f "$BODY"; deny "could not create a temporary file"; }
+BODY=$(mktemp "${TMPDIR:-/tmp}/votal-hook.XXXXXX") || fail "could not create a temporary file"
+HDRS=$(mktemp "${TMPDIR:-/tmp}/votal-hook.XXXXXX") || { rm -f "$BODY"; fail "could not create a temporary file"; }
 trap 'rm -f "$BODY" "$HDRS"' EXIT HUP INT TERM
 chmod 600 "$HDRS" "$BODY"
 {
-    printf 'X-API-Key: %s\n' "$KEY"
-    printf 'X-Agent-Key: %s\n' "$AGENT"
+    if [ -n "$SECRET_FILE" ]; then
+        printf 'X-Votal-Local-Secret: %s\n' "$SECRET"
+    else
+        printf 'X-API-Key: %s\n' "$KEY"
+        printf 'X-Agent-Key: %s\n' "$AGENT"
+        printf 'X-Device-Id: %s\n' "$HOST_NAME"
+    fi
     printf 'X-Shield-User: %s\n' "$USER_NAME"
-    printf 'X-Device-Id: %s\n' "$HOST_NAME"
     printf 'Content-Type: application/json\n'
 } > "$HDRS"
 
 STATUS=$(curl -sS --max-time "$TIMEOUT" --connect-timeout "$TIMEOUT" \
               -H @"$HDRS" --data-binary @- -o "$BODY" -w '%{http_code}' \
               "$ENDPOINT" 2>/dev/null) \
-    || deny "Shield could not be reached at $URL, so this action is not allowed"
-[ "$STATUS" = "200" ] || deny "Shield answered HTTP $STATUS, so this action is not allowed"
+    || fail "Shield could not be reached at $URL, so this action is not allowed"
+[ "$STATUS" = "200" ] || fail "Shield answered HTTP $STATUS, so this action is not allowed"
 
 ANSWER=$(tr -d '\r\n' < "$BODY")
 COMPACT=$(printf '%s' "$ANSWER" | tr -d ' \t')
@@ -130,4 +166,4 @@ case "$COMPACT" in
             "${why:-Votal Shield: this action needs your confirmation}"
         exit 0 ;;
 esac
-deny "Shield's answer was not understood, so this action is not allowed"
+fail "Shield's answer was not understood, so this action is not allowed"

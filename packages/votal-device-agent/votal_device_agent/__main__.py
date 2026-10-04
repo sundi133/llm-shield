@@ -30,7 +30,7 @@ def main(argv=None) -> int:
     ap.add_argument("--config", help="agent.json (default: the installed location)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("service", "install-hooks", "uninstall-hooks", "verify", "version", "run",
-                 "status", "sync", "verify-audit"):
+                 "status", "sync", "verify-audit", "claude-code-hook"):
         sub.add_parser(name)
     sub.add_parser("native-host")
     e = sub.add_parser("enroll")
@@ -44,6 +44,20 @@ def main(argv=None) -> int:
 
     if args.cmd == "version":
         print(VERSION)
+        return 0
+    if args.cmd == "claude-code-hook":
+        # What this build installs for Claude Code (agent_hooks.py): the hook
+        # scripts' checksums (the release smoke test compares them with the
+        # repository's) and where the settings go on this machine.
+        import hashlib
+        from votal_device_agent import agent_hooks, hook_scripts
+        from votal_device_agent.platform import paths, system
+        p = agent_hooks.default_paths(system(), paths().install_dir)
+        print(json.dumps({
+            "hook_version": agent_hooks.HOOK_VERSION,
+            "sh_sha256": hashlib.sha256(hook_scripts.CLAUDE_CODE_HOOK_SH.encode()).hexdigest(),
+            "ps1_sha256": hashlib.sha256(hook_scripts.CLAUDE_CODE_HOOK_PS1.encode()).hexdigest(),
+            "managed_settings": str(p.managed_settings), "hooks_dir": str(p.hooks_dir)}, indent=2))
         return 0
     if args.cmd == "native-host":
         from votal_device_agent import native_host

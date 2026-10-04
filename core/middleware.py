@@ -303,7 +303,8 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=403, content={
                 "error": "device_key_scope",
                 "detail": "A device key may only fetch its DLP bundle, send heartbeats, "
-                          "renew its CA and post runtime events."})
+                          "renew its CA, post runtime events and ask the Claude Code "
+                          "hook route."})
 
         # Skip enrichment for non-guarded paths
         if path in self._SKIP_PATHS or path.startswith("/v1/admin"):

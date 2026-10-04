@@ -2,4 +2,4 @@
 enrollment and both installer builds read it (docs/specs/device-rollout-kit.md
 task 1); a rollout kit pins installers by it."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

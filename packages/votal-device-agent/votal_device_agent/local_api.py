@@ -2,6 +2,8 @@
 
   POST /v1/local/check    {text, destination, app?, last_user?}  -> decision
   POST /v1/local/justify  {prompt_sha256, destination, reason}   -> {granted}
+  POST /v1/local/claude-code/hook  Claude Code's PreToolUse input  -> its answer
+                          (asked of Shield with the device key; agent_hooks.py)
   GET  /v1/local/status                                         -> agent state
   GET  /proxy.pac                                               -> the PAC file (no secret)
   GET, POST /justify/{token}                                    -> the reason page (no secret)
@@ -40,6 +42,8 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 MAX_BODY = 1 << 20
+#: A Write's hook input carries the whole file; Shield accepts 4 MB.
+MAX_HOOK_BODY = 4 << 20
 SECRET_FILE = "local_secret"
 
 
@@ -135,13 +139,13 @@ class LocalApi:
                     return False
                 return True
 
-            def _body(self) -> dict | None:
+            def _body(self, limit: int = MAX_BODY) -> dict | None:
                 try:
                     n = int(self.headers.get("Content-Length") or 0)
                 except ValueError:
                     n = -1
-                if n < 0 or n > MAX_BODY:
-                    self._send(413, {"error": f"body over {MAX_BODY} bytes"})
+                if n < 0 or n > limit:
+                    self._send(413, {"error": f"body over {limit} bytes"})
                     return None
                 try:
                     body = json.loads(self.rfile.read(n) or b"{}")
@@ -209,9 +213,13 @@ placeholder="e.g. customer asked for this summary, ticket 4821"></textarea>
                     return self._justify_submit(self.path[len("/justify/"):])
                 if not self._allowed():
                     return
-                body = self._body()
+                hook = self.path == "/v1/local/claude-code/hook"
+                body = self._body(MAX_HOOK_BODY if hook else MAX_BODY)
                 if body is None:
                     return
+                if hook:
+                    return self._send(200, api.agent.claude_code_hook(
+                        body, user=str(self.headers.get("X-Shield-User") or "")))
                 if self.path == "/v1/local/check":
                     text, dest = body.get("text"), body.get("destination")
                     if not isinstance(text, str) or not isinstance(dest, str) or not dest:

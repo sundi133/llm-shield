@@ -13,11 +13,14 @@ secret's SHA-256 is stored. Each device gets its own key (`vdk_...`, scope
 `device`); Shield keeps only its hash, in the key store and in the device
 record, which is what revoke removes.
 
-A device key may reach four endpoints and nothing else (DEVICE_PATHS). The
+A device key may reach five endpoints and nothing else (DEVICE_PATHS). The
 check is a prefix test on the presented key, run inside ShieldMiddleware, so
 it adds no Redis read and no middleware layer to any other request, including
 the guard path. Each of those endpoints also checks the device record, so a
-revoke takes effect at once on every worker, not after the tenant cache expires.
+revoke takes effect at once on every worker, not after the tenant cache expires,
+with one stated exception: the Claude Code hook route, called on every tool
+call, caches a successful lookup for CALLER_CACHE_S (caller_device_cached;
+docs/specs/claude-code-fleet-rollout.md section 5).
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ DEVICE_PATHS = frozenset({
     ("POST", "/v1/devices/heartbeat"),
     ("POST", "/v1/devices/ca"),
     ("POST", "/v1/shield/runtime/events"),
+    ("POST", "/v1/shield/hooks/claude-code"),
 })
 STATES = ("ok", "no_bundle", "stale_bundle", "model_unavailable", "model_unsupported",
           "model_mismatch", "degraded")
@@ -549,6 +553,72 @@ def caller_device(request) -> Optional[tuple[str, str, dict]]:
     return tenant_id, device_id, record
 
 
+#: How long the Claude Code hook route trusts a successful device lookup. A
+#: revoked key keeps getting hook answers for at most this long; every other
+#: device endpoint checks the record on each call.
+CALLER_CACHE_S = 30.0
+_caller_lock = threading.Lock()
+_caller_cache: dict[str, tuple[float, tuple]] = {}
+_CALLER_CACHE_MAX = 20_000
+
+
+def caller_device_cached(request, now: Optional[float] = None):
+    """caller_device, with a successful lookup kept for CALLER_CACHE_S. A key
+    that is not a device key, or a refused one, is never cached."""
+    from core.auth import _extract_api_key
+    api_key = _extract_api_key(request)
+    if not is_device_key(api_key):
+        return None
+    now = time.monotonic() if now is None else now
+    key_hash = _sha(api_key)
+    with _caller_lock:
+        hit = _caller_cache.get(key_hash)
+    if hit and hit[0] > now:
+        return hit[1]
+    device = caller_device(request)
+    with _caller_lock:
+        if len(_caller_cache) >= _CALLER_CACHE_MAX:
+            _caller_cache.clear()
+        _caller_cache[key_hash] = (now + CALLER_CACHE_S, device)
+    return device
+
+
+def reset_caller_cache() -> None:
+    with _caller_lock:
+        _caller_cache.clear()
+
+
+AGENT_HOOK_STATES = ("active", "off", "conflict", "error")
+
+
+def _agent_hooks_state(v) -> dict:
+    """The device agent's report on each coding agent's hook
+    (docs/specs/claude-code-fleet-rollout.md section 3):
+    {coding_agent: {state, settings_hash?, hook_version?, reason?}}."""
+    from core.dlp.agent_hooks import CODING_AGENTS
+    if not isinstance(v, dict) or len(v) > len(CODING_AGENTS) * 4:
+        raise DeviceError("agent_hooks: an object of coding agent -> state")
+    return {k: _hook_state(k, s) for k, s in v.items()
+            if isinstance(k, str) and k in CODING_AGENTS}
+
+
+def _hook_state(name: str, v) -> dict:
+    if not isinstance(v, dict) or v.get("state") not in AGENT_HOOK_STATES:
+        raise DeviceError(f"agent_hooks.{name}.state: one of {', '.join(AGENT_HOOK_STATES)}")
+    out = {"state": v["state"]}
+    h = v.get("settings_hash")
+    if h is not None:
+        if not isinstance(h, str) or not _DIGEST.match(h):
+            raise DeviceError(f"agent_hooks.{name}.settings_hash: sha256:<64 hex>")
+        out["settings_hash"] = h
+    for k, n in (("hook_version", 16), ("reason", 200)):
+        if v.get(k) is not None:
+            if not isinstance(v[k], str) or len(v[k]) > n:
+                raise DeviceError(f"agent_hooks.{name}.{k}: text of at most {n} characters")
+            out[k] = v[k]
+    return out
+
+
 def heartbeat(tenant_id: str, device_id: str, body: dict) -> dict:
     """Record what the agent reports. Unknown fields are ignored (a newer agent
     may send more); the known ones are validated."""
@@ -573,6 +643,9 @@ def heartbeat(tenant_id: str, device_id: str, body: dict) -> dict:
         raise DeviceError(f"counters: at most {MAX_COUNTERS} names mapped to non-negative integers")
     seen = {"at": int(time.time()), "bundle_version": bv, "model_digest": digest, "mode": mode,
             "state": state, "counters": counters}
+    ah = body.get("agent_hooks")
+    if ah is not None:
+        seen["agent_hooks"] = _agent_hooks_state(ah)
     av = body.get("agent_version")
     if isinstance(av, str) and 0 < len(av) <= 40:
         seen["agent_version"] = av
@@ -605,6 +678,8 @@ def list_devices(tenant_id: str, expected_digest: str = "") -> dict:
                "counters": s.get("counters", {})}
         if s.get("agent_version"):
             row["agent_version"] = s["agent_version"]
+        if s.get("agent_hooks"):
+            row["agent_hooks"] = s["agent_hooks"]
         row["model_ok"] = (None if not (expected_digest and row["model_digest"])
                            else row["model_digest"] == expected_digest)
         rows.append(row)

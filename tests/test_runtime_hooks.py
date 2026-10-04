@@ -319,7 +319,9 @@ def test_route_auth_and_input(app):
     r = TestClient(app).post("/v1/shield/hooks/claude-code", json=body,
                              headers={"X-API-Key": DEVICE_KEY_PREFIX + "x" * 40,
                                       "X-Agent-Key": "claude-code"})
-    assert r.status_code == 403 and r.json()["error"] == "device_key_scope"
+    # Device keys may call the hook route (claude-code-fleet-rollout); an
+    # unknown or revoked one is refused by the device record check.
+    assert r.status_code == 401 and "device key revoked or unknown" in r.text
     assert _post(t, body, agent="").status_code == 400
     assert t.c.post("/v1/shield/hooks/claude-code", content=b"not json",
                     headers={"X-Agent-Key": "claude-code"}).status_code == 422

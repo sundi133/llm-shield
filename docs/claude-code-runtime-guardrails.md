@@ -3,7 +3,7 @@ title: Claude Code guardrails
 layout: default
 nav_order: 30
 permalink: /claude-code-runtime-guardrails/
-description: Make Claude Code on employee laptops ask Votal Shield before every command, file write and fetch, so a runtime profile (no file encryption, no writes outside the project, no credential reads) is enforced there too. Deployed by MDM, managed from the portal.
+description: Make Claude Code on employee laptops ask Votal Shield before every command, file write and fetch, so a runtime profile (no file encryption, no writes outside the project, no credential reads) is enforced there too. Turned on per device fleet from the portal; the Votal device agent installs it.
 ---
 
 # Claude Code guardrails: admin guide
@@ -22,12 +22,11 @@ is in your audit log.
 
 Claude Code has **hooks**: before a tool call (a shell command, a file
 write or edit, a file read, a web fetch, an MCP tool), it can ask an outside
-program or URL, which may deny the call. Organisations can install hooks as
+program, which may deny the call. Organisations can install hooks as
 **managed settings** that users cannot change.
 
-Shield answers those hook calls at `POST /v1/shield/hooks/claude-code`, using
-the runtime profile assigned to the agent the laptop names (for example
-`claude-code`):
+Shield answers those calls using the runtime profile of the agent the laptop
+is checked as (for example `claude-code`):
 
 | Claude Code tool | What Shield checks |
 |---|---|
@@ -44,24 +43,37 @@ In a profile, `@project` means "the folder Claude Code was started in", so
 Decisions are deterministic (no model call) and take well under a
 millisecond in Shield, plus the network round trip.
 
-## Choose a variant
+## Two ways to roll it out
 
-| | HTTP hook | Fail-closed hook |
+| | With the Votal device agent (recommended) | Without it |
 |---|---|---|
-| On the laptop | Nothing to install: managed settings only | A small script (`sh` and `curl`, or PowerShell on Windows) and its config file |
-| If the laptop cannot reach Shield | **Claude Code goes ahead** | **The action is denied** |
-| Good for | Getting started, monitoring, organisations that accept "Shield down means unchecked" | Organisations where every action must be checked |
+| What you deploy | Nothing new: the device agent you roll out for Device DLP (version 0.2.0 or later) installs and maintains the hook | Managed settings, and for fail-closed a small script and its config, by MDM |
+| Keys on laptops | None: each laptop uses its own device key | A tenant key, readable on every laptop |
+| Turning it on and off | Per fleet, in the portal, within a sync (a few minutes) | Push new files |
+| Pilot without blocking | Monitor mode: Shield records what it would block | Not available |
+| If Shield cannot be reached | Your choice per fleet: allow or deny | HTTP hook: allowed. Fail-closed hook: denied |
 
-Both were tested against a real Claude Code. Start with the HTTP hook on a
-pilot group, then move to the fail-closed hook.
+## With the Votal device agent
 
-## Set it up
+You need laptops enrolled with the Votal device agent 0.2.0 or later (Device
+DLP, rollout kits). Fleets are the groups you created kits for.
 
-### 1. Create the profile
+### 1. Turn it on
 
-In the portal, open **Runtime Profiles**, pick the template
-**coding-agent-baseline (Claude Code on laptops)**, name the profile, review
-it and save. The template:
+In the portal, open **Runtime Profiles**. In the **Coding agents on laptops**
+card, click **Turn on for Claude Code**. Shield:
+
+- creates the profile **coding-agent-baseline** from the template, or keeps
+  yours if one with that name exists (it never overwrites a profile);
+- registers the agent `claude-code` with that profile, or binds your existing
+  `claude-code` agent to it. If that agent already uses another profile,
+  Shield asks before changing it;
+- covers Claude Code on your fleets. Every fleet stays **off** until you set
+  its mode.
+
+### 2. Review the profile
+
+The baseline profile:
 
 - lets Claude Code write only in the project and `/tmp`;
 - denies reading credential stores (`~/.ssh`, `~/.aws`, cloud CLIs, keychains,
@@ -73,10 +85,10 @@ it and save. The template:
 - asks the developer to confirm `sudo`, force pushes and package publishing;
 - allows web fetches only to a short list of developer hosts.
 
-Edit it to fit your teams. In particular, add the hosts your developers fetch
-documentation and packages from: anything not on the allow-list is denied.
-The **Advisor** on the same page turns denied fetches into suggested
-allow-list entries for you to approve.
+Edit it under **Edit profile** to fit your teams. In particular, add the hosts
+your developers fetch documentation and packages from: anything not on the
+allow-list is denied. The **Advisor** on the same page turns denied fetches
+into suggested allow-list entries for you to approve.
 
 Optionally, limit how fast one Claude Code session may change files:
 
@@ -91,69 +103,98 @@ changes (an agent rewriting or deleting a whole tree) whatever each single
 change looks like. Writes are Claude Code's write and edit tools, Bash
 redirects into files and commands such as `cp`, `mv` and `tee`; deletes are
 commands such as `rm`, `find -delete` and `git clean`. Each tool call or
-command counts once, however many files it touches. Pick numbers above what
-your developers' normal sessions reach: the Laptops list and the audit log
-show when a limit is hit.
+command counts once, however many files it touches.
 
-### 2. Register the agent
+### 3. Pilot one fleet in monitor mode
 
-In **Agent Registry**, register an agent with id `claude-code` (or one id per
-team, for example `claude-code-payments`) and set its `runtime_profile` to the
-profile from step 1. An agent without a profile is not checked.
+In the **Fleets** table, set a pilot fleet to **monitor**, leave **If Shield
+can't be reached** at **allow**, and click **Save fleet modes**.
 
-### 3. Create a key for laptops
+At their next sync the fleet's laptops install the hook, and the fleet's row
+shows them as **hook active**. Claude Code sessions started from then on are
+checked; sessions already open are checked once they are restarted.
 
-Create a tenant API key for the laptops, ideally one with the `runtime`
-scope only. It is readable on every laptop, so do not reuse an admin key.
+In monitor mode nothing is blocked: Shield records what it would have done.
+The **Laptops** list shows calls as "would be denied", and the decision audit
+has them with `monitor: true`.
 
-### 4. Build the files
+### 4. Tune, then enforce
 
-On **Runtime Profiles**, in the **Claude Code on laptops** card, choose the
-variant and the operating system, check the agent id and the Shield URL, paste
-the key, and click **Build files**. The key is used to build the files and
-is not stored. You get:
+Read the would-be denials for a few days. Widen the allow-list or narrow a
+pattern where they were normal work. Then set the fleet to **enforce**, and
+choose what happens when a laptop cannot get an answer from Shield:
+
+- **allow**: Claude Code goes ahead, with a warning (the Shield service or the
+  network is down, or the device agent is stopped);
+- **deny**: the action is blocked until Shield answers again.
+
+Shield's own denials always block, whichever you choose.
+
+Changes to a fleet's mode reach running Claude Code sessions on the next tool
+call; there is nothing to restart.
+
+### 5. Check one laptop
+
+On a laptop in an enforcing fleet, start Claude Code and ask for something the
+profile denies, for example "encrypt notes.txt with openssl". Claude Code
+reports **Blocked by Votal Shield: command matches denied pattern
+'openssl enc*'** and the file is not changed. Ask for ordinary work and it runs
+as before.
+
+On the laptop, `votal-device-agent claude-code-hook` (as an administrator)
+shows where the agent writes Claude Code's settings and which hook it ships.
+
+### 6. Watch
+
+- The **Fleets** table shows, per fleet, how many laptops have the hook
+  **active**, are in **settings conflict**, report an **error**, or have
+  **not reported** (agent older than 0.2.0, or not synced yet).
+- The **Laptops** list shows each laptop's latest call, its fleet, user,
+  profile and decision. A laptop whose last call keeps getting older while its
+  developer is working may have lost the hook or its route to Shield.
+- Every denial, every "ask" and every monitor-mode would-be denial is in the
+  decision audit (guardrail `runtime_boundary`, source `claude_code`) with the
+  user, laptop, fleet, session and reason. Every call goes to telemetry and
+  your SIEM. File contents are never recorded: only the command, path or URL.
+
+### Claude Code settings you already manage
+
+The agent never overwrites a Claude Code managed settings file it did not
+write. If one exists, the laptop shows **settings conflict** and the agent
+leaves it alone: merge the `hooks` and `allowManagedHooksOnly` keys (the
+**Laptops without the Votal agent** section shows them) into your file, or
+remove your file and the agent takes over at its next sync.
+
+## Without the Votal device agent
+
+For laptops that do not run the Votal device agent (including Linux).
+
+1. **Profile and agent.** Follow steps 1 and 2 above, or create the profile
+   under **Edit profile** and choose it in **Agent Registry** (the agent's
+   **Runtime profile** field).
+2. **A key for laptops.** Create a tenant API key, ideally with the
+   `runtime` scope only. It is readable on every laptop, so do not reuse an
+   admin key.
+3. **Build the files.** Open **Laptops without the Votal agent** in the card,
+   choose the hook and the operating system, check the agent id and the
+   Shield URL (your Shield API address, not the portal's), paste the key, and
+   click **Build files**. The key is used to build the files and is not
+   stored.
+4. **Deploy** with your MDM:
 
 | File | What it is | Where it goes |
 |---|---|---|
 | `managed-settings.json` | Claude Code managed settings with the hook | macOS `/Library/Application Support/ClaudeCode/`, Linux `/etc/claude-code/`, Windows `C:\Program Files\ClaudeCode\` |
-| `votal-claude-code.mobileconfig` (macOS) | The same settings as a configuration profile | Your MDM (Jamf, Kandji, Intune) |
-| `install-votal-claude-code.sh` (macOS, Linux) | Installs everything in one step, as root | An MDM policy script |
+| `votal-claude-code.mobileconfig` (macOS) | The same settings as a configuration profile; try it on one Mac first | Your MDM (Jamf, Kandji, Intune) |
+| `install-votal-claude-code.sh` (macOS, Linux) | Installs everything in one step, as root; never overwrites managed settings it did not write | An MDM policy script |
 | `hook.conf` (fail-closed) | The hook's Shield URL, key and agent | macOS `/Library/Application Support/Votal/`, Linux `/etc/votal/`, Windows `C:\ProgramData\Votal\` |
 | `claude_code_hook.sh` / `.ps1` (fail-closed) | The hook | macOS `/Library/Application Support/Votal/`, Linux `/opt/votal/`, Windows `C:\Program Files\Votal\` |
 
-If you already manage Claude Code settings, merge the `hooks` and
-`allowManagedHooksOnly` keys into your file. The install script never
-overwrites managed settings it did not write; it stops and leaves its version
-next to yours as `managed-settings.json.votal`.
-
-### 5. Deploy
-
-- **macOS and Linux:** run `install-votal-claude-code.sh` as root from your
-  MDM, or upload the `.mobileconfig` (HTTP hook). Try the `.mobileconfig` on
-  one Mac first.
-- **Windows:** copy the files to the paths above (and, for the fail-closed
-  hook, keep the command exactly as built: it ends in `|| exit 2`).
-- Developers restart Claude Code to pick up the settings.
-
-### 6. Check one laptop
-
-In Claude Code on a pilot laptop, ask for something the profile denies, for
-example "encrypt notes.txt with openssl". Claude Code reports
-**Blocked by Votal Shield: command matches denied pattern 'openssl enc*'** and
-the file is not changed. Ask for ordinary work and it runs as before.
-
-For the fail-closed hook, also set a wrong `SHIELD_URL` in `hook.conf` and ask
-for something harmless: it is denied with "Shield could not be reached".
-
-### 7. Watch
-
-- The **Laptops** list in the card shows each laptop's latest call, its user,
-  profile and decision. A laptop whose last call keeps getting older while
-  its developer is working may have lost the hook or its route to Shield.
-- Every denial and every "ask" is in the decision audit (guardrail
-  `runtime_boundary`, source `claude_code`) with the user, laptop, session and
-  reason. Every call goes to telemetry and your SIEM. File contents are never
-  recorded: only the command, path or URL.
+Developers restart Claude Code to pick up the settings. Check one laptop as in
+step 5 above. For the fail-closed hook, also set a wrong `SHIELD_URL` in
+`hook.conf` and ask for something harmless: it is denied with "Shield could
+not be reached". `ON_UNREACHABLE=allow` in `hook.conf` lets actions through
+instead when Shield cannot answer; Shield's own denials still block.
 
 ## What it blocks
 
@@ -177,14 +218,14 @@ the hook cannot see it; Votal's device agent or secure web gateway covers it.
 ## Limits to know
 
 - **It governs the agent, not the person.** Commands a developer runs
-  themselves, outside Claude Code, are not checked.
-- **HTTP hook and outages.** With the HTTP hook, an action goes ahead when
-  Shield cannot be reached or answers with an error. Use the fail-closed hook
-  where that is not acceptable.
-- **Fail-closed hook rules.** Keep `|| exit 2` at the end of the hook
-  command (without it, a missing script lets actions through) and keep
-  `SHIELD_TIMEOUT` (4 seconds) below the hook's `timeout` (10 seconds): when
-  Claude Code stops a slow hook itself, the action goes ahead.
+  themselves, outside Claude Code, are not checked. Neither are programs an
+  agent without hooks runs.
+- **Turning a fleet on for the first time** covers Claude Code sessions
+  started after the laptop's next sync. Sessions already open are covered
+  once restarted. Later changes, including switching the fleet off, reach
+  running sessions straight away.
+- **A revoked laptop** keeps getting answers from Shield for up to 30 seconds,
+  then follows its fleet's "if Shield can't be reached" choice.
 - **"Ask" needs a person.** In a non-interactive session (`claude -p`, CI)
   there is no one to confirm, so an "ask" stops the action.
 - **Switching hooks off.** Managed settings with `allowManagedHooksOnly`
@@ -194,15 +235,22 @@ the hook cannot see it; Votal's device agent or secure web gateway covers it.
 - **Paths are compared as text.** Symlinks on the laptop are not resolved.
   `/tmp`, `/var` and `/etc` on macOS are treated as their `/private/...`
   real paths.
-- **Windows.** The PowerShell hook is built to the same rules and tested
-  against them, but has not yet been run on a Windows laptop. Pilot it first.
+- **Without the agent**, keep `|| exit 2` at the end of the fail-closed hook
+  command (without it, a missing script lets actions through) and keep
+  `SHIELD_TIMEOUT` (4 seconds) below the hook's `timeout` (10 seconds). The
+  agent's settings already do both.
+- **Windows.** The Windows hook is built and tested to the same rules, but how
+  Claude Code runs a hook command on Windows is still being confirmed on a
+  real laptop. Pilot Windows fleets in monitor mode first.
 
 ## Troubleshooting
 
 | What you see | Why | What to do |
 |---|---|---|
-| Nothing is ever denied | The agent id on the laptop has no profile, or the hook is not installed | Check the Laptops list: "none: not checked" means no profile for that agent id |
-| Every action is denied with "Shield could not be reached" (fail-closed) | The laptop cannot reach `SHIELD_URL`, or the key is wrong (HTTP 401) | Fix `hook.conf`; `curl` the URL from the laptop |
+| Nothing is ever denied | The fleet is off or in monitor mode, the agent id has no profile, or the session started before the hook was installed | Check the fleet's mode, the status line in the card, and restart Claude Code |
+| A fleet shows laptops as **not reported** | Those laptops run an agent older than 0.2.0, or have not synced since | Update the agent (new rollout kit or your MDM) and wait for a sync |
+| A laptop shows **settings conflict** | Claude Code managed settings the agent did not write are already there | Merge the hooks block into them, or remove them |
+| Every action is denied with "Shield could not be reached" | The laptop cannot reach Shield (or the agent is stopped) and the fleet denies when unreachable | Check the laptop's network and the agent (`votal-device-agent status`) |
 | Web pages the developer needs are denied | The host is not on the profile's allow-list | Approve the Advisor's suggestion, or add the host |
 | A normal command is denied | A deny pattern is too broad | Narrow the pattern in the profile; the denial's reason names it |
 | "too many file changes in this session" | The session passed a limit in `limits` | Raise the limit, or start a new Claude Code session |

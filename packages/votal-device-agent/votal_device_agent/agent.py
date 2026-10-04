@@ -18,6 +18,7 @@ State directory layout:
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import platform
 import subprocess
@@ -28,6 +29,7 @@ from typing import Optional
 
 from votal_device_agent import model as model_mod
 from votal_device_agent import sync
+from votal_device_agent.agent_hooks import AgentHooks, HookPaths, default_paths
 from votal_device_agent.audit import AuditLog
 from votal_device_agent.engine import Engine
 from votal_device_agent.local_api import LocalApi, load_or_create_secret
@@ -71,10 +73,30 @@ def device_info() -> dict:
             "serial_hash": serial_hash(serial)}
 
 
+def _hook_urllib(method: str, url: str, headers: dict, body) -> tuple:
+    """sync._urllib with a 3 s timeout: the hook script waits 4 s for this agent."""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return r.status, dict(r.headers), r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers or {}), b""
+
+
 class Agent:
     def __init__(self, cfg: sync.AgentConfig, *, http: sync.Http = sync._urllib,
-                 model_http: Optional[model_mod.Http] = None, credentials=None):
+                 model_http: Optional[model_mod.Http] = None, credentials=None,
+                 hook_paths: Optional[HookPaths] = None, hook_http: Optional[sync.Http] = None):
         self.cfg, self.http = cfg, http
+        # Coding-agent hooks (agent_hooks.py). Hook calls go to Shield with a
+        # short timeout, so the agent answers before the hook script gives up.
+        from votal_device_agent import platform as plat
+        os_name = plat.system()
+        self.hooks = AgentHooks(hook_paths or default_paths(os_name, plat.paths(os_name).install_dir),
+                                cfg.state_dir, local_port=cfg.local_port, os_name=os_name)
+        self.hook_http = hook_http or _hook_urllib
         self.store = TrustStore(cfg.state_dir, tenant_id=cfg.tenant_id, fleet=cfg.fleet,
                                 pinned_key_hex=cfg.pinned_public_key,
                                 fallback_path=cfg.fallback_path or None)
@@ -143,6 +165,51 @@ class Agent:
         self.engine.set_trust(self.store.load())
         if self.proxy is not None and self.engine.ai_hosts != before:
             self._ensure_ca(restart=True)
+        self.apply_hooks()
+
+    def apply_hooks(self) -> None:
+        """Make Claude Code's hook match the fleet, from a bundle this agent
+        trusts only. On fallback (no bundle, tampered, expired past grace) the
+        last applied state stays: a broken bundle must not switch the hook off."""
+        if self.engine.trust.status not in ("verified", "grace"):
+            return
+        try:
+            self.hooks.apply(self.engine.policy.get("agent_hooks"))
+        except Exception:
+            pass
+
+    # ── coding-agent hook calls (local_api: POST /v1/local/claude-code/hook) ──
+
+    def _hook_setting(self) -> dict:
+        s = self.engine.policy.get("agent_hooks") or {}
+        return s if isinstance(s, dict) else {}
+
+    def claude_code_hook(self, body: dict, user: str = "") -> dict:
+        """Ask Shield about one Claude Code tool call, with this device's key.
+        No answer, or an answer that is not Claude Code's format, gets the
+        fleet's on_unreachable decision."""
+        s = self._hook_setting()
+        if s.get("mode") not in ("monitor", "enforce") or "claude_code" not in (s.get("agents") or {}):
+            return {}
+        if self.creds is not None and not self.revoked:
+            try:
+                status, _h, raw = self.hook_http(
+                    "POST", f"{self.cfg.shield_url.rstrip('/')}/v1/shield/hooks/claude-code",
+                    {"X-API-Key": self.creds.api_key, "Content-Type": "application/json",
+                     "X-Shield-User": user[:200]}, json.dumps(body).encode())
+                if status == 200:
+                    answer = json.loads(raw or b"{}")
+                    if isinstance(answer, dict) and (answer == {} or "hookSpecificOutput" in answer):
+                        return answer
+            except (OSError, ValueError):
+                pass
+        self.engine.counters["hook_unreachable"] = self.engine.counters.get("hook_unreachable", 0) + 1
+        if s.get("on_unreachable") == "deny":
+            return {"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": "Blocked by Votal Shield: Shield could not be reached, "
+                                            "so this action is not allowed"}}
+        return {}
 
     def ca_valid(self) -> bool:
         """Whether the proxy holds a CA it may intercept with right now."""
@@ -320,10 +387,13 @@ class Agent:
         m = self.engine.policy.get("model") or {}
         if self.model.state == "ok":
             digest = m.get("digest", "")
-        return {"bundle_version": self.engine.trust.bundle_version,
-                "model_digest": digest, "mode": self.engine.policy.get("mode", ""),
-                "state": self.state(), "agent_version": sync.AGENT_VERSION,
-                "counters": dict(list(self.engine.counters.items())[:20])}
+        out = {"bundle_version": self.engine.trust.bundle_version,
+               "model_digest": digest, "mode": self.engine.policy.get("mode", ""),
+               "state": self.state(), "agent_version": sync.AGENT_VERSION,
+               "counters": dict(list(self.engine.counters.items())[:20])}
+        if self.hooks.report:
+            out["agent_hooks"] = self.hooks.report
+        return out
 
     def status(self) -> dict:
         t = self.engine.trust

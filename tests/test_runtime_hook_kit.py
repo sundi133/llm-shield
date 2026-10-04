@@ -326,7 +326,7 @@ def test_portal_routes_are_on_the_admin_plane_too():
 # ── the portal card ──────────────────────────────────────────────────
 
 HTML = open(os.path.join(ROOT, "static", "tenant.html")).read()
-_START = HTML.index("// ── Claude Code on laptops")
+_START = HTML.index("// ── Coding agents on laptops")
 SCRIPT = HTML[_START:HTML.index("// ── Device DLP (laptop agent)", _START)]
 
 
@@ -340,7 +340,10 @@ def test_card_is_wired():
     from api.routes_hooks_portal import router
     served = {(m, r.path) for r in router.routes for m in r.methods}
     assert served == {("GET", "/v1/tenant/me/hooks/claude-code"),
-                      ("POST", "/v1/tenant/me/hooks/claude-code/kit")}
+                      ("POST", "/v1/tenant/me/hooks/claude-code/kit"),
+                      ("POST", "/v1/tenant/me/hooks/enable"),
+                      ("GET", "/v1/tenant/me/hooks/fleets"),
+                      ("PUT", "/v1/tenant/me/hooks/fleets")}
     assert '<option value="coding-agent-baseline">' in HTML
     for v in hook_kit.VARIANTS:
         assert f'<option value="{v}">' in HTML
@@ -351,7 +354,7 @@ def test_card_is_wired():
 def test_card_escapes_what_laptops_report():
     """Device, user, agent, profile and tool come from laptops' headers."""
     body = SCRIPT[SCRIPT.index("function ccRow"):SCRIPT.index("const CC_FILE_NOTES")]
-    safe = re.compile(r"^(xfEsc\(|ddAgo\(|DD_TD$|dec\[[01]\]$|r\.profile \?)")
+    safe = re.compile(r"^(xfEsc\(|ddAgo\(|DD_TD$|dec\[[01]\]$|r\.profile \?|what$)")
     unsafe = [m.group(1) for m in re.finditer(r"\$\{((?:[^{}]|\{[^{}]*\})+)\}", body)
               if not safe.match(m.group(1).strip())]
     assert unsafe == []
@@ -359,6 +362,6 @@ def test_card_escapes_what_laptops_report():
 
 
 def test_key_input_is_not_kept():
-    card = HTML[HTML.index('id="cc-card"'):HTML.index('id="cc-laptops"')]
+    card = HTML[HTML.index('id="cc-card"'):HTML.index('id="cc-files"')]
     assert 'id="cc-key" type="password" autocomplete="off"' in card
     assert "localStorage" not in SCRIPT and "sessionStorage" not in SCRIPT

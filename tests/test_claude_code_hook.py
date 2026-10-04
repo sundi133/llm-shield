@@ -222,7 +222,10 @@ def test_powershell_twin_has_the_same_rules():
     src = open(PS1).read()
     exits = [l.strip() for l in src.splitlines() if "exit " in l and not l.lstrip().startswith("#")]
     assert {e.split("exit ")[1].split()[0].strip("}") for e in exits} == {"0", "2"}
-    assert sum("exit 0" in e for e in exits) == 2       # {} and ask
+    assert sum("exit 0" in e for e in exits) == 3       # {}, ask, and ON_UNREACHABLE=allow
+    fail = src[src.index("function Fail"):src.index("trap {")]
+    assert 'if ($script:OnUnreachable -eq "allow")' in fail and "exit 0" in fail
+    assert 'if ($decision -eq "deny") {' in src and "Deny $why" in src   # Shield's deny never Fail
     assert "trap {" in src and '$ErrorActionPreference = "Stop"' in src
     assert "$env:SHIELD" not in src                     # config file only
     assert "/v1/shield/hooks/claude-code" in src
@@ -245,3 +248,49 @@ def test_powershell_twin_runs(shield, tmp_path):
     assert json.loads(run().stdout) == ASK
     shield.status, shield.body = 500, b"x"
     assert run().returncode == 2
+
+
+# ── ON_UNREACHABLE and the Votal device agent (claude-code-fleet-rollout) ──
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_on_unreachable_allow_lets_failures_through_but_never_shields_deny(shell, shield, tmp_path):
+    down = _conf(tmp_path, "SHIELD_URL=http://127.0.0.1:9\nSHIELD_API_KEY=k\nON_UNREACHABLE=allow\n")
+    r = _run(down, shell)
+    assert r.returncode == 0 and b"allowed, because this fleet lets actions through" in r.stderr
+    conf = _ok_conf(tmp_path, shield, "ON_UNREACHABLE=allow\n")
+    shield.status, shield.body = 500, b"boom"
+    assert _run(conf, shell).returncode == 0
+    shield.status, shield.body = 200, DENY
+    r = _run(conf, shell)
+    assert r.returncode == 2 and b"openssl enc*" in r.stderr          # Shield said no: no
+    other = _conf(tmp_path, "SHIELD_URL=http://127.0.0.1:9\nSHIELD_API_KEY=k\nON_UNREACHABLE=maybe\n")
+    assert _run(other, shell).returncode == 2                          # anything else: deny
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_local_agent_mode_sends_the_local_secret_to_the_agent(shell, shield, tmp_path):
+    secret = tmp_path / "local_secret"
+    secret.write_text("local-secret-value\n")
+    conf = _conf(tmp_path, f"SHIELD_URL={shield.url}\nSHIELD_LOCAL_SECRET_FILE={secret}\n")
+    shield.body = DENY
+    r = _run(conf, shell)
+    assert r.returncode == 2
+    sent = shield.seen[-1]
+    h = {k.lower(): v for k, v in sent["headers"].items()}
+    assert sent["path"] == "/v1/local/claude-code/hook"
+    assert h["x-votal-local-secret"] == "local-secret-value"
+    assert "x-api-key" not in h and "x-agent-key" not in h
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("text, needle", [
+    ("SHIELD_URL=https://api.example\nSHIELD_LOCAL_SECRET_FILE={secret}\n", "must be the local agent"),
+    ("SHIELD_URL=http://127.0.0.1:47823\nSHIELD_LOCAL_SECRET_FILE={missing}\n", "local secret"),
+])
+def test_local_agent_mode_refuses_bad_setups(shell, tmp_path, text, needle):
+    secret = tmp_path / "local_secret"
+    secret.write_text("x" * 40)
+    conf = _conf(tmp_path, text.format(secret=secret, missing=tmp_path / "nope"))
+    r = _run(conf, shell)
+    assert r.returncode == 2 and needle in r.stderr.decode(), r.stderr
