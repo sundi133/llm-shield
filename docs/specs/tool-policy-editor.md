@@ -8,7 +8,7 @@ description: Replace the raw JSON on the Tool Policies screen with a form for th
 
 # Spec: Tool policy editor
 
-> Status: **APPROVED** 2026-10-04. Task 1 implemented; see "Task 1 notes".
+> Status: **APPROVED** 2026-10-04. Tasks 1 and 2 implemented; see the notes at the end.
 
 ## 1. Problem & outcome
 
@@ -165,3 +165,27 @@ validated for the default policy. Secret patterns are saved as
 - Found while building, not changed here: `POST /v1/data-policies/validate`
   evaluates patterns with the stdlib `re` module and `re.sub`, a third regex
   behaviour next to the enforcing `regex` engine and the portal's JavaScript.
+
+## Task 2 notes (as built)
+
+- The default-policy card is the form (`peMount('gdp-editor', 'gdp', ...)` in
+  `static/tenant.html`); the raw JSON textarea is gone, JSON lives under
+  Advanced. State and rendering are pure functions (`peStateFrom`,
+  `pePolicyFrom`, `peValidate`, `peRenderHtml`) tested under node
+  (`tests/test_tool_policy_editor_portal.py`); the editor id and wiring are
+  ready for the per-tool modal (task 3).
+- The form starts from the whole stored policy and replaces only what it edits,
+  so allowlist, thresholds, exact-match lists, compliance framework,
+  sanitization intent and other roles' rules survive a save; the card says when
+  a policy carries them.
+- A stored custom pattern with `severity: critical` is saved back as
+  `severity: high` with `action: block`: it still blocks, explicitly, and
+  unticking "block whole result" now actually stops blocking.
+- A policy in `sanitization_mode: "ai"` that gains secret patterns is switched
+  to `"both"`, since `"ai"` skips the patterns entirely.
+- Verified in the portal (local admin app, tenant `bank-co`): tick recommended,
+  the domain rule's field, a custom rule, Try it (result with secrets came back
+  "Not checked" with both secrets redacted, as no model was running), save,
+  reload: the form rebuilt from the stored policy matches. Note for local runs:
+  data-policy storage needs Redis (no in-memory fallback), so saving fails with
+  "Redis connection not available" without one; this predates the editor.

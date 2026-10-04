@@ -9956,6 +9956,276 @@ let DATA_POLICIES_CACHE = {};
 // it, which is the gap left when the "apply reasonable security defaults"
 // fallback was removed. Per-tool policies below are unchanged and always win by
 // being additive on top. Spec: docs/spec-global-tool-data-policy.md
+// ── Tool policy editor ─────────────────────────────────────────────────────
+// Spec: docs/specs/tool-policy-editor.md. A form over the stored data-policy
+// shape: ready-made protections from GET /v1/data-policies/library (stored as
+// their rule text, recognised by tag), the operator's own one-line rules, and
+// secret patterns. Fields the form does not show are carried through as they
+// are. peStateFrom / pePolicyFrom / peValidate / peRenderHtml are pure, so the
+// round trip and the escaping are tested under node (tests/test_tool_policy_editor_portal.py).
+
+let PE_LIBRARY = null;   // library entries, loaded once
+const PE = {};           // editor state by editor id
+
+async function peLoadLibrary() {
+  if (PE_LIBRARY) return PE_LIBRARY;
+  try {
+    const r = await fetch('/v1/data-policies/library', { headers: { 'X-API-Key': API_KEY } });
+    PE_LIBRARY = r.ok ? ((await r.json()).entries || []) : [];
+  } catch (e) { PE_LIBRARY = []; }
+  return PE_LIBRARY;
+}
+
+// The value an operator put where a library rule has a placeholder.
+function peFilledValue(template, rule, needle) {
+  const [pre, post] = template.split(needle);
+  if (post === undefined || !rule.startsWith(pre) || !rule.endsWith(post)) return '';
+  return rule.slice(pre.length, rule.length - post.length);
+}
+
+function peStateFrom(policy, library, role) {
+  const base = JSON.parse(JSON.stringify(policy || {}));
+  const st = { role: role || '*', base, ticked: [], domains: '', calls: [], results: [], patterns: [] };
+  const rp = (base.role_policies || []).find(r => r.role === st.role) || {};
+  const sides = { call: rp.input_rules || [], result: rp.output_rules || [] };
+  for (const side of ['call', 'result']) {
+    for (const raw of sides[side]) {
+      const rule = String(raw);
+      const e = library.find(x => x.side === side && x.tag && rule.startsWith(x.tag));
+      if (!e) { (side === 'call' ? st.calls : st.results).push(rule); continue; }
+      if (!st.ticked.includes(e.id)) st.ticked.push(e.id);
+      if (e.needs) st.domains = peFilledValue(e.rule, rule, e.needs);
+    }
+  }
+  for (const r of (base.sanitization_rules || [])) {
+    const e = library.find(x => x.side === 'secret' && x.pattern.pattern_id === r.pattern_id);
+    if (e) { if (!st.ticked.includes(e.id)) st.ticked.push(e.id); continue; }
+    st.patterns.push({ orig: r, name: r.description || r.pattern_id || '', regex: r.regex || '',
+                       replacement: r.replacement || '[REDACTED]', enabled: r.enabled !== false,
+                       block: r.action === 'block' || r.severity === 'critical' });
+  }
+  return st;
+}
+
+function pePolicyFrom(st, library) {
+  const p = JSON.parse(JSON.stringify(st.base || {}));
+  delete p.created_at; delete p.updated_at; delete p.tool_name;
+  const picked = side => library.filter(e => e.side === side && st.ticked.includes(e.id));
+  const text = e => e.needs ? e.rule.split(e.needs).join(st.domains.trim() || e.needs) : e.rule;
+  const calls = picked('call').map(text).concat(st.calls.map(s => s.trim()).filter(Boolean));
+  const results = picked('result').map(text).concat(st.results.map(s => s.trim()).filter(Boolean));
+  const roles = p.role_policies || [];
+  const at = roles.findIndex(r => r.role === st.role);
+  if (at >= 0) roles[at] = { ...roles[at], input_rules: calls, output_rules: results };
+  else if (calls.length || results.length)
+    roles.push({ role: st.role, action: 'redact', data_scope: [], redaction_level: 'partial',
+                 input_rules: calls, output_rules: results });
+  p.role_policies = roles;
+  const used = new Set();
+  const custom = st.patterns.filter(r => r.regex.trim()).map((r, i) => {
+    let pid = (r.orig && r.orig.pattern_id) || r.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || `custom_${i + 1}`;
+    while (used.has(pid)) pid += '_x';
+    used.add(pid);
+    // Never "critical": that severity always blocks the whole result, whatever
+    // the action says. Blocking is the explicit action instead.
+    const sev = r.orig && r.orig.severity && r.orig.severity !== 'critical' ? r.orig.severity : 'high';
+    return { ...(r.orig || {}), pattern_id: pid, regex: r.regex, replacement: r.replacement || '[REDACTED]',
+             description: r.name || pid, enabled: !!r.enabled, severity: sev,
+             action: r.block ? 'block' : 'redact' };
+  });
+  p.sanitization_rules = picked('secret').map(e => ({ ...e.pattern, enabled: true })).concat(custom);
+  // Mode "ai" skips the patterns entirely (core/dlp floor runs in regex|both).
+  if (p.sanitization_rules.length && (p.sanitization_mode || 'regex') === 'ai') p.sanitization_mode = 'both';
+  if (p.enabled === undefined) p.enabled = true;
+  return p;
+}
+
+function peValidate(st, library) {
+  const problems = [];
+  const needs = library.filter(e => e.needs && st.ticked.includes(e.id));
+  if (needs.length && !st.domains.trim())
+    problems.push(`Fill in your domains for "${needs[0].name}".`);
+  st.patterns.forEach((r, i) => {
+    if (r.regex.trim() && !r.name.trim()) problems.push(`Secret pattern ${i + 1} needs a name.`);
+  });
+  return problems;
+}
+
+// Settings the form does not show, which it keeps as they are.
+function peHiddenSettings(st) {
+  const b = st.base || {}, out = [];
+  for (const k of ['allowlist', 'thresholds', 'exact_match']) if ((b[k] || []).length) out.push(k.replace('_', ' '));
+  if (b.compliance_framework) out.push('compliance framework');
+  if (b.sanitization_intent) out.push('sanitization intent');
+  if ((b.role_policies || []).some(r => r.role !== st.role)) out.push('rules for specific roles');
+  return out;
+}
+
+function peRenderHtml(id, st, library) {
+  const box = 'background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:12px;padding:0.3rem 0.45rem;';
+  const head = t => `<div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-2,#888);margin:0.9rem 0 0.35rem;">${t}</div>`;
+  const group = (side, label) => {
+    const items = library.filter(e => e.side === side).map(e => {
+      const on = st.ticked.includes(e.id);
+      const threats = e.threats.map(t => 'T' + t).join(' ');
+      const detail = e.side === 'secret' ? e.pattern.regex : e.rule;
+      const needs = e.needs && on ? `<input type="text" placeholder="your domains, e.g. acme.com, acme.co.uk" value="${_esc(st.domains)}"
+            data-pe="${_esc(id)}" data-field="domains" oninput="peSet(this)" style="${box}width:100%;margin-top:0.3rem;">` : '';
+      return `<div style="padding:0.25rem 0;">
+        <label style="display:flex;gap:0.45rem;align-items:flex-start;font-size:12.5px;cursor:pointer;">
+          <input type="checkbox" ${on ? 'checked' : ''} data-pe="${_esc(id)}" data-entry="${_esc(e.id)}" onchange="peToggle(this)">
+          <span>${_esc(e.name)} <span class="muted" style="font-size:10.5px;">${_esc(threats)}</span>
+            ${e.recommended ? '' : '<span class="muted" style="font-size:10.5px;">· needs your input</span>'}</span>
+        </label>
+        <details style="margin-left:1.6rem;"><summary class="muted" style="font-size:10.5px;cursor:pointer;">rule</summary>
+          <div class="muted" style="font-size:11px;white-space:pre-wrap;">${_esc(detail)}</div></details>
+        ${needs}
+      </div>`;
+    }).join('');
+    return `<div style="flex:1 1 280px;min-width:240px;"><div style="font-size:12px;font-weight:600;margin-bottom:0.2rem;">${label}</div>${items || '<div class="muted" style="font-size:11px;">Library unavailable.</div>'}</div>`;
+  };
+  const list = (key, label) => `
+    <div style="margin-bottom:0.6rem;"><div style="font-size:12px;font-weight:600;margin-bottom:0.25rem;">${label}</div>
+      ${st[key].map((rule, i) => `<div style="display:flex;gap:0.35rem;margin-bottom:0.3rem;">
+        <input type="text" value="${_esc(rule)}" maxlength="1000" placeholder="e.g. BLOCK sending email outside acme.com"
+          data-pe="${_esc(id)}" data-list="${key}" data-i="${i}" oninput="peSetItem(this)" style="${box}flex:1;">
+        <button class="small" title="Remove" data-pe="${_esc(id)}" data-list="${key}" data-i="${i}" onclick="peRemove(this)">✕</button></div>`).join('')}
+      <button class="small" data-pe="${_esc(id)}" data-list="${key}" onclick="peAdd(this)">+ Add rule</button></div>`;
+  const patterns = `
+    <div style="font-size:12px;font-weight:600;margin-bottom:0.25rem;">Secret patterns</div>
+    ${st.patterns.map((r, i) => `<div style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap;margin-bottom:0.3rem;">
+      <input type="text" value="${_esc(r.name)}" placeholder="name" data-pe="${_esc(id)}" data-i="${i}" data-field="name" oninput="pePattern(this)" style="${box}width:9rem;">
+      <input type="text" value="${_esc(r.regex)}" placeholder="pattern (regex)" data-pe="${_esc(id)}" data-i="${i}" data-field="regex" oninput="pePattern(this)" style="${box}flex:1;min-width:10rem;font-family:ui-monospace,monospace;">
+      <input type="text" value="${_esc(r.replacement)}" placeholder="replace with" data-pe="${_esc(id)}" data-i="${i}" data-field="replacement" oninput="pePattern(this)" style="${box}width:9rem;">
+      <label style="font-size:11px;"><input type="checkbox" ${r.enabled ? 'checked' : ''} data-pe="${_esc(id)}" data-i="${i}" data-field="enabled" onchange="pePattern(this)"> on</label>
+      <label style="font-size:11px;" title="Withhold the whole result instead of replacing the match"><input type="checkbox" ${r.block ? 'checked' : ''} data-pe="${_esc(id)}" data-i="${i}" data-field="block" onchange="pePattern(this)"> block whole result</label>
+      <button class="small" title="Remove" data-pe="${_esc(id)}" data-list="patterns" data-i="${i}" onclick="peRemove(this)">✕</button></div>`).join('')}
+    <button class="small" data-pe="${_esc(id)}" data-list="patterns" onclick="peAdd(this)">+ Add pattern</button>`;
+  const hidden = peHiddenSettings(st);
+  return `
+    <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.6rem;">
+      ${head('Ready-made protections')}
+      <span style="margin-left:auto;display:flex;gap:0.35rem;">
+        <button class="small" data-pe="${_esc(id)}" onclick="peRecommended(this)">Tick recommended</button>
+        <button class="small" data-pe="${_esc(id)}" onclick="peClear(this)">Clear</button></span></div>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+      ${group('call', 'Tool calls')}${group('result', 'Tool results')}${group('secret', 'Secrets')}</div>
+    ${head('Your rules')}
+    ${list('calls', 'Tool calls')}${list('results', 'Tool results')}${patterns}
+    ${hidden.length ? `<div class="muted" style="font-size:11px;margin-top:0.6rem;">Also contains ${_esc(hidden.join(', '))}; kept as they are. Edit them under Advanced.</div>` : ''}
+    ${head('Try it')}
+    <div style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center;">
+      <select id="${_esc(id)}-try-side" style="${box}width:auto;"><option value="call">a tool call</option><option value="result">a tool result</option></select>
+      <input type="text" id="${_esc(id)}-try-tool" placeholder="tool name, e.g. send_email" style="${box}width:14rem;">
+      <button class="small" data-pe="${_esc(id)}" onclick="peTry(this)">Check</button></div>
+    <textarea id="${_esc(id)}-try-input" rows="3" placeholder='Call: arguments as JSON, e.g. {"to": "x@evil.example"}. Result: the text the tool returned.'
+      style="${box}width:100%;margin-top:0.35rem;font-family:ui-monospace,monospace;min-height:0;height:4.5rem;"></textarea>
+    <div id="${_esc(id)}-try-out" style="font-size:12px;margin-top:0.35rem;"></div>
+    <details style="margin-top:0.8rem;" data-pe="${_esc(id)}" ontoggle="peShowJson(this)">
+      <summary style="cursor:pointer;font-size:12px;">Advanced: edit as JSON</summary>
+      <textarea id="${_esc(id)}-json" rows="10" style="${box}width:100%;margin-top:0.4rem;font-family:ui-monospace,monospace;font-size:11px;"></textarea>
+      <button class="small" data-pe="${_esc(id)}" onclick="peApplyJson(this)">Apply JSON to the form</button></details>
+    <div style="margin-top:0.8rem;"><button class="primary small" data-pe="${_esc(id)}" onclick="peSave(this)">Save</button></div>`;
+}
+
+// ── wiring ──────────────────────────────────────────────────────────────────
+
+function peMount(containerId, id, policy, opts) {
+  PE[id] = { ...peStateFrom(policy, PE_LIBRARY || [], (opts && opts.role) || '*'), opts: opts || {}, containerId };
+  peRerender(id);
+}
+
+function peRerender(id) {
+  const el = document.getElementById(PE[id].containerId);
+  if (el) el.innerHTML = peRenderHtml(id, PE[id], PE_LIBRARY || []);
+}
+
+function peToggle(el) {
+  const st = PE[el.dataset.pe], eid = el.dataset.entry;
+  st.ticked = st.ticked.filter(x => x !== eid);
+  if (el.checked) st.ticked.push(eid);
+  peRerender(el.dataset.pe);   // a rule that needs input shows its field
+}
+function peSet(el) { PE[el.dataset.pe][el.dataset.field] = el.value; }
+function peSetItem(el) { PE[el.dataset.pe][el.dataset.list][+el.dataset.i] = el.value; }
+function peAdd(el) {
+  const st = PE[el.dataset.pe];
+  st[el.dataset.list].push(el.dataset.list === 'patterns'
+    ? { orig: null, name: '', regex: '', replacement: '[REDACTED]', enabled: true, block: false } : '');
+  peRerender(el.dataset.pe);
+}
+function peRemove(el) { PE[el.dataset.pe][el.dataset.list].splice(+el.dataset.i, 1); peRerender(el.dataset.pe); }
+function pePattern(el) {
+  const row = PE[el.dataset.pe].patterns[+el.dataset.i];
+  row[el.dataset.field] = el.type === 'checkbox' ? el.checked : el.value;
+}
+function peRecommended(el) {
+  const st = PE[el.dataset.pe];
+  for (const e of (PE_LIBRARY || [])) if (e.recommended && !st.ticked.includes(e.id)) st.ticked.push(e.id);
+  peRerender(el.dataset.pe);
+}
+function peClear(el) { PE[el.dataset.pe].ticked = []; peRerender(el.dataset.pe); }
+
+function peShowJson(el) {
+  if (!el.open) return;
+  const id = el.dataset.pe;
+  document.getElementById(`${id}-json`).value = JSON.stringify(pePolicyFrom(PE[id], PE_LIBRARY || []), null, 2);
+}
+function peApplyJson(el) {
+  const id = el.dataset.pe;
+  let parsed;
+  try { parsed = JSON.parse(document.getElementById(`${id}-json`).value); }
+  catch (e) { showToast('Not valid JSON: ' + e.message, 'error'); return; }
+  const { opts, containerId } = PE[id];
+  PE[id] = { ...peStateFrom(parsed, PE_LIBRARY || [], PE[id].role), opts, containerId };
+  peRerender(id);
+  showToast('Applied to the form. Save to keep it.', 'success');
+}
+
+function peErrorText(raw) {
+  try {
+    const d = JSON.parse(raw).detail;
+    if (d && d.errors) return d.errors.join('; ');
+    return typeof d === 'string' ? d : JSON.stringify(d);
+  } catch (e) { return raw; }
+}
+
+async function peTry(el) {
+  const id = el.dataset.pe, out = document.getElementById(`${id}-try-out`);
+  const side = document.getElementById(`${id}-try-side`).value;
+  const tool = document.getElementById(`${id}-try-tool`).value.trim();
+  const input = document.getElementById(`${id}-try-input`).value;
+  const body = { policy: pePolicyFrom(PE[id], PE_LIBRARY || []), tool_name: tool || 'any_tool',
+                 user_role: PE[id].role === '*' ? '' : PE[id].role };
+  if (side === 'call') {
+    try { body.arguments = input.trim() ? JSON.parse(input) : {}; }
+    catch (e) { out.innerHTML = `<span style="color:var(--danger,#e5484d);">Arguments must be JSON: ${_esc(e.message)}</span>`; return; }
+  } else body.result = input;
+  out.innerHTML = '<span class="muted">Checking…</span>';
+  try {
+    const res = await fetch('/v1/data-policies/try', {
+      method: 'POST', headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body) });
+    const raw = await res.text();
+    if (!res.ok) throw new Error(peErrorText(raw));
+    const d = JSON.parse(raw);
+    const colour = { blocked: 'var(--danger,#e5484d)', redacted: 'var(--warning,#d4a017)',
+                     allowed: 'var(--success,#30a46c)', not_checked: 'var(--text-2,#888)' }[d.decision] || 'inherit';
+    const label = { blocked: 'Blocked', redacted: 'Redacted', allowed: 'Allowed', not_checked: 'Not checked' }[d.decision] || d.decision;
+    out.innerHTML = `<strong style="color:${colour};">${_esc(label)}</strong> <span class="muted">${_esc(d.reason || '')}</span>
+      ${d.sanitized != null && d.decision !== 'allowed' ? `<pre style="white-space:pre-wrap;font-size:11px;margin:0.3rem 0 0;">${_esc(d.sanitized)}</pre>` : ''}`;
+  } catch (e) { out.innerHTML = `<span style="color:var(--danger,#e5484d);">${_esc(e.message)}</span>`; }
+}
+
+async function peSave(el) {
+  const id = el.dataset.pe, st = PE[id];
+  const problems = peValidate(st, PE_LIBRARY || []);
+  if (problems.length) { showToast(problems.join(' '), 'error'); return; }
+  await st.opts.onSave(pePolicyFrom(st, PE_LIBRARY || []));
+}
+
+// ── Default policy (all tools) ──────────────────────────────────────────────
+
 async function loadGlobalDataPolicy() {
   const el = document.getElementById('global-policy-card');
   if (!el) return;
@@ -9964,6 +10234,7 @@ async function loadGlobalDataPolicy() {
     const res = await fetch('/v1/data-policies/global/policy', { headers: { 'X-API-Key': API_KEY } });
     if (res.ok) { const d = await res.json(); p = d.policy || p; exists = !!d.exists; }
   } catch (e) { /* render the empty state */ }
+  await peLoadLibrary();
 
   const on = p.enabled !== false;
   const roles = (p.role_policies || []).length;
@@ -9989,27 +10260,12 @@ async function loadGlobalDataPolicy() {
         the default cannot be cancelled from below. Start at
         <code>warn</code> and escalate once Telemetry looks right.
       </div>
-      <textarea id="global-policy-json" rows="6" style="width:100%;margin-top:0.6rem;
-        background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);
-        color:var(--text);font-family:ui-monospace,monospace;font-size:11px;padding:0.5rem;"
-        >${_esc(JSON.stringify({ enabled: on,
-            role_policies: p.role_policies || [],
-            sanitization_rules: p.sanitization_rules || [],
-            allowlist: p.allowlist || [],
-            thresholds: p.thresholds || [],
-            exact_match: p.exact_match || [] }, null, 2))}</textarea>
-      <div style="margin-top:0.5rem;"><button class="small" onclick="saveGlobalDataPolicy()">Save default policy</button></div>
+      <div id="gdp-editor"></div>
     </div>`;
+  peMount('gdp-editor', 'gdp', { ...p, enabled: on }, { onSave: saveGlobalDataPolicy });
 }
 
-async function saveGlobalDataPolicy() {
-  let body;
-  try {
-    body = JSON.parse(document.getElementById('global-policy-json').value);
-  } catch (e) {
-    showToast('Not valid JSON: ' + e.message, 'error');
-    return;
-  }
+async function saveGlobalDataPolicy(body) {
   // Blast radius is every tool call on the tenant, so a blocking default is
   // confirmed rather than saved on a click.
   const blocks = (body.role_policies || []).filter(r => r.action === 'block');
@@ -10021,7 +10277,7 @@ async function saveGlobalDataPolicy() {
       headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(peErrorText(await res.text()));
     showToast('Default policy saved', 'success');
     loadGlobalDataPolicy();
   } catch (e) { showToast('Save failed: ' + e.message, 'error'); }
