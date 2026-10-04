@@ -23,7 +23,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-SOURCES = ("openshell", "k8s", "cilium", "falco", "squid", "envoy", "claude_code", "custom")
+SOURCES = ("openshell", "k8s", "cilium", "falco", "squid", "envoy", "claude_code", "osquery",
+           "sysmon", "custom")
 KINDS = ("network", "file", "process", "resource", "policy", "action", "dlp")
 DECISIONS = ("deny", "allow", "audit")
 SEVERITIES = ("info", "low", "medium", "high", "critical")
@@ -107,6 +108,14 @@ def normalize(raw: dict) -> dict:
         if excerpt is not None and (not isinstance(excerpt, str)
                                     or len(excerpt) > DLP_EXCERPT_MAX):
             raise EventError(f"detail.excerpt: text of at most {DLP_EXCERPT_MAX} characters")
+    if source in ("osquery", "sysmon"):
+        # Agent OS events (docs/specs/agent-os-events.md): attributed on the
+        # laptop; the verdict and the decision are set at ingest (os_events.join).
+        from core.runtime_policy import os_events
+        try:
+            detail = os_events.clean_detail(kind, detail)
+        except os_events.OsEventError as e:
+            raise EventError(str(e))
     return {
         "source": source,
         "kind": kind,
@@ -210,13 +219,18 @@ def _engine(rest: str) -> str:
 def summary(ev: dict) -> str:
     d = ev["detail"]
     if ev["kind"] == "network":
-        what = f"{d.get('method', '')} {d.get('host', '?')}:{d.get('port', '')}{d.get('path', '')}".strip()
+        host = d.get("host") or d.get("dest_host") or d.get("dest_ip") or "?"
+        port = d.get("port") or d.get("dest_port") or ""
+        what = f"{d.get('method', '')} {host}:{port}{d.get('path', '')}".strip()
         who = f" by {d['binary']}" if d.get("binary") else ""
         return f"{ev['decision']} network {what}{who}"
     if ev["kind"] == "file":
         return f"{ev['decision']} file {d.get('op', 'access')} {d.get('path', '?')}"
     if ev["kind"] == "process":
-        return f"{ev['decision']} process {d.get('command') or d.get('binary') or '?'}"
+        by = f" by {d['AgentId']}" if d.get("AgentId") else ""
+        return (f"{ev['decision']} process "
+                f"{d.get('command') or d.get('command_line') or d.get('binary') or d.get('image') or '?'}"
+                f"{by}")
     if ev["kind"] == "action":
         # Embodied action guard decisions uploaded from robots
         # (docs/specs/embodied-action-guard.md §5.3).
@@ -265,6 +279,11 @@ def telemetry_fields(ev: dict) -> dict:
     for src, dst in (("host", "destination.domain"), ("destination", "destination.domain"),
                      ("port", "destination.port"), ("method", "http.request.method"), ("path", "votal.runtime.path"),
                      ("binary", "process.executable"), ("command", "process.command_line"),
+                     ("image", "process.executable"), ("command_line", "process.command_line"),
+                     ("dest_host", "destination.domain"), ("dest_ip", "destination.ip"),
+                     ("dest_port", "destination.port"), ("AgentId", "votal.agent.id"),
+                     ("agent_label", "votal.agent.label"),
+                     ("ShieldProfileVerdict", "votal.runtime.verdict"),
                      ("finding", "votal.runtime.finding"), ("reason", "votal.runtime.reason")):
         if d.get(src) not in (None, ""):
             out[dst] = d[src]
@@ -316,6 +335,25 @@ async def ingest(tenant_id: str, events: list[dict], *, source_ip: str = "",
     from core.xflow import runtime as xflow
     from storage.decision_audit import log_decision
 
+    # Agent OS events (osquery, sysmon): AgentId and the profile verdict first,
+    # so the audit row and telemetry below carry them. Dropped entirely when
+    # SHIELD_DEVICE_AGENT_OS_EVENTS=off.
+    os_evs = [ev for ev in events if ev["source"] in ("osquery", "sysmon")]
+    if os_evs:
+        from core.dlp import agent_os_events
+        from core.runtime_policy import os_events
+        from core.runtime_policy.advisor import _shield_hosts
+        if agent_os_events.disabled():
+            events = [ev for ev in events if ev["source"] not in ("osquery", "sysmon")]
+            os_evs = []
+        hosts = _shield_hosts()
+        for ev in os_evs:
+            try:
+                os_events.join(tenant_id, ev, hosts)
+            except Exception:
+                ev["detail"]["ShieldProfileVerdict"] = "no_profile"
+                ev["decision"], ev["severity"] = "allow", "info"
+
     audited = flowed = applied = 0
     for ev in events:
         try:
@@ -356,6 +394,11 @@ async def ingest(tenant_id: str, events: list[dict], *, source_ip: str = "",
                     evidence="observed", path="runtime_event", session_id=ev["session_id"],
                     agent=ev["agent_id"], classification=cls)
                 flowed += bool(rec)
+    if os_evs:
+        try:
+            os_events.record(tenant_id, os_evs)
+        except Exception:
+            pass
     advised = 0
     try:
         from core.runtime_policy import advisor

@@ -343,7 +343,8 @@ def test_card_is_wired():
                       ("POST", "/v1/tenant/me/hooks/claude-code/kit"),
                       ("POST", "/v1/tenant/me/hooks/enable"),
                       ("GET", "/v1/tenant/me/hooks/fleets"),
-                      ("PUT", "/v1/tenant/me/hooks/fleets")}
+                      ("PUT", "/v1/tenant/me/hooks/fleets"),
+                      ("GET", "/v1/tenant/me/hooks/os-events")}
     assert '<option value="coding-agent-baseline">' in HTML
     for v in hook_kit.VARIANTS:
         assert f'<option value="{v}">' in HTML

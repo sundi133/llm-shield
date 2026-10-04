@@ -148,6 +148,13 @@ def _check_write(view: rc.CompiledProfile, path: str) -> Optional[str]:
     if view.fs_write and not any(rc._under(path, r) for r in view.fs_write):
         return (f"path {path} is outside the profile's writable paths "
                 f"({', '.join(view.fs_write)})")
+    if not view.fs_write and view.raw["filesystem"]["read_write"]:
+        # The profile limits writes, but none of its writable paths resolved
+        # (only @project, and no usable cwd): nothing is writable, never
+        # everything.
+        return (f"path {path} is not writable: the profile allows writes only in "
+                f"{', '.join(view.raw['filesystem']['read_write'])}, and this session's "
+                f"project folder is not known")
     return None
 
 

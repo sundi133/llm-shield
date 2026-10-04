@@ -589,6 +589,35 @@ def reset_caller_cache() -> None:
 
 
 AGENT_HOOK_STATES = ("active", "off", "conflict", "error")
+OS_EVENT_STATES = ("active", "off", "missing", "no_permission", "error")
+OS_EVENT_COLLECTORS = ("osquery", "sysmon", "osquery+sysmon", "none")
+
+
+def _os_events_state(v) -> dict:
+    """The device agent's report on its OS event collectors
+    (docs/specs/agent-os-events.md section 3)."""
+    if not isinstance(v, dict) or v.get("state") not in OS_EVENT_STATES:
+        raise DeviceError(f"os_events.state: one of {', '.join(OS_EVENT_STATES)}")
+    if v.get("collector", "none") not in OS_EVENT_COLLECTORS:
+        raise DeviceError(f"os_events.collector: one of {', '.join(OS_EVENT_COLLECTORS)}")
+    out = {"state": v["state"], "collector": v.get("collector", "none")}
+    for k in ("sent", "dropped"):
+        n = v.get(k, 0)
+        if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            raise DeviceError(f"os_events.{k}: a non-negative integer")
+        out[k] = n
+    for k, n in (("version", 32), ("reason", 200)):
+        if v.get(k) is not None:
+            if not isinstance(v[k], str) or len(v[k]) > n:
+                raise DeviceError(f"os_events.{k}: text of at most {n} characters")
+            out[k] = v[k]
+    missing = v.get("missing_event_ids")
+    if missing is not None:
+        if not isinstance(missing, list) or len(missing) > 20 or \
+                not all(isinstance(i, int) and not isinstance(i, bool) for i in missing):
+            raise DeviceError("os_events.missing_event_ids: a list of event ids")
+        out["missing_event_ids"] = missing
+    return out
 
 
 def _agent_hooks_state(v) -> dict:
@@ -646,6 +675,9 @@ def heartbeat(tenant_id: str, device_id: str, body: dict) -> dict:
     ah = body.get("agent_hooks")
     if ah is not None:
         seen["agent_hooks"] = _agent_hooks_state(ah)
+    oe = body.get("os_events")
+    if oe is not None:
+        seen["os_events"] = _os_events_state(oe)
     av = body.get("agent_version")
     if isinstance(av, str) and 0 < len(av) <= 40:
         seen["agent_version"] = av
@@ -680,6 +712,8 @@ def list_devices(tenant_id: str, expected_digest: str = "") -> dict:
             row["agent_version"] = s["agent_version"]
         if s.get("agent_hooks"):
             row["agent_hooks"] = s["agent_hooks"]
+        if s.get("os_events"):
+            row["os_events"] = s["os_events"]
         row["model_ok"] = (None if not (expected_digest and row["model_digest"])
                            else row["model_digest"] == expected_digest)
         rows.append(row)
