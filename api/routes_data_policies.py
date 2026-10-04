@@ -818,6 +818,99 @@ async def preview_sanitization(
     }
 
 
+# ── Policy editor: ready-made protections and a dry run ─────────────────────
+# Spec: docs/specs/tool-policy-editor.md, task 1.
+
+@router.get("/library")
+async def get_policy_library(tenant_id: str = Depends(get_tenant_from_request)):
+    """Ready-made protections the Tool Policies editor offers as tick-boxes."""
+    from core.policy_library import LIBRARY_VERSION, entries
+    return {"version": LIBRARY_VERSION, "entries": entries()}
+
+
+class TryPolicyRequest(BaseModel):
+    """Exactly one of `arguments` (a tool call) or `result` (what a tool returned)."""
+    policy: GlobalDataPolicy
+    tool_name: str
+    arguments: Optional[Dict] = None
+    result: Optional[str] = None
+    user_role: str = ""
+
+
+_TRY_RESULT_MAX = 50_000
+_NOT_CHECKED_CALL = ("The policy could not be checked ({err}). On live traffic this call "
+                     "would currently be ALLOWED: rules judged by the model fail open.")
+_NOT_CHECKED_RESULT = ("The policy could not be fully checked ({err}). On live traffic this "
+                       "result would be delivered with only the secret patterns applied, "
+                       "unless SHIELD_DLP_FAIL_CLOSED is on.")
+
+
+@router.post("/try")
+async def try_policy(req: TryPolicyRequest,
+                     tenant_id: str = Depends(get_tenant_from_request)):
+    """Run an UNSAVED policy against one tool call or one tool result, through
+    the same functions live traffic uses. Nothing is stored or recorded."""
+    if (req.arguments is None) == (req.result is None):
+        raise HTTPException(status_code=400,
+                            detail="Give either arguments (a tool call) or result (a tool's output).")
+    tool = req.tool_name.strip()
+    if not tool or len(tool) > 200:
+        raise HTTPException(status_code=400, detail="tool_name is required (at most 200 characters)")
+    policy = req.policy.model_dump()
+    _reject_invalid_floor(policy)
+    policy["tool_name"] = tool
+    if not policy.get("enabled", True):
+        return {"decision": "allowed", "reason": "This policy is turned off.", "sanitized": None}
+
+    if req.arguments is not None:
+        from guardrails.agentic.tool.payload_risk import evaluate_payload_policy_llm
+        try:
+            issue = await evaluate_payload_policy_llm(
+                tool, req.arguments, tenant_id=tenant_id, user_role=req.user_role,
+                data_policies=[policy], raise_errors=True)
+        except Exception as e:
+            return {"decision": "not_checked",
+                    "reason": _NOT_CHECKED_CALL.format(err=type(e).__name__), "sanitized": None}
+        if issue:
+            return {"decision": "blocked", "reason": issue["message"],
+                    "details": issue["details"], "sanitized": None}
+        return {"decision": "allowed", "reason": "No rule in this policy is broken by this call.",
+                "sanitized": None}
+
+    if len(req.result) > _TRY_RESULT_MAX:
+        raise HTTPException(status_code=400,
+                            detail=f"result is limited to {_TRY_RESULT_MAX} characters here")
+    from guardrails.agentic.tool.payload_risk import _format_data_policies
+    from guardrails.agentic.tool.tool_output_sanitization import ToolOutputSanitizationGuardrail
+
+    class _UnsavedPolicySanitizer(ToolOutputSanitizationGuardrail):
+        """The live sanitizer, reading the policy under test instead of the store."""
+        @staticmethod
+        def _load_policies(tenant_id: str, tool_name: str = ""):
+            return [policy]
+
+        @staticmethod
+        def _load_policies_text(tenant_id: str, tool_name: str = "", user_role: str = "") -> str:
+            return _format_data_policies([policy], tenant_id, tool_name, user_role)
+
+    # _check_inner, not check(): check() may record taint for the session.
+    r = await _UnsavedPolicySanitizer()._check_inner(req.result, {
+        "tool_output": req.result, "tool_name": tool, "tenant_id": tenant_id,
+        "user_role": req.user_role or "user"})
+    details = r.details or {}
+    sanitized = details.get("sanitized_output", req.result)
+    if details.get("error"):
+        return {"decision": "not_checked",
+                "reason": _NOT_CHECKED_RESULT.format(err=str(details["error"])[:120]),
+                "sanitized": sanitized}
+    if r.action == "block":
+        return {"decision": "blocked", "reason": r.message, "sanitized": None}
+    if sanitized != req.result:
+        return {"decision": "redacted", "reason": r.message, "sanitized": sanitized}
+    return {"decision": "allowed", "reason": "No rule in this policy applies to this result.",
+            "sanitized": sanitized}
+
+
 @router.post("/validate")
 async def validate_data_against_policies(
     request: Dict,
