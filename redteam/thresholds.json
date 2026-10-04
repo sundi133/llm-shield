@@ -1,0 +1,9 @@
+{
+  "default": 0.8,
+  "per_class": {
+    "prompt-injection": 0.9,
+    "sensitive-disclosure": 1.0
+  },
+  "max_false_positive_rate": 0.05,
+  "strict_action": false
+}
