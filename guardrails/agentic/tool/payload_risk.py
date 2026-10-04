@@ -58,8 +58,16 @@ async def evaluate_payload_policy_llm(
     tenant_id: str = "",
     user_role: str = "",
     data_policies: list[dict[str, Any]] | None = None,
+    *,
+    raise_errors: bool = False,
 ) -> Optional[dict[str, Any]]:
-    """Use the LLM to evaluate whether a tool call payload violates data policies."""
+    """Use the LLM to evaluate whether a tool call payload violates data policies.
+
+    Returns None both when the call is allowed and when the model could not be
+    asked (fail open, the guard path's behaviour). ``raise_errors=True`` makes
+    the second case raise instead, so the policy editor's dry run can say "not
+    checked" rather than "allowed".
+    """
     payload = payload or {}
     if not payload and not tool_name:
         return None
@@ -117,6 +125,8 @@ async def evaluate_payload_policy_llm(
 
     except Exception as e:
         logger.error(f"LLM payload risk evaluation error for {tool_name}: {e}")
+        if raise_errors:
+            raise
         return None  # Fail open
 
 

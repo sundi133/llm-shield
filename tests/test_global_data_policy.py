@@ -305,6 +305,6 @@ def test_a_blocking_default_is_confirmed_before_saving():
     """Blast radius is every tool call on the tenant. A click should not be
     enough."""
     html = _portal()
-    save = html.split("async function saveGlobalDataPolicy()")[1][:1200]
+    save = html.split("async function saveGlobalDataPolicy(")[1][:1200]
     assert "confirm(" in save
     assert "'block'" in save

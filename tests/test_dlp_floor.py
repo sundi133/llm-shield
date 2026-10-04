@@ -431,8 +431,7 @@ def test_the_portal_edits_and_round_trips_the_floor_fields():
     save = html.split("async function saveDataPolicy(")[1].split("\n}\n")[0]
     assert "dp-floor-json" in save
     for key in ("allowlist", "thresholds", "exact_match"):
-        assert key in save
-    assert "...floorFields" in save
+        assert f"policy.{key} " in save   # assigned from the floor textarea on every form save
 
 
 def test_the_portal_hash_helper_calls_the_endpoint_and_is_defined():
@@ -443,7 +442,13 @@ def test_the_portal_hash_helper_calls_the_endpoint_and_is_defined():
 
 
 def test_the_global_card_round_trips_the_floor_fields():
+    """The default-policy card is a form (docs/specs/tool-policy-editor.md) that
+    does not show the floor fields; it must carry them through a save. The
+    editor starts from the whole stored policy and only replaces what the form
+    edits; tests/test_tool_policy_editor_portal.py runs that round trip under
+    node with allowlist, thresholds and exact_match set."""
     html = _portal()
-    card = html.split("async function loadGlobalDataPolicy()")[1].split("async function saveGlobalDataPolicy")[0]
+    editor = html.split("function pePolicyFrom(st, library) {")[1].split("\n}\n")[0]
+    assert "JSON.parse(JSON.stringify(st.base" in editor
     for key in ("allowlist", "thresholds", "exact_match"):
-        assert key in card
+        assert key not in editor        # never rebuilt, so never dropped
