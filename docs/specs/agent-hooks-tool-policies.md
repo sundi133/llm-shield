@@ -308,6 +308,40 @@ on the live MCP gateway path too, unless a server profile sets
 by this work, but the PostToolUse half depends on it. Needs its own small fix
 (and spec note) before task 2.
 
+## 9.2 Build notes
+
+**Task 1 (done).** `core/runtime_policy/hook_policies.py`:
+- `settings_for(profile)`: the agent's `tool_policies`, or None (today's
+  behaviour) when absent, both switches off, or `SHIELD_HOOK_TOOL_POLICIES=0`.
+- `check_call(tenant, tool, input, settings)`: `ToolCallValidationGuardrail`
+  for tools whose name fully matches `model_tools_before`; others are not
+  checked before the call. ALLOW or DENY.
+- `check_result(tenant, tool, response, settings)`: `ToolOutputSanitizationGuardrail`
+  for tools in `model_tools_after`; every other tool, and any result over
+  `max_output_chars`, gets the deterministic Secrets / sanitization patterns
+  only (`_run_floor`), no model. ALLOW, REDACT (with `sanitized`) or WITHHOLD
+  (a block, or a redaction the model failed to produce).
+- No policy for the tool: no model call (the call guard would otherwise ask the
+  model for "security defaults", a rule nobody wrote).
+- Timeout or error: the policy's `fail_closed` decides (deny / withhold, else
+  allow, unjudged); after a call the patterns still apply either way.
+- Reasons are scrubbed: any token of 8+ characters that also appears in the
+  arguments or the original output becomes `[value]`, so a model quoting a
+  secret back cannot carry it to the agent or the audit.
+- `Decision.event_fields()` for the runtime event: action, reason, whether the
+  model ran, unjudged, pattern ids, latency; never content.
+- `tool_policies` validated on the runtime profile (`core/runtime_policy/model.py`),
+  stored only when set so existing profiles keep their hash; compilers list it
+  as enforced by coding-agent hooks only.
+
+Deviation from §2: a model-checked call reads `data_policies:{tenant}` twice
+(once here, for the no-policy skip and the fail mode; once inside the guard),
+not once. Both are single GETs; folding them needs a guard change, left for
+later.
+
+Tests: `tests/test_hook_tool_policies.py` (36), seven safeguards
+sabotage-checked. Clean venv: 6226 passed.
+
 ## 10. How you will test it (after tasks 1 to 3)
 
 **Claude Code**: put the §4.4 hooks in `~/.claude/settings.json` (or

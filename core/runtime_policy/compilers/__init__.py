@@ -61,4 +61,8 @@ def compile_profile(target: str, profile: dict, ctx: ExportContext) -> Compiled:
     for k in sorted(profile.get("limits") or {}):
         out.unsupported.append(f"limits.{k}: per-session limit on file changes. Enforced by "
                                f"Shield's coding-agent hook checks only")
+    tp = profile.get("tool_policies") or {}
+    if tp.get("before_call") or tp.get("after_call"):
+        out.unsupported.append("tool_policies: Tool Registry rules on each tool call and result. "
+                               "Enforced by Shield's coding-agent hook checks only")
     return out

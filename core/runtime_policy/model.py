@@ -40,7 +40,14 @@ _MEM_RE = re.compile(r"^\d+(Ki|Mi|Gi|Ti|K|M|G|T)?$")
 _GLOB_CHARS = set("*?[")
 
 _TOP_KEYS = {"description", "network", "filesystem", "process", "tools", "identity",
-             "resources", "fail_closed", "limits"}
+             "resources", "fail_closed", "limits", "tool_policies"}
+#: Tool Registry rules on coding-agent tool calls, through hooks only
+#: (docs/specs/agent-hooks-tool-policies.md section 3).
+_TOOL_POLICY_KEYS = {"before_call", "after_call", "model_tools_before", "model_tools_after",
+                     "max_output_chars", "check_timeout_s"}
+DEFAULT_MODEL_TOOLS_BEFORE = ["Bash", "Write", "Edit", "MultiEdit", "apply_patch", "WebFetch", "mcp__.*"]
+DEFAULT_MODEL_TOOLS_AFTER = ["Bash", "Read", "WebFetch", "mcp__.*"]
+MAX_MODEL_TOOL_PATTERNS = 50
 #: Per-session limits on file changes, enforced by coding-agent hooks only
 #: (docs/specs/agent-hook-adapter.md section 10).
 _LIMIT_KEYS = {"max_writes_per_minute", "max_deletes_per_session"}
@@ -312,6 +319,35 @@ def _limits(raw: Any, errors: list[str]) -> dict:
     return out
 
 
+def _tool_policies(raw: Any, errors: list[str]) -> dict:
+    """Which Tool Registry checks the coding-agent hooks apply, and to which
+    tools the model-backed checks reach. Defaults filled in, so the stored form
+    validates again unchanged."""
+    tp = _obj(raw, "tool_policies", errors)
+    _unknown(tp, _TOOL_POLICY_KEYS, "tool_policies", errors)
+    out = {
+        "before_call": _bool(tp.get("before_call"), False, "tool_policies.before_call", errors),
+        "after_call": _bool(tp.get("after_call"), False, "tool_policies.after_call", errors),
+    }
+    for key, default in (("model_tools_before", DEFAULT_MODEL_TOOLS_BEFORE),
+                         ("model_tools_after", DEFAULT_MODEL_TOOLS_AFTER)):
+        where = f"tool_policies.{key}"
+        pats = default if tp.get(key) is None else _strs(tp.get(key), where, errors)
+        if len(pats) > MAX_MODEL_TOOL_PATTERNS:
+            errors.append(f"{where}: at most {MAX_MODEL_TOOL_PATTERNS} patterns")
+        for pat in pats:
+            try:
+                re.compile(pat)
+            except re.error as e:
+                errors.append(f"{where}: {pat!r} is not a valid regular expression ({e})")
+        out[key] = list(pats)
+    chars = _int(tp.get("max_output_chars"), 1_000, 2_000_000, "tool_policies.max_output_chars", errors)
+    out["max_output_chars"] = 200_000 if chars is None else chars
+    secs = _int(tp.get("check_timeout_s"), 1, 120, "tool_policies.check_timeout_s", errors)
+    out["check_timeout_s"] = 20 if secs is None else secs
+    return out
+
+
 def _tools(raw: Any, errors: list[str]) -> dict:
     t = _obj(raw, "tools", errors)
     _unknown(t, _TOOLS_KEYS, "tools", errors)
@@ -420,6 +456,8 @@ def validate_profile(raw: Any) -> dict:
     limits = _limits(raw.get("limits"), errors)
     if limits:
         profile["limits"] = limits
+    if raw.get("tool_policies") is not None:     # stored only when set, like limits
+        profile["tool_policies"] = _tool_policies(raw.get("tool_policies"), errors)
     desc = raw.get("description")
     if desc is not None:
         if not isinstance(desc, str) or len(desc) > MAX_TEXT:
