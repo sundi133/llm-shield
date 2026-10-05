@@ -410,3 +410,30 @@ def test_a_refresh_without_a_new_refresh_token_keeps_the_old_one_counted():
 def test_records_from_before_this_change_report_unknown_not_false():
     out = mcp_oauth.public_status({"status": "connected", "issuer": "https://p"})
     assert out["refresh_token_held"] is None and out["warning"] == ""
+
+
+# ── task 3: discover without storing, for the portal's scope choices ───────
+
+
+def _discover(client, route="gdrive", cfg=None):
+    gstore.set_upstream("acme", route, cfg or {"route": route, "transport": "http", "url": DRIVE_MCP})
+    stub = _Stub(GOOGLE_DOCS)
+    with patch("core.secret_vault.keyprovider.vault_enabled", return_value=True), \
+         patch("httpx.AsyncClient", lambda **kw: stub):
+        return client.get(f"/v1/tenant/me/mcp/servers/{route}/oauth/discover", headers=H)
+
+
+def test_discover_offers_googles_scopes_and_stores_nothing(client):
+    r = _discover(client)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["profile"] == "google" and body["dynamic_registration"] is False
+    assert body["access_scopes"] == GOOGLE_RESOURCE["scopes_supported"]
+    assert ostore.get_broker("acme", "gdrive") is None
+
+
+def test_discover_refuses_stdio_and_unknown_routes(client):
+    r = _discover(client, "local", {"route": "local", "transport": "stdio", "command": "x"})
+    assert r.status_code == 422
+    with patch("core.secret_vault.keyprovider.vault_enabled", return_value=True):
+        assert client.get("/v1/tenant/me/mcp/servers/nope/oauth/discover", headers=H).status_code == 404

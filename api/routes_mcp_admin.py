@@ -52,9 +52,10 @@ from core.mcp_scan import (
 from core.mcp_credentials import MODE_AUTH_CODE
 from core.mcp_oauth import (
     OAuthBrokerError,
-    broker_enabled,
+    access_scopes,
     authorization_header_state,
     available_scopes,
+    broker_enabled,
     build_authorize_url,
     choose_scopes,
     discover,
@@ -629,6 +630,42 @@ def _oauth_precondition(route: str) -> dict:
                    "brokering stores tokens there and will not fall back to "
                    "plaintext")
     return {}
+
+
+@router.get("/servers/{route}/oauth/discover")
+async def oauth_discover(route: str, request: Request):
+    """What connecting this route would involve, before anything is stored.
+
+    The portal needs a server's scopes to offer them as choices, but status only
+    has them once a connect has been attempted. This runs the same
+    (SSRF-guarded) discovery as connect and stores nothing.
+    docs/specs/mcp-oauth-standard-providers.md, task 3.
+    """
+    tenant_id = _require_tenant(request)
+    _oauth_precondition(route)
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    if not cfg.get("url"):
+        raise HTTPException(
+            status_code=422,
+            detail="OAuth needs an http/sse upstream with a URL; stdio routes have "
+                   "no OAuth provider to discover")
+    import httpx
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            meta = await discover(client, cfg["url"])
+    except OAuthBrokerError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {
+        "tenant_id": tenant_id, "route": route,
+        "issuer": meta.get("issuer") or "",
+        "profile": meta.get("profile") or "standard",
+        "available_scopes": available_scopes(meta),
+        "access_scopes": access_scopes(meta),
+        # False means the operator must bring a client ID (Google, most SaaS).
+        "dynamic_registration": bool(meta.get("registration_endpoint")),
+    }
 
 
 @router.get("/servers/{route}/oauth")

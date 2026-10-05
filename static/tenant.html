@@ -5593,6 +5593,19 @@ if __name__ == "__main__":
         <div id="mcp-findings-body" class="section-panel-body" style="padding:0;"></div>
       </div>
 
+      <!-- Connect with OAuth (docs/specs/mcp-oauth-standard-providers.md). Shield
+           signs in once and keeps the credential in its vault; agents never hold it. -->
+      <div class="section-panel" id="mcp-oauth" style="display:none;margin-top:1rem;">
+        <div class="section-panel-head">
+          <div>
+            <div class="section-panel-title">Connect with OAuth &mdash; <span id="mcp-oauth-route" class="mono"></span></div>
+            <div class="section-panel-desc">Shield signs in to this server once, keeps the credential refreshed in its vault and sends it on every call. Agents never see it.</div>
+          </div>
+          <button class="small" onclick="document.getElementById('mcp-oauth').style.display='none'">Close</button>
+        </div>
+        <div id="mcp-oauth-body" class="section-panel-body"></div>
+      </div>
+
       <!-- ── Controls, below the fleet ────────────────────────────────────────
            Adding and kill-switching are deliberate, occasional actions. They sit
            under the fleet so the page opens on state rather than on a form. -->
@@ -13997,6 +14010,9 @@ function renderMcpGateway(inv) {
                 ? `<button class="small" title="Override the scan finding and put this server back into service. Recorded against your account." onclick="mcpActivateServer('${enc}')">Activate</button>`
                 : `<button class="small" onclick="mcpToggleServer('${enc}', ${active ? 'false' : 'true'})">${active ? 'Disable' : 'Enable'}</button>`}
               <button class="small" onclick="mcpRunScan('${enc}')">Scan</button>
+              ${(s.transport || '') !== 'stdio'
+                ? `<button class="small" title="Sign this server in once; Shield keeps the credential" onclick="mcpShowOAuth('${enc}')">OAuth</button>`
+                : ''}
               <button class="small" style="color:var(--red);border-color:var(--red);margin-left:auto;" onclick="mcpDeleteServer('${enc}')">Remove</button>
             </div>
           </div>`;
@@ -14257,6 +14273,138 @@ async function mcpDeleteServer(encRoute) {
     loadMcpGateway();
   } catch (e) {
     showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+// ── MCP OAuth connect (pure) ───────────────────────────────────────────────
+// Spec: docs/specs/mcp-oauth-standard-providers.md, task 3. Pure, so the panel
+// is tested under node (tests/test_mcp_oauth_portal.py).
+
+const MCP_GOOGLE_SCOPE_PREFIX = 'https://www.googleapis.com/auth/';
+
+// "https://www.googleapis.com/auth/drive.readonly" -> "drive.readonly".
+function mcpScopeLabel(scope) {
+  const s = String(scope || '');
+  return s.startsWith(MCP_GOOGLE_SCOPE_PREFIX) ? s.slice(MCP_GOOGLE_SCOPE_PREFIX.length) : s;
+}
+
+function mcpOAuthWhen(epochSeconds) {
+  if (!epochSeconds) return '';
+  return new Date(epochSeconds * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+}
+
+// One line saying what is true now, and whether it needs attention.
+function mcpOAuthStatus(st) {
+  const s = st || {};
+  if (!s.status || s.status === 'not_connected') return { text: 'Not connected.', tone: 'dim' };
+  if (s.status === 'pending') return { text: 'Waiting for sign-in. Open the sign-in page to finish.', tone: 'warn' };
+  if (s.status === 'needs_consent') return { text: 'The provider withdrew the grant. Connect again.', tone: 'bad' };
+  if (s.status === 'error') return { text: `Error: ${s.last_error || 'unknown'}`, tone: 'bad' };
+  const parts = [`Connected${s.issuer ? ` to ${s.issuer}` : ''}.`];
+  if (s.expires_at) parts.push(`Current token valid until ${mcpOAuthWhen(s.expires_at)}.`);
+  let tone = 'good';
+  if (s.warning) { parts.push(s.warning); tone = 'warn'; }
+  if (s.authorization_header === 'other') {
+    parts.push('This route sends its own Authorization header, so this credential is not in use.');
+    tone = 'warn';
+  }
+  return { text: parts.join(' '), tone };
+}
+
+// The form. Nothing is pre-ticked: Shield never chooses between, say, full Drive
+// and read-only Drive for the operator.
+function mcpOAuthFormHtml(encRoute, disc, status) {
+  const d = disc || {};
+  const st = mcpOAuthStatus(status);
+  const colour = { good: 'var(--green,#16a34a)', warn: 'var(--warn,#d4a017)',
+                   bad: 'var(--red,#dc2626)', dim: 'var(--text-dim,#888)' }[st.tone];
+  const box = 'font-size:12px;padding:0.35rem 0.5rem;';
+  const scopes = (d.access_scopes || []).map((sc, i) => `
+      <label style="display:flex;gap:0.45rem;align-items:flex-start;font-size:12.5px;padding:0.15rem 0;cursor:pointer;" title="${_esc(sc)}">
+        <input type="checkbox" class="mcp-oauth-scope" value="${_esc(sc)}" style="margin:2px 0 0;">
+        <span class="mono">${_esc(mcpScopeLabel(sc))}</span>
+        ${/\.readonly$/.test(sc) ? '<span class="badge" style="font-size:10px;">read-only</span>' : ''}
+      </label>`).join('');
+  const clientNote = d.dynamic_registration
+    ? 'Optional: leave blank to let Shield register itself with this provider.'
+    : 'Required: this provider does not let Shield register itself. Create an OAuth client (type: Web application) with the redirect URI your Shield administrator gives you.';
+  return `
+    <div style="font-size:12.5px;color:${colour};margin-bottom:0.7rem;">${_esc(st.text)}</div>
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:0.6rem;">
+      Provider <span class="mono">${_esc(d.issuer || 'unknown')}</span>${d.profile && d.profile !== 'standard' ? ` &middot; ${_esc(d.profile)}` : ''}</div>
+    <div style="font-size:12px;font-weight:600;margin-bottom:0.2rem;">Client</div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:0.35rem;">${_esc(clientNote)}</div>
+    <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.7rem;">
+      <input type="text" id="mcp-oauth-client-id" placeholder="client ID" autocomplete="off" style="${box}flex:1;min-width:14rem;">
+      <input type="password" id="mcp-oauth-client-secret" placeholder="client secret" autocomplete="new-password" style="${box}flex:1;min-width:12rem;">
+    </div>
+    <div style="font-size:12px;font-weight:600;margin-bottom:0.2rem;">Scopes</div>
+    ${scopes || '<div style="font-size:11px;color:var(--text-dim);">This server needs no scope choice.</div>'}
+    <div style="font-size:11px;color:var(--warn,#d4a017);margin:0.6rem 0;">Every agent and user of this route will act as the account that signs in, with its access. Use a dedicated account, not a personal one.</div>
+    <button class="primary small" onclick="mcpOAuthConnect('${encRoute}')">Connect</button>
+    <div id="mcp-oauth-result" style="margin-top:0.7rem;"></div>`;
+}
+
+// What POST .../oauth/connect is sent. Empty fields are left out so the server
+// applies its own defaults (self-registration, no scope choice).
+function mcpOAuthConnectBody(clientId, clientSecret, scopes) {
+  const body = {};
+  if ((clientId || '').trim()) body.client_id = clientId.trim();
+  if ((clientSecret || '').trim()) body.client_secret = clientSecret.trim();
+  if ((scopes || []).length) body.scopes = scopes;
+  return body;
+}
+
+// After connect: the consent note, and the sign-in link only if it is https.
+function mcpOAuthResultHtml(resp) {
+  const r = resp || {};
+  const url = String(r.authorize_url || '');
+  const link = /^https:\/\//i.test(url)
+    ? `<a class="primary small" style="display:inline-block;padding:0.35rem 0.7rem;border-radius:6px;text-decoration:none;"
+          href="${_esc(url)}" target="_blank" rel="noopener noreferrer">Open sign-in page</a>`
+    : '<span style="color:var(--red,#dc2626);font-size:12px;">The provider returned no usable sign-in address.</span>';
+  return `<div style="font-size:12px;color:var(--text-dim);margin-bottom:0.5rem;">${_esc(r.consent_note || '')}</div>
+    ${link}
+    <div style="font-size:11px;color:var(--text-dim);margin-top:0.4rem;">After signing in, come back and check the status.</div>`;
+}
+
+// ── MCP OAuth connect (wiring) ─────────────────────────────────────────────
+
+async function mcpShowOAuth(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  const panel = document.getElementById('mcp-oauth');
+  const body = document.getElementById('mcp-oauth-body');
+  document.getElementById('mcp-oauth-route').textContent = route;
+  panel.style.display = '';
+  body.innerHTML = '<div style="font-size:12px;color:var(--text-dim);">Looking up the provider…</div>';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const base = `/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/oauth`;
+  const [disc, status] = await Promise.all([
+    apiCall(base + '/discover').catch(e => ({ error: e.message })),
+    apiCall(base).then(r => r.oauth).catch(() => ({})),
+  ]);
+  if (disc.error) {
+    body.innerHTML = `<div style="font-size:12.5px;color:${mcpOAuthStatus(status).tone === 'good' ? 'var(--green,#16a34a)' : 'var(--text-dim)'};margin-bottom:0.5rem;">${_esc(mcpOAuthStatus(status).text)}</div>
+      <div style="font-size:12px;color:var(--red,#dc2626);">This server cannot be connected with OAuth: ${_esc(disc.error)}</div>`;
+    return;
+  }
+  body.innerHTML = mcpOAuthFormHtml(encRoute, disc, status);
+}
+
+async function mcpOAuthConnect(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  const scopes = [...document.querySelectorAll('#mcp-oauth .mcp-oauth-scope:checked')].map(el => el.value);
+  const body = mcpOAuthConnectBody(document.getElementById('mcp-oauth-client-id').value,
+                                   document.getElementById('mcp-oauth-client-secret').value, scopes);
+  const out = document.getElementById('mcp-oauth-result');
+  out.innerHTML = '<span style="font-size:12px;color:var(--text-dim);">Starting…</span>';
+  try {
+    const r = await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/oauth/connect`,
+      { method: 'POST', body: JSON.stringify(body) });
+    out.innerHTML = mcpOAuthResultHtml(r);
+    document.getElementById('mcp-oauth-client-secret').value = '';   // never kept in the page
+  } catch (e) {
+    out.innerHTML = `<span style="font-size:12px;color:var(--red,#dc2626);">${_esc(e.message)}</span>`;
   }
 }
 

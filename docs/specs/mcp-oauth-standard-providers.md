@@ -1,6 +1,6 @@
 # Spec: connect OAuth upstreams that are not MCP-native (Google first)
 
-Status: APPROVED 2026-10-04; tasks 1-2 done. Branch: `feat/tenant-enforce-mode`.
+Status: APPROVED 2026-10-04; tasks 1-3 done. Branch: `feat/tenant-enforce-mode`.
 Builds on `docs/spec-mcp-oauth-brokering.md` and
 `docs/spec-mcp-credential-modes.md` (mode 4, authorization code + PKCE).
 
@@ -207,6 +207,19 @@ held.
    token leaves it unchanged, and records from before this change report it as
    unknown (null), not false. Status also gains `warning` and
    `authorization_header` (`brokered` / `other` / `none`).
-3. **Portal.** Connect with OAuth panel and status. Node tests.
+3. **Portal.** Connect with OAuth panel and status. Node tests. Done. Notes:
+   - Added `GET /v1/tenant/me/mcp/servers/{route}/oauth/discover` (admin plane,
+     read-only, stores nothing). The panel needs a server's scopes before the
+     first connect, and status only has them after one. Same SSRF-guarded
+     discovery as connect; 422 for stdio routes, 404 for unknown ones.
+   - An **OAuth** button on HTTP/SSE server cards opens the panel next to scan
+     findings. The secret field is a password field and is cleared after use;
+     the sign-in link is only rendered for an https URL and opens with
+     `noopener noreferrer`.
+   - Checked in the portal against Google's live Drive MCP discovery on a local
+     admin plane: three Drive scopes offered, none ticked, read-only marked;
+     Connect with a placeholder client produced an authorize URL with
+     `scope=drive.readonly`, `access_type=offline`, `prompt=consent`, PKCE and
+     `resource`; connecting without a scope listed the choices.
 4. **Docs and the live check.** Google setup guide (customer-facing, no em
    dashes) and the end-to-end check against Google's Drive MCP server.
