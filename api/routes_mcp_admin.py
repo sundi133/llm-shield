@@ -233,10 +233,17 @@ async def mcp_inventory(request: Request):
     # "weaker than it looks" as bypassable.
     from storage.identity_policy import get_policy
     tenant_requires = bool(get_policy(tenant_id).get("require_verified_identity"))
+    from storage.mcp_grant_store import principals_for_route
     for s in servers:
         own = s.get("require_verified_identity")
         s["verified_callers_only"] = own if isinstance(own, bool) else tenant_requires
         s["verified_callers_source"] = "server" if isinstance(own, bool) else "tenant"
+        if s.get("credential_scope") == "per_user":
+            # Implied at runtime (core/mcp/principal.requires_verified): a
+            # per-person server always needs to know who the person is.
+            s["verified_callers_only"] = True
+            s["verified_callers_source"] = "per_user"
+            s["personal_connections"] = len(principals_for_route(tenant_id, s.get("route", "")))
     disabled = list_disabled_tools(tenant_id)
     disabled_names = {d.get("tool_name") for d in disabled}
 
@@ -712,6 +719,61 @@ async def set_credential_scope(route: str, body: CredentialScopeRequest, request
     if body.credential_scope == "per_user":
         out["connect_url"] = connect_url(tenant_id, route)
     return out
+
+
+# ── personal connections (B4) ────────────────────────────────────────────
+#
+# Who has connected their own account to a per-person server, and the means to
+# take it away. Revoking calls the provider's revocation endpoint (best effort)
+# and always deletes Shield's copy. Spec §4.9.
+
+
+@router.get("/servers/{route}/grants")
+async def list_server_grants(route: str, request: Request):
+    from storage.mcp_grant_store import list_grants
+    from storage.principal_store import get_principal
+    tenant_id = _require_tenant(request)
+    if not get_upstream(tenant_id, route):
+        raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
+    rows = []
+    for g in list_grants(tenant_id, route):
+        person = get_principal(tenant_id, g.get("principal_id", "")) or {}
+        rows.append({**g, "email": person.get("email", ""), "name": person.get("name", ""),
+                     "principal_type": person.get("type", ""),
+                     "principal_status": person.get("status", "")})
+    rows.sort(key=lambda r: (r.get("email") or r.get("principal_id") or "").lower())
+    return {"route": route, "grants": rows, "count": len(rows)}
+
+
+@router.delete("/servers/{route}/grants/{principal_id}")
+async def revoke_server_grant(route: str, principal_id: str, request: Request):
+    from core.mcp_credentials import revoke_grant
+    tenant_id = _require_tenant(request)
+    if not await revoke_grant(tenant_id, route, principal_id):
+        raise HTTPException(status_code=404, detail="that person has no connection to this server")
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_personal_connection_revoked", actor=_actor(request),
+                         tenant_id=tenant_id, after={"route": route, "principal_id": principal_id})
+    except Exception:
+        pass
+    return {"route": route, "principal_id": principal_id, "status": "revoked"}
+
+
+@router.delete("/servers/{route}/grants")
+async def revoke_all_server_grants(route: str, request: Request):
+    from core.mcp_credentials import revoke_route_grants
+    tenant_id = _require_tenant(request)
+    if not get_upstream(tenant_id, route):
+        raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
+    n = await revoke_route_grants(tenant_id, route)
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_personal_connections_revoked_all", actor=_actor(request),
+                         tenant_id=tenant_id, after={"route": route, "revoked": n})
+    except Exception:
+        pass
+    return {"route": route, "revoked": n}
 
 
 @router.post("/servers/{route}/enable")

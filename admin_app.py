@@ -131,6 +131,7 @@ _oidc_admin_router = None
 _portal_auth_router = None
 _mcp_signin_router = None
 _mcp_connect_router = None
+_principals_router = None
 _a2a_router = None
 
 try:
@@ -156,6 +157,11 @@ try:
 except Exception as _e:      # noqa: BLE001 - say why the connect page is missing
     import logging as _logging
     _logging.getLogger("votal.admin").warning("MCP connect page not mounted: %s", _e)
+try:
+    from api.routes_principals import router as _principals_router
+except Exception as _e:      # noqa: BLE001
+    import logging as _logging
+    _logging.getLogger("votal.admin").warning("principals routes not mounted: %s", _e)
 try:
     from api.routes_a2a import router as _a2a_router
 except Exception:
@@ -1120,6 +1126,8 @@ def create_admin_app() -> FastAPI:
         app.include_router(_mcp_signin_router)         # /oauth/consent, /v1/tenant/me/identity/policy
     if _mcp_connect_router:
         app.include_router(_mcp_connect_router)        # /connect/{tenant}[/{route}]
+    if _principals_router:
+        app.include_router(_principals_router)         # /v1/tenant/me/principals
     if _a2a_router:
         app.include_router(_a2a_router)                # /.well-known/agent.json, /a2a/*
 

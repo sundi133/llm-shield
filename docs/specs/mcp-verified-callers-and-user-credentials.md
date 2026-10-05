@@ -788,6 +788,39 @@ cross-tenant session with the same person in both tenants. Ten safeguards
 sabotage-checked. Viewed in the browser locally (desktop and phone width).
 Clean venv: 6131 passed.
 
+**B4 (done).** Seeing and removing personal connections; suspending people.
+- `GET /v1/tenant/me/mcp/servers/{route}/grants` (person, upstream account,
+  status, connected date; never token material), `DELETE .../grants/{pid}`,
+  `DELETE .../grants`. Revocation at the provider is best effort; Shield's
+  copy is always deleted.
+- `api/routes_principals.py`: `GET /v1/tenant/me/principals` (filter by type,
+  status, text), `GET .../{pid}` (with connections and key records),
+  `POST .../{pid}/suspend`, `POST .../{pid}/reactivate`. Changes need a portal
+  administrator when the caller is a signed-in person. A3 adds service
+  accounts and keys to this router.
+- `core/principal_lifecycle.change_status`, shared with SCIM (C1): suspended
+  revokes every upstream connection on every server; deprovisioned also
+  deletes the person's keys (new per-person key index). Gateway refusal needs
+  no step: tokens and keys are checked against status on use (15 s cache), and
+  refresh re-reads it. Reactivating does not restore connections.
+- Console: a Connections (N) button on per-person server cards opening a
+  Personal connections panel (Revoke, Suspend person, Revoke all).
+
+Found while viewing it in the console: per-person servers showed "key
+accepted" and offered Require sign-in, because the inventory reported only the
+explicit setting while the gateway enforces verified callers for them anyway
+(B2). The inventory now reports `verified_callers_only: true` with source
+`per_user`, and the card offers no identity toggle there. The card's button
+row also overflowed with seven buttons; it now wraps.
+
+Not done: the jti of outstanding Shield access tokens is not written to the
+revocation list on suspension; they are refused through the status check
+instead, within the 15 s bound.
+
+Tests: `tests/test_mcp_grant_admin.py` (13). Six safeguards sabotage-checked;
+a seventh (dropping a revoked key from the index) is cosmetic, because the
+list skips index entries whose key is gone. Clean venv: 6144 passed.
+
 ## 10. Decisions taken (change any before approval)
 
 1. **Shield is the authorization server and federates to the tenant's IdP**,

@@ -120,6 +120,8 @@ COPY api/routes_portal_auth.py api/
 # them; tests/test_mcp_signin.py checks these COPY lines instead.
 COPY api/routes_mcp_signin.py api/
 COPY api/routes_mcp_connect.py api/
+COPY api/routes_principals.py api/
+COPY core/principal_lifecycle.py core/
 COPY core/mcp/__init__.py core/mcp/
 COPY core/mcp/resource.py core/mcp/
 COPY storage/identity_policy.py storage/

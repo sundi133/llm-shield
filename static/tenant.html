@@ -2200,10 +2200,10 @@
   }
   .mcp-card-meta { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
   .mcp-card-actions {
-    display: flex; gap: 0.4rem; margin-top: 0.15rem;
+    display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.15rem;
     padding-top: 0.65rem; border-top: 1px solid var(--border);
   }
-  .mcp-card-actions button { padding: 0.35rem 0.7rem; font-size: 12px; }
+  .mcp-card-actions button { padding: 0.35rem 0.7rem; font-size: 12px; white-space: nowrap; }
 
   /* Status pill: state first, in colour, before any identifier. */
   .mcp-pill {
@@ -5604,6 +5604,19 @@ if __name__ == "__main__":
           <button class="small" onclick="document.getElementById('mcp-oauth').style.display='none'">Close</button>
         </div>
         <div id="mcp-oauth-body" class="section-panel-body"></div>
+      </div>
+
+      <!-- People who connected their own account to a per-person server (B4 of
+           docs/specs/mcp-verified-callers-and-user-credentials.md). -->
+      <div class="section-panel" id="mcp-grants" style="display:none;margin-top:1rem;">
+        <div class="section-panel-head">
+          <div>
+            <div class="section-panel-title">Personal connections &mdash; <span id="mcp-grants-route" class="mono"></span></div>
+            <div class="section-panel-desc">Each person below connected their own account to this server. Revoking removes it here and at the provider; the person can connect again unless suspended.</div>
+          </div>
+          <button class="small" onclick="document.getElementById('mcp-grants').style.display='none'">Close</button>
+        </div>
+        <div id="mcp-grants-body" class="section-panel-body"></div>
       </div>
 
       <!-- ── Controls, below the fleet ────────────────────────────────────────
@@ -14021,6 +14034,7 @@ function renderMcpGateway(inv) {
               <button class="small" onclick="mcpRunScan('${enc}')">Scan</button>
               ${mcpIdentityButton(s, enc)}
               ${mcpScopeButton(s, enc)}
+              ${mcpGrantsButton(s, enc)}
               ${(s.transport || '') !== 'stdio'
                 ? `<button class="small" title="Sign this server in once; Shield keeps the credential" onclick="mcpShowOAuth('${enc}')">OAuth</button>`
                 : ''}
@@ -14262,6 +14276,51 @@ async function mcpSetIdentity(encRoute, requireVerified) {
   }
 }
 
+async function mcpShowGrants(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  const panel = document.getElementById('mcp-grants');
+  document.getElementById('mcp-grants-route').textContent = route;
+  panel.style.display = '';
+  const body = document.getElementById('mcp-grants-body');
+  body.innerHTML = '<div style="font-size:12px;color:var(--text-dim);">Loading…</div>';
+  try {
+    const data = await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/grants`);
+    body.innerHTML = mcpGrantsHtml(route, data);
+  } catch (e) {
+    body.innerHTML = `<div style="font-size:12px;color:var(--red);">${_esc(e.message)}</div>`;
+  }
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function mcpRevokeGrant(encRoute, encPid) {
+  const route = decodeURIComponent(encRoute);
+  if (!confirm(`Revoke this person's connection to "${route}"?\n\nIt is removed here and revoked at the provider. They can connect again.`)) return;
+  try {
+    await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/grants/${encPid}`, { method: 'DELETE' });
+    showToast('Connection revoked', 'success');
+    mcpShowGrants(encRoute); loadMcpGateway();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpRevokeAllGrants(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  if (!confirm(`Revoke EVERY personal connection to "${route}"?\n\nEveryone must connect again before using it.`)) return;
+  try {
+    const out = await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/grants`, { method: 'DELETE' });
+    showToast(`${out.revoked} connection(s) revoked`, 'success');
+    mcpShowGrants(encRoute); loadMcpGateway();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpSuspendPerson(encPid, encRoute) {
+  if (!confirm('Suspend this person?\n\nWithin 15 seconds they can no longer use any MCP server, and every account they connected (on every server) is revoked at the provider. Reactivating does not restore those connections.')) return;
+  try {
+    const out = await apiCall(`/v1/tenant/me/principals/${encPid}/suspend`, { method: 'POST' });
+    showToast(`Suspended; ${out.connections_revoked} connection(s) revoked`, 'success');
+    mcpShowGrants(encRoute); loadMcpGateway();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
 async function mcpSetScope(encRoute, scope) {
   const route = decodeURIComponent(encRoute);
   if (scope === 'per_user' && !confirm(
@@ -14399,12 +14458,14 @@ function mcpIdentityPill(server) {
 
 function mcpIdentityBadge(server) {
   if (!server || server.verified_callers_only !== true) return '';
-  const from = server.verified_callers_source === 'tenant' ? ' (tenant default)' : '';
+  const from = server.verified_callers_source === 'tenant' ? ' (tenant default)'
+    : server.verified_callers_source === 'per_user' ? ' (required: own accounts)' : '';
   return '<span class="badge" title="Only signed-in users and service accounts' + _esc(from) + '">verified callers</span>';
 }
 
 function mcpIdentityButton(server, enc) {
-  if (!server || (server.transport || '') === 'stdio') return '';
+  // A per-person server always requires sign-in; there is nothing to toggle.
+  if (!server || (server.transport || '') === 'stdio' || server.credential_scope === 'per_user') return '';
   return server.verified_callers_only
     ? '<button class="small" title="Accept the tenant key again on this server" onclick="mcpSetIdentity(\'' + enc + '\', false)">Allow key</button>'
     : '<button class="small" title="Accept only signed-in users and service accounts" onclick="mcpSetIdentity(\'' + enc + '\', true)">Require sign-in</button>';
@@ -14414,6 +14475,43 @@ function mcpIdentityButton(server, enc) {
 function mcpScopeBadge(server) {
   if (!server || server.credential_scope !== 'per_user') return '';
   return '<span class="badge" title="Each person connects and uses their own account on this server; the shared credential is never used">own accounts</span>';
+}
+
+function mcpGrantsButton(server, enc) {
+  if (!server || server.credential_scope !== 'per_user') return '';
+  const n = Number(server.personal_connections || 0);
+  return '<button class="small" title="People who connected their own account" onclick="mcpShowGrants(\'' + enc + '\')">Connections (' + n + ')</button>';
+}
+
+function mcpGrantsWhen(ts) {
+  if (!ts) return '';
+  try { return new Date(Number(ts) * 1000).toISOString().slice(0, 10); } catch (e) { return ''; }
+}
+
+function mcpGrantsHtml(route, data) {
+  const rows = (data && data.grants) || [];
+  const enc = encodeURIComponent(route || '');
+  if (!rows.length) {
+    return '<div style="font-size:12px;color:var(--text-dim);">Nobody has connected an account yet. People connect at the link in their AI app\'s error message, or at /connect.</div>';
+  }
+  const status = { connected: 'connected', needs_consent: 'expired', error: 'renewal failing' };
+  const body = rows.map(g => {
+    const pid = encodeURIComponent(g.principal_id || '');
+    const who = _esc(g.email || g.name || g.principal_id || '');
+    const suspended = g.principal_status && g.principal_status !== 'active';
+    return '<tr>' +
+      '<td>' + who + (suspended ? ' <span class="mcp-pill mcp-pill-off">' + _esc(g.principal_status) + '</span>' : '') + '</td>' +
+      '<td class="mono">' + _esc(g.upstream_account || '') + '</td>' +
+      '<td>' + _esc(status[g.status] || g.status || '') + '</td>' +
+      '<td>' + _esc(mcpGrantsWhen(g.connected_at)) + '</td>' +
+      '<td style="white-space:nowrap;"><button class="small" onclick="mcpRevokeGrant(\'' + enc + '\', \'' + pid + '\')">Revoke</button> ' +
+      (suspended ? '' : '<button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpSuspendPerson(\'' + pid + '\', \'' + enc + '\')">Suspend person</button>') +
+      '</td></tr>';
+  }).join('');
+  return '<table class="gov-table"><thead><tr>' +
+    '<th>Person</th><th>Upstream account</th><th>Status</th><th>Connected</th><th></th></tr></thead>' +
+    '<tbody>' + body + '</tbody></table>' +
+    '<div style="margin-top:0.6rem;"><button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpRevokeAllGrants(\'' + enc + '\')">Revoke all</button></div>';
 }
 
 function mcpScopeButton(server, enc) {

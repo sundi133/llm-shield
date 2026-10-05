@@ -9,6 +9,7 @@ a verified caller resolves to, and what the audit trail names.
     principal_idx:{tenant}:{sha256(iss|sub)[:24]}     -> pid, no TTL
     principals:{tenant}                               SET of pid
     principalkey:{sha256(key)}                        a principal's API key
+    principalkeys:{tenant}:{pid}                      SET of that principal's key hashes
 
 **Principal keys are deliberately NOT tenant keys.** They live in their own
 namespace, so `resolve_tenant_by_api_key` never sees them and a key handed to
@@ -63,6 +64,10 @@ def _set_key(tenant_id: str) -> str:
 
 def _pkey_key(key_hash: str) -> str:
     return f"principalkey:{key_hash}"
+
+
+def _pkeys_set(tenant_id: str, pid: str) -> str:
+    return f"principalkeys:{tenant_id}:{pid}"
 
 
 def _hash(value: str) -> str:
@@ -247,8 +252,36 @@ def create_principal_key(tenant_id: str, pid: str, *, label: str = "") -> tuple[
         "label": label, "prefix": key[:_KEY_PREFIX_LEN],
         "created_at": int(time.time()),
     }
-    _put(_pkey_key(_hash(key)), json.dumps(record))
+    key_hash = _hash(key)
+    _put(_pkey_key(key_hash), json.dumps(record))
+    _add_member(_pkeys_set(tenant_id, pid), key_hash)
     return key, dict(record)
+
+
+def list_principal_keys(tenant_id: str, pid: str) -> list[dict]:
+    """Public records of a principal's keys (never the keys themselves)."""
+    out = []
+    for key_hash in _members(_pkeys_set(tenant_id, pid)):
+        rec = _decode(_get(_pkey_key(key_hash)))
+        if rec:
+            out.append(rec)
+    return out
+
+
+def delete_principal_keys(tenant_id: str, pid: str) -> int:
+    """Delete every key a principal holds (deprovisioning). Returns how many."""
+    n = 0
+    r = _get_redis()
+    for key_hash in _members(_pkeys_set(tenant_id, pid)):
+        if r:
+            n += bool(r.delete(_pkey_key(key_hash)))
+        else:
+            n += _fallback_store.pop(_pkey_key(key_hash), None) is not None
+    if r:
+        r.delete(_pkeys_set(tenant_id, pid))
+    else:
+        _fallback_store.pop(_pkeys_set(tenant_id, pid), None)
+    return n
 
 
 def resolve_principal_key(key: str) -> Optional[dict]:
@@ -259,8 +292,18 @@ def resolve_principal_key(key: str) -> Optional[dict]:
 
 
 def revoke_principal_key(key: str) -> bool:
-    k = _pkey_key(_hash(key))
+    key_hash = _hash(key)
+    k = _pkey_key(key_hash)
+    rec = _decode(_get(k))
     r = _get_redis()
+    if rec:
+        set_key = _pkeys_set(rec.get("tenant_id", ""), rec.get("principal_id", ""))
+        if r:
+            r.srem(set_key, key_hash)
+        else:
+            members = set(json.loads(_fallback_store.get(set_key) or "[]"))
+            members.discard(key_hash)
+            _fallback_store[set_key] = json.dumps(sorted(members))
     if r:
         return bool(r.delete(k))
     return _fallback_store.pop(k, None) is not None
