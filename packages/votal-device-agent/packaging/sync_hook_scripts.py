@@ -1,9 +1,13 @@
-"""Regenerate votal_device_agent/hook_scripts.py from the canonical Claude Code
-hook scripts in core/runtime_policy/hook_scripts/.
+"""Regenerate the copies of the canonical Claude Code hook scripts in
+core/runtime_policy/hook_scripts/:
 
-The installers bundle the agent with PyInstaller --collect-submodules, which
-takes modules but not data files, so the scripts ship as string constants.
-tests/test_device_agent_hooks.py fails when this copy drifts.
+* votal_device_agent/hook_scripts.py. The installers bundle the agent with
+  PyInstaller --collect-submodules, which takes modules but not data files, so
+  the scripts ship as string constants. tests/test_device_agent_hooks.py fails
+  when this copy drifts.
+* the Claude Code / Cowork plugin's scripts/claude_code_hook.sh
+  (examples/agent-hooks/plugin). tests/test_agent_hooks_examples.py fails when
+  this copy drifts.
 
     python packages/votal-device-agent/packaging/sync_hook_scripts.py
 """
@@ -12,6 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "core" / "runtime_policy" / "hook_scripts"
 OUT = ROOT / "packages" / "votal-device-agent" / "votal_device_agent" / "hook_scripts.py"
+PLUGIN_SH = (ROOT / "examples" / "agent-hooks" / "plugin" / "votal-shield-hooks" / "scripts"
+             / "claude_code_hook.sh")
 
 
 def render() -> str:
@@ -26,3 +32,5 @@ def render() -> str:
 if __name__ == "__main__":
     OUT.write_text(render(), encoding="utf-8")
     print(f"wrote {OUT}")
+    PLUGIN_SH.write_bytes((SRC / "claude_code_hook.sh").read_bytes())
+    print(f"wrote {PLUGIN_SH}")

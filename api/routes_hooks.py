@@ -11,6 +11,7 @@ deny and ask, telemetry for every call) is written after the answer.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 
@@ -170,7 +171,16 @@ async def _post_tool_use(request: Request, background: BackgroundTasks, *, tenan
     if settings is None or not settings.after_call:
         return {}
     tool = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else ""
-    d = await hook_policies.check_result(tenant_id, tool, payload.get("tool_response"), settings)
+    original = payload.get("tool_response")
+    d = await hook_policies.check_result(tenant_id, tool, original, settings)
+    replacement = None
+    if target == TARGET_CLAUDE_CODE and d.action == hook_policies.REDACT:
+        # Claude Code drops a replacement that is not in the tool's own shape
+        # and shows the original, so one that cannot be built is a withhold.
+        replacement = hook_policies.redacted_output(original, d.sanitized or "")
+        if replacement is None:
+            d = dataclasses.replace(d, action=hook_policies.WITHHOLD, sanitized=None,
+                                    reason="the redacted result no longer fit the tool's format")
     background.add_task(_record_result_event, request, tenant_id, agent, cp, payload, d,
                         user=user, device_id=device_id, fleet=fleet, monitor=monitor)
     if monitor or d.action == hook_policies.ALLOW:
@@ -186,19 +196,22 @@ async def _post_tool_use(request: Request, background: BackgroundTasks, *, tenan
         return {"decision": "block", "reason": hook_policies.withheld_text(d)}
     if d.action == hook_policies.REDACT:
         return {"hookSpecificOutput": {
-            "hookEventName": "PostToolUse", "updatedToolOutput": d.sanitized,
+            "hookEventName": "PostToolUse", "updatedToolOutput": replacement,
             "additionalContext": "Votal Shield redacted sensitive data from this result "
                                  "under your organization's policy."}}
     return {"hookSpecificOutput": {
-        "hookEventName": "PostToolUse", "updatedToolOutput": hook_policies.withheld_text(d),
+        "hookEventName": "PostToolUse",
+        "updatedToolOutput": hook_policies.withheld_output(original, hook_policies.withheld_text(d)),
         "additionalContext": "Votal Shield withheld this result under your organization's "
                              "policy. Do not try to obtain it another way."}}
 
 
-def _record_result_event(request: Request, tenant_id: str, agent: str, cp, payload: dict,
-                         d, *, user: str, device_id: str, fleet: str, monitor: bool) -> None:
+async def _record_result_event(request: Request, tenant_id: str, agent: str, cp, payload: dict,
+                               d, *, user: str, device_id: str, fleet: str,
+                               monitor: bool) -> None:
     """Runtime event for a checked result: kind dlp; redact is an audit,
-    withhold a deny. Never the result itself."""
+    withhold a deny. Never the result itself. Async because `ingest` is: a
+    sync caller only created the coroutine, and no event was ever written."""
     decision = {hook_policies.ALLOW: "allow", hook_policies.REDACT: "audit",
                 hook_policies.WITHHOLD: "deny"}.get(d.action, "allow")
     detail = {"tool": (payload.get("tool_name") or "")[:200] if isinstance(payload.get("tool_name"), str) else "",
@@ -221,8 +234,8 @@ def _record_result_event(request: Request, tenant_id: str, agent: str, cp, paylo
             "session_id": str(payload.get("session_id") or "")[:512],
             "profile": cp.name if cp else "", "profile_hash": cp.hash if cp else "",
             "detail": detail})
-        rt_events.ingest(tenant_id, [ev],
-                         source_ip=request.client.host if request.client else "")
+        await rt_events.ingest(tenant_id, [ev],
+                               source_ip=request.client.host if request.client else "")
     except Exception as e:      # noqa: BLE001 - the hook has already answered
         logger.warning("PostToolUse event not recorded: %s", e)
 

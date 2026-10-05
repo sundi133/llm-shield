@@ -122,6 +122,79 @@ Known Codex gaps: hooks do not run for its hosted web search, `spawn_agent`,
 Code Mode, or the VS Code extension; on Windows, exit code 2 may not block
 (openai/codex#48183).
 
+## 5. As a plugin, for Claude Code and Cowork
+
+Cowork does not read Claude Code's settings files; it loads hooks only from
+plugins. `plugin/` is a plugin marketplace with one plugin,
+`votal-shield-hooks`: the same hooks as `claude-settings-fail-closed.json`,
+running the script it carries. It reads the same `~/.votal/hook.conf` (step 4),
+so install that first.
+
+**Claude Code:**
+
+```bash
+claude plugin marketplace add /path/to/examples/agent-hooks/plugin
+```
+
+```bash
+claude plugin install votal-shield-hooks@votal-shield
+```
+
+**Cowork:** zip the plugin folder and upload it under Customize, Plugins:
+
+```bash
+cd /path/to/examples/agent-hooks/plugin/votal-shield-hooks && zip -r ~/votal-shield-hooks.zip . -x '.*.swp'
+```
+
+Then ask a Cowork task to do something your Tool calls rules forbid. "Blocked
+by Votal Shield" means it works. If every call is blocked with a message that
+the hook config is missing, Cowork cannot see `~/.votal/hook.conf` from where
+it runs its hooks: the plugin fails closed rather than letting calls through.
+
+Use the plugin **or** the settings file, not both: with both, every call is
+checked twice. If you added the hooks to `~/.claude/settings.json`, remove
+them there after installing the plugin.
+
+**From a bucket (Claude Code 2.1.224 or later):** host the plugin as a zip
+plus a `marketplace.json` on any static HTTPS host, such as a GCS bucket.
+`plugin/package_for_bucket.py` builds both: a reproducible
+`votal-shield-hooks-<version>.zip` and a catalog that points at it with an
+`archive` source pinned by its sha256. It uploads nothing; it prints the
+commands.
+
+```bash
+python examples/agent-hooks/plugin/package_for_bucket.py --base-url https://storage.googleapis.com/votal-ai/claude-plugins
+```
+
+Upload the zip first, then the catalog (the printed `gcloud storage cp`
+commands set a long cache on the versioned zip and `no-cache` on the
+catalog). Each machine then runs:
+
+```bash
+claude plugin marketplace add https://storage.googleapis.com/votal-ai/claude-plugins/marketplace.json
+```
+
+```bash
+claude plugin install votal-shield-hooks@votal-shield
+```
+
+- Both files must be readable without signing in: Claude Code sends no Google
+  credentials. The plugin holds no secrets; the tenant key stays in each
+  machine's `~/.votal/hook.conf`.
+- Whoever can write the zip can run code on every machine that installs it,
+  on every tool call. The sha256 makes Claude Code refuse a zip that does not
+  match the catalog, so give write access to both only to the release process.
+- Raise `version` in `.claude-plugin/plugin.json` and `marketplace.json` on
+  every change: the zip is cached as immutable under its versioned name.
+- Cowork does not install from a URL. Upload the same zip in Organization
+  settings, Plugins & skills, or sync it from a private GitHub repository.
+
+To refresh the plugin's copy of the script after changing the script:
+
+```bash
+python packages/votal-device-agent/packaging/sync_hook_scripts.py
+```
+
 ## Timing
 
 Each check that uses the model takes a few seconds (about 4 s measured on
