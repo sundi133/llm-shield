@@ -286,6 +286,10 @@ async def post_token_endpoint(client, endpoint: str, data: dict,
             + (f", {error}" if error else "") + ")",
             permanent=permanent)
 
+    if purpose == "oauth-revocation":
+        # RFC 7009: success is HTTP 200 with an empty body. Requiring an
+        # access_token here reported every successful revocation as a failure.
+        return payload
     if not payload.get("access_token"):
         raise CredentialError(502, "token response contained no access_token")
     return payload
@@ -307,12 +311,67 @@ def due_for_renewal(record: dict, *, now: Optional[int] = None) -> bool:
     return due_for_refresh(record, margin_seconds=refresh_margin_seconds(), now=now)
 
 
-def _lock_key(tenant_id: str, route: str) -> str:
-    return f"mcp_cred:lock:{tenant_id}:{route}"
+def _lock_key(tenant_id: str, route: str, subject: str = "") -> str:
+    base = f"mcp_cred:lock:{tenant_id}:{route}"
+    return f"{base}:{subject}" if subject else base
+
+
+#: Delete the lock only if it still holds our owner value. A renewal that ran
+#: past the TTL must not delete the lock a second renewer has since taken.
+_RELEASE_IF_OWNER = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] then "
+    "return redis.call('del', KEYS[1]) else return 0 end")
+
+
+def take_lock(tenant_id: str, route: str, *, subject: str = "", ttl: int = 60) -> str:
+    """Single-flight renewal. Returns an owner value to pass to `drop_lock`,
+    or "" when another renewal holds the lock.
+
+    Shared credentials keep the old behaviour on a Redis error (proceed: the
+    provider's idempotency is the backstop). A person's credential (`subject`)
+    does not renew unlocked: a double refresh burns a rotating refresh token
+    and strands that person in needs_consent, so the caller uses the current
+    token if still valid, else asks the person to retry.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§3.7)
+    """
+    import secrets as _secrets
+    from storage.tenant_store import _get_redis
+
+    owner = _secrets.token_hex(16)
+    r = _get_redis()
+    if not r:
+        return owner            # one process: nothing to serialize
+    try:
+        return owner if r.set(_lock_key(tenant_id, route, subject), owner, nx=True, ex=ttl) else ""
+    except Exception:
+        return "" if subject else owner
+
+
+def drop_lock(tenant_id: str, route: str, owner: str, *, subject: str = "") -> None:
+    from storage.tenant_store import _get_redis
+
+    r = _get_redis()
+    if not r or not owner:
+        return
+    key = _lock_key(tenant_id, route, subject)
+    try:
+        r.eval(_RELEASE_IF_OWNER, 1, key, owner)
+        return
+    except Exception:
+        pass
+    try:                        # no scripting: still never delete someone else's
+        held = r.get(key)
+        if (held.decode() if isinstance(held, bytes) else held) == owner:
+            r.delete(key)
+    except Exception:
+        pass
 
 
 def acquire_renewal_lock(tenant_id: str, route: str, *, ttl: int = 60) -> bool:
-    """Best-effort single-flight across replicas and across planes.
+    """Legacy boolean form of `take_lock` (no owner value). Prefer take_lock /
+    drop_lock, which never release a lock some other renewal holds.
+
+    Best-effort single-flight across replicas and across planes.
 
     This matters more than it looks. Most providers **invalidate the old refresh
     token** when it is used, so two concurrent renewals can destroy a working
@@ -372,7 +431,8 @@ async def renew_route(tenant_id: str, route: str, *, actor: str = "system") -> d
         return {"renewed": False, "status": "unsupported",
                 "detail": f"no provider for mode {record.get('mode')!r}"}
 
-    if not acquire_renewal_lock(tenant_id, route):
+    owner = take_lock(tenant_id, route)
+    if not owner:
         return {"renewed": False, "status": "locked",
                 "detail": "another renewal is in flight"}
 
@@ -402,7 +462,7 @@ async def renew_route(tenant_id: str, route: str, *, actor: str = "system") -> d
         logger.exception("mcp-cred: unexpected renew failure for %s/%s", tenant_id, route)
         return {"renewed": False, "status": STATUS_ERROR, "detail": type(e).__name__}
     finally:
-        release_renewal_lock(tenant_id, route)
+        drop_lock(tenant_id, route, owner)
 
 
 async def sweep_tenant(tenant_id: str) -> dict:
@@ -926,3 +986,115 @@ class DeviceCodeProvider:
 
 
 register_provider(DeviceCodeProvider())
+
+
+# ── disconnect and revoke (task B1) ──────────────────────────────────────
+#
+# Until now nothing disconnected a brokered route, and deleting a server left
+# its tokens in the vault and the delegation alive at the provider. With one
+# grant per person, that would multiply into a live delegation per employee.
+# Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.9, task B1)
+
+
+async def disconnect_route(tenant_id: str, route: str, *, actor: str = "system",
+                           client=None) -> dict:
+    """Disconnect a route's shared OAuth credential.
+
+    Revokes at the provider (best effort), deletes the route's vault entries
+    and broker record, and removes the Authorization header the connect wired
+    (only that one: a header an operator set is left alone). Never raises.
+    """
+    from storage.mcp_oauth_store import (access_ref, client_secret_ref, delete_broker,
+                                         get_broker, refresh_ref)
+
+    record = get_broker(tenant_id, route)
+    out = {"had_connection": record is not None, "revocation_attempted": False}
+    if record and not is_static(record.get("mode")):
+        provider = get_provider(record.get("mode"))
+        if provider is not None and record.get("revocation_endpoint"):
+            out["revocation_attempted"] = True
+            try:
+                await provider.revoke(CredentialContext(
+                    tenant_id=tenant_id, route=route, record=record,
+                    upstream_url="", actor=actor), client=client)
+            except Exception as e:      # noqa: BLE001 - local delete must still happen
+                logger.info("mcp-cred: revoke failed for %s/%s: %s", tenant_id, route, e)
+    try:
+        from core.secret_vault.keyprovider import vault_enabled
+        if vault_enabled():
+            from storage.vault_store import delete_vault_entry
+            for ref in (access_ref(route), refresh_ref(route), client_secret_ref(route)):
+                delete_vault_entry(tenant_id, ref)
+    except Exception as e:      # noqa: BLE001
+        logger.warning("mcp-cred: vault cleanup failed for %s/%s: %s", tenant_id, route, e)
+    delete_broker(tenant_id, route)
+    try:
+        from core.mcp_oauth import authorization_header_state
+        from storage.mcp_gateway_store import get_upstream, set_upstream
+        cfg = get_upstream(tenant_id, route)
+        if cfg:
+            changed = False
+            if authorization_header_state(cfg, route) == "brokered":
+                cfg["headers"] = {k: v for k, v in (cfg.get("headers") or {}).items()
+                                  if k.lower() != "authorization"}
+                changed = True
+            if cfg.get("credential_mode") and not is_static(cfg.get("credential_mode")):
+                cfg.pop("credential_mode", None)
+                changed = True
+            if changed:
+                cfg["updated_at"] = int(time.time())
+                set_upstream(tenant_id, route, cfg)
+    except Exception as e:      # noqa: BLE001
+        logger.warning("mcp-cred: header cleanup failed for %s/%s: %s", tenant_id, route, e)
+    return out
+
+
+async def revoke_grant(tenant_id: str, route: str, principal_id: str, *, client=None) -> bool:
+    """Revoke one person's grant at the provider (best effort) and delete it.
+
+    The refresh token is sent to the revocation endpoint only if it is bound to
+    that host, the same rule that governs every other release. Returns whether
+    a grant existed. Never raises.
+    """
+    from storage.mcp_grant_store import GrantError, delete_grant, get_grant, refresh_token_for
+    from storage.mcp_oauth_store import get_broker
+
+    existed = get_grant(tenant_id, route, principal_id) is not None
+    record = get_broker(tenant_id, route) or {}
+    endpoint = record.get("revocation_endpoint") or ""
+    if existed and endpoint:
+        try:
+            token = refresh_token_for(tenant_id, route, principal_id, endpoint)
+            data = {"token": token, "token_type_hint": "refresh_token",
+                    "client_id": record.get("client_id") or ""}
+            secret = CredentialContext(tenant_id=tenant_id, route=route, record=record,
+                                       upstream_url="").secret("client_secret_ref")
+            if secret:
+                data["client_secret"] = secret
+            await _with_client(client, lambda c: post_token_endpoint(
+                c, endpoint, data, purpose="oauth-revocation"))
+        except (GrantError, CredentialError) as e:
+            logger.info("mcp-cred: grant revoke skipped/failed for %s/%s: %s",
+                        tenant_id, route, getattr(e, "reason", "") or getattr(e, "message", e))
+        except Exception as e:      # noqa: BLE001 - local delete must still happen
+            logger.info("mcp-cred: grant revoke failed for %s/%s: %s", tenant_id, route, e)
+    delete_grant(tenant_id, route, principal_id)
+    return existed
+
+
+async def revoke_route_grants(tenant_id: str, route: str, *, client=None) -> int:
+    """Revoke every person's grant for a route. Returns how many existed."""
+    from storage.mcp_grant_store import principals_for_route
+    n = 0
+    for pid in principals_for_route(tenant_id, route):
+        n += bool(await revoke_grant(tenant_id, route, pid, client=client))
+    return n
+
+
+async def revoke_principal_grants(tenant_id: str, principal_id: str, *, client=None) -> int:
+    """Revoke every grant one person holds (offboarding). Returns how many."""
+    from storage.mcp_grant_store import routes_for_principal
+    n = 0
+    for route in routes_for_principal(tenant_id, principal_id):
+        n += bool(await revoke_grant(tenant_id, route, principal_id, client=client))
+    return n

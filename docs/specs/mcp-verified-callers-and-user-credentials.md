@@ -683,6 +683,35 @@ against the real router rather than a fake.
 Tests: `tests/test_mcp_verified_only.py` (18). Seven safeguards
 sabotage-checked. Verified in the console locally. Clean venv: 6070 passed.
 
+**B1 (done).** Per-person grant store and credential fixes; no guard-path
+change yet.
+- `storage/mcp_grant_store.py`: `store_tokens`, `access_token_for`,
+  `refresh_token_for` (released only to the bound host), `set_status`,
+  `delete_grant`, indexes both ways. Sealed with the vault KEK, a fresh data
+  key per token, and AES-GCM associated data naming tenant, route, person and
+  kind, so one person's sealed token copied into another's grant fails to open.
+  Needs `SECRET_VAULT_ENABLED`, like OAuth brokering.
+- Lock: `take_lock` / `drop_lock` with an owner value and compare-and-delete;
+  renewals use them. A person's credential never renews unlocked on a Redis
+  error; the shared credential keeps its old behaviour.
+- `take_pending` uses GETDEL.
+- `DELETE /v1/tenant/me/mcp/servers/{route}/oauth` disconnects the shared
+  credential: revokes at the provider (best effort), deletes the three vault
+  entries and the broker record, removes only the Authorization header the
+  connect wired, clears `credential_mode`.
+- Deleting a server now disconnects its shared credential and revokes every
+  person's grant first, and reports both counts.
+- `revoke_principal_grants` is ready for offboarding (B4/C1).
+
+Amendments: one key per grant (status and sealed tokens together) instead of
+two, so a write can never leave a status pointing at stale tokens and the
+gateway reads a grant in one GET. Also fixed a pre-existing quirk: a
+successful RFC 7009 revocation (HTTP 200, empty body) was reported as a
+failure because the token helper demanded an `access_token`.
+
+Tests: `tests/test_mcp_grants.py` (23). Eight safeguards sabotage-checked.
+Clean venv: 6093 passed.
+
 ## 10. Decisions taken (change any before approval)
 
 1. **Shield is the authorization server and federates to the tenant's IdP**,

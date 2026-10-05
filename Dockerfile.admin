@@ -193,6 +193,9 @@ COPY storage/mcp_gateway_store.py storage/
 COPY storage/mcp_policy_store.py storage/
 COPY storage/mcp_scan_store.py storage/
 COPY storage/mcp_oauth_store.py storage/
+# Per-person upstream grants; imported lazily by core/mcp_credentials.py when a
+# server is deleted or disconnected (tests/test_mcp_grants.py checks this line).
+COPY storage/mcp_grant_store.py storage/
 COPY core/telemetry.py core/
 # core/telemetry.py imports core/asim.py in its export path (ASIM output format).
 COPY core/asim.py core/

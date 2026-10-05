@@ -229,13 +229,20 @@ def take_pending(state: str) -> Optional[dict]:
         return None
     key = _pending_key(state)
     r = _get_redis()
-    raw = r.get(key) if r else _fallback_store.get(key)
-    rec = _decode(raw)
-
     if r:
-        r.delete(key)
+        # Read and delete in one step. A GET then DELETE let two concurrent
+        # callbacks with the same state both read the record before either
+        # deleted it, so one authorization could complete twice.
+        try:
+            raw = r.getdel(key)
+        except Exception:
+            pipe = r.pipeline()
+            pipe.get(key)
+            pipe.delete(key)
+            raw = pipe.execute()[0]
     else:
-        _fallback_store.pop(key, None)
+        raw = _fallback_store.pop(key, None)
+    rec = _decode(raw)
 
     if rec is None:
         return None

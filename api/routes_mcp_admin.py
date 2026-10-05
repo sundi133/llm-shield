@@ -447,6 +447,16 @@ async def delete_server(route: str, request: Request):
     if existing and existing.get("profile_id"):
         unbind_route(tenant_id, existing["profile_id"], route)
 
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    # Credentials go first, while the route still exists: deleting the server
+    # used to leave its tokens in the vault and the delegation alive at the
+    # provider, for whatever server later reused the name. Best effort at the
+    # provider; the local delete always happens.
+    from core.mcp_credentials import disconnect_route, revoke_route_grants
+    shared = await disconnect_route(tenant_id, route, actor=actor)
+    per_person = await revoke_route_grants(tenant_id, route)
+
     if not delete_upstream(tenant_id, route):
         raise HTTPException(status_code=404, detail=f"route '{route}' not found")
     # A report left behind would be shown against whatever server later reuses
@@ -456,11 +466,16 @@ async def delete_server(route: str, request: Request):
     try:
         from storage.admin_audit import log_admin_action
         log_admin_action(action="mcp_gateway_delete_upstream", actor=actor,
-                         tenant_id=tenant_id, after={"route": route, "via": "portal"})
+                         tenant_id=tenant_id,
+                         after={"route": route, "via": "portal",
+                                "shared_credential_removed": shared["had_connection"],
+                                "personal_connections_revoked": per_person})
     except Exception:
         pass
 
-    return {"status": "deleted", "tenant_id": tenant_id, "route": route}
+    return {"status": "deleted", "tenant_id": tenant_id, "route": route,
+            "shared_credential_removed": shared["had_connection"],
+            "personal_connections_revoked": per_person}
 
 
 # ── onboarding scan ──────────────────────────────────────────────────────
@@ -738,6 +753,32 @@ async def oauth_discover(route: str, request: Request):
         # False means the operator must bring a client ID (Google, most SaaS).
         "dynamic_registration": bool(meta.get("registration_endpoint")),
     }
+
+
+@router.delete("/servers/{route}/oauth")
+async def oauth_disconnect(route: str, request: Request):
+    """Disconnect the route's shared OAuth credential.
+
+    Revokes it at the provider (best effort), deletes its tokens and client
+    secret from the vault, and removes the Authorization header the connect
+    wired. The server stays registered; connect again to restore access.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.9)
+    """
+    tenant_id = _require_tenant(request)
+    if not get_upstream(tenant_id, route):
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    from core.mcp_credentials import disconnect_route
+    out = await disconnect_route(tenant_id, route, actor=_actor(request))
+    if not out["had_connection"]:
+        raise HTTPException(status_code=404, detail=f"route '{route}' has no OAuth connection")
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_oauth_disconnected", actor=_actor(request),
+                         tenant_id=tenant_id,
+                         after={"route": route, "revocation_attempted": out["revocation_attempted"]})
+    except Exception:
+        pass
+    return {"status": "disconnected", "route": route, **out}
 
 
 @router.get("/servers/{route}/oauth")
