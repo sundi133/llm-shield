@@ -1,6 +1,21 @@
 #!/bin/sh
-# Votal Shield fail-closed hook for Claude Code (PreToolUse).
-# Spec: docs/specs/agent-hook-adapter.md, section 4.3.
+# Votal Shield fail-closed hook for Claude Code and Codex (PreToolUse and
+# PostToolUse).
+# Specs: docs/specs/agent-hook-adapter.md section 4.3 (before a call);
+#        docs/specs/agent-hooks-tool-policies.md section 4.3 (after a call, Codex).
+#
+# Arguments, in any order:
+#   --config <path>                  the config file (see below)
+#   --target claude-code | codex     whose hook this is (default claude-code).
+#                                    Codex has no HTTP hooks, so it always uses
+#                                    this script; it posts to
+#                                    /v1/shield/hooks/codex.
+#
+# AFTER a call (PostToolUse) Shield's answer is passed through unchanged: the
+# redacted result, or a note that it was withheld. When Shield cannot answer,
+# the result goes through by default (withholding every result during an
+# outage stops all work); ON_UNREACHABLE_RESULT=withhold withholds instead.
+# Everything below about exit 2 is about BEFORE a call.
 #
 # Claude Code runs this before every matched tool call and pipes the call's
 # JSON on stdin. It is forwarded to Shield (POST /v1/shield/hooks/claude-code)
@@ -33,6 +48,8 @@
 #   ON_UNREACHABLE=deny               (optional: deny, the default, or allow;
 #                                      what a FAILURE means. Shield's own
 #                                      denials always deny.)
+#   ON_UNREACHABLE_RESULT=allow       (optional: allow, the default, or withhold;
+#                                      what a failure means AFTER a call)
 #   SHIELD_LOCAL_SECRET_FILE=<path>   (set by the Votal device agent: ask the
 #                                      agent on 127.0.0.1 with its local secret
 #                                      instead of Shield with a tenant key;
@@ -48,8 +65,22 @@ deny() {
 
 # A failure (no answer, bad answer, bad setup): denied unless the config says
 # ON_UNREACHABLE=allow. Shield's own denials go through deny(), never here.
+# After a call (EVENT=PostToolUse) a failure follows ON_UNREACHABLE_RESULT.
 ON_UNREACHABLE=deny
+ON_UNREACHABLE_RESULT=allow
+EVENT=PreToolUse
+TARGET=claude-code
 fail() {
+    if [ "$EVENT" = "PostToolUse" ]; then
+        if [ "$ON_UNREACHABLE_RESULT" = "withhold" ]; then
+            if [ "$TARGET" = "codex" ]; then
+                printf '{"decision":"block","reason":"[Shield withheld this result: Shield could not check it]"}\n'
+            else
+                printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":"[Shield withheld this result: Shield could not check it]"}}\n'
+            fi
+        fi
+        exit 0
+    fi
     if [ "$ON_UNREACHABLE" = "allow" ]; then
         printf 'Votal Shield: %s; allowed, because this fleet lets actions through when Shield cannot answer\n' "${1%, so this action is not allowed}" >&2
         exit 0
@@ -58,14 +89,37 @@ fail() {
 }
 
 CONF=""
-if [ "${1:-}" = "--config" ]; then
-    CONF="${2:-}"
-elif [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
-    CONF="/Library/Application Support/Votal/hook.conf"
-else
-    CONF="/etc/votal/hook.conf"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        # Never "shift 2" past the end: in some shells that is fatal, and an
+        # exit code other than 2 lets the call through.
+        --config) CONF="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+        --target) TARGET="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+        *) shift ;;
+    esac
+done
+case "$TARGET" in
+    claude-code|codex) ;;
+    *) deny "unknown --target '$TARGET' (claude-code or codex), so this action is not allowed" ;;
+esac
+if [ -z "$CONF" ]; then
+    if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+        CONF="/Library/Application Support/Votal/hook.conf"
+    else
+        CONF="/etc/votal/hook.conf"
+    fi
 fi
-[ -n "$CONF" ] && [ -r "$CONF" ] || deny "hook config $CONF is missing or unreadable, so this action is not allowed"
+
+# The event comes in on stdin with the call; buffer it to read the event name
+# (the body is forwarded unchanged). Before the config, so that a broken setup
+# after a call is a PostToolUse failure, not a PreToolUse one.
+IN=$(mktemp "${TMPDIR:-/tmp}/votal-hook.XXXXXX") || deny "could not create a temporary file"
+chmod 600 "$IN"
+cat > "$IN"
+case "$(tr -d ' \t\r\n' < "$IN")" in
+    *'"hook_event_name":"PostToolUse"'*) EVENT=PostToolUse ;;
+esac
+[ -n "$CONF" ] && [ -r "$CONF" ] || fail "hook config $CONF is missing or unreadable, so this action is not allowed"
 
 # Parse KEY=value lines; never source the file.
 URL="" KEY="" AGENT="claude-code" TIMEOUT="4" SECRET_FILE="" UNREACH="deny"
@@ -87,6 +141,7 @@ while IFS= read -r line || [ -n "$line" ]; do
         SHIELD_TIMEOUT) TIMEOUT=$v ;;
         SHIELD_LOCAL_SECRET_FILE) SECRET_FILE=$v ;;
         ON_UNREACHABLE) UNREACH=$v ;;
+        ON_UNREACHABLE_RESULT) [ "$v" = "withhold" ] && ON_UNREACHABLE_RESULT=withhold ;;
     esac
 done < "$CONF"
 [ "$UNREACH" = "allow" ] && ON_UNREACHABLE=allow
@@ -113,8 +168,11 @@ esac
 [ "$TIMEOUT" -ge 1 ] 2>/dev/null && [ "$TIMEOUT" -le 30 ] || TIMEOUT=4
 command -v curl >/dev/null 2>&1 || fail "curl is not installed, so Shield cannot be asked and this action is not allowed"
 
-ENDPOINT="${URL%/}/v1/shield/hooks/claude-code"
-[ -n "$SECRET_FILE" ] && ENDPOINT="${URL%/}/v1/local/claude-code/hook"
+ENDPOINT="${URL%/}/v1/shield/hooks/$TARGET"
+if [ -n "$SECRET_FILE" ]; then
+    [ "$TARGET" = "claude-code" ] || fail "the Votal device agent does not install Codex hooks yet"
+    ENDPOINT="${URL%/}/v1/local/claude-code/hook"
+fi
 USER_NAME=${USER:-$(id -un 2>/dev/null)}
 HOST_NAME=$(hostname 2>/dev/null)
 
@@ -122,7 +180,7 @@ HOST_NAME=$(hostname 2>/dev/null)
 # in the process list.
 BODY=$(mktemp "${TMPDIR:-/tmp}/votal-hook.XXXXXX") || fail "could not create a temporary file"
 HDRS=$(mktemp "${TMPDIR:-/tmp}/votal-hook.XXXXXX") || { rm -f "$BODY"; fail "could not create a temporary file"; }
-trap 'rm -f "$BODY" "$HDRS"' EXIT HUP INT TERM
+trap 'rm -f "$BODY" "$HDRS" "$IN"' EXIT HUP INT TERM
 chmod 600 "$HDRS" "$BODY"
 {
     if [ -n "$SECRET_FILE" ]; then
@@ -137,13 +195,24 @@ chmod 600 "$HDRS" "$BODY"
 } > "$HDRS"
 
 STATUS=$(curl -sS --max-time "$TIMEOUT" --connect-timeout "$TIMEOUT" \
-              -H @"$HDRS" --data-binary @- -o "$BODY" -w '%{http_code}' \
+              -H @"$HDRS" --data-binary @"$IN" -o "$BODY" -w '%{http_code}' \
               "$ENDPOINT" 2>/dev/null) \
     || fail "Shield could not be reached at $URL, so this action is not allowed"
 [ "$STATUS" = "200" ] || fail "Shield answered HTTP $STATUS, so this action is not allowed"
 
 ANSWER=$(tr -d '\r\n' < "$BODY")
 COMPACT=$(printf '%s' "$ANSWER" | tr -d ' \t')
+
+if [ "$EVENT" = "PostToolUse" ]; then
+    # Shield's answer is already in this agent's format: pass it on whole.
+    case "$COMPACT" in
+        '{}') exit 0 ;;
+        '{'*'"updatedToolOutput"'*'}'|'{'*'"decision":"block"'*'}')
+            printf '%s\n' "$ANSWER"
+            exit 0 ;;
+    esac
+    fail "Shield's answer was not understood"
+fi
 
 # The reason Shield gave, made safe to print and to put back into JSON.
 reason() {

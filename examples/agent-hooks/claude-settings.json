@@ -1,0 +1,32 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Glob|Grep|WebFetch|mcp__.*",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "https://api.guardrails.votal.ai/v1/shield/hooks/claude-code",
+            "headers": {"X-API-Key": "$SHIELD_TENANT_KEY", "X-Agent-Key": "claude-code", "X-Shield-User": "$USER"},
+            "allowedEnvVars": ["SHIELD_TENANT_KEY", "USER"],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Read|Grep|WebFetch|mcp__.*",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "https://api.guardrails.votal.ai/v1/shield/hooks/claude-code",
+            "headers": {"X-API-Key": "$SHIELD_TENANT_KEY", "X-Agent-Key": "claude-code", "X-Shield-User": "$USER"},
+            "allowedEnvVars": ["SHIELD_TENANT_KEY", "USER"],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
