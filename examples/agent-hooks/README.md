@@ -122,6 +122,45 @@ Known Codex gaps: hooks do not run for its hosted web search, `spawn_agent`,
 Code Mode, or the VS Code extension; on Windows, exit code 2 may not block
 (openai/codex#48183).
 
+## 5. As a plugin, for Claude Code and Cowork
+
+Cowork does not read Claude Code's settings files; it loads hooks only from
+plugins. `plugin/` is a plugin marketplace with one plugin,
+`votal-shield-hooks`: the same hooks as `claude-settings-fail-closed.json`,
+running the script it carries. It reads the same `~/.votal/hook.conf` (step 4),
+so install that first.
+
+**Claude Code:**
+
+```bash
+claude plugin marketplace add /path/to/examples/agent-hooks/plugin
+```
+
+```bash
+claude plugin install votal-shield-hooks@votal-shield
+```
+
+**Cowork:** zip the plugin folder and upload it under Customize, Plugins:
+
+```bash
+cd /path/to/examples/agent-hooks/plugin/votal-shield-hooks && zip -r ~/votal-shield-hooks.zip . -x '.*.swp'
+```
+
+Then ask a Cowork task to do something your Tool calls rules forbid. "Blocked
+by Votal Shield" means it works. If every call is blocked with a message that
+the hook config is missing, Cowork cannot see `~/.votal/hook.conf` from where
+it runs its hooks: the plugin fails closed rather than letting calls through.
+
+Use the plugin **or** the settings file, not both: with both, every call is
+checked twice. If you added the hooks to `~/.claude/settings.json`, remove
+them there after installing the plugin.
+
+To refresh the plugin's copy of the script after changing the script:
+
+```bash
+python packages/votal-device-agent/packaging/sync_hook_scripts.py
+```
+
 ## Timing
 
 Each check that uses the model takes a few seconds (about 4 s measured on
