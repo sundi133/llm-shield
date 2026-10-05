@@ -1,6 +1,6 @@
 # Spec: connect OAuth upstreams that are not MCP-native (Google first)
 
-Status: APPROVED 2026-10-04; tasks 1-3 done. Branch: `feat/tenant-enforce-mode`.
+Status: APPROVED 2026-10-04; tasks 1-3 done; task 4 docs and tooling done, live sign-in pending. Branch: `feat/tenant-enforce-mode`.
 Builds on `docs/spec-mcp-oauth-brokering.md` and
 `docs/spec-mcp-credential-modes.md` (mode 4, authorization code + PKCE).
 
@@ -223,3 +223,23 @@ held.
      `resource`; connecting without a scope listed the choices.
 4. **Docs and the live check.** Google setup guide (customer-facing, no em
    dashes) and the end-to-end check against Google's Drive MCP server.
+   Docs and tooling done; the live sign-in waits on a Google Cloud OAuth client
+   in a project enrolled in Google's Workspace Developer Preview. Notes:
+   - `docs/mcp-oauth-google.md`: the customer guide.
+   - `scripts/mcp_oauth_live_check.py`: `serve` runs the admin plane and the
+     gateway in one local process (in memory, vault on, 127.0.0.1 only);
+     `check` reports status, lists tools through the gateway, makes one read
+     (`list_recent_files`, one file, no content), forces a refresh, and lists
+     again. It prints no tokens.
+   - Google's Drive MCP server answers `tools/list` without any sign-in, so
+     listing tools proves the path but not the credential; the read does.
+   - Renewal has no background timer: the gateway refreshes a token on the first
+     call after it nears expiry (`core/mcp/gateway.py` ensure_credential_fresh).
+     The guide says so.
+   - Found, not fixed here (pre-existing, any HTTP upstream): when an upstream
+     rejects a call (e.g. 401 for a missing or expired token), the MCP client
+     raises `asyncio.CancelledError`, which escapes the gateway's
+     `except Exception`, and the data plane answers HTTP 500 with no JSON-RPC
+     error. Reproduced on `core.app` against Google with no token. Raised as a
+     separate task; the guide's troubleshooting table and the harness explain
+     the symptom meanwhile.
