@@ -39,8 +39,15 @@ router = APIRouter(tags=["oauth"])
 
 @router.get("/.well-known/oauth-authorization-server")
 async def oauth_metadata(request: Request):
-    """RFC 8414 Authorization Server Metadata."""
-    base_url = str(request.base_url).rstrip("/")
+    """RFC 8414 Authorization Server Metadata.
+
+    SHIELD_OAUTH_ISSUER_URL, when set, is the public URL of this server: the
+    endpoints are built on it (behind a TLS proxy the request's own base URL is
+    http) and it is the issuer, which RFC 8414 requires to equal the URL the
+    metadata was fetched from. Unset, the response is exactly as before.
+    """
+    from core.mcp.resource import issuer_url
+    base_url = issuer_url() or str(request.base_url).rstrip("/")
     return build_server_metadata(base_url)
 
 
@@ -158,6 +165,27 @@ async def oauth_authorize(request: Request):
             content={"error": "invalid_request", "error_description": "redirect_uri required"},
         )
 
+    # MCP sign-in: the resource is a tenant-addressed gateway URL, so the person
+    # signs in through that tenant's identity provider. Every other request
+    # keeps the tenant-key consent below, unchanged.
+    # Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.5)
+    from core.mcp.resource import federated_login_enabled, parse_resource
+    resource = params.get("resource", "")
+    if federated_login_enabled() and parse_resource(resource):
+        from api.routes_mcp_signin import begin_sign_in
+        return await begin_sign_in(
+            client=client, redirect_uri=redirect_uri, code_challenge=code_challenge,
+            scope=scope, state=state, resource=resource)
+    if not client.tenant_id:
+        # A self-registered client has no tenant, so it can only be used to
+        # sign a person in to a gateway URL (above), never with a tenant key.
+        return JSONResponse(
+            status_code=400,
+            content={"error": "invalid_request",
+                     "error_description": "this client can only sign in to an MCP gateway URL "
+                                          "(pass resource=<gateway URL>)"},
+        )
+
     # Resource-owner authorization (consent). Auto-approving with no login let a
     # stranger trade a code for a valid tenant token. Require the request to be
     # authenticated as the client's tenant (X-API-Key) before issuing a code,
@@ -231,6 +259,7 @@ async def oauth_token(request: Request):
             client_id=body.get("client_id", ""),
             redirect_uri=body.get("redirect_uri", ""),
             code_verifier=body.get("code_verifier", ""),
+            resource=body.get("resource", ""),
         )
         if "error" in result:
             return JSONResponse(status_code=400, content=result)
@@ -298,6 +327,9 @@ async def _handle_client_credentials(body: dict, request: Request) -> JSONRespon
                      "error_description": "client is not authorized for the client_credentials grant"},
         )
 
+    if client.principal_id:
+        return _service_account_token(client, body)
+
     access_token = issue_access_token(
         client_id=client_id,
         scope=client.scope or "shield",
@@ -310,6 +342,40 @@ async def _handle_client_credentials(body: dict, request: Request) -> JSONRespon
         "expires_in": 600,
         "scope": client.scope or "shield",
     })
+
+
+def _service_account_token(client, body: dict) -> JSONResponse:
+    """A client bound to a service account: the token names the account, with
+    its roles, so the MCP gateway treats the caller as verified.
+
+    Refused while the account is suspended or removed. With `resource` set to
+    one of the tenant's gateway URLs (RFC 8707), the token is valid on that
+    server only; otherwise it is tenant-wide, like any client-credentials token.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (A3)
+    """
+    from core.mcp.resource import parse_resource
+    from core.oauth.authz_server import _current_principal, _principal_claims
+
+    principal = _current_principal(client.tenant_id, {"id": client.principal_id,
+                                                      "type": "service_account"})
+    if principal is None:
+        return JSONResponse(status_code=400, content={
+            "error": "invalid_grant", "error_description": "the service account is not active"})
+    resource = (body.get("resource") or "").strip()
+    audience = "shield-oauth"
+    if resource:
+        parsed = parse_resource(resource)
+        if not parsed or parsed[0] != client.tenant_id:
+            return JSONResponse(status_code=400, content={
+                "error": "invalid_target",
+                "error_description": "resource must be one of this organization's gateway URLs"})
+        audience = resource
+    token = issue_access_token(
+        client_id=client.client_id, scope=client.scope or "mcp", tenant_id=client.tenant_id,
+        user_sub=principal["id"], audience=audience,
+        extra_claims=_principal_claims(principal))
+    return JSONResponse(content={"access_token": token, "token_type": "Bearer",
+                                 "expires_in": 600, "scope": client.scope or "mcp"})
 
 
 async def _handle_token_exchange(body: dict, request: Request) -> JSONResponse:

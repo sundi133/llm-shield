@@ -35,6 +35,38 @@ _REDIRECT_ENV = "SHIELD_OAUTH_REDIRECT_URI"
 #: with the first access token and an operator would be re-consenting hourly.
 REQUIRED_SCOPE = "offline_access"
 
+#: Scopes that identify the user or keep the grant alive, as opposed to scopes
+#: that grant access to the resource itself. Only the second kind needs an
+#: operator's explicit choice.
+IDENTITY_SCOPES = ("openid", "email", "profile", REQUIRED_SCOPE)
+
+#: How each provider family issues refresh tokens and what else its authorize
+#: request needs. Matched on the discovered issuer; anything unlisted is
+#: "standard", which is the behaviour this module always had. Adding a provider
+#: is a row here, not new code. Spec: docs/specs/mcp-oauth-standard-providers.md
+PROFILES: dict[str, dict] = {
+    "standard": {
+        "issuers": (),
+        "refresh_via_scope": True,          # needs offline_access in the scope list
+        "authorize_params": {},
+        "send_resource": True,              # RFC 8707, as the MCP auth spec asks
+    },
+    "google": {
+        "issuers": ("https://accounts.google.com",),
+        # Google lists only openid/email/profile and issues refresh tokens for
+        # access_type=offline. prompt=consent makes it issue one on every
+        # connect, not only the first, and makes a silent re-grant impossible.
+        "refresh_via_scope": False,
+        "authorize_params": {"access_type": "offline", "prompt": "consent"},
+        # Inferred, not observed: Google lists Claude as a supported client of
+        # its Workspace MCP servers and Claude follows the MCP auth spec, which
+        # sends `resource`. Turn off here if a live connect shows otherwise.
+        "send_resource": True,
+    },
+}
+
+_SCOPE_CHOICE_ENV = "SHIELD_MCP_OAUTH_REQUIRE_SCOPE_CHOICE"
+
 _TIMEOUT = 15.0
 
 
@@ -45,6 +77,67 @@ class OAuthBrokerError(Exception):
         super().__init__(message)
         self.status = status
         self.message = message
+
+
+def profile_for(meta: dict) -> str:
+    """The provider profile for discovered metadata (issuer-matched)."""
+    issuer = str(meta.get("issuer") or "").rstrip("/")
+    for name, prof in PROFILES.items():
+        if issuer and issuer in prof["issuers"]:
+            return name
+    return "standard"
+
+
+def _profile(meta: dict) -> dict:
+    return PROFILES.get(meta.get("profile") or profile_for(meta), PROFILES["standard"])
+
+
+def available_scopes(meta: dict) -> list[str]:
+    """Everything the resource and its provider advertise, resource first,
+    without duplicates. What the portal offers."""
+    out: list[str] = []
+    for s in list(meta.get("resource_scopes") or []) + list(meta.get("scopes_supported") or []):
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def access_scopes(meta: dict) -> list[str]:
+    """The advertised scopes that grant access to the resource, as opposed to
+    identity scopes. A server advertising any of these needs a choice."""
+    return [s for s in available_scopes(meta) if s not in IDENTITY_SCOPES]
+
+
+def _scope_choice_required() -> bool:
+    """SHIELD_MCP_OAUTH_REQUIRE_SCOPE_CHOICE=off restores "identity scopes only"."""
+    return os.getenv(_SCOPE_CHOICE_ENV, "on").strip().lower() not in (
+        "0", "false", "no", "off")
+
+
+def choose_scopes(meta: dict, requested: Optional[list[str]] = None) -> list[str]:
+    """The scopes to request: the profile's identity scopes plus the operator's
+    choice of the resource's own scopes.
+
+    Shield never picks between, say, `drive` and `drive.readonly`: a server that
+    advertises access scopes needs them chosen, and every chosen scope must be
+    one the server or its provider advertises.
+    """
+    base = check_brokerable(meta)
+    advertised = available_scopes(meta)
+    chosen = [s.strip() for s in (requested or []) if s and s.strip()]
+    if chosen:
+        unknown = [s for s in chosen if advertised and s not in advertised]
+        if unknown:
+            raise OAuthBrokerError(
+                422, f"not offered by this server: {', '.join(unknown)}. "
+                     f"Choose from: {', '.join(advertised)}")
+        return base + [s for s in chosen if s not in base]
+    offered = access_scopes(meta)
+    if offered and _scope_choice_required():
+        raise OAuthBrokerError(
+            422, "this server grants access by scope; choose the scopes to request "
+                 f"from: {', '.join(offered)}")
+    return base
 
 
 def broker_enabled() -> bool:
@@ -129,7 +222,9 @@ async def discover(client, resource_url: str) -> dict:
 
     servers = []
     scopes_supported = []
+    resource = ""
     if resource_meta:
+        resource = str(resource_meta.get("resource") or "")
         servers = [s for s in (resource_meta.get("authorization_servers") or [])
                    if isinstance(s, str)]
         scopes_supported = [s for s in (resource_meta.get("scopes_supported") or [])
@@ -150,7 +245,7 @@ async def discover(client, resource_url: str) -> dict:
             # The provider's own scope list wins; the resource's is the fallback,
             # since a resource may advertise scopes its AS does not issue.
             scopes = [s for s in (meta.get("scopes_supported") or []) if isinstance(s, str)]
-            return {
+            found = {
                 "issuer": meta.get("issuer") or base,
                 "authorization_endpoint": meta.get("authorization_endpoint") or "",
                 "token_endpoint": meta.get("token_endpoint"),
@@ -164,7 +259,13 @@ async def discover(client, resource_url: str) -> dict:
                     m for m in (meta.get("code_challenge_methods_supported") or [])
                     if isinstance(m, str)
                 ],
+                # The resource's own scopes were discarded here before, so a
+                # server's access scopes (Drive's, say) could never be asked for.
+                "resource_scopes": scopes_supported,
+                "resource": resource,
             }
+            found["profile"] = profile_for(found)
+            return found
 
     raise OAuthBrokerError(
         502,
@@ -195,14 +296,16 @@ def check_brokerable(meta: dict) -> list[str]:
         raise OAuthBrokerError(
             422, "provider does not support the refresh_token grant, so Shield "
                  "cannot keep the credential alive without re-consent")
-    if supported and REQUIRED_SCOPE not in supported:
+    via_scope = _profile(meta)["refresh_via_scope"]
+    if via_scope and supported and REQUIRED_SCOPE not in supported:
         raise OAuthBrokerError(
             422, f"provider does not offer the '{REQUIRED_SCOPE}' scope, so no "
                  f"refresh token can be issued")
 
-    # Ask for offline_access plus whatever identity scopes the provider offers.
+    # Identity scopes the provider offers, plus offline_access where that is how
+    # the provider issues refresh tokens (other profiles use an authorize param).
     wanted = [s for s in ("openid", "email") if not supported or s in supported]
-    return wanted + [REQUIRED_SCOPE]
+    return wanted + ([REQUIRED_SCOPE] if via_scope else [])
 
 
 async def register_client(client, meta: dict, *, route: str) -> dict:
@@ -268,7 +371,8 @@ def build_authorize_url(meta: dict, *, client_id: str, scopes: list[str],
     if not endpoint:
         raise OAuthBrokerError(422, "provider publishes no authorization_endpoint")
 
-    query = urlencode({
+    prof = _profile(meta)
+    params = {
         "response_type": "code",
         "client_id": client_id,
         "redirect_uri": redirect_uri(),
@@ -276,7 +380,11 @@ def build_authorize_url(meta: dict, *, client_id: str, scopes: list[str],
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
-    })
+        **prof["authorize_params"],
+    }
+    if prof["send_resource"] and meta.get("resource"):
+        params["resource"] = meta["resource"]
+    query = urlencode(params)
     joiner = "&" if urlparse(endpoint).query else "?"
     return f"{endpoint}{joiner}{query}"
 
@@ -298,4 +406,38 @@ def public_status(record: Optional[dict]) -> dict:
         "last_error": record.get("last_error") or "",
         "connected_at": record.get("connected_at") or 0,
         "connected_by": record.get("connected_by") or "",
+        "profile": record.get("profile") or "standard",
+        "available_scopes": list(record.get("available_scopes") or []),
+        # None for records and modes that never recorded it.
+        "refresh_token_held": record.get("refresh_token_held"),
+        "warning": _status_warning(record),
     }
+
+
+def _status_warning(record: dict) -> str:
+    """The one thing an operator must act on, in words, or empty."""
+    if record.get("status") == "connected" and record.get("refresh_token_held") is False:
+        return ("The provider returned no refresh token, so this connection stops "
+                "working when its access token expires. Reconnect; for Google, "
+                "first remove Shield's access at myaccount.google.com/permissions.")
+    return ""
+
+
+def authorization_header_state(cfg: dict, route: str) -> str:
+    """Which Authorization header the route sends upstream: the brokered token
+    ("brokered"), one an operator set ("other"), or none ("none")."""
+    from storage.mcp_oauth_store import access_ref
+    value = next((v for k, v in (cfg.get("headers") or {}).items()
+                  if k.lower() == "authorization"), None)
+    if value is None:
+        return "none"
+    return "brokered" if value == f"Bearer shield://{access_ref(route)}" else "other"
+
+
+def token_request_extras(record: dict) -> dict:
+    """Extra fields for token-endpoint requests: the RFC 8707 resource, when
+    the record's profile sends it. Records written before profiles existed have
+    no `resource`, so they send exactly what they always did."""
+    prof = PROFILES.get(record.get("profile") or "standard", PROFILES["standard"])
+    resource = record.get("resource") or ""
+    return {"resource": resource} if prof["send_resource"] and resource else {}

@@ -2200,10 +2200,10 @@
   }
   .mcp-card-meta { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
   .mcp-card-actions {
-    display: flex; gap: 0.4rem; margin-top: 0.15rem;
+    display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.15rem;
     padding-top: 0.65rem; border-top: 1px solid var(--border);
   }
-  .mcp-card-actions button { padding: 0.35rem 0.7rem; font-size: 12px; }
+  .mcp-card-actions button { padding: 0.35rem 0.7rem; font-size: 12px; white-space: nowrap; }
 
   /* Status pill: state first, in colour, before any identifier. */
   .mcp-pill {
@@ -5593,6 +5593,57 @@ if __name__ == "__main__":
         <div id="mcp-findings-body" class="section-panel-body" style="padding:0;"></div>
       </div>
 
+      <!-- Connect with OAuth (docs/specs/mcp-oauth-standard-providers.md). Shield
+           signs in once and keeps the credential in its vault; agents never hold it. -->
+      <div class="section-panel" id="mcp-oauth" style="display:none;margin-top:1rem;">
+        <div class="section-panel-head">
+          <div>
+            <div class="section-panel-title">Connect with OAuth &mdash; <span id="mcp-oauth-route" class="mono"></span></div>
+            <div class="section-panel-desc">Shield signs in to this server once, keeps the credential refreshed in its vault and sends it on every call. Agents never see it.</div>
+          </div>
+          <button class="small" onclick="document.getElementById('mcp-oauth').style.display='none'">Close</button>
+        </div>
+        <div id="mcp-oauth-body" class="section-panel-body"></div>
+      </div>
+
+      <!-- People who connected their own account to a per-person server (B4 of
+           docs/specs/mcp-verified-callers-and-user-credentials.md). -->
+      <div class="section-panel" id="mcp-grants" style="display:none;margin-top:1rem;">
+        <div class="section-panel-head">
+          <div>
+            <div class="section-panel-title">Personal connections &mdash; <span id="mcp-grants-route" class="mono"></span></div>
+            <div class="section-panel-desc">Each person below connected their own account to this server. Revoking removes it here and at the provider; the person can connect again unless suspended.</div>
+          </div>
+          <button class="small" onclick="document.getElementById('mcp-grants').style.display='none'">Close</button>
+        </div>
+        <div id="mcp-grants-body" class="section-panel-body"></div>
+      </div>
+
+      <!-- Who can call the gateway: sign-in settings, people, service accounts
+           (tasks A3/B4 of docs/specs/mcp-verified-callers-and-user-credentials.md). -->
+      <div class="section-panel" id="mcp-people" style="margin-top:1rem;">
+        <div class="section-panel-head">
+          <div>
+            <div class="section-panel-title">Who can call your servers</div>
+            <div class="section-panel-desc">People sign in from their AI app with your company login. Headless agents use a service account with a key or an OAuth client. Suspending anyone stops their access within 15 seconds and revokes the accounts they connected.</div>
+          </div>
+          <button class="small" onclick="loadMcpPeople()">Refresh</button>
+        </div>
+        <div class="section-panel-body">
+          <div id="mcp-people-policy"></div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:flex-end;margin:0.9rem 0;">
+            <div><label style="font-size:11px;color:var(--text-dim);display:block;">New service account</label>
+              <input id="mcp-sa-name" placeholder="e.g. nightly-reconciler" maxlength="100" style="font-size:12px;"></div>
+            <div><label style="font-size:11px;color:var(--text-dim);display:block;">Roles (comma separated)</label>
+              <input id="mcp-sa-roles" placeholder="e.g. finance" style="font-size:12px;"></div>
+            <button class="small primary" onclick="mcpCreateServiceAccount()">Create</button>
+          </div>
+          <div id="mcp-people-secret"></div>
+          <div id="mcp-people-list"></div>
+          <div id="mcp-people-detail"></div>
+        </div>
+      </div>
+
       <!-- ── Controls, below the fleet ────────────────────────────────────────
            Adding and kill-switching are deliberate, occasional actions. They sit
            under the fleet so the page opens on state rather than on a form. -->
@@ -5617,6 +5668,14 @@ if __name__ == "__main__":
           <label id="mcp-reg-cmd-wrap" class="mcp-field mcp-field-wide" style="display:none;"><span>Command</span>
             <input id="mcp-reg-cmd" placeholder="/usr/bin/your-mcp-server" />
           </label>
+          <div id="mcp-reg-headers-wrap" class="mcp-field mcp-field-wide">
+            <span>Headers sent to the server</span>
+            <div style="font-size:11px;color:var(--text-dim);margin:0.15rem 0 0.35rem;">
+              For example an API key, or a secret only Shield holds so the server can refuse anyone else.
+              Values are stored by Shield and always shown masked. Leave empty when updating a server to keep its current headers.</div>
+            <div id="mcp-reg-headers"></div>
+            <button type="button" class="small" onclick="mcpAddHeaderRow()">+ Add header</button>
+          </div>
           <label class="mcp-check-row">
             <input id="mcp-reg-isolation" type="checkbox" />
             <span>Upstream accepts connections only from the gateway (isolation_ack)</span>
@@ -13919,6 +13978,7 @@ async function loadMcpGateway() {
     return;
   }
   renderMcpGateway(inv);
+  loadMcpPeople();
 }
 
 function renderMcpGateway(inv) {
@@ -13984,19 +14044,26 @@ function renderMcpGateway(inv) {
         return `<div class="mcp-server-card${active ? '' : ' is-off'}${s.drift ? ' is-drift' : ''}">
             <div class="mcp-card-top">
               <span class="mcp-card-route" title="${route}">${route}</span>
-              ${pill}${drift}${bypass}
+              ${pill}${drift}${bypass}${mcpIdentityPill(s)}
             </div>
             <div class="mcp-card-dest" title="${dest}">${dest || '&mdash;'}</div>
             <div class="mcp-card-meta">
               <span class="badge">${transport}</span>
               <span class="badge">${backend}</span>
-              ${profile}${scan}
+              ${mcpHeaderBadge(s)}
+              ${profile}${scan}${mcpIdentityBadge(s)}${mcpScopeBadge(s)}
             </div>
             <div class="mcp-card-actions">
               ${blockedByScan
                 ? `<button class="small" title="Override the scan finding and put this server back into service. Recorded against your account." onclick="mcpActivateServer('${enc}')">Activate</button>`
                 : `<button class="small" onclick="mcpToggleServer('${enc}', ${active ? 'false' : 'true'})">${active ? 'Disable' : 'Enable'}</button>`}
               <button class="small" onclick="mcpRunScan('${enc}')">Scan</button>
+              ${mcpIdentityButton(s, enc)}
+              ${mcpScopeButton(s, enc)}
+              ${mcpGrantsButton(s, enc)}
+              ${(s.transport || '') !== 'stdio'
+                ? `<button class="small" title="Sign this server in once; Shield keeps the credential" onclick="mcpShowOAuth('${enc}')">OAuth</button>`
+                : ''}
               <button class="small" style="color:var(--red);border-color:var(--red);margin-left:auto;" onclick="mcpDeleteServer('${enc}')">Remove</button>
             </div>
           </div>`;
@@ -14218,10 +14285,208 @@ async function mcpToggleServer(encRoute, makeActive) {
   }
 }
 
+async function mcpSetIdentity(encRoute, requireVerified) {
+  const route = decodeURIComponent(encRoute);
+  if (requireVerified && !confirm(
+      `Accept only signed-in users and service accounts on "${route}"?\n\n` +
+      `Clients that send only the tenant key are refused from the next call. ` +
+      `People connect with https://<gateway>/gateway/t/<tenant>/${route}/mcp and sign in ` +
+      `with your company SSO. Check the audit trail first for callers still marked unverified.`)) return;
+  try {
+    await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/identity`,
+      { method: 'PUT', body: JSON.stringify({ require_verified_identity: requireVerified }) });
+    showToast(requireVerified ? `${route} now requires sign-in` : `${route} accepts the tenant key again`, 'success');
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+async function loadMcpPeople() {
+  const list = document.getElementById('mcp-people-list');
+  if (!list) return;
+  try {
+    const [policy, people] = await Promise.all([
+      apiCall('/v1/tenant/me/identity/policy'), apiCall('/v1/tenant/me/principals')]);
+    document.getElementById('mcp-people-policy').innerHTML = mcpPolicyFormHtml(policy);
+    list.innerHTML = mcpPeopleHtml(people.principals);
+  } catch (e) {
+    list.innerHTML = `<div style="font-size:12px;color:var(--red);">${_esc(e.message)}</div>`;
+  }
+}
+
+async function mcpSavePolicy() {
+  const body = {
+    mcp_sign_in: { enabled: document.getElementById('mcp-pol-signin').checked,
+                   allowed_groups: mcpRolesFromText(document.getElementById('mcp-pol-groups').value) },
+    require_verified_identity: document.getElementById('mcp-pol-verified').checked,
+  };
+  if (body.require_verified_identity && !confirm('Require verified callers on every server that has no setting of its own?\n\nCallers sending only the tenant key are refused from the next call.')) return;
+  try {
+    await apiCall('/v1/tenant/me/identity/policy', { method: 'PUT', body: JSON.stringify(body) });
+    showToast('Sign-in settings saved', 'success');
+    loadMcpGateway();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpCreateServiceAccount() {
+  const name = document.getElementById('mcp-sa-name').value.trim();
+  if (!name) { showToast('Name the service account', 'error'); return; }
+  try {
+    const sa = await apiCall('/v1/tenant/me/service-accounts', { method: 'POST', body: JSON.stringify({
+      name, roles: mcpRolesFromText(document.getElementById('mcp-sa-roles').value) }) });
+    document.getElementById('mcp-sa-name').value = '';
+    document.getElementById('mcp-sa-roles').value = '';
+    showToast(`Created ${sa.name}. Give it a key or an OAuth client.`, 'success');
+    await loadMcpPeople();
+    mcpShowPerson(encodeURIComponent(sa.id));
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpShowPerson(encPid) {
+  try {
+    const d = await apiCall(`/v1/tenant/me/principals/${encPid}`);
+    document.getElementById('mcp-people-detail').innerHTML = mcpPersonDetailHtml(d);
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpSetPersonStatus(encPid, action) {
+  if (action === 'suspend' && !confirm('Suspend?\n\nWithin 15 seconds they can no longer call any MCP server, and every account they connected is revoked at the provider.')) return;
+  try {
+    const out = await apiCall(`/v1/tenant/me/principals/${encPid}/${action}`, { method: 'POST' });
+    showToast(action === 'suspend' ? `Suspended; ${out.connections_revoked} connection(s) revoked` : 'Reactivated', 'success');
+    loadMcpGateway();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpRemoveServiceAccount(encPid) {
+  if (!confirm('Remove this service account?\n\nIts keys and OAuth clients are deleted and it is refused from the next call. This cannot be undone.')) return;
+  try {
+    await apiCall(`/v1/tenant/me/service-accounts/${encPid}`, { method: 'DELETE' });
+    document.getElementById('mcp-people-detail').innerHTML = '';
+    showToast('Service account removed', 'success');
+    loadMcpPeople();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpCreateKey(encPid) {
+  const label = prompt('Label for this key (e.g. where it is used):', '') ?? null;
+  if (label === null) return;
+  try {
+    const out = await apiCall(`/v1/tenant/me/principals/${encPid}/keys`, { method: 'POST', body: JSON.stringify({ label }) });
+    document.getElementById('mcp-people-secret').innerHTML = mcpSecretOnceHtml('key', out);
+    mcpShowPerson(encPid);
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpCreateClient(encPid) {
+  try {
+    const out = await apiCall(`/v1/tenant/me/principals/${encPid}/oauth-clients`, { method: 'POST' });
+    document.getElementById('mcp-people-secret').innerHTML = mcpSecretOnceHtml('client', out);
+    mcpShowPerson(encPid);
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpDeleteKey(encPid, encKey) {
+  if (!confirm('Delete this key? Anything using it is refused from the next call.')) return;
+  try {
+    await apiCall(`/v1/tenant/me/principals/${encPid}/keys/${encKey}`, { method: 'DELETE' });
+    mcpShowPerson(encPid);
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpDeleteClient(encPid, encClient) {
+  if (!confirm('Delete this OAuth client? It can no longer obtain tokens.')) return;
+  try {
+    await apiCall(`/v1/tenant/me/principals/${encPid}/oauth-clients/${encClient}`, { method: 'DELETE' });
+    mcpShowPerson(encPid);
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpShowGrants(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  const panel = document.getElementById('mcp-grants');
+  document.getElementById('mcp-grants-route').textContent = route;
+  panel.style.display = '';
+  const body = document.getElementById('mcp-grants-body');
+  body.innerHTML = '<div style="font-size:12px;color:var(--text-dim);">Loading…</div>';
+  try {
+    const data = await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/grants`);
+    body.innerHTML = mcpGrantsHtml(route, data);
+  } catch (e) {
+    body.innerHTML = `<div style="font-size:12px;color:var(--red);">${_esc(e.message)}</div>`;
+  }
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function mcpRevokeGrant(encRoute, encPid) {
+  const route = decodeURIComponent(encRoute);
+  if (!confirm(`Revoke this person's connection to "${route}"?\n\nIt is removed here and revoked at the provider. They can connect again.`)) return;
+  try {
+    await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/grants/${encPid}`, { method: 'DELETE' });
+    showToast('Connection revoked', 'success');
+    mcpShowGrants(encRoute); loadMcpGateway();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpRevokeAllGrants(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  if (!confirm(`Revoke EVERY personal connection to "${route}"?\n\nEveryone must connect again before using it.`)) return;
+  try {
+    const out = await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/grants`, { method: 'DELETE' });
+    showToast(`${out.revoked} connection(s) revoked`, 'success');
+    mcpShowGrants(encRoute); loadMcpGateway();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpSuspendPerson(encPid, encRoute) {
+  if (!confirm('Suspend this person?\n\nWithin 15 seconds they can no longer use any MCP server, and every account they connected (on every server) is revoked at the provider. Reactivating does not restore those connections.')) return;
+  try {
+    const out = await apiCall(`/v1/tenant/me/principals/${encPid}/suspend`, { method: 'POST' });
+    showToast(`Suspended; ${out.connections_revoked} connection(s) revoked`, 'success');
+    mcpShowGrants(encRoute); loadMcpGateway();
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpSetScope(encRoute, scope) {
+  const route = decodeURIComponent(encRoute);
+  if (scope === 'per_user' && !confirm(
+      `Use each person's own account on "${route}"?\n\n` +
+      `From the next call, every person must connect their own account once; ` +
+      `anyone who has not gets a link to connect and is refused until they do. ` +
+      `The shared credential is never used for this server. Only signed-in ` +
+      `users and service accounts can call it.`)) return;
+  try {
+    const out = await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/credential-scope`,
+      { method: 'PUT', body: JSON.stringify({ credential_scope: scope }) });
+    showToast(scope === 'per_user'
+      ? `${route} now uses each person's account. People connect at ${out.connect_url || '/connect'}`
+      : `${route} uses the shared credential again`, 'success');
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
 function mcpToggleTransportFields() {
   const t = document.getElementById('mcp-reg-transport').value;
   document.getElementById('mcp-reg-url-wrap').style.display = (t === 'stdio') ? 'none' : '';
   document.getElementById('mcp-reg-cmd-wrap').style.display = (t === 'stdio') ? '' : 'none';
+  document.getElementById('mcp-reg-headers-wrap').style.display = (t === 'stdio') ? 'none' : '';
+}
+
+function mcpAddHeaderRow() {
+  const box = document.getElementById('mcp-reg-headers');
+  box.insertAdjacentHTML('beforeend', mcpHeaderRowHtml());
+  const rows = box.querySelectorAll('.mcp-reg-header-row');
+  rows[rows.length - 1].querySelector('.mcp-reg-header-name').focus();
+}
+
+function mcpRegHeaderRows() {
+  return [...document.querySelectorAll('#mcp-reg-headers .mcp-reg-header-row')].map(r => ({
+    name: r.querySelector('.mcp-reg-header-name').value,
+    value: r.querySelector('.mcp-reg-header-value').value,
+  }));
 }
 
 async function mcpRegisterServer() {
@@ -14233,6 +14498,11 @@ async function mcpRegisterServer() {
   if (!route) { showToast('Enter a route name', 'error'); return; }
   const body = { route, transport, isolation_ack };
   if (transport === 'stdio') body.command = command; else body.url = url;
+  if (transport !== 'stdio') {
+    const h = mcpHeadersFromRows(mcpRegHeaderRows());
+    if (h.errors.length) { showToast(h.errors.join(' '), 'error'); return; }
+    if (Object.keys(h.headers).length) body.headers = h.headers;   // absent = keep current
+  }
   try {
     const r = await apiCall('/v1/tenant/me/mcp/servers',
       { method: 'POST', body: JSON.stringify(body) });
@@ -14241,6 +14511,7 @@ async function mcpRegisterServer() {
     document.getElementById('mcp-reg-route').value = '';
     document.getElementById('mcp-reg-url').value = '';
     document.getElementById('mcp-reg-cmd').value = '';
+    document.getElementById('mcp-reg-headers').innerHTML = '';   // secrets never linger in the page
     document.getElementById('mcp-reg-isolation').checked = false;
     loadMcpGateway();
   } catch (e) {
@@ -14257,6 +14528,333 @@ async function mcpDeleteServer(encRoute) {
     loadMcpGateway();
   } catch (e) {
     showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+// ── MCP register headers (pure) ────────────────────────────────────────────
+// Headers Shield sends to an upstream (an API key, or a secret only Shield
+// holds). Pure, so tests/test_mcp_register_headers_portal.py runs them in node.
+
+const MCP_HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+
+// Rows from the form -> {headers, errors}. Blank rows are ignored; anything
+// half-filled, duplicated (case-insensitively) or carrying a line break is an
+// error, because a line break in a header value is header injection.
+function mcpHeadersFromRows(rows) {
+  const headers = {}, errors = [], seen = new Set();
+  for (const r of rows || []) {
+    const name = String(r.name || '').trim(), value = String(r.value || '');
+    if (!name && !value.trim()) continue;
+    if (!MCP_HEADER_NAME.test(name)) { errors.push(`"${name || '(blank)'}" is not a valid header name.`); continue; }
+    if (!value.trim()) { errors.push(`${name} has no value.`); continue; }
+    if (/[\r\n]/.test(value)) { errors.push(`${name}'s value contains a line break.`); continue; }
+    if (seen.has(name.toLowerCase())) { errors.push(`${name} appears twice.`); continue; }
+    seen.add(name.toLowerCase());
+    headers[name] = value.trim();
+  }
+  if (Object.keys(headers).length > 20) errors.push('At most 20 headers.');
+  return { headers, errors };
+}
+
+function mcpHeaderRowHtml() {
+  const box = 'font-size:12px;padding:0.35rem 0.5rem;';
+  return `<div class="mcp-reg-header-row" style="display:flex;gap:0.4rem;margin-bottom:0.35rem;">
+      <input class="mcp-reg-header-name" placeholder="X-Upstream-Key" autocomplete="off" style="${box}width:14rem;">
+      <input class="mcp-reg-header-value" type="password" placeholder="value" autocomplete="new-password" style="${box}flex:1;">
+      <button type="button" class="small" title="Remove" onclick="this.parentElement.remove()">✕</button></div>`;
+}
+
+// The card names the headers a server sends; values are never in the page.
+function mcpHeaderBadge(server) {
+  const names = Object.keys((server || {}).headers || {});
+  if (!names.length) return '';
+  const label = names.some(n => n.toLowerCase() === 'authorization') && names.length === 1
+    ? 'authorization' : `${names.length} header${names.length > 1 ? 's' : ''}`;
+  return `<span class="badge" title="${_esc('Sends: ' + names.join(', ') + ' (values masked)')}">${_esc(label)}</span>`;
+}
+
+// ── MCP verified callers (pure) ────────────────────────────────────────────
+// A4 of docs/specs/mcp-verified-callers-and-user-credentials.md. A server that
+// still accepts a bare tenant key gets a warning pill, like "bypassable": the
+// role on every call there is whatever the caller says it is.
+
+function mcpIdentityPill(server) {
+  if (!server || server.verified_callers_only !== false) return '';
+  return '<span class="mcp-pill mcp-pill-warn" title="Accepts a bare tenant key, so callers are not verified and the role is whatever the caller sends. Require sign-in to fix.">key accepted</span>';
+}
+
+function mcpIdentityBadge(server) {
+  if (!server || server.verified_callers_only !== true) return '';
+  const from = server.verified_callers_source === 'tenant' ? ' (tenant default)'
+    : server.verified_callers_source === 'per_user' ? ' (required: own accounts)' : '';
+  return '<span class="badge" title="Only signed-in users and service accounts' + _esc(from) + '">verified callers</span>';
+}
+
+function mcpIdentityButton(server, enc) {
+  // A per-person server always requires sign-in; there is nothing to toggle.
+  if (!server || (server.transport || '') === 'stdio' || server.credential_scope === 'per_user') return '';
+  return server.verified_callers_only
+    ? '<button class="small" title="Accept the tenant key again on this server" onclick="mcpSetIdentity(\'' + enc + '\', false)">Allow key</button>'
+    : '<button class="small" title="Accept only signed-in users and service accounts" onclick="mcpSetIdentity(\'' + enc + '\', true)">Require sign-in</button>';
+}
+
+// Each person's own account (B2): one shared credential, or every caller's own.
+function mcpScopeBadge(server) {
+  if (!server || server.credential_scope !== 'per_user') return '';
+  return '<span class="badge" title="Each person connects and uses their own account on this server; the shared credential is never used">own accounts</span>';
+}
+
+function mcpGrantsButton(server, enc) {
+  if (!server || server.credential_scope !== 'per_user') return '';
+  const n = Number(server.personal_connections || 0);
+  return '<button class="small" title="People who connected their own account" onclick="mcpShowGrants(\'' + enc + '\')">Connections (' + n + ')</button>';
+}
+
+function mcpGrantsWhen(ts) {
+  if (!ts) return '';
+  try { return new Date(Number(ts) * 1000).toISOString().slice(0, 10); } catch (e) { return ''; }
+}
+
+function mcpGrantsHtml(route, data) {
+  const rows = (data && data.grants) || [];
+  const enc = encodeURIComponent(route || '');
+  if (!rows.length) {
+    return '<div style="font-size:12px;color:var(--text-dim);">Nobody has connected an account yet. People connect at the link in their AI app\'s error message, or at /connect.</div>';
+  }
+  const status = { connected: 'connected', needs_consent: 'expired', error: 'renewal failing' };
+  const body = rows.map(g => {
+    const pid = encodeURIComponent(g.principal_id || '');
+    const who = _esc(g.email || g.name || g.principal_id || '');
+    const suspended = g.principal_status && g.principal_status !== 'active';
+    return '<tr>' +
+      '<td>' + who + (suspended ? ' <span class="mcp-pill mcp-pill-off">' + _esc(g.principal_status) + '</span>' : '') + '</td>' +
+      '<td class="mono">' + _esc(g.upstream_account || '') + '</td>' +
+      '<td>' + _esc(status[g.status] || g.status || '') + '</td>' +
+      '<td>' + _esc(mcpGrantsWhen(g.connected_at)) + '</td>' +
+      '<td style="white-space:nowrap;"><button class="small" onclick="mcpRevokeGrant(\'' + enc + '\', \'' + pid + '\')">Revoke</button> ' +
+      (suspended ? '' : '<button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpSuspendPerson(\'' + pid + '\', \'' + enc + '\')">Suspend person</button>') +
+      '</td></tr>';
+  }).join('');
+  return '<table class="gov-table"><thead><tr>' +
+    '<th>Person</th><th>Upstream account</th><th>Status</th><th>Connected</th><th></th></tr></thead>' +
+    '<tbody>' + body + '</tbody></table>' +
+    '<div style="margin-top:0.6rem;"><button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpRevokeAllGrants(\'' + enc + '\')">Revoke all</button></div>';
+}
+
+function mcpScopeButton(server, enc) {
+  if (!server || !['http', 'sse'].includes(server.transport || '')) return '';
+  return server.credential_scope === 'per_user'
+    ? '<button class="small" title="Use one shared credential for everyone" onclick="mcpSetScope(\'' + enc + '\', \'shared\')">Shared account</button>'
+    : '<button class="small" title="Each person uses their own account on this server" onclick="mcpSetScope(\'' + enc + '\', \'per_user\')">Own accounts</button>';
+}
+
+// Who can call the gateway (A3). Pure renderers; handlers are further down.
+function mcpRolesFromText(text) {
+  const out = [];
+  String(text || '').split(',').map(r => r.trim()).filter(Boolean).forEach(r => { if (!out.includes(r)) out.push(r); });
+  return out;
+}
+
+function mcpPolicyFormHtml(policy) {
+  const p = policy || {};
+  const si = p.mcp_sign_in || {};
+  return '<div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-end;font-size:12px;">' +
+    '<label style="display:flex;gap:0.35rem;align-items:center;"><input type="checkbox" id="mcp-pol-signin"' + (si.enabled ? ' checked' : '') + '> Sign-in from AI apps</label>' +
+    '<div><label style="font-size:11px;color:var(--text-dim);display:block;">Allowed IdP groups (required to enable)</label>' +
+    '<input id="mcp-pol-groups" style="font-size:12px;min-width:220px;" placeholder="e.g. eng, finance" value="' + _esc((si.allowed_groups || []).join(', ')) + '"></div>' +
+    '<label style="display:flex;gap:0.35rem;align-items:center;"><input type="checkbox" id="mcp-pol-verified"' + (p.require_verified_identity ? ' checked' : '') + '> Verified callers only on every server (default)</label>' +
+    '<button class="small" onclick="mcpSavePolicy()">Save</button></div>';
+}
+
+function mcpPeopleHtml(list) {
+  const rows = list || [];
+  if (!rows.length) return '<div style="font-size:12px;color:var(--text-dim);">Nobody yet. People appear when they first sign in from an AI app; create a service account above for headless agents.</div>';
+  const body = rows.map(p => {
+    const pid = encodeURIComponent(p.id || '');
+    const sa = p.type === 'service_account';
+    const active = p.status === 'active';
+    const status = active ? '<span class="mcp-pill mcp-pill-on">active</span>'
+                          : '<span class="mcp-pill mcp-pill-off">' + _esc(p.status || '') + '</span>';
+    const removed = p.status === 'deprovisioned';
+    const actions = removed ? '' :
+      (sa ? '<button class="small" onclick="mcpShowPerson(\'' + pid + '\')">Keys &amp; clients</button> ' : '') +
+      (active ? '<button class="small" onclick="mcpSetPersonStatus(\'' + pid + '\', \'suspend\')">Suspend</button> '
+              : '<button class="small" onclick="mcpSetPersonStatus(\'' + pid + '\', \'reactivate\')">Reactivate</button> ') +
+      (sa ? '<button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpRemoveServiceAccount(\'' + pid + '\')">Remove</button>' : '');
+    return '<tr><td>' + _esc(p.email || p.name || p.id) + '</td>' +
+      '<td>' + (sa ? 'service account' : 'person') + '</td>' +
+      '<td>' + status + '</td>' +
+      '<td>' + _esc((p.roles || []).join(', ')) + '</td>' +
+      '<td style="white-space:nowrap;">' + actions + '</td></tr>';
+  }).join('');
+  return '<table class="gov-table"><thead><tr><th>Who</th><th>Kind</th><th>Status</th><th>Roles</th><th></th></tr></thead><tbody>' + body + '</tbody></table>';
+}
+
+function mcpPersonDetailHtml(d) {
+  const pid = encodeURIComponent((d && d.id) || '');
+  const keys = (d && d.keys) || [];
+  const clients = (d && d.oauth_clients) || [];
+  const keyRows = keys.map(k => '<li><span class="mono">' + _esc(k.prefix || '') + '…</span> ' + _esc(k.label || '') +
+    ' <button class="small" onclick="mcpDeleteKey(\'' + pid + '\', \'' + encodeURIComponent(k.key_id || '') + '\')">Delete</button></li>').join('');
+  const clientRows = clients.map(c => '<li><span class="mono">' + _esc(c.client_id || '') + '</span>' +
+    ' <button class="small" onclick="mcpDeleteClient(\'' + pid + '\', \'' + encodeURIComponent(c.client_id || '') + '\')">Delete</button></li>').join('');
+  return '<div style="border-top:1px solid var(--border);margin-top:0.8rem;padding-top:0.8rem;font-size:12px;">' +
+    '<div style="font-weight:600;margin-bottom:0.4rem;">' + _esc((d && d.name) || '') + '</div>' +
+    '<div>Keys: <button class="small" onclick="mcpCreateKey(\'' + pid + '\')">New key</button></div>' +
+    '<ul style="margin:0.3rem 0 0.6rem 1rem;">' + (keyRows || '<li style="color:var(--text-dim);">none</li>') + '</ul>' +
+    '<div>OAuth clients (client credentials): <button class="small" onclick="mcpCreateClient(\'' + pid + '\')">New OAuth client</button></div>' +
+    '<ul style="margin:0.3rem 0 0 1rem;">' + (clientRows || '<li style="color:var(--text-dim);">none</li>') + '</ul></div>';
+}
+
+function mcpSecretOnceHtml(kind, data) {
+  const d = data || {};
+  const lines = kind === 'key'
+    ? '<div>Key: <code style="user-select:all;">' + _esc(d.key || '') + '</code></div>' +
+      '<div style="color:var(--text-dim);">Send it as <code>X-API-Key</code> or <code>Authorization: Bearer</code>.</div>'
+    : '<div>Client ID: <code style="user-select:all;">' + _esc(d.client_id || '') + '</code></div>' +
+      '<div>Client secret: <code style="user-select:all;">' + _esc(d.client_secret || '') + '</code></div>' +
+      '<div style="color:var(--text-dim);">POST /oauth/token with grant_type=client_credentials; add resource=&lt;gateway URL&gt; for a token valid on one server.</div>';
+  return '<div style="border:1px solid var(--warn,#d4a017);border-radius:6px;padding:0.6rem 0.8rem;margin:0.6rem 0;font-size:12px;">' +
+    '<div style="font-weight:600;margin-bottom:0.3rem;">Copy this now. It will not be shown again.</div>' + lines +
+    '<button class="small" style="margin-top:0.4rem;" onclick="document.getElementById(\'mcp-people-secret\').innerHTML=\'\'">I have stored it</button></div>';
+}
+
+// ── MCP OAuth connect (pure) ───────────────────────────────────────────────
+// Spec: docs/specs/mcp-oauth-standard-providers.md, task 3. Pure, so the panel
+// is tested under node (tests/test_mcp_oauth_portal.py).
+
+const MCP_GOOGLE_SCOPE_PREFIX = 'https://www.googleapis.com/auth/';
+
+// "https://www.googleapis.com/auth/drive.readonly" -> "drive.readonly".
+function mcpScopeLabel(scope) {
+  const s = String(scope || '');
+  return s.startsWith(MCP_GOOGLE_SCOPE_PREFIX) ? s.slice(MCP_GOOGLE_SCOPE_PREFIX.length) : s;
+}
+
+function mcpOAuthWhen(epochSeconds) {
+  if (!epochSeconds) return '';
+  return new Date(epochSeconds * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+}
+
+// One line saying what is true now, and whether it needs attention.
+function mcpOAuthStatus(st) {
+  const s = st || {};
+  if (!s.status || s.status === 'not_connected') return { text: 'Not connected.', tone: 'dim' };
+  if (s.status === 'pending') return { text: 'Waiting for sign-in. Open the sign-in page to finish.', tone: 'warn' };
+  if (s.status === 'configured') return { text: `Set up${s.issuer ? ` with ${s.issuer}` : ''}. Each person connects their own account.`, tone: 'good' };
+  if (s.status === 'needs_consent') return { text: 'The provider withdrew the grant. Connect again.', tone: 'bad' };
+  if (s.status === 'error') return { text: `Error: ${s.last_error || 'unknown'}`, tone: 'bad' };
+  const parts = [`Connected${s.issuer ? ` to ${s.issuer}` : ''}.`];
+  if (s.expires_at) parts.push(`Current token valid until ${mcpOAuthWhen(s.expires_at)}.`);
+  let tone = 'good';
+  if (s.warning) { parts.push(s.warning); tone = 'warn'; }
+  if (s.authorization_header === 'other') {
+    parts.push('This route sends its own Authorization header, so this credential is not in use.');
+    tone = 'warn';
+  }
+  return { text: parts.join(' '), tone };
+}
+
+// The form. Nothing is pre-ticked: Shield never chooses between, say, full Drive
+// and read-only Drive for the operator.
+function mcpOAuthFormHtml(encRoute, disc, status) {
+  const d = disc || {};
+  const st = mcpOAuthStatus(status);
+  const colour = { good: 'var(--green,#16a34a)', warn: 'var(--warn,#d4a017)',
+                   bad: 'var(--red,#dc2626)', dim: 'var(--text-dim,#888)' }[st.tone];
+  const box = 'font-size:12px;padding:0.35rem 0.5rem;';
+  const scopes = (d.access_scopes || []).map((sc, i) => `
+      <label style="display:flex;gap:0.45rem;align-items:flex-start;font-size:12.5px;padding:0.15rem 0;cursor:pointer;" title="${_esc(sc)}">
+        <input type="checkbox" class="mcp-oauth-scope" value="${_esc(sc)}" style="margin:2px 0 0;">
+        <span class="mono">${_esc(mcpScopeLabel(sc))}</span>
+        ${/\.readonly$/.test(sc) ? '<span class="badge" style="font-size:10px;">read-only</span>' : ''}
+      </label>`).join('');
+  const clientNote = d.dynamic_registration
+    ? 'Optional: leave blank to let Shield register itself with this provider.'
+    : 'Required: this provider does not let Shield register itself. Create an OAuth client (type: Web application) with the redirect URI your Shield administrator gives you.';
+  return `
+    <div style="font-size:12.5px;color:${colour};margin-bottom:0.7rem;">${_esc(st.text)}</div>
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:0.6rem;">
+      Provider <span class="mono">${_esc(d.issuer || 'unknown')}</span>${d.profile && d.profile !== 'standard' ? ` &middot; ${_esc(d.profile)}` : ''}</div>
+    <div style="font-size:12px;font-weight:600;margin-bottom:0.2rem;">Client</div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:0.35rem;">${_esc(clientNote)}</div>
+    <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.7rem;">
+      <input type="text" id="mcp-oauth-client-id" placeholder="client ID" autocomplete="off" style="${box}flex:1;min-width:14rem;">
+      <input type="password" id="mcp-oauth-client-secret" placeholder="client secret" autocomplete="new-password" style="${box}flex:1;min-width:12rem;">
+    </div>
+    <div style="font-size:12px;font-weight:600;margin-bottom:0.2rem;">Scopes</div>
+    ${scopes || '<div style="font-size:11px;color:var(--text-dim);">This server needs no scope choice.</div>'}
+    <div style="font-size:11px;color:var(--warn,#d4a017);margin:0.6rem 0;">Every agent and user of this route will act as the account that signs in, with its access. Use a dedicated account, not a personal one.</div>
+    <button class="primary small" onclick="mcpOAuthConnect('${encRoute}')">Connect</button>
+    <div id="mcp-oauth-result" style="margin-top:0.7rem;"></div>`;
+}
+
+// What POST .../oauth/connect is sent. Empty fields are left out so the server
+// applies its own defaults (self-registration, no scope choice).
+function mcpOAuthConnectBody(clientId, clientSecret, scopes) {
+  const body = {};
+  if ((clientId || '').trim()) body.client_id = clientId.trim();
+  if ((clientSecret || '').trim()) body.client_secret = clientSecret.trim();
+  if ((scopes || []).length) body.scopes = scopes;
+  return body;
+}
+
+// After connect: the consent note, and the sign-in link only if it is https.
+function mcpOAuthResultHtml(resp) {
+  const r = resp || {};
+  if (r.status === 'configured') {
+    // A per-person server: nothing to sign in to here. Hand out the link.
+    const connect = String(r.connect_url || '');
+    return `<div style="font-size:12px;color:var(--text-dim);margin-bottom:0.5rem;">${_esc(r.consent_note || '')}</div>
+      <div style="font-size:12px;">Send people this link: <code style="user-select:all;">${_esc(connect)}</code></div>`;
+  }
+  const url = String(r.authorize_url || '');
+  const link = /^https:\/\//i.test(url)
+    ? `<a class="primary small" style="display:inline-block;padding:0.35rem 0.7rem;border-radius:6px;text-decoration:none;"
+          href="${_esc(url)}" target="_blank" rel="noopener noreferrer">Open sign-in page</a>`
+    : '<span style="color:var(--red,#dc2626);font-size:12px;">The provider returned no usable sign-in address.</span>';
+  return `<div style="font-size:12px;color:var(--text-dim);margin-bottom:0.5rem;">${_esc(r.consent_note || '')}</div>
+    ${link}
+    <div style="font-size:11px;color:var(--text-dim);margin-top:0.4rem;">After signing in, come back and check the status.</div>`;
+}
+
+// ── MCP OAuth connect (wiring) ─────────────────────────────────────────────
+
+async function mcpShowOAuth(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  const panel = document.getElementById('mcp-oauth');
+  const body = document.getElementById('mcp-oauth-body');
+  document.getElementById('mcp-oauth-route').textContent = route;
+  panel.style.display = '';
+  body.innerHTML = '<div style="font-size:12px;color:var(--text-dim);">Looking up the provider…</div>';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const base = `/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/oauth`;
+  const [disc, status] = await Promise.all([
+    apiCall(base + '/discover').catch(e => ({ error: e.message })),
+    apiCall(base).then(r => r.oauth).catch(() => ({})),
+  ]);
+  if (disc.error) {
+    body.innerHTML = `<div style="font-size:12.5px;color:${mcpOAuthStatus(status).tone === 'good' ? 'var(--green,#16a34a)' : 'var(--text-dim)'};margin-bottom:0.5rem;">${_esc(mcpOAuthStatus(status).text)}</div>
+      <div style="font-size:12px;color:var(--red,#dc2626);">This server cannot be connected with OAuth: ${_esc(disc.error)}</div>`;
+    return;
+  }
+  body.innerHTML = mcpOAuthFormHtml(encRoute, disc, status);
+}
+
+async function mcpOAuthConnect(encRoute) {
+  const route = decodeURIComponent(encRoute);
+  const scopes = [...document.querySelectorAll('#mcp-oauth .mcp-oauth-scope:checked')].map(el => el.value);
+  const body = mcpOAuthConnectBody(document.getElementById('mcp-oauth-client-id').value,
+                                   document.getElementById('mcp-oauth-client-secret').value, scopes);
+  const out = document.getElementById('mcp-oauth-result');
+  out.innerHTML = '<span style="font-size:12px;color:var(--text-dim);">Starting…</span>';
+  try {
+    const r = await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/oauth/connect`,
+      { method: 'POST', body: JSON.stringify(body) });
+    out.innerHTML = mcpOAuthResultHtml(r);
+    document.getElementById('mcp-oauth-client-secret').value = '';   // never kept in the page
+  } catch (e) {
+    out.innerHTML = `<span style="font-size:12px;color:var(--red,#dc2626);">${_esc(e.message)}</span>`;
   }
 }
 

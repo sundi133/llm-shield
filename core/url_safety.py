@@ -285,3 +285,26 @@ def validate_proxy_base_url(url: str, *, purpose: str = "llm-proxy") -> str:
     # Defense in depth: still run the IP/metadata/scheme checks. The env
     # allowlist is disabled here since we just applied the richer one.
     return validate_outbound_url(url, purpose=purpose, check_env_allowlist=False)
+
+
+def guarded_async_client(**kwargs):
+    """An httpx.AsyncClient that follows redirects only to safe destinations.
+
+    validate_outbound_url checks the URL a caller starts from; a client that
+    then follows redirects unchecked lets a public host bounce the request to
+    an internal or metadata address (blind SSRF). Every redirect target is
+    validated here before it is followed, and an unsafe one raises
+    UnsafeURLError from the request, which callers already treat as a failure.
+    """
+    import httpx
+
+    async def _check(response):
+        # next_request is only populated when the client is NOT following
+        # redirects itself, so resolve the target from Location here.
+        if response.has_redirect_location:
+            target = response.request.url.join(response.headers["location"])
+            validate_outbound_url(str(target), purpose="redirect")
+
+    hooks = kwargs.pop("event_hooks", {}) or {}
+    hooks = {**hooks, "response": list(hooks.get("response", [])) + [_check]}
+    return httpx.AsyncClient(follow_redirects=True, event_hooks=hooks, **kwargs)

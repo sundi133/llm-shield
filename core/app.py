@@ -71,6 +71,7 @@ from api.routes_agent_auth import router as agent_auth_router, tenant_router as 
 from api.routes_mcp_server import router as mcp_server_router
 from api.routes_mcp_gateway import router as mcp_gateway_config_router
 from api.routes_mcp_gateway_server import router as mcp_gateway_server_router
+from api.routes_mcp_gateway_server import wellknown_router as mcp_gateway_wellknown_router
 from api.routes_openapi_mcp import router as openapi_mcp_router
 from api.routes_ssf import router as ssf_router
 from api.routes_oauth import router as oauth_router
@@ -175,6 +176,7 @@ def create_app() -> FastAPI:
     # MCP gateway: front unmodified upstream MCP servers (config API + JSON-RPC server)
     app.include_router(mcp_gateway_config_router)
     app.include_router(mcp_gateway_server_router)
+    app.include_router(mcp_gateway_wellknown_router)   # per-route RFC 9728 metadata
     app.include_router(openapi_mcp_router)
     app.include_router(ssf_router)
     app.include_router(oauth_router)

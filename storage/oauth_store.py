@@ -47,6 +47,9 @@ class OAuthClient:
     scope: str = "shield"
     tenant_id: str = ""
     created_at: int = 0
+    # A service account this client authenticates as (client_credentials).
+    # docs/specs/mcp-verified-callers-and-user-credentials.md, task A3.
+    principal_id: str = ""
 
 
 def hash_client_secret(secret: str) -> str:
@@ -153,6 +156,23 @@ class AuthorizationCode:
     tenant_id: str
     user_sub: str
     created_at: int = 0
+    # Set by MCP sign-in (docs/specs/mcp-verified-callers-and-user-credentials.md):
+    # the gateway URL the token is for (its audience) and the principal it names.
+    resource: str = ""
+    principal: dict = field(default_factory=dict)
+
+
+def _getdel(r, key: str):
+    """Read and delete in one step, so a code or refresh token can be redeemed
+    once even under concurrent requests. GETDEL needs Redis 6.2; older servers
+    fall back to a transaction."""
+    try:
+        return r.getdel(key)
+    except Exception:
+        pipe = r.pipeline()
+        pipe.get(key)
+        pipe.delete(key)
+        return pipe.execute()[0]
 
 
 async def save_auth_code(auth_code: AuthorizationCode, ttl: int = 600) -> None:
@@ -178,9 +198,8 @@ async def consume_auth_code(code: str) -> Optional[AuthorizationCode]:
     r = _get_redis()
     if r:
         try:
-            raw = r.get(f"shield:oauth:code:{code}")
+            raw = _getdel(r, f"shield:oauth:code:{code}")
             if raw:
-                r.delete(f"shield:oauth:code:{code}")
                 return AuthorizationCode(**json.loads(raw))
             return None
         except Exception as e:
@@ -207,6 +226,8 @@ class RefreshTokenRecord:
     tenant_id: str
     user_sub: str
     created_at: int = 0
+    resource: str = ""
+    principal: dict = field(default_factory=dict)
 
 
 async def save_refresh_token(
@@ -236,9 +257,8 @@ async def consume_refresh_token(
     r = _get_redis()
     if r:
         try:
-            raw = r.get(f"shield:oauth:refresh:{token_hash}")
+            raw = _getdel(r, f"shield:oauth:refresh:{token_hash}")
             if raw:
-                r.delete(f"shield:oauth:refresh:{token_hash}")
                 return RefreshTokenRecord(**json.loads(raw))
             return None
         except Exception as e:

@@ -42,6 +42,7 @@ STATUS_PENDING = "pending"           # flow started, callback not yet received
 STATUS_CONNECTED = "connected"       # usable access token in the vault
 STATUS_NEEDS_CONSENT = "needs_consent"  # refresh rejected — a human must re-authorize
 STATUS_ERROR = "error"               # transient failure; retried automatically
+STATUS_CONFIGURED = "configured"     # per-person route: client set up, no shared token
 
 
 def _key(tenant_id: str, route: str) -> str:
@@ -121,7 +122,8 @@ def delete_broker(tenant_id: str, route: str) -> bool:
 
 def update_status(tenant_id: str, route: str, status: str,
                   *, error: str = "", expires_at: Optional[int] = None,
-                  mark_refreshed: bool = False) -> Optional[dict]:
+                  mark_refreshed: bool = False,
+                  refresh_token_held: Optional[bool] = None) -> Optional[dict]:
     """Patch just the operational fields. Returns the updated record, or None.
 
     Separate from ``set_broker`` so the refresh loop cannot accidentally clobber
@@ -136,6 +138,10 @@ def update_status(tenant_id: str, route: str, status: str,
         rec["expires_at"] = int(expires_at)
     if mark_refreshed:
         rec["last_refresh_at"] = int(time.time())
+    # None leaves it as it was: a refresh that returns no new refresh token
+    # means the provider kept the old one valid, not that it went away.
+    if refresh_token_held is not None:
+        rec["refresh_token_held"] = bool(refresh_token_held)
     return set_broker(tenant_id, route, rec)
 
 
@@ -183,7 +189,8 @@ def new_state() -> str:
 
 
 def put_pending(state: str, tenant_id: str, route: str, code_verifier: str,
-                redirect_uri: str) -> dict:
+                redirect_uri: str, *, principal_id: str = "",
+                browser_binding: str = "") -> dict:
     """Record one in-flight authorization, keyed by ``state``.
 
     The tenant is stored HERE rather than passed back through the callback URL,
@@ -197,6 +204,11 @@ def put_pending(state: str, tenant_id: str, route: str, code_verifier: str,
         "route": route,
         "code_verifier": code_verifier,
         "redirect_uri": redirect_uri,
+        # A person connecting their own account (B3 of docs/specs/mcp-verified-
+        # callers-and-user-credentials.md): whose grant this is, and a hash of
+        # the browser session that started it, which the callback must match.
+        "principal_id": principal_id,
+        "browser_binding": browser_binding,
         "created_at": int(time.time()),
         "expires_at": int(time.time()) + PENDING_TTL_SECONDS,
     }
@@ -224,13 +236,20 @@ def take_pending(state: str) -> Optional[dict]:
         return None
     key = _pending_key(state)
     r = _get_redis()
-    raw = r.get(key) if r else _fallback_store.get(key)
-    rec = _decode(raw)
-
     if r:
-        r.delete(key)
+        # Read and delete in one step. A GET then DELETE let two concurrent
+        # callbacks with the same state both read the record before either
+        # deleted it, so one authorization could complete twice.
+        try:
+            raw = r.getdel(key)
+        except Exception:
+            pipe = r.pipeline()
+            pipe.get(key)
+            pipe.delete(key)
+            raw = pipe.execute()[0]
     else:
-        _fallback_store.pop(key, None)
+        raw = _fallback_store.pop(key, None)
+    rec = _decode(raw)
 
     if rec is None:
         return None

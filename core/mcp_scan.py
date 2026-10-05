@@ -98,6 +98,14 @@ async def scan_upstream(cfg: dict, tenant_id: str, *, timeout: float = 20.0) -> 
                           "no metadata audit was performed")
 
     headers = cfg.get("headers") or {}
+    if cfg.get("credential_scope") == "per_user":
+        # A per-person server has no shared credential to scan with, and must
+        # never be scanned with one left over from before: audit it
+        # unauthenticated, as most servers allow for tools/list.
+        from core.mcp_credentials import _brokered_refs
+        refs = _brokered_refs(cfg.get("route") or "")
+        headers = {k: v for k, v in headers.items()
+                   if k.lower() != "authorization" and not any(r in str(v) for r in refs)}
     if headers:
         # The stored credential may be a vault reference. Resolving it here means
         # the scan authenticates the same way the gateway will — scanning as an

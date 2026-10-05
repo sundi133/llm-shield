@@ -77,9 +77,10 @@ def _captured_store():
     """Patch persistence so a strategy can be tested without a live vault."""
     seen = {}
 
-    def _store(ctx, *, token, expires_at, refresh_token=""):
+    def _store(ctx, *, token, expires_at, refresh_token="", refresh_token_held=None):
         seen.update({"token": token, "expires_at": expires_at,
-                     "refresh_token": refresh_token})
+                     "refresh_token": refresh_token,
+                     "refresh_token_held": refresh_token_held})
         return {"expires_at": expires_at}
 
     return seen, patch.object(cred, "store_credential", _store)

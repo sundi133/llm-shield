@@ -24,6 +24,7 @@ round-trips off the guard path.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -175,33 +176,46 @@ class _NotInteractive:
 # ── credential persistence ───────────────────────────────────────────
 
 def store_credential(ctx: CredentialContext, *, token: str,
-                     expires_at: int, refresh_token: str = "") -> dict:
+                     expires_at: int, refresh_token: str = "",
+                     refresh_token_held: Optional[bool] = None) -> dict:
     """Write the acquired credential to the vault and update the record.
 
-    The vault is the only place a token lands. Binding is the token endpoint's
-    host — or the upstream's, for modes with no token endpoint — because the
-    vault refuses a binding to a Shield host and materializes only on the leg out
-    to the real upstream, which is exactly where this is used.
+    The vault is the only place a token lands, and it reveals a secret only on
+    the way out to a host the secret is bound to. So each secret is bound to
+    where it is actually sent:
+
+    * the access token goes to the MCP upstream on every gateway call, so it is
+      bound to the upstream's host;
+    * the refresh token only ever goes to the token endpoint, so it is bound
+      there.
+
+    Both used to be bound to the token endpoint's host. That only worked when the
+    provider issues tokens from the same host it serves MCP on (Higgsfield).
+    Google issues from oauth2.googleapis.com and serves drivemcp.googleapis.com,
+    so the gateway could never resolve the access token and refused every call.
     """
     from storage.mcp_oauth_store import (STATUS_CONNECTED, access_ref,
                                          refresh_ref, update_status)
     from storage.vault_store import create_vault_entry
 
-    endpoint = ctx.record.get("token_endpoint") or ctx.upstream_url or ""
-    host = urlparse(endpoint).hostname or ""
-    if not host:
+    token_host = urlparse(ctx.record.get("token_endpoint") or "").hostname or ""
+    upstream_host = urlparse(ctx.upstream_url or "").hostname or ""
+    access_host = upstream_host or token_host
+    refresh_host = token_host or upstream_host
+    if not access_host:
         raise CredentialError(
             500, "cannot determine the binding host for this credential",
             permanent=True)
 
-    create_vault_entry(ctx.tenant_id, access_ref(ctx.route), token, [host],
+    create_vault_entry(ctx.tenant_id, access_ref(ctx.route), token, [access_host],
                        mode="inject")
     if refresh_token:
         create_vault_entry(ctx.tenant_id, refresh_ref(ctx.route), refresh_token,
-                           [host], mode="inject")
+                           [refresh_host], mode="inject")
 
     update_status(ctx.tenant_id, ctx.route, STATUS_CONNECTED,
-                  expires_at=expires_at, mark_refreshed=True)
+                  expires_at=expires_at, mark_refreshed=True,
+                  refresh_token_held=refresh_token_held)
     return {"expires_at": expires_at}
 
 
@@ -273,6 +287,10 @@ async def post_token_endpoint(client, endpoint: str, data: dict,
             + (f", {error}" if error else "") + ")",
             permanent=permanent)
 
+    if purpose == "oauth-revocation":
+        # RFC 7009: success is HTTP 200 with an empty body. Requiring an
+        # access_token here reported every successful revocation as a failure.
+        return payload
     if not payload.get("access_token"):
         raise CredentialError(502, "token response contained no access_token")
     return payload
@@ -294,12 +312,73 @@ def due_for_renewal(record: dict, *, now: Optional[int] = None) -> bool:
     return due_for_refresh(record, margin_seconds=refresh_margin_seconds(), now=now)
 
 
-def _lock_key(tenant_id: str, route: str) -> str:
-    return f"mcp_cred:lock:{tenant_id}:{route}"
+def _lock_key(tenant_id: str, route: str, subject: str = "") -> str:
+    base = f"mcp_cred:lock:{tenant_id}:{route}"
+    return f"{base}:{subject}" if subject else base
+
+
+#: Delete the lock only if it still holds our owner value. A renewal that ran
+#: past the TTL must not delete the lock a second renewer has since taken.
+_RELEASE_IF_OWNER = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] then "
+    "return redis.call('del', KEYS[1]) else return 0 end")
+
+
+def take_lock(tenant_id: str, route: str, *, subject: str = "", ttl: int = 60) -> str:
+    """Single-flight renewal. Returns an owner value to pass to `drop_lock`,
+    or "" when another renewal holds the lock.
+
+    Shared credentials keep the old behaviour on a Redis error (proceed: the
+    provider's idempotency is the backstop). A person's credential (`subject`)
+    does not renew unlocked: a double refresh burns a rotating refresh token
+    and strands that person in needs_consent, so the caller uses the current
+    token if still valid, else asks the person to retry.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§3.7)
+    """
+    import secrets as _secrets
+    from storage.tenant_store import _get_redis
+
+    owner = _secrets.token_hex(16)
+    r = _get_redis()
+    if not r:
+        return owner            # one process: nothing to serialize
+    try:
+        return owner if r.set(_lock_key(tenant_id, route, subject), owner, nx=True, ex=ttl) else ""
+    except Exception:
+        return "" if subject else owner
+
+
+def drop_lock(tenant_id: str, route: str, owner: str, *, subject: str = "") -> None:
+    from storage.tenant_store import _get_redis
+
+    r = _get_redis()
+    if not r or not owner:
+        return
+    key = _lock_key(tenant_id, route, subject)
+    try:
+        r.eval(_RELEASE_IF_OWNER, 1, key, owner)            # redis-py
+        return
+    except TypeError:
+        try:                                                 # upstash-redis (production)
+            r.eval(_RELEASE_IF_OWNER, keys=[key], args=[owner])
+            return
+        except Exception:
+            pass
+    except Exception:
+        pass
+    try:                        # no scripting: still never delete someone else's
+        held = r.get(key)
+        if (held.decode() if isinstance(held, bytes) else held) == owner:
+            r.delete(key)
+    except Exception:
+        pass
 
 
 def acquire_renewal_lock(tenant_id: str, route: str, *, ttl: int = 60) -> bool:
-    """Best-effort single-flight across replicas and across planes.
+    """Legacy boolean form of `take_lock` (no owner value). Prefer take_lock /
+    drop_lock, which never release a lock some other renewal holds.
+
+    Best-effort single-flight across replicas and across planes.
 
     This matters more than it looks. Most providers **invalidate the old refresh
     token** when it is used, so two concurrent renewals can destroy a working
@@ -359,7 +438,8 @@ async def renew_route(tenant_id: str, route: str, *, actor: str = "system") -> d
         return {"renewed": False, "status": "unsupported",
                 "detail": f"no provider for mode {record.get('mode')!r}"}
 
-    if not acquire_renewal_lock(tenant_id, route):
+    owner = take_lock(tenant_id, route)
+    if not owner:
         return {"renewed": False, "status": "locked",
                 "detail": "another renewal is in flight"}
 
@@ -389,7 +469,7 @@ async def renew_route(tenant_id: str, route: str, *, actor: str = "system") -> d
         logger.exception("mcp-cred: unexpected renew failure for %s/%s", tenant_id, route)
         return {"renewed": False, "status": STATUS_ERROR, "detail": type(e).__name__}
     finally:
-        release_renewal_lock(tenant_id, route)
+        drop_lock(tenant_id, route, owner)
 
 
 async def sweep_tenant(tenant_id: str) -> dict:
@@ -466,6 +546,7 @@ class AuthCodeProvider:
             "redirect_uri": ctx.record.get("redirect_uri") or _redirect_uri(),
             "client_id": ctx.record.get("client_id") or "",
             "code_verifier": code_verifier,
+            **_token_extras(ctx.record),
         }
         secret = ctx.secret("client_secret_ref")
         if secret:
@@ -483,9 +564,12 @@ class AuthCodeProvider:
                 "mcp-cred: %s/%s exchanged a code but the provider returned no "
                 "refresh_token; the credential cannot be kept alive",
                 ctx.tenant_id, ctx.route)
+        # Recorded either way, so the console can say "stops working at <expiry>"
+        # instead of looking connected until the first access token dies.
         return store_credential(
             ctx, token=str(payload["access_token"]),
-            expires_at=expiry_from(payload), refresh_token=refresh)
+            expires_at=expiry_from(payload), refresh_token=refresh,
+            refresh_token_held=bool(refresh))
 
     async def renew(self, ctx: CredentialContext, *, client=None) -> dict:
         refresh = ctx.secret("refresh_token_ref")
@@ -498,6 +582,7 @@ class AuthCodeProvider:
             "grant_type": "refresh_token",
             "refresh_token": refresh,
             "client_id": ctx.record.get("client_id") or "",
+            **_token_extras(ctx.record),
         }
         secret = ctx.secret("client_secret_ref")
         if secret:
@@ -511,10 +596,11 @@ class AuthCodeProvider:
         # old. Dropping it here would strand the route at the next renewal, so a
         # returned value always replaces the stored one; an omitted value means
         # the provider kept the existing token valid.
+        rotated = str(payload.get("refresh_token") or "")
         return store_credential(
             ctx, token=str(payload["access_token"]),
-            expires_at=expiry_from(payload),
-            refresh_token=str(payload.get("refresh_token") or ""))
+            expires_at=expiry_from(payload), refresh_token=rotated,
+            refresh_token_held=True if rotated else None)
 
     async def revoke(self, ctx: CredentialContext, *, client=None) -> None:
         endpoint = ctx.record.get("revocation_endpoint") or ""
@@ -535,6 +621,13 @@ class AuthCodeProvider:
                         ctx.tenant_id, ctx.route)
 
 
+def _token_extras(record: dict) -> dict:
+    """RFC 8707 `resource` on token requests, per the record's provider profile
+    (docs/specs/mcp-oauth-standard-providers.md)."""
+    from core.mcp_oauth import token_request_extras
+    return token_request_extras(record)
+
+
 def _redirect_uri() -> str:
     from core.mcp_oauth import OAuthBrokerError, redirect_uri
     try:
@@ -552,7 +645,8 @@ async def _with_client(client, fn):
     if client is not None:
         return await fn(client)
     import httpx
-    async with httpx.AsyncClient(follow_redirects=True) as c:
+    from core.url_safety import guarded_async_client
+    async with guarded_async_client() as c:
         return await fn(c)
 
 
@@ -883,10 +977,12 @@ class DeviceCodeProvider:
                 raise CredentialError(202, "authorization still pending") from e
             raise
 
+        # The first token of the flow: no refresh token here means none at all.
+        refresh = str(payload.get("refresh_token") or "")
         return store_credential(
             ctx, token=str(payload["access_token"]),
-            expires_at=expiry_from(payload),
-            refresh_token=str(payload.get("refresh_token") or ""))
+            expires_at=expiry_from(payload), refresh_token=refresh,
+            refresh_token_held=bool(refresh))
 
     async def renew(self, ctx: CredentialContext, *, client=None) -> dict:
         # Renewal is an ordinary refresh_token grant — identical to auth code, so
@@ -898,3 +994,331 @@ class DeviceCodeProvider:
 
 
 register_provider(DeviceCodeProvider())
+
+
+# ── disconnect and revoke (task B1) ──────────────────────────────────────
+#
+# Until now nothing disconnected a brokered route, and deleting a server left
+# its tokens in the vault and the delegation alive at the provider. With one
+# grant per person, that would multiply into a live delegation per employee.
+# Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.9, task B1)
+
+
+async def disconnect_route(tenant_id: str, route: str, *, actor: str = "system",
+                           client=None) -> dict:
+    """Disconnect a route's shared OAuth credential.
+
+    Revokes at the provider (best effort), deletes the route's vault entries
+    and broker record, and removes the Authorization header the connect wired
+    (only that one: a header an operator set is left alone). Never raises.
+    """
+    from storage.mcp_oauth_store import (access_ref, client_secret_ref, delete_broker,
+                                         get_broker, refresh_ref)
+
+    record = get_broker(tenant_id, route)
+    out = {"had_connection": record is not None, "revocation_attempted": False}
+    if record and not is_static(record.get("mode")):
+        provider = get_provider(record.get("mode"))
+        if provider is not None and record.get("revocation_endpoint"):
+            out["revocation_attempted"] = True
+            try:
+                await provider.revoke(CredentialContext(
+                    tenant_id=tenant_id, route=route, record=record,
+                    upstream_url="", actor=actor), client=client)
+            except Exception as e:      # noqa: BLE001 - local delete must still happen
+                logger.info("mcp-cred: revoke failed for %s/%s: %s", tenant_id, route, e)
+    try:
+        from core.secret_vault.keyprovider import vault_enabled
+        if vault_enabled():
+            from storage.vault_store import delete_vault_entry
+            for ref in (access_ref(route), refresh_ref(route), client_secret_ref(route)):
+                delete_vault_entry(tenant_id, ref)
+    except Exception as e:      # noqa: BLE001
+        logger.warning("mcp-cred: vault cleanup failed for %s/%s: %s", tenant_id, route, e)
+    delete_broker(tenant_id, route)
+    try:
+        from core.mcp_oauth import authorization_header_state
+        from storage.mcp_gateway_store import get_upstream, set_upstream
+        cfg = get_upstream(tenant_id, route)
+        if cfg:
+            changed = False
+            if authorization_header_state(cfg, route) == "brokered":
+                cfg["headers"] = {k: v for k, v in (cfg.get("headers") or {}).items()
+                                  if k.lower() != "authorization"}
+                changed = True
+            if cfg.get("credential_mode") and not is_static(cfg.get("credential_mode")):
+                cfg.pop("credential_mode", None)
+                changed = True
+            if changed:
+                cfg["updated_at"] = int(time.time())
+                set_upstream(tenant_id, route, cfg)
+    except Exception as e:      # noqa: BLE001
+        logger.warning("mcp-cred: header cleanup failed for %s/%s: %s", tenant_id, route, e)
+    return out
+
+
+async def revoke_grant(tenant_id: str, route: str, principal_id: str, *, client=None) -> bool:
+    """Revoke one person's grant at the provider (best effort) and delete it.
+
+    The refresh token is sent to the revocation endpoint only if it is bound to
+    that host, the same rule that governs every other release. Returns whether
+    a grant existed. Never raises.
+    """
+    from storage.mcp_grant_store import GrantError, delete_grant, get_grant, refresh_token_for
+    from storage.mcp_oauth_store import get_broker
+
+    existed = get_grant(tenant_id, route, principal_id) is not None
+    record = get_broker(tenant_id, route) or {}
+    endpoint = record.get("revocation_endpoint") or ""
+    if existed and endpoint:
+        try:
+            token = refresh_token_for(tenant_id, route, principal_id, endpoint)
+            data = {"token": token, "token_type_hint": "refresh_token",
+                    "client_id": record.get("client_id") or ""}
+            secret = CredentialContext(tenant_id=tenant_id, route=route, record=record,
+                                       upstream_url="").secret("client_secret_ref")
+            if secret:
+                data["client_secret"] = secret
+            await _with_client(client, lambda c: post_token_endpoint(
+                c, endpoint, data, purpose="oauth-revocation"))
+        except (GrantError, CredentialError) as e:
+            logger.info("mcp-cred: grant revoke skipped/failed for %s/%s: %s",
+                        tenant_id, route, getattr(e, "reason", "") or getattr(e, "message", e))
+        except Exception as e:      # noqa: BLE001 - local delete must still happen
+            logger.info("mcp-cred: grant revoke failed for %s/%s: %s", tenant_id, route, e)
+    delete_grant(tenant_id, route, principal_id)
+    return existed
+
+
+async def revoke_route_grants(tenant_id: str, route: str, *, client=None) -> int:
+    """Revoke every person's grant for a route. Returns how many existed."""
+    from storage.mcp_grant_store import principals_for_route
+    n = 0
+    for pid in principals_for_route(tenant_id, route):
+        n += bool(await revoke_grant(tenant_id, route, pid, client=client))
+    return n
+
+
+async def revoke_principal_grants(tenant_id: str, principal_id: str, *, client=None) -> int:
+    """Revoke every grant one person holds (offboarding). Returns how many."""
+    from storage.mcp_grant_store import routes_for_principal
+    n = 0
+    for route in routes_for_principal(tenant_id, principal_id):
+        n += bool(await revoke_grant(tenant_id, route, principal_id, client=client))
+    return n
+
+
+# ── each person's own account (task B2) ──────────────────────────────────
+#
+# A route with `credential_scope: per_user` sends each caller's own upstream
+# token. There is deliberately no code path from such a route to the shared
+# token: user_credential_headers() strips every header that references the
+# route's brokered vault entries before anything is materialized, and a person
+# with no usable grant is refused with ConnectRequired, never served as someone
+# else. Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.4)
+
+SCOPE_SHARED = "shared"
+SCOPE_PER_USER = "per_user"
+CREDENTIAL_SCOPES = (SCOPE_SHARED, SCOPE_PER_USER)
+
+#: How long a call waits for another call's refresh of the same person's
+#: token before giving up.
+_REFRESH_WAIT_S = 5.0
+_background: set = set()
+
+
+class ConnectRequired(Exception):
+    """The caller has no usable grant for a per-person route.
+
+    reason: not_connected | reconnect | refresh_unavailable | disabled |
+            not_configured | sign_in_required | error
+    """
+
+    def __init__(self, reason: str, tenant_id: str, route: str, message: str = ""):
+        super().__init__(message or "Connect your account to use this server")
+        self.reason, self.tenant_id, self.route = reason, tenant_id, route
+
+
+def per_user_enabled() -> bool:
+    """SHIELD_MCP_PER_USER_CREDENTIALS=0: per-person routes cannot be saved,
+    and existing ones refuse every call (reason `disabled`). They never fall
+    back to the shared credential."""
+    return os.environ.get("SHIELD_MCP_PER_USER_CREDENTIALS", "1").strip().lower() not in (
+        "0", "off", "false", "no")
+
+
+def is_per_user(cfg: Optional[dict]) -> bool:
+    return (cfg or {}).get("credential_scope") == SCOPE_PER_USER
+
+
+def credential_scope_error(cfg: dict) -> str:
+    """Why this route document may not be saved, or "" if it may."""
+    scope = cfg.get("credential_scope")
+    if scope is None:
+        return ""
+    if scope not in CREDENTIAL_SCOPES:
+        return f"credential_scope must be one of: {', '.join(CREDENTIAL_SCOPES)}"
+    if scope != SCOPE_PER_USER:
+        return ""
+    if not per_user_enabled():
+        return "per-person credentials are turned off on this deployment"
+    if (cfg.get("transport") or "") not in ("http", "sse"):
+        return "per-person credentials need an http or sse server (a stdio process serves every caller)"
+    if cfg.get("require_verified_identity") is False:
+        return ("per-person credentials need verified callers: this server is set to "
+                "accept the tenant key, which would let anyone with it use someone else's account")
+    return ""
+
+
+def _brokered_refs(route: str) -> tuple:
+    from storage.mcp_oauth_store import access_ref, client_secret_ref, refresh_ref
+    return tuple(f"shield://{r}" for r in (access_ref(route), refresh_ref(route),
+                                           client_secret_ref(route)))
+
+
+def _host(url: str) -> str:
+    return urlparse(url or "").hostname or ""
+
+
+async def user_credential_headers(tenant_id: str, route: str, cfg: dict,
+                                  principal_id: str) -> tuple[dict, str, dict]:
+    """The route config for one call, carrying this person's own token.
+
+    Returns (cfg for this call, the token, the grant's public view). Raises
+    ConnectRequired when the person has no usable grant. The returned config
+    has no header referring to the route's shared credential and no
+    `credential_mode`, so neither materialization nor the shared renewal path
+    can touch the shared token.
+    """
+    from storage.mcp_grant_store import GrantError, access_for_call
+
+    if not per_user_enabled():
+        raise ConnectRequired("disabled", tenant_id, route,
+                              "per-person credentials are turned off on this deployment")
+    if (cfg.get("transport") or "") not in ("http", "sse"):
+        raise ConnectRequired("disabled", tenant_id, route,
+                              "per-person credentials are not available for this server")
+    if not principal_id:
+        raise ConnectRequired("sign_in_required", tenant_id, route,
+                              "Sign in to use this server; it uses each person's own account")
+
+    upstream = cfg.get("url") or ""
+    try:
+        token, grant = access_for_call(tenant_id, route, principal_id, upstream)
+    except GrantError as e:
+        reason = {"not_connected": "not_connected", "needs_consent": "reconnect"}.get(e.reason, "error")
+        raise ConnectRequired(reason, tenant_id, route) from e
+
+    expires_at = int(grant.get("expires_at") or 0)
+    now = int(time.time())
+    if expires_at and expires_at - now <= refresh_margin_seconds():
+        if expires_at > now + 5:
+            # Still valid: use it now, refresh behind the call.
+            task = asyncio.create_task(_refresh_quietly(tenant_id, route, principal_id, upstream))
+            _background.add(task)
+            task.add_done_callback(_background.discard)
+        else:
+            await refresh_user_grant(tenant_id, route, principal_id, upstream)
+            try:
+                token, grant = access_for_call(tenant_id, route, principal_id, upstream)
+            except GrantError as e:
+                raise ConnectRequired("error", tenant_id, route) from e
+
+    refs = _brokered_refs(route)
+    headers = {k: v for k, v in (cfg.get("headers") or {}).items()
+               if k.lower() != "authorization" and not any(ref in str(v) for ref in refs)}
+    headers["Authorization"] = f"Bearer {token}"
+    out = {k: v for k, v in cfg.items() if k != "credential_mode"}
+    out["headers"] = headers
+    return out, token, grant
+
+
+async def _refresh_quietly(tenant_id: str, route: str, pid: str, upstream: str) -> None:
+    try:
+        await refresh_user_grant(tenant_id, route, pid, upstream, wait=False)
+    except ConnectRequired:
+        pass
+    except Exception as e:      # noqa: BLE001 - a background task must not raise
+        logger.info("mcp-cred: background refresh failed for %s/%s: %s",
+                    tenant_id, route, type(e).__name__)
+
+
+async def refresh_user_grant(tenant_id: str, route: str, pid: str, upstream: str,
+                             *, wait: bool = True, client=None) -> None:
+    """Refresh one person's token, single-flighted per person.
+
+    If another call holds the lock, wait up to _REFRESH_WAIT_S for it to land
+    (or return at once when `wait` is false). A refresh the provider rejects
+    permanently marks the grant needs_consent: the person must connect again.
+    """
+    from storage.mcp_grant_store import (STATUS_ERROR, STATUS_NEEDS_CONSENT, GrantError,
+                                         get_grant, refresh_token_for, set_status,
+                                         store_tokens)
+    from storage.mcp_oauth_store import get_broker
+
+    owner = take_lock(tenant_id, route, subject=pid)
+    if not owner:
+        if not wait:
+            return
+        # Another call is refreshing. Wait for its lock to be free, then use
+        # what it stored if it is fresh, or refresh ourselves if it failed.
+        deadline = time.monotonic() + _REFRESH_WAIT_S
+        while not owner:
+            if time.monotonic() >= deadline:
+                raise ConnectRequired("refresh_unavailable", tenant_id, route,
+                                      "your connection is being renewed; try again in a moment")
+            await asyncio.sleep(0.1)
+            owner = take_lock(tenant_id, route, subject=pid)
+        grant = get_grant(tenant_id, route, pid) or {}
+        if int(grant.get("expires_at") or 0) - int(time.time()) > refresh_margin_seconds():
+            drop_lock(tenant_id, route, owner, subject=pid)
+            return
+    try:
+        record = get_broker(tenant_id, route) or {}
+        endpoint = record.get("token_endpoint") or ""
+        if not endpoint or not record.get("client_id"):
+            raise ConnectRequired("not_configured", tenant_id, route,
+                                  "this server's sign-in is not configured; ask your administrator")
+        try:
+            refresh = refresh_token_for(tenant_id, route, pid, endpoint)
+        except GrantError as e:
+            set_status(tenant_id, route, pid, STATUS_NEEDS_CONSENT, error=e.reason)
+            raise ConnectRequired("reconnect", tenant_id, route) from e
+        data = {"grant_type": "refresh_token", "refresh_token": refresh,
+                "client_id": record.get("client_id") or "", **_token_extras(record)}
+        secret = CredentialContext(tenant_id=tenant_id, route=route, record=record).secret(
+            "client_secret_ref")
+        if secret:
+            data["client_secret"] = secret
+        try:
+            payload = await _with_client(client, lambda c: post_token_endpoint(
+                c, endpoint, data, purpose="oauth-token-refresh"))
+        except CredentialError as e:
+            set_status(tenant_id, route, pid,
+                       STATUS_NEEDS_CONSENT if e.permanent else STATUS_ERROR, error=e.message)
+            raise ConnectRequired("reconnect" if e.permanent else "refresh_unavailable",
+                                  tenant_id, route) from e
+        store_tokens(tenant_id, route, pid,
+                     access_token=str(payload["access_token"]),
+                     access_bindings=[_host(upstream) or _host(endpoint)],
+                     refresh_token=str(payload.get("refresh_token") or ""),
+                     refresh_bindings=[_host(endpoint)],
+                     expires_at=expiry_from(payload), scopes=payload.get("scope"))
+    finally:
+        drop_lock(tenant_id, route, owner, subject=pid)
+
+
+def scrub_secret(obj, secret: str):
+    """Replace every occurrence of `secret` in a result, recursively, so an
+    upstream that echoes the caller's token cannot hand it to the model."""
+    if not secret:
+        return obj
+    if isinstance(obj, str):
+        return obj.replace(secret, "[credential removed by Shield]")
+    if isinstance(obj, list):
+        return [scrub_secret(v, secret) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(scrub_secret(v, secret) for v in obj)
+    if isinstance(obj, dict):
+        return {k: scrub_secret(v, secret) for k, v in obj.items()}
+    return obj

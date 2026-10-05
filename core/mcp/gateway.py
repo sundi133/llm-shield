@@ -18,6 +18,8 @@ import os
 import re
 from typing import Awaitable, Callable, Optional
 
+from core.mcp.principal import check_verified, current_caller
+from core.mcp_credentials import is_per_user
 from storage.mcp_gateway_store import get_upstream
 
 logger = logging.getLogger("votal.mcp_gateway")
@@ -262,6 +264,12 @@ async def _audit_decision(event: dict) -> None:
         tool = event.get("tool", "")
         allowed = bool(event.get("allowed", False))
         reason = event.get("reason", "")
+        # Who made the call and how they were verified, when the request came
+        # through the gateway entry point. Absent for other callers of MCPProxy,
+        # so their entries are unchanged.
+        from core.mcp.principal import current_caller
+        caller = current_caller()
+        identity = caller.audit_fields() if caller is not None else None
         from storage.audit_log import audit_logger
         await audit_logger.log({
             "agent_key": event.get("agent_key", ""),
@@ -306,6 +314,7 @@ async def _audit_decision(event: dict) -> None:
                 "mode": event.get("mode", ""),
                 "would_block": event.get("would_block") or [],
                 "risk": event.get("risk", ""),
+                **({"identity": identity} if identity is not None else {}),
             },
         })
     except Exception as e:      # noqa: BLE001 - audit must never fail a call
@@ -409,7 +418,37 @@ class MCPGatewayRouter:
         local subprocess) is pooled, with a one-shot reconnect if its session dies.
         """
         cfg = self._load_cfg(tenant_id, route)
+        # "Verified callers only": refused here, before the upstream is
+        # contacted, on the config this call already read (no extra store read).
+        # Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (A4)
+        check_verified(tenant_id, route, cfg)
         transport = (cfg.get("transport") or "stdio").lower()
+        caller = current_caller()
+        if caller is not None:
+            caller.credential_scope = cfg.get("credential_scope") or "shared"
+
+        if is_per_user(cfg):
+            # Each person's own account: the call carries the caller's token and
+            # nothing else. No caller, no grant: refused (ConnectRequired),
+            # never served with the shared credential. Includes stdio, which
+            # per-person routes refuse.
+            from core.mcp_credentials import scrub_secret, user_credential_headers
+            call_cfg, secret, grant = await user_credential_headers(
+                tenant_id, route,
+                self._cfg_with_identity_headers(cfg, agent_key=agent_key, user_role=user_role),
+                caller.principal_id if (caller is not None and caller.verified) else "")
+            if caller is not None:
+                caller.upstream_account = grant.get("upstream_account") or ""
+            proxy = await self._proxy_factory(call_cfg, tenant_id)
+            try:
+                return scrub_secret(await fn(proxy), secret)
+            finally:
+                up = getattr(proxy, "_upstream", None)
+                if up is not None and hasattr(up, "aclose"):
+                    try:
+                        await up.aclose()
+                    except Exception:
+                        pass
 
         if transport not in ("stdio",):
             proxy = await self._proxy_factory(

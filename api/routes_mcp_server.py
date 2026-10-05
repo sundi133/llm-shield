@@ -143,7 +143,7 @@ MCP_TOOLS = [
 ]
 
 
-def _oauth_claims(authorization: str) -> dict | None:
+def _oauth_claims(authorization: str, audiences: tuple = ("shield-oauth",)) -> dict | None:
     """Validate a Shield-issued OAuth access token from an Authorization header.
 
     Returns the claims if the bearer is a valid Shield OAuth access token,
@@ -159,12 +159,51 @@ def _oauth_claims(authorization: str) -> dict | None:
         if not token or not is_jwt_format(token):
             return None
         from core.agent_tokens import get_signer
-        claims = decode_jwt(token, get_signer(), audience="shield-oauth")
+        claims = decode_jwt(token, get_signer())
+        # "shield-oauth" is the tenant-wide audience. A token from MCP sign-in
+        # names one gateway URL instead and is accepted only on that URL, which
+        # the gateway passes in `audiences` (docs/specs/mcp-verified-callers-
+        # and-user-credentials.md §3.3).
+        if claims.get("aud") not in audiences:
+            return None
         if claims.get("token_type") != "access_token":
             return None
-        return claims
     except Exception:
         return None
+    # /oauth/revoke writes the jti to the revocation list; until now nothing on
+    # the MCP path read it, so a revoked token kept working until it expired.
+    # Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (task A1)
+    jti = claims.get("jti")
+    if jti:
+        from storage.revocation import is_jti_revoked
+        if is_jti_revoked(jti):
+            return None
+    return claims
+
+
+def _request_oauth_claims(request) -> dict | None:
+    """`_oauth_claims` for this request's Authorization header, verified once.
+
+    Both identity resolution and principal resolution need the claims; caching
+    them on the request keeps the revocation read to one per request.
+    """
+    st = getattr(request, "state", None)
+    cached = getattr(st, "_shield_oauth_claims", _UNSET) if st is not None else _UNSET
+    if cached is not _UNSET:
+        return cached
+    h = getattr(request, "headers", None)
+    expected = getattr(st, "_shield_expected_aud", "") if st is not None else ""
+    audiences = ("shield-oauth", expected) if expected else ("shield-oauth",)
+    claims = _oauth_claims(h.get("authorization", "") if h is not None else "", audiences)
+    if st is not None:
+        try:
+            st._shield_oauth_claims = claims
+        except Exception:
+            pass
+    return claims
+
+
+_UNSET = object()
 
 
 def _bearer_token(authorization: str) -> str:
@@ -206,7 +245,7 @@ def _resolve_identity(request: Request) -> tuple[str, str, str]:
                 pass
 
     if not tenant_id or not agent_key:
-        claims = _oauth_claims(h.get("authorization", ""))
+        claims = _request_oauth_claims(request)
         if claims:
             tenant_id = tenant_id or (claims.get("tenant_id") or "")
             sub = claims.get("sub") or ""

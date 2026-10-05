@@ -31,7 +31,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 import time
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -52,15 +52,19 @@ from core.mcp_scan import (
 from core.mcp_credentials import MODE_AUTH_CODE
 from core.mcp_oauth import (
     OAuthBrokerError,
+    access_scopes,
+    authorization_header_state,
+    available_scopes,
     broker_enabled,
     build_authorize_url,
-    check_brokerable,
+    choose_scopes,
     discover,
     public_status,
     redirect_uri,
     register_client,
 )
 from storage.mcp_oauth_store import (
+    STATUS_CONFIGURED,
     STATUS_PENDING,
     take_pending,
     access_ref,
@@ -134,8 +138,17 @@ def _redact(cfg: dict) -> dict:
 #: materialized policy, and re-enable a server SecOps had switched off.
 _PRESERVED_ON_REWRITE = (
     "profile_id", "overrides", "effective_policy", "effective_rev",
-    "active", "scan", "scan_override",
+    "active", "scan", "scan_override", "require_verified_identity", "credential_scope",
 )
+
+
+def _check_credential_scope(cfg: dict) -> None:
+    """Refuse a route document whose credential scope cannot be honoured
+    (docs/specs/mcp-verified-callers-and-user-credentials.md, B2)."""
+    from core.mcp_credentials import credential_scope_error
+    problem = credential_scope_error(cfg)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
 
 
 def _carry_over(cfg: dict, existing: dict | None) -> dict:
@@ -143,6 +156,20 @@ def _carry_over(cfg: dict, existing: dict | None) -> dict:
     for key in _PRESERVED_ON_REWRITE:
         if existing and key in existing and key not in cfg:
             cfg[key] = existing[key]
+    # Re-saving a server without sending headers used to wipe its credential
+    # (a secret header, or the Authorization header an OAuth connect wired),
+    # because a rewrite replaces the document. Keep them when the request says
+    # nothing about headers AND the server is the same: a secret must never
+    # follow a route to a different host. `headers: {}` still clears them.
+    same_upstream = bool(existing) and all(
+        existing.get(k) == cfg.get(k) for k in ("transport", "url", "command"))
+    if same_upstream:
+        if "headers" not in cfg and existing.get("headers"):
+            cfg["headers"] = existing["headers"]
+        # Broker-owned: the OAuth record still exists, so the route must keep
+        # saying how its credential is renewed.
+        if existing.get("credential_mode"):
+            cfg.setdefault("credential_mode", existing["credential_mode"])
     return cfg
 
 
@@ -200,6 +227,23 @@ async def mcp_inventory(request: Request):
         # letting a route quietly serve a superseded revision.
         profile_id = s.get("profile_id")
         s["drift"] = is_drifted(s, get_profile(tenant_id, profile_id) if profile_id else None)
+    # "Verified callers only": the route's own value, else the tenant default.
+    # `verified_callers_only` is what the gateway enforces; the console shows an
+    # "accepts tenant key" pill on routes where it is false, the same class of
+    # "weaker than it looks" as bypassable.
+    from storage.identity_policy import get_policy
+    tenant_requires = bool(get_policy(tenant_id).get("require_verified_identity"))
+    from storage.mcp_grant_store import principals_for_route
+    for s in servers:
+        own = s.get("require_verified_identity")
+        s["verified_callers_only"] = own if isinstance(own, bool) else tenant_requires
+        s["verified_callers_source"] = "server" if isinstance(own, bool) else "tenant"
+        if s.get("credential_scope") == "per_user":
+            # Implied at runtime (core/mcp/principal.requires_verified): a
+            # per-person server always needs to know who the person is.
+            s["verified_callers_only"] = True
+            s["verified_callers_source"] = "per_user"
+            s["personal_connections"] = len(principals_for_route(tenant_id, s.get("route", "")))
     disabled = list_disabled_tools(tenant_id)
     disabled_names = {d.get("tool_name") for d in disabled}
 
@@ -208,6 +252,8 @@ async def mcp_inventory(request: Request):
         "servers": servers,
         "server_count": len(servers),
         "inactive_server_count": sum(1 for s in servers if not s["active"]),
+        "require_verified_identity": tenant_requires,
+        "unverified_server_count": sum(1 for s in servers if not s["verified_callers_only"]),
         "drifted_server_count": sum(1 for s in servers if s["drift"]),
         "disabled_tools": disabled,
         "disabled_count": len(disabled),
@@ -326,6 +372,13 @@ class RegisterServerRequest(BaseModel):
     # must leave the current state alone, or editing a URL would silently put a
     # server SecOps disabled back into service.
     active: Optional[bool] = None
+    # "Verified callers only" (docs/specs/mcp-verified-callers-and-user-credentials.md
+    # A4). Optional, not defaulted: None leaves the stored value alone, and a
+    # route with no value follows the tenant default.
+    require_verified_identity: Optional[bool] = None
+    # "shared" (one credential for everyone) or "per_user" (each person's own
+    # upstream account, B2). Optional: None leaves the stored value alone.
+    credential_scope: Optional[str] = None
 
     @model_validator(mode="after")
     def _check(self):
@@ -357,6 +410,7 @@ async def register_server(body: RegisterServerRequest, request: Request):
     cfg["created_at"] = (existing or {}).get("created_at") or int(time.time())
     cfg["updated_at"] = int(time.time())
     _carry_over(cfg, existing)
+    _check_credential_scope(cfg)
     set_upstream(tenant_id, route, cfg)
 
     try:
@@ -414,6 +468,16 @@ async def delete_server(route: str, request: Request):
     if existing and existing.get("profile_id"):
         unbind_route(tenant_id, existing["profile_id"], route)
 
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    # Credentials go first, while the route still exists: deleting the server
+    # used to leave its tokens in the vault and the delegation alive at the
+    # provider, for whatever server later reused the name. Best effort at the
+    # provider; the local delete always happens.
+    from core.mcp_credentials import disconnect_route, revoke_route_grants
+    shared = await disconnect_route(tenant_id, route, actor=actor)
+    per_person = await revoke_route_grants(tenant_id, route)
+
     if not delete_upstream(tenant_id, route):
         raise HTTPException(status_code=404, detail=f"route '{route}' not found")
     # A report left behind would be shown against whatever server later reuses
@@ -423,11 +487,16 @@ async def delete_server(route: str, request: Request):
     try:
         from storage.admin_audit import log_admin_action
         log_admin_action(action="mcp_gateway_delete_upstream", actor=actor,
-                         tenant_id=tenant_id, after={"route": route, "via": "portal"})
+                         tenant_id=tenant_id,
+                         after={"route": route, "via": "portal",
+                                "shared_credential_removed": shared["had_connection"],
+                                "personal_connections_revoked": per_person})
     except Exception:
         pass
 
-    return {"status": "deleted", "tenant_id": tenant_id, "route": route}
+    return {"status": "deleted", "tenant_id": tenant_id, "route": route,
+            "shared_credential_removed": shared["had_connection"],
+            "personal_connections_revoked": per_person}
 
 
 # ── onboarding scan ──────────────────────────────────────────────────────
@@ -572,6 +641,141 @@ async def disable_server(route: str, body: ToolActionRequest, request: Request):
             "server": _redact(cfg)}
 
 
+class IdentitySettingRequest(BaseModel):
+    # true or false sets this server; null makes it follow the tenant default.
+    require_verified_identity: Optional[bool] = None
+
+
+@router.put("/servers/{route}/identity")
+async def set_server_identity(route: str, body: IdentitySettingRequest, request: Request):
+    """Whether this server accepts only signed-in users and service accounts.
+
+    Effective on the next call; the gateway reads the route per call. Turning
+    it on refuses every client still sending only a tenant key, so check the
+    audit trail's `verified` share for this server first.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (A4)
+    """
+    tenant_id = _require_tenant(request)
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
+    before = cfg.get("require_verified_identity")
+    if body.require_verified_identity is None:
+        cfg.pop("require_verified_identity", None)
+    else:
+        cfg["require_verified_identity"] = body.require_verified_identity
+    _check_credential_scope(cfg)        # a per-person server cannot accept the key
+    cfg["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, cfg)
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_server_identity_requirement", actor=_actor(request),
+                         tenant_id=tenant_id,
+                         before={"route": route, "require_verified_identity": before},
+                         after={"route": route,
+                                "require_verified_identity": body.require_verified_identity})
+    except Exception:
+        pass
+    from storage.identity_policy import get_policy
+    own = cfg.get("require_verified_identity")
+    effective = own if isinstance(own, bool) else bool(
+        get_policy(tenant_id).get("require_verified_identity"))
+    return {"route": route, "require_verified_identity": own,
+            "verified_callers_only": effective}
+
+
+class CredentialScopeRequest(BaseModel):
+    credential_scope: str = Field(..., description="shared | per_user")
+
+
+@router.put("/servers/{route}/credential-scope")
+async def set_credential_scope(route: str, body: CredentialScopeRequest, request: Request):
+    """Whether the server uses one shared credential or each person's own account.
+
+    per_user needs an http/sse server and verified callers, and from the next
+    call refuses anyone who has not connected their own account, with a link to
+    connect. It never falls back to the shared credential.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (B2)
+    """
+    tenant_id = _require_tenant(request)
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
+    before = cfg.get("credential_scope") or "shared"
+    candidate = {**cfg, "credential_scope": body.credential_scope}
+    _check_credential_scope(candidate)
+    candidate["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, candidate)
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_server_credential_scope", actor=_actor(request),
+                         tenant_id=tenant_id,
+                         before={"route": route, "credential_scope": before},
+                         after={"route": route, "credential_scope": body.credential_scope})
+    except Exception:
+        pass
+    from core.mcp.resource import connect_url
+    out = {"route": route, "credential_scope": body.credential_scope}
+    if body.credential_scope == "per_user":
+        out["connect_url"] = connect_url(tenant_id, route)
+    return out
+
+
+# ── personal connections (B4) ────────────────────────────────────────────
+#
+# Who has connected their own account to a per-person server, and the means to
+# take it away. Revoking calls the provider's revocation endpoint (best effort)
+# and always deletes Shield's copy. Spec §4.9.
+
+
+@router.get("/servers/{route}/grants")
+async def list_server_grants(route: str, request: Request):
+    from storage.mcp_grant_store import list_grants
+    from storage.principal_store import get_principal
+    tenant_id = _require_tenant(request)
+    if not get_upstream(tenant_id, route):
+        raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
+    rows = []
+    for g in list_grants(tenant_id, route):
+        person = get_principal(tenant_id, g.get("principal_id", "")) or {}
+        rows.append({**g, "email": person.get("email", ""), "name": person.get("name", ""),
+                     "principal_type": person.get("type", ""),
+                     "principal_status": person.get("status", "")})
+    rows.sort(key=lambda r: (r.get("email") or r.get("principal_id") or "").lower())
+    return {"route": route, "grants": rows, "count": len(rows)}
+
+
+@router.delete("/servers/{route}/grants/{principal_id}")
+async def revoke_server_grant(route: str, principal_id: str, request: Request):
+    from core.mcp_credentials import revoke_grant
+    tenant_id = _require_tenant(request)
+    if not await revoke_grant(tenant_id, route, principal_id):
+        raise HTTPException(status_code=404, detail="that person has no connection to this server")
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_personal_connection_revoked", actor=_actor(request),
+                         tenant_id=tenant_id, after={"route": route, "principal_id": principal_id})
+    except Exception:
+        pass
+    return {"route": route, "principal_id": principal_id, "status": "revoked"}
+
+
+@router.delete("/servers/{route}/grants")
+async def revoke_all_server_grants(route: str, request: Request):
+    from core.mcp_credentials import revoke_route_grants
+    tenant_id = _require_tenant(request)
+    if not get_upstream(tenant_id, route):
+        raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
+    n = await revoke_route_grants(tenant_id, route)
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_personal_connections_revoked_all", actor=_actor(request),
+                         tenant_id=tenant_id, after={"route": route, "revoked": n})
+    except Exception:
+        pass
+    return {"route": route, "revoked": n}
+
+
 @router.post("/servers/{route}/enable")
 async def enable_server(route: str, request: Request):
     """Re-enable a server previously disabled here."""
@@ -604,6 +808,11 @@ class OAuthConnectRequest(BaseModel):
     # For providers without dynamic registration. Omit to self-register.
     client_id: Optional[str] = Field(None, max_length=256)
     client_secret: Optional[str] = Field(None, max_length=2048)
+    # The resource's own scopes to request (e.g. a Drive read-only scope). Must
+    # be ones the server or its provider advertises; required when the server
+    # advertises access scopes. docs/specs/mcp-oauth-standard-providers.md
+    scopes: Optional[list[Annotated[str, Field(min_length=1, max_length=256)]]] = Field(
+        None, max_length=20)
 
 
 def _oauth_precondition(route: str) -> dict:
@@ -624,14 +833,103 @@ def _oauth_precondition(route: str) -> dict:
     return {}
 
 
+@router.get("/servers/{route}/oauth/discover")
+async def oauth_discover(route: str, request: Request):
+    """What connecting this route would involve, before anything is stored.
+
+    The portal needs a server's scopes to offer them as choices, but status only
+    has them once a connect has been attempted. This runs the same
+    (SSRF-guarded) discovery as connect and stores nothing.
+    docs/specs/mcp-oauth-standard-providers.md, task 3.
+    """
+    tenant_id = _require_tenant(request)
+    _oauth_precondition(route)
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    if not cfg.get("url"):
+        raise HTTPException(
+            status_code=422,
+            detail="OAuth needs an http/sse upstream with a URL; stdio routes have "
+                   "no OAuth provider to discover")
+    import httpx
+    try:
+        from core.url_safety import guarded_async_client
+        async with guarded_async_client() as client:
+            meta = await discover(client, cfg["url"])
+    except OAuthBrokerError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {
+        "tenant_id": tenant_id, "route": route,
+        "issuer": meta.get("issuer") or "",
+        "profile": meta.get("profile") or "standard",
+        "available_scopes": available_scopes(meta),
+        "access_scopes": access_scopes(meta),
+        # False means the operator must bring a client ID (Google, most SaaS).
+        "dynamic_registration": bool(meta.get("registration_endpoint")),
+    }
+
+
+@router.delete("/servers/{route}/oauth")
+async def oauth_disconnect(route: str, request: Request):
+    """Disconnect the route's shared OAuth credential.
+
+    Revokes it at the provider (best effort), deletes its tokens and client
+    secret from the vault, and removes the Authorization header the connect
+    wired. The server stays registered; connect again to restore access.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.9)
+    """
+    tenant_id = _require_tenant(request)
+    if not get_upstream(tenant_id, route):
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    from core.mcp_credentials import disconnect_route
+    out = await disconnect_route(tenant_id, route, actor=_actor(request))
+    if not out["had_connection"]:
+        raise HTTPException(status_code=404, detail=f"route '{route}' has no OAuth connection")
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_oauth_disconnected", actor=_actor(request),
+                         tenant_id=tenant_id,
+                         after={"route": route, "revocation_attempted": out["revocation_attempted"]})
+    except Exception:
+        pass
+    return {"status": "disconnected", "route": route, **out}
+
+
 @router.get("/servers/{route}/oauth")
 async def get_oauth_status(route: str, request: Request):
     """Brokering status for one route. Never returns tokens, on any path."""
     tenant_id = _require_tenant(request)
     if not get_upstream(tenant_id, route):
         raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    cfg = get_upstream(tenant_id, route) or {}
     return {"tenant_id": tenant_id, "route": route,
-            "oauth": public_status(get_broker(tenant_id, route))}
+            "oauth": {**public_status(get_broker(tenant_id, route)),
+                      "authorization_header": authorization_header_state(cfg, route)}}
+
+
+def _wire_brokered_header(tenant_id: str, route: str) -> str:
+    """Point the route at the brokered token, unless it already sends an
+    Authorization header. Returns the resulting state.
+
+    Without this, a completed connection did nothing until an operator hand-set
+    the header. An existing header is never replaced: it may be a deliberate
+    credential, and the status says which one is in use. Only the reference to
+    the vault entry the callback just wrote is ever added, for the route named
+    in the pending record, never a value from the request.
+    """
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        return "none"
+    state = authorization_header_state(cfg, route)
+    if state != "none":
+        return state
+    from storage.mcp_oauth_store import access_ref
+    cfg["headers"] = {**(cfg.get("headers") or {}),
+                      "Authorization": f"Bearer shield://{access_ref(route)}"}
+    cfg["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, cfg)
+    return "brokered"
 
 
 def _callback_page(title: str, detail: str, ok: bool) -> HTMLResponse:
@@ -689,6 +987,11 @@ async def oauth_callback(request: Request, code: str = "", state: str = "",
             "It was already used, or it expired. Start the connection again from "
             "the Shield console.", ok=False)
 
+    if pending.get("principal_id"):
+        # A person connecting their own account to a per-person server (B3).
+        from api.routes_mcp_connect import complete_personal
+        return await complete_personal(request, pending, code)
+
     tenant_id = pending["tenant_id"]
     route = pending["route"]
     record = get_broker(tenant_id, route)
@@ -713,14 +1016,24 @@ async def oauth_callback(request: Request, code: str = "", state: str = "",
         return _callback_page("Could not exchange the authorization code",
                               e.message, ok=False)
 
+    header = _wire_brokered_header(tenant_id, route)
+
     try:
         from storage.admin_audit import log_admin_action
         log_admin_action(action="mcp_oauth_connected", actor="oauth-callback",
                          tenant_id=tenant_id,
                          after={"route": route, "issuer": record.get("issuer", ""),
-                                "via": "callback"})
+                                "via": "callback", "authorization_header": header})
     except Exception:
         pass
+
+    if header == "other":
+        return _callback_page(
+            f"Connected: {route}",
+            "Shield now holds a credential for this server, but the route already "
+            "sends its own Authorization header, so the new credential is not in "
+            "use. Remove that header in the Shield console to switch to it.",
+            ok=True)
 
     return _callback_page(
         f"Connected: {route}",
@@ -757,9 +1070,10 @@ async def oauth_connect(route: str, request: Request,
 
     try:
         redirect = redirect_uri()
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        from core.url_safety import guarded_async_client
+        async with guarded_async_client() as client:
             meta = await discover(client, upstream_url)
-            scopes = check_brokerable(meta)
+            scopes = choose_scopes(meta, body.scopes if body else None)
 
             if body and body.client_id:
                 creds = {"client_id": body.client_id,
@@ -778,6 +1092,40 @@ async def oauth_connect(route: str, request: Request,
         create_vault_entry(tenant_id, client_secret_ref(route),
                            creds["client_secret"], [host], mode="inject")
         secret_ref = f"shield://{client_secret_ref(route)}"
+
+    from core.mcp_credentials import is_per_user
+    if is_per_user(cfg):
+        # A per-person server never uses a shared token, so the operator only
+        # configures the OAuth app here; each person connects their own account
+        # on the connect page (docs/specs/mcp-verified-callers-and-user-
+        # credentials.md, B3). No pending state, no credential_mode on the route.
+        set_broker(tenant_id, route, {
+            "mode": MODE_AUTH_CODE, "issuer": meta["issuer"],
+            "authorization_endpoint": meta["authorization_endpoint"],
+            "token_endpoint": meta["token_endpoint"],
+            "revocation_endpoint": meta.get("revocation_endpoint", ""),
+            "client_id": creds["client_id"], "client_secret_ref": secret_ref,
+            "scopes": scopes, "profile": meta.get("profile") or "standard",
+            "resource": meta.get("resource") or "",
+            "available_scopes": available_scopes(meta),
+            "status": STATUS_CONFIGURED, "last_error": "", "connected_by": actor,
+        })
+        try:
+            from storage.admin_audit import log_admin_action
+            log_admin_action(action="mcp_oauth_configured", actor=actor, tenant_id=tenant_id,
+                             after={"route": route, "issuer": meta["issuer"],
+                                    "scopes": scopes, "credential_scope": "per_user"})
+        except Exception:
+            pass
+        from core.mcp.resource import connect_url
+        return JSONResponse(status_code=200, content={
+            "status": "configured", "tenant_id": tenant_id, "route": route,
+            "connect_url": connect_url(tenant_id, route),
+            "consent_note": (
+                f"This server uses each person's own account, so no account is "
+                f"connected here. Each person connects their own at the link below, "
+                f"signing in at {meta['issuer']} with scopes {', '.join(scopes)}."),
+        })
 
     verifier = generate_code_verifier()
     state = new_state()
@@ -798,6 +1146,9 @@ async def oauth_connect(route: str, request: Request,
         "client_id": creds["client_id"],
         "client_secret_ref": secret_ref,
         "scopes": scopes,
+        "profile": meta.get("profile") or "standard",
+        "resource": meta.get("resource") or "",
+        "available_scopes": available_scopes(meta),
         "access_token_ref": f"shield://{access_ref(route)}",
         "refresh_token_ref": f"shield://{refresh_ref(route)}",
         "status": STATUS_PENDING,
@@ -827,7 +1178,9 @@ async def oauth_connect(route: str, request: Request,
             f"Visiting this URL grants Shield ongoing access to the account you "
             f"sign in with at {meta['issuer']}, with scopes "
             f"{', '.join(scopes)}. The grant persists until revoked here or at "
-            f"the provider. Use a service account, not a personal login."),
+            f"the provider. Every agent and user of this route acts as that "
+            f"account, with its access. Use a service account or a dedicated "
+            f"account, not a personal login."),
     })
 
 

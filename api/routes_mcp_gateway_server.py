@@ -17,7 +17,14 @@ from typing import Any, Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from api.routes_mcp_server import _resolve_identity, _resolve_session_id
+from api.routes_mcp_server import _request_oauth_claims, _resolve_identity, _resolve_session_id
+from core.mcp import resource as resource_urls
+from core.mcp.gateway import _audit_decision
+from core.mcp_credentials import ConnectRequired
+from core.mcp.principal import (METHOD_PRINCIPAL_INACTIVE, IdentityRequired, check_verified,
+                                current_caller, reset_current_caller, resolve_caller,
+                                set_current_caller)
+from storage.mcp_gateway_store import get_upstream
 from core.mcp.gateway import GatewayError
 from core.mcp.gateway import router as gateway_router
 
@@ -53,7 +60,9 @@ def _challenge_enabled() -> bool:
         "SHIELD_MCP_AUTH_CHALLENGE", "").strip().lower() not in ("0", "off", "false", "no")
 
 
-def _unauthenticated(rpc_id: Any, request: Request) -> JSONResponse:
+def _unauthenticated(rpc_id: Any, request: Request, metadata_url: str = "", *,
+                     message: str = _UNAUTHENTICATED_MSG, data: Optional[dict] = None,
+                     error: str = "") -> JSONResponse:
     """401 with an RFC 9728 challenge, so a client knows to authenticate.
 
     This used to answer HTTP 200 carrying the JSON-RPC error, because
@@ -67,7 +76,7 @@ def _unauthenticated(rpc_id: Any, request: Request) -> JSONResponse:
     The resource metadata document already exists and is already served; this
     only points clients at it. Spec: docs/spec-mcp-gateway-bearer-auth.md
     """
-    resp = _err(rpc_id, -32001, _UNAUTHENTICATED_MSG)
+    resp = _err(rpc_id, -32001, message, data)
     if not _challenge_enabled():
         return resp
     resp.status_code = 401
@@ -79,7 +88,15 @@ def _unauthenticated(rpc_id: Any, request: Request) -> JSONResponse:
     if not base:
         base = str(getattr(request, "base_url", "") or "").rstrip("/")
     challenge = 'Bearer realm="mcp"'
-    if base:
+    if error:
+        # RFC 6750: the credential was presented and is no longer good (a
+        # suspended person's token), so the client should sign in again.
+        challenge += f', error="{error}"'
+    if metadata_url:
+        # A tenant-addressed URL has its own metadata, naming the server as the
+        # resource, so the client's sign-in yields a token for this server only.
+        challenge += f', resource_metadata="{metadata_url}"'
+    elif base:
         challenge += f', resource_metadata="{base}/.well-known/oauth-protected-resource"'
     resp.headers["WWW-Authenticate"] = challenge
     return resp
@@ -151,7 +168,7 @@ def _confirmation_details(decision: dict) -> dict:
     return out
 
 
-async def _dispatch(route: str, body: dict, request: Request):
+async def _dispatch(route: str, body: dict, request: Request, url_tenant: str = ""):
     method = body.get("method")
     params = body.get("params") or {}
     rpc_id = body.get("id")
@@ -159,11 +176,119 @@ async def _dispatch(route: str, body: dict, request: Request):
     if method in _NOTIFICATIONS:
         return Response(status_code=204)
 
-    tenant_id, agent_key, user_role = _resolve_identity(request)
-    if not tenant_id:
-        return _unauthenticated(rpc_id, request)
+    # Who is calling. Enforcement uses exactly the legacy tenant/agent/role;
+    # the verified principal (if any) is recorded on every decision this
+    # request makes. Spec: docs/specs/mcp-verified-callers-and-user-credentials.md
+    metadata = ""
+    if url_tenant:
+        # The tenant-addressed form: a token from MCP sign-in is accepted here,
+        # and only for this URL (its audience).
+        metadata = resource_urls.metadata_url(url_tenant, route, request)
+        try:
+            request.state._shield_expected_aud = resource_urls.resource_url(url_tenant, route, request)
+        except Exception:
+            pass
+    caller = resolve_caller(request, legacy=_resolve_identity,
+                            oauth_claims=_request_oauth_claims)
+    if not caller.tenant_id or (url_tenant and caller.tenant_id != url_tenant):
+        # A credential for another tenant is refused exactly like no credential:
+        # the URL names the tenant, and nothing here says whether it exists.
+        inactive = caller.identity_method == METHOD_PRINCIPAL_INACTIVE
+        return _unauthenticated(rpc_id, request, metadata,
+                                error="invalid_token" if inactive else "")
 
+    token = set_current_caller(caller)
+    try:
+        return await _dispatch_as(route, method, params, rpc_id, request, caller.tenant_id,
+                                  caller.agent_key, caller.user_role)
+    except IdentityRequired as e:
+        return await _identity_required(e, method, params, rpc_id, request)
+    except ConnectRequired as e:
+        return await _connect_required(e, method, params, rpc_id)
+    finally:
+        reset_current_caller(token)
+
+
+# Distinct from -32001 (who are you?) and -32002 (confirm this action): the
+# caller is known, and what is missing is their own upstream connection.
+_RPC_CONNECT_REQUIRED = -32003
+
+_CONNECT_MESSAGES = {
+    "not_connected": "Connect your account to use this server",
+    "reconnect": "Your connection to this server has expired. Connect your account again",
+    "refresh_unavailable": "Your connection is being renewed. Try again in a moment",
+    "sign_in_required": "Sign in to use this server; it uses each person's own account",
+    "not_configured": "This server's sign-in is not set up yet. Ask your administrator",
+    "disabled": "Per-person accounts are turned off for this server",
+}
+
+
+async def _connect_required(e: ConnectRequired, method: Any, params: dict,
+                            rpc_id: Any) -> JSONResponse:
+    """A per-person server, and the caller has no usable connection of their own.
+
+    JSON-RPC -32003 with the page where they connect. HTTP 200: the caller is
+    authenticated, so a 401 would send the client into sign-in, which cannot
+    fix this. The upstream was never contacted; the refusal is audited.
+    """
+    caller = current_caller()
+    try:
+        await _audit_decision({
+            "tenant_id": e.tenant_id, "route": e.route,
+            "tool": (params.get("name") or params.get("uri") or method) if isinstance(params, dict) else method,
+            "agent_key": caller.agent_key if caller else "",
+            "user_role": caller.user_role if caller else "",
+            "allowed": False, "action": "block", "mode": "enforce", "risk": "low",
+            "reason": _CONNECT_MESSAGES.get(e.reason, str(e)),
+            "results": [{"guardrail": "user_credential", "passed": False, "action": "block",
+                         "message": f"no usable personal connection: {e.reason}"}],
+        })
+    except Exception:       # noqa: BLE001 - audit never changes the answer
+        pass
+    return _err(rpc_id, _RPC_CONNECT_REQUIRED, _CONNECT_MESSAGES.get(e.reason, str(e)),
+                {"reason": e.reason,
+                 "connect_url": resource_urls.connect_url(e.tenant_id, e.route)})
+
+
+async def _identity_required(e: IdentityRequired, method: Any, params: dict, rpc_id: Any,
+                             request: Request) -> JSONResponse:
+    """Refuse an unverified caller on a "verified callers only" route.
+
+    HTTP 401 pointing at the route's tenant-addressed sign-in metadata, so an
+    MCP client starts sign-in by itself. A client on the tenant-wide URL is told
+    the URL to use instead: a token from sign-in is valid only on that one.
+    The refusal is audited, so a tenant can see who still sends a bare key.
+    """
+    sign_in_url = resource_urls.resource_url(e.tenant_id, e.route, request)
+    caller = e.caller
+    try:
+        await _audit_decision({
+            "tenant_id": e.tenant_id, "route": e.route,
+            "tool": (params.get("name") or params.get("uri") or method) if isinstance(params, dict) else method,
+            "agent_key": caller.agent_key if caller else "",
+            "user_role": caller.user_role if caller else "",
+            "allowed": False, "action": "block", "mode": "enforce", "risk": "high",
+            "reason": "this server accepts only signed-in users and service accounts",
+            "results": [{"guardrail": "verified_identity", "passed": False, "action": "block",
+                         "message": f"caller identity: {caller.identity_method if caller else 'none'}"}],
+        })
+    except Exception:       # noqa: BLE001 - audit never changes the answer
+        pass
+    return _unauthenticated(
+        rpc_id, request, resource_urls.metadata_url(e.tenant_id, e.route, request),
+        message="this MCP server accepts only signed-in users and service accounts",
+        data={"reason": "verified_identity_required", "sign_in_url": sign_in_url})
+
+
+async def _dispatch_as(route: str, method: Any, params: dict, rpc_id: Any, request: Request,
+                       tenant_id: str, agent_key: str, user_role: str):
     if method == "initialize":
+        # Answered locally, so it never reaches the router's check. Refuse here
+        # too, or a client would connect and only fail on its first call, after
+        # it had stopped looking for a sign-in prompt.
+        caller = current_caller()
+        if caller is not None and not caller.verified:
+            check_verified(tenant_id, route, get_upstream(tenant_id, route))
         return _ok(rpc_id, {
             "protocolVersion": _PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": False}},
@@ -227,6 +352,8 @@ async def _dispatch(route: str, body: dict, request: Request):
                 return _ok(rpc_id, out)
 
         return _err(rpc_id, -32601, f"method not supported by the Shield gateway: {method}")
+    except (IdentityRequired, ConnectRequired):
+        raise           # answered by _dispatch with their own responses
     except GatewayError as e:
         # 404 (no route) -> -32004; server-side -> -32000.
         return _err(rpc_id, -32004 if e.status == 404 else -32000, e.message)
@@ -238,12 +365,46 @@ async def _dispatch(route: str, body: dict, request: Request):
         return _err(rpc_id, -32603, f"error handling {method}: {detail}")
 
 
-@router.post("/{route}/mcp")
-async def gateway_mcp(route: str, request: Request):
+async def _body(request: Request):
     try:
         body = await request.json()
     except Exception:
-        return _err(None, -32700, "parse error: body is not valid JSON")
+        return None, _err(None, -32700, "parse error: body is not valid JSON")
     if not isinstance(body, dict):
-        return _err(None, -32600, "invalid request: expected a JSON-RPC object")
-    return await _dispatch(route, body, request)
+        return None, _err(None, -32600, "invalid request: expected a JSON-RPC object")
+    return body, None
+
+
+@router.post("/{route}/mcp")
+async def gateway_mcp(route: str, request: Request):
+    body, error = await _body(request)
+    return error or await _dispatch(route, body, request)
+
+
+@router.post("/t/{tenant}/{route}/mcp")
+async def gateway_mcp_for_tenant(tenant: str, route: str, request: Request):
+    """The same gateway, addressed by tenant, so an MCP client can sign a
+    person in with nothing but this URL.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.1)"""
+    if not (resource_urls.valid_segment(tenant) and resource_urls.valid_segment(route)):
+        return _err(None, -32004, "unknown server")
+    body, error = await _body(request)
+    return error or await _dispatch(route, body, request, url_tenant=tenant)
+
+
+# Protected-resource metadata (RFC 9728) for each tenant-addressed URL, at the
+# well-known path with the URL's path appended. Public: it is what a client
+# reads before it has any credential.
+wellknown_router = APIRouter(tags=["mcp-gateway-server"])
+
+
+@wellknown_router.get(resource_urls.WELL_KNOWN + "/gateway/t/{tenant}/{route}/mcp")
+async def gateway_resource_metadata(tenant: str, route: str, request: Request):
+    if not (resource_urls.valid_segment(tenant) and resource_urls.valid_segment(route)):
+        return JSONResponse(status_code=404, content={"error": "not_found"})
+    return {
+        "resource": resource_urls.resource_url(tenant, route, request),
+        "authorization_servers": [resource_urls.authorization_server_url(request)],
+        "scopes_supported": ["mcp"],
+        "bearer_methods_supported": ["header"],
+    }
