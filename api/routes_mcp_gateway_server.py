@@ -17,7 +17,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from api.routes_mcp_server import _resolve_identity, _resolve_session_id
+from api.routes_mcp_server import _request_oauth_claims, _resolve_identity, _resolve_session_id
+from core.mcp.principal import reset_current_caller, resolve_caller, set_current_caller
 from core.mcp.gateway import GatewayError
 from core.mcp.gateway import router as gateway_router
 
@@ -159,10 +160,24 @@ async def _dispatch(route: str, body: dict, request: Request):
     if method in _NOTIFICATIONS:
         return Response(status_code=204)
 
-    tenant_id, agent_key, user_role = _resolve_identity(request)
-    if not tenant_id:
+    # Who is calling. Enforcement uses exactly the legacy tenant/agent/role;
+    # the verified principal (if any) is recorded on every decision this
+    # request makes. Spec: docs/specs/mcp-verified-callers-and-user-credentials.md
+    caller = resolve_caller(request, legacy=_resolve_identity,
+                            oauth_claims=_request_oauth_claims)
+    if not caller.tenant_id:
         return _unauthenticated(rpc_id, request)
 
+    token = set_current_caller(caller)
+    try:
+        return await _dispatch_as(route, method, params, rpc_id, request, caller.tenant_id,
+                                  caller.agent_key, caller.user_role)
+    finally:
+        reset_current_caller(token)
+
+
+async def _dispatch_as(route: str, method: Any, params: dict, rpc_id: Any, request: Request,
+                       tenant_id: str, agent_key: str, user_role: str):
     if method == "initialize":
         return _ok(rpc_id, {
             "protocolVersion": _PROTOCOL_VERSION,

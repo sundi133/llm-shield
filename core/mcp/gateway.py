@@ -262,6 +262,12 @@ async def _audit_decision(event: dict) -> None:
         tool = event.get("tool", "")
         allowed = bool(event.get("allowed", False))
         reason = event.get("reason", "")
+        # Who made the call and how they were verified, when the request came
+        # through the gateway entry point. Absent for other callers of MCPProxy,
+        # so their entries are unchanged.
+        from core.mcp.principal import current_caller
+        caller = current_caller()
+        identity = caller.audit_fields() if caller is not None else None
         from storage.audit_log import audit_logger
         await audit_logger.log({
             "agent_key": event.get("agent_key", ""),
@@ -306,6 +312,7 @@ async def _audit_decision(event: dict) -> None:
                 "mode": event.get("mode", ""),
                 "would_block": event.get("would_block") or [],
                 "risk": event.get("risk", ""),
+                **({"identity": identity} if identity is not None else {}),
             },
         })
     except Exception as e:      # noqa: BLE001 - audit must never fail a call

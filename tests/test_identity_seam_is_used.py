@@ -37,6 +37,7 @@ ALLOWED = {
     "core/mcp/enforcement.py": "passes into guard context",
     "core/mcp/http_enforcer.py": "forwards to the REST tool endpoint",
     "api/routes_mcp_server.py": "resolves identity for the MCP path",
+    "core/mcp/principal.py": "labels role_source in the audit record, not authorization",
     "api/routes_openapi_mcp.py": "MCP shim",
     "api/routes_rbac_test.py": "test-harness route that sends the header",
     "api/routes_governance.py": "attribution string, not authorization",
