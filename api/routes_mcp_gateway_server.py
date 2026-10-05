@@ -245,9 +245,14 @@ async def _connect_required(e: ConnectRequired, method: Any, params: dict,
         })
     except Exception:       # noqa: BLE001 - audit never changes the answer
         pass
-    return _err(rpc_id, _RPC_CONNECT_REQUIRED, _CONNECT_MESSAGES.get(e.reason, str(e)),
-                {"reason": e.reason,
-                 "connect_url": resource_urls.connect_url(e.tenant_id, e.route)})
+    link = resource_urls.connect_url(e.tenant_id, e.route)
+    message = _CONNECT_MESSAGES.get(e.reason, str(e))
+    if e.reason in ("not_connected", "reconnect"):
+        # In the text, not only in `data`: AI apps show the message to the
+        # person, and most do not show error data at all.
+        message = f"{message}: {link}"
+    return _err(rpc_id, _RPC_CONNECT_REQUIRED, message,
+                {"reason": e.reason, "connect_url": link})
 
 
 async def _identity_required(e: IdentityRequired, method: Any, params: dict, rpc_id: Any,

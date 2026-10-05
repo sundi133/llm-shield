@@ -1224,13 +1224,21 @@ async def user_credential_headers(tenant_id: str, route: str, cfg: dict,
             except GrantError as e:
                 raise ConnectRequired("error", tenant_id, route) from e
 
-    refs = _brokered_refs(route)
-    headers = {k: v for k, v in (cfg.get("headers") or {}).items()
-               if k.lower() != "authorization" and not any(ref in str(v) for ref in refs)}
-    headers["Authorization"] = f"Bearer {token}"
-    out = {k: v for k, v in cfg.items() if k != "credential_mode"}
-    out["headers"] = headers
+    out = without_shared_credential(route, cfg)
+    out["headers"]["Authorization"] = f"Bearer {token}"
     return out, token, grant
+
+
+def without_shared_credential(route: str, cfg: dict) -> dict:
+    """The route config with no Authorization header, no header referring to
+    the route's brokered credential, and no credential_mode: nothing that can
+    reach the shared token. The base for a person's own call, and on its own
+    for the anonymous tool listing a person sees before connecting."""
+    refs = _brokered_refs(route)
+    out = {k: v for k, v in cfg.items() if k != "credential_mode"}
+    out["headers"] = {k: v for k, v in (cfg.get("headers") or {}).items()
+                      if k.lower() != "authorization" and not any(ref in str(v) for ref in refs)}
+    return out
 
 
 async def _refresh_quietly(tenant_id: str, route: str, pid: str, upstream: str) -> None:

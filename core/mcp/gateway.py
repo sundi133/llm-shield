@@ -409,7 +409,8 @@ class MCPGatewayRouter:
         self._pool[key] = proxy
         return proxy
 
-    async def _call(self, tenant_id: str, route: str, fn, *, agent_key: str = "", user_role: Optional[str] = None):
+    async def _call(self, tenant_id: str, route: str, fn, *, agent_key: str = "",
+                    user_role: Optional[str] = None, listing: bool = False):
         """Run fn against the routed upstream.
 
         Network transports (http/sse) connect **per call** and close in the same
@@ -432,39 +433,36 @@ class MCPGatewayRouter:
             # nothing else. No caller, no grant: refused (ConnectRequired),
             # never served with the shared credential. Includes stdio, which
             # per-person routes refuse.
-            from core.mcp_credentials import scrub_secret, user_credential_headers
-            call_cfg, secret, grant = await user_credential_headers(
-                tenant_id, route,
-                self._cfg_with_identity_headers(cfg, agent_key=agent_key, user_role=user_role),
-                caller.principal_id if (caller is not None and caller.verified) else "")
+            from core.mcp_credentials import (ConnectRequired, scrub_secret,
+                                              user_credential_headers,
+                                              without_shared_credential)
+            base_cfg = self._cfg_with_identity_headers(cfg, agent_key=agent_key, user_role=user_role)
+            try:
+                call_cfg, secret, grant = await user_credential_headers(
+                    tenant_id, route, base_cfg,
+                    caller.principal_id if (caller is not None and caller.verified) else "")
+            except ConnectRequired as e:
+                if not (listing and e.reason in ("not_connected", "reconnect")):
+                    raise
+                # Before a person connects, their AI app still needs the tool
+                # list, or it shows an empty server and never makes the call
+                # that would tell them to connect. Ask the upstream with NO
+                # credential (never the shared one); if it will not list
+                # anonymously, the person gets the connect message instead.
+                try:
+                    return await self._run_network(
+                        without_shared_credential(route, base_cfg), tenant_id, fn)
+                except Exception as refused:        # noqa: BLE001
+                    raise e from refused
             if caller is not None:
                 caller.upstream_account = grant.get("upstream_account") or ""
-            proxy = await self._proxy_factory(call_cfg, tenant_id)
-            try:
-                return scrub_secret(await fn(proxy), secret)
-            finally:
-                up = getattr(proxy, "_upstream", None)
-                if up is not None and hasattr(up, "aclose"):
-                    try:
-                        await up.aclose()
-                    except Exception:
-                        pass
+            return scrub_secret(await self._run_network(call_cfg, tenant_id, fn), secret)
 
         if transport not in ("stdio",):
-            proxy = await self._proxy_factory(
-                self._cfg_with_identity_headers(cfg, agent_key=agent_key, user_role=user_role),
-                tenant_id,
-            )
-            try:
-                return await fn(proxy)
-            finally:
-                up = getattr(proxy, "_upstream", None)
-                if up is not None and hasattr(up, "aclose"):
-                    try:
-                        await up.aclose()
-                    except Exception:
-                        pass
             # (per-call connect avoids cross-task session lifecycle entirely)
+            return await self._run_network(
+                self._cfg_with_identity_headers(cfg, agent_key=agent_key, user_role=user_role),
+                tenant_id, fn)
 
         proxy = await self._pooled_proxy(tenant_id, route, cfg)
         # The connection is pooled; the policy must not be. Push the freshly read
@@ -483,6 +481,19 @@ class MCPGatewayRouter:
             self.invalidate(tenant_id, route)
             return await fn(await self._pooled_proxy(tenant_id, route, cfg))
 
+    async def _run_network(self, cfg: dict, tenant_id: str, fn):
+        """Connect per call, run fn, always close in the same task."""
+        proxy = await self._proxy_factory(cfg, tenant_id)
+        try:
+            return await fn(proxy)
+        finally:
+            up = getattr(proxy, "_upstream", None)
+            if up is not None and hasattr(up, "aclose"):
+                try:
+                    await up.aclose()
+                except Exception:
+                    pass
+
     async def list_tools(self, tenant_id: str, route: str, *, agent_key: str, user_role: Optional[str]):
         return await self._call(
             tenant_id,
@@ -490,6 +501,7 @@ class MCPGatewayRouter:
             lambda p: p.list_tools(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
             agent_key=agent_key,
             user_role=user_role,
+            listing=True,
         )
 
     async def call_tool(
@@ -516,6 +528,7 @@ class MCPGatewayRouter:
             lambda p: p.list_resources(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
             agent_key=agent_key,
             user_role=user_role,
+            listing=True,
         )
 
     async def list_resource_templates(self, tenant_id, route, *, agent_key, user_role):
@@ -525,6 +538,7 @@ class MCPGatewayRouter:
             lambda p: p.list_resource_templates(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
             agent_key=agent_key,
             user_role=user_role,
+            listing=True,
         )
 
     async def read_resource(self, tenant_id, route, uri, *, agent_key, user_role):
@@ -543,6 +557,7 @@ class MCPGatewayRouter:
             lambda p: p.list_prompts(agent_key=agent_key, user_role=user_role, tenant_id=tenant_id),
             agent_key=agent_key,
             user_role=user_role,
+            listing=True,
         )
 
     async def get_prompt(self, tenant_id, route, name, arguments, *, agent_key, user_role):
