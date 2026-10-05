@@ -466,6 +466,7 @@ class AuthCodeProvider:
             "redirect_uri": ctx.record.get("redirect_uri") or _redirect_uri(),
             "client_id": ctx.record.get("client_id") or "",
             "code_verifier": code_verifier,
+            **_token_extras(ctx.record),
         }
         secret = ctx.secret("client_secret_ref")
         if secret:
@@ -498,6 +499,7 @@ class AuthCodeProvider:
             "grant_type": "refresh_token",
             "refresh_token": refresh,
             "client_id": ctx.record.get("client_id") or "",
+            **_token_extras(ctx.record),
         }
         secret = ctx.secret("client_secret_ref")
         if secret:
@@ -533,6 +535,13 @@ class AuthCodeProvider:
             # provider outage would leave an un-deletable route behind.
             logger.info("mcp-cred: revocation call failed for %s/%s",
                         ctx.tenant_id, ctx.route)
+
+
+def _token_extras(record: dict) -> dict:
+    """RFC 8707 `resource` on token requests, per the record's provider profile
+    (docs/specs/mcp-oauth-standard-providers.md)."""
+    from core.mcp_oauth import token_request_extras
+    return token_request_extras(record)
 
 
 def _redirect_uri() -> str:

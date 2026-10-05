@@ -31,7 +31,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 import time
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -53,8 +53,9 @@ from core.mcp_credentials import MODE_AUTH_CODE
 from core.mcp_oauth import (
     OAuthBrokerError,
     broker_enabled,
+    available_scopes,
     build_authorize_url,
-    check_brokerable,
+    choose_scopes,
     discover,
     public_status,
     redirect_uri,
@@ -604,6 +605,11 @@ class OAuthConnectRequest(BaseModel):
     # For providers without dynamic registration. Omit to self-register.
     client_id: Optional[str] = Field(None, max_length=256)
     client_secret: Optional[str] = Field(None, max_length=2048)
+    # The resource's own scopes to request (e.g. a Drive read-only scope). Must
+    # be ones the server or its provider advertises; required when the server
+    # advertises access scopes. docs/specs/mcp-oauth-standard-providers.md
+    scopes: Optional[list[Annotated[str, Field(min_length=1, max_length=256)]]] = Field(
+        None, max_length=20)
 
 
 def _oauth_precondition(route: str) -> dict:
@@ -759,7 +765,7 @@ async def oauth_connect(route: str, request: Request,
         redirect = redirect_uri()
         async with httpx.AsyncClient(follow_redirects=True) as client:
             meta = await discover(client, upstream_url)
-            scopes = check_brokerable(meta)
+            scopes = choose_scopes(meta, body.scopes if body else None)
 
             if body and body.client_id:
                 creds = {"client_id": body.client_id,
@@ -798,6 +804,9 @@ async def oauth_connect(route: str, request: Request,
         "client_id": creds["client_id"],
         "client_secret_ref": secret_ref,
         "scopes": scopes,
+        "profile": meta.get("profile") or "standard",
+        "resource": meta.get("resource") or "",
+        "available_scopes": available_scopes(meta),
         "access_token_ref": f"shield://{access_ref(route)}",
         "refresh_token_ref": f"shield://{refresh_ref(route)}",
         "status": STATUS_PENDING,
@@ -827,7 +836,9 @@ async def oauth_connect(route: str, request: Request,
             f"Visiting this URL grants Shield ongoing access to the account you "
             f"sign in with at {meta['issuer']}, with scopes "
             f"{', '.join(scopes)}. The grant persists until revoked here or at "
-            f"the provider. Use a service account, not a personal login."),
+            f"the provider. Every agent and user of this route acts as that "
+            f"account, with its access. Use a service account or a dedicated "
+            f"account, not a personal login."),
     })
 
 
