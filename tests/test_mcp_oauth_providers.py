@@ -437,3 +437,63 @@ def test_discover_refuses_stdio_and_unknown_routes(client):
     assert r.status_code == 422
     with patch("core.secret_vault.keyprovider.vault_enabled", return_value=True):
         assert client.get("/v1/tenant/me/mcp/servers/nope/oauth/discover", headers=H).status_code == 404
+
+
+# ── the brokered token actually reaches a server on a different host ───────
+#
+# Google issues tokens from oauth2.googleapis.com and serves MCP on
+# drivemcp.googleapis.com. The access token used to be bound to the token
+# endpoint's host, so the gateway, which resolves it for the upstream's host,
+# could never use it. These run the real vault and the gateway's real header
+# resolution.
+
+
+@pytest.fixture
+def real_vault(monkeypatch):
+    import base64
+    from core.secret_vault.keyprovider import _reset_provider_for_tests
+    from storage.tenant_store import _fallback_store
+    monkeypatch.setenv("SECRET_VAULT_ENABLED", "true")
+    monkeypatch.setenv("SECRET_VAULT_KEY_PROVIDER", "software")
+    monkeypatch.setenv("SECRET_VAULT_KEK", base64.b64encode(b"k" * 32).decode())
+    _reset_provider_for_tests()
+    yield
+    _reset_provider_for_tests()
+    for k in [k for k in _fallback_store if k.startswith("vault:")]:
+        del _fallback_store[k]
+
+
+def _store_google_tokens():
+    ostore.set_broker("acme", "gdrive", {"status": "pending", "profile": "google"})
+    ctx = creds.CredentialContext(
+        tenant_id="acme", route="gdrive", upstream_url=DRIVE_MCP, actor="test",
+        record={"token_endpoint": "https://oauth2.googleapis.com/token"})
+    creds.store_credential(ctx, token="ya29.ACCESS", expires_at=9_999_999_999,
+                           refresh_token="1//REFRESH", refresh_token_held=True)
+
+
+def test_the_gateway_can_send_googles_access_token_to_the_drive_server(real_vault):
+    from core.mcp.gateway import materialize_upstream_headers
+    _store_google_tokens()
+    cfg = {"route": "gdrive", "transport": "http", "url": DRIVE_MCP,
+           "headers": {"Authorization": "Bearer shield://oauth-gdrive-access"}}
+    out = materialize_upstream_headers(cfg, "acme")
+    assert out["headers"]["Authorization"] == "Bearer ya29.ACCESS"
+
+
+def test_the_refresh_token_is_only_released_to_the_token_endpoint(real_vault):
+    from core.secret_vault.materialize import materialize_headers
+    _store_google_tokens()
+    ref = {"X-R": "shield://oauth-gdrive-refresh"}
+    to_drive, unresolved = materialize_headers("acme", ref, DRIVE_MCP)
+    assert to_drive["X-R"] == "shield://oauth-gdrive-refresh" and unresolved == ["X-R"]
+    to_token, _ = materialize_headers("acme", ref, "https://oauth2.googleapis.com/token")
+    assert to_token["X-R"] == "1//REFRESH"
+
+
+def test_the_access_token_is_not_released_anywhere_else(real_vault):
+    from core.secret_vault.materialize import materialize_headers
+    _store_google_tokens()
+    out, unresolved = materialize_headers(
+        "acme", {"Authorization": "Bearer shield://oauth-gdrive-access"}, "https://evil.example/mcp")
+    assert "ya29" not in out["Authorization"] and unresolved == ["Authorization"]

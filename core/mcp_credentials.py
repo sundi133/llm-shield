@@ -179,27 +179,38 @@ def store_credential(ctx: CredentialContext, *, token: str,
                      refresh_token_held: Optional[bool] = None) -> dict:
     """Write the acquired credential to the vault and update the record.
 
-    The vault is the only place a token lands. Binding is the token endpoint's
-    host — or the upstream's, for modes with no token endpoint — because the
-    vault refuses a binding to a Shield host and materializes only on the leg out
-    to the real upstream, which is exactly where this is used.
+    The vault is the only place a token lands, and it reveals a secret only on
+    the way out to a host the secret is bound to. So each secret is bound to
+    where it is actually sent:
+
+    * the access token goes to the MCP upstream on every gateway call, so it is
+      bound to the upstream's host;
+    * the refresh token only ever goes to the token endpoint, so it is bound
+      there.
+
+    Both used to be bound to the token endpoint's host. That only worked when the
+    provider issues tokens from the same host it serves MCP on (Higgsfield).
+    Google issues from oauth2.googleapis.com and serves drivemcp.googleapis.com,
+    so the gateway could never resolve the access token and refused every call.
     """
     from storage.mcp_oauth_store import (STATUS_CONNECTED, access_ref,
                                          refresh_ref, update_status)
     from storage.vault_store import create_vault_entry
 
-    endpoint = ctx.record.get("token_endpoint") or ctx.upstream_url or ""
-    host = urlparse(endpoint).hostname or ""
-    if not host:
+    token_host = urlparse(ctx.record.get("token_endpoint") or "").hostname or ""
+    upstream_host = urlparse(ctx.upstream_url or "").hostname or ""
+    access_host = upstream_host or token_host
+    refresh_host = token_host or upstream_host
+    if not access_host:
         raise CredentialError(
             500, "cannot determine the binding host for this credential",
             permanent=True)
 
-    create_vault_entry(ctx.tenant_id, access_ref(ctx.route), token, [host],
+    create_vault_entry(ctx.tenant_id, access_ref(ctx.route), token, [access_host],
                        mode="inject")
     if refresh_token:
         create_vault_entry(ctx.tenant_id, refresh_ref(ctx.route), refresh_token,
-                           [host], mode="inject")
+                           [refresh_host], mode="inject")
 
     update_status(ctx.tenant_id, ctx.route, STATUS_CONNECTED,
                   expires_at=expires_at, mark_refreshed=True,

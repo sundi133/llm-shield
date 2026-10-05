@@ -236,6 +236,14 @@ held.
    - Renewal has no background timer: the gateway refreshes a token on the first
      call after it nears expiry (`core/mcp/gateway.py` ensure_credential_fresh).
      The guide says so.
+   - Found and fixed: the access token was bound in the vault to the token
+     endpoint's host, but the gateway releases it for the upstream's host.
+     Fine when both are one host (Higgsfield); for Google
+     (oauth2.googleapis.com vs drivemcp.googleapis.com) the gateway could never
+     resolve it and would refuse every call. The access token is now bound to
+     the upstream host and the refresh token stays bound to the token endpoint.
+     Regression tests use the real vault and the gateway's real header
+     resolution.
    - Found, not fixed here (pre-existing, any HTTP upstream): when an upstream
      rejects a call (e.g. 401 for a missing or expired token), the MCP client
      raises `asyncio.CancelledError`, which escapes the gateway's
