@@ -1,0 +1,13 @@
+# Votal Shield hook config. Copy to ~/.votal/hook.conf for a personal test, or
+# /Library/Application Support/Votal/hook.conf (macOS) and /etc/votal/hook.conf
+# (Linux) for a managed install. Read by the script, never sourced; keep it
+# readable only by you (chmod 600).
+SHIELD_URL=https://api.guardrails.votal.ai
+SHIELD_API_KEY=<your tenant key>
+SHIELD_AGENT=claude-code
+# Seconds; keep below the hook's "timeout" in the settings above.
+SHIELD_TIMEOUT=25
+# Before a call, a failure denies (the default). After a call, a failure
+# lets the result through (the default) or withholds it.
+ON_UNREACHABLE=deny
+ON_UNREACHABLE_RESULT=allow

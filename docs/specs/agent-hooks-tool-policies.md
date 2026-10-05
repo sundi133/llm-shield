@@ -367,6 +367,44 @@ real tenant, model guards stubbed, Secrets patterns real). Six safeguards
 sabotage-checked; the seventh (ignoring `after_call` in the route) is caught
 one layer down by `check_result`. Clean venv: 6239 passed.
 
+**Task 3 (done).** `POST /v1/shield/hooks/codex`: the same handler as
+Claude Code, with Codex's shapes. Before a call: the same deny JSON; an `ask`
+becomes a deny ("needs a person's confirmation, which Codex hooks cannot ask
+for"), because Codex runs the tool on `ask`. After a call: a redaction is
+`{"decision": "block", "reason": "... Result:\n<redacted>"}` and a withheld
+result is `{"decision": "block", "reason": "[Shield withheld this result:
+...]"}`; Codex replaces the result with the reason (task 0). Tenant-key
+callers only: fleet rollout (`agent_hooks`) knows Claude Code only, so a
+device-agent key gets a 400 here.
+
+The script (`claude_code_hook.sh` and its PowerShell twin):
+- `--target claude-code | codex` and `--config <path>`, in any order.
+- The input is buffered to read `hook_event_name`, then forwarded unchanged.
+- After a call, Shield's answer (already in the agent's format) is passed
+  through; a failure follows `ON_UNREACHABLE_RESULT` (`allow`, default, or
+  `withhold`). Before a call, every failure still exits 2.
+- Argument parsing never `shift 2`s past the end, which is fatal in some
+  shells and, as an exit code other than 2, would fail open (sabotage-checked).
+- The device agent's embedded copy is regenerated
+  (`packages/votal-device-agent/packaging/sync_hook_scripts.py`).
+
+Amendments: the script keeps its name, `claude_code_hook.sh`, instead of
+becoming `shield_hook.sh`: deployed laptops reference it by that name, and a
+renamed or missing fail-closed script denies every call. The flag is
+`--target`, not `--agent`, because the config already has `SHIELD_AGENT` (the
+agent id).
+
+Reference files: `examples/agent-hooks/` (profile, Claude Code HTTP and
+fail-closed settings, Codex hooks, script config, README with the end-to-end
+test), kept valid by `tests/test_agent_hooks_examples.py`.
+
+Not run: the PowerShell twin (no PowerShell on the build machine; checked by
+reading, as before) and real Claude Code (sign-in pending).
+
+Tests: `tests/test_codex_hook_tool_policies.py` (28: route on the real app,
+script under sh and dash against a fake Shield). Six safeguards
+sabotage-checked. Clean venv: 6271 passed.
+
 ## 10. How you will test it (after tasks 1 to 3)
 
 **Claude Code**: put the §4.4 hooks in `~/.claude/settings.json` (or

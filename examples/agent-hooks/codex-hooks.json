@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"$HOME/.votal/claude_code_hook.sh\" --config \"$HOME/.votal/hook.conf\" --target codex || exit 2",
+            "timeout": 30,
+            "statusMessage": "Votal Shield: checking this call"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"$HOME/.votal/claude_code_hook.sh\" --config \"$HOME/.votal/hook.conf\" --target codex",
+            "timeout": 30,
+            "statusMessage": "Votal Shield: checking the result"
+          }
+        ]
+      }
+    ]
+  }
+}

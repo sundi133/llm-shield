@@ -1,0 +1,18 @@
+{
+  "description": "Coding agents on laptops: Tool Registry rules before and after each tool call",
+  "filesystem": {
+    "read_write": ["@project", "/tmp"],
+    "deny": ["~/.ssh/**", "~/.aws/**"]
+  },
+  "process": {
+    "deny_commands": ["openssl enc*", "gpg -c*"]
+  },
+  "tool_policies": {
+    "before_call": true,
+    "after_call": true,
+    "model_tools_before": ["Bash", "Write", "Edit", "MultiEdit", "apply_patch", "WebFetch", "mcp__.*"],
+    "model_tools_after": ["Bash", "Read", "WebFetch", "mcp__.*"],
+    "max_output_chars": 200000,
+    "check_timeout_s": 20
+  }
+}

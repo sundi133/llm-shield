@@ -222,13 +222,18 @@ def test_powershell_twin_has_the_same_rules():
     src = open(PS1).read()
     exits = [l.strip() for l in src.splitlines() if "exit " in l and not l.lstrip().startswith("#")]
     assert {e.split("exit ")[1].split()[0].strip("}") for e in exits} == {"0", "2"}
-    assert sum("exit 0" in e for e in exits) == 3       # {}, ask, and ON_UNREACHABLE=allow
+    # {}, ask, ON_UNREACHABLE=allow; and two AFTER a call only (docs/specs/
+    # agent-hooks-tool-policies.md 4.3): a failure lets the result through or
+    # withholds it, and Shield's answer is passed on. Neither is reachable
+    # before a call, where every failure still exits 2.
+    assert sum("exit 0" in e for e in exits) == 5
+    assert src.count('if ($script:Event -eq "PostToolUse")') == 2
     fail = src[src.index("function Fail"):src.index("trap {")]
     assert 'if ($script:OnUnreachable -eq "allow")' in fail and "exit 0" in fail
     assert 'if ($decision -eq "deny") {' in src and "Deny $why" in src   # Shield's deny never Fail
     assert "trap {" in src and '$ErrorActionPreference = "Stop"' in src
     assert "$env:SHIELD" not in src                     # config file only
-    assert "/v1/shield/hooks/claude-code" in src
+    assert "/v1/shield/hooks/$Target" in src and '[ValidateSet("claude-code", "codex")]' in src
     assert "-TimeoutSec $timeout" in src
 
 

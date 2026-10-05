@@ -1,4 +1,8 @@
-# Votal Shield fail-closed hook for Claude Code (PreToolUse), Windows.
+# Votal Shield fail-closed hook for Claude Code and Codex (PreToolUse and
+# PostToolUse), Windows. -Target claude-code (default) or codex; after a call
+# Shield's answer is passed through, and a failure follows
+# ON_UNREACHABLE_RESULT (allow, the default, or withhold).
+# docs/specs/agent-hooks-tool-policies.md section 4.3.
 # Spec: docs/specs/agent-hook-adapter.md, section 4.3. The twin of
 # claude_code_hook.sh: same config, same answers, same rule that EVERY
 # failure exits 2 (Claude Code lets a call through on any other exit code).
@@ -19,7 +23,8 @@
 #   127.0.0.1 with its local secret instead of Shield with a tenant key).
 #   Never read from the environment. Windows PowerShell 5.1 or later.
 
-param([string]$Config = "$env:ProgramData\Votal\hook.conf")
+param([string]$Config = "$env:ProgramData\Votal\hook.conf",
+      [ValidateSet("claude-code", "codex")][string]$Target = "claude-code")
 
 $ErrorActionPreference = "Stop"
 
@@ -31,7 +36,18 @@ function Deny([string]$Why) {
 # A failure (no answer, bad answer, bad setup): denied unless the config says
 # ON_UNREACHABLE=allow. Shield's own denials go through Deny, never here.
 $script:OnUnreachable = "deny"
+$script:OnUnreachableResult = "allow"
+$script:Event = "PreToolUse"
 function Fail([string]$Why) {
+    if ($script:Event -eq "PostToolUse") {
+        if ($script:OnUnreachableResult -eq "withhold") {
+            $note = "[Shield withheld this result: Shield could not check it]"
+            if ($Target -eq "codex") { $o = @{ decision = "block"; reason = $note } }
+            else { $o = @{ hookSpecificOutput = @{ hookEventName = "PostToolUse"; updatedToolOutput = $note } } }
+            [Console]::Out.WriteLine(($o | ConvertTo-Json -Compress -Depth 4))
+        }
+        exit 0
+    }
     if ($script:OnUnreachable -eq "allow") {
         [Console]::Error.WriteLine("Votal Shield: $($Why -replace ', so this action is not allowed$', ''); allowed, because this fleet lets actions through when Shield cannot answer")
         exit 0
@@ -41,12 +57,17 @@ function Fail([string]$Why) {
 
 trap { Fail "the hook failed ($($_.Exception.Message)), so this action is not allowed" }
 
+# Read the event first, so a broken setup after a call is a PostToolUse failure.
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+$body = [Console]::In.ReadToEnd()
+if ($body -match '"hook_event_name"\s*:\s*"PostToolUse"') { $script:Event = "PostToolUse" }
+
 if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
-    Deny "hook config $Config is missing or unreadable, so this action is not allowed"
+    Fail "hook config $Config is missing or unreadable, so this action is not allowed"
 }
 
 $settings = @{ SHIELD_URL = ""; SHIELD_API_KEY = ""; SHIELD_AGENT = "claude-code"; SHIELD_TIMEOUT = "4";
-              SHIELD_LOCAL_SECRET_FILE = ""; ON_UNREACHABLE = "deny" }
+              SHIELD_LOCAL_SECRET_FILE = ""; ON_UNREACHABLE = "deny"; ON_UNREACHABLE_RESULT = "allow" }
 foreach ($line in Get-Content -LiteralPath $Config) {
     $l = $line.Trim()
     if ($l -eq "" -or $l.StartsWith("#") -or -not $l.Contains("=")) { continue }
@@ -59,6 +80,7 @@ foreach ($line in Get-Content -LiteralPath $Config) {
 }
 
 if ($settings.ON_UNREACHABLE -eq "allow") { $script:OnUnreachable = "allow" }
+if ($settings.ON_UNREACHABLE_RESULT -eq "withhold") { $script:OnUnreachableResult = "withhold" }
 $url = $settings.SHIELD_URL
 $local = [bool]$settings.SHIELD_LOCAL_SECRET_FILE
 if (-not $url) { Fail "SHIELD_URL is not set in $Config, so this action is not allowed" }
@@ -80,11 +102,10 @@ $timeout = 4
 [int]::TryParse($settings.SHIELD_TIMEOUT, [ref]$timeout) | Out-Null
 if ($timeout -lt 1 -or $timeout -gt 30) { $timeout = 4 }
 
-[Console]::InputEncoding = [System.Text.Encoding]::UTF8
-$body = [Console]::In.ReadToEnd()
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 if ($local) {
+    if ($Target -ne "claude-code") { Fail "the Votal device agent does not install Codex hooks yet" }
     $headers = @{ "X-Votal-Local-Secret" = $secret; "X-Shield-User" = $env:USERNAME }
     $endpoint = $url.TrimEnd("/") + "/v1/local/claude-code/hook"
 } else {
@@ -94,7 +115,7 @@ if ($local) {
         "X-Shield-User" = $env:USERNAME
         "X-Device-Id"   = $env:COMPUTERNAME
     }
-    $endpoint = $url.TrimEnd("/") + "/v1/shield/hooks/claude-code"
+    $endpoint = $url.TrimEnd("/") + "/v1/shield/hooks/$Target"
 }
 try {
     $resp = Invoke-WebRequest -Uri $endpoint -Method Post `
@@ -112,6 +133,16 @@ try { $answer = $resp.Content | ConvertFrom-Json } catch { Fail "Shield's answer
 if ($null -eq $answer) { Fail "Shield's answer was not understood, so this action is not allowed" }
 $names = @($answer.PSObject.Properties | ForEach-Object { $_.Name })
 if ($names.Count -eq 0) { exit 0 }                                  # {} = allow
+
+if ($script:Event -eq "PostToolUse") {
+    # Already in this agent's format (redacted result or withheld note): pass it on.
+    $hso = $answer.hookSpecificOutput
+    if (($hso -and $null -ne $hso.updatedToolOutput) -or [string]$answer.decision -eq "block") {
+        [Console]::Out.WriteLine($resp.Content)
+        exit 0
+    }
+    Fail "Shield's answer was not understood"
+}
 
 $out = $answer.hookSpecificOutput
 $decision = if ($out) { [string]$out.permissionDecision } else { "" }

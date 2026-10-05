@@ -44,6 +44,22 @@ async def _payload(request: Request) -> dict:
 
 @router.post("/claude-code")
 async def claude_code_pre_tool_use(request: Request, background: BackgroundTasks):
+    """Claude Code's PreToolUse and PostToolUse hooks."""
+    return await _handle(request, background, TARGET_CLAUDE_CODE)
+
+
+@router.post("/codex")
+async def codex_hook(request: Request, background: BackgroundTasks):
+    """Codex's PreToolUse and PostToolUse hooks (command hooks; Codex has no
+    HTTP hooks, so `claude_code_hook.sh --target codex` posts here).
+    docs/specs/agent-hooks-tool-policies.md section 4.2."""
+    return await _handle(request, background, TARGET_CODEX)
+
+
+TARGET_CLAUDE_CODE, TARGET_CODEX = "claude-code", "codex"
+
+
+async def _handle(request: Request, background: BackgroundTasks, target: str):
     """Two kinds of caller:
 
     * A tenant key (managed settings or the standalone hook): X-Agent-Key names
@@ -63,6 +79,10 @@ async def claude_code_pre_tool_use(request: Request, background: BackgroundTasks
     except dv.DeviceError as e:
         raise HTTPException(status_code=e.status, detail=str(e))
     fleet, mode = "", "enforce"
+    if device and target == TARGET_CODEX:
+        # Fleet rollout (agent_hooks) knows Claude Code only so far.
+        raise HTTPException(status_code=400, detail="the Votal device agent does not install "
+                            "Codex hooks yet: use a tenant key with X-Agent-Key")
     if device:
         tenant_id, device_id, record = device
         fleet = str(record.get("fleet") or "")
@@ -87,7 +107,7 @@ async def claude_code_pre_tool_use(request: Request, background: BackgroundTasks
     if event == "PostToolUse":
         return await _post_tool_use(request, background, tenant_id=tenant_id, agent=agent,
                                     cp=cp, payload=payload, user=user, device_id=device_id,
-                                    fleet=fleet, monitor=monitor)
+                                    fleet=fleet, monitor=monitor, target=target)
     if event != "PreToolUse":
         return {}
     decision = hooks.decide(cp, payload, _shield_hosts(request))
@@ -110,6 +130,12 @@ async def claude_code_pre_tool_use(request: Request, background: BackgroundTasks
                                                       settings)
         if policy_check.action == hook_policies.DENY:
             decision = hooks.Decision("deny", "tool", tool, policy_check.reason)
+    if target == TARGET_CODEX and decision.decision == "ask":
+        # Codex treats "ask" as a failed hook and runs the tool, so an action
+        # that needs a person's confirmation is denied there instead.
+        decision = hooks.Decision("deny", decision.kind, decision.value,
+                                  f"{decision.reason} (needs a person's confirmation, which "
+                                  f"Codex hooks cannot ask for)", op=decision.op)
     background.add_task(hook_seen.record, tenant_id, agent=agent, user=user, device=device_id,
                         decision=decision.decision, tool=tool,
                         profile=cp.name if cp else None, session_id=session, fleet=fleet,
@@ -132,7 +158,7 @@ async def claude_code_pre_tool_use(request: Request, background: BackgroundTasks
 
 async def _post_tool_use(request: Request, background: BackgroundTasks, *, tenant_id: str,
                          agent: str, cp, payload: dict, user: str, device_id: str, fleet: str,
-                         monitor: bool) -> dict:
+                         monitor: bool, target: str = TARGET_CLAUDE_CODE) -> dict:
     """PostToolUse: the Tool Registry "Tool results" rules and Secrets patterns
     on what the tool returned, before Claude sees it.
 
@@ -149,6 +175,15 @@ async def _post_tool_use(request: Request, background: BackgroundTasks, *, tenan
                         user=user, device_id=device_id, fleet=fleet, monitor=monitor)
     if monitor or d.action == hook_policies.ALLOW:
         return {}
+    if target == TARGET_CODEX:
+        # Codex cannot rewrite a result, but a PostToolUse "block" replaces
+        # the result with the hook's reason (verified in task 0). So the
+        # reason IS the result the model sees.
+        if d.action == hook_policies.REDACT:
+            return {"decision": "block",
+                    "reason": "Votal Shield redacted sensitive data from this result under your "
+                              "organization's policy. Result:\n" + (d.sanitized or "")}
+        return {"decision": "block", "reason": hook_policies.withheld_text(d)}
     if d.action == hook_policies.REDACT:
         return {"hookSpecificOutput": {
             "hookEventName": "PostToolUse", "updatedToolOutput": d.sanitized,

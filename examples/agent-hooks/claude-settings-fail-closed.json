@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Glob|Grep|WebFetch|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"$HOME/.votal/claude_code_hook.sh\" --config \"$HOME/.votal/hook.conf\" --target claude-code || exit 2",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Read|Grep|WebFetch|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"$HOME/.votal/claude_code_hook.sh\" --config \"$HOME/.votal/hook.conf\" --target claude-code",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
