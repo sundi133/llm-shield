@@ -166,10 +166,30 @@ def test_a_failed_redaction_never_returns_the_original(monkeypatch):
     assert RAW not in str(r.details["sanitized_output"])
 
 
-def test_a_warn_ceiling_never_reaches_the_redaction_path(monkeypatch):
-    """Configured `warn` caps a redact verdict to warn before the redaction
-    branch. warn promises no modified content, so there is no redaction
-    obligation to fail - the original is returned, flagged."""
+def test_under_warn_a_redaction_is_applied_and_held_to_the_same_bar(monkeypatch):
+    """Amended 2026-10-05 (docs/spec-tool-output-action-authority.md): warn
+    means "never refuse the call", not "never modify". This test used to
+    assert the original was returned under warn; that was the cap swallowing
+    every redaction under the shipped default, so tenants' result rules never
+    applied. A redaction under warn now reaches the caller, and an unusable
+    one is held to the same bar as anywhere else: it escalates, capped at warn,
+    and never delivers the original as if it were redacted."""
+    monkeypatch.delenv("SHIELD_TOOL_OUTPUT_REDACT_UNDER_WARN", raising=False)
+    r, _ = _run(monkeypatch, _guard("warn"), _verdict("redact", MASKED))
+    assert r.action == "redact"
+    assert r.details["sanitized_output"] == MASKED
+
+    # The model said redact but produced nothing usable: withheld, never the
+    # raw record dressed up as redacted. The label stays at the warn ceiling.
+    r, _ = _run(monkeypatch, _guard("warn"), _verdict("redact", ""))
+    assert r.action == "warn"
+    assert r.details["sanitized_output"] == "[CONTENT BLOCKED DUE TO DATA POLICY]"
+    assert r.details["redaction_failed"]
+    assert RAW not in str(r.details["sanitized_output"])
+
+
+def test_the_rollback_flag_restores_the_old_warn_behaviour(monkeypatch):
+    monkeypatch.setenv("SHIELD_TOOL_OUTPUT_REDACT_UNDER_WARN", "off")
     r, _ = _run(monkeypatch, _guard("warn"), _verdict("redact", ""))
     assert r.action == "warn"
     assert r.details["sanitized_output"] == RAW

@@ -198,3 +198,86 @@ def test_the_shipped_default_does_not_block():
     block = y.split("tool_output_sanitization:")[1].split("settings:")[0]
     assert "action: warn" in block
     assert "action: block" not in block
+
+
+# ── redaction under warn (amendment, 2026-10-05) ─────────────────────────
+#
+# Found in production: tenant bankco's Tool Registry result rules ("MUST use
+# action=redact", "Mask ... as [SECRET REDACTED]") never took effect. The
+# shipped default is `action: warn`, redact ranks above warn on the ladder, so
+# every model "redact" was capped to warn and the ORIGINAL output delivered.
+# The cap exists so a tenant on warn is never BLOCKED; redaction does not
+# refuse the call, so warn no longer caps it.
+
+REDACTED = "name=Aisha Khan passport=[REDACTED] ssn=[REDACTED]"
+
+
+def _run_redact(monkeypatch, guard):
+    async def _llm(**kw):
+        return {"choices": [{"message": {
+            "content": f"true,redact,0.99,passport and ssn\nSANITIZED: {REDACTED}"}}]}
+    monkeypatch.setattr(tos, "async_llm_call", _llm)
+    monkeypatch.setattr(tos.ToolOutputSanitizationGuardrail, "_load_policies_text",
+                        staticmethod(lambda tenant_id, tool_name="", user_role="":
+                                     "Output rule: mask passports and SSNs as [REDACTED]"))
+    return asyncio.run(guard.check("", {
+        "tool_name": "customer_profile_get", "tool_output": PII,
+        "tenant_id": "bankco", "user_role": "user"}))
+
+
+@pytest.mark.parametrize("verdict,configured,expected", [
+    ("redact", "warn", "redact"),       # was: warn (the bug)
+    ("mask", "warn", "mask"),           # was: warn
+    ("block", "warn", "warn"),          # unchanged: warn is never blocked
+    ("redact", "log", "log"),           # log and pass stay observe-only
+    ("mask", "pass", "pass"),
+])
+def test_warn_allows_redaction_but_never_a_block(verdict, configured, expected, monkeypatch):
+    monkeypatch.delenv("SHIELD_TOOL_OUTPUT_REDACT_UNDER_WARN", raising=False)
+    assert _cap_action(verdict, configured) == expected
+
+
+def test_under_warn_a_redaction_is_delivered_redacted(monkeypatch):
+    monkeypatch.delenv("SHIELD_TOOL_OUTPUT_REDACT_UNDER_WARN", raising=False)
+    r = _run_redact(monkeypatch, _guard("warn"))
+    assert r.action == "redact"
+    out = str(r.details.get("sanitized_output", ""))
+    assert out == REDACTED and "P1234567" not in out
+
+
+def test_the_rollback_flag_restores_capping_redaction(monkeypatch):
+    monkeypatch.setenv("SHIELD_TOOL_OUTPUT_REDACT_UNDER_WARN", "off")
+    assert _cap_action("redact", "warn") == "warn"
+    r = _run_redact(monkeypatch, _guard("warn"))
+    assert r.action == "warn"
+
+
+def test_the_shipped_config_now_redacts_on_the_mcp_path(monkeypatch):
+    """End to end on the live MCP path with config/default.yaml loaded, which
+    is what production runs: a redaction reaches the client, a block is still
+    capped to warn."""
+    import config.schema as cs
+    from core.mcp.enforcement import sanitize_tool_result
+    monkeypatch.delenv("SHIELD_TOOL_OUTPUT_REDACT_UNDER_WARN", raising=False)
+    # load_config assigns the module global itself, so take the original first;
+    # monkeypatch would otherwise record the loaded config as "original" and
+    # leak warn into every later test.
+    original = cs.config
+    shipped = cs.load_config(str(REPO / "config" / "default.yaml"))
+    cs.config = original
+    monkeypatch.setattr(cs, "config", shipped)
+    assert cs.config.guardrails["tool_output_sanitization"].action == "warn"
+    monkeypatch.setattr(tos.ToolOutputSanitizationGuardrail, "_load_policies",
+                        staticmethod(lambda tenant_id, tool_name="": [{"tool_name": "*", "enabled": True}]))
+
+    _run_redact(monkeypatch, _guard("warn"))      # installs the redact stubs
+    out = asyncio.run(sanitize_tool_result("customer_profile_get", PII,
+                                           tenant_id="bankco", user_role="user"))
+    assert out["action"] == "redact" and "P1234567" not in str(out["sanitized_output"])
+
+    async def _block(**kw):
+        return {"choices": [{"message": {"content": "true,block,0.99,profile"}}]}
+    monkeypatch.setattr(tos, "async_llm_call", _block)
+    out = asyncio.run(sanitize_tool_result("customer_profile_get", PII,
+                                           tenant_id="bankco", user_role="user"))
+    assert out["blocked"] is False and out["action"] == "warn"

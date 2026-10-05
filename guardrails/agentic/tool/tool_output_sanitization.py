@@ -63,9 +63,27 @@ def _cap_action(action: str, configured: str) -> str:
     """
     if not _cap_enabled() or not configured:
         return action
+    if configured == "warn" and action in ("redact", "mask") and _redact_under_warn():
+        # `warn` means "never refuse the call" (docs/spec-tool-output-action-
+        # authority.md: a tenant on warn "can never be blocked"). Redacting
+        # and masking do not refuse it: the call succeeds with the sensitive
+        # part removed, which is exactly what the tenant's Tool Registry
+        # result rules ask for. Ranking them above warn on the severity ladder
+        # capped every redaction to warn under the shipped default, so those
+        # rules never took effect and the original output was delivered.
+        # `log` and `pass` remain observe-only. Spec: amendment of 2026-10-05.
+        return action
     if _SEVERITY.get(action, 0) > _SEVERITY.get(configured, 4):
         return configured
     return action
+
+
+def _redact_under_warn() -> bool:
+    """SHIELD_TOOL_OUTPUT_REDACT_UNDER_WARN=off restores capping redact/mask to
+    warn (the original output delivered with a warning). Rollback only."""
+    import os
+    return os.environ.get("SHIELD_TOOL_OUTPUT_REDACT_UNDER_WARN", "").strip().lower() \
+        not in ("0", "off", "false", "no")
 
 def _redaction_enabled() -> bool:
     """SHIELD_LLM_REDACTION=off restores the old behaviour.

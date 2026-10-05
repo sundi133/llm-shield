@@ -312,6 +312,10 @@ guardrails:
     # It used to be advisory -- the model's verdict won, so a deployment set to
     # warn was blocked anyway. Blocking is now opt-in, per tenant, via
     # Tool Registry -> Data Policies.
+    # Under warn the call is never refused, but redact and mask still apply:
+    # they deliver the result with the sensitive part removed, as the tenant's
+    # result rules ask (SHIELD_TOOL_OUTPUT_REDACT_UNDER_WARN=off to roll back).
+    # log and pass are observe-only. docs/spec-tool-output-action-authority.md
     action: warn
     settings:
       # A list of regex redaction rules lived here and NOTHING read them: the
