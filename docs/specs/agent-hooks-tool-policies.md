@@ -405,6 +405,35 @@ Tests: `tests/test_codex_hook_tool_policies.py` (28: route on the real app,
 script under sh and dash against a fake Shield). Six safeguards
 sabotage-checked. Clean venv: 6271 passed.
 
+## 9.3 Found in production (2026-10-05, after #470)
+
+Testing the merged hooks live in Claude Code 2.1.104 (desktop Code tab, hooks
+in `~/.claude/settings.json`) found two defects and one gap:
+
+1. **Redactions never reached Claude.** Claude Code accepts `updatedToolOutput`
+   only in the tool's own output shape (Bash: `{stdout, stderr, interrupted,
+   isImage}`); a plain string for a built-in tool is dropped silently and the
+   original is shown. Shield sent the redacted JSON text as a string, so a
+   redacted `cat` of a card file reached the model unmasked while the hook
+   reported "redacted". Fix: `hook_policies.redacted_output` parses the
+   redacted text back into the original structure (strings from the
+   redaction, numbers and flags from the original); if it no longer has the
+   same shape, the result is **withheld** instead (as #469 does for a failed
+   redaction), because a replacement Claude Code rejects lets the original
+   through. `withheld_output` puts the note in the longest string and empties
+   other strings of 64 characters or more. MCP results are not shape-checked
+   by Claude Code but keep their shape too. Codex is unchanged (the reason
+   text is the result).
+2. **No PostToolUse event was ever recorded.** `_record_result_event` was sync
+   and called the async `rt_events.ingest` without awaiting it. Now async; the
+   test fake is async too, so a missing await fails the tests.
+3. **Cowork does not read Claude Code settings files**; it loads hooks only
+   from plugins. `examples/agent-hooks/plugin` is a marketplace with one
+   plugin, `votal-shield-hooks`, carrying the same hooks and its own copy of
+   the script (kept identical by `sync_hook_scripts.py`, pinned by a test).
+   Whether Cowork's hook environment can read `~/.votal/hook.conf` is checked
+   on install; if it cannot, every call is denied, never let through.
+
 ## 10. How you will test it (after tasks 1 to 3)
 
 **Claude Code**: put the §4.4 hooks in `~/.claude/settings.json` (or

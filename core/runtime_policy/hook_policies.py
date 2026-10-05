@@ -272,3 +272,89 @@ async def check_result(tenant_id: str, tool_name: str, tool_response: Any,
 
 def withheld_text(decision: Decision) -> str:
     return WITHHELD_TEXT.format(reason=decision.reason or "a Tool Registry rule")
+
+
+# ── the replacement, in the tool's own shape ──────────────────────────────
+# Claude Code takes a replacement result only in the tool's own shape (Bash:
+# {stdout, stderr, interrupted, isImage}, Read: {type, file: {...}}). For a
+# built-in tool it drops a plain string without a word, and the ORIGINAL
+# reaches the model: seen live on Claude Code 2.1.104. MCP results are not
+# validated, but keep their shape too. A structured result is checked as its
+# JSON text (`_as_text`), so the redacted text is JSON of the same shape.
+
+_KEEP_SHORTER_THAN = 64     # withheld: shorter strings (type tags, paths) stay
+
+
+def _same_shape(original: Any, candidate: Any) -> bool:
+    if isinstance(original, str):
+        return isinstance(candidate, str)
+    if isinstance(original, dict):
+        return (isinstance(candidate, dict) and candidate.keys() == original.keys()
+                and all(_same_shape(original[k], candidate[k]) for k in original))
+    if isinstance(original, list):
+        return (isinstance(candidate, list) and len(candidate) == len(original)
+                and all(_same_shape(o, c) for o, c in zip(original, candidate)))
+    return True             # numbers, booleans, null: the original's are kept
+
+
+def _merge(original: Any, candidate: Any) -> Any:
+    """The candidate's strings in the original's structure; everything else
+    (numbers, booleans, null) from the original."""
+    if isinstance(original, str):
+        return candidate
+    if isinstance(original, dict):
+        return {k: _merge(v, candidate[k]) for k, v in original.items()}
+    if isinstance(original, list):
+        return [_merge(o, c) for o, c in zip(original, candidate)]
+    return original
+
+
+def redacted_output(original: Any, sanitized: str) -> Any:
+    """The redacted result in the original's shape, or None when the redacted
+    text no longer fits it: the caller then withholds the result, since
+    sending a replacement the agent rejects would let the original through."""
+    if isinstance(original, str):
+        return sanitized
+    if not isinstance(original, (dict, list)):
+        return None
+    try:
+        candidate = json.loads(sanitized)
+    except (TypeError, ValueError):
+        return None
+    return _merge(original, candidate) if _same_shape(original, candidate) else None
+
+
+def withheld_output(original: Any, note: str) -> Any:
+    """The withheld note in the original's shape: in its longest string, with
+    every other string of `_KEEP_SHORTER_THAN` characters or more emptied."""
+    if not isinstance(original, (dict, list)):
+        return note
+    leaves: list = []
+
+    def walk(v: Any, path: tuple) -> None:
+        if isinstance(v, str):
+            leaves.append((len(v), path))
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                walk(x, path + (k,))
+        elif isinstance(v, list):
+            for i, x in enumerate(v):
+                walk(x, path + (i,))
+
+    walk(original, ())
+    if not leaves:
+        return note
+    longest = max(leaves)[1]
+
+    def rebuild(v: Any, path: tuple) -> Any:
+        if isinstance(v, str):
+            if path == longest:
+                return note
+            return v if len(v) < _KEEP_SHORTER_THAN else ""
+        if isinstance(v, dict):
+            return {k: rebuild(x, path + (k,)) for k, x in v.items()}
+        if isinstance(v, list):
+            return [rebuild(x, path + (i,)) for i, x in enumerate(v)]
+        return v
+
+    return rebuild(original, ())
