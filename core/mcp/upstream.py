@@ -13,6 +13,8 @@ import fails, ``connect_upstream`` raises a clear, actionable error.
 
 from __future__ import annotations
 
+import asyncio
+
 from contextlib import AsyncExitStack
 from typing import Any, Optional
 
@@ -154,6 +156,10 @@ _SDK_HINT = (
 )
 
 
+class UpstreamRefused(RuntimeError):
+    """The upstream refused or dropped the connection while it was being set up."""
+
+
 async def connect_upstream(config: dict) -> MCPUpstream:
     """Connect to an upstream MCP server and return an MCPUpstream.
 
@@ -199,3 +205,24 @@ async def connect_upstream(config: dict) -> MCPUpstream:
     except Exception:
         await stack.aclose()
         raise
+    except asyncio.CancelledError as e:
+        # An upstream that refuses the connection (HTTP 401/403, a dead token)
+        # surfaces from the SDK's transport task group as a cancellation of
+        # THIS task, not as an Exception. Leaving the exit stack open kept the
+        # task cancelled, so the error escaped every handler as an HTTP 500.
+        # Closing the stack exits the SDK's cancel scope, which absorbs its own
+        # cancellation; what remains is an ordinary refusal. A cancellation
+        # from outside (the client went away) is still pending afterwards and
+        # is re-raised untouched.
+        try:
+            await stack.aclose()
+        except BaseException as inner:          # noqa: BLE001 - the real cause
+            cause = inner
+        else:
+            cause = e
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise
+        raise UpstreamRefused(
+            "the upstream MCP server refused the connection "
+            "(check its URL and credential)") from cause

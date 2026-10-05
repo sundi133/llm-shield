@@ -849,6 +849,23 @@ because without it sign-in could only be enabled through the API.
 Tests: `tests/test_mcp_service_accounts.py` (17). Ten safeguards
 sabotage-checked. Viewed in the console locally. Clean venv: 6161 passed.
 
+**Follow-up after the first production test plan (branch fix/mcp-connect-link).**
+- The `-32003` message now ends with the connect link for `not_connected`
+  and `reconnect`; AI apps show the message, rarely `data`.
+- Before a person connects, `tools/list`, `resources/list`,
+  `resources/templates/list` and `prompts/list` on a per-person server are
+  fetched from the upstream with no credential at all
+  (`without_shared_credential`), so the AI app shows the tools and the first
+  call carries the link. If the upstream will not list anonymously, the
+  person gets the connect message. Calls, reads and prompt gets never go
+  anonymous.
+- Fixed the bug under it: an upstream refusing the connection (401/403) made
+  the MCP SDK cancel the request's own task; `connect_upstream` caught only
+  `Exception`, so the SDK's scope stayed open, the task stayed cancelled and
+  the gateway answered HTTP 500. It now closes the scope on cancellation and
+  raises `UpstreamRefused`; a cancellation from outside is still re-raised.
+  Reproduced and tested against a real local server answering 401.
+
 ## 10. Decisions taken (change any before approval)
 
 1. **Shield is the authorization server and federates to the tenant's IdP**,

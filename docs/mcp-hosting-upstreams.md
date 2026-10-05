@@ -214,6 +214,6 @@ apps, your flow policy (**Cross-App Flow**).
 |---|---|---|
 | "no upstream configured for route" | The route name in the agent's URL does not match a registered server | Check the route name on the server card |
 | Tool calls fail and the server logs 401 | The server did not get the secret header or the token | Check the header count on the server card, add the header again, or check its OAuth status |
-| Tool calls fail with an HTTP 500 and no message | The server rejected or dropped the call | Check the server's logs and the route's credential |
+| Tool calls fail with "the upstream MCP server refused the connection" | The server rejected Shield's request, usually its credential (HTTP 401 or 403) | Check the server's logs and the route's credential |
 | Calls work from Shield but also from elsewhere | The server does not enforce the secret header or network rule | Fix the server, then confirm isolation |
 | The server is a free tunnel and stops working | The tunnel restarted with a new address | Use a stable domain or a reserved tunnel address |
