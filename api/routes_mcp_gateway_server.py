@@ -19,7 +19,11 @@ from fastapi.responses import JSONResponse, Response
 
 from api.routes_mcp_server import _request_oauth_claims, _resolve_identity, _resolve_session_id
 from core.mcp import resource as resource_urls
-from core.mcp.principal import reset_current_caller, resolve_caller, set_current_caller
+from core.mcp.gateway import _audit_decision
+from core.mcp.principal import (METHOD_PRINCIPAL_INACTIVE, IdentityRequired, check_verified,
+                                current_caller, reset_current_caller, resolve_caller,
+                                set_current_caller)
+from storage.mcp_gateway_store import get_upstream
 from core.mcp.gateway import GatewayError
 from core.mcp.gateway import router as gateway_router
 
@@ -55,7 +59,9 @@ def _challenge_enabled() -> bool:
         "SHIELD_MCP_AUTH_CHALLENGE", "").strip().lower() not in ("0", "off", "false", "no")
 
 
-def _unauthenticated(rpc_id: Any, request: Request, metadata_url: str = "") -> JSONResponse:
+def _unauthenticated(rpc_id: Any, request: Request, metadata_url: str = "", *,
+                     message: str = _UNAUTHENTICATED_MSG, data: Optional[dict] = None,
+                     error: str = "") -> JSONResponse:
     """401 with an RFC 9728 challenge, so a client knows to authenticate.
 
     This used to answer HTTP 200 carrying the JSON-RPC error, because
@@ -69,7 +75,7 @@ def _unauthenticated(rpc_id: Any, request: Request, metadata_url: str = "") -> J
     The resource metadata document already exists and is already served; this
     only points clients at it. Spec: docs/spec-mcp-gateway-bearer-auth.md
     """
-    resp = _err(rpc_id, -32001, _UNAUTHENTICATED_MSG)
+    resp = _err(rpc_id, -32001, message, data)
     if not _challenge_enabled():
         return resp
     resp.status_code = 401
@@ -81,6 +87,10 @@ def _unauthenticated(rpc_id: Any, request: Request, metadata_url: str = "") -> J
     if not base:
         base = str(getattr(request, "base_url", "") or "").rstrip("/")
     challenge = 'Bearer realm="mcp"'
+    if error:
+        # RFC 6750: the credential was presented and is no longer good (a
+        # suspended person's token), so the client should sign in again.
+        challenge += f', error="{error}"'
     if metadata_url:
         # A tenant-addressed URL has its own metadata, naming the server as the
         # resource, so the client's sign-in yields a token for this server only.
@@ -182,19 +192,59 @@ async def _dispatch(route: str, body: dict, request: Request, url_tenant: str = 
     if not caller.tenant_id or (url_tenant and caller.tenant_id != url_tenant):
         # A credential for another tenant is refused exactly like no credential:
         # the URL names the tenant, and nothing here says whether it exists.
-        return _unauthenticated(rpc_id, request, metadata)
+        inactive = caller.identity_method == METHOD_PRINCIPAL_INACTIVE
+        return _unauthenticated(rpc_id, request, metadata,
+                                error="invalid_token" if inactive else "")
 
     token = set_current_caller(caller)
     try:
         return await _dispatch_as(route, method, params, rpc_id, request, caller.tenant_id,
                                   caller.agent_key, caller.user_role)
+    except IdentityRequired as e:
+        return await _identity_required(e, method, params, rpc_id, request)
     finally:
         reset_current_caller(token)
+
+
+async def _identity_required(e: IdentityRequired, method: Any, params: dict, rpc_id: Any,
+                             request: Request) -> JSONResponse:
+    """Refuse an unverified caller on a "verified callers only" route.
+
+    HTTP 401 pointing at the route's tenant-addressed sign-in metadata, so an
+    MCP client starts sign-in by itself. A client on the tenant-wide URL is told
+    the URL to use instead: a token from sign-in is valid only on that one.
+    The refusal is audited, so a tenant can see who still sends a bare key.
+    """
+    sign_in_url = resource_urls.resource_url(e.tenant_id, e.route, request)
+    caller = e.caller
+    try:
+        await _audit_decision({
+            "tenant_id": e.tenant_id, "route": e.route,
+            "tool": (params.get("name") or params.get("uri") or method) if isinstance(params, dict) else method,
+            "agent_key": caller.agent_key if caller else "",
+            "user_role": caller.user_role if caller else "",
+            "allowed": False, "action": "block", "mode": "enforce", "risk": "high",
+            "reason": "this server accepts only signed-in users and service accounts",
+            "results": [{"guardrail": "verified_identity", "passed": False, "action": "block",
+                         "message": f"caller identity: {caller.identity_method if caller else 'none'}"}],
+        })
+    except Exception:       # noqa: BLE001 - audit never changes the answer
+        pass
+    return _unauthenticated(
+        rpc_id, request, resource_urls.metadata_url(e.tenant_id, e.route, request),
+        message="this MCP server accepts only signed-in users and service accounts",
+        data={"reason": "verified_identity_required", "sign_in_url": sign_in_url})
 
 
 async def _dispatch_as(route: str, method: Any, params: dict, rpc_id: Any, request: Request,
                        tenant_id: str, agent_key: str, user_role: str):
     if method == "initialize":
+        # Answered locally, so it never reaches the router's check. Refuse here
+        # too, or a client would connect and only fail on its first call, after
+        # it had stopped looking for a sign-in prompt.
+        caller = current_caller()
+        if caller is not None and not caller.verified:
+            check_verified(tenant_id, route, get_upstream(tenant_id, route))
         return _ok(rpc_id, {
             "protocolVersion": _PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": False}},
@@ -258,6 +308,8 @@ async def _dispatch_as(route: str, method: Any, params: dict, rpc_id: Any, reque
                 return _ok(rpc_id, out)
 
         return _err(rpc_id, -32601, f"method not supported by the Shield gateway: {method}")
+    except IdentityRequired:
+        raise           # answered as HTTP 401 by _dispatch, never as a JSON-RPC 200
     except GatewayError as e:
         # 404 (no route) -> -32004; server-side -> -32000.
         return _err(rpc_id, -32004 if e.status == 404 else -32000, e.message)

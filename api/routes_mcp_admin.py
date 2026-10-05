@@ -137,7 +137,7 @@ def _redact(cfg: dict) -> dict:
 #: materialized policy, and re-enable a server SecOps had switched off.
 _PRESERVED_ON_REWRITE = (
     "profile_id", "overrides", "effective_policy", "effective_rev",
-    "active", "scan", "scan_override",
+    "active", "scan", "scan_override", "require_verified_identity",
 )
 
 
@@ -217,6 +217,16 @@ async def mcp_inventory(request: Request):
         # letting a route quietly serve a superseded revision.
         profile_id = s.get("profile_id")
         s["drift"] = is_drifted(s, get_profile(tenant_id, profile_id) if profile_id else None)
+    # "Verified callers only": the route's own value, else the tenant default.
+    # `verified_callers_only` is what the gateway enforces; the console shows an
+    # "accepts tenant key" pill on routes where it is false, the same class of
+    # "weaker than it looks" as bypassable.
+    from storage.identity_policy import get_policy
+    tenant_requires = bool(get_policy(tenant_id).get("require_verified_identity"))
+    for s in servers:
+        own = s.get("require_verified_identity")
+        s["verified_callers_only"] = own if isinstance(own, bool) else tenant_requires
+        s["verified_callers_source"] = "server" if isinstance(own, bool) else "tenant"
     disabled = list_disabled_tools(tenant_id)
     disabled_names = {d.get("tool_name") for d in disabled}
 
@@ -225,6 +235,8 @@ async def mcp_inventory(request: Request):
         "servers": servers,
         "server_count": len(servers),
         "inactive_server_count": sum(1 for s in servers if not s["active"]),
+        "require_verified_identity": tenant_requires,
+        "unverified_server_count": sum(1 for s in servers if not s["verified_callers_only"]),
         "drifted_server_count": sum(1 for s in servers if s["drift"]),
         "disabled_tools": disabled,
         "disabled_count": len(disabled),
@@ -343,6 +355,10 @@ class RegisterServerRequest(BaseModel):
     # must leave the current state alone, or editing a URL would silently put a
     # server SecOps disabled back into service.
     active: Optional[bool] = None
+    # "Verified callers only" (docs/specs/mcp-verified-callers-and-user-credentials.md
+    # A4). Optional, not defaulted: None leaves the stored value alone, and a
+    # route with no value follows the tenant default.
+    require_verified_identity: Optional[bool] = None
 
     @model_validator(mode="after")
     def _check(self):
@@ -587,6 +603,48 @@ async def disable_server(route: str, body: ToolActionRequest, request: Request):
 
     return {"status": "disabled", "tenant_id": tenant_id, "route": route,
             "server": _redact(cfg)}
+
+
+class IdentitySettingRequest(BaseModel):
+    # true or false sets this server; null makes it follow the tenant default.
+    require_verified_identity: Optional[bool] = None
+
+
+@router.put("/servers/{route}/identity")
+async def set_server_identity(route: str, body: IdentitySettingRequest, request: Request):
+    """Whether this server accepts only signed-in users and service accounts.
+
+    Effective on the next call; the gateway reads the route per call. Turning
+    it on refuses every client still sending only a tenant key, so check the
+    audit trail's `verified` share for this server first.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (A4)
+    """
+    tenant_id = _require_tenant(request)
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
+    before = cfg.get("require_verified_identity")
+    if body.require_verified_identity is None:
+        cfg.pop("require_verified_identity", None)
+    else:
+        cfg["require_verified_identity"] = body.require_verified_identity
+    cfg["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, cfg)
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_server_identity_requirement", actor=_actor(request),
+                         tenant_id=tenant_id,
+                         before={"route": route, "require_verified_identity": before},
+                         after={"route": route,
+                                "require_verified_identity": body.require_verified_identity})
+    except Exception:
+        pass
+    from storage.identity_policy import get_policy
+    own = cfg.get("require_verified_identity")
+    effective = own if isinstance(own, bool) else bool(
+        get_policy(tenant_id).get("require_verified_identity"))
+    return {"route": route, "require_verified_identity": own,
+            "verified_callers_only": effective}
 
 
 @router.post("/servers/{route}/enable")

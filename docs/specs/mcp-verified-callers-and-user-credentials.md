@@ -648,6 +648,41 @@ Tests: `tests/test_mcp_signin.py` (28, stub IdP, full client flow), A1 tests
 updated to the A2 rules, `test_oauth_authz_hardening.py` registration guard
 updated. Twelve safeguards sabotage-checked. Clean venv: 6052 passed.
 
+**A4 (done).** "Verified callers only":
+- Route field `require_verified_identity` (true, false, or absent = follow the
+  tenant default in `shield:identity_policy:{tenant}`). Kept on re-save
+  (`_PRESERVED_ON_REWRITE`). `PUT /v1/tenant/me/mcp/servers/{route}/identity`
+  sets it (null returns the route to the tenant default). The identity policy
+  API now updates one setting at a time.
+- Checked in `MCPGatewayRouter._call` on the config the call already read, so
+  a route that sets the field costs no read; the tenant default is cached
+  in-process for 15 s. `initialize` is answered locally, so it checks too, with
+  one route read for unverified callers only (once per session).
+- Refusal: HTTP 401, `-32001`, `WWW-Authenticate` naming the route's
+  tenant-addressed metadata, `data.sign_in_url`. Audited as a block by the
+  `verified_identity` guardrail. A suspended person's token gets
+  `error="invalid_token"`. Upstream never contacted.
+- `SHIELD_MCP_REQUIRE_VERIFIED=0` turns refusals off fleet-wide.
+- Console: an amber "key accepted" pill on servers that still take the bare
+  tenant key, a "verified callers" badge (with "tenant default" when
+  inherited), and a Require sign-in / Allow key button with a confirmation.
+  Inventory reports `verified_callers_only`, `verified_callers_source`,
+  `unverified_server_count`.
+
+Amendment: the spec said to stop forwarding `X-Agent-Key` / `X-User-Role`
+upstream for verified callers. Not done, deliberately: since A2 the role
+forwarded for a verified caller is the verified one enforcement used, so
+dropping it removes correct information, and on a verified-only route every
+forwarded role is verified. Dropping them for tenant-key callers would break
+upstreams that read them today.
+
+Found while building: `_dispatch_as` turned every exception into a JSON-RPC
+error with HTTP 200, which would have swallowed the refusal; caught by testing
+against the real router rather than a fake.
+
+Tests: `tests/test_mcp_verified_only.py` (18). Seven safeguards
+sabotage-checked. Verified in the console locally. Clean venv: 6070 passed.
+
 ## 10. Decisions taken (change any before approval)
 
 1. **Shield is the authorization server and federates to the tenant's IdP**,

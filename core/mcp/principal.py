@@ -29,6 +29,7 @@ Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.2, §4.10)
 from __future__ import annotations
 
 import logging
+import os
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -101,6 +102,7 @@ def reset_current_caller(token) -> None:
 
 def clear_cache() -> None:
     _cache.clear()
+    _policy_cache.clear()
 
 
 def _cached_principal(tenant_id: str, pid: str) -> Optional[dict]:
@@ -286,3 +288,67 @@ def _names_principal(request, oauth_claims) -> bool:
                    ((headers.get("x-api-key") or "").strip(), _bearer(headers)))
     except Exception:       # noqa: BLE001
         return True
+
+
+# ── "verified callers only" (task A4) ────────────────────────────────────
+
+_POLICY_TTL_S = 15.0
+_policy_cache: dict[str, tuple[float, bool]] = {}
+
+
+class IdentityRequired(Exception):
+    """The route requires a verified caller and this one is not.
+
+    Raised before the upstream is contacted. The gateway answers it with HTTP
+    401 and the route's sign-in metadata, because MCP clients begin sign-in
+    only on a 401.
+    """
+
+    def __init__(self, tenant_id: str, route: str, caller: Optional[Caller]):
+        super().__init__("this MCP server accepts only signed-in users and service accounts")
+        self.tenant_id, self.route, self.caller = tenant_id, route, caller
+
+
+def enforcement_enabled() -> bool:
+    """SHIELD_MCP_REQUIRE_VERIFIED=0 turns the rejection off fleet-wide, for
+    rollback without editing routes. Identity is still resolved and recorded."""
+    return os.environ.get("SHIELD_MCP_REQUIRE_VERIFIED", "1").strip().lower() not in (
+        "0", "off", "false", "no")
+
+
+def _tenant_default(tenant_id: str) -> bool:
+    now = time.monotonic()
+    hit = _policy_cache.get(tenant_id)
+    if hit and hit[0] > now:
+        return hit[1]
+    from storage.identity_policy import get_policy
+    value = bool(get_policy(tenant_id).get("require_verified_identity"))
+    if len(_policy_cache) >= _CACHE_MAX:
+        _policy_cache.clear()
+    _policy_cache[tenant_id] = (now + _POLICY_TTL_S, value)
+    return value
+
+
+def requires_verified(tenant_id: str, cfg: Optional[dict]) -> bool:
+    """Whether this route accepts only verified callers.
+
+    The route's own `require_verified_identity` wins when it is a boolean
+    (an explicit false exempts one route from a tenant-wide default); absent,
+    the tenant default applies, read through a 15 s in-process cache so the
+    guard path pays no store read.
+    """
+    value = (cfg or {}).get("require_verified_identity")
+    if isinstance(value, bool):
+        return value
+    return _tenant_default(tenant_id)
+
+
+def check_verified(tenant_id: str, route: str, cfg: Optional[dict]) -> None:
+    """Raise IdentityRequired when the current gateway caller may not use this
+    route. A no-op outside a gateway request (no caller), so other users of the
+    router are unaffected."""
+    caller = current_caller()
+    if caller is None or caller.verified or not enforcement_enabled():
+        return
+    if requires_verified(tenant_id, cfg):
+        raise IdentityRequired(tenant_id, route, caller)

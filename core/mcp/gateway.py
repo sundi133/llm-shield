@@ -18,6 +18,7 @@ import os
 import re
 from typing import Awaitable, Callable, Optional
 
+from core.mcp.principal import check_verified
 from storage.mcp_gateway_store import get_upstream
 
 logger = logging.getLogger("votal.mcp_gateway")
@@ -416,6 +417,10 @@ class MCPGatewayRouter:
         local subprocess) is pooled, with a one-shot reconnect if its session dies.
         """
         cfg = self._load_cfg(tenant_id, route)
+        # "Verified callers only": refused here, before the upstream is
+        # contacted, on the config this call already read (no extra store read).
+        # Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (A4)
+        check_verified(tenant_id, route, cfg)
         transport = (cfg.get("transport") or "stdio").lower()
 
         if transport not in ("stdio",):

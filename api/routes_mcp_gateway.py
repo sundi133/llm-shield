@@ -49,6 +49,10 @@ class UpstreamConfigRequest(BaseModel):
     # the config, so SecOps can park a server instead of deleting it.
     # Optional, not defaulted — see the note in api/routes_mcp_admin.py.
     active: Optional[bool] = None
+    # "Verified callers only" (docs/specs/mcp-verified-callers-and-user-credentials.md
+    # A4). Optional, not defaulted: None leaves the stored value alone, and a
+    # route with no value follows the tenant default.
+    require_verified_identity: Optional[bool] = None
 
     @model_validator(mode="after")
     def _check(self):

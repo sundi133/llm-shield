@@ -14005,20 +14005,21 @@ function renderMcpGateway(inv) {
         return `<div class="mcp-server-card${active ? '' : ' is-off'}${s.drift ? ' is-drift' : ''}">
             <div class="mcp-card-top">
               <span class="mcp-card-route" title="${route}">${route}</span>
-              ${pill}${drift}${bypass}
+              ${pill}${drift}${bypass}${mcpIdentityPill(s)}
             </div>
             <div class="mcp-card-dest" title="${dest}">${dest || '&mdash;'}</div>
             <div class="mcp-card-meta">
               <span class="badge">${transport}</span>
               <span class="badge">${backend}</span>
               ${mcpHeaderBadge(s)}
-              ${profile}${scan}
+              ${profile}${scan}${mcpIdentityBadge(s)}
             </div>
             <div class="mcp-card-actions">
               ${blockedByScan
                 ? `<button class="small" title="Override the scan finding and put this server back into service. Recorded against your account." onclick="mcpActivateServer('${enc}')">Activate</button>`
                 : `<button class="small" onclick="mcpToggleServer('${enc}', ${active ? 'false' : 'true'})">${active ? 'Disable' : 'Enable'}</button>`}
               <button class="small" onclick="mcpRunScan('${enc}')">Scan</button>
+              ${mcpIdentityButton(s, enc)}
               ${(s.transport || '') !== 'stdio'
                 ? `<button class="small" title="Sign this server in once; Shield keeps the credential" onclick="mcpShowOAuth('${enc}')">OAuth</button>`
                 : ''}
@@ -14243,6 +14244,23 @@ async function mcpToggleServer(encRoute, makeActive) {
   }
 }
 
+async function mcpSetIdentity(encRoute, requireVerified) {
+  const route = decodeURIComponent(encRoute);
+  if (requireVerified && !confirm(
+      `Accept only signed-in users and service accounts on "${route}"?\n\n` +
+      `Clients that send only the tenant key are refused from the next call. ` +
+      `People connect with https://<gateway>/gateway/t/<tenant>/${route}/mcp and sign in ` +
+      `with your company SSO. Check the audit trail first for callers still marked unverified.`)) return;
+  try {
+    await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/identity`,
+      { method: 'PUT', body: JSON.stringify({ require_verified_identity: requireVerified }) });
+    showToast(requireVerified ? `${route} now requires sign-in` : `${route} accepts the tenant key again`, 'success');
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
 function mcpToggleTransportFields() {
   const t = document.getElementById('mcp-reg-transport').value;
   document.getElementById('mcp-reg-url-wrap').style.display = (t === 'stdio') ? 'none' : '';
@@ -14346,6 +14364,29 @@ function mcpHeaderBadge(server) {
   const label = names.some(n => n.toLowerCase() === 'authorization') && names.length === 1
     ? 'authorization' : `${names.length} header${names.length > 1 ? 's' : ''}`;
   return `<span class="badge" title="${_esc('Sends: ' + names.join(', ') + ' (values masked)')}">${_esc(label)}</span>`;
+}
+
+// ── MCP verified callers (pure) ────────────────────────────────────────────
+// A4 of docs/specs/mcp-verified-callers-and-user-credentials.md. A server that
+// still accepts a bare tenant key gets a warning pill, like "bypassable": the
+// role on every call there is whatever the caller says it is.
+
+function mcpIdentityPill(server) {
+  if (!server || server.verified_callers_only !== false) return '';
+  return '<span class="mcp-pill mcp-pill-warn" title="Accepts a bare tenant key, so callers are not verified and the role is whatever the caller sends. Require sign-in to fix.">key accepted</span>';
+}
+
+function mcpIdentityBadge(server) {
+  if (!server || server.verified_callers_only !== true) return '';
+  const from = server.verified_callers_source === 'tenant' ? ' (tenant default)' : '';
+  return '<span class="badge" title="Only signed-in users and service accounts' + _esc(from) + '">verified callers</span>';
+}
+
+function mcpIdentityButton(server, enc) {
+  if (!server || (server.transport || '') === 'stdio') return '';
+  return server.verified_callers_only
+    ? '<button class="small" title="Accept the tenant key again on this server" onclick="mcpSetIdentity(\'' + enc + '\', false)">Allow key</button>'
+    : '<button class="small" title="Accept only signed-in users and service accounts" onclick="mcpSetIdentity(\'' + enc + '\', true)">Require sign-in</button>';
 }
 
 // ── MCP OAuth connect (pure) ───────────────────────────────────────────────

@@ -7,7 +7,8 @@
         "enabled": false,           // people may sign in from MCP clients
         "allowed_groups": [],       // IdP groups allowed to; required to enable
         "provider": ""              // which configured OIDC provider; "" = the first
-      }
+      },
+      "require_verified_identity": false   // default for routes that do not set it
     }
 
 Sign-in is off until a tenant turns it on, and it cannot be turned on with an
@@ -41,7 +42,8 @@ def _clean_groups(groups: Any) -> list[str]:
 
 
 def default_policy() -> dict:
-    return {"mcp_sign_in": {"enabled": False, "allowed_groups": [], "provider": ""}}
+    return {"mcp_sign_in": {"enabled": False, "allowed_groups": [], "provider": ""},
+            "require_verified_identity": False}
 
 
 def get_policy(tenant_id: str) -> dict:
@@ -54,25 +56,39 @@ def get_policy(tenant_id: str) -> dict:
             "allowed_groups": _clean_groups(s.get("allowed_groups")),
             "provider": str(s.get("provider") or ""),
         }
+    if isinstance(stored, dict):
+        policy["require_verified_identity"] = bool(stored.get("require_verified_identity"))
     return policy
 
 
 def set_policy(tenant_id: str, policy: dict) -> dict:
-    """Validate and store. Raises ValueError with an operator-facing message."""
-    s = (policy or {}).get("mcp_sign_in") or {}
-    if not isinstance(s, dict):
-        raise ValueError("mcp_sign_in must be an object")
-    clean = {
-        "enabled": bool(s.get("enabled")),
-        "allowed_groups": _clean_groups(s.get("allowed_groups")),
-        "provider": str(s.get("provider") or "").strip(),
-    }
-    if clean["enabled"] and not clean["allowed_groups"]:
-        raise ValueError(
-            "mcp_sign_in.allowed_groups is empty. Name the IdP groups whose "
-            "members may sign in to your MCP servers; an empty list would admit "
-            "everyone in your directory.")
-    doc = {"mcp_sign_in": clean}
+    """Validate and store. Raises ValueError with an operator-facing message.
+
+    A partial update: a top-level key that is absent keeps its stored value, so
+    turning on "verified callers only" does not reset sign-in, and vice versa.
+    """
+    policy = policy or {}
+    doc = get_policy(tenant_id)
+    if "mcp_sign_in" in policy:
+        s = policy.get("mcp_sign_in") or {}
+        if not isinstance(s, dict):
+            raise ValueError("mcp_sign_in must be an object")
+        clean = {
+            "enabled": bool(s.get("enabled")),
+            "allowed_groups": _clean_groups(s.get("allowed_groups")),
+            "provider": str(s.get("provider") or "").strip(),
+        }
+        if clean["enabled"] and not clean["allowed_groups"]:
+            raise ValueError(
+                "mcp_sign_in.allowed_groups is empty. Name the IdP groups whose "
+                "members may sign in to your MCP servers; an empty list would admit "
+                "everyone in your directory.")
+        doc["mcp_sign_in"] = clean
+    if "require_verified_identity" in policy:
+        value = policy["require_verified_identity"]
+        if not isinstance(value, bool):
+            raise ValueError("require_verified_identity must be true or false")
+        doc["require_verified_identity"] = value
     kv_set(_key(tenant_id), doc)
     return doc
 
