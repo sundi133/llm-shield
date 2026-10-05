@@ -64,6 +64,7 @@ from core.mcp_oauth import (
     register_client,
 )
 from storage.mcp_oauth_store import (
+    STATUS_CONFIGURED,
     STATUS_PENDING,
     take_pending,
     access_ref,
@@ -923,6 +924,11 @@ async def oauth_callback(request: Request, code: str = "", state: str = "",
             "It was already used, or it expired. Start the connection again from "
             "the Shield console.", ok=False)
 
+    if pending.get("principal_id"):
+        # A person connecting their own account to a per-person server (B3).
+        from api.routes_mcp_connect import complete_personal
+        return await complete_personal(request, pending, code)
+
     tenant_id = pending["tenant_id"]
     route = pending["route"]
     record = get_broker(tenant_id, route)
@@ -1022,6 +1028,40 @@ async def oauth_connect(route: str, request: Request,
         create_vault_entry(tenant_id, client_secret_ref(route),
                            creds["client_secret"], [host], mode="inject")
         secret_ref = f"shield://{client_secret_ref(route)}"
+
+    from core.mcp_credentials import is_per_user
+    if is_per_user(cfg):
+        # A per-person server never uses a shared token, so the operator only
+        # configures the OAuth app here; each person connects their own account
+        # on the connect page (docs/specs/mcp-verified-callers-and-user-
+        # credentials.md, B3). No pending state, no credential_mode on the route.
+        set_broker(tenant_id, route, {
+            "mode": MODE_AUTH_CODE, "issuer": meta["issuer"],
+            "authorization_endpoint": meta["authorization_endpoint"],
+            "token_endpoint": meta["token_endpoint"],
+            "revocation_endpoint": meta.get("revocation_endpoint", ""),
+            "client_id": creds["client_id"], "client_secret_ref": secret_ref,
+            "scopes": scopes, "profile": meta.get("profile") or "standard",
+            "resource": meta.get("resource") or "",
+            "available_scopes": available_scopes(meta),
+            "status": STATUS_CONFIGURED, "last_error": "", "connected_by": actor,
+        })
+        try:
+            from storage.admin_audit import log_admin_action
+            log_admin_action(action="mcp_oauth_configured", actor=actor, tenant_id=tenant_id,
+                             after={"route": route, "issuer": meta["issuer"],
+                                    "scopes": scopes, "credential_scope": "per_user"})
+        except Exception:
+            pass
+        from core.mcp.resource import connect_url
+        return JSONResponse(status_code=200, content={
+            "status": "configured", "tenant_id": tenant_id, "route": route,
+            "connect_url": connect_url(tenant_id, route),
+            "consent_note": (
+                f"This server uses each person's own account, so no account is "
+                f"connected here. Each person connects their own at the link below, "
+                f"signing in at {meta['issuer']} with scopes {', '.join(scopes)}."),
+        })
 
     verifier = generate_code_verifier()
     state = new_state()

@@ -42,6 +42,7 @@ STATUS_PENDING = "pending"           # flow started, callback not yet received
 STATUS_CONNECTED = "connected"       # usable access token in the vault
 STATUS_NEEDS_CONSENT = "needs_consent"  # refresh rejected — a human must re-authorize
 STATUS_ERROR = "error"               # transient failure; retried automatically
+STATUS_CONFIGURED = "configured"     # per-person route: client set up, no shared token
 
 
 def _key(tenant_id: str, route: str) -> str:
@@ -188,7 +189,8 @@ def new_state() -> str:
 
 
 def put_pending(state: str, tenant_id: str, route: str, code_verifier: str,
-                redirect_uri: str) -> dict:
+                redirect_uri: str, *, principal_id: str = "",
+                browser_binding: str = "") -> dict:
     """Record one in-flight authorization, keyed by ``state``.
 
     The tenant is stored HERE rather than passed back through the callback URL,
@@ -202,6 +204,11 @@ def put_pending(state: str, tenant_id: str, route: str, code_verifier: str,
         "route": route,
         "code_verifier": code_verifier,
         "redirect_uri": redirect_uri,
+        # A person connecting their own account (B3 of docs/specs/mcp-verified-
+        # callers-and-user-credentials.md): whose grant this is, and a hash of
+        # the browser session that started it, which the callback must match.
+        "principal_id": principal_id,
+        "browser_binding": browser_binding,
         "created_at": int(time.time()),
         "expires_at": int(time.time()) + PENDING_TTL_SECONDS,
     }

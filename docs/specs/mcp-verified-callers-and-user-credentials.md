@@ -755,6 +755,39 @@ sabotage-checked; the fourteenth (requiring `verified` before using the
 principal id) is redundant by construction, since only verified callers carry
 one. Clean venv: 6113 passed.
 
+**B3 (done).** The connect page (`api/routes_mcp_connect.py`, admin plane):
+- `GET /connect/{tenant}` (a person's per-person servers, with status and the
+  upstream account) and `GET /connect/{tenant}/{route}`; `POST .../start`
+  (303 to the provider, PKCE, state) and `POST .../disconnect` (revokes at the
+  provider, deletes the grant). Forms carry a per-session, per-server token on
+  top of the SameSite=Lax session cookie.
+- The person comes from their portal SSO session; without one they are sent to
+  `/v1/tenant/auth/login?tenant=..&next=..`. A session for another tenant is
+  refused even when the same person exists in both (tenants can share an IdP).
+  They must already be an active principal.
+- The existing OAuth callback branches on `principal_id` in the pending record:
+  it exchanges the code for that person, stores their grant, and records the
+  upstream account (`email`, else `sub`, from the id_token the token endpoint
+  returned over TLS; a label, not a gate). It stores nothing unless the browser
+  session that started the connection finishes it; nothing in the shared
+  broker record changes.
+- On a per-person server, the console's OAuth button now only configures the
+  OAuth app (`status: configured`): no shared token is obtained, no
+  `credential_mode` or Authorization header is set, and the response carries
+  the link to send people. Shared servers are unchanged.
+
+Amendments: the person-facing endpoints are pages and form posts under
+`/connect/...` instead of `GET/DELETE /v1/me/connections` JSON, since only a
+browser uses them. A person must already exist as a principal (created at
+their first sign-in from an MCP client, which anyone who hit `-32003` has
+done); creating people from a portal session is deferred, because the session
+does not keep the IdP groups that `allowed_groups` checks.
+
+Tests: `tests/test_mcp_connect.py` (18), including the account-swap case and a
+cross-tenant session with the same person in both tenants. Ten safeguards
+sabotage-checked. Viewed in the browser locally (desktop and phone width).
+Clean venv: 6131 passed.
+
 ## 10. Decisions taken (change any before approval)
 
 1. **Shield is the authorization server and federates to the tenant's IdP**,

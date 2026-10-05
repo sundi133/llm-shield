@@ -119,6 +119,7 @@ COPY api/routes_portal_auth.py api/
 # Mostly imported lazily inside handlers, so the import-graph guard cannot see
 # them; tests/test_mcp_signin.py checks these COPY lines instead.
 COPY api/routes_mcp_signin.py api/
+COPY api/routes_mcp_connect.py api/
 COPY core/mcp/__init__.py core/mcp/
 COPY core/mcp/resource.py core/mcp/
 COPY storage/identity_policy.py storage/

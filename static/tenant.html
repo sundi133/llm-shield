@@ -14445,6 +14445,7 @@ function mcpOAuthStatus(st) {
   const s = st || {};
   if (!s.status || s.status === 'not_connected') return { text: 'Not connected.', tone: 'dim' };
   if (s.status === 'pending') return { text: 'Waiting for sign-in. Open the sign-in page to finish.', tone: 'warn' };
+  if (s.status === 'configured') return { text: `Set up${s.issuer ? ` with ${s.issuer}` : ''}. Each person connects their own account.`, tone: 'good' };
   if (s.status === 'needs_consent') return { text: 'The provider withdrew the grant. Connect again.', tone: 'bad' };
   if (s.status === 'error') return { text: `Error: ${s.last_error || 'unknown'}`, tone: 'bad' };
   const parts = [`Connected${s.issuer ? ` to ${s.issuer}` : ''}.`];
@@ -14505,6 +14506,12 @@ function mcpOAuthConnectBody(clientId, clientSecret, scopes) {
 // After connect: the consent note, and the sign-in link only if it is https.
 function mcpOAuthResultHtml(resp) {
   const r = resp || {};
+  if (r.status === 'configured') {
+    // A per-person server: nothing to sign in to here. Hand out the link.
+    const connect = String(r.connect_url || '');
+    return `<div style="font-size:12px;color:var(--text-dim);margin-bottom:0.5rem;">${_esc(r.consent_note || '')}</div>
+      <div style="font-size:12px;">Send people this link: <code style="user-select:all;">${_esc(connect)}</code></div>`;
+  }
   const url = String(r.authorize_url || '');
   const link = /^https:\/\//i.test(url)
     ? `<a class="primary small" style="display:inline-block;padding:0.35rem 0.7rem;border-radius:6px;text-decoration:none;"
