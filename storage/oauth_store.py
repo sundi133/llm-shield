@@ -47,6 +47,9 @@ class OAuthClient:
     scope: str = "shield"
     tenant_id: str = ""
     created_at: int = 0
+    # A service account this client authenticates as (client_credentials).
+    # docs/specs/mcp-verified-callers-and-user-credentials.md, task A3.
+    principal_id: str = ""
 
 
 def hash_client_secret(secret: str) -> str:

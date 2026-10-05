@@ -821,6 +821,34 @@ Tests: `tests/test_mcp_grant_admin.py` (13). Six safeguards sabotage-checked;
 a seventh (dropping a revoked key from the index) is cosmetic, because the
 list skips index entries whose key is gone. Clean venv: 6144 passed.
 
+**A3 (done).** Service accounts for agents that cannot sign in.
+- `POST /v1/tenant/me/service-accounts` (name, roles), `DELETE .../{pid}`
+  (deprovision: keys and OAuth clients deleted, record kept for audit),
+  `PATCH /v1/tenant/me/principals/{pid}` (name, roles).
+- Keys: `POST /v1/tenant/me/principals/{pid}/keys` (shown once),
+  `DELETE .../keys/{key_id}`.
+- OAuth clients: `POST /v1/tenant/me/principals/{pid}/oauth-clients` (client id
+  and secret shown once), `DELETE .../oauth-clients/{client_id}`. The
+  client-credentials grant issues a token naming the service account with its
+  current roles (`ptype: service_account`), refused while it is not active.
+  With `resource` set to one of the tenant's gateway URLs the token is valid on
+  that server only; another tenant's URL is `invalid_target`.
+- Console: a "Who can call your servers" panel on the MCP Gateway page: the
+  tenant's sign-in settings (sign-in on/off, allowed groups, tenant-wide
+  verified callers), create a service account, keys and OAuth clients with a
+  copy-once box, and people and service accounts with Suspend / Reactivate /
+  Remove.
+
+Amendments: keys and OAuth clients are for **service accounts only**. The
+spec let administrators mint keys for people; an administrator who could do
+that could act as the person, with their roles and their personal upstream
+connections. Self-service personal keys (minted by the person after SSO) are
+deferred. The sign-in settings form was not in A3's scope but is added here,
+because without it sign-in could only be enabled through the API.
+
+Tests: `tests/test_mcp_service_accounts.py` (17). Ten safeguards
+sabotage-checked. Viewed in the console locally. Clean venv: 6161 passed.
+
 ## 10. Decisions taken (change any before approval)
 
 1. **Shield is the authorization server and federates to the tenant's IdP**,

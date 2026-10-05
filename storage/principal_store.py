@@ -268,6 +268,40 @@ def list_principal_keys(tenant_id: str, pid: str) -> list[dict]:
     return out
 
 
+def delete_principal_key_by_id(tenant_id: str, pid: str, key_id: str) -> bool:
+    """Delete one of a principal's keys by its public id."""
+    r = _get_redis()
+    for key_hash in _members(_pkeys_set(tenant_id, pid)):
+        rec = _decode(_get(_pkey_key(key_hash)))
+        if not rec or rec.get("key_id") != key_id:
+            continue
+        if r:
+            r.delete(_pkey_key(key_hash))
+            r.srem(_pkeys_set(tenant_id, pid), key_hash)
+        else:
+            _fallback_store.pop(_pkey_key(key_hash), None)
+            members = set(json.loads(_fallback_store.get(_pkeys_set(tenant_id, pid)) or "[]"))
+            members.discard(key_hash)
+            _fallback_store[_pkeys_set(tenant_id, pid)] = json.dumps(sorted(members))
+        return True
+    return False
+
+
+def update_service_account(tenant_id: str, pid: str, *, name: Any = None,
+                           roles: Any = None) -> Optional[dict]:
+    doc = get_principal(tenant_id, pid)
+    if doc is None or doc.get("type") != TYPE_SERVICE_ACCOUNT:
+        return None
+    if name is not None:
+        if not str(name).strip():
+            raise ValueError("name cannot be empty")
+        doc["name"] = str(name).strip()
+    if roles is not None:
+        doc["roles"] = _clean_groups(roles)
+    doc["updated_at"] = int(time.time())
+    return _save(tenant_id, doc)
+
+
 def delete_principal_keys(tenant_id: str, pid: str) -> int:
     """Delete every key a principal holds (deprovisioning). Returns how many."""
     n = 0

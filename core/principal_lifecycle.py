@@ -9,7 +9,7 @@ What each status does:
 |---|---|---|---|
 | active | allowed | kept | work |
 | suspended | refused within 15 s | **revoked at the provider and deleted** | kept, refused while suspended |
-| deprovisioned | refused within 15 s | revoked and deleted | **deleted** |
+| deprovisioned | refused within 15 s | revoked and deleted | **deleted**, and a service account's OAuth clients |
 
 Gateway refusal needs no extra step: every Shield token and principal key is
 checked against the principal's status on use (cached in-process for 15 s, so
@@ -44,12 +44,26 @@ async def change_status(tenant_id: str, principal_id: str, status: str) -> dict:
     set_status(tenant_id, principal_id, status)
     summary = {"principal_id": principal_id, "status": status,
                "previous_status": before.get("status", ""),
-               "connections_revoked": 0, "keys_deleted": 0}
+               "connections_revoked": 0, "keys_deleted": 0, "oauth_clients_deleted": 0}
     if status != STATUS_ACTIVE:
         summary["connections_revoked"] = await revoke_principal_grants(tenant_id, principal_id)
     if status == STATUS_DEPROVISIONED:
         summary["keys_deleted"] = delete_principal_keys(tenant_id, principal_id)
+        summary["oauth_clients_deleted"] = await delete_principal_clients(tenant_id, principal_id)
     logger.info("principal %s/%s -> %s (%d connections revoked, %d keys deleted)",
                 tenant_id, principal_id, status, summary["connections_revoked"],
                 summary["keys_deleted"])
     return summary
+
+
+async def principal_clients(tenant_id: str, principal_id: str) -> list:
+    from storage.oauth_store import list_clients
+    return [c for c in await list_clients(tenant_id) if c.principal_id == principal_id]
+
+
+async def delete_principal_clients(tenant_id: str, principal_id: str) -> int:
+    from storage.oauth_store import delete_client
+    n = 0
+    for c in await principal_clients(tenant_id, principal_id):
+        n += bool(await delete_client(c.client_id))
+    return n

@@ -327,6 +327,9 @@ async def _handle_client_credentials(body: dict, request: Request) -> JSONRespon
                      "error_description": "client is not authorized for the client_credentials grant"},
         )
 
+    if client.principal_id:
+        return _service_account_token(client, body)
+
     access_token = issue_access_token(
         client_id=client_id,
         scope=client.scope or "shield",
@@ -339,6 +342,40 @@ async def _handle_client_credentials(body: dict, request: Request) -> JSONRespon
         "expires_in": 600,
         "scope": client.scope or "shield",
     })
+
+
+def _service_account_token(client, body: dict) -> JSONResponse:
+    """A client bound to a service account: the token names the account, with
+    its roles, so the MCP gateway treats the caller as verified.
+
+    Refused while the account is suspended or removed. With `resource` set to
+    one of the tenant's gateway URLs (RFC 8707), the token is valid on that
+    server only; otherwise it is tenant-wide, like any client-credentials token.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (A3)
+    """
+    from core.mcp.resource import parse_resource
+    from core.oauth.authz_server import _current_principal, _principal_claims
+
+    principal = _current_principal(client.tenant_id, {"id": client.principal_id,
+                                                      "type": "service_account"})
+    if principal is None:
+        return JSONResponse(status_code=400, content={
+            "error": "invalid_grant", "error_description": "the service account is not active"})
+    resource = (body.get("resource") or "").strip()
+    audience = "shield-oauth"
+    if resource:
+        parsed = parse_resource(resource)
+        if not parsed or parsed[0] != client.tenant_id:
+            return JSONResponse(status_code=400, content={
+                "error": "invalid_target",
+                "error_description": "resource must be one of this organization's gateway URLs"})
+        audience = resource
+    token = issue_access_token(
+        client_id=client.client_id, scope=client.scope or "mcp", tenant_id=client.tenant_id,
+        user_sub=principal["id"], audience=audience,
+        extra_claims=_principal_claims(principal))
+    return JSONResponse(content={"access_token": token, "token_type": "Bearer",
+                                 "expires_in": 600, "scope": client.scope or "mcp"})
 
 
 async def _handle_token_exchange(body: dict, request: Request) -> JSONResponse:

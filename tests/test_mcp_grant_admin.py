@@ -195,7 +195,8 @@ def test_suspending_a_person_cuts_off_gateway_and_upstream_access(admin_client, 
     r = admin_client.post(f"/v1/tenant/me/principals/{alice['id']}/suspend")
     assert r.status_code == 200
     assert r.json() == {"principal_id": alice["id"], "status": "suspended",
-                        "previous_status": "active", "connections_revoked": 2, "keys_deleted": 0}
+                        "previous_status": "active", "connections_revoked": 2, "keys_deleted": 0,
+                        "oauth_clients_deleted": 0}
     assert sorted(provider) == sorted([f"rt-{alice['id']}-gdrive", f"rt-{alice['id']}-gmail"])
     assert grants.routes_for_principal(T, alice["id"]) == []
 
