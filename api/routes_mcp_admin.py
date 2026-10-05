@@ -137,8 +137,17 @@ def _redact(cfg: dict) -> dict:
 #: materialized policy, and re-enable a server SecOps had switched off.
 _PRESERVED_ON_REWRITE = (
     "profile_id", "overrides", "effective_policy", "effective_rev",
-    "active", "scan", "scan_override", "require_verified_identity",
+    "active", "scan", "scan_override", "require_verified_identity", "credential_scope",
 )
+
+
+def _check_credential_scope(cfg: dict) -> None:
+    """Refuse a route document whose credential scope cannot be honoured
+    (docs/specs/mcp-verified-callers-and-user-credentials.md, B2)."""
+    from core.mcp_credentials import credential_scope_error
+    problem = credential_scope_error(cfg)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
 
 
 def _carry_over(cfg: dict, existing: dict | None) -> dict:
@@ -359,6 +368,9 @@ class RegisterServerRequest(BaseModel):
     # A4). Optional, not defaulted: None leaves the stored value alone, and a
     # route with no value follows the tenant default.
     require_verified_identity: Optional[bool] = None
+    # "shared" (one credential for everyone) or "per_user" (each person's own
+    # upstream account, B2). Optional: None leaves the stored value alone.
+    credential_scope: Optional[str] = None
 
     @model_validator(mode="after")
     def _check(self):
@@ -390,6 +402,7 @@ async def register_server(body: RegisterServerRequest, request: Request):
     cfg["created_at"] = (existing or {}).get("created_at") or int(time.time())
     cfg["updated_at"] = int(time.time())
     _carry_over(cfg, existing)
+    _check_credential_scope(cfg)
     set_upstream(tenant_id, route, cfg)
 
     try:
@@ -643,6 +656,7 @@ async def set_server_identity(route: str, body: IdentitySettingRequest, request:
         cfg.pop("require_verified_identity", None)
     else:
         cfg["require_verified_identity"] = body.require_verified_identity
+    _check_credential_scope(cfg)        # a per-person server cannot accept the key
     cfg["updated_at"] = int(time.time())
     set_upstream(tenant_id, route, cfg)
     try:
@@ -660,6 +674,43 @@ async def set_server_identity(route: str, body: IdentitySettingRequest, request:
         get_policy(tenant_id).get("require_verified_identity"))
     return {"route": route, "require_verified_identity": own,
             "verified_callers_only": effective}
+
+
+class CredentialScopeRequest(BaseModel):
+    credential_scope: str = Field(..., description="shared | per_user")
+
+
+@router.put("/servers/{route}/credential-scope")
+async def set_credential_scope(route: str, body: CredentialScopeRequest, request: Request):
+    """Whether the server uses one shared credential or each person's own account.
+
+    per_user needs an http/sse server and verified callers, and from the next
+    call refuses anyone who has not connected their own account, with a link to
+    connect. It never falls back to the shared credential.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (B2)
+    """
+    tenant_id = _require_tenant(request)
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
+    before = cfg.get("credential_scope") or "shared"
+    candidate = {**cfg, "credential_scope": body.credential_scope}
+    _check_credential_scope(candidate)
+    candidate["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, candidate)
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_server_credential_scope", actor=_actor(request),
+                         tenant_id=tenant_id,
+                         before={"route": route, "credential_scope": before},
+                         after={"route": route, "credential_scope": body.credential_scope})
+    except Exception:
+        pass
+    from core.mcp.resource import connect_url
+    out = {"route": route, "credential_scope": body.credential_scope}
+    if body.credential_scope == "per_user":
+        out["connect_url"] = connect_url(tenant_id, route)
+    return out
 
 
 @router.post("/servers/{route}/enable")

@@ -247,6 +247,27 @@ def _release(tenant_id: str, route: str, pid: str, kind: str, destination: str) 
         raise GrantError("unreadable", "the stored token could not be opened") from e
 
 
+def access_for_call(tenant_id: str, route: str, pid: str, destination: str) -> tuple[str, dict]:
+    """(access token, public view) for one call, from ONE read. GrantError if
+    the person has no usable grant. The view carries `expires_at`, so the
+    caller can decide on refresh without a second read."""
+    from core.secret_vault.materialize import _binding_matches
+    doc = _get_doc(_key(tenant_id, route, pid))
+    if doc is None:
+        raise GrantError("not_connected", "this person has not connected this server")
+    if doc.get("status") == STATUS_NEEDS_CONSENT:
+        raise GrantError("needs_consent", "this person must connect this server again")
+    envelope = doc.get(ACCESS)
+    if not envelope:
+        raise GrantError("not_connected")
+    if not _binding_matches(destination or "", envelope.get("bindings") or []):
+        raise GrantError("binding_mismatch", f"the access token is not bound to {destination!r}")
+    try:
+        return _open(envelope, _aad(tenant_id, route, pid, ACCESS)), public_view(doc)
+    except Exception as e:      # noqa: BLE001
+        raise GrantError("unreadable", "the stored token could not be opened") from e
+
+
 def access_token_for(tenant_id: str, route: str, pid: str, destination: str) -> str:
     """This person's access token for `destination`, or GrantError. One read."""
     return _release(tenant_id, route, pid, ACCESS, destination)

@@ -68,6 +68,12 @@ def authorization_server_url(request=None) -> str:
             or (str(getattr(request, "base_url", "") or "").rstrip("/") if request else ""))
 
 
+def connect_url(tenant_id: str, route: str) -> str:
+    """Where a person connects their own account for a per-person server (B3)."""
+    base = authorization_server_url()
+    return f"{base}/connect/{tenant_id}/{route}" if base else f"/connect/{tenant_id}/{route}"
+
+
 def valid_segment(value: str) -> bool:
     return bool(value) and bool(_SEGMENT.match(value))
 

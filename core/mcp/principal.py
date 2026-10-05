@@ -69,6 +69,8 @@ class Caller:
     principal_roles: list = field(default_factory=list)
     client_id: str = ""
     role_override_refused: bool = False
+    credential_scope: str = ""      # set by the router once the route is read
+    upstream_account: str = ""      # per-person routes: whose upstream account
 
     def audit_fields(self) -> dict:
         return {
@@ -81,6 +83,8 @@ class Caller:
             "principal_roles": list(self.principal_roles),
             "client_id": self.client_id,
             "role_override_refused": self.role_override_refused,
+            "credential_scope": self.credential_scope,
+            "upstream_account": self.upstream_account,
         }
 
 
@@ -337,6 +341,11 @@ def requires_verified(tenant_id: str, cfg: Optional[dict]) -> bool:
     the tenant default applies, read through a 15 s in-process cache so the
     guard path pays no store read.
     """
+    if (cfg or {}).get("credential_scope") == "per_user":
+        # Each person's own account only means something if we know who the
+        # person is. Implied, so a later tenant-default change cannot open a
+        # per-person server to a bare tenant key.
+        return True
     value = (cfg or {}).get("require_verified_identity")
     if isinstance(value, bool):
         return value

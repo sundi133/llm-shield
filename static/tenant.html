@@ -14012,7 +14012,7 @@ function renderMcpGateway(inv) {
               <span class="badge">${transport}</span>
               <span class="badge">${backend}</span>
               ${mcpHeaderBadge(s)}
-              ${profile}${scan}${mcpIdentityBadge(s)}
+              ${profile}${scan}${mcpIdentityBadge(s)}${mcpScopeBadge(s)}
             </div>
             <div class="mcp-card-actions">
               ${blockedByScan
@@ -14020,6 +14020,7 @@ function renderMcpGateway(inv) {
                 : `<button class="small" onclick="mcpToggleServer('${enc}', ${active ? 'false' : 'true'})">${active ? 'Disable' : 'Enable'}</button>`}
               <button class="small" onclick="mcpRunScan('${enc}')">Scan</button>
               ${mcpIdentityButton(s, enc)}
+              ${mcpScopeButton(s, enc)}
               ${(s.transport || '') !== 'stdio'
                 ? `<button class="small" title="Sign this server in once; Shield keeps the credential" onclick="mcpShowOAuth('${enc}')">OAuth</button>`
                 : ''}
@@ -14261,6 +14262,26 @@ async function mcpSetIdentity(encRoute, requireVerified) {
   }
 }
 
+async function mcpSetScope(encRoute, scope) {
+  const route = decodeURIComponent(encRoute);
+  if (scope === 'per_user' && !confirm(
+      `Use each person's own account on "${route}"?\n\n` +
+      `From the next call, every person must connect their own account once; ` +
+      `anyone who has not gets a link to connect and is refused until they do. ` +
+      `The shared credential is never used for this server. Only signed-in ` +
+      `users and service accounts can call it.`)) return;
+  try {
+    const out = await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/credential-scope`,
+      { method: 'PUT', body: JSON.stringify({ credential_scope: scope }) });
+    showToast(scope === 'per_user'
+      ? `${route} now uses each person's account. People connect at ${out.connect_url || '/connect'}`
+      : `${route} uses the shared credential again`, 'success');
+    loadMcpGateway();
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
 function mcpToggleTransportFields() {
   const t = document.getElementById('mcp-reg-transport').value;
   document.getElementById('mcp-reg-url-wrap').style.display = (t === 'stdio') ? 'none' : '';
@@ -14387,6 +14408,19 @@ function mcpIdentityButton(server, enc) {
   return server.verified_callers_only
     ? '<button class="small" title="Accept the tenant key again on this server" onclick="mcpSetIdentity(\'' + enc + '\', false)">Allow key</button>'
     : '<button class="small" title="Accept only signed-in users and service accounts" onclick="mcpSetIdentity(\'' + enc + '\', true)">Require sign-in</button>';
+}
+
+// Each person's own account (B2): one shared credential, or every caller's own.
+function mcpScopeBadge(server) {
+  if (!server || server.credential_scope !== 'per_user') return '';
+  return '<span class="badge" title="Each person connects and uses their own account on this server; the shared credential is never used">own accounts</span>';
+}
+
+function mcpScopeButton(server, enc) {
+  if (!server || !['http', 'sse'].includes(server.transport || '')) return '';
+  return server.credential_scope === 'per_user'
+    ? '<button class="small" title="Use one shared credential for everyone" onclick="mcpSetScope(\'' + enc + '\', \'shared\')">Shared account</button>'
+    : '<button class="small" title="Each person uses their own account on this server" onclick="mcpSetScope(\'' + enc + '\', \'per_user\')">Own accounts</button>';
 }
 
 // ── MCP OAuth connect (pure) ───────────────────────────────────────────────

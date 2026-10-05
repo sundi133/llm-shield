@@ -246,7 +246,8 @@ def test_a_signed_in_person_is_recorded_as_verified(client, router, audit):
         "principal_id": alice["id"], "principal_type": "user",
         "email": "alice@acme.example", "identity_method": "oauth_user",
         "verified": True, "role_source": "principal", "principal_roles": ["analyst"],
-        "client_id": "claude", "role_override_refused": False}
+        "client_id": "claude", "role_override_refused": False,
+        "credential_scope": "", "upstream_account": ""}   # set by the real router (B2)
 
 
 def test_a_suspended_persons_token_admits_nobody(client, router):

@@ -24,6 +24,7 @@ round-trips off the guard path.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -1098,3 +1099,219 @@ async def revoke_principal_grants(tenant_id: str, principal_id: str, *, client=N
     for route in routes_for_principal(tenant_id, principal_id):
         n += bool(await revoke_grant(tenant_id, route, principal_id, client=client))
     return n
+
+
+# ── each person's own account (task B2) ──────────────────────────────────
+#
+# A route with `credential_scope: per_user` sends each caller's own upstream
+# token. There is deliberately no code path from such a route to the shared
+# token: user_credential_headers() strips every header that references the
+# route's brokered vault entries before anything is materialized, and a person
+# with no usable grant is refused with ConnectRequired, never served as someone
+# else. Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.4)
+
+SCOPE_SHARED = "shared"
+SCOPE_PER_USER = "per_user"
+CREDENTIAL_SCOPES = (SCOPE_SHARED, SCOPE_PER_USER)
+
+#: How long a call waits for another call's refresh of the same person's
+#: token before giving up.
+_REFRESH_WAIT_S = 5.0
+_background: set = set()
+
+
+class ConnectRequired(Exception):
+    """The caller has no usable grant for a per-person route.
+
+    reason: not_connected | reconnect | refresh_unavailable | disabled |
+            not_configured | sign_in_required | error
+    """
+
+    def __init__(self, reason: str, tenant_id: str, route: str, message: str = ""):
+        super().__init__(message or "Connect your account to use this server")
+        self.reason, self.tenant_id, self.route = reason, tenant_id, route
+
+
+def per_user_enabled() -> bool:
+    """SHIELD_MCP_PER_USER_CREDENTIALS=0: per-person routes cannot be saved,
+    and existing ones refuse every call (reason `disabled`). They never fall
+    back to the shared credential."""
+    return os.environ.get("SHIELD_MCP_PER_USER_CREDENTIALS", "1").strip().lower() not in (
+        "0", "off", "false", "no")
+
+
+def is_per_user(cfg: Optional[dict]) -> bool:
+    return (cfg or {}).get("credential_scope") == SCOPE_PER_USER
+
+
+def credential_scope_error(cfg: dict) -> str:
+    """Why this route document may not be saved, or "" if it may."""
+    scope = cfg.get("credential_scope")
+    if scope is None:
+        return ""
+    if scope not in CREDENTIAL_SCOPES:
+        return f"credential_scope must be one of: {', '.join(CREDENTIAL_SCOPES)}"
+    if scope != SCOPE_PER_USER:
+        return ""
+    if not per_user_enabled():
+        return "per-person credentials are turned off on this deployment"
+    if (cfg.get("transport") or "") not in ("http", "sse"):
+        return "per-person credentials need an http or sse server (a stdio process serves every caller)"
+    if cfg.get("require_verified_identity") is False:
+        return ("per-person credentials need verified callers: this server is set to "
+                "accept the tenant key, which would let anyone with it use someone else's account")
+    return ""
+
+
+def _brokered_refs(route: str) -> tuple:
+    from storage.mcp_oauth_store import access_ref, client_secret_ref, refresh_ref
+    return tuple(f"shield://{r}" for r in (access_ref(route), refresh_ref(route),
+                                           client_secret_ref(route)))
+
+
+def _host(url: str) -> str:
+    return urlparse(url or "").hostname or ""
+
+
+async def user_credential_headers(tenant_id: str, route: str, cfg: dict,
+                                  principal_id: str) -> tuple[dict, str, dict]:
+    """The route config for one call, carrying this person's own token.
+
+    Returns (cfg for this call, the token, the grant's public view). Raises
+    ConnectRequired when the person has no usable grant. The returned config
+    has no header referring to the route's shared credential and no
+    `credential_mode`, so neither materialization nor the shared renewal path
+    can touch the shared token.
+    """
+    from storage.mcp_grant_store import GrantError, access_for_call
+
+    if not per_user_enabled():
+        raise ConnectRequired("disabled", tenant_id, route,
+                              "per-person credentials are turned off on this deployment")
+    if (cfg.get("transport") or "") not in ("http", "sse"):
+        raise ConnectRequired("disabled", tenant_id, route,
+                              "per-person credentials are not available for this server")
+    if not principal_id:
+        raise ConnectRequired("sign_in_required", tenant_id, route,
+                              "Sign in to use this server; it uses each person's own account")
+
+    upstream = cfg.get("url") or ""
+    try:
+        token, grant = access_for_call(tenant_id, route, principal_id, upstream)
+    except GrantError as e:
+        reason = {"not_connected": "not_connected", "needs_consent": "reconnect"}.get(e.reason, "error")
+        raise ConnectRequired(reason, tenant_id, route) from e
+
+    expires_at = int(grant.get("expires_at") or 0)
+    now = int(time.time())
+    if expires_at and expires_at - now <= refresh_margin_seconds():
+        if expires_at > now + 5:
+            # Still valid: use it now, refresh behind the call.
+            task = asyncio.create_task(_refresh_quietly(tenant_id, route, principal_id, upstream))
+            _background.add(task)
+            task.add_done_callback(_background.discard)
+        else:
+            await refresh_user_grant(tenant_id, route, principal_id, upstream)
+            try:
+                token, grant = access_for_call(tenant_id, route, principal_id, upstream)
+            except GrantError as e:
+                raise ConnectRequired("error", tenant_id, route) from e
+
+    refs = _brokered_refs(route)
+    headers = {k: v for k, v in (cfg.get("headers") or {}).items()
+               if k.lower() != "authorization" and not any(ref in str(v) for ref in refs)}
+    headers["Authorization"] = f"Bearer {token}"
+    out = {k: v for k, v in cfg.items() if k != "credential_mode"}
+    out["headers"] = headers
+    return out, token, grant
+
+
+async def _refresh_quietly(tenant_id: str, route: str, pid: str, upstream: str) -> None:
+    try:
+        await refresh_user_grant(tenant_id, route, pid, upstream, wait=False)
+    except ConnectRequired:
+        pass
+    except Exception as e:      # noqa: BLE001 - a background task must not raise
+        logger.info("mcp-cred: background refresh failed for %s/%s: %s",
+                    tenant_id, route, type(e).__name__)
+
+
+async def refresh_user_grant(tenant_id: str, route: str, pid: str, upstream: str,
+                             *, wait: bool = True, client=None) -> None:
+    """Refresh one person's token, single-flighted per person.
+
+    If another call holds the lock, wait up to _REFRESH_WAIT_S for it to land
+    (or return at once when `wait` is false). A refresh the provider rejects
+    permanently marks the grant needs_consent: the person must connect again.
+    """
+    from storage.mcp_grant_store import (STATUS_ERROR, STATUS_NEEDS_CONSENT, GrantError,
+                                         get_grant, refresh_token_for, set_status,
+                                         store_tokens)
+    from storage.mcp_oauth_store import get_broker
+
+    owner = take_lock(tenant_id, route, subject=pid)
+    if not owner:
+        if not wait:
+            return
+        # Another call is refreshing. Wait for its lock to be free, then use
+        # what it stored if it is fresh, or refresh ourselves if it failed.
+        deadline = time.monotonic() + _REFRESH_WAIT_S
+        while not owner:
+            if time.monotonic() >= deadline:
+                raise ConnectRequired("refresh_unavailable", tenant_id, route,
+                                      "your connection is being renewed; try again in a moment")
+            await asyncio.sleep(0.1)
+            owner = take_lock(tenant_id, route, subject=pid)
+        grant = get_grant(tenant_id, route, pid) or {}
+        if int(grant.get("expires_at") or 0) - int(time.time()) > refresh_margin_seconds():
+            drop_lock(tenant_id, route, owner, subject=pid)
+            return
+    try:
+        record = get_broker(tenant_id, route) or {}
+        endpoint = record.get("token_endpoint") or ""
+        if not endpoint or not record.get("client_id"):
+            raise ConnectRequired("not_configured", tenant_id, route,
+                                  "this server's sign-in is not configured; ask your administrator")
+        try:
+            refresh = refresh_token_for(tenant_id, route, pid, endpoint)
+        except GrantError as e:
+            set_status(tenant_id, route, pid, STATUS_NEEDS_CONSENT, error=e.reason)
+            raise ConnectRequired("reconnect", tenant_id, route) from e
+        data = {"grant_type": "refresh_token", "refresh_token": refresh,
+                "client_id": record.get("client_id") or "", **_token_extras(record)}
+        secret = CredentialContext(tenant_id=tenant_id, route=route, record=record).secret(
+            "client_secret_ref")
+        if secret:
+            data["client_secret"] = secret
+        try:
+            payload = await _with_client(client, lambda c: post_token_endpoint(
+                c, endpoint, data, purpose="oauth-token-refresh"))
+        except CredentialError as e:
+            set_status(tenant_id, route, pid,
+                       STATUS_NEEDS_CONSENT if e.permanent else STATUS_ERROR, error=e.message)
+            raise ConnectRequired("reconnect" if e.permanent else "refresh_unavailable",
+                                  tenant_id, route) from e
+        store_tokens(tenant_id, route, pid,
+                     access_token=str(payload["access_token"]),
+                     access_bindings=[_host(upstream) or _host(endpoint)],
+                     refresh_token=str(payload.get("refresh_token") or ""),
+                     refresh_bindings=[_host(endpoint)],
+                     expires_at=expiry_from(payload), scopes=payload.get("scope"))
+    finally:
+        drop_lock(tenant_id, route, owner, subject=pid)
+
+
+def scrub_secret(obj, secret: str):
+    """Replace every occurrence of `secret` in a result, recursively, so an
+    upstream that echoes the caller's token cannot hand it to the model."""
+    if not secret:
+        return obj
+    if isinstance(obj, str):
+        return obj.replace(secret, "[credential removed by Shield]")
+    if isinstance(obj, list):
+        return [scrub_secret(v, secret) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(scrub_secret(v, secret) for v in obj)
+    if isinstance(obj, dict):
+        return {k: scrub_secret(v, secret) for k, v in obj.items()}
+    return obj

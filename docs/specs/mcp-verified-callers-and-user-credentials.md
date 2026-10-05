@@ -712,6 +712,49 @@ failure because the token helper demanded an `access_token`.
 Tests: `tests/test_mcp_grants.py` (23). Eight safeguards sabotage-checked.
 Clean venv: 6093 passed.
 
+**B2 (done).** `credential_scope: per_user`:
+- `MCPGatewayRouter._call` builds the call's config with
+  `user_credential_headers`: the caller's own token from their grant (one
+  read), every header that references the route's brokered vault entries
+  stripped, `credential_mode` dropped. Neither materialization nor the shared
+  renewal path can reach the shared token. The result is scrubbed of the
+  caller's token.
+- No usable grant: JSON-RPC `-32003` (HTTP 200: the caller is authenticated, a
+  401 would send the client into a sign-in that cannot help) with `reason`
+  (`not_connected`, `reconnect`, `refresh_unavailable`, `sign_in_required`,
+  `not_configured`, `disabled`) and `connect_url`
+  (`{SHIELD_OAUTH_ISSUER_URL}/connect/{tenant}/{route}`, the B3 page). Audited
+  as a block by the `user_credential` guardrail; upstream never contacted.
+- Renewal: a token inside the refresh margin is used and refreshed behind the
+  call; an expired one is refreshed first under the person's own lock. A
+  waiting call retakes the lock once free and uses what the other call stored.
+  A permanent rejection marks the grant `needs_consent`.
+- `per_user` implies verified callers at runtime (`requires_verified`), so a
+  later tenant-default change cannot open the server to a bare key. With the
+  identity check switched off, an unverified caller gets `sign_in_required`,
+  never the shared token.
+- Saving: `credential_scope` on register and the config API, kept on re-save,
+  `PUT /servers/{route}/credential-scope` (returns the connect link). Refused
+  (400) for stdio, for a route set to accept the key, and when
+  `SHIELD_MCP_PER_USER_CREDENTIALS=0`; the identity endpoint refuses `false`
+  on a per-person server.
+- Onboarding scan of a per-person server runs without the shared credential.
+- Audit identity adds `credential_scope` and `upstream_account`.
+- Console: "own accounts" badge and an Own accounts / Shared account button.
+
+Found while building: a waiting refresh compared `last_refresh_at`, which has
+one-second resolution, so a refresh landing within the same second looked like
+no refresh; the waiter now retakes the lock instead.
+
+Not yet: the connect page itself (B3). Until then a grant can only be written
+by code, so a per-person server refuses everyone with `not_connected`.
+
+Tests: `tests/test_mcp_per_user.py` (20), the shared credential set up and
+working in every test so any fallback would show. Thirteen safeguards
+sabotage-checked; the fourteenth (requiring `verified` before using the
+principal id) is redundant by construction, since only verified callers carry
+one. Clean venv: 6113 passed.
+
 ## 10. Decisions taken (change any before approval)
 
 1. **Shield is the authorization server and federates to the tenant's IdP**,

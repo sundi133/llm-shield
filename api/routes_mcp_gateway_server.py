@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, Response
 from api.routes_mcp_server import _request_oauth_claims, _resolve_identity, _resolve_session_id
 from core.mcp import resource as resource_urls
 from core.mcp.gateway import _audit_decision
+from core.mcp_credentials import ConnectRequired
 from core.mcp.principal import (METHOD_PRINCIPAL_INACTIVE, IdentityRequired, check_verified,
                                 current_caller, reset_current_caller, resolve_caller,
                                 set_current_caller)
@@ -202,8 +203,51 @@ async def _dispatch(route: str, body: dict, request: Request, url_tenant: str = 
                                   caller.agent_key, caller.user_role)
     except IdentityRequired as e:
         return await _identity_required(e, method, params, rpc_id, request)
+    except ConnectRequired as e:
+        return await _connect_required(e, method, params, rpc_id)
     finally:
         reset_current_caller(token)
+
+
+# Distinct from -32001 (who are you?) and -32002 (confirm this action): the
+# caller is known, and what is missing is their own upstream connection.
+_RPC_CONNECT_REQUIRED = -32003
+
+_CONNECT_MESSAGES = {
+    "not_connected": "Connect your account to use this server",
+    "reconnect": "Your connection to this server has expired. Connect your account again",
+    "refresh_unavailable": "Your connection is being renewed. Try again in a moment",
+    "sign_in_required": "Sign in to use this server; it uses each person's own account",
+    "not_configured": "This server's sign-in is not set up yet. Ask your administrator",
+    "disabled": "Per-person accounts are turned off for this server",
+}
+
+
+async def _connect_required(e: ConnectRequired, method: Any, params: dict,
+                            rpc_id: Any) -> JSONResponse:
+    """A per-person server, and the caller has no usable connection of their own.
+
+    JSON-RPC -32003 with the page where they connect. HTTP 200: the caller is
+    authenticated, so a 401 would send the client into sign-in, which cannot
+    fix this. The upstream was never contacted; the refusal is audited.
+    """
+    caller = current_caller()
+    try:
+        await _audit_decision({
+            "tenant_id": e.tenant_id, "route": e.route,
+            "tool": (params.get("name") or params.get("uri") or method) if isinstance(params, dict) else method,
+            "agent_key": caller.agent_key if caller else "",
+            "user_role": caller.user_role if caller else "",
+            "allowed": False, "action": "block", "mode": "enforce", "risk": "low",
+            "reason": _CONNECT_MESSAGES.get(e.reason, str(e)),
+            "results": [{"guardrail": "user_credential", "passed": False, "action": "block",
+                         "message": f"no usable personal connection: {e.reason}"}],
+        })
+    except Exception:       # noqa: BLE001 - audit never changes the answer
+        pass
+    return _err(rpc_id, _RPC_CONNECT_REQUIRED, _CONNECT_MESSAGES.get(e.reason, str(e)),
+                {"reason": e.reason,
+                 "connect_url": resource_urls.connect_url(e.tenant_id, e.route)})
 
 
 async def _identity_required(e: IdentityRequired, method: Any, params: dict, rpc_id: Any,
@@ -308,8 +352,8 @@ async def _dispatch_as(route: str, method: Any, params: dict, rpc_id: Any, reque
                 return _ok(rpc_id, out)
 
         return _err(rpc_id, -32601, f"method not supported by the Shield gateway: {method}")
-    except IdentityRequired:
-        raise           # answered as HTTP 401 by _dispatch, never as a JSON-RPC 200
+    except (IdentityRequired, ConnectRequired):
+        raise           # answered by _dispatch with their own responses
     except GatewayError as e:
         # 404 (no route) -> -32004; server-side -> -32000.
         return _err(rpc_id, -32004 if e.status == 404 else -32000, e.message)

@@ -18,7 +18,8 @@ import os
 import re
 from typing import Awaitable, Callable, Optional
 
-from core.mcp.principal import check_verified
+from core.mcp.principal import check_verified, current_caller
+from core.mcp_credentials import is_per_user
 from storage.mcp_gateway_store import get_upstream
 
 logger = logging.getLogger("votal.mcp_gateway")
@@ -422,6 +423,32 @@ class MCPGatewayRouter:
         # Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (A4)
         check_verified(tenant_id, route, cfg)
         transport = (cfg.get("transport") or "stdio").lower()
+        caller = current_caller()
+        if caller is not None:
+            caller.credential_scope = cfg.get("credential_scope") or "shared"
+
+        if is_per_user(cfg):
+            # Each person's own account: the call carries the caller's token and
+            # nothing else. No caller, no grant: refused (ConnectRequired),
+            # never served with the shared credential. Includes stdio, which
+            # per-person routes refuse.
+            from core.mcp_credentials import scrub_secret, user_credential_headers
+            call_cfg, secret, grant = await user_credential_headers(
+                tenant_id, route,
+                self._cfg_with_identity_headers(cfg, agent_key=agent_key, user_role=user_role),
+                caller.principal_id if (caller is not None and caller.verified) else "")
+            if caller is not None:
+                caller.upstream_account = grant.get("upstream_account") or ""
+            proxy = await self._proxy_factory(call_cfg, tenant_id)
+            try:
+                return scrub_secret(await fn(proxy), secret)
+            finally:
+                up = getattr(proxy, "_upstream", None)
+                if up is not None and hasattr(up, "aclose"):
+                    try:
+                        await up.aclose()
+                    except Exception:
+                        pass
 
         if transport not in ("stdio",):
             proxy = await self._proxy_factory(
