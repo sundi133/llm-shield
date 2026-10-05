@@ -342,6 +342,31 @@ later.
 Tests: `tests/test_hook_tool_policies.py` (36), seven safeguards
 sabotage-checked. Clean venv: 6226 passed.
 
+**Task 2 (done).** `POST /v1/shield/hooks/claude-code` branches on
+`hook_event_name` (absent = PreToolUse, as before; other events get `{}`).
+- PreToolUse: the runtime profile decides first (no model); if it does not
+  deny and `before_call` is on, `check_call`. A Tool Registry deny becomes
+  `permissionDecision: "deny"` with "Blocked by Votal Shield: <rule reason>".
+  The runtime event's detail carries the tool-policy fields.
+- PostToolUse (new): if `after_call` is on, `check_result`. Redact:
+  `updatedToolOutput` = the redacted text, plus `additionalContext`. Withhold:
+  `updatedToolOutput` = "[Shield withheld this result: <reason>]". Never
+  `decision: "block"`, which ends the turn. Monitor mode: `{}` (recorded).
+- Each checked result is a runtime event: kind `dlp`, decision allow / audit
+  (redact) / deny (withhold), `detail.verdict` allow / redact / block
+  (`monitor` in monitor mode), no content. An event that fails validation is
+  now logged instead of dropped silently (that is how the missing `verdict`
+  was found).
+
+Not yet verified against real Claude Code (its CLI sign-in on the test
+machine had expired): whether `updatedToolOutput` as a string is accepted for
+tools whose `tool_response` is structured (`Read`). Task 0's open item.
+
+Tests: `tests/test_claude_code_hook_tool_policies.py` (13, the real app and a
+real tenant, model guards stubbed, Secrets patterns real). Six safeguards
+sabotage-checked; the seventh (ignoring `after_call` in the route) is caught
+one layer down by `check_result`. Clean venv: 6239 passed.
+
 ## 10. How you will test it (after tasks 1 to 3)
 
 **Claude Code**: put the §4.4 hooks in `~/.claude/settings.json` (or
