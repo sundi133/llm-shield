@@ -1,6 +1,6 @@
 # Spec: connect OAuth upstreams that are not MCP-native (Google first)
 
-Status: APPROVED 2026-10-04; task 1 done. Branch: `feat/tenant-enforce-mode`.
+Status: APPROVED 2026-10-04; tasks 1-2 done. Branch: `feat/tenant-enforce-mode`.
 Builds on `docs/spec-mcp-oauth-brokering.md` and
 `docs/spec-mcp-credential-modes.md` (mode 4, authorization code + PKCE).
 
@@ -199,7 +199,14 @@ held.
    - Token exchange and refresh send `resource` too, per the record's profile;
      records written before this change send exactly what they did.
 2. **Callback wiring.** Header set when absent, `refresh_token_held`, status
-   text. Tests.
+   text. Tests. Done. Notes: the header check is case-insensitive, other headers
+   are preserved, and a route that already sends its own Authorization header
+   gets a callback page saying the new credential is not in use (the value is
+   never shown). `refresh_token_held` is set on the first token of both the
+   authorization-code and device flows; a refresh that returns no new refresh
+   token leaves it unchanged, and records from before this change report it as
+   unknown (null), not false. Status also gains `warning` and
+   `authorization_header` (`brokered` / `other` / `none`).
 3. **Portal.** Connect with OAuth panel and status. Node tests.
 4. **Docs and the live check.** Google setup guide (customer-facing, no em
    dashes) and the end-to-end check against Google's Drive MCP server.

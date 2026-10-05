@@ -175,7 +175,8 @@ class _NotInteractive:
 # ── credential persistence ───────────────────────────────────────────
 
 def store_credential(ctx: CredentialContext, *, token: str,
-                     expires_at: int, refresh_token: str = "") -> dict:
+                     expires_at: int, refresh_token: str = "",
+                     refresh_token_held: Optional[bool] = None) -> dict:
     """Write the acquired credential to the vault and update the record.
 
     The vault is the only place a token lands. Binding is the token endpoint's
@@ -201,7 +202,8 @@ def store_credential(ctx: CredentialContext, *, token: str,
                            [host], mode="inject")
 
     update_status(ctx.tenant_id, ctx.route, STATUS_CONNECTED,
-                  expires_at=expires_at, mark_refreshed=True)
+                  expires_at=expires_at, mark_refreshed=True,
+                  refresh_token_held=refresh_token_held)
     return {"expires_at": expires_at}
 
 
@@ -484,9 +486,12 @@ class AuthCodeProvider:
                 "mcp-cred: %s/%s exchanged a code but the provider returned no "
                 "refresh_token; the credential cannot be kept alive",
                 ctx.tenant_id, ctx.route)
+        # Recorded either way, so the console can say "stops working at <expiry>"
+        # instead of looking connected until the first access token dies.
         return store_credential(
             ctx, token=str(payload["access_token"]),
-            expires_at=expiry_from(payload), refresh_token=refresh)
+            expires_at=expiry_from(payload), refresh_token=refresh,
+            refresh_token_held=bool(refresh))
 
     async def renew(self, ctx: CredentialContext, *, client=None) -> dict:
         refresh = ctx.secret("refresh_token_ref")
@@ -513,10 +518,11 @@ class AuthCodeProvider:
         # old. Dropping it here would strand the route at the next renewal, so a
         # returned value always replaces the stored one; an omitted value means
         # the provider kept the existing token valid.
+        rotated = str(payload.get("refresh_token") or "")
         return store_credential(
             ctx, token=str(payload["access_token"]),
-            expires_at=expiry_from(payload),
-            refresh_token=str(payload.get("refresh_token") or ""))
+            expires_at=expiry_from(payload), refresh_token=rotated,
+            refresh_token_held=True if rotated else None)
 
     async def revoke(self, ctx: CredentialContext, *, client=None) -> None:
         endpoint = ctx.record.get("revocation_endpoint") or ""
@@ -892,10 +898,12 @@ class DeviceCodeProvider:
                 raise CredentialError(202, "authorization still pending") from e
             raise
 
+        # The first token of the flow: no refresh token here means none at all.
+        refresh = str(payload.get("refresh_token") or "")
         return store_credential(
             ctx, token=str(payload["access_token"]),
-            expires_at=expiry_from(payload),
-            refresh_token=str(payload.get("refresh_token") or ""))
+            expires_at=expiry_from(payload), refresh_token=refresh,
+            refresh_token_held=bool(refresh))
 
     async def renew(self, ctx: CredentialContext, *, client=None) -> dict:
         # Renewal is an ordinary refresh_token grant — identical to auth code, so

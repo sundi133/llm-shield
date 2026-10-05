@@ -311,3 +311,102 @@ def test_status_shows_the_profile_and_the_options_and_still_no_secrets(client):
     assert oauth["profile"] == "google" and oauth["scopes"] == [DRIVE_RO]
     assert DRIVE_ALL in oauth["available_scopes"]
     assert "gsecret" not in r.text and "resource" not in oauth
+
+
+# ── task 2: the callback wires the route, and says whether it will last ────
+
+
+def _pending_google(route="gdrive", headers=None):
+    cfg = {"route": route, "transport": "http", "url": DRIVE_MCP}
+    if headers is not None:
+        cfg["headers"] = headers
+    gstore.set_upstream("acme", route, cfg)
+    st = ostore.new_state()
+    ostore.put_pending(st, "acme", route, "verifier", REDIRECT)
+    ostore.set_broker("acme", route, {
+        "mode": "auth_code", "issuer": "https://accounts.google.com", "profile": "google",
+        "resource": DRIVE_MCP, "token_endpoint": "https://oauth2.googleapis.com/token",
+        "client_id": "cid", "scopes": [DRIVE_RO], "status": ostore.STATUS_PENDING})
+    return st
+
+
+def _callback(client, st, token_response):
+    """The real callback and the real exchange; only the provider's HTTP
+    answer, the vault and the audit sink are stand-ins."""
+    audit = []
+
+    async def fake_post(client_, endpoint, data, *, purpose):
+        return token_response
+
+    with patch.object(creds, "post_token_endpoint", fake_post), \
+         patch("storage.vault_store.create_vault_entry", lambda *a, **k: {}), \
+         patch("storage.admin_audit.log_admin_action", lambda **kw: audit.append(kw)):
+        r = client.get(f"/v1/tenant/me/mcp/oauth/callback?code=c&state={st}")
+    return r, audit
+
+
+GOOD = {"access_token": "ya29.x", "refresh_token": "1//r", "expires_in": 3599}
+
+
+def test_a_completed_connection_wires_the_route_to_the_brokered_token(client):
+    st = _pending_google(headers={"X-Trace": "keep-me"})
+    r, audit = _callback(client, st, GOOD)
+    assert r.status_code == 200 and "Connected: gdrive" in r.text
+    headers = gstore.get_upstream("acme", "gdrive")["headers"]
+    assert headers == {"X-Trace": "keep-me",
+                       "Authorization": "Bearer shield://oauth-gdrive-access"}
+    assert audit[-1]["after"]["authorization_header"] == "brokered"
+    status = client.get("/v1/tenant/me/mcp/servers/gdrive/oauth", headers=H).json()["oauth"]
+    assert status["authorization_header"] == "brokered"
+    assert status["status"] == "connected" and status["refresh_token_held"] is True
+    assert status["warning"] == ""
+
+
+def test_an_operators_own_authorization_header_is_never_replaced(client):
+    st = _pending_google(headers={"authorization": "Bearer operator-pat"})
+    r, audit = _callback(client, st, GOOD)
+    assert gstore.get_upstream("acme", "gdrive")["headers"] == {"authorization": "Bearer operator-pat"}
+    assert "not in use" in r.text and "operator-pat" not in r.text
+    assert audit[-1]["after"]["authorization_header"] == "other"
+    status = client.get("/v1/tenant/me/mcp/servers/gdrive/oauth", headers=H).json()["oauth"]
+    assert status["authorization_header"] == "other"
+
+
+def test_reconnecting_leaves_an_already_brokered_route_as_it_is(client):
+    st = _pending_google(headers={"Authorization": "Bearer shield://oauth-gdrive-access"})
+    _, audit = _callback(client, st, GOOD)
+    assert gstore.get_upstream("acme", "gdrive")["headers"] == {
+        "Authorization": "Bearer shield://oauth-gdrive-access"}
+    assert audit[-1]["after"]["authorization_header"] == "brokered"
+
+
+def test_a_failed_exchange_wires_nothing(client):
+    st = _pending_google()
+
+    async def boom(client_, endpoint, data, *, purpose):
+        raise creds.CredentialError(400, "invalid_grant", permanent=True)
+
+    with patch.object(creds, "post_token_endpoint", boom):
+        r = client.get(f"/v1/tenant/me/mcp/oauth/callback?code=c&state={st}")
+    assert r.status_code == 400
+    assert "headers" not in gstore.get_upstream("acme", "gdrive")
+
+
+def test_no_refresh_token_is_said_plainly(client):
+    """Before this, the route looked connected until its first token died."""
+    st = _pending_google()
+    _callback(client, st, {"access_token": "ya29.x", "expires_in": 3599})
+    status = client.get("/v1/tenant/me/mcp/servers/gdrive/oauth", headers=H).json()["oauth"]
+    assert status["status"] == "connected" and status["refresh_token_held"] is False
+    assert "stops working" in status["warning"] and "myaccount.google.com" in status["warning"]
+
+
+def test_a_refresh_without_a_new_refresh_token_keeps_the_old_one_counted():
+    ostore.set_broker("acme", "gdrive", {"status": "connected", "refresh_token_held": True})
+    ostore.update_status("acme", "gdrive", ostore.STATUS_CONNECTED, refresh_token_held=None)
+    assert ostore.get_broker("acme", "gdrive")["refresh_token_held"] is True
+
+
+def test_records_from_before_this_change_report_unknown_not_false():
+    out = mcp_oauth.public_status({"status": "connected", "issuer": "https://p"})
+    assert out["refresh_token_held"] is None and out["warning"] == ""

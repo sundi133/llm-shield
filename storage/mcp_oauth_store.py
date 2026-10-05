@@ -121,7 +121,8 @@ def delete_broker(tenant_id: str, route: str) -> bool:
 
 def update_status(tenant_id: str, route: str, status: str,
                   *, error: str = "", expires_at: Optional[int] = None,
-                  mark_refreshed: bool = False) -> Optional[dict]:
+                  mark_refreshed: bool = False,
+                  refresh_token_held: Optional[bool] = None) -> Optional[dict]:
     """Patch just the operational fields. Returns the updated record, or None.
 
     Separate from ``set_broker`` so the refresh loop cannot accidentally clobber
@@ -136,6 +137,10 @@ def update_status(tenant_id: str, route: str, status: str,
         rec["expires_at"] = int(expires_at)
     if mark_refreshed:
         rec["last_refresh_at"] = int(time.time())
+    # None leaves it as it was: a refresh that returns no new refresh token
+    # means the provider kept the old one valid, not that it went away.
+    if refresh_token_held is not None:
+        rec["refresh_token_held"] = bool(refresh_token_held)
     return set_broker(tenant_id, route, rec)
 
 

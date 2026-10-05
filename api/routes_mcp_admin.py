@@ -53,6 +53,7 @@ from core.mcp_credentials import MODE_AUTH_CODE
 from core.mcp_oauth import (
     OAuthBrokerError,
     broker_enabled,
+    authorization_header_state,
     available_scopes,
     build_authorize_url,
     choose_scopes,
@@ -636,8 +637,34 @@ async def get_oauth_status(route: str, request: Request):
     tenant_id = _require_tenant(request)
     if not get_upstream(tenant_id, route):
         raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+    cfg = get_upstream(tenant_id, route) or {}
     return {"tenant_id": tenant_id, "route": route,
-            "oauth": public_status(get_broker(tenant_id, route))}
+            "oauth": {**public_status(get_broker(tenant_id, route)),
+                      "authorization_header": authorization_header_state(cfg, route)}}
+
+
+def _wire_brokered_header(tenant_id: str, route: str) -> str:
+    """Point the route at the brokered token, unless it already sends an
+    Authorization header. Returns the resulting state.
+
+    Without this, a completed connection did nothing until an operator hand-set
+    the header. An existing header is never replaced: it may be a deliberate
+    credential, and the status says which one is in use. Only the reference to
+    the vault entry the callback just wrote is ever added, for the route named
+    in the pending record, never a value from the request.
+    """
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        return "none"
+    state = authorization_header_state(cfg, route)
+    if state != "none":
+        return state
+    from storage.mcp_oauth_store import access_ref
+    cfg["headers"] = {**(cfg.get("headers") or {}),
+                      "Authorization": f"Bearer shield://{access_ref(route)}"}
+    cfg["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, cfg)
+    return "brokered"
 
 
 def _callback_page(title: str, detail: str, ok: bool) -> HTMLResponse:
@@ -719,14 +746,24 @@ async def oauth_callback(request: Request, code: str = "", state: str = "",
         return _callback_page("Could not exchange the authorization code",
                               e.message, ok=False)
 
+    header = _wire_brokered_header(tenant_id, route)
+
     try:
         from storage.admin_audit import log_admin_action
         log_admin_action(action="mcp_oauth_connected", actor="oauth-callback",
                          tenant_id=tenant_id,
                          after={"route": route, "issuer": record.get("issuer", ""),
-                                "via": "callback"})
+                                "via": "callback", "authorization_header": header})
     except Exception:
         pass
+
+    if header == "other":
+        return _callback_page(
+            f"Connected: {route}",
+            "Shield now holds a credential for this server, but the route already "
+            "sends its own Authorization header, so the new credential is not in "
+            "use. Remove that header in the Shield console to switch to it.",
+            ok=True)
 
     return _callback_page(
         f"Connected: {route}",

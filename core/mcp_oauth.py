@@ -408,7 +408,30 @@ def public_status(record: Optional[dict]) -> dict:
         "connected_by": record.get("connected_by") or "",
         "profile": record.get("profile") or "standard",
         "available_scopes": list(record.get("available_scopes") or []),
+        # None for records and modes that never recorded it.
+        "refresh_token_held": record.get("refresh_token_held"),
+        "warning": _status_warning(record),
     }
+
+
+def _status_warning(record: dict) -> str:
+    """The one thing an operator must act on, in words, or empty."""
+    if record.get("status") == "connected" and record.get("refresh_token_held") is False:
+        return ("The provider returned no refresh token, so this connection stops "
+                "working when its access token expires. Reconnect; for Google, "
+                "first remove Shield's access at myaccount.google.com/permissions.")
+    return ""
+
+
+def authorization_header_state(cfg: dict, route: str) -> str:
+    """Which Authorization header the route sends upstream: the brokered token
+    ("brokered"), one an operator set ("other"), or none ("none")."""
+    from storage.mcp_oauth_store import access_ref
+    value = next((v for k, v in (cfg.get("headers") or {}).items()
+                  if k.lower() == "authorization"), None)
+    if value is None:
+        return "none"
+    return "brokered" if value == f"Bearer shield://{access_ref(route)}" else "other"
 
 
 def token_request_extras(record: dict) -> dict:
