@@ -139,6 +139,76 @@ def test_the_plugin_command_passes_a_redaction_back(shield, tmp_path):
     assert r.returncode == 0 and json.loads(r.stdout) == shield.body
 
 
+# ── packaging for a bucket (package_for_bucket.py) ───────────────────────
+
+BASE = "https://storage.googleapis.com/votal-ai/claude-plugins"
+
+
+def _packager():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "package_for_bucket", os.path.join(MARKETPLACE, "package_for_bucket.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_bucket_catalog_points_at_the_zip_and_pins_it(tmp_path):
+    import hashlib
+    r = _packager().package(BASE + "/", tmp_path)          # trailing slash tolerated
+    hosted = json.loads(r["marketplace"].read_text())
+    [entry] = hosted["plugins"]
+    with open(os.path.join(PLUGIN, ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
+        version = json.load(f)["version"]
+    assert entry["source"] == {
+        "source": "archive", "url": f"{BASE}/votal-shield-hooks-{version}.zip",
+        "sha256": hashlib.sha256(r["zip"].read_bytes()).hexdigest()}
+    assert entry["version"] == version and hosted["name"] == "votal-shield"
+
+
+def test_the_zip_is_the_plugin_at_its_root_and_the_same_every_time(tmp_path):
+    import zipfile
+    pkg = _packager()
+    first = pkg.package(BASE, tmp_path / "a")
+    # A fresh checkout on another machine has other file times: same digest.
+    hooks_json = os.path.join(PLUGIN, "hooks", "hooks.json")
+    st = os.stat(hooks_json)
+    os.utime(hooks_json, (st.st_atime, st.st_mtime + 86400))
+    try:
+        second = pkg.package(BASE, tmp_path / "b")
+    finally:
+        os.utime(hooks_json, (st.st_atime, st.st_mtime))
+    assert first["sha256"] == second["sha256"]
+    with zipfile.ZipFile(first["zip"]) as z:
+        names = sorted(z.namelist())
+        assert names == [".claude-plugin/plugin.json", "hooks/hooks.json",
+                         "scripts/claude_code_hook.sh"]
+        mode = z.getinfo("scripts/claude_code_hook.sh").external_attr >> 16
+        assert mode & 0o777 == 0o755
+        with open(os.path.join(PLUGIN, "hooks", "hooks.json"), "rb") as f:
+            assert z.read("hooks/hooks.json") == f.read()
+
+
+@pytest.mark.parametrize("url", ["http://storage.googleapis.com/votal-ai/p",
+                                 "storage.googleapis.com/votal-ai/p",
+                                 "https://storage.googleapis.com/votal-ai/p?x=1"])
+def test_the_bucket_url_must_be_plain_https(tmp_path, url):
+    pkg = _packager()
+    with pytest.raises(pkg.PackagingError):
+        pkg.package(url, tmp_path)
+    assert pkg.main(["--base-url", url, "--out", str(tmp_path)]) == 2
+    assert not list(tmp_path.iterdir())                   # nothing half-written
+
+
+def test_a_drifted_script_is_not_packaged(tmp_path, monkeypatch):
+    pkg = _packager()
+    other = tmp_path / "other.sh"
+    other.write_text("#!/bin/sh\nexit 0\n")
+    monkeypatch.setattr(pkg, "CANONICAL_SCRIPT", other)
+    with pytest.raises(pkg.PackagingError, match="sync_hook_scripts"):
+        pkg.package(BASE, tmp_path / "out")
+
+
 @pytest.mark.parametrize("break_it", ["no_config", "no_script"])
 def test_the_plugin_denies_when_it_cannot_check(shield, tmp_path, break_it):
     """Cowork runs hooks in its own environment: if it cannot see ~/.votal or

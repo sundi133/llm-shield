@@ -155,6 +155,40 @@ Use the plugin **or** the settings file, not both: with both, every call is
 checked twice. If you added the hooks to `~/.claude/settings.json`, remove
 them there after installing the plugin.
 
+**From a bucket (Claude Code 2.1.224 or later):** host the plugin as a zip
+plus a `marketplace.json` on any static HTTPS host, such as a GCS bucket.
+`plugin/package_for_bucket.py` builds both: a reproducible
+`votal-shield-hooks-<version>.zip` and a catalog that points at it with an
+`archive` source pinned by its sha256. It uploads nothing; it prints the
+commands.
+
+```bash
+python examples/agent-hooks/plugin/package_for_bucket.py --base-url https://storage.googleapis.com/votal-ai/claude-plugins
+```
+
+Upload the zip first, then the catalog (the printed `gcloud storage cp`
+commands set a long cache on the versioned zip and `no-cache` on the
+catalog). Each machine then runs:
+
+```bash
+claude plugin marketplace add https://storage.googleapis.com/votal-ai/claude-plugins/marketplace.json
+```
+
+```bash
+claude plugin install votal-shield-hooks@votal-shield
+```
+
+- Both files must be readable without signing in: Claude Code sends no Google
+  credentials. The plugin holds no secrets; the tenant key stays in each
+  machine's `~/.votal/hook.conf`.
+- Whoever can write the zip can run code on every machine that installs it,
+  on every tool call. The sha256 makes Claude Code refuse a zip that does not
+  match the catalog, so give write access to both only to the release process.
+- Raise `version` in `.claude-plugin/plugin.json` and `marketplace.json` on
+  every change: the zip is cached as immutable under its versioned name.
+- Cowork does not install from a URL. Upload the same zip in Organization
+  settings, Plugins & skills, or sync it from a private GitHub repository.
+
 To refresh the plugin's copy of the script after changing the script:
 
 ```bash
