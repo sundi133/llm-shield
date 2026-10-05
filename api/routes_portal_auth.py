@@ -284,7 +284,12 @@ async def callback(request: Request, code: str = "", state: str = "",
     cfg = await oidc_registry.get_provider(tenant_id, login_tx.get("provider", ""))
     if cfg is None:
         raise HTTPException(status_code=404, detail="provider no longer configured")
-    _require_configured(cfg, login_tx.get("provider", ""))
+    # MCP sign-in shares this callback, so a tenant registers one redirect URI
+    # with its IdP. It is gated by the tenant's allowed_groups, not admin_groups,
+    # and never creates a portal session.
+    mcp_sign_in = login_tx.get("purpose") == "mcp_sign_in"
+    if not mcp_sign_in:
+        _require_configured(cfg, login_tx.get("provider", ""))
 
     try:
         discovery = await discover_openid_config(cfg.issuer)
@@ -332,6 +337,10 @@ async def callback(request: Request, code: str = "", state: str = "",
     # from another tenant's IdP cannot open a session here.
     if str(claims.get("iss", "")).rstrip("/") != cfg.issuer.rstrip("/"):
         raise HTTPException(status_code=401, detail="issuer mismatch")
+
+    if mcp_sign_in:
+        from api.routes_mcp_signin import complete_sign_in
+        return await complete_sign_in(request, login_tx, claims, cfg)
 
     session_id = create_session(
         tenant_id,

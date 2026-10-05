@@ -47,9 +47,26 @@ def test_redirect_uri_validator():
 
 
 # ── registration auth ───────────────────────────────────────────────────
-def test_register_requires_tenant_key(client):
+def test_register_requires_tenant_key(client, monkeypatch):
+    # With MCP sign-in off (the fleet switch), a key is required, as before.
+    monkeypatch.setenv("SHIELD_OAUTH_FEDERATED_LOGIN", "0")
     r = client.post("/oauth/register", json={"client_name": "x", "redirect_uris": ["https://a/cb"]})
     assert r.status_code == 401
+
+
+def test_register_without_a_key_gets_a_client_with_no_tenant(client):
+    """MCP clients register before anyone signs in (spec A2). Such a client is
+    bound to no tenant and cannot obtain a tenant token: its only use is
+    signing a person in to a gateway URL. tests/test_mcp_signin.py covers that."""
+    import asyncio
+    from storage.oauth_store import get_client
+    r = client.post("/oauth/register", json={"client_name": "x", "redirect_uris": ["https://a/cb"]})
+    assert r.status_code == 201
+    assert asyncio.run(get_client(r.json()["client_id"])).tenant_id == ""
+    a = client.get("/oauth/authorize", headers={"X-API-Key": "k-acme"}, params={
+        "response_type": "code", "client_id": r.json()["client_id"],
+        "code_challenge": "x" * 43}, follow_redirects=False)
+    assert a.status_code == 400
 
 
 def test_register_rejects_non_https_redirect(client):

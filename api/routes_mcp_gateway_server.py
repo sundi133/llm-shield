@@ -18,6 +18,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from api.routes_mcp_server import _request_oauth_claims, _resolve_identity, _resolve_session_id
+from core.mcp import resource as resource_urls
 from core.mcp.principal import reset_current_caller, resolve_caller, set_current_caller
 from core.mcp.gateway import GatewayError
 from core.mcp.gateway import router as gateway_router
@@ -54,7 +55,7 @@ def _challenge_enabled() -> bool:
         "SHIELD_MCP_AUTH_CHALLENGE", "").strip().lower() not in ("0", "off", "false", "no")
 
 
-def _unauthenticated(rpc_id: Any, request: Request) -> JSONResponse:
+def _unauthenticated(rpc_id: Any, request: Request, metadata_url: str = "") -> JSONResponse:
     """401 with an RFC 9728 challenge, so a client knows to authenticate.
 
     This used to answer HTTP 200 carrying the JSON-RPC error, because
@@ -80,7 +81,11 @@ def _unauthenticated(rpc_id: Any, request: Request) -> JSONResponse:
     if not base:
         base = str(getattr(request, "base_url", "") or "").rstrip("/")
     challenge = 'Bearer realm="mcp"'
-    if base:
+    if metadata_url:
+        # A tenant-addressed URL has its own metadata, naming the server as the
+        # resource, so the client's sign-in yields a token for this server only.
+        challenge += f', resource_metadata="{metadata_url}"'
+    elif base:
         challenge += f', resource_metadata="{base}/.well-known/oauth-protected-resource"'
     resp.headers["WWW-Authenticate"] = challenge
     return resp
@@ -152,7 +157,7 @@ def _confirmation_details(decision: dict) -> dict:
     return out
 
 
-async def _dispatch(route: str, body: dict, request: Request):
+async def _dispatch(route: str, body: dict, request: Request, url_tenant: str = ""):
     method = body.get("method")
     params = body.get("params") or {}
     rpc_id = body.get("id")
@@ -163,10 +168,21 @@ async def _dispatch(route: str, body: dict, request: Request):
     # Who is calling. Enforcement uses exactly the legacy tenant/agent/role;
     # the verified principal (if any) is recorded on every decision this
     # request makes. Spec: docs/specs/mcp-verified-callers-and-user-credentials.md
+    metadata = ""
+    if url_tenant:
+        # The tenant-addressed form: a token from MCP sign-in is accepted here,
+        # and only for this URL (its audience).
+        metadata = resource_urls.metadata_url(url_tenant, route, request)
+        try:
+            request.state._shield_expected_aud = resource_urls.resource_url(url_tenant, route, request)
+        except Exception:
+            pass
     caller = resolve_caller(request, legacy=_resolve_identity,
                             oauth_claims=_request_oauth_claims)
-    if not caller.tenant_id:
-        return _unauthenticated(rpc_id, request)
+    if not caller.tenant_id or (url_tenant and caller.tenant_id != url_tenant):
+        # A credential for another tenant is refused exactly like no credential:
+        # the URL names the tenant, and nothing here says whether it exists.
+        return _unauthenticated(rpc_id, request, metadata)
 
     token = set_current_caller(caller)
     try:
@@ -253,12 +269,46 @@ async def _dispatch_as(route: str, method: Any, params: dict, rpc_id: Any, reque
         return _err(rpc_id, -32603, f"error handling {method}: {detail}")
 
 
-@router.post("/{route}/mcp")
-async def gateway_mcp(route: str, request: Request):
+async def _body(request: Request):
     try:
         body = await request.json()
     except Exception:
-        return _err(None, -32700, "parse error: body is not valid JSON")
+        return None, _err(None, -32700, "parse error: body is not valid JSON")
     if not isinstance(body, dict):
-        return _err(None, -32600, "invalid request: expected a JSON-RPC object")
-    return await _dispatch(route, body, request)
+        return None, _err(None, -32600, "invalid request: expected a JSON-RPC object")
+    return body, None
+
+
+@router.post("/{route}/mcp")
+async def gateway_mcp(route: str, request: Request):
+    body, error = await _body(request)
+    return error or await _dispatch(route, body, request)
+
+
+@router.post("/t/{tenant}/{route}/mcp")
+async def gateway_mcp_for_tenant(tenant: str, route: str, request: Request):
+    """The same gateway, addressed by tenant, so an MCP client can sign a
+    person in with nothing but this URL.
+    Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.1)"""
+    if not (resource_urls.valid_segment(tenant) and resource_urls.valid_segment(route)):
+        return _err(None, -32004, "unknown server")
+    body, error = await _body(request)
+    return error or await _dispatch(route, body, request, url_tenant=tenant)
+
+
+# Protected-resource metadata (RFC 9728) for each tenant-addressed URL, at the
+# well-known path with the URL's path appended. Public: it is what a client
+# reads before it has any credential.
+wellknown_router = APIRouter(tags=["mcp-gateway-server"])
+
+
+@wellknown_router.get(resource_urls.WELL_KNOWN + "/gateway/t/{tenant}/{route}/mcp")
+async def gateway_resource_metadata(tenant: str, route: str, request: Request):
+    if not (resource_urls.valid_segment(tenant) and resource_urls.valid_segment(route)):
+        return JSONResponse(status_code=404, content={"error": "not_found"})
+    return {
+        "resource": resource_urls.resource_url(tenant, route, request),
+        "authorization_servers": [resource_urls.authorization_server_url(request)],
+        "scopes_supported": ["mcp"],
+        "bearer_methods_supported": ["header"],
+    }

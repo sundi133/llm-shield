@@ -1,8 +1,6 @@
 """Who is calling the MCP gateway: principals, verified, recorded on every decision.
 
-Task A1 of docs/specs/mcp-verified-callers-and-user-credentials.md. Audit only:
-the tenant, agent key and role that enforcement uses are exactly what the
-legacy resolver returns, so no decision changes. What is new:
+Tasks A1 and A2 of docs/specs/mcp-verified-callers-and-user-credentials.md.
 
 - a principal store (people and service accounts) and principal keys that live
   outside the tenant-key namespace;
@@ -10,9 +8,10 @@ legacy resolver returns, so no decision changes. What is new:
   naming one, or a principal key) and records it with how it was verified;
 - a revoked Shield access token is no longer accepted.
 
-The headline guarantee is test_enforcement_sees_exactly_the_legacy_identity:
-whatever principal is attached, the values passed to enforcement are the ones
-the gateway used before this change.
+A tenant-key caller is resolved exactly as before (test_a_tenant_key_caller_
+resolves_exactly_as_before). A credential that names a principal is new, so it
+follows stricter rules from the start (A2): its role comes from the principal,
+never a header, and it admits nobody once the principal is suspended.
 """
 import asyncio
 import time
@@ -206,23 +205,37 @@ def test_a_tenant_key_caller_resolves_exactly_as_before(client, router, audit):
     assert ident["principal_id"] == ""
 
 
-def test_enforcement_sees_exactly_the_legacy_identity(client, router, monkeypatch):
-    """Whatever principal is attached, enforcement gets the legacy values."""
+def test_a_signed_in_person_cannot_claim_a_role_with_a_header(client, router, audit):
     alice = _user()
-    headers = {**_bearer(_token(alice, roles=["analyst"])),
+    headers = {**_bearer(_token(alice, roles=["analyst", "reader"])),
                "X-Agent-Key": "claude-desktop", "X-User-Role": "admin"}
-    legacy = []
-    real = ms._resolve_identity
-
-    def spy(request):
-        out = real(request)
-        legacy.append(out)
-        return out
-    monkeypatch.setattr(srv, "_resolve_identity", spy)
     _call(client, headers)
-    assert router.calls == legacy == [(TENANT, "claude-desktop", "admin")]
-    # A1 records the verified principal but does not yet use its roles.
-    assert router.callers[0].verified and router.callers[0].principal_roles == ["analyst"]
+    assert router.calls == [(TENANT, "claude-desktop", "analyst")]
+    ident = audit[0]["metadata"]["identity"]
+    assert ident["role_source"] == "principal" and ident["role_override_refused"] is True
+
+
+def test_a_header_may_pick_among_the_persons_own_roles(client, router, audit):
+    alice = _user()
+    _call(client, {**_bearer(_token(alice, roles=["analyst", "reader"])),
+                   "X-User-Role": "reader"})
+    assert router.calls[0][2] == "reader"
+    ident = audit[0]["metadata"]["identity"]
+    assert ident["role_source"] == "principal_selected" and not ident["role_override_refused"]
+
+
+def test_a_person_with_no_roles_acts_with_none(client, router, audit):
+    alice = _user()
+    _call(client, {**_bearer(_token(alice, roles=[])), "X-User-Role": "admin"})
+    assert router.calls[0][2] == ""
+    assert audit[0]["metadata"]["identity"]["role_source"] == "principal_none"
+
+
+def test_a_service_account_key_acts_as_its_own_role(client, router):
+    sa = ps.create_service_account(TENANT, name="bot", roles=["finance"])
+    key, _ = ps.create_principal_key(TENANT, sa["id"])
+    _call(client, {"X-API-Key": key, "X-User-Role": "admin"})
+    assert router.calls[0][2] == "finance"
 
 
 def test_a_signed_in_person_is_recorded_as_verified(client, router, audit):
@@ -232,28 +245,33 @@ def test_a_signed_in_person_is_recorded_as_verified(client, router, audit):
     assert ident == {
         "principal_id": alice["id"], "principal_type": "user",
         "email": "alice@acme.example", "identity_method": "oauth_user",
-        "verified": True, "role_source": "none", "principal_roles": ["analyst"]}
+        "verified": True, "role_source": "principal", "principal_roles": ["analyst"],
+        "client_id": "claude", "role_override_refused": False}
 
 
-def test_a_suspended_person_is_recorded_but_not_yet_refused(client, router, audit):
+def test_a_suspended_persons_token_admits_nobody(client, router):
     alice = _user()
     ps.set_status(TENANT, alice["id"], ps.STATUS_SUSPENDED)
     r = _call(client, _bearer(_token(alice)))
-    assert r.status_code == 200 and router.calls     # A4 refuses; A1 only records
-    ident = audit[0]["metadata"]["identity"]
-    assert ident["identity_method"] == "principal_inactive" and not ident["verified"]
+    assert r.status_code == 401 and router.calls == []
 
 
-def test_a_token_whose_type_does_not_match_the_record_is_not_verified(client, router, audit):
+def test_a_token_whose_type_does_not_match_the_record_admits_nobody(client, router):
     sa = ps.create_service_account(TENANT, name="bot")
-    _call(client, _bearer(_token(sa, ptype="user")))
-    assert audit[0]["metadata"]["identity"]["verified"] is False
+    assert _call(client, _bearer(_token(sa, ptype="user"))).status_code == 401
 
 
-def test_a_principal_from_another_tenant_is_never_found(client, router, audit):
+def test_a_principal_from_another_tenant_is_never_found(client, router):
     other = _user(tenant=OTHER)
-    _call(client, _bearer(_token(other, tenant=TENANT)))
-    assert audit[0]["metadata"]["identity"]["verified"] is False
+    assert _call(client, _bearer(_token(other, tenant=TENANT))).status_code == 401
+
+
+def test_a_suspended_persons_token_never_un_admits_a_tenant_key(client, router, audit):
+    alice = _user()
+    ps.set_status(TENANT, alice["id"], ps.STATUS_SUSPENDED)
+    r = _call(client, {"X-API-Key": TENANT_KEY, **_bearer(_token(alice))})
+    assert r.status_code == 200
+    assert audit[0]["metadata"]["identity"]["identity_method"] == "principal_inactive"
 
 
 def test_a_shield_token_without_a_principal_is_legacy(client, router, audit):
@@ -338,6 +356,19 @@ def test_a_resolver_failure_falls_back_to_the_legacy_identity(client, router, au
     assert audit[0]["metadata"]["identity"]["identity_method"] == "tenant_key"
 
 
+def test_a_resolver_failure_never_admits_a_principal_credential_alone(client, router, monkeypatch):
+    sa = ps.create_service_account(TENANT, name="bot")
+    key, _ = ps.create_principal_key(TENANT, sa["id"])
+
+    def boom(*a, **k):
+        raise RuntimeError("store down")
+    monkeypatch.setattr(principal, "_cached_principal", boom)
+    assert _call(client, {"X-API-Key": key}).status_code == 401
+    alice = _user()
+    assert _call(client, _bearer(_token(alice))).status_code == 401
+    assert router.calls == []
+
+
 def test_the_caller_does_not_outlive_its_request(client, router):
     _call(client, {"X-API-Key": TENANT_KEY})
     assert router.callers[0] is not None
@@ -386,6 +417,4 @@ def test_a_status_change_is_seen_once_the_cache_expires(client, router, audit, m
     ps.set_status(TENANT, alice["id"], ps.STATUS_SUSPENDED)
     now = time.monotonic()
     monkeypatch.setattr(principal.time, "monotonic", lambda: now + principal._CACHE_TTL_S + 1)
-    audit.clear()
-    _call(client, _bearer(token))
-    assert audit[0]["metadata"]["identity"]["identity_method"] == "principal_inactive"
+    assert _call(client, _bearer(token)).status_code == 401

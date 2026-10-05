@@ -89,7 +89,17 @@ async def register_client(request: Request):
             tenant_id = _ensure_sandbox_tenant()
         except Exception:
             tenant_id = ""
-    if not tenant_id:
+    # MCP clients (Claude, Cursor, VS Code) register themselves with no
+    # credential before a person signs in. Such a client gets no tenant: the
+    # authorization endpoint lets it do one thing, sign a person in to a
+    # tenant-addressed gateway URL through that tenant's IdP, with a consent
+    # screen. It cannot use a tenant key, client_credentials or a secret.
+    # Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.5)
+    unbound = False
+    if not tenant_id and not api_key:
+        from core.mcp.resource import federated_login_enabled
+        unbound = federated_login_enabled()
+    if not tenant_id and not unbound:
         return JSONResponse(
             status_code=401,
             content={"error": "invalid_token",
@@ -107,6 +117,21 @@ async def register_client(request: Request):
     grant_types = body.get("grant_types", ["authorization_code", "refresh_token"])
     auth_method = body.get("token_endpoint_auth_method", "none")
     scope = body.get("scope", "shield")
+
+    if unbound:
+        if len(client_name) > 100:
+            return JSONResponse(status_code=400, content={
+                "error": "invalid_client_metadata", "error_description": "client_name is too long"})
+        if not set(grant_types or []) <= {"authorization_code", "refresh_token"} \
+                or "authorization_code" not in (grant_types or []):
+            return JSONResponse(status_code=400, content={
+                "error": "invalid_client_metadata",
+                "error_description": "without a tenant key a client may only use authorization_code"})
+        if auth_method != "none":
+            return JSONResponse(status_code=400, content={
+                "error": "invalid_client_metadata",
+                "error_description": "without a tenant key a client must be public "
+                                     "(token_endpoint_auth_method=none)"})
 
     # Validate redirect URIs for any client that uses the authorization-code
     # flow: must be a non-empty list of exact https URLs (localhost may use http

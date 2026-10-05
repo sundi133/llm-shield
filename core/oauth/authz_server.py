@@ -44,16 +44,21 @@ def issue_access_token(
     tenant_id: str,
     user_sub: str,
     ttl_seconds: int = 600,
+    audience: str = "shield-oauth",
+    extra_claims: Optional[dict] = None,
 ) -> str:
     """Mint a JWT access token for an OAuth client.
 
-    The access token is a standard JWT verifiable by any library.
+    The access token is a standard JWT verifiable by any library. `audience`
+    defaults to the tenant-wide "shield-oauth"; a token from MCP sign-in names
+    one gateway URL instead, so it is refused by every other server.
     """
     signer = _get_oauth_signer()
     now = int(time.time())
     claims = {
+        **(extra_claims or {}),
         "iss": os.environ.get("SHIELD_ISSUER", "shield").strip() or "shield",
-        "aud": "shield-oauth",
+        "aud": audience,
         "sub": user_sub,
         "client_id": client_id,
         "tenant_id": tenant_id,
@@ -88,12 +93,38 @@ def generate_client_secret() -> str:
 # ── Authorization code exchange ─────────────────────────────────────────
 
 
+def _principal_claims(principal: dict) -> dict:
+    """The claims a principal-naming access token carries (A2 of the spec)."""
+    return {
+        "ptype": principal.get("type", ""),
+        "email": principal.get("email", ""),
+        "roles": list(principal.get("roles") or []),
+        "idp": principal.get("issuer", ""),
+    }
+
+
+def _current_principal(tenant_id: str, principal: dict) -> Optional[dict]:
+    """The principal as stored now, or None if it is no longer active.
+
+    A refresh must not outlive a suspension: the stored record, not the one
+    captured at sign-in, decides. Roles and email come from it too, so a group
+    change reaches the next token.
+    """
+    from storage.principal_store import get_principal, is_active
+    doc = get_principal(tenant_id, principal.get("id", ""))
+    if not is_active(doc) or doc.get("type") != principal.get("type"):
+        return None
+    return {"id": doc["id"], "type": doc["type"], "email": doc.get("email", ""),
+            "roles": list(doc.get("roles") or []), "issuer": doc.get("issuer", "")}
+
+
 async def exchange_authorization_code(
     *,
     code: str,
     client_id: str,
     redirect_uri: str,
     code_verifier: str,
+    resource: str = "",
 ) -> dict:
     """Exchange an authorization code for tokens.
 
@@ -120,12 +151,25 @@ async def exchange_authorization_code(
     ):
         return {"error": "invalid_grant", "error_description": "PKCE verification failed"}
 
+    # RFC 8707: a resource named at the token endpoint must be the one the
+    # person consented to at the authorization endpoint.
+    if resource and auth_code.resource and resource != auth_code.resource:
+        return {"error": "invalid_target", "error_description": "resource does not match the authorization"}
+
+    principal = auth_code.principal or {}
+    if principal:
+        principal = _current_principal(auth_code.tenant_id, principal)
+        if principal is None:
+            return {"error": "invalid_grant", "error_description": "account is not active"}
+
     # Issue tokens
     access_token = issue_access_token(
         client_id=client_id,
         scope=auth_code.scope,
         tenant_id=auth_code.tenant_id,
-        user_sub=auth_code.user_sub,
+        user_sub=principal.get("id") if principal else auth_code.user_sub,
+        audience=auth_code.resource or "shield-oauth",
+        extra_claims=_principal_claims(principal) if principal else None,
     )
 
     refresh_token = issue_refresh_token()
@@ -137,6 +181,8 @@ async def exchange_authorization_code(
         tenant_id=auth_code.tenant_id,
         user_sub=auth_code.user_sub,
         created_at=int(time.time()),
+        resource=auth_code.resource,
+        principal=principal or {},
     ))
 
     return {
@@ -167,12 +213,20 @@ async def exchange_refresh_token(
     if record.client_id != client_id:
         return {"error": "invalid_grant", "error_description": "client_id mismatch"}
 
+    principal = record.principal or {}
+    if principal:
+        principal = _current_principal(record.tenant_id, principal)
+        if principal is None:
+            return {"error": "invalid_grant", "error_description": "account is not active"}
+
     # Issue new tokens
     access_token = issue_access_token(
         client_id=client_id,
         scope=record.scope,
         tenant_id=record.tenant_id,
-        user_sub=record.user_sub,
+        user_sub=principal.get("id") if principal else record.user_sub,
+        audience=record.resource or "shield-oauth",
+        extra_claims=_principal_claims(principal) if principal else None,
     )
 
     new_refresh = issue_refresh_token()
@@ -184,6 +238,8 @@ async def exchange_refresh_token(
         tenant_id=record.tenant_id,
         user_sub=record.user_sub,
         created_at=int(time.time()),
+        resource=record.resource,
+        principal=principal or {},
     ))
 
     return {
@@ -200,7 +256,8 @@ async def exchange_refresh_token(
 
 def build_server_metadata(base_url: str) -> dict:
     """Build OAuth 2.1 Authorization Server Metadata (RFC 8414)."""
-    issuer = os.environ.get("SHIELD_ISSUER", "shield").strip() or "shield"
+    issuer = (os.environ.get("SHIELD_OAUTH_ISSUER_URL", "").strip().rstrip("/")
+              or os.environ.get("SHIELD_ISSUER", "shield").strip() or "shield")
     base = base_url.rstrip("/")
     return {
         "issuer": issuer,

@@ -115,6 +115,14 @@ COPY api/routes_oauth.py api/
 COPY api/routes_oauth_registration.py api/
 COPY api/routes_oidc_admin.py api/
 COPY api/routes_portal_auth.py api/
+# MCP sign-in (docs/specs/mcp-verified-callers-and-user-credentials.md, A2).
+# Mostly imported lazily inside handlers, so the import-graph guard cannot see
+# them; tests/test_mcp_signin.py checks these COPY lines instead.
+COPY api/routes_mcp_signin.py api/
+COPY core/mcp/__init__.py core/mcp/
+COPY core/mcp/resource.py core/mcp/
+COPY storage/identity_policy.py storage/
+COPY storage/principal_store.py storage/
 COPY api/routes_a2a.py api/
 COPY api/routes_agentic_control_plane.py api/
 COPY api/routes_identity_config.py api/

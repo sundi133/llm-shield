@@ -5,14 +5,19 @@ verified principal behind the request, if there is one: a person who signed in
 (a Shield access token naming a principal) or a service account (a principal
 key). The result is recorded on every decision in the audit trail.
 
-**Task A1 is audit only.** The tenant, agent key and role that enforcement uses
-are exactly what the legacy resolver returns, so no decision changes. What is
-new is the record of who the principal was and whether the identity was
-verified; that record is what tells a tenant when it can switch a route to
+For a tenant key, enforcement gets exactly what the legacy resolver returns:
+the role is whatever `X-User-Role` says, as before, and the caller is recorded
+as unverified. That record is what tells a tenant when it can switch a route to
 "verified callers only" (task A4) without breaking a client.
 
-The one behaviour that does change sits in `_oauth_claims`: a Shield access
-token whose `jti` was revoked is no longer accepted.
+A credential that names a principal (a token from MCP sign-in, or a principal
+key) is different, because it is new and nothing depends on the old behaviour:
+- its role comes from the principal. `X-User-Role` may pick one of the
+  principal's own roles and is otherwise ignored, so a signed-in employee
+  cannot claim `admin` with a header;
+- it admits the caller only while the principal is active.
+
+A Shield access token whose `jti` was revoked is not accepted (`_oauth_claims`).
 
 Latency (guard path): tenant-key callers add no Redis read. A Shield token adds
 the revocation read; a principal token adds one principal read, cached
@@ -61,6 +66,8 @@ class Caller:
     principal_type: str = ""
     email: str = ""
     principal_roles: list = field(default_factory=list)
+    client_id: str = ""
+    role_override_refused: bool = False
 
     def audit_fields(self) -> dict:
         return {
@@ -71,6 +78,8 @@ class Caller:
             "verified": self.verified,
             "role_source": self.role_source,
             "principal_roles": list(self.principal_roles),
+            "client_id": self.client_id,
+            "role_override_refused": self.role_override_refused,
         }
 
 
@@ -129,7 +138,42 @@ def _apply_principal(caller: Caller, tenant_id: str, doc: Optional[dict],
     caller.principal_type = doc.get("type", "")
     caller.email = doc.get("email", "")
     roles = token_roles if isinstance(token_roles, list) else doc.get("roles")
-    caller.principal_roles = sorted({str(r) for r in (roles or [])})
+    ordered: list = []
+    for r in roles or []:
+        r = str(r)
+        if r and r not in ordered:
+            ordered.append(r)
+    caller.principal_roles = ordered
+
+
+def _select_role(caller: Caller, header_role: str) -> None:
+    """A verified caller acts as one of its own roles, never a header's choice.
+
+    `X-User-Role` may pick among the principal's roles; any other value is
+    ignored and recorded. With no pick, the first role (the order the IdP gave,
+    filtered by the tenant's role allowlist at sign-in).
+    """
+    roles = caller.principal_roles
+    if header_role and header_role in roles:
+        caller.user_role, caller.role_source = header_role, "principal_selected"
+    elif roles:
+        caller.user_role, caller.role_source = roles[0], "principal"
+    else:
+        caller.user_role, caller.role_source = "", "principal_none"
+    caller.role_override_refused = bool(header_role) and header_role not in roles
+
+
+def _tenant_proven_otherwise(request, tenant_id: str) -> bool:
+    """Whether the caller's tenant is established by something other than the
+    principal credential: middleware state or a valid tenant key."""
+    st = getattr(request, "state", None)
+    if st is not None and getattr(st, "tenant_id", ""):
+        return True
+    api_key = (request.headers.get("x-api-key") or "").strip()
+    if not api_key:
+        return False
+    from storage.tenant_store import resolve_tenant_by_api_key
+    return (resolve_tenant_by_api_key(api_key) or "") == tenant_id
 
 
 def _attach_principal(caller: Caller, request, oauth_claims: Callable[[Any], Optional[dict]]) -> None:
@@ -139,14 +183,20 @@ def _attach_principal(caller: Caller, request, oauth_claims: Callable[[Any], Opt
     headers = request.headers
     claims = oauth_claims(request)
     if claims:
+        caller.client_id = str(claims.get("client_id") or "")
         ptype, pid = claims.get("ptype"), claims.get("sub") or ""
         if ptype in TYPES and pid:
-            doc = _cached_principal(claims.get("tenant_id") or "", pid)
+            token_tenant = claims.get("tenant_id") or ""
+            doc = _cached_principal(token_tenant, pid)
             if doc is not None and doc.get("type") != ptype:
                 doc = None
             method = (METHOD_OAUTH_USER if ptype == "user" else METHOD_OAUTH_SERVICE_ACCOUNT)
-            _apply_principal(caller, claims.get("tenant_id") or "", doc, method,
+            _apply_principal(caller, token_tenant, doc, method,
                              token_roles=claims.get("roles"))
+            if not caller.verified and caller.tenant_id == token_tenant \
+                    and not _tenant_proven_otherwise(request, token_tenant):
+                # A principal token is honoured only for an active principal.
+                caller.tenant_id = ""
         else:
             caller.identity_method = METHOD_OAUTH_LEGACY
         return
@@ -198,11 +248,41 @@ def resolve_caller(request, *, legacy: Callable[[Any], tuple],
                     user_role=user_role or "", role_source=role_source)
     try:
         _attach_principal(caller, request, oauth_claims)
+        if caller.verified:
+            _select_role(caller, header_role)
     except Exception as e:      # noqa: BLE001 - identity recording must not fail a call
         logger.warning("mcp caller resolution failed, using legacy identity: %s", e)
         caller.tenant_id = tenant_id or ""
+        caller.user_role = user_role or ""
+        caller.role_source = role_source
         caller.identity_method = METHOD_TENANT_KEY if tenant_id else METHOD_NONE
         caller.verified = False
-        caller.principal_id = caller.principal_type = caller.email = ""
+        caller.principal_id = caller.principal_type = caller.email = caller.client_id = ""
         caller.principal_roles = []
+        caller.role_override_refused = False
+        if _names_principal(request, oauth_claims) and not _proven_safely(request, tenant_id):
+            # New credential kinds fail closed: without the principal store we
+            # cannot tell an active principal from a suspended one, and the
+            # legacy path would hand its holder a header-chosen role.
+            caller.tenant_id = ""
     return caller
+
+
+def _proven_safely(request, tenant_id: str) -> bool:
+    try:
+        return bool(tenant_id) and _tenant_proven_otherwise(request, tenant_id)
+    except Exception:       # noqa: BLE001
+        return False
+
+
+def _names_principal(request, oauth_claims) -> bool:
+    try:
+        from storage.principal_store import TYPES, looks_like_principal_key
+        claims = oauth_claims(request) or {}
+        if claims.get("ptype") in TYPES:
+            return True
+        headers = request.headers
+        return any(looks_like_principal_key(v) for v in
+                   ((headers.get("x-api-key") or "").strip(), _bearer(headers)))
+    except Exception:       # noqa: BLE001
+        return True

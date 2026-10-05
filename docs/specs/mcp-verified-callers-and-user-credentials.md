@@ -556,7 +556,7 @@ One branch, one small commit per task, each green before the next.
 | A1 | Principal store and `resolve_caller`, **audit only**: verified Shield tokens and principal keys resolve to principals and are recorded; nothing rejects. Gateway checks `jti` revocation. | Yes, behavior-neutral |
 | A2 | Federated sign-in: tenant-addressed gateway URL, per-route protected-resource metadata, authorize to the tenant IdP, JIT principals, route-bound tokens with roles, consent page | Metadata only |
 | A3 | Service accounts, principal keys, client-credentials for service accounts; portal list of people and service accounts with suspend | No |
-| A4 | Enforcement: `require_verified_identity` (route and tenant default), 401 challenge, verified role selection, stop forwarding label headers upstream, escape hatch | **Yes** |
+| A4 | Enforcement: `require_verified_identity` (route and tenant default), 401 challenge, stop forwarding label headers upstream, escape hatch (verified role selection moved to A2) | **Yes** |
 
 **Part B: per-user upstream credentials**
 
@@ -600,6 +600,53 @@ written on the guard path; the portal will derive it from the audit trail.
 
 Tests: `tests/test_mcp_principal_resolution.py` (24), each safeguard
 sabotage-checked. Full suite green in a clean venv (6018 passed).
+
+**A2 (done).** MCP sign-in end to end:
+- Data plane: `POST /gateway/t/{tenant}/{route}/mcp` and its RFC 9728 metadata
+  (`core/mcp/resource.py`, `api/routes_mcp_gateway_server.py`). A token is
+  accepted only on the URL it names; a credential for another tenant gets the
+  same 401 as none.
+- Admin plane: `/oauth/authorize` branches to the tenant's IdP when `resource`
+  is a gateway URL (`api/routes_mcp_signin.py`); `/oauth/consent`;
+  `GET/PUT /v1/tenant/me/identity/policy`; tokens carry `aud`, `ptype`,
+  `email`, `roles`, `idp`; a refresh re-reads the principal (suspension and
+  role changes apply at the next refresh).
+
+Amendments made while building A2, each for a reason found in the code:
+1. **Tenant opt-in with allowed groups** (`storage/identity_policy.py`,
+   `mcp_sign_in.enabled` + `allowed_groups`, required non-empty). Otherwise
+   configuring portal SSO would silently let the whole directory call MCP
+   servers.
+2. **Verified role selection moved from A4 to A2**, for principal-naming
+   credentials only. Without it, sign-in would let any employee claim `admin`
+   with `X-User-Role`. Tenant-key callers are unchanged. A4 keeps the
+   `require_verified_identity` rejection and the label-header forwarding change.
+3. **A principal-naming token admits nobody once the principal is inactive**
+   (A1 only recorded it). A store error fails closed for these credentials,
+   never for a caller with a valid tenant key.
+4. **The IdP leg reuses the portal SSO callback**, so a tenant registers no new
+   redirect URI with its IdP. MCP sign-in never creates a portal session and is
+   gated by `allowed_groups`, not `admin_groups`.
+5. **Consent**: clients the tenant registered with its key skip the page;
+   self-registered clients always see it (remembered 90 days per person,
+   client and server). The page is bound to the signing-in browser by a
+   cookie, cannot be framed, and escapes the client-supplied name.
+6. **Keyless registration** yields a client with no tenant, public, auth code
+   only. It cannot use the tenant-key consent, a secret or client credentials.
+   `SHIELD_OAUTH_REGISTRATION_TOKEN`, if set, still applies to every
+   registration (that deployment then cannot use self-registering clients).
+7. **Codes and refresh tokens are redeemed atomically** (`GETDEL`), fixing a
+   pre-existing read-then-delete race.
+
+Deploy settings for sign-in: `SHIELD_PUBLIC_GATEWAY_URL` (same on both planes),
+`SHIELD_OAUTH_ISSUER_URL` (the admin plane's public URL; also makes the AS
+metadata issuer that URL, as RFC 8414 requires), `SHIELD_PORTAL_BASE_URL`
+(already required by portal SSO). Unset `SHIELD_OAUTH_ISSUER_URL` leaves the
+AS metadata exactly as before. Fleet switch: `SHIELD_OAUTH_FEDERATED_LOGIN=0`.
+
+Tests: `tests/test_mcp_signin.py` (28, stub IdP, full client flow), A1 tests
+updated to the A2 rules, `test_oauth_authz_hardening.py` registration guard
+updated. Twelve safeguards sabotage-checked. Clean venv: 6052 passed.
 
 ## 10. Decisions taken (change any before approval)
 

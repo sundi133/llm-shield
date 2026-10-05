@@ -123,6 +123,17 @@ def _clean_groups(groups: Any) -> list[str]:
     return sorted({str(g) for g in groups if str(g).strip()})
 
 
+def _ordered_roles(roles: Any) -> list[str]:
+    """Roles in the order given, deduplicated. Order matters: with no
+    selection, a person acts as their first role."""
+    out: list[str] = []
+    for r in roles if isinstance(roles, (list, tuple)) else []:
+        r = str(r).strip()
+        if r and r not in out:
+            out.append(r)
+    return out
+
+
 # ── records ──────────────────────────────────────────────────────────
 
 
@@ -147,7 +158,8 @@ def find_user(tenant_id: str, issuer: str, sub: str) -> Optional[dict]:
 
 
 def upsert_user(tenant_id: str, *, issuer: str, sub: str, email: str = "",
-                name: str = "", groups: Any = None, source: str = "jit") -> dict:
+                name: str = "", groups: Any = None, roles: Any = None,
+                source: str = "jit") -> dict:
     """Create the person for (issuer, sub), or refresh what the IdP says about them.
 
     Identity is (issuer, sub), never email: an email can be reassigned to a
@@ -170,6 +182,7 @@ def upsert_user(tenant_id: str, *, issuer: str, sub: str, email: str = "",
         _put(_index_key(tenant_id, issuer, sub), doc["id"])
     doc.update(email=email or doc.get("email", ""), name=name or doc.get("name", ""),
                groups=_clean_groups(groups) if groups is not None else doc.get("groups", []),
+               roles=_ordered_roles(roles) if roles is not None else doc.get("roles", []),
                updated_at=now)
     return _save(tenant_id, doc)
 
