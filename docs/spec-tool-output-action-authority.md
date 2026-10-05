@@ -242,3 +242,53 @@ Regression suites: `tests/test_mcp_dlp_and_scanning.py`,
 **Definition of done:** full suite green in a clean venv; CI `pytest` gate
 passes; a live check confirming the known-blocking customer profile still blocks
 under the default.
+
+## Amendment (2026-10-05): redaction is not capped by warn
+
+**Found in production.** Tenant `bankco`'s Tool Registry result rules ("MUST
+use action=redact", "Mask passwords ... as [SECRET REDACTED]") never took
+effect. Under the shipped `action: warn`, the ladder above ranks `redact` and
+`mask` (3) over `warn` (2), so every model verdict to redact was capped to
+`warn` and the **original** output was delivered. Reproduced on production
+(`/v1/data-policies/try`, an explicit one-line rule and an obvious AWS key:
+allowed, key returned) and locally on the live MCP path
+(`core.mcp.enforcement.sanitize_tool_result` with `config/default.yaml`).
+
+This was never the intent. The outcome in §1 is that a tenant on `warn` "can
+never be blocked", and §4 itself describes redact and mask as returning
+"modified content without refusing the call". The matrix in §7 has no row for
+redact under warn; the cap reached it by arithmetic, not by decision.
+
+**Change.** Under `warn`, a `redact` or `mask` verdict passes through. `block`
+is still capped to `warn`. `log` and `pass` remain observe-only and still cap
+redaction. Every other row of §7 is unchanged.
+
+| configured | model says | before | after |
+|---|---|---|---|
+| warn | redact / mask | warn, original delivered | **redact / mask, redacted delivered** |
+| warn | block | warn | warn (unchanged) |
+| log / pass | redact / mask | log / pass | unchanged |
+
+**One consequence, stated.** When the model says redact but returns no
+usable redaction (empty, unchanged, or far longer than the input), the result
+is withheld (`[CONTENT BLOCKED DUE TO DATA POLICY]`, label `warn`,
+`redaction_failed` set), as `docs/spec-apply-sanitization-rules.md` requires:
+a failed redaction never delivers the original as if it were redacted. Under
+warn this path was unreachable before; it is the one case where warn now
+withholds a result.
+
+**Migration note.** Tenants whose Tool Registry result rules ask for redaction
+start getting redacted results, on MCP gateway calls and on
+`/v1/shield/tool/output`, from the first deploy. That is what those rules say
+and what the console shows; it was not happening. Nothing changes for tenants
+without result rules (the model is not called), and nothing is blocked that
+was not blocked before.
+
+**Rollback:** `SHIELD_TOOL_OUTPUT_REDACT_UNDER_WARN=off` restores capping
+redaction to `warn`. `SHIELD_TOOL_OUTPUT_ACTION_CAP=off` (unchanged) removes
+the cap altogether.
+
+**Tests:** `tests/test_tool_output_action_authority.py`, the
+"redaction under warn" section, including an end-to-end run on the MCP path
+with `config/default.yaml` loaded; it fails if the change is reverted.
+
