@@ -195,6 +195,34 @@ def test_a_lock_is_released_only_by_its_owner(monkeypatch, scripting):
     assert not r.data
 
 
+def test_the_owner_release_is_atomic_on_upstash_too(monkeypatch):
+    """Production uses the Upstash REST client, whose eval takes keys= and
+    args= lists. The release must use the script there, not the get/delete
+    fallback."""
+    import storage.tenant_store as ts
+
+    class _Upstash(_Redis):
+        def __init__(self):
+            super().__init__()
+            self.scripted = 0
+
+        def eval(self, script, keys=None, args=None):
+            self.scripted += 1
+            if self.data.get(keys[0]) == args[0]:
+                return self.delete(keys[0])
+            return 0
+
+        def get(self, k):
+            raise AssertionError("fell back to the non-atomic path")
+    r = _Upstash()
+    monkeypatch.setattr(ts, "_get_redis", lambda: r)
+    owner = creds.take_lock(T, R)
+    creds.drop_lock(T, R, "someone-else")
+    assert r.data
+    creds.drop_lock(T, R, owner)
+    assert not r.data and r.scripted == 2
+
+
 def test_a_persons_credential_never_renews_unlocked(monkeypatch):
     import storage.tenant_store as ts
     monkeypatch.setattr(ts, "_get_redis", lambda: _Redis(broken=True))

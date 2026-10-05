@@ -854,7 +854,8 @@ async def oauth_discover(route: str, request: Request):
                    "no OAuth provider to discover")
     import httpx
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        from core.url_safety import guarded_async_client
+        async with guarded_async_client() as client:
             meta = await discover(client, cfg["url"])
     except OAuthBrokerError as e:
         raise HTTPException(status_code=e.status, detail=e.message)
@@ -1069,7 +1070,8 @@ async def oauth_connect(route: str, request: Request,
 
     try:
         redirect = redirect_uri()
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        from core.url_safety import guarded_async_client
+        async with guarded_async_client() as client:
             meta = await discover(client, upstream_url)
             scopes = choose_scopes(meta, body.scopes if body else None)
 

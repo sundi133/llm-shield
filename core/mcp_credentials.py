@@ -356,8 +356,14 @@ def drop_lock(tenant_id: str, route: str, owner: str, *, subject: str = "") -> N
         return
     key = _lock_key(tenant_id, route, subject)
     try:
-        r.eval(_RELEASE_IF_OWNER, 1, key, owner)
+        r.eval(_RELEASE_IF_OWNER, 1, key, owner)            # redis-py
         return
+    except TypeError:
+        try:                                                 # upstash-redis (production)
+            r.eval(_RELEASE_IF_OWNER, keys=[key], args=[owner])
+            return
+        except Exception:
+            pass
     except Exception:
         pass
     try:                        # no scripting: still never delete someone else's
@@ -639,7 +645,8 @@ async def _with_client(client, fn):
     if client is not None:
         return await fn(client)
     import httpx
-    async with httpx.AsyncClient(follow_redirects=True) as c:
+    from core.url_safety import guarded_async_client
+    async with guarded_async_client() as c:
         return await fn(c)
 
 
