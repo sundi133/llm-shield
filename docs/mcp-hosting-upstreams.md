@@ -69,9 +69,9 @@ internet. Shield can reach them directly.
 2. Enter a short route name (for example `gdrive`), transport `http`, and the
    vendor's MCP URL.
 3. Give Shield the credential:
-   - **API key or token**: register the server through the API with the key
-     in `headers` (see [Register with a secret header](#register-with-a-secret-header)).
-     The console masks it.
+   - **API key or token**: add it under **Headers sent to the server** (see
+     [Register with a secret header](#register-with-a-secret-header)). The
+     console masks it.
    - **OAuth sign-in**: select **OAuth** on the server card and follow
      [Google Workspace MCP through Shield](/mcp-oauth-google/). The same panel
      works for other OAuth providers.
@@ -116,8 +116,14 @@ app.add_middleware(OnlyShield)
 
 ### Register with a secret header
 
-The **Add Server** form does not take headers yet; register through the API with
-your tenant key:
+In **Add Server**, select **+ Add header** under **Headers sent to the server**,
+enter the header name (for example `X-Upstream-Key`) and its value, and register.
+The value is stored by Shield and always shown masked; the server card shows
+how many headers it sends. Saving the server again with the header rows left
+empty keeps its current headers, as long as the URL is unchanged; changing the
+URL drops them, so a secret never follows a route to a different host.
+
+Or through the API with your tenant key:
 
 ```bash
 curl -s -X POST https://shield.votal.ai/v1/tenant/me/mcp/servers -H "X-API-Key: $SHIELD_TENANT_KEY" -H "Content-Type: application/json" -d '{"route":"payments","transport":"http","url":"https://mcp-payments.example.com/mcp","headers":{"X-Upstream-Key":"'"$UPSTREAM_KEY"'"},"isolation_ack":true}'
@@ -207,7 +213,7 @@ apps, your flow policy (**Cross-App Flow**).
 | What you see | Likely cause | Fix |
 |---|---|---|
 | "no upstream configured for route" | The route name in the agent's URL does not match a registered server | Check the route name on the server card |
-| Tool calls fail and the server logs 401 | The server did not get the secret header or the token | Check the route's headers (register again through the API) or its OAuth status |
+| Tool calls fail and the server logs 401 | The server did not get the secret header or the token | Check the header count on the server card, add the header again, or check its OAuth status |
 | Tool calls fail with an HTTP 500 and no message | The server rejected or dropped the call | Check the server's logs and the route's credential |
 | Calls work from Shield but also from elsewhere | The server does not enforce the secret header or network rule | Fix the server, then confirm isolation |
 | The server is a free tunnel and stops working | The tunnel restarted with a new address | Use a stable domain or a reserved tunnel address |

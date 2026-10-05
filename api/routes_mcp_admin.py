@@ -146,6 +146,20 @@ def _carry_over(cfg: dict, existing: dict | None) -> dict:
     for key in _PRESERVED_ON_REWRITE:
         if existing and key in existing and key not in cfg:
             cfg[key] = existing[key]
+    # Re-saving a server without sending headers used to wipe its credential
+    # (a secret header, or the Authorization header an OAuth connect wired),
+    # because a rewrite replaces the document. Keep them when the request says
+    # nothing about headers AND the server is the same: a secret must never
+    # follow a route to a different host. `headers: {}` still clears them.
+    same_upstream = bool(existing) and all(
+        existing.get(k) == cfg.get(k) for k in ("transport", "url", "command"))
+    if same_upstream:
+        if "headers" not in cfg and existing.get("headers"):
+            cfg["headers"] = existing["headers"]
+        # Broker-owned: the OAuth record still exists, so the route must keep
+        # saying how its credential is renewed.
+        if existing.get("credential_mode"):
+            cfg.setdefault("credential_mode", existing["credential_mode"])
     return cfg
 
 

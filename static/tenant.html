@@ -5630,6 +5630,14 @@ if __name__ == "__main__":
           <label id="mcp-reg-cmd-wrap" class="mcp-field mcp-field-wide" style="display:none;"><span>Command</span>
             <input id="mcp-reg-cmd" placeholder="/usr/bin/your-mcp-server" />
           </label>
+          <div id="mcp-reg-headers-wrap" class="mcp-field mcp-field-wide">
+            <span>Headers sent to the server</span>
+            <div style="font-size:11px;color:var(--text-dim);margin:0.15rem 0 0.35rem;">
+              For example an API key, or a secret only Shield holds so the server can refuse anyone else.
+              Values are stored by Shield and always shown masked. Leave empty when updating a server to keep its current headers.</div>
+            <div id="mcp-reg-headers"></div>
+            <button type="button" class="small" onclick="mcpAddHeaderRow()">+ Add header</button>
+          </div>
           <label class="mcp-check-row">
             <input id="mcp-reg-isolation" type="checkbox" />
             <span>Upstream accepts connections only from the gateway (isolation_ack)</span>
@@ -14003,6 +14011,7 @@ function renderMcpGateway(inv) {
             <div class="mcp-card-meta">
               <span class="badge">${transport}</span>
               <span class="badge">${backend}</span>
+              ${mcpHeaderBadge(s)}
               ${profile}${scan}
             </div>
             <div class="mcp-card-actions">
@@ -14238,6 +14247,21 @@ function mcpToggleTransportFields() {
   const t = document.getElementById('mcp-reg-transport').value;
   document.getElementById('mcp-reg-url-wrap').style.display = (t === 'stdio') ? 'none' : '';
   document.getElementById('mcp-reg-cmd-wrap').style.display = (t === 'stdio') ? '' : 'none';
+  document.getElementById('mcp-reg-headers-wrap').style.display = (t === 'stdio') ? 'none' : '';
+}
+
+function mcpAddHeaderRow() {
+  const box = document.getElementById('mcp-reg-headers');
+  box.insertAdjacentHTML('beforeend', mcpHeaderRowHtml());
+  const rows = box.querySelectorAll('.mcp-reg-header-row');
+  rows[rows.length - 1].querySelector('.mcp-reg-header-name').focus();
+}
+
+function mcpRegHeaderRows() {
+  return [...document.querySelectorAll('#mcp-reg-headers .mcp-reg-header-row')].map(r => ({
+    name: r.querySelector('.mcp-reg-header-name').value,
+    value: r.querySelector('.mcp-reg-header-value').value,
+  }));
 }
 
 async function mcpRegisterServer() {
@@ -14249,6 +14273,11 @@ async function mcpRegisterServer() {
   if (!route) { showToast('Enter a route name', 'error'); return; }
   const body = { route, transport, isolation_ack };
   if (transport === 'stdio') body.command = command; else body.url = url;
+  if (transport !== 'stdio') {
+    const h = mcpHeadersFromRows(mcpRegHeaderRows());
+    if (h.errors.length) { showToast(h.errors.join(' '), 'error'); return; }
+    if (Object.keys(h.headers).length) body.headers = h.headers;   // absent = keep current
+  }
   try {
     const r = await apiCall('/v1/tenant/me/mcp/servers',
       { method: 'POST', body: JSON.stringify(body) });
@@ -14257,6 +14286,7 @@ async function mcpRegisterServer() {
     document.getElementById('mcp-reg-route').value = '';
     document.getElementById('mcp-reg-url').value = '';
     document.getElementById('mcp-reg-cmd').value = '';
+    document.getElementById('mcp-reg-headers').innerHTML = '';   // secrets never linger in the page
     document.getElementById('mcp-reg-isolation').checked = false;
     loadMcpGateway();
   } catch (e) {
@@ -14274,6 +14304,48 @@ async function mcpDeleteServer(encRoute) {
   } catch (e) {
     showToast('Failed: ' + e.message, 'error');
   }
+}
+
+// ── MCP register headers (pure) ────────────────────────────────────────────
+// Headers Shield sends to an upstream (an API key, or a secret only Shield
+// holds). Pure, so tests/test_mcp_register_headers_portal.py runs them in node.
+
+const MCP_HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+
+// Rows from the form -> {headers, errors}. Blank rows are ignored; anything
+// half-filled, duplicated (case-insensitively) or carrying a line break is an
+// error, because a line break in a header value is header injection.
+function mcpHeadersFromRows(rows) {
+  const headers = {}, errors = [], seen = new Set();
+  for (const r of rows || []) {
+    const name = String(r.name || '').trim(), value = String(r.value || '');
+    if (!name && !value.trim()) continue;
+    if (!MCP_HEADER_NAME.test(name)) { errors.push(`"${name || '(blank)'}" is not a valid header name.`); continue; }
+    if (!value.trim()) { errors.push(`${name} has no value.`); continue; }
+    if (/[\r\n]/.test(value)) { errors.push(`${name}'s value contains a line break.`); continue; }
+    if (seen.has(name.toLowerCase())) { errors.push(`${name} appears twice.`); continue; }
+    seen.add(name.toLowerCase());
+    headers[name] = value.trim();
+  }
+  if (Object.keys(headers).length > 20) errors.push('At most 20 headers.');
+  return { headers, errors };
+}
+
+function mcpHeaderRowHtml() {
+  const box = 'font-size:12px;padding:0.35rem 0.5rem;';
+  return `<div class="mcp-reg-header-row" style="display:flex;gap:0.4rem;margin-bottom:0.35rem;">
+      <input class="mcp-reg-header-name" placeholder="X-Upstream-Key" autocomplete="off" style="${box}width:14rem;">
+      <input class="mcp-reg-header-value" type="password" placeholder="value" autocomplete="new-password" style="${box}flex:1;">
+      <button type="button" class="small" title="Remove" onclick="this.parentElement.remove()">✕</button></div>`;
+}
+
+// The card names the headers a server sends; values are never in the page.
+function mcpHeaderBadge(server) {
+  const names = Object.keys((server || {}).headers || {});
+  if (!names.length) return '';
+  const label = names.some(n => n.toLowerCase() === 'authorization') && names.length === 1
+    ? 'authorization' : `${names.length} header${names.length > 1 ? 's' : ''}`;
+  return `<span class="badge" title="${_esc('Sends: ' + names.join(', ') + ' (values masked)')}">${_esc(label)}</span>`;
 }
 
 // ── MCP OAuth connect (pure) ───────────────────────────────────────────────
