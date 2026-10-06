@@ -907,6 +907,29 @@
     color: #b91c1c;
     background: #fee2e2;
   }
+  .telemetry-pill.monitor {
+    color: #1d4ed8;
+    background: #dbeafe;
+  }
+  .telemetry-source {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.18rem 0.5rem;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  .telemetry-source.chat {
+    color: #3730a3;
+    background: #e0e7ff;
+  }
+  .telemetry-source.coding-agent {
+    color: #065f46;
+    background: #d1fae5;
+  }
   .telemetry-empty {
     padding: 1rem;
     text-align: center;
@@ -3269,6 +3292,14 @@
           <div class="field" style="margin-bottom:0;">
             <label for="telemetry-tool-filter">Tool</label>
             <input id="telemetry-tool-filter" type="text" placeholder="tool name">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label for="telemetry-source-filter">Source</label>
+            <select id="telemetry-source-filter">
+              <option value="">All</option>
+              <option value="chat">Chat</option>
+              <option value="coding-agent">Coding agent</option>
+            </select>
           </div>
           <div>
             <button class="primary" onclick="loadTelemetry()">Apply</button>
@@ -7918,10 +7949,21 @@ function telemetryPill(status) {
 }
 
 function telemetryDisplayStatus(entry) {
+  if (entry.source === 'coding-agent') {
+    // The decision's own verdict: block/redact/warn/monitor/pass.
+    const s = entry.status || 'pass';
+    return s === 'block' ? 'blocked' : s;
+  }
   if ((entry.status || '') === 'block' || entry.block_reason) return 'blocked';
   if ((entry.tool_calls || []).some(tool => !((tool.rbac || {}).allowed))) return 'blocked';
   if ((entry.status || '') === 'warn') return 'warn';
   return 'pass';
+}
+
+function telemetrySourceBadge(entry) {
+  const src = entry.source === 'coding-agent' ? 'coding-agent' : 'chat';
+  const label = src === 'coding-agent' ? 'coding agent' : 'chat';
+  return `<span class="telemetry-source ${src}">${label}</span>`;
 }
 
 function renderTelemetryToolRows(toolCalls) {
@@ -8004,6 +8046,7 @@ function renderTelemetryEntries(entries) {
         <thead>
           <tr>
             <th>Time</th>
+            <th>Source</th>
             <th>Agent</th>
             <th>Message</th>
             <th>Status</th>
@@ -8016,6 +8059,7 @@ function renderTelemetryEntries(entries) {
           ${entries.map((entry, index) => `
             <tr>
               <td><div class="telemetry-row-sub">${escapeHtml(new Date(entry.timestamp).toLocaleString())}</div></td>
+              <td>${telemetrySourceBadge(entry)}</td>
               <td>
                 <div class="telemetry-row-meta">
                   <div class="telemetry-row-strong">${escapeHtml(entry.agent_key || 'unknown-agent')}</div>
@@ -8036,12 +8080,15 @@ function renderTelemetryEntries(entries) {
                   <div class="telemetry-row-sub">${escapeHtml(entry.stage || 'complete')}</div>
                 </div>
               </td>
-              <td><div class="telemetry-row-sub">${escapeHtml(entry.tool_call_count || 0)} call(s)</div></td>
-              <td><div class="telemetry-row-sub">${escapeHtml(entry.latency_ms || 0)} ms</div></td>
+              <td><div class="telemetry-row-sub">${
+                entry.source === 'coding-agent'
+                  ? escapeHtml(entry.tool_name || '—')
+                  : `${escapeHtml(entry.tool_call_count || 0)} call(s)`}</div></td>
+              <td><div class="telemetry-row-sub">${entry.latency_ms == null ? '—' : `${escapeHtml(entry.latency_ms)} ms`}</div></td>
               <td><button class="telemetry-expand-btn" onclick="toggleTelemetryDetail(${index})">Details</button></td>
             </tr>
             <tr id="telemetry-detail-${index}" class="telemetry-detail-row hidden">
-              <td colspan="7">
+              <td colspan="8">
                 <div class="telemetry-detail-inner">
                   <div class="telemetry-detail-grid">
                     <div>
@@ -8097,11 +8144,14 @@ async function loadTelemetry() {
     const status = document.getElementById('telemetry-status-filter').value;
     const agent = (document.getElementById('telemetry-agent-filter').value || '').trim();
     const tool = (document.getElementById('telemetry-tool-filter').value || '').trim();
+    const sourceEl = document.getElementById('telemetry-source-filter');
+    const source = sourceEl ? sourceEl.value : '';
     const days = parseInt(document.getElementById('telemetry-range').value) || 7;
     if (q) params.set('q', q);
     if (status) params.set('status', status);
     if (agent) params.set('agent_key', agent);
     if (tool) params.set('tool_name', tool);
+    if (source) params.set('source', source);
     params.set('since', _sinceDate(days));
 
     let data = await apiCall(`/v1/tenant/me/telemetry?${params.toString()}`).catch(() => null);

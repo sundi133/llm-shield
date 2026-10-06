@@ -574,6 +574,93 @@ async def get_my_delegations(
     }
 
 
+# docs/specs/unified-agent-telemetry.md: the Telemetry tab also shows
+# coding-agent hook decisions (prompt checks, tool-call checks, result
+# redactions). They live in the decisions store (decisions:{tenant}), written
+# by the hook routes via log_decision, with metadata.source == "claude_code".
+# This is a read-side merge: nothing new is recorded.
+_CODING_AGENT_SOURCE = "claude_code"
+_VERDICT_STATUS = {"block": "block", "redact": "redact", "warn": "warn",
+                   "monitor": "monitor", "allow": "pass"}
+_ACTION_STATUS = {"block": "block", "deny": "block", "warn": "warn", "ask": "warn",
+                  "audit": "warn", "allow": "pass", "pass": "pass"}
+
+
+def _coding_agent_telemetry_enabled() -> bool:
+    import os
+    return os.environ.get("SHIELD_TELEMETRY_INCLUDE_CODING_AGENT", "on").strip().lower() \
+        not in ("0", "off", "false", "no")
+
+
+def _coding_agent_row(entry: dict) -> dict:
+    """One decisions-store entry as a telemetry row. The message is the entry's
+    summary (docs/specs/unified-agent-telemetry.md relies on the #473 summary,
+    e.g. 'coding-agent prompt block: <policy>'); never the prompt or result."""
+    meta = entry.get("metadata") or {}
+    detail = meta.get("detail") or {}
+    verdict = detail.get("verdict")
+    st = _VERDICT_STATUS.get(verdict) or _ACTION_STATUS.get(entry.get("action"), "block")
+    hook = detail.get("hook")
+    stage = "input" if hook == "UserPromptSubmit" else "tool"
+    latency = detail.get("prompt_check_ms")
+    if latency is None:
+        latency = detail.get("tool_policy_ms")
+    return {
+        "id": entry.get("id") or f"{entry.get('timestamp')}:{entry.get('session_id')}",
+        "timestamp": entry.get("timestamp"),
+        "agent_key": entry.get("agent_key"),
+        "message": entry.get("reason"),
+        "status": st,
+        "latency_ms": latency,
+        "stage": stage,
+        "source": "coding-agent",
+        "blocked": st == "block",
+        "block_reason": entry.get("reason") if st == "block" else None,
+        "user_role": entry.get("user_role") or "",
+        "session_id": entry.get("session_id"),
+        "tool_name": detail.get("tool") or "",
+        "tool_calls": [],
+        "tool_call_count": 0,
+        "tool_statuses": [],
+        "input_guardrails": [],
+        "output_guardrails": [],
+        "usage": {},
+    }
+
+
+def _coding_agent_rows(tenant_id: str, *, agent_key, status, tool_name, q,
+                       since, until) -> list[dict]:
+    """Coding-agent hook decisions for this tenant, as telemetry rows, with the
+    same filters as the chat side applied."""
+    from storage.decision_audit import query_decisions
+    try:
+        from core.runtime_policy.check import GUARDRAIL as RUNTIME_GUARDRAIL
+    except Exception:       # noqa: BLE001
+        RUNTIME_GUARDRAIL = "runtime_boundary"
+    try:
+        decisions = query_decisions(tenant_id=tenant_id, guardrail=RUNTIME_GUARDRAIL,
+                                    agent_key=agent_key, since=since, until=until, limit=1000)
+    except Exception as e:      # noqa: BLE001 - never fail the whole endpoint
+        import logging
+        logging.getLogger("votal.telemetry").warning("coding-agent rows unavailable: %s", e)
+        return []
+    out = []
+    for e in decisions:
+        # runtime_boundary also carries infra (OpenShell) and robot events;
+        # metadata.source isolates the coding-agent ones.
+        if (e.get("metadata") or {}).get("source") != _CODING_AGENT_SOURCE:
+            continue
+        row = _coding_agent_row(e)
+        if status and row["status"] != status:
+            continue
+        if tool_name and row["tool_name"] != tool_name:
+            continue
+        if q and q.lower() not in f"{row['message'] or ''} {row['agent_key'] or ''}".lower():
+            continue
+        out.append(row)
+    return out
+
+
 @router.get("/me/telemetry")
 async def get_my_telemetry(
     request: Request,
@@ -582,11 +669,13 @@ async def get_my_telemetry(
     agent_key: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="pass, warn, redact, mask, or block"),
     tool_name: Optional[str] = Query(None),
+    source: Optional[str] = Query(None, description="chat, coding-agent, or omitted for both"),
     q: Optional[str] = Query(None, description="Free-text search across message, tool, and reason"),
     since: Optional[str] = Query(None, description="ISO timestamp — only return entries after this time (e.g. 2026-05-25T00:00:00Z)"),
     until: Optional[str] = Query(None, description="ISO timestamp — only return entries before this time"),
 ):
-    """Return tenant-scoped agent chat telemetry with normalized tool-call status."""
+    """Return tenant-scoped agent activity: chat telemetry and, merged in,
+    coding-agent hook decisions. docs/specs/unified-agent-telemetry.md."""
     tenant_id = _require_tenant(request)
 
     filters = {}
@@ -651,14 +740,33 @@ async def get_my_telemetry(
             "usage": metadata.get("usage") or {},
         })
 
-    total = len(telemetry_entries)
-    page = telemetry_entries[offset:offset + limit]
+    for entry in telemetry_entries:
+        entry["source"] = "chat"
+
+    rows = []
+    if source != "coding-agent":
+        rows.extend(telemetry_entries)
+    if source != "chat" and _coding_agent_telemetry_enabled():
+        rows.extend(_coding_agent_rows(tenant_id, agent_key=agent_key, status=status,
+                                       tool_name=tool_name, q=q, since=since, until=until))
+    # Newest first across both sources, then page the merged list.
+    rows.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
+
+    total = len(rows)
+    page = rows[offset:offset + limit]
 
     by_status = {"pass": 0, "warn": 0, "block": 0}
     total_tool_calls = 0
     blocked_tool_calls = 0
-    for entry in telemetry_entries:
+    for entry in rows:
         by_status[entry["status"]] = by_status.get(entry["status"], 0) + 1
+        if entry.get("source") == "coding-agent":
+            # A tool/result decision is itself a tool call; a prompt check is not.
+            if entry.get("stage") == "tool":
+                total_tool_calls += 1
+                if entry["status"] in ("block", "redact"):
+                    blocked_tool_calls += 1
+            continue
         total_tool_calls += len(entry["tool_calls"])
         blocked_tool_calls += sum(
             1 for tc in entry["tool_calls"] if not ((tc.get("rbac") or {}).get("allowed"))
