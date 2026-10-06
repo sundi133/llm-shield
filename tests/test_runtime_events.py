@@ -56,6 +56,39 @@ def test_l7_method_deny_fields():
     assert p["detail"]["policy"] == "allow_1_api_github_com"
 
 
+def _dlp(detail):
+    return ev.normalize({"source": "claude_code", "kind": "dlp", "decision": "deny",
+                         "severity": "medium", "agent_id": "claude-code",
+                         "agent_instance_id": "", "session_id": "s", "profile": "p",
+                         "profile_hash": "h", "detail": detail})
+
+
+def test_summary_names_the_policy_for_a_coding_agent_prompt_block():
+    # docs/specs/agent-hooks-prompt-check.md: not "dlp block ? to ?".
+    e = _dlp({"hook": "UserPromptSubmit", "verdict": "block", "prompt_len": 20,
+              "prompt_sha256": "x" * 64, "prompt_check_policies": ["No file encryption"],
+              "prompt_check_reason": "No file encryption: asks to lock a file"})
+    assert ev.summary(e) == "coding-agent prompt block: No file encryption"
+
+
+def test_summary_falls_back_to_the_reason_when_no_policy_name():
+    e = _dlp({"hook": "UserPromptSubmit", "verdict": "block", "prompt_len": 1,
+              "prompt_sha256": "y" * 64, "prompt_check_reason": "the check could not run"})
+    assert ev.summary(e) == "coding-agent prompt block: the check could not run"
+
+
+def test_summary_describes_a_coding_agent_tool_result_redaction():
+    e = _dlp({"hook": "PostToolUse", "verdict": "redact", "tool": "Read",
+              "tool_policy_reason": "redacted: card number"})
+    assert ev.summary(e) == "coding-agent tool result redact on Read: redacted: card number"
+
+
+def test_summary_still_reads_a_device_dlp_event_the_old_way():
+    e = _dlp({"verdict": "block", "category": "pii", "destination": "upload.example",
+              "device_id": "dev-1"})
+    assert ev.summary(e) == "dlp block pii to upload.example from dev-1"
+
+
 def test_chatter_is_ignored():
     for l in _lines():
         if "CONFIG:CREATING" in l or "SSH:LISTEN" in l or "PROC:LAUNCH" in l:

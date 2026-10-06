@@ -243,6 +243,18 @@ def summary(ev: dict) -> str:
     if ev["kind"] == "dlp" and d.get("event") == "enrollment_refused":
         return (f"device enrollment refused: a device in fleet {d.get('fleet', '?')} with "
                 f"this serial ({d.get('device_id', '?')}) is still reporting")
+    if ev["kind"] == "dlp" and d.get("hook") == "UserPromptSubmit":
+        # Coding-agent prompt check (docs/specs/agent-hooks-prompt-check.md):
+        # name the policy, not "? to ?".
+        pols = d.get("prompt_check_policies") or []
+        what = ", ".join(p for p in pols if p) or d.get("prompt_check_reason") or "a policy"
+        return f"coding-agent prompt {d.get('verdict') or ev['decision']}: {what}"
+    if ev["kind"] == "dlp" and d.get("hook") == "PostToolUse":
+        # Coding-agent tool-result check (docs/specs/agent-hooks-tool-policies.md).
+        tool = d.get("tool") or "?"
+        why = d.get("tool_policy_reason") or ""
+        return (f"coding-agent tool result {d.get('verdict') or ev['decision']} on {tool}"
+                + (f": {why}" if why else ""))
     if ev["kind"] == "dlp":
         what = d.get("category") or d.get("rule_id") or "?"
         where = d.get("destination") or "?"
