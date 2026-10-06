@@ -308,9 +308,11 @@ matcher and no `|| exit 2`; the plugin goes to 1.1.0 (its zip is cached by
 version in a bucket); the example profile turns `before_prompt` on;
 `hook.conf.example` documents `ON_UNREACHABLE_PROMPT`; README section 5.
 Device agent and plugin copies regenerated with `sync_hook_scripts.py`.
-The device agent's local endpoint (`/v1/local/claude-code/hook`) forwards
-this event unchanged; whether the agent's own installer registers the hook is
-the fleet rollout's to decide (not changed here).
+Not checked: whether the Votal device agent's local endpoint
+(`/v1/local/claude-code/hook`) forwards this event, and whether its installer
+registers the hook. Both belong to the fleet rollout and are unchanged here;
+until checked, the prompt check is for tenant-key installs (settings files,
+plugin).
 
 Tests: `tests/test_prompt_hook_script.py` (27, under sh and dash): answer
 passed through for both targets, empty answer, failures under both settings
