@@ -180,4 +180,14 @@ summary counts, the off flag, a store outage, paging over the merged list.
 Four safeguards sabotage-checked (source filter, flag, sort, outage catch).
 Clean venv: 6371 passed.
 
-Task 2 (portal Source filter/column) is the remaining task.
+**Task 2 (portal).** `static/tenant.html`: the Telemetry tab gains a **Source**
+dropdown (All / Chat / Coding agent) passed as the `source` param, and a
+**Source** column with a badge (chat / coding agent). `telemetryDisplayStatus`
+shows a coding-agent row's own verdict (block/redact/warn/monitor/pass); a
+`.monitor` pill and the source-badge styles were added. The Tools column shows
+the tool name for a coding-agent row (which has no chat tool-call list) and
+"N call(s)" for chat; latency shows "—" when absent; the detail row's colspan
+is 8. Verified by rendering the table with mock chat + coding-agent rows in
+Node against the page's real `escapeHtml` (source badges, blocked/redact pills,
+tool name, policy-name message, 8-col detail), and the portal-wiring tests
+(75) still pass. Final visual check is in the portal after deploy.
