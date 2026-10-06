@@ -240,6 +240,23 @@ embedded copies via `sync_hook_scripts.py`.
 3. **Scripts, settings files, plugin, README:** `UserPromptSubmit` everywhere,
    `ON_UNREACHABLE_PROMPT`, regenerated copies, end-to-end test steps.
 
+## 9.1 Task 0 results (2026-10-06)
+
+Run from the user's Terminal with a probe hook (records its input, answers a
+fixed decision); no Shield code involved.
+
+| Check | Result |
+|---|---|
+| Claude Code 2.1.289, `{"decision":"block","reason":...}` | **Verified.** Prompt refused before the model runs: "UserPromptSubmit operation blocked by hook: <reason>", then "Original prompt: ...". |
+| Claude Code input fields | `cwd`, `hook_event_name`, `permission_mode`, `prompt`, `prompt_id`, `session_id`, `transcript_path`. `prompt_id` goes into the event detail. |
+| Claude Code `additionalContext` (warn) | Not run (CLI sign-in expired). Documented as supported; checked in task 2's live test. |
+| Codex 0.155.1, `codex exec` | **The hook never fired**, in a git repo, trusted project, `--dangerously-bypass-hook-trust`, hooks feature on (Codex accepted the flag: it warned that `codex_hooks` is deprecated in favour of `hooks`). Codex's docs list `UserPromptSubmit` with the same `decision: block` shape. Either `exec` mode does not emit it or project hooks are not loaded there. **Codex is unverified**: task 3 tests it in an interactive session with `~/.codex/hooks.json`; if it does not fire, the Codex half ships documented as unsupported, the route still answering correctly. |
+| Production `/guardrails/input` latency, tenant `bankco` (4 natural-language input policies, 1 Sigma) | 2.7 to 7.5 s, usually 3 to 4.5 s per prompt. Matches section 2. |
+| bankco input policies on "encrypt file ... with openssl", "zip ... with a password" | All passed: no policy covers encryption yet. Section 10 step 1 adds it. |
+
+Amendment from task 0: the route records `prompt_id` (Claude Code) and
+`turn_id` (Codex) in the event, to tie a blocked prompt to its session.
+
 ## 10. How you will test it
 
 1. Console, I/O Guardrails, custom policies: add an **input** policy, action
