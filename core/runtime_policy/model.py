@@ -44,7 +44,16 @@ _TOP_KEYS = {"description", "network", "filesystem", "process", "tools", "identi
 #: Tool Registry rules on coding-agent tool calls, through hooks only
 #: (docs/specs/agent-hooks-tool-policies.md section 3).
 _TOOL_POLICY_KEYS = {"before_call", "after_call", "model_tools_before", "model_tools_after",
-                     "max_output_chars", "check_timeout_s"}
+                     "max_output_chars", "check_timeout_s", "before_prompt", "prompt_guards",
+                     "prompt_policy_ids"}
+#: The prompt check (docs/specs/agent-hooks-prompt-check.md section 3): stored
+#: only when one of these is set, so existing profiles keep their hash.
+_PROMPT_KEYS = ("before_prompt", "prompt_guards", "prompt_policy_ids")
+DEFAULT_PROMPT_GUARDS = ["custom_policy_input"]
+MAX_PROMPT_GUARDS = 20
+MAX_PROMPT_POLICY_IDS = 50
+_GUARD_NAME = re.compile(r"^(\*|[a-z][a-z0-9_]{0,63})$")
+_POLICY_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,100}$")
 DEFAULT_MODEL_TOOLS_BEFORE = ["Bash", "Write", "Edit", "MultiEdit", "apply_patch", "WebFetch", "mcp__.*"]
 DEFAULT_MODEL_TOOLS_AFTER = ["Bash", "Read", "WebFetch", "mcp__.*"]
 MAX_MODEL_TOOL_PATTERNS = 50
@@ -345,6 +354,22 @@ def _tool_policies(raw: Any, errors: list[str]) -> dict:
     out["max_output_chars"] = 200_000 if chars is None else chars
     secs = _int(tp.get("check_timeout_s"), 1, 120, "tool_policies.check_timeout_s", errors)
     out["check_timeout_s"] = 20 if secs is None else secs
+    if any(tp.get(k) is not None for k in _PROMPT_KEYS):
+        out["before_prompt"] = _bool(tp.get("before_prompt"), False,
+                                     "tool_policies.before_prompt", errors)
+        for key, default, cap, shape, what in (
+                ("prompt_guards", DEFAULT_PROMPT_GUARDS, MAX_PROMPT_GUARDS, _GUARD_NAME,
+                 "an input guard name, or *"),
+                ("prompt_policy_ids", [], MAX_PROMPT_POLICY_IDS, _POLICY_ID,
+                 "a custom policy id")):
+            where = f"tool_policies.{key}"
+            vals = default if tp.get(key) is None else _strs(tp.get(key), where, errors)
+            if len(vals) > cap:
+                errors.append(f"{where}: at most {cap} entries")
+            for v in vals:
+                if not shape.match(v):
+                    errors.append(f"{where}: {v!r} is not {what}")
+            out[key] = list(dict.fromkeys(vals))
     return out
 
 

@@ -1,7 +1,7 @@
 # Spec: prompt check for coding agents (UserPromptSubmit)
 
 Status: DRAFT, awaiting approval. Extends
-[agent-hooks-tool-policies.md](agent-hooks-tool-policies.md) (PRs #470, #471).
+`docs/specs/agent-hooks-tool-policies.md` (PRs #470, #471).
 
 ## 1. Problem and outcome
 
@@ -256,6 +256,28 @@ fixed decision); no Shield code involved.
 
 Amendment from task 0: the route records `prompt_id` (Claude Code) and
 `turn_id` (Codex) in the event, to tie a blocked prompt to its session.
+
+## 9.2 Build notes
+
+**Task 1 (core).** `core/runtime_policy/hook_policies.py`: `check_prompt`,
+`prompt_guards`, `PromptDecision` (with `event_fields`), `prompt_fingerprint`,
+`prompt_check_enabled`; `Settings` gains `before_prompt`, `prompt_guards`,
+`prompt_policy_ids`, and `settings_for` returns settings when only the prompt
+check is on. `core/runtime_policy/model.py` validates the three keys and
+stores them only when one is set. Amendments, each for a reason found while
+building:
+- Only the model-written part of a reason is scrubbed of the prompt's words.
+  Scrubbing the whole reason also mangled the tenant's own policy name
+  ("No file [value]") whenever it shared a word with the prompt.
+- A guard that raises comes back from the pipeline as a failed `log` with
+  `details.error`; it counts as unjudged (fail setting), never as a finding.
+- The portal's list of what monitor mode covers gains "coding-agent prompts"
+  (`POLICY_MODE_APPLIES_TO`), enforced by `tests/test_tenant_policy_mode.py`.
+
+Tests: `tests/test_hook_prompt_check.py` (24), the real custom policy guard
+through the real tenant pipeline with only its model call faked. Seven
+safeguards sabotage-checked, including running without the per-request
+config (8 tests fail). Clean venv: 6319 passed.
 
 ## 10. How you will test it
 

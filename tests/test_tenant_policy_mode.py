@@ -236,6 +236,7 @@ _CALL_SITE_LABELS = {
     "api/routes_openai_compat.py": {"OpenAI-compatible proxy"},
     "api/routes_agent_chat.py": {"agent chat"},
     "api/routes_litellm_guardrail.py": {"LiteLLM"},
+    "core/runtime_policy/hook_policies.py": {"coding-agent prompts"},
 }
 # define / display only. routes_data_policies.py reports the mode on GET
 # /v1/data-policies/status (docs/specs/tool-policy-fail-safe.md) and applies it
