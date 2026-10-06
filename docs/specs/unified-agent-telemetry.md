@@ -156,3 +156,28 @@ page.
 
 Depends on #473 (the decision summary) for readable coding-agent `message`
 text; land that first.
+
+## 9.1 Build notes
+
+**Task 1 (endpoint).** `api/routes_tenant_self.py`: `get_my_telemetry` gains a
+`source` param and merges coding-agent rows. `_coding_agent_rows` reads
+`decisions:{tenant}` via `query_decisions(guardrail=runtime_boundary)` and
+keeps only `metadata.source == "claude_code"` (runtime_boundary also carries
+infra and robot events). `_coding_agent_row` maps each to the telemetry row
+shape: `message` is the stored summary (#473), `status` from the verdict
+(block/redact/warn/monitor/pass), `stage` input for UserPromptSubmit else
+tool, latency from the event; never the prompt/result. Chat rows are tagged
+`source: "chat"`; both are sorted newest-first and paged together; the summary
+tiles count both (a tool/result decision is a tool call, a prompt check is
+not). `SHIELD_TELEMETRY_INCLUDE_CODING_AGENT=0` restores chat-only. A decisions
+store error leaves chat working. Both lazily imported modules
+(`storage.decision_audit`, `core.runtime_policy.check`) are already in
+`Dockerfile.admin`.
+
+Tests: `tests/test_telemetry_merge.py` (9): both sources newest-first, no
+prompt text/hash in rows, source filter, infra/robot excluded, status filter,
+summary counts, the off flag, a store outage, paging over the merged list.
+Four safeguards sabotage-checked (source filter, flag, sort, outage catch).
+Clean venv: 6371 passed.
+
+Task 2 (portal Source filter/column) is the remaining task.
