@@ -24,6 +24,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/claude_code_hook.sh\" --config \"$HOME/.votal/hook.conf\" --target claude-code",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }

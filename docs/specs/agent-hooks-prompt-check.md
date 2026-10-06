@@ -298,6 +298,32 @@ shape (4), Codex given the Claude-only note (1), outage read as no policies
 (1), fleet monitor ignored (1, after adding the device-key tests). Clean venv:
 6333 passed.
 
+**Task 3 (scripts, settings, plugin, README).** `claude_code_hook.sh` and
+`.ps1` recognise `UserPromptSubmit`, pass a `decision: block` or an
+`additionalContext` answer through unchanged, and on a failure follow
+`ON_UNREACHABLE_PROMPT` (allow by default; `block` prints a refusal), always
+exiting 0. A missing config cannot be read for that setting, so it lets the
+prompt through. Every settings file and the plugin register the hook with no
+matcher and no `|| exit 2`; the plugin goes to 1.1.0 (its zip is cached by
+version in a bucket); the example profile turns `before_prompt` on;
+`hook.conf.example` documents `ON_UNREACHABLE_PROMPT`; README section 5.
+Device agent and plugin copies regenerated with `sync_hook_scripts.py`.
+The device agent's local endpoint (`/v1/local/claude-code/hook`) forwards
+this event unchanged; whether the agent's own installer registers the hook is
+the fleet rollout's to decide (not changed here).
+
+Tests: `tests/test_prompt_hook_script.py` (27, under sh and dash): answer
+passed through for both targets, empty answer, failures under both settings
+(while a tool-call failure still denies), missing config, PS1 contract,
+every settings file and the plugin, example profile. The PS1 contract test
+now counts the two prompt-only exits. Sabotage-checked: event not recognised
+(18 fail), setting ignored (4), answer not passed through (8). Both plugin
+manifests pass `claude plugin validate` (Claude Code 2.1.289). Clean venv:
+6360 passed.
+
+Still to do after merge: the interactive Codex check (section 9.1) and the
+end-to-end test in section 10.
+
 ## 10. How you will test it
 
 1. Console, I/O Guardrails, custom policies: add an **input** policy, action

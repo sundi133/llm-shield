@@ -50,6 +50,10 @@
 #                                      denials always deny.)
 #   ON_UNREACHABLE_RESULT=allow       (optional: allow, the default, or withhold;
 #                                      what a failure means AFTER a call)
+#   ON_UNREACHABLE_PROMPT=allow       (optional: allow, the default, or block;
+#                                      what a failure means for a submitted
+#                                      prompt, UserPromptSubmit;
+#                                      docs/specs/agent-hooks-prompt-check.md)
 #   SHIELD_LOCAL_SECRET_FILE=<path>   (set by the Votal device agent: ask the
 #                                      agent on 127.0.0.1 with its local secret
 #                                      instead of Shield with a tenant key;
@@ -65,12 +69,22 @@ deny() {
 
 # A failure (no answer, bad answer, bad setup): denied unless the config says
 # ON_UNREACHABLE=allow. Shield's own denials go through deny(), never here.
-# After a call (EVENT=PostToolUse) a failure follows ON_UNREACHABLE_RESULT.
+# After a call (EVENT=PostToolUse) a failure follows ON_UNREACHABLE_RESULT; for
+# a submitted prompt (EVENT=UserPromptSubmit) it follows ON_UNREACHABLE_PROMPT.
 ON_UNREACHABLE=deny
 ON_UNREACHABLE_RESULT=allow
+ON_UNREACHABLE_PROMPT=allow
 EVENT=PreToolUse
 TARGET=claude-code
 fail() {
+    if [ "$EVENT" = "UserPromptSubmit" ]; then
+        # The same answer in both agents: the prompt is refused before the
+        # model runs. Exit 0 either way: exit 2 would also refuse it, but with
+        # the internal failure as the message.
+        [ "$ON_UNREACHABLE_PROMPT" = "block" ] && \
+            printf '{"decision":"block","reason":"Votal Shield could not check this request"}\n'
+        exit 0
+    fi
     if [ "$EVENT" = "PostToolUse" ]; then
         if [ "$ON_UNREACHABLE_RESULT" = "withhold" ]; then
             if [ "$TARGET" = "codex" ]; then
@@ -118,6 +132,7 @@ chmod 600 "$IN"
 cat > "$IN"
 case "$(tr -d ' \t\r\n' < "$IN")" in
     *'"hook_event_name":"PostToolUse"'*) EVENT=PostToolUse ;;
+    *'"hook_event_name":"UserPromptSubmit"'*) EVENT=UserPromptSubmit ;;
 esac
 [ -n "$CONF" ] && [ -r "$CONF" ] || fail "hook config $CONF is missing or unreadable, so this action is not allowed"
 
@@ -142,6 +157,7 @@ while IFS= read -r line || [ -n "$line" ]; do
         SHIELD_LOCAL_SECRET_FILE) SECRET_FILE=$v ;;
         ON_UNREACHABLE) UNREACH=$v ;;
         ON_UNREACHABLE_RESULT) [ "$v" = "withhold" ] && ON_UNREACHABLE_RESULT=withhold ;;
+        ON_UNREACHABLE_PROMPT) [ "$v" = "block" ] && ON_UNREACHABLE_PROMPT=block ;;
     esac
 done < "$CONF"
 [ "$UNREACH" = "allow" ] && ON_UNREACHABLE=allow
@@ -208,6 +224,17 @@ if [ "$EVENT" = "PostToolUse" ]; then
     case "$COMPACT" in
         '{}') exit 0 ;;
         '{'*'"updatedToolOutput"'*'}'|'{'*'"decision":"block"'*'}')
+            printf '%s\n' "$ANSWER"
+            exit 0 ;;
+    esac
+    fail "Shield's answer was not understood"
+fi
+
+if [ "$EVENT" = "UserPromptSubmit" ]; then
+    # A refusal ({"decision":"block"}) or a note for the agent: pass it on whole.
+    case "$COMPACT" in
+        '{}') exit 0 ;;
+        '{'*'"decision":"block"'*'}'|'{'*'"additionalContext"'*'}')
             printf '%s\n' "$ANSWER"
             exit 0 ;;
     esac

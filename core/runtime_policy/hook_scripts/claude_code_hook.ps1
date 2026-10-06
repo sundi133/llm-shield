@@ -1,7 +1,10 @@
 # Votal Shield fail-closed hook for Claude Code and Codex (PreToolUse and
 # PostToolUse), Windows. -Target claude-code (default) or codex; after a call
 # Shield's answer is passed through, and a failure follows
-# ON_UNREACHABLE_RESULT (allow, the default, or withhold).
+# ON_UNREACHABLE_RESULT (allow, the default, or withhold). For a submitted
+# prompt (UserPromptSubmit) a refusal or note is passed through, and a failure
+# follows ON_UNREACHABLE_PROMPT (allow, the default, or block);
+# docs/specs/agent-hooks-prompt-check.md.
 # docs/specs/agent-hooks-tool-policies.md section 4.3.
 # Spec: docs/specs/agent-hook-adapter.md, section 4.3. The twin of
 # claude_code_hook.sh: same config, same answers, same rule that EVERY
@@ -37,8 +40,16 @@ function Deny([string]$Why) {
 # ON_UNREACHABLE=allow. Shield's own denials go through Deny, never here.
 $script:OnUnreachable = "deny"
 $script:OnUnreachableResult = "allow"
+$script:OnUnreachablePrompt = "allow"
 $script:Event = "PreToolUse"
 function Fail([string]$Why) {
+    if ($script:Event -eq "UserPromptSubmit") {
+        if ($script:OnUnreachablePrompt -eq "block") {
+            $o = @{ decision = "block"; reason = "Votal Shield could not check this request" }
+            [Console]::Out.WriteLine(($o | ConvertTo-Json -Compress -Depth 4))
+        }
+        exit 0
+    }
     if ($script:Event -eq "PostToolUse") {
         if ($script:OnUnreachableResult -eq "withhold") {
             $note = "[Shield withheld this result: Shield could not check it]"
@@ -61,13 +72,15 @@ trap { Fail "the hook failed ($($_.Exception.Message)), so this action is not al
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
 $body = [Console]::In.ReadToEnd()
 if ($body -match '"hook_event_name"\s*:\s*"PostToolUse"') { $script:Event = "PostToolUse" }
+elseif ($body -match '"hook_event_name"\s*:\s*"UserPromptSubmit"') { $script:Event = "UserPromptSubmit" }
 
 if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
     Fail "hook config $Config is missing or unreadable, so this action is not allowed"
 }
 
 $settings = @{ SHIELD_URL = ""; SHIELD_API_KEY = ""; SHIELD_AGENT = "claude-code"; SHIELD_TIMEOUT = "4";
-              SHIELD_LOCAL_SECRET_FILE = ""; ON_UNREACHABLE = "deny"; ON_UNREACHABLE_RESULT = "allow" }
+              SHIELD_LOCAL_SECRET_FILE = ""; ON_UNREACHABLE = "deny"; ON_UNREACHABLE_RESULT = "allow";
+              ON_UNREACHABLE_PROMPT = "allow" }
 foreach ($line in Get-Content -LiteralPath $Config) {
     $l = $line.Trim()
     if ($l -eq "" -or $l.StartsWith("#") -or -not $l.Contains("=")) { continue }
@@ -81,6 +94,7 @@ foreach ($line in Get-Content -LiteralPath $Config) {
 
 if ($settings.ON_UNREACHABLE -eq "allow") { $script:OnUnreachable = "allow" }
 if ($settings.ON_UNREACHABLE_RESULT -eq "withhold") { $script:OnUnreachableResult = "withhold" }
+if ($settings.ON_UNREACHABLE_PROMPT -eq "block") { $script:OnUnreachablePrompt = "block" }
 $url = $settings.SHIELD_URL
 $local = [bool]$settings.SHIELD_LOCAL_SECRET_FILE
 if (-not $url) { Fail "SHIELD_URL is not set in $Config, so this action is not allowed" }
@@ -138,6 +152,16 @@ if ($script:Event -eq "PostToolUse") {
     # Already in this agent's format (redacted result or withheld note): pass it on.
     $hso = $answer.hookSpecificOutput
     if (($hso -and $null -ne $hso.updatedToolOutput) -or [string]$answer.decision -eq "block") {
+        [Console]::Out.WriteLine($resp.Content)
+        exit 0
+    }
+    Fail "Shield's answer was not understood"
+}
+
+if ($script:Event -eq "UserPromptSubmit") {
+    # A refusal or a note for the agent, already in its format: pass it on.
+    $hso = $answer.hookSpecificOutput
+    if ([string]$answer.decision -eq "block" -or ($hso -and $null -ne $hso.additionalContext)) {
         [Console]::Out.WriteLine($resp.Content)
         exit 0
     }

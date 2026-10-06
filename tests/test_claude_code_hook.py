@@ -225,9 +225,12 @@ def test_powershell_twin_has_the_same_rules():
     # {}, ask, ON_UNREACHABLE=allow; and two AFTER a call only (docs/specs/
     # agent-hooks-tool-policies.md 4.3): a failure lets the result through or
     # withholds it, and Shield's answer is passed on. Neither is reachable
-    # before a call, where every failure still exits 2.
-    assert sum("exit 0" in e for e in exits) == 5
+    # before a call, where every failure still exits 2. And two for a
+    # submitted prompt only (docs/specs/agent-hooks-prompt-check.md 4.4), the
+    # same pair: a failure (ON_UNREACHABLE_PROMPT) and Shield's answer passed on.
+    assert sum("exit 0" in e for e in exits) == 7
     assert src.count('if ($script:Event -eq "PostToolUse")') == 2
+    assert src.count('if ($script:Event -eq "UserPromptSubmit")') == 2
     fail = src[src.index("function Fail"):src.index("trap {")]
     assert 'if ($script:OnUnreachable -eq "allow")' in fail and "exit 0" in fail
     assert 'if ($decision -eq "deny") {' in src and "Deny $why" in src   # Shield's deny never Fail
