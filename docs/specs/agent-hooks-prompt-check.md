@@ -279,6 +279,25 @@ through the real tenant pipeline with only its model call faked. Seven
 safeguards sabotage-checked, including running without the per-request
 config (8 tests fail). Clean venv: 6319 passed.
 
+**Task 2 (route).** `api/routes_hooks.py`: `_handle` sends `UserPromptSubmit`
+to `_user_prompt_submit` on both routes; `_record_prompt_event` writes the
+`dlp` event (verdict `block`, `allow`, `uncertain` when unjudged, or `monitor`;
+`prompt_sha256`, `prompt_len`, `prompt_id` / `turn_id`, policy and guard
+names; never the prompt). A tenant-key caller uses the tenant config the
+middleware already loaded; a device-key caller's is read from the store.
+Amendment: `check_prompt` takes `config_error`, so a store outage follows the
+fail setting instead of reading as "no policies" (found while writing the
+outage test).
+
+Tests: `tests/test_prompt_hook_route.py` (14): block in both agents, warn
+note for Claude Code only, no prompt in answers or events, event fields,
+`turn_id`, profile off, fleet switch, tenant monitor, store outage under both
+fail settings, device-key caller under fleet enforce and monitor, tool calls
+unaffected. Sabotage-checked: prompt text in the event (6 fail), wrong block
+shape (4), Codex given the Claude-only note (1), outage read as no policies
+(1), fleet monitor ignored (1, after adding the device-key tests). Clean venv:
+6333 passed.
+
 ## 10. How you will test it
 
 1. Console, I/O Guardrails, custom policies: add an **input** policy, action

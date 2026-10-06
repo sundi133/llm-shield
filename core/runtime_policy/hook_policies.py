@@ -491,9 +491,11 @@ def _finding(r, prompt: str) -> tuple[list, str]:
 
 
 async def check_prompt(tenant_id: str, prompt: Any, tenant_config: Optional[dict],
-                       settings: Settings) -> PromptDecision:
+                       settings: Settings, *, config_error: bool = False) -> PromptDecision:
     """The tenant's prompt policies on one submitted prompt: BLOCK, WARN or
-    ALLOW. `redact` is a BLOCK (a submitted prompt cannot be rewritten)."""
+    ALLOW. `redact` is a BLOCK (a submitted prompt cannot be rewritten).
+    `config_error`: the tenant's config could not be read, so nothing could be
+    checked (the fail setting decides), which is not the same as no policies."""
     from core.policy_mode import MONITOR, resolve_mode
     from core.tenant_pipeline import REPLACE, run_tenant_pipeline
 
@@ -503,11 +505,11 @@ async def check_prompt(tenant_id: str, prompt: Any, tenant_config: Optional[dict
     oversize = len(prompt) > settings.max_output_chars
     guards = prompt_guards((tenant_config or {}).get("input_guardrails"), settings,
                            sigma_only=oversize)
-    if not guards and not oversize:
+    if not guards and not oversize and not config_error:
         return PromptDecision(ALLOW, reason="no prompt policy", latency_ms=_ms(t0))
 
     results = []
-    error = ""
+    error = "tenant config unavailable" if config_error else ""
     if guards:
         try:
             pr = await asyncio.wait_for(
