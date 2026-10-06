@@ -11,3 +11,6 @@ SHIELD_TIMEOUT=25
 # lets the result through (the default) or withholds it.
 ON_UNREACHABLE=deny
 ON_UNREACHABLE_RESULT=allow
+# A submitted prompt (UserPromptSubmit): a failure lets it through (the
+# default) or blocks it.
+ON_UNREACHABLE_PROMPT=allow

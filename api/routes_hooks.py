@@ -4,6 +4,11 @@ Claude Code's PreToolUse hook posts each tool call here before it runs; the
 answer allows ({}), denies or asks, in Claude Code's own format. Spec:
 docs/specs/agent-hook-adapter.md.
 
+PostToolUse checks a tool's result (docs/specs/agent-hooks-tool-policies.md);
+UserPromptSubmit checks the prompt itself, before the agent sees it
+(docs/specs/agent-hooks-prompt-check.md). Both are off unless the agent's
+profile turns them on.
+
 A decision path for the agent, like /v1/shield/runtime/check, which it reuses:
 deterministic, cached profile, no model call. The runtime event (audit for
 deny and ask, telemetry for every call) is written after the answer.
@@ -109,6 +114,11 @@ async def _handle(request: Request, background: BackgroundTasks, target: str):
         return await _post_tool_use(request, background, tenant_id=tenant_id, agent=agent,
                                     cp=cp, payload=payload, user=user, device_id=device_id,
                                     fleet=fleet, monitor=monitor, target=target)
+    if event == "UserPromptSubmit":
+        return await _user_prompt_submit(request, background, tenant_id=tenant_id, agent=agent,
+                                         cp=cp, payload=payload, user=user,
+                                         device_id=device_id, fleet=fleet, monitor=monitor,
+                                         target=target)
     if event != "PreToolUse":
         return {}
     decision = hooks.decide(cp, payload, _shield_hosts(request))
@@ -204,6 +214,84 @@ async def _post_tool_use(request: Request, background: BackgroundTasks, *, tenan
         "updatedToolOutput": hook_policies.withheld_output(original, hook_policies.withheld_text(d)),
         "additionalContext": "Votal Shield withheld this result under your organization's "
                              "policy. Do not try to obtain it another way."}}
+
+
+async def _user_prompt_submit(request: Request, background: BackgroundTasks, *, tenant_id: str,
+                              agent: str, cp, payload: dict, user: str, device_id: str,
+                              fleet: str, monitor: bool, target: str) -> dict:
+    """UserPromptSubmit: the tenant's input policies on the prompt itself,
+    before the agent sees it (docs/specs/agent-hooks-prompt-check.md). Off
+    unless the agent's profile sets `tool_policies.before_prompt`.
+
+    Blocked: `{"decision": "block", "reason": ...}`, the same in both agents;
+    the prompt is refused before the model runs. Warned: Claude Code gets a
+    note naming the policy; Codex gets nothing (unverified there, spec 9.1).
+    """
+    settings = hook_policies.settings_for(cp)
+    if settings is None or not settings.before_prompt:
+        return {}
+    # The middleware already loaded the tenant for a tenant key; a device key
+    # resolves the tenant from its device record, so load it here.
+    tenant_config = getattr(request.state, "tenant_config", None)
+    config_error = False
+    if not isinstance(tenant_config, dict) or getattr(request.state, "tenant_id", None) != tenant_id:
+        try:
+            from storage.tenant_store import get_tenant
+            tenant_config = await run_in_threadpool(get_tenant, tenant_id)
+        except Exception as e:      # noqa: BLE001 - store down: the fail setting decides
+            logger.warning("prompt check: tenant config unavailable (%s)", type(e).__name__)
+            tenant_config, config_error = None, True
+    d = await hook_policies.check_prompt(tenant_id, payload.get("prompt"), tenant_config,
+                                         settings, config_error=config_error)
+    background.add_task(_record_prompt_event, request, tenant_id, agent, cp, payload, d,
+                        user=user, device_id=device_id, fleet=fleet, monitor=monitor)
+    if monitor or d.action == hook_policies.ALLOW:
+        return {}
+    if d.action == hook_policies.BLOCK:
+        return {"decision": "block", "reason": f"Blocked by Votal Shield: {d.reason}"}
+    if target == TARGET_CODEX:
+        return {}
+    names = ", ".join(d.policies) or "a policy"
+    return {"hookSpecificOutput": {
+        "hookEventName": "UserPromptSubmit",
+        "additionalContext": f"Votal Shield: this request falls under your organization's "
+                             f"policy ({names}). Follow that policy."}}
+
+
+async def _record_prompt_event(request: Request, tenant_id: str, agent: str, cp, payload: dict,
+                               d, *, user: str, device_id: str, fleet: str,
+                               monitor: bool) -> None:
+    """Runtime event for a checked prompt: kind dlp; a block is a deny, a warn
+    an audit. Never the prompt: its sha256 and length only (spec section 5)."""
+    decision = {hook_policies.BLOCK: "deny", hook_policies.WARN: "audit"}.get(d.action, "allow")
+    verdict = "block" if d.action == hook_policies.BLOCK else (
+        "uncertain" if d.unjudged else "allow")
+    if d.monitor:                   # the tenant's policy_mode is monitor
+        decision, verdict = "audit", "monitor"
+    detail = {"hook": "UserPromptSubmit", "user": user[:200], "device_id": device_id[:200],
+              **hook_policies.prompt_fingerprint(payload.get("prompt")), **d.event_fields(),
+              "verdict": verdict}
+    for key in ("prompt_id", "turn_id"):      # Claude Code and Codex ids for this prompt
+        value = payload.get(key)
+        if isinstance(value, (str, int)) and str(value):
+            detail[key] = str(value)[:200]
+    if fleet:
+        detail["fleet"] = fleet[:64]
+    if monitor and decision != "allow":     # the fleet's agent_hooks mode is monitor
+        detail["monitor"], detail["would_decide"], detail["verdict"] = True, decision, "monitor"
+        decision = "audit"
+    try:
+        ev = rt_events.normalize({
+            "source": hooks.SOURCE, "kind": "dlp", "decision": decision,
+            "severity": "medium" if decision == "deny" else "info",
+            "agent_id": agent[:200], "agent_instance_id": device_id[:200],
+            "session_id": str(payload.get("session_id") or "")[:512],
+            "profile": cp.name if cp else "", "profile_hash": cp.hash if cp else "",
+            "detail": detail})
+        await rt_events.ingest(tenant_id, [ev],
+                               source_ip=request.client.host if request.client else "")
+    except Exception as e:      # noqa: BLE001 - the hook has already answered
+        logger.warning("UserPromptSubmit event not recorded: %s", e)
 
 
 async def _record_result_event(request: Request, tenant_id: str, agent: str, cp, payload: dict,

@@ -1,13 +1,17 @@
 {
   "name": "votal-shield",
-  "owner": {"name": "Votal AI"},
-  "metadata": {"description": "Votal Shield plugins for Claude Code and Cowork."},
+  "owner": {
+    "name": "Votal AI"
+  },
+  "metadata": {
+    "description": "Votal Shield plugins for Claude Code and Cowork."
+  },
   "plugins": [
     {
       "name": "votal-shield-hooks",
       "source": "./votal-shield-hooks",
       "description": "Applies your Votal Shield Tool Registry policies to every tool call, before and after it runs.",
-      "version": "1.0.0"
+      "version": "1.1.0"
     }
   ]
 }

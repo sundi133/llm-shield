@@ -122,7 +122,44 @@ Known Codex gaps: hooks do not run for its hosted web search, `spawn_agent`,
 Code Mode, or the VS Code extension; on Windows, exit code 2 may not block
 (openai/codex#48183).
 
-## 5. As a plugin, for Claude Code and Cowork
+## 5. Check the request itself (prompt check)
+
+The checks above judge one tool call at a time, so an agent refused on one
+tool can try another. The prompt check judges the request before the agent
+starts: the user's prompt goes to Shield (`UserPromptSubmit` hook) and your
+**input custom policies** decide. A blocked prompt never reaches the model and
+no tool is tried. Spec: `docs/specs/agent-hooks-prompt-check.md`.
+
+1. **Write the policy.** In the console, I/O Guardrails, custom policies, add
+   an **input** policy with action block, for example: "Block requests to
+   encrypt, password-protect, lock or ransom files, or to disable security
+   tools." Note its id.
+2. **Turn the check on** in the agent's runtime profile. `runtime-profile.json`
+   here already has `"before_prompt": true`. Two optional keys in the same
+   `tool_policies` block:
+   - `"prompt_policy_ids": ["<id>"]`: only these policies run on prompts, so a
+     policy written for coding agents does not also apply to your chat apps.
+   - `"prompt_guards": ["*"]`: also run your other input guards (PII, prompt
+     injection) on prompts. The default is custom policies only, because
+     developers paste logs and code those guards flag.
+3. **Settings.** Every settings file here and the plugin already register the
+   `UserPromptSubmit` hook. With the script, `ON_UNREACHABLE_PROMPT` in
+   `hook.conf` says what a failure means: `allow` (the default) or `block`.
+4. **Test.** In a new Claude Code session: "encrypt file ~/Downloads/a.txt"
+   gets "Blocked by Votal Shield: <policy>: ..." at once, with no tool calls.
+   "explain how TLS works" goes through.
+
+What is recorded: a `dlp` runtime event with the policy name, the verdict,
+and the prompt's sha256 and length. Never the prompt.
+
+Each prompt waits for the check before the agent starts: about 3 to 5 s with
+a few natural-language policies (they run in parallel).
+
+Codex: its documentation lists `UserPromptSubmit` with the same `block`
+answer, but `codex exec` did not call the hook in our checks. Test it in an
+interactive Codex session; a warning note is not sent to Codex.
+
+## 6. As a plugin, for Claude Code and Cowork
 
 Cowork does not read Claude Code's settings files; it loads hooks only from
 plugins. `plugin/` is a plugin marketplace with one plugin,

@@ -388,7 +388,8 @@ async def update_my_policies(request: Request, body: TenantSelfUpdateRequest):
 # against the call sites of core.policy_mode, so the portal cannot misstate what
 # monitor mode covers.
 POLICY_MODE_APPLIES_TO = ["/guardrails/input", "/guardrails/file", "tool and MCP calls",
-                          "gateway", "OpenAI-compatible proxy", "agent chat", "LiteLLM"]
+                          "gateway", "OpenAI-compatible proxy", "agent chat", "LiteLLM",
+                          "coding-agent prompts"]
 POLICY_MODE_NOT_APPLIED_TO = ["/guardrails/output"]
 _MODE_REASON_MAX = 500
 

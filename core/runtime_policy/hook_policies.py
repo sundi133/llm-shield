@@ -32,11 +32,17 @@ fleet-wide.
 Never puts the agent's arguments or the original output in a reason.
 
 Spec: docs/specs/agent-hooks-tool-policies.md (task 1)
+
+Before a prompt, `check_prompt` runs the tenant's input custom policies on the
+prompt itself (docs/specs/agent-hooks-prompt-check.md, task 1), off unless the
+profile sets `tool_policies.before_prompt`; `SHIELD_HOOK_PROMPT_CHECK=0` turns
+it off fleet-wide.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -59,6 +65,9 @@ class Settings:
     model_tools_after: list = field(default_factory=list)
     max_output_chars: int = 200_000
     check_timeout_s: int = 20
+    before_prompt: bool = False
+    prompt_guards: list = field(default_factory=lambda: ["custom_policy_input"])
+    prompt_policy_ids: list = field(default_factory=list)
 
 
 @dataclass
@@ -85,21 +94,32 @@ def enabled() -> bool:
         "0", "off", "false", "no")
 
 
+def prompt_check_enabled() -> bool:
+    """`SHIELD_HOOK_PROMPT_CHECK=0` turns the prompt check off fleet-wide."""
+    return os.environ.get("SHIELD_HOOK_PROMPT_CHECK", "1").strip().lower() not in (
+        "0", "off", "false", "no")
+
+
 def settings_for(profile) -> Optional[Settings]:
     """The agent's settings from its compiled runtime profile, or None when the
-    profile does not turn either check on (today's behaviour)."""
+    profile turns no check on (today's behaviour)."""
     if profile is None or not enabled():
         return None
     raw = (getattr(profile, "raw", None) or {}).get("tool_policies") or {}
-    if not (raw.get("before_call") or raw.get("after_call")):
+    before_prompt = bool(raw.get("before_prompt")) and prompt_check_enabled()
+    if not (raw.get("before_call") or raw.get("after_call") or before_prompt):
         return None
-    from core.runtime_policy.model import DEFAULT_MODEL_TOOLS_AFTER, DEFAULT_MODEL_TOOLS_BEFORE
+    from core.runtime_policy.model import (DEFAULT_MODEL_TOOLS_AFTER, DEFAULT_MODEL_TOOLS_BEFORE,
+                                           DEFAULT_PROMPT_GUARDS)
     return Settings(
         before_call=bool(raw.get("before_call")), after_call=bool(raw.get("after_call")),
         model_tools_before=list(raw.get("model_tools_before") or DEFAULT_MODEL_TOOLS_BEFORE),
         model_tools_after=list(raw.get("model_tools_after") or DEFAULT_MODEL_TOOLS_AFTER),
         max_output_chars=int(raw.get("max_output_chars") or 200_000),
-        check_timeout_s=int(raw.get("check_timeout_s") or 20))
+        check_timeout_s=int(raw.get("check_timeout_s") or 20),
+        before_prompt=before_prompt,
+        prompt_guards=list(raw.get("prompt_guards") or DEFAULT_PROMPT_GUARDS),
+        prompt_policy_ids=list(raw.get("prompt_policy_ids") or []))
 
 
 def model_applies(tool_name: str, patterns: list) -> bool:
@@ -358,3 +378,180 @@ def withheld_output(original: Any, note: str) -> Any:
         return v
 
     return rebuild(original, ())
+
+
+# ── before a prompt ──────────────────────────────────────────────────────
+# docs/specs/agent-hooks-prompt-check.md: the tenant's input custom policies
+# (and, when the profile names them, other input guards) on the prompt a user
+# submits to a coding agent, before the agent sees it. Runs the same
+# in-process pipeline as /guardrails/input, through run_tenant_pipeline, which
+# installs the per-request config: without it the custom policy guard sees an
+# empty list and passes silently (core/tenant_pipeline.py).
+
+WARN, BLOCK = "warn", "block"
+CUSTOM_POLICY_GUARD = "custom_policy_input"
+_ACTION_RANK = {"pass": 0, "log": 1, "warn": 2, "redact": 3, "block": 4,
+                "pending_confirmation": 4}
+
+
+@dataclass
+class PromptDecision:
+    """What the prompt hook should do: ALLOW, WARN or BLOCK. In monitor mode a
+    block becomes ALLOW, with `would` saying what enforce would have done."""
+    action: str = ALLOW
+    reason: str = ""
+    policies: list = field(default_factory=list)
+    guards: list = field(default_factory=list)
+    unjudged: bool = False
+    monitor: bool = False
+    would: str = ""
+    latency_ms: int = 0
+
+    def event_fields(self) -> dict:
+        """For the runtime event: never the prompt."""
+        out = {"prompt_check_action": self.action, "prompt_check_reason": self.reason[:300],
+               "prompt_check_policies": list(self.policies)[:20],
+               "prompt_check_guards": list(self.guards)[:20],
+               "prompt_check_unjudged": self.unjudged, "prompt_check_ms": self.latency_ms}
+        if self.monitor:
+            out["monitor"], out["would_decide"] = True, self.would
+        return out
+
+
+def prompt_fingerprint(prompt: str) -> dict:
+    """All an event may carry about a prompt: its hash and length."""
+    text = prompt if isinstance(prompt, str) else ""
+    return {"prompt_sha256": hashlib.sha256(text.encode("utf-8", "replace")).hexdigest(),
+            "prompt_len": len(text)}
+
+
+def _is_sigma(policy: dict) -> bool:
+    try:
+        from guardrails.output.custom_policy import is_sigma_policy
+        return bool(is_sigma_policy(policy))
+    except Exception:       # noqa: BLE001
+        return policy.get("format") == "sigma"
+
+
+def prompt_guards(input_guardrails: Optional[dict], settings: Settings, *,
+                  sigma_only: bool = False) -> dict:
+    """The tenant's input guard config cut down to what runs on prompts: the
+    guards the profile names (`*` = every enabled one); within the custom
+    policy guard, only enabled input policies, only `prompt_policy_ids` when
+    given, only Sigma policies when `sigma_only`. A guard left with nothing to
+    check is dropped."""
+    names = settings.prompt_guards or [CUSTOM_POLICY_GUARD]
+    every = "*" in names
+    ids = set(settings.prompt_policy_ids or [])
+    out: dict = {}
+    for name, cfg in (input_guardrails or {}).items():
+        if not isinstance(cfg, dict) or not cfg.get("enabled", True):
+            continue
+        if not (every or name in names):
+            continue
+        if name == CUSTOM_POLICY_GUARD:
+            gs = dict(cfg.get("settings") or {})
+            pols = [p for p in gs.get("policies") or []
+                    if isinstance(p, dict) and p.get("enabled", True)
+                    and p.get("stage", "input") == "input"
+                    and (not ids or p.get("policy_id") in ids)
+                    and (not sigma_only or _is_sigma(p))]
+            if not pols:
+                continue
+            gs["policies"] = pols
+            out[name] = {**cfg, "settings": gs}
+        elif not sigma_only:
+            out[name] = cfg
+    return out
+
+
+def _prompt_fail_closed(tenant_id: str) -> bool:
+    """The Tool Registry's "If a check can't run": one switch for every hook
+    check (spec section 7)."""
+    return _fail_closed(_policies(tenant_id, "UserPromptSubmit"))
+
+
+def _finding(r, prompt: str) -> tuple[list, str]:
+    """(policy or guard names, reason) for one failed guard result. Only the
+    model-written part is scrubbed of the prompt's words: the policy name is
+    the tenant's own text, and often shares a word with the prompt."""
+    d = r.details or {}
+    if r.guardrail_name == CUSTOM_POLICY_GUARD:
+        names = [v.get("policy_name") for v in d.get("violation_details") or []
+                 if isinstance(v, dict) and v.get("policy_name")]
+        primary = d.get("primary_violation") or {}
+        head = primary.get("policy_name") or (names[0] if names else "a custom policy")
+        why = primary.get("reasoning") or ""
+    else:
+        names, head, why = [r.guardrail_name], r.guardrail_name, r.message or ""
+    if _ACTION_RANK.get(r.action, 0) == _ACTION_RANK["redact"]:
+        why = "remove the sensitive data and send it again"
+    why = scrub(why, prompt)
+    return names, (f"{head}: {why}" if why else head)[:300]
+
+
+async def check_prompt(tenant_id: str, prompt: Any, tenant_config: Optional[dict],
+                       settings: Settings, *, config_error: bool = False) -> PromptDecision:
+    """The tenant's prompt policies on one submitted prompt: BLOCK, WARN or
+    ALLOW. `redact` is a BLOCK (a submitted prompt cannot be rewritten).
+    `config_error`: the tenant's config could not be read, so nothing could be
+    checked (the fail setting decides), which is not the same as no policies."""
+    from core.policy_mode import MONITOR, resolve_mode
+    from core.tenant_pipeline import REPLACE, run_tenant_pipeline
+
+    t0 = time.perf_counter()
+    if not settings.before_prompt or not isinstance(prompt, str) or not prompt.strip():
+        return PromptDecision(ALLOW, latency_ms=_ms(t0))
+    oversize = len(prompt) > settings.max_output_chars
+    guards = prompt_guards((tenant_config or {}).get("input_guardrails"), settings,
+                           sigma_only=oversize)
+    if not guards and not oversize and not config_error:
+        return PromptDecision(ALLOW, reason="no prompt policy", latency_ms=_ms(t0))
+
+    results = []
+    error = "tenant config unavailable" if config_error else ""
+    if guards:
+        try:
+            pr = await asyncio.wait_for(
+                run_tenant_pipeline("input", prompt, {}, guards, REPLACE),
+                timeout=settings.check_timeout_s)
+            results = list(pr.results)
+        except Exception as e:      # noqa: BLE001 - timeout or pipeline failure
+            error = type(e).__name__
+            logger.warning("prompt check could not run (%s)", error)
+
+    # A guard that raised comes back as a failed "log" with details.error; a
+    # custom policy whose model call failed is listed in details.errors.
+    broken = [r for r in results if not r.passed and (r.details or {}).get("error")]
+    findings = [r for r in results if not r.passed and r not in broken]
+    unjudged = bool(error or broken or oversize
+                    or any((r.details or {}).get("errors") for r in results))
+
+    d = PromptDecision(ALLOW, guards=list(guards), unjudged=unjudged)
+    if findings:
+        worst = max(findings, key=lambda r: _ACTION_RANK.get(r.action, 0))
+        rank = _ACTION_RANK.get(worst.action, 0)
+        names, reason = _finding(worst, prompt)
+        d.policies = list(dict.fromkeys(
+            n for r in findings if _ACTION_RANK.get(r.action, 0) >= _ACTION_RANK["warn"]
+            for n in _finding(r, prompt)[0]))
+        if rank >= _ACTION_RANK["redact"]:
+            d.action, d.reason = BLOCK, reason
+        elif rank == _ACTION_RANK["warn"]:
+            d.action, d.reason = WARN, reason
+        administrative = any((r.details or {}).get("administrative") for r in findings)
+    else:
+        administrative = False
+    if d.action != BLOCK and unjudged and _prompt_fail_closed(tenant_id):
+        d.action = BLOCK
+        d.reason = (f"this request is too long to check ({len(prompt)} characters)" if oversize
+                    else "the policy check could not run") + \
+            ", and this policy blocks when that happens"
+    elif d.action == ALLOW and unjudged:
+        d.reason = (f"too long to check fully ({len(prompt)} characters)" if oversize
+                    else "policy check could not run")
+
+    if d.action == BLOCK and not administrative and resolve_mode(tenant_config) == MONITOR:
+        d.action, d.monitor, d.would = ALLOW, True, BLOCK
+    d.latency_ms = _ms(t0)
+    return d
