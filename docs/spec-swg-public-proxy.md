@@ -70,10 +70,10 @@ real objections the in-VPC design sidestepped and this one must answer head-on:
   Tier 2 round trip to the data plane (measured 1.5–1.9s). The proxy should be
   deployed in a region near the fleet to keep the first hop small.
 - **Planes touched:** deployment/ops (a new GCP deploy path) and the existing
-  `shield-icap` service (unchanged). Squid config gains the mTLS `https_port`
-  and the destination allow-list. No admin-plane or data-plane code change is
-  required for v1 (Squid does the auth); a console view of enrolled device
-  certs is a later item.
+  `shield-icap` service (unchanged). A new nginx front does the mTLS auth and
+  Squid gains the destination allow-list. No admin-plane or data-plane code
+  change is required for v1 (nginx + Squid do the auth and filtering); a console
+  view of enrolled device certs is a later item.
 
 ## 3. Data model
 
@@ -89,7 +89,7 @@ No new Redis keys. The state is certificates and GCP resources.
 **The contract this spec requires of the device-identity side** (so it can come
 from MDM or the device agent without this spec owning a CA):
 - Each device presents a client cert whose chain verifies to the
-  device-identity CA Squid trusts (`clientca`).
+  device-identity CA nginx trusts (`ssl_client_certificate` + `ssl_verify_client on`).
 - The cert's subject/SAN carries a stable **device id** (e.g. the MDM device
   UUID), so a decision can be attributed and one device revoked.
 - Revocation is by **short TTL** (re-issued on MDM check-in) or a **CRL/OCSP**
@@ -112,25 +112,42 @@ the tenant key; `SHIELD_ICAP_EXPECT_TENANT` makes a wrong key a loud refusal.
 Laptop (MDM: device cert + 2 CAs trusted)
   │  PAC: AI hosts -> HTTPS proxy pub-proxy:8443 ; everything else -> DIRECT
   ▼  TLS to the proxy, presenting the device client cert (mTLS)
-External LB (TCP passthrough, external IP)  ──►  Squid https_port 8443
-                                                   require client cert (clientca)
-                                                   ssl_bump AI hosts only
-                                                   http_access deny non-AI CONNECT
-                                                        │ docker bridge, never public
-                                                        ▼
-                                                   shield-icap :1344  ──► /guardrails/input
+VM external IP :8443  ──►  nginx (stream) terminate TLS
+                            require + verify device client cert (ssl_verify_client on)
+                                 │ docker bridge
+                                 ▼
+                            Squid http_port 3128 (plaintext, bridge-only)
+                                 ssl_bump AI hosts only
+                                 http_access deny non-AI CONNECT
+                                 │ docker bridge, never public
+                                 ▼
+                            shield-icap :1344  ──► /guardrails/input
 ```
 
-### 4.2 Squid additions (over the Mode A `squid.conf`)
+### 4.2 Why nginx fronts Squid (mTLS can't live on the bump port)
 
-- **`https_port 8443 tls-cert=<interception-or-serving-cert> ... clientca=/etc/squid/ssl/client-ca.pem tls-default-ca=off`** — the proxy is reached over TLS and **requires** a client cert that verifies to the device-identity CA. (This is proxy-over-TLS, selected by the PAC's `HTTPS` proxy keyword; the laptop's connection to the proxy is itself encrypted, so the client cert is not exposed.)
-- **`acl has_client_cert ... / proxy_auth`-equivalent:** deny any request without a verified client cert.
-- **Destination allow-list:** `http_access deny CONNECT !ai_hosts` and `http_access deny !ai_hosts` — the proxy carries only AI hosts, so it is not an open relay even to an authenticated client.
-- The existing `ssl_bump peek/bump ai_hosts`, ICAP, and `never_bump` (banks etc.) are unchanged.
+Squid refuses `ssl-bump` on a forward-mode `https_port`
+(`FATAL: ssl-bump on https_port requires tproxy/intercept`), so one Squid port
+cannot both terminate the device's proxy-TLS (with `clientca` mTLS) **and**
+bump upstream AI TLS. The front is therefore split into two containers:
 
-These live in a **separate overlay** (`deploy/swg/squid.public.conf` or an
-`include`), not by editing the shared `squid.conf`, so the in-VPC path is
-untouched and `tests/test_icap_deploy.py`'s splice-order assertions still hold.
+- **nginx** (`deploy/swg/nginx-mtls.conf`, stream module) — `listen 8443 ssl`,
+  `ssl_verify_client on` against the device-issuing CA (`ssl_client_certificate`),
+  server cert signed by the interception CA for the proxy host. It terminates
+  the proxy-over-TLS hop (PAC `HTTPS` keyword) and `proxy_pass`es the decrypted
+  forward-proxy bytes to Squid. A laptop with no valid device cert is dropped at
+  this handshake — it never reaches Squid.
+- **Squid** (`deploy/swg/squid.public.conf`) — plaintext `http_port 3128 ssl-bump`
+  on the docker bridge only (never published to the host). Adds a **destination
+  allow-list** over the Mode A `squid.conf`: `http_access deny CONNECT !ai_dst`
+  then `allow CONNECT ai_dst`, so even reaching Squid behind nginx cannot relay
+  to a non-AI host. The existing `ssl_bump peek/bump ai_hosts`, ICAP, and
+  `never_bump` (banks etc.) are copied verbatim.
+
+The public config is a **separate overlay** (`squid.public.conf`), not an edit
+to the shared `squid.conf`, so the in-VPC path is untouched and
+`tests/test_icap_deploy.py`'s splice-order assertions still hold;
+`tests/test_swg_public_proxy.py` guards the shared sections against drift.
 
 ### 4.3 PAC
 
@@ -141,11 +158,16 @@ PAC URL is distributed by MDM alongside the certs.
 
 ### 4.4 Deploy
 
-A new `deploy/swg/gcp/deploy-public.sh` (or a `--public` mode on the existing
-`deploy-mode-a.sh`): an **external** TCP passthrough LB + a Squid MIG (this one
-*does* get a public frontend, justified by mTLS + AI-only), `shield-icap`
-internal as before. Builds via Cloud Build; CA(s) and key in Secret Manager;
-`squid.public.conf` by metadata. Starts in monitor.
+`deploy/swg/gcp/deploy-public.sh`: a single public VM with an external IP and a
+firewall opening **8443** (nginx mTLS proxy) and **8081** (PAC/health) to
+`0.0.0.0/0` — the client cert is the allow-list, not source IP; SSH is IAP-only
+and **1344 is never exposed**. Three containers on a docker bridge: `shield-nginx`
+(publishes 8443), `shield-squid` (3128, bridge-only), `shield-icap` (8081 PAC +
+1344 bridge-only). Builds both images via Cloud Build (`cloudbuild.yaml`, since
+`gcloud builds submit --tag` can't select a Dockerfile); CA(s) + tenant key in
+Secret Manager; `squid.public.conf` and `nginx-mtls.conf` shipped by instance
+metadata; nginx's server cert is signed on first boot by the interception CA for
+the proxy host. Starts in monitor.
 
 ## 5. Security & backward compatibility
 
@@ -205,15 +227,15 @@ internal as before. Builds via Cloud Build; CA(s) and key in Secret Manager;
   client cert, bumps only AI hosts, denies non-AI `CONNECT`, and keeps the
   `never_bump` banks list. The in-VPC `squid.conf` is byte-unchanged (its
   existing splice-order test still passes).
-- **Deploy script** (mirrors `tests/test_swg_gcp_deploy.py`): external LB
-  forwards 8443 + 8081 only, never 1344; instances carry the client-CA secret;
-  `--emit-startup` renders a boot script that pulls both CAs and the key and
-  runs the two containers on the bridge with 1344 unpublished.
+- **Deploy script** (`tests/test_swg_public_proxy.py`): firewall opens 8443 +
+  8081 only, never 1344; instances carry the client-CA secret; the boot script
+  pulls both CAs and the key, signs the nginx server cert, and runs the three
+  containers (nginx publishes 8443; Squid 3128 and ICAP 1344 bridge-only).
 - **PAC:** AI hosts → `HTTPS <host>:8443`, everything else → `DIRECT`; the
   fail-open vs fail-closed tail is whatever the deploy selected.
-- **mTLS (integration, against a local Squid):** a request with a valid client
-  cert is bumped and screened; one without is refused at the handshake; a valid
-  cert to a non-AI host is denied.
+- **mTLS (integration, against the deployed nginx+Squid):** a request with a
+  valid client cert is bumped and screened; one without is refused at the nginx
+  handshake; a valid cert to a non-AI host is denied by Squid.
 - **Revocation:** a cert past its TTL / on the CRL is refused.
 - Full suite green in a clean venv; CI `pytest` gate passes.
 
@@ -244,11 +266,14 @@ on the path for v1 (it may later become an alternative issuer).
 
 These cannot be fully verified without Docker and a GCP project, so each task
 states what proves it:
-- **squid.public.conf:** `squid -k parse -f` inside the squid-openssl image
-  (no GnuTLS build has `ssl_bump`), plus a **live mTLS handshake** test — a
-  request with a valid client cert is bumped and screened; one without is
-  refused at the handshake; a valid cert to a non-AI host is denied. Structural
-  directive assertions run in CI now; the parse + handshake run in the image.
+- **squid.public.conf + nginx-mtls.conf:** `squid -k parse -f` inside the
+  squid-openssl image (no GnuTLS build has `ssl_bump`), nginx stream-module
+  load, plus a **live mTLS handshake** test — a request with a valid client cert
+  is bumped and screened; one without is refused at the **nginx** handshake; a
+  valid cert to a non-AI host is denied by **Squid**. Structural directive
+  assertions run in CI now; the parse + handshake run on the deploy.
+  (mTLS moved from Squid's `https_port` to nginx because Squid refuses `ssl-bump`
+  on a forward `https_port`.)
 - **deploy-public.sh:** `bash -n`, path resolution, and a structural test
   (mirroring `tests/test_swg_gcp_deploy.py`) that the external LB forwards only
   8443 + 8081, never 1344; a real deploy is the operator's acceptance step.

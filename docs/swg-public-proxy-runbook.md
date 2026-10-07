@@ -11,14 +11,21 @@ internet. Spec: `docs/spec-swg-public-proxy.md`. Script:
 
 Three controls make a public interception proxy safe:
 1. **mTLS** — every laptop presents an MDM-issued client certificate; no cert,
-   no connection.
+   no connection. This is enforced by **nginx**, not Squid (see below).
 2. **AI-only** — Squid tunnels only AI hosts (`squid.public.conf`), so it is
    not a general relay.
 3. **ICAP private** — port 1344 is never exposed; it stays on the docker bridge.
 
+**Two tiers.** Squid cannot both terminate the device's TLS and `ssl-bump` on a
+forward-mode port (`FATAL: ssl-bump on https_port requires intercept`). So the
+front is split: **nginx** (`nginx-mtls.conf`, stream module) listens on `:8443`,
+*requires* and verifies the device client cert (`ssl_verify_client on`), and
+forwards the decrypted forward-proxy bytes to **Squid** (`squid.public.conf`,
+plaintext `http_port 3128`, bridge-only), which bumps AI hosts and calls ICAP.
+
 > It starts in **monitor** and must NOT go to enforce until the verification
-> gate below passes. The Squid mTLS config is verified by a live handshake, not
-> by this document.
+> gate below passes. The mTLS config is verified by a live handshake, not by
+> this document.
 
 ## 0. Prerequisites
 
@@ -71,8 +78,10 @@ curl -s http://$IP:8081/healthz        # mode, rules, enforcing_anything
 gcloud compute ssh shield-swg-public --zone us-west1-a --tunnel-through-iap \
   --command "sudo docker ps --format '{{.Names}} {{.Status}}'"
 ```
-`shield-squid` running = its entrypoint's `squid -k parse` passed (the config
-is valid). If it is missing/restarting: `sudo docker logs shield-squid`.
+All three — `shield-nginx`, `shield-squid`, `shield-icap` — must be `Up`.
+`shield-squid` running = its `squid -k parse` passed (config valid);
+`shield-nginx` running = the stream config loaded and the server cert signed.
+If one is missing/restarting: `sudo docker logs <name>`.
 
 **mTLS handshake** — mint a client cert from the device CA and run three checks:
 ```bash
@@ -94,9 +103,9 @@ curl --proxy https://swg.votal.ai:8443 --proxy-cacert interception-ca.pem \
   --proxy-cert device.crt --proxy-key device.key --resolve swg.votal.ai:8443:$IP \
   -s -o /dev/null -w "%{http_code}\n" https://www.google.com
 ```
-Expected: **200 / fail / 403**. If the no-cert test returns 200, Squid is
-requesting but not *requiring* the client cert — fix the `https_port` require
-flag in `squid.public.conf` and redeploy before going further.
+Expected: **200 / fail / 403**. If the no-cert test returns 200, nginx is
+accepting connections without a client cert — confirm `ssl_verify_client on`
+in `nginx-mtls.conf` (not `optional`) and redeploy before going further.
 
 ## 3. Roll out by MDM
 
@@ -127,8 +136,9 @@ SHIELD_ICAP_MODE=enforce ./deploy-public.sh      # re-runs, resets the VM
 |---|---|
 | `gcloud builds submit ... unrecognized arguments: -f` | old script; `--tag` cannot pick a Dockerfile. Fixed: builds via `cloudbuild.yaml`. |
 | Secret `NOT_FOUND` on `versions add` | the secret is created by the script's first run; run `./deploy-public.sh` once, then add the version. |
-| `shield-squid` not running | config parse failure — `sudo docker logs shield-squid`; a bad mTLS/bump directive shows here. |
-| No-cert curl returns 200 | client cert requested not required — fix `https_port` flag. |
+| `shield-squid` not running | config parse failure — `sudo docker logs shield-squid`; a bad bump/ICAP directive shows here. |
+| `shield-nginx` not running | `sudo docker logs shield-nginx`. `unknown directive "stream"` = the image lacks the stream module (use `nginx:stable`, which has it static); `cannot load certificate` = server-cert signing failed in the startup script. |
+| No-cert curl returns 200 | nginx accepting without a cert — set `ssl_verify_client on` (not `optional`) in `nginx-mtls.conf`. |
 | Every AI site shows a cert error on a device | interception CA not trusted on that device (MDM step 3). |
 | `environment` tag warning on `votal-ai` | GCP org-policy nudge; usually harmless. If VM/firewall creation *fails* for it, add an `environment` tag/label. |
 | AI works but nothing blocked | still in monitor, or policy has no blocking rule — check `/healthz` `enforcing_anything`. |
