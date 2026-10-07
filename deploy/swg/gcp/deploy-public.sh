@@ -67,15 +67,9 @@ command -v openssl >/dev/null || { echo "ERROR: openssl is required"; exit 1; }
 gcloud config set project "$PROJECT_ID" >/dev/null
 echo "== Public SWG  project=$PROJECT_ID host=$SHIELD_PROXY_PUBLIC_HOST mode=$SHIELD_ICAP_MODE =="
 
-# --- 1. images ------------------------------------------------------------
-echo "==> 1/6 build images (Cloud Build)"
-gcloud artifacts repositories describe shield --location="$REGION" >/dev/null 2>&1 || \
-  gcloud artifacts repositories create shield --repository-format=docker --location="$REGION"
-gcloud builds submit --tag "$IMG_ICAP"  -f "$REPO_ROOT/Dockerfile.icap"             "$REPO_ROOT"
-gcloud builds submit --tag "$IMG_SQUID" -f "$REPO_ROOT/deploy/swg/Dockerfile.squid" "$REPO_ROOT"
-
-# --- 2. secrets: tenant key, interception CA, MDM issuing CA --------------
-echo "==> 2/6 secrets"
+# --- 1. secrets: tenant key, interception CA, MDM issuing CA --------------
+# Checked FIRST, before the (slow) image build, so a missing secret fails fast.
+echo "==> 1/6 secrets"
 ensure_secret() { gcloud secrets describe "$1" >/dev/null 2>&1 || gcloud secrets create "$1" --replication-policy=automatic; }
 has_version() { gcloud secrets versions access latest --secret="$1" >/dev/null 2>&1; }
 
@@ -101,6 +95,15 @@ has_version "$CLIENT_CA_SECRET" || { cat <<EOF
        gcloud secrets versions add $CLIENT_CA_SECRET --data-file=mdm-issuing-ca.pem
 EOF
   exit 1; }
+
+# --- 2. images (both, one Cloud Build run; cloudbuild.yaml selects the ----
+#        Dockerfiles, since `gcloud builds submit --tag` cannot). ----------
+echo "==> 2/6 build images (Cloud Build)"
+gcloud artifacts repositories describe shield --location="$REGION" >/dev/null 2>&1 || \
+  gcloud artifacts repositories create shield --repository-format=docker --location="$REGION"
+gcloud builds submit "$REPO_ROOT" \
+  --config "$HERE/cloudbuild.yaml" \
+  --substitutions=_IMG_ICAP="$IMG_ICAP",_IMG_SQUID="$IMG_SQUID"
 
 # --- 3. service account ---------------------------------------------------
 echo "==> 3/6 service account"
