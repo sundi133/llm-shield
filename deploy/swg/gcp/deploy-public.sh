@@ -108,11 +108,22 @@ gcloud builds submit "$REPO_ROOT" \
 # --- 3. service account ---------------------------------------------------
 echo "==> 3/6 service account"
 SA="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
-gcloud iam service-accounts describe "$SA" >/dev/null 2>&1 || \
+if ! gcloud iam service-accounts describe "$SA" >/dev/null 2>&1; then
   gcloud iam service-accounts create "$SA_NAME" --display-name="$SA_NAME"
+  # IAM is eventually consistent: a just-created SA is not usable in a binding
+  # for a few seconds. Wait until it is visible before binding.
+  for _ in $(seq 1 20); do
+    gcloud iam service-accounts describe "$SA" >/dev/null 2>&1 && break
+    sleep 3
+  done
+fi
+# Visibility does not guarantee the binding succeeds yet, so retry each one.
 for s in "$KEY_SECRET" "$CA_SECRET" "$CLIENT_CA_SECRET"; do
-  gcloud secrets add-iam-policy-binding "$s" \
-    --member="serviceAccount:${SA}" --role=roles/secretmanager.secretAccessor >/dev/null
+  for _ in $(seq 1 10); do
+    gcloud secrets add-iam-policy-binding "$s" \
+      --member="serviceAccount:${SA}" --role=roles/secretmanager.secretAccessor >/dev/null 2>&1 && break
+    sleep 3
+  done
 done
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA}" --role=roles/artifactregistry.reader >/dev/null 2>&1 || true
