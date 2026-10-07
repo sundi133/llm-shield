@@ -52,8 +52,12 @@ def test_squid_is_a_plaintext_forward_proxy_behind_nginx():
 def test_only_ai_hosts_may_be_tunnelled_so_it_is_not_a_relay():
     c = _text(PUBLIC)
     assert "acl ai_dst dstdomain" in c
+    # CONNECT tunnel target restricted to AI hosts...
     assert "http_access deny CONNECT !ai_dst" in c
-    assert "http_access allow CONNECT ai_dst" in c
+    # ...and the bumped inner request (not a CONNECT) restricted too, else it
+    # would fall through to `deny all` and 403 an allowed host.
+    assert "http_access deny !ai_dst" in c
+    assert "http_access allow ai_dst" in c
     assert c.rstrip().count("http_access deny all") >= 1
     # No source-IP allow-list on a public proxy (auth is the client cert).
     assert "http_access allow localnet" not in c
