@@ -261,6 +261,12 @@ class IcapConfig:
     # PAC generation (mode A, bundled Squid). `pac_proxy` is Squid's address as
     # the BROWSER sees it, not the ICAP port.
     pac_proxy: str = "127.0.0.1:3128"
+    # "PROXY" for the plaintext Squid port (in-VPC Mode A), or "HTTPS" for a
+    # public proxy reached over TLS and requiring a client certificate (laptop
+    # fleet, docs/spec-swg-public-proxy.md). It is the PAC return keyword: an
+    # `HTTPS` proxy makes the browser->proxy hop itself TLS, so the device's
+    # client cert is not sent in the clear.
+    pac_proxy_scheme: str = "PROXY"
     bypass_hosts: tuple[str, ...] = DEFAULT_BYPASS_HOSTS
 
     # WebSocket screening routing (docs/spec-websocket-inspection.md task 5, and
@@ -302,6 +308,7 @@ class IcapConfig:
             tls_key=os.environ.get("SHIELD_ICAP_TLS_KEY", "").strip(),
             tls_client_ca=os.environ.get("SHIELD_ICAP_TLS_CLIENT_CA", "").strip(),
             pac_proxy=os.environ.get("SHIELD_ICAP_PAC_PROXY", "127.0.0.1:3128").strip(),
+            pac_proxy_scheme=("HTTPS" if os.environ.get("SHIELD_ICAP_PAC_SCHEME", "PROXY").strip().upper() == "HTTPS" else "PROXY"),
             bypass_hosts=_host_list("SHIELD_ICAP_BYPASS_HOSTS", DEFAULT_BYPASS_HOSTS),
             **_copilot_env(),
         )

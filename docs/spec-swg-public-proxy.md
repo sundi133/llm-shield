@@ -230,11 +230,26 @@ internal as before. Builds via Cloud Build; CA(s) and key in Secret Manager;
 4. *(later, optional)* console view of enrolled device certs — admin plane,
    would add a `Dockerfile.admin` COPY and its drift test.
 
-## 10. Open question for approval
+## 10. Decisions
 
-**Device-cert source and revocation (task 0).** The cleanest for a fleet that
-already runs MDM is **MDM-issued SCEP/ACME client certs with a short TTL**
-(re-issued on check-in, no CRL to host). If the Votal device agent is already
-deployed, its per-device identity could issue the client cert instead, tying
-proxy access to the same identity as the hooks. Which source do you want? It
-decides task 0 and the revocation mechanism.
+**Device-cert source and revocation (task 0): DECIDED — MDM-issued client
+certs.** Each managed laptop gets a client certificate from the fleet's MDM
+(SCEP or ACME), re-issued on check-in with a **short TTL** so revocation is "stop
+re-issuing" rather than hosting a CRL/OCSP. Squid trusts the MDM's issuing CA
+(`client-ca.pem`, public cert only — the key stays in MDM). The cert's subject
+or SAN carries the MDM device id for attribution. The Votal device agent is not
+on the path for v1 (it may later become an alternative issuer).
+
+## 11. Verification gate (how each artifact is trusted)
+
+These cannot be fully verified without Docker and a GCP project, so each task
+states what proves it:
+- **squid.public.conf:** `squid -k parse -f` inside the squid-openssl image
+  (no GnuTLS build has `ssl_bump`), plus a **live mTLS handshake** test — a
+  request with a valid client cert is bumped and screened; one without is
+  refused at the handshake; a valid cert to a non-AI host is denied. Structural
+  directive assertions run in CI now; the parse + handshake run in the image.
+- **deploy-public.sh:** `bash -n`, path resolution, and a structural test
+  (mirroring `tests/test_swg_gcp_deploy.py`) that the external LB forwards only
+  8443 + 8081, never 1344; a real deploy is the operator's acceptance step.
+- **MDM scripts:** shellcheck/structural; a real device enrolment is acceptance.

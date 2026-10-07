@@ -77,7 +77,7 @@ function FindProxyForURL(url, host) {{
   if (
 {_match_expr(tuple(cfg.ai_hosts))}
   ) {{
-    return "PROXY {cfg.pac_proxy}{fallback}";
+    return "{cfg.pac_proxy_scheme} {cfg.pac_proxy}{fallback}";
   }}
 
   // 3. Everything else goes straight out.
