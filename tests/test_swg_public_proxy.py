@@ -121,6 +121,15 @@ def test_deploy_pulls_both_cas_and_uses_https_pac_scheme():
 
 
 @_needs_deploy
+def test_deploy_makes_the_tenant_key_readable_by_the_icap_uid():
+    # shield-icap drops to USER 65532 (Dockerfile.icap). A root-owned 600 key
+    # file reads as empty inside the container -> no bundle -> nothing screened.
+    # The startup must chown the secrets dir to that uid.
+    d = _text(DEPLOY)
+    assert "chown -R 65532:65532 /var/shield/secrets" in d
+
+
+@_needs_deploy
 def test_deploy_runs_nginx_mtls_front_and_signs_its_server_cert():
     d = _text(DEPLOY)
     assert "nginx-mtls.conf" in d and "nginx:stable" in d

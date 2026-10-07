@@ -164,6 +164,12 @@ gcloud secrets versions access latest --secret="$(meta ca-secret)"        > /var
 gcloud secrets versions access latest --secret="$(meta client-ca-secret)" > /var/shield/ssl/client-ca.pem
 gcloud secrets versions access latest --secret="$(meta key-secret)"       > /var/shield/secrets/shield_api_key
 chmod 600 /var/shield/ssl/ca.pem /var/shield/ssl/client-ca.pem /var/shield/secrets/shield_api_key
+# shield-icap drops to USER 65532 (Dockerfile.icap), so the tenant-key file it
+# reads (/run/secrets, mounted ro from here) must be owned by that uid -- a
+# root-owned 600 file reads as empty inside the container, the bundle never
+# loads, and nothing is screened. nginx/squid read their certs as root at
+# startup, so /var/shield/ssl stays root-owned.
+chown -R 65532:65532 /var/shield/secrets
 meta squid-conf  > /var/shield/squid.public.conf
 meta nginx-conf  > /var/shield/nginx-mtls.conf
 
