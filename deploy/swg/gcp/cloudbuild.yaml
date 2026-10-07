@@ -1,0 +1,12 @@
+# Builds both SWG images in one Cloud Build run. Used by deploy-public.sh
+# (and deploy-mode-a.sh): `gcloud builds submit --tag` cannot select a
+# non-default Dockerfile, so the Dockerfile is named explicitly here with
+# `docker build -f`. The build context is the repo root (passed as SOURCE).
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'Dockerfile.icap', '-t', '${_IMG_ICAP}', '.']
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'deploy/swg/Dockerfile.squid', '-t', '${_IMG_SQUID}', '.']
+images:
+  - '${_IMG_ICAP}'
+  - '${_IMG_SQUID}'

@@ -35,6 +35,39 @@ def test_pac_routes_ai_hosts_to_the_proxy():
     assert "10.0.0.5:3128" in out
 
 
+def test_pac_default_scheme_is_plain_proxy():
+    # In-VPC Mode A: the browser reaches a plaintext Squid port.
+    assert 'return "PROXY 10.0.0.5:3128' in pac(ai_hosts=("anthropic.com",),
+                                                pac_proxy="10.0.0.5:3128")
+
+
+def test_pac_https_scheme_for_a_public_mtls_proxy():
+    # Laptop fleet (docs/spec-swg-public-proxy.md): proxy-over-TLS, so the
+    # device client cert is not sent in the clear. The AI branch returns HTTPS.
+    out = pac(ai_hosts=("anthropic.com",), pac_proxy="proxy.example.com:8443",
+              pac_proxy_scheme="HTTPS")
+    assert 'return "HTTPS proxy.example.com:8443' in out
+    assert '"PROXY proxy.example.com' not in out       # not the plaintext keyword
+
+
+def test_pac_scheme_comes_from_the_env():
+    from icap.config import IcapConfig
+    import os
+    old = os.environ.get("SHIELD_ICAP_PAC_SCHEME")
+    try:
+        os.environ["SHIELD_ICAP_PAC_SCHEME"] = "https"     # case-insensitive
+        assert IcapConfig.from_env().pac_proxy_scheme == "HTTPS"
+        os.environ["SHIELD_ICAP_PAC_SCHEME"] = "PROXY"
+        assert IcapConfig.from_env().pac_proxy_scheme == "PROXY"
+        del os.environ["SHIELD_ICAP_PAC_SCHEME"]
+        assert IcapConfig.from_env().pac_proxy_scheme == "PROXY"   # default
+    finally:
+        if old is None:
+            os.environ.pop("SHIELD_ICAP_PAC_SCHEME", None)
+        else:
+            os.environ["SHIELD_ICAP_PAC_SCHEME"] = old
+
+
 def test_pac_checks_bypass_before_inspection():
     """Order is the control: a bank must return DIRECT even if some future
     edit also lists it as an AI host."""
