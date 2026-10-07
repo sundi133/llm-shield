@@ -56,12 +56,14 @@ IMG_SQUID="${REGION}-docker.pkg.dev/${PROJECT_ID}/shield/shield-squid:latest"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
-SQUID_CONF="$HERE/../squid.public.conf"   # the mTLS config, NOT the in-VPC base
+SQUID_CONF="$HERE/../squid.public.conf"   # AI-only forward proxy, behind nginx
+NGINX_CONF="$HERE/../nginx-mtls.conf"     # mTLS terminator in front of Squid
 
 # --- validate -------------------------------------------------------------
 [ "$PROJECT_ID" != "YOUR_GCP_PROJECT_ID" ] || { echo "ERROR: set PROJECT_ID"; exit 1; }
 [ "$SHIELD_PROXY_PUBLIC_HOST" != "YOUR_PROXY_HOSTNAME" ] || { echo "ERROR: set SHIELD_PROXY_PUBLIC_HOST"; exit 1; }
 [ -f "$SQUID_CONF" ] || { echo "ERROR: $SQUID_CONF not found - run from deploy/swg/gcp/"; exit 1; }
+[ -f "$NGINX_CONF" ] || { echo "ERROR: $NGINX_CONF not found - run from deploy/swg/gcp/"; exit 1; }
 command -v openssl >/dev/null || { echo "ERROR: openssl is required"; exit 1; }
 
 gcloud config set project "$PROJECT_ID" >/dev/null
@@ -150,7 +152,7 @@ cat > "$STARTUP" <<'STARTUP_EOF'
 #!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-apt-get update && apt-get install -y docker.io curl
+apt-get update && apt-get install -y docker.io curl openssl
 systemctl enable --now docker
 M="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
 h="Metadata-Flavor: Google"
@@ -162,12 +164,24 @@ gcloud secrets versions access latest --secret="$(meta ca-secret)"        > /var
 gcloud secrets versions access latest --secret="$(meta client-ca-secret)" > /var/shield/ssl/client-ca.pem
 gcloud secrets versions access latest --secret="$(meta key-secret)"       > /var/shield/secrets/shield_api_key
 chmod 600 /var/shield/ssl/ca.pem /var/shield/ssl/client-ca.pem /var/shield/secrets/shield_api_key
-meta squid-conf > /var/shield/squid.public.conf
+meta squid-conf  > /var/shield/squid.public.conf
+meta nginx-conf  > /var/shield/nginx-mtls.conf
+
+# Server cert for the proxy hostname, signed by the interception CA (which
+# devices already trust via MDM), so the laptop's proxy-TLS handshake to nginx
+# succeeds.
+HOST="$(meta proxy-host)"
+openssl req -new -newkey rsa:2048 -nodes -keyout /var/shield/ssl/server.key \
+  -out /tmp/server.csr -subj "/CN=$HOST" >/dev/null 2>&1
+openssl x509 -req -in /tmp/server.csr -CA /var/shield/ssl/ca.pem -CAkey /var/shield/ssl/ca.pem \
+  -CAcreateserial -days 825 -out /var/shield/ssl/server.pem \
+  -extfile <(printf "subjectAltName=DNS:%s\n" "$HOST") >/dev/null 2>&1
+chmod 600 /var/shield/ssl/server.key
 
 IMG_ICAP="$(meta icap-image)"; IMG_SQUID="$(meta squid-image)"
-docker pull "$IMG_ICAP"; docker pull "$IMG_SQUID"
+docker pull "$IMG_ICAP"; docker pull "$IMG_SQUID"; docker pull nginx:stable
 docker network inspect shield-net >/dev/null 2>&1 || docker network create shield-net
-docker rm -f shield-icap shield-squid 2>/dev/null || true
+docker rm -f shield-icap shield-squid shield-nginx 2>/dev/null || true
 
 # shield-icap serves the PAC (8081, public) and ICAP (1344, bridge-only - NOT
 # published). The PAC returns `HTTPS <host>:8443` so the browser->proxy hop is TLS.
@@ -183,18 +197,28 @@ docker run -d --restart=always --name shield-icap --network shield-net \
   -e SHIELD_ICAP_PAC_PROXY="$(meta proxy-host):$(meta proxy-port)" \
   "$IMG_ICAP"
 
+# Squid: http_port 3128 on the bridge only (NOT published to the host). nginx
+# reaches it by name; bumps AI hosts and calls shield-icap.
 docker run -d --restart=always --name shield-squid --network shield-net \
   -v /var/shield/squid.public.conf:/etc/squid/squid.conf:ro \
   -v /var/shield/ssl:/etc/squid/ssl:ro \
   -v shield-ssldb:/var/spool/squid \
-  -p 0.0.0.0:8443:8443 \
   "$IMG_SQUID"
+
+# nginx: the public mTLS terminator on 8443. Verifies the device client cert,
+# then forwards the decrypted proxy protocol to Squid. This is the only thing
+# bound to the external interface besides the PAC.
+docker run -d --restart=always --name shield-nginx --network shield-net \
+  -v /var/shield/nginx-mtls.conf:/etc/nginx/nginx.conf:ro \
+  -v /var/shield/ssl:/etc/nginx/ssl:ro \
+  -p 0.0.0.0:8443:8443 \
+  nginx:stable
 STARTUP_EOF
 
 META="region=$REGION,icap-image=$IMG_ICAP,squid-image=$IMG_SQUID,ca-secret=$CA_SECRET,client-ca-secret=$CLIENT_CA_SECRET,key-secret=$KEY_SECRET,shield-api-base=$SHIELD_API_BASE,shield-mode=$SHIELD_ICAP_MODE,shield-sync=$SHIELD_ICAP_SYNC_SCREEN,shield-expect=$SHIELD_ICAP_EXPECT_TENANT,proxy-host=$SHIELD_PROXY_PUBLIC_HOST,proxy-port=$PROXY_PORT"
 if gcloud compute instances describe "$VM_NAME" --zone="$ZONE" >/dev/null 2>&1; then
   gcloud compute instances add-metadata "$VM_NAME" --zone="$ZONE" \
-    --metadata="$META" --metadata-from-file=startup-script="$STARTUP",squid-conf="$SQUID_CONF"
+    --metadata="$META" --metadata-from-file=startup-script="$STARTUP",squid-conf="$SQUID_CONF",nginx-conf="$NGINX_CONF"
   gcloud compute instances reset "$VM_NAME" --zone="$ZONE"
 else
   gcloud compute instances create "$VM_NAME" --zone="$ZONE" \
@@ -202,7 +226,7 @@ else
     --tags=shield-swg-public --image-family=debian-12 --image-project=debian-cloud \
     --boot-disk-size=20GB --boot-disk-type=pd-balanced \
     --service-account="$SA" --scopes=cloud-platform \
-    --metadata="$META" --metadata-from-file=startup-script="$STARTUP",squid-conf="$SQUID_CONF"
+    --metadata="$META" --metadata-from-file=startup-script="$STARTUP",squid-conf="$SQUID_CONF",nginx-conf="$NGINX_CONF"
 fi
 
 # --- 6. report ------------------------------------------------------------

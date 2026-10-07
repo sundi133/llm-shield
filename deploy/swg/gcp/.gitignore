@@ -1,0 +1,8 @@
+# Local CA/device material generated while deploying or testing the SWG.
+# These are secrets (private keys) or ephemeral test certs — never commit them.
+# The real CAs live in GCP Secret Manager; see docs/swg-public-proxy-runbook.md.
+*.pem
+*.key
+*.crt
+*.csr
+*.srl

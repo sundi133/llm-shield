@@ -13,6 +13,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 PUBLIC = REPO / "deploy" / "swg" / "squid.public.conf"
+NGINX = REPO / "deploy" / "swg" / "nginx-mtls.conf"
 BASE = REPO / "deploy" / "swg" / "squid.conf"
 DEPLOY = REPO / "deploy" / "swg" / "gcp" / "deploy-public.sh"
 
@@ -29,12 +30,23 @@ def _text(p):
 # ── the mTLS Squid config (task 1) ───────────────────────────────────────
 
 
-def test_proxy_is_a_tls_port_requiring_a_client_cert():
+def test_nginx_terminates_tls_and_requires_a_client_cert():
+    # mTLS is nginx's job, not Squid's: Squid cannot ssl-bump on a forward
+    # https_port (FATAL: requires intercept). nginx does the client-cert auth.
+    n = _text(NGINX)
+    assert "listen 8443 ssl" in n
+    assert "ssl_verify_client       on" in n or "ssl_verify_client on" in n
+    assert "ssl_client_certificate" in n and "client-ca.pem" in n   # the MDM issuing CA
+    assert "proxy_pass squid" in n and "server shield-squid:3128" in n
+
+
+def test_squid_is_a_plaintext_forward_proxy_behind_nginx():
     c = _text(PUBLIC)
-    assert "https_port 8443 ssl-bump" in c            # proxy-over-TLS, not plaintext
-    assert "clientca=/etc/squid/ssl/client-ca.pem" in c   # verify device cert
-    assert "tls-default-ca=off" in c                  # public CAs are not device identity
-    assert "http_port" not in c                       # never a plaintext proxy port
+    # directives only — the comments explain *why* it isn't an https_port.
+    directives = "\n".join(l for l in c.splitlines() if not l.lstrip().startswith("#"))
+    assert "http_port 3128 ssl-bump" in directives     # not https_port (would be FATAL)
+    assert "https_port" not in directives
+    assert "clientca" not in directives                # client auth is nginx's, not Squid's
 
 
 def test_only_ai_hosts_may_be_tunnelled_so_it_is_not_a_relay():
@@ -105,4 +117,17 @@ def test_deploy_pulls_both_cas_and_uses_https_pac_scheme():
     assert "client-ca" in d                       # the MDM issuing CA (verify device certs)
     assert "swg-ca-pem" in d or "ca-secret" in d   # the interception CA
     assert "SHIELD_ICAP_PAC_SCHEME" in d and "HTTPS" in d
-    assert "squid.public.conf" in d                # ships the mTLS config, not the base
+    assert "squid.public.conf" in d
+
+
+@_needs_deploy
+def test_deploy_runs_nginx_mtls_front_and_signs_its_server_cert():
+    d = _text(DEPLOY)
+    assert "nginx-mtls.conf" in d and "nginx:stable" in d
+    assert "shield-nginx" in d
+    # The nginx server cert is signed by the interception CA for the proxy host.
+    assert "server.pem" in d and "subjectAltName=DNS" in d
+    # Squid is not published to the host anymore (bridge only; nginx fronts it).
+    assert '-p 0.0.0.0:8443:8443' in d                      # nginx publishes 8443
+    squid_run = d[d.index("name shield-squid"):d.index("name shield-nginx")]
+    assert "8443:8443" not in squid_run                     # squid does NOT
