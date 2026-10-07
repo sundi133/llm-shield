@@ -89,23 +89,56 @@ openssl req -new -newkey rsa:2048 -nodes -keyout device.key -out device.csr -sub
 openssl x509 -req -in device.csr -CA test-device-ca.pem -CAkey test-device-ca.key -CAcreateserial -days 90 -out device.crt
 gcloud secrets versions access latest --secret=swg-ca-pem > interception-ca.pem
 
-# valid cert + AI host -> expect 200
+# valid cert + AI host -> CONNECT succeeds, request is bumped + screened
 curl --proxy https://swg.votal.ai:8443 --proxy-cacert interception-ca.pem \
   --proxy-cert device.crt --proxy-key device.key --resolve swg.votal.ai:8443:$IP \
-  --cacert interception-ca.pem -s -o /dev/null -w "%{http_code}\n" https://claude.ai
+  --cacert interception-ca.pem -sv -o /dev/null https://claude.ai 2>&1 | grep -i "CONNECT\|200 connection\|Forbidden"
 
 # NO client cert -> expect failure (000)
 curl --proxy https://swg.votal.ai:8443 --proxy-cacert interception-ca.pem \
   --resolve swg.votal.ai:8443:$IP -s -o /dev/null -w "%{http_code}\n" https://claude.ai
 
-# valid cert + NON-AI host -> expect 403 (not a relay)
+# valid cert + NON-AI host -> expect blocked (000/403, TCP_DENIED in squid log)
 curl --proxy https://swg.votal.ai:8443 --proxy-cacert interception-ca.pem \
   --proxy-cert device.crt --proxy-key device.key --resolve swg.votal.ai:8443:$IP \
   -s -o /dev/null -w "%{http_code}\n" https://www.google.com
 ```
-Expected: **200 / fail / 403**. If the no-cert test returns 200, nginx is
-accepting connections without a client cert — confirm `ssl_verify_client on`
-in `nginx-mtls.conf` (not `optional`) and redeploy before going further.
+
+**Reading the result — do NOT expect `200` from the AI host.** claude.ai,
+chatgpt.com etc. reject a header-less `curl` with their own `403`
+(Cloudflare/anti-bot). That `403` is the *origin's*, and it proves the proxy
+worked: Squid established the tunnel and forwarded to the real server. The
+signals that matter are in the logs, not curl's exit code:
+
+```bash
+gcloud compute ssh shield-swg-public --zone us-west1-a --tunnel-through-iap \
+  --command "sudo docker logs shield-squid 2>&1 | tail -5; echo ---; sudo docker logs shield-icap 2>&1 | grep 'icap txn' | tail -5"
+```
+Pass = you see, for the AI host: squid `CONNECT claude.ai:443 ... HIER_DIRECT`
+(tunnel built) and `GET https://claude.ai/ ... HIER_DIRECT` (bumped + forwarded),
+**and** an icap line `txn=... host=claude.ai method=GET` (ICAP inspected the
+decrypted request). For the non-AI host: squid `TCP_DENIED ... CONNECT
+www.google.com` (not a relay). For no-cert: curl `000` (nginx dropped it).
+
+If the no-cert test returns anything but a failure, nginx is accepting without a
+cert — confirm `ssl_verify_client on` (not `optional`) in `nginx-mtls.conf`.
+
+**See a prompt actually screened.** A bare `GET /` has no body, so ICAP logs
+`decision=skip reason=no_body`. To exercise a real prompt, POST a body through
+the proxy — ICAP screens the request body before it leaves (reqmod precache),
+regardless of whether the origin would accept the request:
+```bash
+curl --proxy https://swg.votal.ai:8443 --proxy-cacert interception-ca.pem \
+  --proxy-cert device.crt --proxy-key device.key --resolve swg.votal.ai:8443:$IP \
+  --cacert interception-ca.pem -s -o /dev/null -X POST https://api.anthropic.com/v1/messages \
+  -H 'content-type: application/json' \
+  -d '{"messages":[{"role":"user","content":"<text that trips a tenant rule>"}]}'
+# then: sudo docker logs shield-icap | grep 'icap txn' | tail -1
+# monitor mode logs the decision (skip/flag); enforce mode blocks it.
+```
+Best end-to-end check is a real browser routed through the PAC (step 3): a chat
+message is a POST with the prompt in the body, so ICAP screens the real thing
+and the decision lands in Telemetry.
 
 ## 3. Roll out by MDM
 
