@@ -141,7 +141,8 @@ SHIELD_ICAP_MODE=enforce ./deploy-public.sh      # re-runs, resets the VM
 | No-cert curl returns 200 | nginx accepting without a cert — set `ssl_verify_client on` (not `optional`) in `nginx-mtls.conf`. |
 | Every AI site shows a cert error on a device | interception CA not trusted on that device (MDM step 3). |
 | `environment` tag warning on `votal-ai` | GCP org-policy nudge; usually harmless. If VM/firewall creation *fails* for it, add an `environment` tag/label. |
-| AI works but nothing blocked | still in monitor, or policy has no blocking rule — check `/healthz` `enforcing_anything`. |
+| `/healthz` shows `rules:0`, `tenant_id:null`, `shield_reachable:null` | icap can't read the tenant key: the file is root-owned but icap runs as uid 65532, so it reads empty ("SHIELD_API_KEY is not set" in `docker logs shield-icap`). Fixed in the script (`chown -R 65532:65532 /var/shield/secrets`); on an old VM: `sudo chown -R 65532:65532 /var/shield/secrets && sudo docker restart shield-icap`. |
+| AI works but nothing blocked | still in monitor, or policy has no blocking rule — check `/healthz` `enforcing_anything` (needs `rules>0` first). |
 
 ## 6. Limits (state them plainly)
 
