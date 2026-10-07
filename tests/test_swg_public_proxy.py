@@ -144,3 +144,25 @@ def test_deploy_runs_nginx_mtls_front_and_signs_its_server_cert():
     assert '-p 0.0.0.0:8443:8443' in d                      # nginx publishes 8443
     squid_run = d[d.index("name shield-squid"):d.index("name shield-nginx")]
     assert "8443:8443" not in squid_run                     # squid does NOT
+
+
+# ── the single-machine browser demo helper ───────────────────────────────
+
+DEMO = REPO / "deploy" / "swg" / "demo" / "demo-mac.sh"
+
+
+@pytest.mark.skipif(not DEMO.exists(), reason="demo-mac.sh not written yet")
+def test_demo_is_scoped_and_installs_only_the_ca_cert_not_the_key():
+    import subprocess
+    assert subprocess.run(["bash", "-n", str(DEMO)]).returncode == 0
+    d = _text(DEMO)
+    # Selective, scoped routing (AI->proxy via PAC, rest DIRECT) for one Chrome
+    # profile -- never the system proxy (which would catch this machine too).
+    assert "--proxy-pac-url" in d and "--host-resolver-rules" in d
+    assert "--user-data-dir" in d
+    assert "networksetup" not in d                 # not the system-wide path
+    # Only the CA certificate is installed, never the CA private key.
+    assert "openssl x509 -in" in d                 # extract cert-only from the blob
+    assert "add-trusted-cert" in d
+    # Reversible.
+    assert "teardown" in d and "delete-certificate" in d
