@@ -381,3 +381,39 @@ guardrail chart).
 5. GPU node pool present (GPU image only); VRAM/model sized with Votal.
 6. Smoke test: a benign prompt passes, a policy-violating prompt returns
    `action=block`, and `/v1/tenant/me/telemetry` shows the decision.
+
+### A.8 OpenShift (Rafay runs OpenShift)
+
+Ready-to-apply OpenShift manifests live in the repo's `openshift/` directory:
+
+| Manifest | Deploys |
+|---|---|
+| `openshift/redis.yaml` | Redis (tenant store + policy cache) — the dependency from A.2 |
+| `openshift/shield-guardrail-vllm.yaml` | The **guardrail data plane with in-cluster vLLM** (GPU) — Deployment + Service + `Route` + model-cache PVC |
+| `openshift/shield-admin.yaml` | *(optional)* the admin/tenant portal (`Route`, port 8080) |
+
+The vLLM manifest is a thin wrapper — the image's entrypoint
+(`scripts/start_vllm.sh`) already launches vLLM on `:8000`, waits for it, then
+runs the guard API; the manifest only schedules that image on a GPU with the
+volumes, `Route`, and env it needs. Model runs **in-cluster** (full residency).
+
+```bash
+oc new-project shield || oc project shield
+oc apply -f openshift/redis.yaml
+# edit the Secret (REDIS_URL, SHIELD_ADMIN_KEY, optional HF token) first, then:
+oc apply -f openshift/shield-guardrail-vllm.yaml
+oc get route shield-guardrail -o jsonpath='{.spec.host}'   # Rafay's base URL
+```
+
+OpenShift specifics baked into the manifest (and why):
+- **App on port 8080**, not 80 — the restricted SCC can't bind privileged ports.
+- **`/dev/shm` as an in-memory `emptyDir`** — vLLM/NCCL need more than the 64 MB default.
+- **Model-cache PVC** (`HF_HOME`) so the 4B model isn't re-pulled on restart.
+- **`Route` timeout 120s** — Tier-2/agentic calls exceed the 30s default.
+- **GPU toleration + `nvidia.com/gpu: 1`** — needs the **NVIDIA GPU Operator** installed.
+- **fp8 by default** (L40S/L4/H100); set `VLLM_QUANTIZATION=none` on A100/V100/T4.
+- **SCC:** if the vLLM image needs root, `oc adm policy add-scc-to-user anyuid -z shield-guardrail -n shield`.
+
+For the no-GPU option (app calls a remote model), use the `llm-shield-cloud`
+image with `SKIP_VLLM=true` + `LLM_BACKEND_URL` instead — same Deployment shape,
+no GPU, no model-cache PVC.
