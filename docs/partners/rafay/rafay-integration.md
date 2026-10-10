@@ -40,7 +40,8 @@ Rafay customer app ──► Rafay AI serving path
 
 - **Hosted (fastest):** `https://api.guardrails.votal.ai`
 - **In-cluster (data residency):** the Shield guardrail container deployed in the
-  customer's cluster; same paths, Rafay sets the base URL per deployment.
+  customer's cluster; same paths, Rafay sets the base URL per deployment. See
+  **Appendix A** for the Kubernetes/Helm reference.
 
 Everything below is relative to the chosen base URL.
 
@@ -253,3 +254,130 @@ Telemetry view.
   deployment.
 - Decide whether policy config is **portal-embed** or **API in Rafay's UI** (or
   both) so section 5 can be trimmed to the chosen path.
+
+---
+
+## Appendix A — In-cluster deployment (Kubernetes / Helm)
+
+For data residency, the Shield guardrail server runs **inside the customer's
+cluster**; Rafay points its serving path at the in-cluster Service instead of the
+hosted URL. The API in sections 3–7 is identical — only the base URL changes.
+
+> **What Votal ships:** the container **image** (registry path provided per
+> partner) and a **packaged Helm chart on request**. The manifests below are a
+> **reference** Rafay/the customer can apply directly or fold into their own
+> chart — they are not a published chart in this repo. (A `deploy/helm/shield-identity`
+> chart exists for the *identity* plane; the guardrail data plane is shipped as an
+> image today.)
+
+### A.1 Pick an image (model placement)
+
+| Image | Model | Node | Use when |
+|---|---|---|---|
+| `Dockerfile.cloud` (app only, port **80**) | calls a **remote** model endpoint Votal provides | **CPU** | lightest in-cluster footprint; model traffic may leave the cluster |
+| `Dockerfile` (app + in-cluster vLLM, ports **80** app / **8000** model) | **local** vLLM, nothing leaves the cluster | **GPU** | strict residency — the model runs in the customer's cluster too |
+
+Both expose the **same guard API on port 80**. The GPU image additionally runs
+vLLM on 8000 (internal to the pod).
+
+### A.2 Shared dependency: Redis (tenant store + policy cache)
+
+Multi-tenancy needs a Redis the Shield pods share — it holds tenant→key mappings
+and the policy cache. Use a managed Redis or a serverless one:
+- `REDIS_URL=redis://<host>:6379/0`, **or**
+- `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` for serverless.
+
+### A.3 Config (the env that matters)
+
+| Env | Value | Why |
+|---|---|---|
+| `SHIELD_GUARD_REQUIRE_KEY` | **`enforce`** | **required** — else a bad key fails open (isolation gap) |
+| `REDIS_URL` *(or `UPSTASH_*`)* | your Redis | tenant store + policy cache |
+| `SHIELD_ADMIN_KEY` | secret | authorizes tenant provisioning (section 4a) |
+| `LLM_MODEL_NAME` | model id | which guardrail model to use |
+| *(cloud image)* model endpoint + token | from Votal | points the app at the remote model |
+| *(GPU image)* `VLLM_PORT=8000`, `SHIELD_MAX_MODEL_LEN` | as sized | local vLLM; confirm GPU/VRAM with Votal |
+
+### A.4 Reference manifest (cloud-model image, CPU)
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata: { name: shield-guardrail, namespace: shield }
+stringData:
+  REDIS_URL: "redis://redis.shield.svc:6379/0"
+  SHIELD_ADMIN_KEY: "<admin-key-from-votal>"
+  SHIELD_LLM_TOKEN: "<model-endpoint-token-from-votal>"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: shield-guardrail, namespace: shield }
+spec:
+  replicas: 2                       # stateless app; scale horizontally
+  selector: { matchLabels: { app: shield-guardrail } }
+  template:
+    metadata: { labels: { app: shield-guardrail } }
+    spec:
+      containers:
+        - name: shield
+          image: <registry>/votal/shield-guardrail-cloud:<tag>   # Votal provides
+          ports: [ { containerPort: 80 } ]
+          env:
+            - { name: SHIELD_GUARD_REQUIRE_KEY, value: "enforce" }
+            - { name: LLM_MODEL_NAME, value: "<model-id-from-votal>" }
+            - { name: REDIS_URL,        valueFrom: { secretKeyRef: { name: shield-guardrail, key: REDIS_URL } } }
+            - { name: SHIELD_ADMIN_KEY, valueFrom: { secretKeyRef: { name: shield-guardrail, key: SHIELD_ADMIN_KEY } } }
+            - { name: SHIELD_LLM_TOKEN, valueFrom: { secretKeyRef: { name: shield-guardrail, key: SHIELD_LLM_TOKEN } } }
+          readinessProbe: { httpGet: { path: /health, port: 80 } }
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "2",    memory: "2Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: shield-guardrail, namespace: shield }
+spec:
+  selector: { app: shield-guardrail }
+  ports: [ { port: 80, targetPort: 80 } ]
+```
+Rafay's serving path then calls `http://shield-guardrail.shield.svc:80/guardrails/input`.
+
+### A.5 GPU (fully on-prem model) deltas
+
+Swap the image for the app+vLLM one and give the pod a GPU; the model never leaves
+the cluster:
+```yaml
+      containers:
+        - name: shield
+          image: <registry>/votal/shield-guardrail:<tag>     # app + vLLM
+          ports: [ { containerPort: 80 } ]                    # 8000 is pod-internal
+          env:
+            - { name: SHIELD_GUARD_REQUIRE_KEY, value: "enforce" }
+            - { name: LLM_MODEL_NAME,  value: "<model-id>" }
+            - { name: VLLM_PORT,       value: "8000" }
+            - { name: SHIELD_MAX_MODEL_LEN, value: "<confirm with Votal>" }
+          resources:
+            limits: { nvidia.com/gpu: 1 }                     # GPU/VRAM sizing: confirm with Votal
+      # schedule onto a GPU node pool (nodeSelector/taints per Rafay's cluster)
+```
+`replicas` for the GPU variant is bounded by available GPUs; keep the CPU
+cloud-model variant if you need to scale the app out independently of the model.
+
+### A.6 Helm-ify (optional)
+
+If Rafay prefers Helm, parameterise the above as `values.yaml`
+(`image.repository/tag`, `model.name`, `guard.requireKey`, `redis.url`,
+`replicaCount`, `gpu.enabled`) over the same Deployment/Service/Secret templates,
+or ask Votal for the packaged chart. The identity-plane chart at
+`deploy/helm/shield-identity/` is a structural example (it is **not** the
+guardrail chart).
+
+### A.7 In-cluster checklist
+
+1. Image registry path + model endpoint/token + `SHIELD_ADMIN_KEY` received from Votal.
+2. Redis reachable in-cluster; `REDIS_URL`/`UPSTASH_*` set.
+3. `SHIELD_GUARD_REQUIRE_KEY=enforce` set.
+4. Service reachable from Rafay's serving path; base URL pointed at it.
+5. GPU node pool present (GPU image only); VRAM/model sized with Votal.
+6. Smoke test: a benign prompt passes, a policy-violating prompt returns
+   `action=block`, and `/v1/tenant/me/telemetry` shows the decision.

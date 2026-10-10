@@ -31,7 +31,8 @@ customer app → Rafay serving → [PreCall /guardrails/input] → model → [Po
 ```
 
 Deploys two ways, same API: **hosted** (`api.guardrails.votal.ai`) or
-**in-cluster** (Shield container in the customer's cluster for data residency).
+**in-cluster** (Shield container in the customer's cluster for data residency —
+Kubernetes/Helm reference in the integration guide, Appendix A).
 
 ## What's in this handoff
 
