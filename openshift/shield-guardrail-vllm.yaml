@@ -1,0 +1,151 @@
+# OpenShift deployment for the Shield GUARDRAIL DATA PLANE with in-cluster vLLM (GPU).
+#
+# This is a thin wrapper around the existing image — the image's entrypoint
+# (scripts/start_vllm.sh) already launches vLLM on :8000, waits for it, then runs
+# the guard API (handler.py -> uvicorn). This manifest only schedules that image
+# on a GPU, gives it the volumes/Route it needs, and sets its env. No vLLM logic
+# is reimplemented here.
+#
+# Model runs IN the cluster — nothing leaves for inference (full data residency).
+# For the lighter "app calls a remote model" option, use the llm-shield-cloud
+# image with SKIP_VLLM=true + LLM_BACKEND_URL instead (no GPU); see
+# docs/partners/rafay/rafay-integration.md Appendix A.
+#
+# PREREQUISITES
+#   - NVIDIA GPU Operator installed (provides nvidia.com/gpu, drivers, device plugin).
+#   - A GPU node pool. Default below targets an fp8-capable card (L40S / L4 / H100).
+#     On a GPU WITHOUT fp8 (A100, V100, T4), set VLLM_QUANTIZATION=none and
+#     VLLM_KV_CACHE_DTYPE=none below (bf16 uses more VRAM).
+#   - Redis for the tenant store: oc apply -f openshift/redis.yaml
+#   - If votal-ai/vai35-4B-v2 is a private HF repo, set HUGGING_FACE_HUB_TOKEN
+#     in the Secret below.
+#
+# APPLY
+#   oc new-project shield 2>/dev/null || oc project shield
+#   oc apply -f openshift/redis.yaml
+#   # put real values in the Secret first (do NOT commit real keys), then:
+#   oc apply -f openshift/shield-guardrail-vllm.yaml
+#   oc get route shield-guardrail -o jsonpath='{.spec.host}'   # base URL for callers
+#
+# SCC NOTE: the vllm/vllm-openai base may expect to run as root. If the pod
+# CrashLoops under the default restricted-v2 SCC, grant anyuid to its SA:
+#   oc adm policy add-scc-to-user anyuid -z shield-guardrail -n shield
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: shield-guardrail
+  namespace: shield
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: shield-guardrail
+  namespace: shield
+stringData:
+  # Tenant store / policy cache. Point at openshift/redis.yaml's Service.
+  REDIS_URL: "redis://redis:6379/0"
+  # Authorizes the tenant-provisioning endpoints (see integration guide §4a).
+  SHIELD_ADMIN_KEY: "REPLACE_ME"
+  # Only if the model repo is private/gated on Hugging Face.
+  HUGGING_FACE_HUB_TOKEN: ""
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shield-model-cache
+  namespace: shield
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 50Gi          # HF model cache, so the 4B model isn't re-pulled on restart
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shield-guardrail
+  namespace: shield
+  labels: { app: shield-guardrail }
+spec:
+  replicas: 1                # bounded by available GPUs; scale with more GPU nodes
+  selector:
+    matchLabels: { app: shield-guardrail }
+  template:
+    metadata:
+      labels: { app: shield-guardrail }
+    spec:
+      serviceAccountName: shield-guardrail
+      # Schedule onto a GPU node and tolerate the GPU Operator's taint.
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: shield
+          image: docker.io/sundi133/llm-shield:latest   # the "vllm" image (app + vLLM); pin a tag for prod
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8080 }        # guard API (8000 vLLM is pod-internal)
+          env:
+            # --- guard API ---
+            - { name: PORT, value: "8080" }               # OpenShift restricted SCC can't bind :80
+            - { name: SHIELD_GUARD_REQUIRE_KEY, value: "enforce" }  # REQUIRED for tenant isolation
+            - { name: REDIS_URL,        valueFrom: { secretKeyRef: { name: shield-guardrail, key: REDIS_URL } } }
+            - { name: SHIELD_ADMIN_KEY, valueFrom: { secretKeyRef: { name: shield-guardrail, key: SHIELD_ADMIN_KEY } } }
+            # --- vLLM (read by scripts/start_vllm.sh) ---
+            - { name: MODEL_NAME,   value: "votal-ai/vai35-4B-v2" }   # or nvidia/Nemotron-3.5-Content-Safety (pin VLLM_BASE_IMAGE at build)
+            - { name: VLLM_PORT,    value: "8000" }
+            - { name: MAX_MODEL_LEN, value: "8196" }
+            - { name: GPU_MEM_UTIL, value: "0.85" }
+            - { name: VLLM_QUANTIZATION,   value: "fp8" }   # set "none" on GPUs without fp8 (A100/V100/T4)
+            - { name: VLLM_KV_CACHE_DTYPE, value: "fp8" }   # set "none" to match
+            - { name: HUGGING_FACE_HUB_TOKEN, valueFrom: { secretKeyRef: { name: shield-guardrail, key: HUGGING_FACE_HUB_TOKEN, optional: true } } }
+            - { name: HF_HOME, value: "/model-cache" }       # persist the model download on the PVC
+          volumeMounts:
+            - { name: dshm,        mountPath: /dev/shm }     # vLLM/NCCL need a large /dev/shm
+            - { name: model-cache, mountPath: /model-cache }
+          resources:
+            requests: { cpu: "2", memory: "16Gi", nvidia.com/gpu: "1" }
+            limits:   { cpu: "8", memory: "32Gi", nvidia.com/gpu: "1" }
+          # Model load takes minutes — a startupProbe keeps it from being killed
+          # while vLLM downloads/loads, then readiness/liveness take over.
+          startupProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 10
+            failureThreshold: 60          # ~10 min to become ready
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 20
+            failureThreshold: 6
+      volumes:
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 16Gi }
+        - name: model-cache
+          persistentVolumeClaim: { claimName: shield-model-cache }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shield-guardrail
+  namespace: shield
+spec:
+  selector: { app: shield-guardrail }
+  ports:
+    - { name: http, port: 80, targetPort: 8080 }
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: shield-guardrail
+  namespace: shield
+  annotations:
+    # Guardrail calls (esp. Tier-2/agentic) can exceed the 30s default.
+    haproxy.router.openshift.io/timeout: 120s
+spec:
+  to: { kind: Service, name: shield-guardrail }
+  port: { targetPort: http }
+  tls: { termination: edge, insecureEdgeTerminationPolicy: Redirect }

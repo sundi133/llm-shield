@@ -1731,7 +1731,7 @@
           "Usage and audit"
         ],
         "summary": "Get my telemetry",
-        "description": "Return tenant-scoped agent chat telemetry with normalized tool-call status.",
+        "description": "Return tenant-scoped agent activity: chat telemetry and, merged in,\ncoding-agent hook decisions. docs/specs/unified-agent-telemetry.md.",
         "operationId": "get_my_telemetry_v1_tenant_me_telemetry_get",
         "parameters": [
           {
@@ -1806,6 +1806,24 @@
               ],
               "title": "Tool Name"
             }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "chat, coding-agent, or omitted for both",
+              "title": "Source"
+            },
+            "description": "chat, coding-agent, or omitted for both"
           },
           {
             "name": "q",
@@ -2013,6 +2031,40 @@
   ],
   "components": {
     "schemas": {
+      "AllowlistEntry": {
+        "properties": {
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "regex": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regex"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "AllowlistEntry",
+        "description": "A value or pattern that a rule match may not act on: a test card\nnumber, a corporate email domain. Either `value` (literal) or `regex`."
+      },
       "Body_screen_file_guardrails_file_post": {
         "properties": {
           "file": {
@@ -2036,6 +2088,30 @@
           "file"
         ],
         "title": "Body_screen_file_guardrails_file_post"
+      },
+      "CountThreshold": {
+        "properties": {
+          "pattern_id": {
+            "type": "string",
+            "title": "Pattern Id"
+          },
+          "max_count": {
+            "type": "integer",
+            "title": "Max Count"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "default": "payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pattern_id",
+          "max_count"
+        ],
+        "title": "CountThreshold",
+        "description": "More than `max_count` matches of `pattern_id` in one payload escalates\nthat rule to block: five SSNs in a record is bulk exfiltration, not a\nlookup."
       },
       "DataSanitizationRule": {
         "properties": {
@@ -2086,6 +2162,53 @@
         ],
         "title": "DataSanitizationRule"
       },
+      "ExactMatchList": {
+        "properties": {
+          "list_id": {
+            "type": "string",
+            "title": "List Id"
+          },
+          "algorithm": {
+            "type": "string",
+            "title": "Algorithm",
+            "default": "sha256"
+          },
+          "salt": {
+            "type": "string",
+            "title": "Salt"
+          },
+          "normalized": {
+            "type": "string",
+            "title": "Normalized",
+            "default": "strip_lower"
+          },
+          "hashes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hashes"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action",
+            "default": "redact"
+          },
+          "replacement": {
+            "type": "string",
+            "title": "Replacement",
+            "default": "[REDACTED]"
+          }
+        },
+        "type": "object",
+        "required": [
+          "list_id",
+          "salt",
+          "hashes"
+        ],
+        "title": "ExactMatchList",
+        "description": "Salted SHA-256 digests of values the tenant never stores in clear.\nBuild them with POST /v1/data-policies/exact-match/hash."
+      },
       "GlobalDataPolicy": {
         "properties": {
           "sanitization_rules": {
@@ -2094,6 +2217,30 @@
             },
             "type": "array",
             "title": "Sanitization Rules",
+            "default": []
+          },
+          "allowlist": {
+            "items": {
+              "$ref": "#/components/schemas/AllowlistEntry"
+            },
+            "type": "array",
+            "title": "Allowlist",
+            "default": []
+          },
+          "thresholds": {
+            "items": {
+              "$ref": "#/components/schemas/CountThreshold"
+            },
+            "type": "array",
+            "title": "Thresholds",
+            "default": []
+          },
+          "exact_match": {
+            "items": {
+              "$ref": "#/components/schemas/ExactMatchList"
+            },
+            "type": "array",
+            "title": "Exact Match",
             "default": []
           },
           "role_policies": {
@@ -2135,6 +2282,17 @@
             "type": "boolean",
             "title": "Enabled",
             "default": true
+          },
+          "fail_closed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fail Closed"
           }
         },
         "type": "object",
@@ -2474,6 +2632,17 @@
               }
             ],
             "title": "Approval Grant"
+          },
+          "route": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Route"
           }
         },
         "type": "object",
@@ -2495,6 +2664,30 @@
             },
             "type": "array",
             "title": "Sanitization Rules",
+            "default": []
+          },
+          "allowlist": {
+            "items": {
+              "$ref": "#/components/schemas/AllowlistEntry"
+            },
+            "type": "array",
+            "title": "Allowlist",
+            "default": []
+          },
+          "thresholds": {
+            "items": {
+              "$ref": "#/components/schemas/CountThreshold"
+            },
+            "type": "array",
+            "title": "Thresholds",
+            "default": []
+          },
+          "exact_match": {
+            "items": {
+              "$ref": "#/components/schemas/ExactMatchList"
+            },
+            "type": "array",
+            "title": "Exact Match",
             "default": []
           },
           "role_policies": {
@@ -2555,6 +2748,17 @@
             "type": "string",
             "title": "Sanitization Mode",
             "default": "regex"
+          },
+          "fail_closed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fail Closed"
           }
         },
         "type": "object",
@@ -2732,6 +2936,28 @@
               }
             ],
             "title": "Active"
+          },
+          "require_verified_identity": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Require Verified Identity"
+          },
+          "credential_scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Scope"
           }
         },
         "type": "object",
@@ -2812,11 +3038,40 @@
             "description": "Policy description"
           },
           "prompt": {
-            "type": "string",
-            "maxLength": 2000,
-            "minLength": 20,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000,
+                "minLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Prompt",
-            "description": "Natural language policy definition"
+            "description": "Natural language policy definition (format natural_language)"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "description": "Policy format: natural_language or sigma",
+            "default": "natural_language"
+          },
+          "sigma_rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sigma Rule",
+            "description": "Sigma rule as YAML text or object (format sigma)"
           },
           "action": {
             "type": "string",
@@ -2890,7 +3145,6 @@
         "required": [
           "name",
           "description",
-          "prompt",
           "action"
         ],
         "title": "CustomPolicyRequest"
@@ -2935,6 +3189,34 @@
               }
             ],
             "title": "Prompt"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format",
+            "description": "natural_language or sigma"
+          },
+          "sigma_rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sigma Rule",
+            "description": "Sigma rule as YAML text or object"
           },
           "action": {
             "anyOf": [
