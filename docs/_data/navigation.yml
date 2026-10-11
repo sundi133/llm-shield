@@ -75,3 +75,10 @@ groups:
       - { title: Agent Run Tracing, url: /agent-run-tracing/ }
       - { title: Agent Governance, url: /agent-governance/ }
       - { title: Enterprise Features, url: /enterprise-features/ }
+
+  - title: Rafay Integration
+    items:
+      - { title: Overview, url: /partners/rafay/ }
+      - { title: Integration Guide, url: /partners/rafay/integration/ }
+      - { title: Admin & Tenant Creation, url: /partners/rafay/admin/ }
+      - { title: For Customers, url: /partners/rafay/customers/ }
