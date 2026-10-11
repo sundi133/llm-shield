@@ -1,7 +1,9 @@
 ---
-title: Votal Shield — Rafay integration guide (multi-tenant guardrails)
-description: How Rafay enables Votal Shield AI guardrails for its customers. Each Rafay customer is one Shield tenant with its own API key; Rafay calls Shield PreCall (input) and PostCall (output) in its AI serving path.
-audience: Rafay platform engineering
+title: Integration guide
+parent: Rafay Integration
+nav_order: 2
+permalink: /partners/rafay/integration/
+description: "Engineering guide: auth, per-customer onboarding, PreCall/PostCall runtime calls, telemetry, failure modes, and in-cluster (Helm/OpenShift) deployment."
 ---
 
 # Votal Shield — Rafay integration guide
@@ -9,7 +11,7 @@ audience: Rafay platform engineering
 This is the partner handoff for enabling **Votal Shield** AI guardrails on the
 Rafay platform, multi-tenant. Pair it with the machine-readable contract:
 
-- **OpenAPI 3.1 spec:** `docs/assets/openapi-partner.json` (curated partner
+- **OpenAPI 3.1 spec:** [`/assets/openapi-partner.json`](/assets/openapi-partner.json) (curated partner
   subset — the guard, policy, and telemetry endpoints only, never the admin
   surface). Import this into Rafay's codegen / API explorer.
 
@@ -228,7 +230,7 @@ Telemetry view.
 ## 9. End-to-end Rafay steps (checklist)
 
 1. **Receive** from Votal: the admin key (`X-API-Key`-style `X-Admin-Key`), a
-   sandbox tenant + key, the base URL(s), and `docs/assets/openapi-partner.json`.
+   sandbox tenant + key, the base URL(s), and [`/assets/openapi-partner.json`](/assets/openapi-partner.json).
 2. **Import** the OpenAPI into Rafay's API tooling; generate a client.
 3. **Deploy posture:** set `SHIELD_GUARD_REQUIRE_KEY=enforce` on the Rafay-facing
    Shield (hosted config confirmed by Votal, or in the in-cluster Helm values).
@@ -388,9 +390,9 @@ Ready-to-apply OpenShift manifests live in the repo's `openshift/` directory:
 
 | Manifest | Deploys |
 |---|---|
-| `openshift/redis.yaml` | Redis (tenant store + policy cache) — the dependency from A.2 |
-| `openshift/shield-guardrail-vllm.yaml` | The **guardrail data plane with in-cluster vLLM** (GPU) — Deployment + Service + `Route` + model-cache PVC |
-| `openshift/shield-admin.yaml` | *(optional)* the admin/tenant portal (`Route`, port 8080) |
+| [`redis.yaml`](/assets/openshift/redis.yaml) | Redis (tenant store + policy cache) — the dependency from A.2 |
+| [`shield-guardrail-vllm.yaml`](/assets/openshift/shield-guardrail-vllm.yaml) | The **guardrail data plane with in-cluster vLLM** (GPU) — Deployment + Service + `Route` + model-cache PVC |
+| [`shield-admin.yaml`](/assets/openshift/shield-admin.yaml) | *(optional)* the admin/tenant portal (`Route`, port 8080) |
 
 The vLLM manifest is a thin wrapper — the image's entrypoint
 (`scripts/start_vllm.sh`) already launches vLLM on `:8000`, waits for it, then

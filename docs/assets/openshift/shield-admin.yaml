@@ -1,0 +1,246 @@
+---
+# OpenShift deployment manifests for shield-admin
+# Image: docker.io/sundi133/llm-shield-admin:latest
+#
+# Usage:
+#   1. Create secrets:  oc create secret generic shield-admin-secrets \
+#                         --from-literal=UPSTASH_REDIS_REST_URL=http://srh:8079 \
+#                         --from-literal=UPSTASH_REDIS_REST_TOKEN=your-token \
+#                         --from-literal=SHIELD_ADMIN_KEY=your-admin-key \
+#                         --from-literal=PLAYGROUND_LLM_BASE_URL=https://your-litellm-proxy/v1 \
+#                         --from-literal=PLAYGROUND_LLM_MASTER_KEY=sk-your-key \
+#                         --from-literal=PLAYGROUND_LLM_MODEL=moonshotai/kimi-k2.5 \
+#                         --from-literal=PLAYGROUND_SHIELD_ENDPOINT=https://your-shield-server \
+#                         --from-literal=PLAYGROUND_SHIELD_TOKEN=your-shield-token
+#   2. Deploy:          oc apply -f openshift/shield-admin.yaml -n sundi133-dev
+#   3. Get route URL:   oc get route shield-admin -o jsonpath='{.spec.host}'
+
+---
+# Secret — create manually BEFORE applying this file:
+#   oc create secret generic shield-admin-secrets \
+#     --from-literal=UPSTASH_REDIS_REST_URL=http://srh:8079 \
+#     --from-literal=UPSTASH_REDIS_REST_TOKEN=your-token \
+#     --from-literal=SHIELD_ADMIN_KEY=your-admin-key \
+#     --from-literal=PLAYGROUND_LLM_BASE_URL=https://your-litellm-proxy/v1 \
+#     --from-literal=PLAYGROUND_LLM_MASTER_KEY=sk-your-key \
+#     --from-literal=PLAYGROUND_LLM_MODEL=moonshotai/kimi-k2.5 \
+#     --from-literal=PLAYGROUND_SHIELD_ENDPOINT=https://your-shield-server \
+#     --from-literal=PLAYGROUND_SHIELD_TOKEN=your-shield-token \
+#     -n sundi133-dev
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shield-admin
+
+  labels:
+    app: shield-admin
+    app.kubernetes.io/part-of: llm-shield
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shield-admin
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: shield-admin
+        app.kubernetes.io/part-of: llm-shield
+    spec:
+      initContainers:
+        - name: init-permissions
+          image: busybox:latest
+          command: ["sh", "-c", "mkdir -p /app/data /app/log"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: storage-data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/log
+      containers:
+        - name: shield-admin
+          image: docker.io/sundi133/llm-shield-admin:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: AUDIT_LOGGING_ENABLED
+              value: "true"
+            - name: SHIELD_MAX_MODEL_LEN
+              value: "16384"
+            - name: AUDIT_DB_PATH
+              value: /app/data/audit.db
+            - name: NO_PROXY
+              value: "localhost,127.0.0.1,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local,redis"
+            - name: no_proxy
+              value: "localhost,127.0.0.1,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local,redis"
+          envFrom:
+            - secretRef:
+                name: shield-admin-secrets
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: storage-data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/log
+            - name: reports
+              mountPath: /app/report
+            - name: guardrail-reports
+              mountPath: /app/reports
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: storage-data
+          emptyDir:
+            sizeLimit: 500Mi
+        - name: logs
+          emptyDir:
+            sizeLimit: 500Mi
+        - name: reports
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: guardrail-reports
+          emptyDir:
+            sizeLimit: 1Gi
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: shield-admin
+
+  labels:
+    app: shield-admin
+    app.kubernetes.io/part-of: llm-shield
+spec:
+  selector:
+    app: shield-admin
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  type: ClusterIP
+
+---
+# Route — exposes the admin portal externally with TLS
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: shield-admin
+
+  labels:
+    app: shield-admin
+    app.kubernetes.io/part-of: llm-shield
+spec:
+  to:
+    kind: Service
+    name: shield-admin
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+
+---
+# HorizontalPodAutoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: shield-admin
+
+  labels:
+    app: shield-admin
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: shield-admin
+  minReplicas: 1
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+# NetworkPolicy — only allow traffic from OpenShift router and within namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shield-admin-ingress
+
+  labels:
+    app: shield-admin
+spec:
+  podSelector:
+    matchLabels:
+      app: shield-admin
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Allow from OpenShift router (ingress controller)
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+        # Allow from pods in same namespace (e.g., shield workers)
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP

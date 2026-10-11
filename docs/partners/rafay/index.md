@@ -1,9 +1,18 @@
 ---
-title: Votal Shield × Rafay — partner handoff
-description: One-page intro for Rafay BD and engineering. Enable Votal Shield multi-tenant AI guardrails for Rafay customers in their AI serving path.
+title: Rafay Integration
+nav_order: 21
+has_children: true
+permalink: /partners/rafay/
+description: "Enable Votal Shield multi-tenant AI guardrails on Rafay: overview, integration guide, admin and tenant provisioning, and a customer guide."
 ---
 
-# Votal Shield × Rafay — partner handoff
+# Votal Shield x Rafay — partner handoff
+
+In this section:
+- [Integration guide](/partners/rafay/integration/) — engineering: auth, runtime calls, telemetry, in-cluster/OpenShift
+- [Admin & tenant creation](/partners/rafay/admin/) — provision a Shield tenant + API key per customer
+- [For customers](/partners/rafay/customers/) — what a Rafay customer turns on and configures
+{: .mb-4 }
 
 **Goal:** let a Rafay customer turn on AI guardrails for their workloads, with
 each customer's policy isolated to that customer.
@@ -38,8 +47,10 @@ Kubernetes/Helm reference in the integration guide, Appendix A).
 
 | Artifact | Purpose |
 |---|---|
-| `docs/assets/openapi-partner.json` | OpenAPI 3.1 — the curated partner API (guard, policy, telemetry, agentic surfaces; no admin internals). Import for codegen. |
-| `docs/partners/rafay/rafay-integration.md` | Full engineering guide: auth, onboarding, runtime calls with request/response schemas, telemetry, failure modes, a 9-step checklist. |
+| [OpenAPI 3.1 spec](/assets/openapi-partner.json) | The curated partner API (guard, policy, telemetry, agentic surfaces; no admin internals). Import for codegen. |
+| [Integration guide](/partners/rafay/integration/) | Full engineering detail: auth, onboarding, runtime calls with schemas, telemetry, failure modes, in-cluster/OpenShift. |
+| [Admin & tenant creation](/partners/rafay/admin/) | How Rafay provisions a tenant + key per customer. |
+| [For customers](/partners/rafay/customers/) | What a Rafay customer turns on and configures. |
 | Sandbox tenant + key *(Votal provides)* | Integrate and validate before go-live. |
 
 ## Get started (Rafay engineering, ~a day to first green test)
