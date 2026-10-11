@@ -14,6 +14,8 @@ In this section:
 - [For customers](/partners/rafay/customers/) — what a Rafay customer turns on and configures
 {: .mb-4 }
 
+[Download the one-page intro (PDF)](https://storage.googleapis.com/votal-public/partners/rafay/votal-shield-rafay-intro.pdf){: .btn .btn-blue }
+
 **Goal:** let a Rafay customer turn on AI guardrails for their workloads, with
 each customer's policy isolated to that customer.
 
