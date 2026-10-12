@@ -1187,6 +1187,13 @@ def create_admin_app() -> FastAPI:
     async def root():
         return FileResponse(os.path.join(static_dir, "index.html"))
 
+    @app.get("/favicon.png")
+    @app.get("/favicon.ico")
+    async def favicon():
+        # Same mark as votal.ai; a browser's default /favicon.* probe lands here.
+        return FileResponse(os.path.join(static_dir, "favicon.png"),
+                            media_type="image/png")
+
     @app.get("/service-info")
     async def service_info():
         return _service_index()
