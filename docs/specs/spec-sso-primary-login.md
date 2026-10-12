@@ -182,12 +182,17 @@ These five are in-scope requirements, not roadmap. Each → a test in §8.
   tenant SSO path). If any are added → `requirements.txt` + `requirements-test.txt`
   (+ `requirements-admin.txt`), validated in a clean venv.
 - **Env flags:** `SHIELD_PORTAL_REQUIRE_SSO` (existing, now a fleet override),
-  `SHIELD_PORTAL_BASE_URL` (required for redirect_uri), new admin-IdP config
-  (issuer/client_id/secret/operator_groups), and **`SHIELD_ADMIN_IP_ALLOWLIST`**
-  (EH-4, empty = unrestricted). Per-provider `min_acr`/`require_amr` (EH-1) and
-  `backchannel_logout_uri` (EH-2) are stored config, not env. Rebuild:
-  **admin image only**. Any new EH module (back-channel handler, step-up helper)
-  → `Dockerfile.admin` COPY.
+  `SHIELD_PORTAL_BASE_URL` (required for redirect_uri, shared by admin SSO).
+  **Admin IdP (env-configured, Option B — a single operator IdP, not
+  tenant-editable):** `SHIELD_ADMIN_OIDC_ISSUER`, `SHIELD_ADMIN_OIDC_CLIENT_ID`,
+  `SHIELD_ADMIN_OIDC_CLIENT_SECRET` (optional, PKCE public client preferred),
+  `SHIELD_ADMIN_OIDC_AUDIENCE` (default client_id), `SHIELD_ADMIN_OPERATOR_GROUPS`
+  (comma-separated; **empty = admin SSO unavailable**, fail-closed),
+  `SHIELD_ADMIN_GROUPS_CLAIM` (default `groups`), `SHIELD_ADMIN_SESSION_TTL`/`_IDLE`.
+  Still to come: **`SHIELD_ADMIN_IP_ALLOWLIST`** (EH-4), per-provider
+  `min_acr`/`require_amr` (EH-1), `backchannel_logout_uri` (EH-2). Rebuild:
+  **admin image only**. New admin modules added to `Dockerfile.admin` COPY
+  (`api/routes_admin_auth.py`, `storage/admin_sessions.py`).
 
 ## 7. Failure modes & edge cases
 
@@ -242,10 +247,16 @@ These five are in-scope requirements, not roadmap. Each → a test in §8.
    logout for the tenant portal (revoke-by-`sub` over the existing index).
 4. **Auth events → audit/SIEM (EH-3)**: structured login/logout/flip/break-glass
    events through the tamper-evident audit + SIEM path. Small, mostly plumbing.
-5. **Admin SSO** (`routes_admin_auth` + `storage/admin_sessions` + `AuthMiddleware`
-   accepts admin session + `Dockerfile.admin` COPY + `static/admin.html` SSO) with
-   **EH-1** (acr/amr) and admin **EH-2** (logout/back-channel) folded in. The one
-   build-heavy PR; carries its admin-side loophole tests.
+5. **Admin SSO — DONE (core).** `api/routes_admin_auth.py` (env-config single
+   operator IdP, auth-code + PKCE + **state + nonce**, operator-group gate
+   fail-closed, local logout) + `storage/admin_sessions.py` (not tenant-scoped,
+   `shield_admin_session`, roles) + `core/auth.py` (`ADMIN_COOKIE_NAME`,
+   `admin_principal`, AuthMiddleware accepts the session before X-Admin-Key and
+   exempts `/v1/admin/auth/*`; key stays break-glass) + `Dockerfile.admin` COPY +
+   `static/admin.html` SSO button. 18 admin-flow tests incl. non-operator→403,
+   nonce-mismatch→401, replay→400, middleware session acceptance, break-glass key.
+   **Deferred to a follow-on:** admin **EH-1** (acr/amr), admin **EH-2**
+   (back-channel SLO), and enforcing the stored operator **roles** (RBAC).
 6. **Admin hardening**: **EH-4** (`SHIELD_ADMIN_IP_ALLOWLIST` in `AuthMiddleware`),
    **EH-5** (step-up re-auth on destructive admin actions), break-glass alerting on
    interactive `X-Admin-Key`, docs; optional "require admin SSO" flag once operators

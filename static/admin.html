@@ -511,7 +511,19 @@
         <div class="logo-sub">Admin Console</div>
       </div>
     </div>
-    <div class="login-desc">Enter your admin key to continue</div>
+    <div class="login-desc">Sign in to the Admin Console</div>
+
+    <!-- SSO is the primary operator login; shown only when configured. The admin
+         key below stays as a break-glass credential. -->
+    <button class="primary hidden" style="width:100%;" id="admin-sso-button"
+            onclick="startAdminSso()">Sign in with SSO</button>
+    <div id="admin-sso-divider" class="hidden"
+         style="display:flex;align-items:center;gap:0.6rem;margin:0.9rem 0;">
+      <div style="flex:1;height:1px;background:var(--border);"></div>
+      <span style="font-size:11px;color:var(--text-muted);">or break-glass</span>
+      <div style="flex:1;height:1px;background:var(--border);"></div>
+    </div>
+
     <div class="field">
       <label>Admin Key</label>
       <input type="password" id="admin-key-input" placeholder="Enter admin key" autofocus autocomplete="off">
@@ -835,7 +847,34 @@ async function login() {
 
 initCaptcha();
 
+// ── Admin SSO ──────────────────────────────────────────────────────────
+// A full navigation (not fetch): the IdP renders its own page and the
+// shield_admin_session cookie is set on the redirect back to /admin.
+function startAdminSso() {
+  window.location.href =
+    `${BASE_URL}/v1/admin/auth/login?next=${encodeURIComponent('/admin')}`;
+}
+
+// Reveal the SSO button only when an operator IdP is configured, so a
+// key-only deployment looks exactly as it did before.
+async function checkAdminSso() {
+  try {
+    const r = await fetch(`${BASE_URL}/v1/admin/auth/providers`);
+    const d = await r.json();
+    if (d && d.sso_available) {
+      document.getElementById('admin-sso-button').classList.remove('hidden');
+      document.getElementById('admin-sso-divider').classList.remove('hidden');
+    }
+  } catch (e) { /* older build or offline: key login stays as-is */ }
+}
+checkAdminSso();
+
 function logout() {
+  // Revoke any SSO session server-side (clears the cookie); harmless for a
+  // key-only session. Then drop the local key and show the login screen.
+  try {
+    fetch(`${BASE_URL}/v1/admin/auth/logout`, { method: 'POST' }).catch(() => {});
+  } catch (e) { /* ignore */ }
   localStorage.removeItem('votal_admin_key');
   ADMIN_KEY = '';
   document.getElementById('app').classList.add('hidden');
