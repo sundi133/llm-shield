@@ -113,8 +113,28 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 headers={"Retry-After": str(_LOCKOUT_WINDOW_SECS)},
             )
 
-        # Admin routes: always require admin key regardless of auth config
+        # Admin routes: require an admin SSO session OR the admin key.
         if path.startswith("/v1/admin/"):
+            # The admin-auth routes authenticate via the IdP themselves, so they
+            # must be reachable without a session or key, or login/callback could
+            # never complete.
+            if path.startswith("/v1/admin/auth/"):
+                return await call_next(request)
+
+            # SSO session is the primary operator login; X-Admin-Key below stays
+            # as break-glass. Lazy import keeps module load acyclic.
+            try:
+                from storage.admin_sessions import get_session as _get_admin_session
+                sid = request.cookies.get(ADMIN_COOKIE_NAME, "")
+                if sid:
+                    rec = _get_admin_session(sid)
+                    if rec:
+                        request.state.admin_session = rec
+                        _clear_auth_failures(client_ip)
+                        return await call_next(request)
+            except Exception:
+                pass  # fall through to the key; never fail-open on a store hiccup
+
             admin_key = os.environ.get("SHIELD_ADMIN_KEY", "")
             if not admin_key:
                 return JSONResponse(
@@ -126,7 +146,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if not provided:
                 return JSONResponse(
                     status_code=401,
-                    content={"error": "Missing admin key. Use X-Admin-Key header for /v1/admin/* routes."},
+                    content={"error": "Not authenticated. Sign in via SSO "
+                             "(/v1/admin/auth/login), or provide X-Admin-Key "
+                             "(break-glass) for /v1/admin/* routes."},
                 )
 
             if not hmac.compare_digest(provided, admin_key):
@@ -598,6 +620,49 @@ def constrain_self_registration(request, tenant_id: str, entry: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 PORTAL_COOKIE_NAME = "shield_portal_session"
+# Admin-operator SSO session cookie (core/admin_sessions). Distinct from the
+# tenant portal cookie: an operator is not a tenant, and the two must never be
+# interchangeable.
+ADMIN_COOKIE_NAME = "shield_admin_session"
+
+
+def admin_principal(request):
+    """The signed-in platform OPERATOR behind this request, or None.
+
+    Mirrors portal_principal for the admin plane, cached on a distinct
+    request.state slot. An admin session is NOT tenant-scoped.
+    """
+    state = getattr(request, "state", None)
+    if state is not None and hasattr(state, "_admin_principal"):
+        return state._admin_principal
+
+    principal = None
+    try:
+        session_id = ""
+        cookies = getattr(request, "cookies", None)
+        if cookies:
+            session_id = cookies.get(ADMIN_COOKIE_NAME, "") or ""
+        if session_id:
+            from storage.admin_sessions import get_session, touch_session
+            record = get_session(session_id)
+            if record:
+                touch_session(session_id)
+                principal = {
+                    "kind": "admin_operator",
+                    "sub": record.get("sub", ""),
+                    "email": record.get("email", ""),
+                    "name": record.get("name", ""),
+                    "roles": list(record.get("roles") or []),
+                    "issuer": record.get("issuer", ""),
+                    "auth_time": record.get("auth_time"),
+                }
+    except Exception as e:
+        logger.debug("admin session lookup failed: %s", e)
+        principal = None
+
+    if state is not None:
+        state._admin_principal = principal
+    return principal
 
 
 def portal_principal(request):

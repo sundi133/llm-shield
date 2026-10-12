@@ -135,17 +135,36 @@ def _actor(request: Request, tenant_id: str) -> str:
     return audit_actor(request, tenant_id)
 
 
-def _require_sso_enabled() -> bool:
-    """Whether this deployment refuses API-key auth on the portal routes.
-
-    One reader, two callers: the check below that enforces it, and /me/posture
-    that reports it. A second copy of this truthy set would eventually disagree
-    with this one, and a posture page that misreports enforcement is worse than
-    no posture page.
-    """
+def _env_require_sso() -> bool:
+    """Deployment-wide SSO-required posture (env), independent of any tenant."""
     import os
     return os.environ.get(
         "SHIELD_PORTAL_REQUIRE_SSO", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _require_sso_enabled(tenant_id: Optional[str] = None) -> bool:
+    """Whether API-key auth is refused on the portal routes.
+
+    Two switches, OR'd: the deployment-wide env posture
+    (``SHIELD_PORTAL_REQUIRE_SSO``), and a per-tenant flag set by the PLATFORM
+    OPERATOR on the admin plane (``PUT /v1/admin/tenants/{id}`` with
+    ``require_sso``). The per-tenant flag is deliberately NOT tenant
+    self-service: a tenant able to switch off the requirement that they sign in
+    has not been required to. Called with no tenant_id (e.g. deployment posture)
+    it reports the env switch alone, unchanged from before.
+
+    Store-resilient: ``get_tenant`` returns None if Redis is down, so a blip
+    does not escalate the per-tenant flag — and the key just resolved from the
+    same store a moment ago, so None here is a rare transient. The guard/API
+    path is unaffected either way (it never reaches this check).
+    """
+    if _env_require_sso():
+        return True
+    if tenant_id:
+        t = get_tenant(tenant_id)
+        if t and bool(t.get("require_sso")):
+            return True
+    return False
 
 
 def _require_tenant(request: Request) -> str:
@@ -172,12 +191,12 @@ def _require_tenant(request: Request) -> str:
     # closes the shared-key path on the PORTAL routes only. Deliberately not a
     # per-tenant setting — it is a deployment posture, and a tenant able to
     # switch off the requirement that they sign in has not been required to.
-    if tenant_id and _require_sso_enabled():
+    if tenant_id and _require_sso_enabled(tenant_id):
         raise HTTPException(
             status_code=403,
-            detail="This deployment requires signing in "
-                   "(SHIELD_PORTAL_REQUIRE_SSO=1). An API key cannot be used "
-                   "for portal endpoints.",
+            detail="This workspace requires signing in with SSO. An API key "
+                   "cannot be used for portal endpoints; sign in instead. "
+                   "(API keys still work for the API/guard path.)",
         )
 
     if not tenant_id:
@@ -1630,7 +1649,7 @@ def _posture_modes() -> dict:
         "auto_revoke": "on" if auto_revoke_enabled() else "off",
         "agent_token_pop": agent_token_pop_mode(),
         "role_binding": role_binding_mode(),
-        "portal_sso": "on" if _require_sso_enabled() else "off",
+        "portal_sso": "on" if _env_require_sso() else "off",
     }
 
 
@@ -1714,4 +1733,25 @@ async def get_my_session(request: Request):
         # What it may do is governed by its scope; see /v1/tenant/me/key-scope.
         "is_admin": None,
         "issuer": "",
+    }
+
+
+@router.get("/me/portal-auth")
+async def get_portal_auth(request: Request):
+    """Whether this workspace requires SSO to sign in (read-only).
+
+    Transparency only: a tenant can SEE whether SSO is required but cannot change
+    it. The requirement is a security control set by the platform operator
+    (deployment env, or per-tenant via ``PUT /v1/admin/tenants/{id}``); a tenant
+    able to turn off its own requirement would not have been required to sign in.
+    """
+    tenant_id = _require_tenant(request)
+    env_on = _env_require_sso()
+    t = get_tenant(tenant_id) or {}
+    tenant_on = bool(t.get("require_sso"))
+    source = "env" if env_on else ("tenant" if tenant_on else "default")
+    return {
+        "require_sso": env_on or tenant_on,
+        "source": source,
+        "editable_by_tenant": False,
     }

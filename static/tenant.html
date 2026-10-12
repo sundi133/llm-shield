@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Votal Shield — Tenant Portal</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -2555,44 +2557,52 @@
         <div class="logo-sub">Tenant Portal</div>
       </div>
     </div>
-    <div class="login-desc">Sign in with your tenant API key</div>
-    <div class="field">
-      <label>API Key</label>
-      <input type="password" id="api-key-input" placeholder="Enter your tenant API key" value="" autofocus autocomplete="off">
-    </div>
-    <div id="hcaptcha-container" class="field hidden" style="display:none;">
-      <div id="hcaptcha-widget"></div>
-    </div>
-    <button class="primary" style="width: 100%;" onclick="login()">Sign In</button>
+    <div class="login-desc">Sign in to the Tenant Portal</div>
 
-    <!-- SSO. Collapsed behind a link so a deployment with no IdP looks exactly
-         as it did before, and so the organisation field appears ABOVE the
-         button it enables rather than below it — the first render had them the
-         other way round, which asks you to fill in a field that only shows up
-         after the action you were about to take. -->
-    <div style="text-align:center;margin-top:0.9rem;">
-      <a href="#" id="sso-toggle" onclick="revealSso(event)"
+    <!-- SSO is the PRIMARY human login. The API-key form is a labelled fallback
+         below; the API key itself is unchanged and stays a machine/API
+         credential (it still authenticates the guard path) — it is only demoted
+         as the *human* portal login. No server change: both paths already work,
+         this reorders which one leads. -->
+    <div id="sso-block">
+      <div class="field">
+        <label>Organisation</label>
+        <input type="text" id="sso-tenant-input" placeholder="your-tenant-id"
+               autocomplete="organization" oninput="checkSso()" autofocus>
+      </div>
+      <button class="primary" style="width:100%;" id="sso-button"
+              onclick="startSso()">Continue with SSO</button>
+      <div id="sso-hint" style="font-size:12px;color:var(--text-muted);
+                                margin-top:0.5rem;text-align:center;">
+        Enter your organisation to sign in with your identity provider.
+      </div>
+    </div>
+
+    <!-- Fallback: API key (service/API credential, or tenants without SSO). -->
+    <div style="text-align:center;margin-top:1rem;">
+      <a href="#" id="key-toggle" onclick="revealKey(event)"
          style="font-size:12px;color:var(--primary,#4f46e5);text-decoration:none;">
-        Sign in with SSO instead
+        Use an API key instead
       </a>
     </div>
 
-    <div id="sso-block" class="hidden">
+    <div id="key-block" class="hidden">
       <div style="display:flex;align-items:center;gap:0.6rem;margin:0.9rem 0;">
         <div style="flex:1;height:1px;background:var(--border);"></div>
         <span style="font-size:11px;color:var(--text-muted);">or</span>
         <div style="flex:1;height:1px;background:var(--border);"></div>
       </div>
       <div class="field">
-        <label style="font-size:12px;">Organisation</label>
-        <input type="text" id="sso-tenant-input" placeholder="your-tenant-id"
-               autocomplete="organization" oninput="checkSso()"
-               style="font-size:13px;">
+        <label>API Key</label>
+        <input type="password" id="api-key-input" placeholder="Enter your tenant API key" value="" autocomplete="off">
       </div>
-      <button class="secondary hidden" style="width:100%;" id="sso-button"
-              onclick="startSso()">Sign in with SSO</button>
-      <div id="sso-hint" style="font-size:11px;color:var(--text-muted);
-                                margin-top:0.4rem;text-align:center;"></div>
+      <div id="hcaptcha-container" class="field hidden" style="display:none;">
+        <div id="hcaptcha-widget"></div>
+      </div>
+      <button class="primary" style="width: 100%;" onclick="login()">Sign In</button>
+      <div class="cp-hint" style="text-align:center;margin-top:0.5rem;">
+        API keys are for service and API access. People should sign in with SSO above.
+      </div>
     </div>
     <div id="login-error" class="toast error hidden"></div>
     <div class="muted" style="text-align: center; margin-top: 1.25rem;">Need a key? Contact your administrator</div>
@@ -6714,6 +6724,17 @@ async function login() {
 
 initCaptcha();
 
+// Reveal the API-key fallback. SSO is the primary path; the key form stays
+// hidden until a tenant without SSO (or a service operator) asks for it.
+function revealKey(ev) {
+  if (ev) ev.preventDefault();
+  document.getElementById('key-block').classList.remove('hidden');
+  const toggle = document.getElementById('key-toggle');
+  if (toggle) toggle.classList.add('hidden');
+  const input = document.getElementById('api-key-input');
+  if (input) input.focus();
+}
+
 // ── SSO ────────────────────────────────────────────────────────────────
 //
 // The sign-in button is a link into /v1/tenant/auth/login. Everything else —
@@ -6721,13 +6742,6 @@ initCaptcha();
 // passes through this file.
 
 let SSO_DEBOUNCE = null;
-
-function revealSso(ev) {
-  if (ev) ev.preventDefault();
-  document.getElementById('sso-block').classList.remove('hidden');
-  document.getElementById('sso-toggle').classList.add('hidden');
-  document.getElementById('sso-tenant-input').focus();
-}
 
 async function checkSso() {
   const tenant = (document.getElementById('sso-tenant-input')?.value || '').trim();

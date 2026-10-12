@@ -129,6 +129,7 @@ _oauth_router = None
 _oauth_registration_router = None
 _oidc_admin_router = None
 _portal_auth_router = None
+_admin_auth_router = None
 _mcp_signin_router = None
 _mcp_connect_router = None
 _principals_router = None
@@ -146,6 +147,10 @@ except Exception:
     pass
 try:
     from api.routes_portal_auth import router as _portal_auth_router
+except Exception:
+    pass
+try:
+    from api.routes_admin_auth import router as _admin_auth_router
 except Exception:
     pass
 try:
@@ -1124,6 +1129,8 @@ def create_admin_app() -> FastAPI:
         app.include_router(_oidc_admin_router)         # /v1/admin/oidc-providers/*
     if _portal_auth_router:
         app.include_router(_portal_auth_router)        # /v1/tenant/auth/*
+    if _admin_auth_router:
+        app.include_router(_admin_auth_router)         # /v1/admin/auth/*
     if _mcp_signin_router:
         app.include_router(_mcp_signin_router)         # /oauth/consent, /v1/tenant/me/identity/policy
     if _mcp_connect_router:
@@ -1179,6 +1186,13 @@ def create_admin_app() -> FastAPI:
     @app.get("/")
     async def root():
         return FileResponse(os.path.join(static_dir, "index.html"))
+
+    @app.get("/favicon.png")
+    @app.get("/favicon.ico")
+    async def favicon():
+        # Same mark as votal.ai; a browser's default /favicon.* probe lands here.
+        return FileResponse(os.path.join(static_dir, "favicon.png"),
+                            media_type="image/png")
 
     @app.get("/service-info")
     async def service_info():

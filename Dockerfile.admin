@@ -115,6 +115,11 @@ COPY api/routes_oauth.py api/
 COPY api/routes_oauth_registration.py api/
 COPY api/routes_oidc_admin.py api/
 COPY api/routes_portal_auth.py api/
+# Admin-plane SSO (docs/specs/spec-sso-primary-login.md PR 5). Imported by
+# admin_app.py; also imports storage/admin_sessions.py (copied below). core/auth.py
+# lazily imports storage.admin_sessions in the middleware, so that COPY is required
+# at runtime even though the import-graph guard cannot see a function-body import.
+COPY api/routes_admin_auth.py api/
 # MCP sign-in (docs/specs/mcp-verified-callers-and-user-credentials.md, A2).
 # Mostly imported lazily inside handlers, so the import-graph guard cannot see
 # them; tests/test_mcp_signin.py checks these COPY lines instead.
@@ -157,6 +162,9 @@ COPY storage/tenant_store.py storage/
 COPY storage/role_binding_config.py storage/
 # Portal SSO sessions, imported by api/routes_portal_auth.py.
 COPY storage/portal_sessions.py storage/
+# Admin-operator SSO sessions, imported by api/routes_admin_auth.py and lazily by
+# core/auth.py's middleware. Required or the admin image crash-loops at boot.
+COPY storage/admin_sessions.py storage/
 COPY storage/tenant_models.py storage/
 COPY storage/admin_audit.py storage/
 COPY storage/custom_policies.py storage/
