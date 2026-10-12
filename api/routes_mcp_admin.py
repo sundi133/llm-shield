@@ -151,6 +151,49 @@ def _check_credential_scope(cfg: dict) -> None:
         raise HTTPException(status_code=400, detail=problem)
 
 
+def assert_upstream_url_safe(cfg: dict) -> None:
+    """SSRF guard for an upstream-server registration (G2).
+
+    An admin registering/editing a route points the gateway at a URL it will
+    DIAL. Without this an attacker (or a confused admin) could aim a route at
+    169.254.169.254, a loopback admin port, or an internal service. Validate the
+    upstream `url` (and the `http` enforcement backend `shield_url`) before it is
+    stored. `allow_private: true` on the config permits an EXPLICITLY-chosen
+    enterprise-internal (RFC 1918) destination while still blocking loopback,
+    link-local and the cloud-metadata denylist.
+
+    Called on every create AND update, after `_carry_over`, so it checks the
+    effective URL even when an edit omits it. Only http/sse transports have a URL.
+
+    This is a STORE-TIME boundary check (`resolve_dns=False`): scheme + IP-literal
+    + metadata-host denylist, which does not require the upstream to be resolvable
+    yet. The DNS-resolving guarantee (anti-rebinding) runs at DIAL time in
+    core.mcp.gateway.assert_dial_url_safe, right before the gateway connects.
+    """
+    from core.url_safety import UnsafeURLError, validate_outbound_url
+
+    allow_private = bool(cfg.get("allow_private"))
+    for field, purpose in (("url", "mcp-upstream"), ("shield_url", "mcp-enforcement")):
+        target = cfg.get(field)
+        if not target:
+            continue
+        # shield_url only matters when the enforcement backend actually dials it.
+        if field == "shield_url" and cfg.get("enforcement_backend") != "http":
+            continue
+        try:
+            validate_outbound_url(
+                target, purpose=purpose, check_env_allowlist=False,
+                resolve_dns=False, allow_private=allow_private,
+            )
+        except UnsafeURLError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field} rejected by SSRF policy: {e}. "
+                       f"Set allow_private=true only for an approved internal "
+                       f"destination (loopback/link-local/metadata stay blocked).",
+            )
+
+
 def _carry_over(cfg: dict, existing: dict | None) -> dict:
     """Copy governance-owned fields from the stored document onto a rewrite."""
     for key in _PRESERVED_ON_REWRITE:
@@ -379,6 +422,9 @@ class RegisterServerRequest(BaseModel):
     # "shared" (one credential for everyone) or "per_user" (each person's own
     # upstream account, B2). Optional: None leaves the stored value alone.
     credential_scope: Optional[str] = None
+    # SSRF escape: permit an explicitly-approved enterprise-internal (RFC 1918)
+    # upstream. Loopback, link-local and cloud-metadata stay blocked regardless.
+    allow_private: Optional[bool] = None
 
     @model_validator(mode="after")
     def _check(self):
@@ -411,6 +457,7 @@ async def register_server(body: RegisterServerRequest, request: Request):
     cfg["updated_at"] = int(time.time())
     _carry_over(cfg, existing)
     _check_credential_scope(cfg)
+    assert_upstream_url_safe(cfg)   # SSRF guard (G2)
     set_upstream(tenant_id, route, cfg)
 
     try:

@@ -56,6 +56,9 @@ class UpstreamConfigRequest(BaseModel):
     # "shared" (one credential for everyone) or "per_user" (each person's own
     # upstream account, B2). Optional: None leaves the stored value alone.
     credential_scope: Optional[str] = None
+    # SSRF escape: permit an explicitly-approved enterprise-internal (RFC 1918)
+    # upstream. Loopback, link-local and cloud-metadata stay blocked regardless.
+    allow_private: Optional[bool] = None
 
     @model_validator(mode="after")
     def _check(self):
@@ -117,9 +120,10 @@ async def put_route(route: str, body: UpstreamConfigRequest, request: Request):
     cfg["updated_at"] = int(time.time())
     # Mirror the admin plane: a config rewrite must not silently unbind the route
     # from its policy profile or re-enable a server an operator disabled.
-    from api.routes_mcp_admin import _carry_over, _check_credential_scope
+    from api.routes_mcp_admin import _carry_over, _check_credential_scope, assert_upstream_url_safe
     _carry_over(cfg, existing)
     _check_credential_scope(cfg)
+    assert_upstream_url_safe(cfg)   # SSRF guard (G2)
     set_upstream(tenant_id, route, cfg)
     gateway_router.invalidate(tenant_id, route)  # drop any pooled connection
     log_admin_action(
