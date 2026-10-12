@@ -239,10 +239,13 @@ def test_modes_come_from_the_deciding_modules_not_a_local_copy():
 
 
 def test_sso_check_and_sso_reporting_share_one_reader():
-    """_require_tenant enforces SSO; posture reports it. Two truthy sets would
-    let the portal say 'not required' on a deployment that refuses keys."""
-    assert "_require_sso_enabled()" in inspect.getsource(rts._require_tenant)
-    assert "_require_sso_enabled()" in inspect.getsource(rts._posture_modes)
+    """_require_tenant enforces SSO PER TENANT; posture reports the DEPLOYMENT
+    posture. The two serve different scopes now, but both derive the env
+    truthy-set from one reader (_env_require_sso), so the portal can't say 'not
+    required' on a deployment that refuses keys."""
+    assert "_require_sso_enabled(tenant_id)" in inspect.getsource(rts._require_tenant)
+    assert "_env_require_sso()" in inspect.getsource(rts._posture_modes)
+    assert "_env_require_sso()" in inspect.getsource(rts._require_sso_enabled)
 
 
 def test_posture_touches_no_store():

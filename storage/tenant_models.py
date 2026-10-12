@@ -148,3 +148,7 @@ class TenantUpdateRequest(BaseModel):
     output_guardrails: Optional[dict[str, GuardrailPolicy]] = None
     rbac: Optional[TenantRBAC] = None
     quota: Optional[TenantQuota] = None
+    # Operator-controlled: require SSO for this tenant's human portal login
+    # (refuses the API key on /v1/tenant/* routes; the key still works for the
+    # guard/API path). Not tenant self-service. See routes_tenant_self.
+    require_sso: Optional[bool] = Field(default=None)

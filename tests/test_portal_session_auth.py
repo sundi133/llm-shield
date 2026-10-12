@@ -275,7 +275,9 @@ def test_require_sso_refuses_an_api_key(client, monkeypatch):
     monkeypatch.setenv("SHIELD_PORTAL_REQUIRE_SSO", "1")
     r = _me(client, key=API_KEY)
     assert r.status_code == 403
-    assert "SHIELD_PORTAL_REQUIRE_SSO" in r.json()["detail"]
+    # The message tells the user to sign in without leaking the deployment env
+    # var name; the key is still valid on the guard/API path.
+    assert "SSO" in r.json()["detail"]
 
 
 def test_require_sso_still_allows_a_session(client, session, monkeypatch):

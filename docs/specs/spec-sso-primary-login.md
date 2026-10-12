@@ -64,14 +64,21 @@ New:
 - **PR 1 (UI only):** no new endpoints. `static/tenant.html` reorders the login so
   the SSO block (`revealSso`/`startSso`, `:6725-6771` → `GET /v1/tenant/auth/login`)
   is primary and key entry is a fallback.
-- **PR 2 (per-tenant require-SSO):**
-  - `GET /v1/tenant/me/portal-auth` → `{require_sso: bool, source: "tenant"|"env"|"default"}`.
-  - `PUT /v1/tenant/me/portal-auth` body `{require_sso: bool}` → updates the tenant
-    record. Auth: `_require_tenant` + `require_portal_admin` (only a tenant admin
-    may flip it). Mounted on the admin plane under the existing
-    `/v1/tenant` router.
-  - Enforcement reuses `_require_tenant` (`routes_tenant_self.py:175-181`); change
-    `_require_sso_enabled` to also read the per-tenant field.
+- **PR 2 (per-tenant require-SSO) — OPERATOR-CONTROLLED (corrected from draft):**
+  - The toggle is set by the **platform operator**, not the tenant:
+    `PUT /v1/admin/tenants/{tenant_id}` gains `require_sso: bool` (X-Admin-Key),
+    merged onto the tenant record by `update_tenant`. **There is no tenant-side
+    write.** Rationale (and the existing code comment at
+    `routes_tenant_self.py:171-174`): *a tenant able to switch off the requirement
+    that they sign in has not been required to* — a self-service PUT would be the
+    loophole, so it is omitted.
+  - `GET /v1/tenant/me/portal-auth` → `{require_sso, source: "env"|"tenant"|
+    "default", editable_by_tenant: false}` — **read-only transparency** so a
+    tenant can see the posture but not change it.
+  - Enforcement: `_require_sso_enabled(tenant_id)` returns
+    `_env_require_sso() OR tenant.require_sso` (store-resilient: `get_tenant`
+    returns None on a Redis blip, so a blip does not escalate). Posture stays
+    deployment-wide via `_env_require_sso()` (no store read on the posture page).
 - **PR 3 (admin SSO):** new router `/v1/admin/auth` (mirrors `routes_portal_auth`):
   - `GET /v1/admin/auth/providers` → whether admin SSO is configured.
   - `GET /v1/admin/auth/login?next=` → 302 to Votal IdP (auth-code + PKCE S256,
@@ -108,9 +115,10 @@ New:
   `SHIELD_PORTAL_REQUIRE_SSO` unset; `X-Admin-Key` remains.
 
 ### Threat model — loopholes to close (each → a test in §8)
-1. **Open redirect:** the SSO `next=` param (tenant `:199-260` and new admin
-   `/login`) must be validated to same-origin, allowlisted relative paths on
-   callback. Reject absolute/external URLs.
+1. **Open redirect:** the SSO `next=` param must be a same-origin relative path.
+   **Tenant side: already closed** — `_safe_next` (`routes_portal_auth.py:90-102`)
+   rejects schemes, `//`, and `\`, and is applied at both store and callback.
+   Admin SSO (PR 5) must reuse `_safe_next`.
 2. **Empty `admin_groups` / `operator_groups` = fail-closed.** Code already 503s
    on empty tenant `admin_groups` (`routes_portal_auth._require_configured`),
    which **diverges from `docs/spec-portal-sso.md:163-165` ("everyone is admin")**.
@@ -225,10 +233,11 @@ These five are in-scope requirements, not roadmap. Each → a test in §8.
    (fail-closed). Docs only.
 1. **Tenant UI: SSO primary** (`static/tenant.html` reorder; key = labeled
    fallback). No server change. Lowest risk.
-2. **Per-tenant `require_sso`** (`GET/PUT /v1/tenant/me/portal-auth` +
-   `_require_sso_enabled` reads the tenant field; default off) + tenant-side
-   loophole fixes (open-redirect guard on `next=`, revoke-key-under-SSO) +
-   **EH-1** (`min_acr`/`require_amr` on the tenant login).
+2. **Per-tenant `require_sso`** — OPERATOR-CONTROLLED: `require_sso` on
+   `PUT /v1/admin/tenants/{id}` + read-only `GET /v1/tenant/me/portal-auth` +
+   `_require_sso_enabled(tenant_id)`; default off. Open-redirect confirmed already
+   closed (`_safe_next`). **DONE.** (EH-1 acr/amr and the revoke-key-under-SSO fix
+   were split out to keep this PR small — see PRs 2a/3.)
 3. **Session logout + SLO (EH-2)**: `POST .../auth/logout` and OIDC back-channel
    logout for the tenant portal (revoke-by-`sub` over the existing index).
 4. **Auth events → audit/SIEM (EH-3)**: structured login/logout/flip/break-glass
