@@ -1,0 +1,17 @@
+{
+  "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search",
+  "name": "Brave Search MCP Server",
+  "pinned": "",
+  "rating": {
+    "band": "unrated",
+    "rating_version": "1",
+    "reasons": [
+      "scan failed or produced no report"
+    ],
+    "score": null
+  },
+  "repo": "modelcontextprotocol/servers",
+  "scan": {},
+  "slug": "brave-search",
+  "target": "stdio:npx -y @modelcontextprotocol/server-brave-search"
+}
