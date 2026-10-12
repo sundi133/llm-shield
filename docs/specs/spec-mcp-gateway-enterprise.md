@@ -253,16 +253,26 @@ green in a **clean venv**; CI `pytest` gate passes.
 - **Next (post-v1):** stdio bridge, SCIM lifecycle sync, Postgres system-of-record,
   third-party-broker resource-server mode.
 
-## 10. Decisions to confirm (before M1)
+## 10. Decisions (resolved 2026-10-12)
 
-1. **Authz default:** existing tenants stay `legacy` (allow-all-on-empty) until
-   migrated; new tenants `declarative` (default-deny). Agreed? (Secure-by-default
-   without breaking a year of posting agents.)
-2. **System of record:** stay on Redis+fallback for v1 (Postgres = Next), or make
-   Postgres an M1 dependency? (The target names Postgres; v1-on-Redis is faster.)
-3. **Broker vs. own AS:** remain our own authorization server for v1 (we already
-   issue/validate Shield JWTs), add resource-server-for-a-broker mode later?
-4. **First two upstreams + first IdP** to certify (GitHub + Jira? Okta/Entra?) —
-   drives the M3 interop test matrix.
-5. **Private-network destinations & API keys at launch:** required for v1, or
-   gated behind an allowlist/flag?
+1. **Authz default — DECIDED:** existing tenants stay `legacy` (allow-all-on-empty)
+   until migrated; **new tenants default-deny** (`declarative`). Secure-by-default
+   without breaking a year of running agents.
+2. **System of record — DECIDED: Redis + fallback for v1.** Postgres is Next.
+3. **Authorization server — DECIDED:** remain our **own AS** for v1 (we already
+   issue + validate Shield JWTs). Resource-server-for-a-broker mode is Next.
+4. **First IdPs — DECIDED: Okta and Entra.** Plus the **"custom app sends its own
+   headers"** path: a scoped gateway-issued token or **API key** presented in a
+   header, validated by the gateway (the header/client name confers nothing; the
+   gateway never forwards it upstream). First two **upstream servers** still TBD
+   (proposed default: GitHub + one internal/Jira) — drives the M3 interop matrix.
+5. **API keys at launch — DECIDED: yes**, as **scoped machine/service/agent
+   credentials** (never a human login — humans use Okta/Entra SSO). Enterprise-
+   acceptable **because** M1/G8 gives them: shown-once secret + hashed storage,
+   **expiry, rotation, immediate revocation, a scope ceiling that only narrows**,
+   and tenant+principal+audience binding; issuance gated by strong admin auth and
+   audited. We **also** offer short-lived OAuth client-credentials and recommend
+   them where the client supports it. Private-network destinations: allowed via an
+   explicit per-tenant allowlist (not open by default).
+
+**Still open (not blocking M1):** the first two upstream MCP servers to certify.
