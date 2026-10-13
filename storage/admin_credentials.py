@@ -59,6 +59,8 @@ ADMIN_OPERATIONS = (
     "principals:write", # suspend/reactivate a principal (operator incident response)
     "delegations:read", # list recorded agent-for-user delegations
     "delegations:write",# revoke a delegation
+    "policy:read",      # read/validate/simulate a tenant's authorization policy
+    "policy:write",     # edit the draft, publish, roll back
 )
 
 
