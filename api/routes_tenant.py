@@ -76,6 +76,23 @@ async def create_new_tenant(request: Request, body: TenantCreateRequest):
         after={"name": config.get("name"), "plan": config.get("plan"), "api_key_count": len(api_keys)},
     )
 
+    # M2 default-deny: a new tenant is `declarative` with a VISIBLE starter
+    # allow-all to narrow (never a hidden deny-all). authz_mode is set to
+    # declarative ONLY if the starter actually publishes, so a load failure
+    # leaves the tenant legacy (safe) rather than denying every call.
+    try:
+        from core.mcp.policy_runtime import default_new_tenant_mode
+        if default_new_tenant_mode() == "declarative":
+            from core.mcp.policy_lang import starter_document
+            from storage import policy_snapshot_store as _psnap
+            _psnap.save_draft(tenant_id, starter_document())
+            _psnap.publish(tenant_id, published_by=_actor_from_request(request),
+                           note="starter allow-all (M2)")
+            update_tenant(tenant_id, {"authz_mode": "declarative"})
+            config = get_tenant(tenant_id) or config
+    except Exception:
+        pass
+
     return {"status": "created", "tenant_id": tenant_id, "config": config}
 
 
@@ -347,6 +364,33 @@ async def get_effective_policies_endpoint(tenant_id: str, request: Request):
         "count": len(policies),
         "inherited_count": sum(1 for p in policies if "inherited_from" in p),
     }
+
+
+class AuthzModeRequest(BaseModel):
+    mode: str = Field(..., pattern="^(legacy|declarative)$")
+
+
+@router.put("/{tenant_id}/authz-mode")
+async def set_authz_mode(tenant_id: str, body: AuthzModeRequest, request: Request):
+    """Switch a tenant between `legacy` (allow-all-on-empty, pre-M2 behaviour) and
+    `declarative` (authorization decided by its published policy, default-deny).
+    The M2 migration control. Refuses declarative without a published policy, so a
+    tenant cannot be switched into denying every call."""
+    _scope(request, "tenants:write", tenant_id)
+    if not get_tenant(tenant_id):
+        raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
+    if body.mode == "declarative":
+        from storage.policy_snapshot_store import get_current_version
+        if not get_current_version(tenant_id):
+            raise HTTPException(status_code=400, detail=(
+                "Publish a policy before switching to declarative mode, or the "
+                "tenant would deny every tool call (fail-closed). "
+                "POST /v1/admin/policies/{tenant}/publish first."))
+    update_tenant(tenant_id, {"authz_mode": body.mode})
+    log_admin_action(action="set_authz_mode", actor=_actor_from_request(request),
+                     tenant_id=tenant_id, source_ip=_source_ip(request),
+                     after={"authz_mode": body.mode})
+    return {"status": "updated", "tenant_id": tenant_id, "authz_mode": body.mode}
 
 
 # Global admin audit log (not scoped to a tenant)

@@ -101,6 +101,7 @@ COPY api/routes_tenant.py api/
 COPY api/routes_admin_credentials.py api/
 COPY api/routes_admin_principals.py api/
 COPY api/routes_admin_delegations.py api/
+COPY api/routes_admin_policies.py api/
 COPY api/routes_tenant_self.py api/
 COPY api/routes_agents_registry.py api/
 COPY api/routes_governance.py api/
@@ -132,6 +133,7 @@ COPY api/routes_principals.py api/
 COPY core/principal_lifecycle.py core/
 COPY core/mcp/__init__.py core/mcp/
 COPY core/mcp/resource.py core/mcp/
+COPY core/mcp/policy_lang.py core/mcp/
 COPY storage/identity_policy.py storage/
 COPY storage/principal_store.py storage/
 COPY api/routes_a2a.py api/
@@ -188,6 +190,7 @@ COPY embodied-bench/ embodied-bench/
 COPY core/sigma_translate.py core/
 COPY storage/rate_limiter.py storage/
 COPY storage/policy_store.py storage/
+COPY storage/policy_snapshot_store.py storage/
 COPY storage/audit_log.py storage/
 COPY storage/audit_chain.py storage/
 COPY storage/state_store.py storage/
