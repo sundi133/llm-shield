@@ -69,7 +69,6 @@ All platforms below interoperate via **OIDC / OAuth 2.0**.
 | AWS IAM Identity Center | OIDC, OAuth 2.0 | Supported (OIDC/OAuth) — SAML on roadmap |
 | Oracle IAM | OIDC, OAuth 2.0 | Supported (OIDC/OAuth) |
 | IBM Security Verify | OIDC, OAuth 2.0 | Supported (OIDC/OAuth) |
-| JumpCloud | OIDC, OAuth 2.0 | Supported (OIDC/OAuth) |
 | CyberArk Workforce Identity | OIDC (auth) | Supported (OIDC); SCIM roadmap |
 | SailPoint Identity Security | OIDC (auth) | Supported (OIDC); SCIM roadmap |
 | Saviynt Enterprise Identity | OIDC (auth) | Supported (OIDC); SCIM roadmap |

@@ -22,7 +22,7 @@ Status: DRAFT, awaiting approval.
 
 ## 1. Problem & outcome
 
-A partner integration (JumpCloud AI Gateway) cannot use the MCP gateway. The
+A partner integration (a vendor AI Gateway) cannot use the MCP gateway. The
 failure was reproduced end to end on 2026-08-21 against production.
 
 **Two independent defects compound into a silent failure.**
@@ -53,13 +53,13 @@ Claude:   "This connector has no tools available."
 ```
 
 The same client connects to a plain MCP server without any of this, so the fault
-is Shield's, not the client's. For contrast, JumpCloud's own gateway answers
+is Shield's, not the client's. For contrast, a compliant vendor gateway answers
 unauthenticated MCP calls correctly:
 
 ```
 HTTP/2 401
 www-authenticate: Bearer realm="mcp",
-  resource_metadata="https://ai.jumpcloud.com/.well-known/oauth-protected-resource"
+  resource_metadata="https://ai.example-gateway.com/.well-known/oauth-protected-resource"
 ```
 
 **Outcome.** An MCP client presenting a tenant API key as a bearer token
@@ -78,7 +78,7 @@ header pointing at the existing
   gains one input; authorization is untouched.
 - **Not** the OAuth agent-key problem (`oauth:client:...` contains colons and the
   registry rejects it). Separate, documented in
-  `docs/jumpcloud-mcp-setup.md`.
+  `docs/vendor-ai-gateway-setup.md`.
 - **Not** changing `_err` globally. Only the unauthenticated branch gets a
   status code; every other JSON-RPC error keeps today's transport behaviour.
 - **Not** touching the content guard endpoints or `/v1/shield/tool/*`.

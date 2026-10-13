@@ -84,7 +84,7 @@ write (lost updates under concurrent writers).
 **Non-goals**
 
 - No FastMCP, no new MCP framework; this extends the existing gateway.
-- SAML in this spec. OIDC covers Okta, Entra ID, Google, Ping, JumpCloud and
+- SAML in this spec. OIDC covers Okta, Entra ID, Google, Ping and
   Auth0; SAML needs `xmlsec` and gets its own spec.
 - Accepting tokens issued directly by the IdP for the gateway's audience
   ("bring your own token", common with Entra). Shield federates to the IdP and
