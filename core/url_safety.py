@@ -67,23 +67,31 @@ def _allowed_hosts() -> Optional[frozenset[str]]:
     return frozenset(h.strip().lower() for h in raw.split(",") if h.strip())
 
 
-def _ip_is_safe_to_dial(ip_str: str) -> bool:
-    """Return False if the IP is internal/metadata/loopback/etc."""
+def _ip_is_safe_to_dial(ip_str: str, *, allow_private: bool = False) -> bool:
+    """Return False if the IP is internal/metadata/loopback/etc.
+
+    allow_private: when True, permit RFC 1918 / ULA private ranges (for an
+    explicitly-allowlisted enterprise-internal destination) while STILL blocking
+    loopback, link-local (← cloud metadata), multicast, reserved and unspecified.
+    So "allow private LAN" never becomes "allow 169.254.169.254".
+    """
     try:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
         return False
 
-    # Block every category that could route to an internal service
+    # Always-blocked categories — these route to the host/infra, not a LAN peer.
     if (
-        ip.is_private          # RFC 1918 + RFC 4193 ULA
-        or ip.is_loopback     # 127.0.0.0/8, ::1
+        ip.is_loopback        # 127.0.0.0/8, ::1
         or ip.is_link_local   # 169.254.0.0/16, fe80::/10  (← metadata)
         or ip.is_multicast    # 224/4, ff00::/8
         or ip.is_reserved     # 240/4
         or ip.is_unspecified  # 0.0.0.0, ::
     ):
         return False
+    # Private LAN ranges: blocked by default, permitted only when explicitly asked.
+    if ip.is_private:          # RFC 1918 + RFC 4193 ULA (loopback/link-local
+        return allow_private   # already returned above)
     return True
 
 
@@ -93,6 +101,7 @@ def validate_outbound_url(
     purpose: str = "outbound",
     check_env_allowlist: bool = True,
     resolve_dns: bool = True,
+    allow_private: bool = False,
 ) -> str:
     """Reject the URL or return it unchanged if safe.
 
@@ -158,7 +167,7 @@ def validate_outbound_url(
     except ValueError:
         literal_ip = None
     if literal_ip is not None:
-        if not _ip_is_safe_to_dial(str(literal_ip)):
+        if not _ip_is_safe_to_dial(str(literal_ip), allow_private=allow_private):
             logger.warning(f"{purpose}: rejecting non-public IP-literal host {host!r}")
             raise UnsafeURLError("host resolves to a non-public IP")
         return url
@@ -179,7 +188,7 @@ def validate_outbound_url(
     for _family, _type, _proto, _canon, sockaddr in infos:
         ip_str = sockaddr[0]
         seen_ips.append(ip_str)
-        if not _ip_is_safe_to_dial(ip_str):
+        if not _ip_is_safe_to_dial(ip_str, allow_private=allow_private):
             logger.warning(
                 f"{purpose}: rejecting URL {url!r} — host {host!r} "
                 f"resolved to internal IP {ip_str}"

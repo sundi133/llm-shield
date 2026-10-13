@@ -183,8 +183,15 @@ def _free_port():
 
 
 @pytest.fixture
-def refusing_upstream():
-    """A real HTTP server that answers every MCP request with 401."""
+def refusing_upstream(monkeypatch):
+    """A real HTTP server that answers every MCP request with 401.
+
+    It binds 127.0.0.1, which the dial-time SSRF guard now blocks — so disable
+    that guard here: these tests exercise REFUSAL handling, and SSRF itself is
+    covered by tests/test_mcp_gateway_ssrf.py.
+    """
+    monkeypatch.setattr("core.url_safety.validate_outbound_url",
+                        lambda url, **kw: url)
     import uvicorn
     from starlette.applications import Starlette
     from starlette.responses import JSONResponse
@@ -239,6 +246,10 @@ def test_an_outside_cancellation_is_still_a_cancellation(monkeypatch):
     from contextlib import asynccontextmanager
 
     from core.mcp import upstream as up
+
+    # The dial-time SSRF guard would reject the fake host before the hang; this
+    # test is about cancellation, not SSRF (covered in test_mcp_gateway_ssrf.py).
+    monkeypatch.setattr("core.url_safety.validate_outbound_url", lambda url, **kw: url)
 
     @asynccontextmanager
     async def hangs(url, headers=None):

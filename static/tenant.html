@@ -5724,6 +5724,25 @@ if __name__ == "__main__":
           <div class="mcp-warning-note" id="mcp-reg-isolation-note">
             Leave unchecked only if the upstream is still publicly reachable — Shield warns, because an agent could then bypass it.
           </div>
+          <label class="mcp-field"><span>Credential model</span>
+            <select id="mcp-reg-cred-scope">
+              <option value="">Default (tenant setting)</option>
+              <option value="shared">Shared — one credential for everyone</option>
+              <option value="per_user">Per-user — each person connects their own</option>
+            </select>
+          </label>
+          <label class="mcp-check-row">
+            <input id="mcp-reg-verified" type="checkbox" />
+            <span>Require verified identity (SSO) to use this server</span>
+          </label>
+          <label class="mcp-check-row">
+            <input id="mcp-reg-allow-private" type="checkbox" />
+            <span>Allow a private / internal destination (allow_private)</span>
+          </label>
+          <div class="mcp-warning-note" id="mcp-reg-allow-private-note">
+            Only for an explicitly-approved internal server. Loopback, link-local and
+            cloud-metadata addresses stay blocked either way.
+          </div>
           <div style="grid-column:1/-1;">
             <button class="primary" onclick="mcpRegisterServer()">Register Server</button>
           </div>
@@ -14621,6 +14640,10 @@ async function mcpRegisterServer() {
     if (h.errors.length) { showToast(h.errors.join(' '), 'error'); return; }
     if (Object.keys(h.headers).length) body.headers = h.headers;   // absent = keep current
   }
+  const credScope = document.getElementById('mcp-reg-cred-scope').value;
+  if (credScope) body.credential_scope = credScope;
+  if (document.getElementById('mcp-reg-verified').checked) body.require_verified_identity = true;
+  if (document.getElementById('mcp-reg-allow-private').checked) body.allow_private = true;
   try {
     const r = await apiCall('/v1/tenant/me/mcp/servers',
       { method: 'POST', body: JSON.stringify(body) });
@@ -14631,6 +14654,9 @@ async function mcpRegisterServer() {
     document.getElementById('mcp-reg-cmd').value = '';
     document.getElementById('mcp-reg-headers').innerHTML = '';   // secrets never linger in the page
     document.getElementById('mcp-reg-isolation').checked = false;
+    document.getElementById('mcp-reg-cred-scope').value = '';
+    document.getElementById('mcp-reg-verified').checked = false;
+    document.getElementById('mcp-reg-allow-private').checked = false;
     loadMcpGateway();
   } catch (e) {
     showToast('Failed: ' + e.message, 'error');

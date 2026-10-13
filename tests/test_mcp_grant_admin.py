@@ -62,7 +62,7 @@ def env(monkeypatch):
     monkeypatch.delenv("SHIELD_MCP_AUDIT", raising=False)
     for mod in (ts, grants, ostore, ps, rev):
         monkeypatch.setattr(mod, "_get_redis", lambda: None)
-    monkeypatch.setattr("core.url_safety.validate_outbound_url", lambda u, purpose=None: u)
+    monkeypatch.setattr("core.url_safety.validate_outbound_url", lambda u, **kw: u)
     _reset_provider_for_tests()
     principal.clear_cache()
     yield

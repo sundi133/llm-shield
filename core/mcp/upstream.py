@@ -169,6 +169,23 @@ async def connect_upstream(config: dict) -> MCPUpstream:
       {"transport": "http", "url": "https://...", "headers": {...}}   # streamable HTTP
     """
     transport = (config.get("transport") or "stdio").lower()
+
+    # Dial-time SSRF guard (spec-mcp-gateway-enterprise G2): resolve the upstream
+    # URL and refuse to connect to a non-public address. This is the real
+    # anti-rebinding check — the store-time boundary check in
+    # routes_mcp_admin.assert_upstream_url_safe cannot catch a hostname that
+    # resolves to an internal IP. allow_private permits an approved RFC 1918
+    # destination; loopback/link-local/metadata stay blocked.
+    if transport in ("sse", "http", "streamable_http", "streamable-http") and config.get("url"):
+        from core.url_safety import UnsafeURLError, validate_outbound_url
+        try:
+            validate_outbound_url(
+                config["url"], purpose="mcp-dial", check_env_allowlist=False,
+                resolve_dns=True, allow_private=bool(config.get("allow_private")),
+            )
+        except UnsafeURLError as e:
+            raise ValueError(f"upstream URL blocked by SSRF policy: {e}")
+
     stack = AsyncExitStack()
     try:
         if transport == "stdio":
