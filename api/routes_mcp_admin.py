@@ -139,6 +139,9 @@ def _redact(cfg: dict) -> dict:
 _PRESERVED_ON_REWRITE = (
     "profile_id", "overrides", "effective_policy", "effective_rev",
     "active", "scan", "scan_override", "require_verified_identity", "credential_scope",
+    # Approve-before-publish (M1): the operator-approved catalog fingerprint and
+    # its pending/quarantine state survive a re-register that can't rescan.
+    "catalog_hash", "catalog_approved_hash", "catalog_pending", "catalog_quarantined",
 )
 
 
@@ -475,6 +478,16 @@ async def register_server(body: RegisterServerRequest, request: Request):
     # third-party server without looking at them is the whole gap this closes.
     report = await _rescan(tenant_id, route, cfg)
     cfg["scan"] = summary_for_route(report)
+    # Registering a server is the operator vouching for the catalog they see now,
+    # so the observed fingerprint becomes the approved baseline (approve-before-
+    # publish, M1). A later background rescan that sees a DIFFERENT catalog is the
+    # rug-pull this baseline catches.
+    observed = report.get("catalog_hash") or ""
+    if observed:
+        cfg["catalog_hash"] = observed
+        cfg["catalog_approved_hash"] = observed
+        cfg["catalog_pending"] = False
+        cfg["catalog_quarantined"] = False
     scan_policy = (cfg.get("effective_policy") or {}).get("scan_policy")
     if blocks_activation(report, scan_policy):
         # Registered but not serving. Deliberately not a 4xx: the operator's
@@ -585,23 +598,62 @@ async def run_scan(route: str, request: Request):
     report = await _rescan(tenant_id, route, cfg)
     cfg["scan"] = summary_for_route(report)
     cfg["updated_at"] = int(time.time())
+
+    # Approve-before-publish (M1): compare the freshly-observed catalog to the
+    # operator-approved baseline. A mismatch is a rug pull — the server now
+    # advertises different tools/descriptions/schemas than were vetted.
+    observed = report.get("catalog_hash") or ""
+    approved = cfg.get("catalog_approved_hash") or ""
+    catalog_changed = bool(observed) and bool(approved) and observed != approved
+    if catalog_changed:
+        cfg["catalog_hash"] = observed
+        cfg["catalog_pending"] = True
+        # Quarantine is opt-in (secure-by-default-but-non-breaking invariant): a
+        # profile sets scan_policy.on_catalog_change = "quarantine" to refuse the
+        # changed catalog until an admin approves it. Default is warn-only, which
+        # matches how a fail verdict is handled below.
+        policy = (cfg.get("effective_policy") or {}).get("scan_policy") or {}
+        if policy.get("on_catalog_change") == "quarantine" and cfg.get("active", True):
+            cfg["active"] = False
+            cfg["catalog_quarantined"] = True
+    elif observed and not approved:
+        # First successful scan after a register that could not reach the server:
+        # adopt what we now see as the approved baseline.
+        cfg["catalog_hash"] = observed
+        cfg["catalog_approved_hash"] = observed
     set_upstream(tenant_id, route, cfg)
 
     try:
         from storage.admin_audit import log_admin_action
-        log_admin_action(action="mcp_server_scanned", actor=actor, tenant_id=tenant_id,
-                         after={"route": route, "verdict": report.get("verdict"),
-                                "gating_count": report.get("gating_count", 0),
-                                "via": "portal"})
+        log_admin_action(
+            action="mcp_catalog_changed" if catalog_changed else "mcp_server_scanned",
+            actor=actor, tenant_id=tenant_id,
+            after={"route": route, "verdict": report.get("verdict"),
+                   "gating_count": report.get("gating_count", 0),
+                   "catalog_changed": catalog_changed,
+                   "quarantined": bool(cfg.get("catalog_quarantined")), "via": "portal"})
     except Exception:
         pass
 
     resp = {"status": "scanned", "tenant_id": tenant_id, "route": route,
-            "scan": report}
+            "scan": report, "catalog_changed": catalog_changed}
+    if catalog_changed:
+        resp["catalog_pending"] = True
+        if cfg.get("catalog_quarantined"):
+            resp["warning"] = (
+                "The server's catalog changed since it was approved and has been "
+                "QUARANTINED (inactive). Review the new tools/descriptions, then "
+                "POST /servers/{route}/approve-catalog to republish.")
+        else:
+            resp["warning"] = (
+                "The server's catalog changed since it was approved — its tools, "
+                "descriptions or schemas differ from what was vetted. Review and "
+                "POST /servers/{route}/approve-catalog to re-baseline (set "
+                "scan_policy.on_catalog_change=quarantine to auto-disable on change).")
     # A rescan never disables a running server on its own: pulling a live
     # integration mid-flight on a heuristic verdict is the operator's call, not
     # the scanner's. Surface it and let them decide.
-    if report.get("verdict") == "fail" and cfg.get("active", True):
+    elif report.get("verdict") == "fail" and cfg.get("active", True):
         resp["warning"] = (
             "This server has critical findings but is still serving traffic. "
             "Disable it if that is not intended; a rescan does not stop a "
@@ -645,6 +697,45 @@ async def activate_server(route: str, request: Request):
 
     return {"status": "activated", "tenant_id": tenant_id, "route": route,
             "overrode_verdict": report.get("verdict"),
+            "server": _redact(updated)}
+
+
+@router.post("/servers/{route}/approve-catalog")
+async def approve_catalog(route: str, request: Request):
+    """Approve the server's CURRENT catalog as the new baseline (M1).
+
+    Separate from /activate: that overrides a security *finding*; this accepts a
+    *change* to the advertised tools/descriptions/schemas. After approval the
+    observed fingerprint is the one a later rescan compares against, and a server
+    quarantined by a catalog change is republished.
+    """
+    tenant_id = _require_tenant(request)
+    actor = _actor(request)
+    cfg = get_upstream(tenant_id, route)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"route '{route}' not found")
+
+    observed = cfg.get("catalog_hash") or ""
+    updated = dict(cfg)
+    updated["catalog_approved_hash"] = observed
+    updated["catalog_pending"] = False
+    was_quarantined = bool(updated.get("catalog_quarantined"))
+    if was_quarantined:
+        updated["active"] = True
+        updated["catalog_quarantined"] = False
+    updated["updated_at"] = int(time.time())
+    set_upstream(tenant_id, route, updated)
+
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="mcp_catalog_approved", actor=actor, tenant_id=tenant_id,
+                         after={"route": route, "catalog_hash": observed,
+                                "republished": was_quarantined, "via": "portal"})
+    except Exception:
+        pass
+
+    return {"status": "catalog_approved", "tenant_id": tenant_id, "route": route,
+            "catalog_hash": observed, "republished": was_quarantined,
             "server": _redact(updated)}
 
 
