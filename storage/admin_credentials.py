@@ -46,9 +46,61 @@ _MAX_CREDENTIALS = 1000       # a sane ceiling; the index is a single list
 _PUBLIC_FIELDS = ("id", "name", "prefix", "created_at", "created_by",
                   "expires_at", "disabled", "last_used", "scope")
 
+# The coarse operation groups a credential's scope may allow (Task 2). A scope
+# narrows the platform-wide authority of an admin credential; it never widens
+# it. The gateway/handlers name these exact strings when they call
+# core.auth.require_admin_scope, so this is the single source of the vocabulary.
+ADMIN_OPERATIONS = (
+    "tenants:read",     # read tenants, usage, audit, dashboard, hierarchy
+    "tenants:write",    # create/update/delete tenants, tenant API keys, parent
+    "oidc:read",        # read a tenant's trusted OIDC providers
+    "oidc:write",       # register/remove a tenant's OIDC providers
+)
+
 
 def _now() -> int:
     return int(time.time())
+
+
+def normalize_scope(scope):
+    """Validate and normalise a credential scope, or None for full admin.
+
+    Shape: {"operations": [<group>|"*", ...], "tenants": [<id>|"*", ...]}.
+    operations is a required non-empty allowlist; "*" means all operations.
+    tenants is optional — empty (or containing "*") means all tenants.
+    Raises ValueError on a bad shape or an unknown operation, so an operator is
+    told at mint time rather than discovering a typo as a silent 403 later.
+    """
+    if scope is None:
+        return None
+    if not isinstance(scope, dict):
+        raise ValueError("scope must be an object with 'operations' and optional 'tenants'")
+
+    ops_in = scope.get("operations")
+    if not isinstance(ops_in, list) or not ops_in:
+        raise ValueError("scope.operations must be a non-empty list")
+    operations = []
+    for raw in ops_in:
+        op = str(raw).strip()
+        if op == "*":
+            operations = ["*"]
+            break
+        if op not in ADMIN_OPERATIONS:
+            raise ValueError(
+                f"unknown operation {op!r}; valid: {', '.join(ADMIN_OPERATIONS)} or '*'")
+        if op not in operations:
+            operations.append(op)
+
+    tenants_in = scope.get("tenants") or []
+    if not isinstance(tenants_in, list):
+        raise ValueError("scope.tenants must be a list of tenant ids")
+    tenants = []
+    for raw in tenants_in:
+        tid = str(raw).strip()
+        if tid and tid not in tenants:
+            tenants.append(tid)
+
+    return {"operations": operations, "tenants": tenants}
 
 
 def _hash(secret: str) -> str:
@@ -90,6 +142,8 @@ def create_credential(name: str, *, expires_in_days: Optional[int] = None,
             raise ValueError("expires_in_days must be an integer")
         if expires_in_days <= 0:
             raise ValueError("expires_in_days must be greater than zero")
+
+    scope = normalize_scope(scope)
 
     ids = _index()
     if len(ids) >= _MAX_CREDENTIALS:
@@ -177,6 +231,29 @@ def get_credential(cred_id: str) -> Optional[dict]:
         return None
     record = kv_get(_cred_key(key_hash))
     return _public(record) if isinstance(record, dict) else None
+
+
+def rotate_credential(cred_id: str, *, expires_in_days: Optional[int] = None):
+    """Mint a replacement carrying the old credential's name and scope, then
+    revoke the old one. Returns (secret, public_record). Raises ValueError if
+    the id is unknown. The new secret is the caller's to show once.
+
+    expires_in_days None keeps the credential non-expiring (it does NOT inherit
+    the old deadline — rotation is a fresh issue; pass a window to set one).
+    """
+    key_hash = kv_get(_id_key(cred_id))
+    if not isinstance(key_hash, str):
+        raise ValueError("no such credential")
+    old = kv_get(_cred_key(key_hash))
+    if not isinstance(old, dict):
+        raise ValueError("no such credential")
+    name = old.get("name", "")
+    scope = old.get("scope")
+    created_by = old.get("created_by", "")
+    secret, record = create_credential(
+        name, expires_in_days=expires_in_days, created_by=created_by, scope=scope)
+    revoke_credential(cred_id)
+    return secret, record
 
 
 def revoke_credential(cred_id: str) -> bool:

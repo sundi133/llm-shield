@@ -858,3 +858,50 @@ def require_admin_root_or_operator(request) -> None:
         detail="Managing admin credentials requires the root SHIELD_ADMIN_KEY "
                "or a signed-in operator; a managed credential cannot.",
     )
+
+
+def require_admin_scope(request, operation: str, tenant_id: str = "",
+                        *, cross_tenant: bool = False) -> None:
+    """Enforce a managed credential's scope for one admin operation.
+
+    Only a managed credential carries a scope. The root key, an SSO operator,
+    and a middleware-less mount (no admin_identity on state) are unconstrained
+    here — their authority is decided by the gate, not by scope. A credential
+    with no scope (scope is None) is full-admin, which is every Task-1
+    credential, so this is a no-op for them and fully backward-compatible.
+
+    A scoped credential is allowed iff `operation` is in its operations
+    allowlist (or the allowlist is ["*"]) AND, when a tenant_id is given, that
+    tenant is in its tenants allowlist (empty tenants = all tenants, "*" = all).
+
+    `cross_tenant=True` marks an endpoint that spans every tenant (the dashboard,
+    an unfiltered global audit). A credential restricted to specific tenants
+    (a non-empty tenants allowlist without "*") is refused such an endpoint —
+    otherwise a tenant-scoped partner key could read every tenant through it.
+    """
+    from fastapi import HTTPException
+
+    ident = getattr(getattr(request, "state", None), "admin_identity", None)
+    if not (isinstance(ident, dict) and ident.get("kind") == "admin_credential"):
+        return
+    scope = ident.get("scope")
+    if not scope:
+        return
+
+    operations = scope.get("operations") or []
+    if "*" not in operations and operation not in operations:
+        raise HTTPException(
+            status_code=403,
+            detail=f"this admin credential is not scoped for {operation}")
+
+    tenants = scope.get("tenants") or []
+    restricted_to_tenants = bool(tenants) and "*" not in tenants
+    if cross_tenant and restricted_to_tenants:
+        raise HTTPException(
+            status_code=403,
+            detail="this admin credential is restricted to specific tenants and "
+                   "cannot use a cross-tenant endpoint")
+    if tenant_id and restricted_to_tenants and tenant_id not in tenants:
+        raise HTTPException(
+            status_code=403,
+            detail=f"this admin credential is not scoped for tenant {tenant_id}")

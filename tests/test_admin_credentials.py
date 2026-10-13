@@ -232,6 +232,149 @@ def test_validation(client, body):
     assert client.post(CREDS, json=body, headers={"X-Admin-Key": ROOT}).status_code == 422
 
 
+# ── Task 2: scope enforcement ───────────────────────────────────────────────
+# Unique tenant ids per assertion: the dev store persists rows across tests, so
+# a fixed id like "acme" would 409 on the second create.
+
+def _tid() -> str:
+    import uuid
+    return "t-" + uuid.uuid4().hex[:10]
+
+
+def test_scope_operation_and_tenant_enforced(client):
+    tid, other = _tid(), _tid()
+    secret = _mint(client, "rafay",
+                   scope={"operations": ["tenants:write"], "tenants": [tid]}
+                   ).json()["secret"]
+    h = {"X-Admin-Key": secret}
+    assert client.post(TENANTS, json={"tenant_id": tid}, headers=h).status_code == 200    # in scope
+    assert client.post(TENANTS, json={"tenant_id": other}, headers=h).status_code == 403  # tenant out of scope
+    assert client.get(f"{TENANTS}/{tid}", headers=h).status_code == 403                    # read op not granted
+
+
+def test_scope_read_only(client):
+    tid, other = _tid(), _tid()
+    assert client.post(TENANTS, json={"tenant_id": tid}, headers={"X-Admin-Key": ROOT}).status_code == 200
+    secret = _mint(client, "viewer",
+                   scope={"operations": ["tenants:read"], "tenants": [tid]}
+                   ).json()["secret"]
+    h = {"X-Admin-Key": secret}
+    assert client.get(f"{TENANTS}/{tid}", headers=h).status_code == 200          # read in scope
+    assert client.get(f"{TENANTS}/{other}", headers=h).status_code == 403        # tenant out of scope
+    assert client.put(f"{TENANTS}/{tid}", json={}, headers=h).status_code == 403  # write not granted
+
+
+def test_scope_cross_tenant_endpoints_barred_for_restricted(client):
+    tid = _tid()
+    secret = _mint(client, "rafay",
+                   scope={"operations": ["tenants:read"], "tenants": [tid]}
+                   ).json()["secret"]
+    h = {"X-Admin-Key": secret}
+    assert client.get(TENANTS, headers=h).status_code == 403            # list (cross-tenant)
+    assert client.get("/v1/admin/dashboard", headers=h).status_code == 403
+    assert client.get("/v1/admin/audit", headers=h).status_code == 403  # unfiltered global audit
+    assert client.get(f"{TENANTS}/{tid}/audit", headers=h).status_code == 200  # per-tenant, in scope
+
+
+def test_scope_all_tenants_allows_cross_tenant(client):
+    secret = _mint(client, "global-reader",
+                   scope={"operations": ["tenants:read"], "tenants": []}
+                   ).json()["secret"]
+    h = {"X-Admin-Key": secret}
+    assert client.get(TENANTS, headers=h).status_code == 200
+    assert client.get("/v1/admin/dashboard", headers=h).status_code == 200
+
+
+def test_scope_wildcard_operations(client):
+    tid, other = _tid(), _tid()
+    secret = _mint(client, "tenant-admin",
+                   scope={"operations": ["*"], "tenants": [tid]}
+                   ).json()["secret"]
+    h = {"X-Admin-Key": secret}
+    assert client.post(TENANTS, json={"tenant_id": tid}, headers=h).status_code == 200
+    assert client.get(f"{TENANTS}/{tid}", headers=h).status_code == 200      # any op on the in-scope tenant
+    assert client.post(TENANTS, json={"tenant_id": other}, headers=h).status_code == 403
+
+
+def test_scope_enforced_on_oidc(client):
+    tid, other = _tid(), _tid()
+    writer = _mint(client, "idp-admin",
+                   scope={"operations": ["oidc:write"], "tenants": [tid]}
+                   ).json()["secret"]
+    body = {"name": "okta", "issuer": "https://idp.example", "client_id": "s",
+            "jwks_uri": "https://idp.example/jwks", "admin_groups": ["ops"]}
+    assert client.post(f"/v1/admin/oidc-providers/{tid}", json=body,
+                       headers={"X-Admin-Key": writer}).status_code == 200
+    assert client.post(f"/v1/admin/oidc-providers/{other}", json=body,
+                       headers={"X-Admin-Key": writer}).status_code == 403
+    # A tenants-only credential cannot touch OIDC at all (operation not granted).
+    tenants_only = _mint(client, "t-admin",
+                         scope={"operations": ["tenants:write"], "tenants": [tid]}
+                         ).json()["secret"]
+    assert client.post(f"/v1/admin/oidc-providers/{tid}", json=body,
+                       headers={"X-Admin-Key": tenants_only}).status_code == 403
+
+
+def test_unscoped_credential_is_full_admin(client):
+    secret = _mint(client, "full").json()["secret"]       # no scope
+    h = {"X-Admin-Key": secret}
+    assert client.get(TENANTS, headers=h).status_code == 200
+    assert client.post(TENANTS, json={"tenant_id": _tid()}, headers=h).status_code == 200
+    assert client.get("/v1/admin/dashboard", headers=h).status_code == 200
+
+
+@pytest.mark.parametrize("scope", [
+    {"operations": ["bogus:op"]},   # unknown operation
+    {"operations": []},             # empty allowlist
+])
+def test_scope_validation_rejected(client, scope):
+    r = client.post(CREDS, json={"name": "x", "scope": scope}, headers={"X-Admin-Key": ROOT})
+    assert r.status_code == 400
+
+
+# ── Task 3: rotation ─────────────────────────────────────────────────────────
+
+def test_rotate_issues_new_secret_carries_scope_and_revokes_old(client):
+    tid, other = _tid(), _tid()
+    out = _mint(client, "rafay",
+                scope={"operations": ["tenants:write"], "tenants": [tid]}).json()
+    old_secret, cid = out["secret"], out["id"]
+
+    r = client.post(f"{CREDS}/{cid}/rotate", json={}, headers={"X-Admin-Key": ROOT})
+    assert r.status_code == 200, r.text
+    new = r.json()
+    new_secret, new_id = new["secret"], new["id"]
+    assert new_secret != old_secret and new_id != cid
+
+    # Old secret refused; new secret works within the carried-over scope.
+    assert client.post(TENANTS, json={"tenant_id": tid},
+                       headers={"X-Admin-Key": old_secret}).status_code == 403
+    assert client.post(TENANTS, json={"tenant_id": tid},
+                       headers={"X-Admin-Key": new_secret}).status_code == 200
+    assert client.post(TENANTS, json={"tenant_id": other},
+                       headers={"X-Admin-Key": new_secret}).status_code == 403  # scope carried
+
+    # Listing shows only the new one, with the same name + scope.
+    listing = client.get(CREDS, headers={"X-Admin-Key": ROOT}).json()
+    assert listing["count"] == 1
+    assert listing["credentials"][0]["id"] == new_id
+    assert listing["credentials"][0]["name"] == "rafay"
+    assert listing["credentials"][0]["scope"]["operations"] == ["tenants:write"]
+
+
+def test_rotate_unknown_id_404(client):
+    assert client.post(f"{CREDS}/akid_nope/rotate", json={},
+                       headers={"X-Admin-Key": ROOT}).status_code == 404
+
+
+def test_rotate_requires_root_or_operator(client):
+    out = _mint(client, "rafay").json()
+    secret, cid = out["secret"], out["id"]
+    # A managed credential cannot rotate (anti-escalation).
+    assert client.post(f"{CREDS}/{cid}/rotate", json={},
+                       headers={"X-Admin-Key": secret}).status_code == 403
+
+
 # 11 ─ Dockerfile.admin pins the lazily-imported storage module ─────────────
 
 def test_dockerfile_admin_copies_admin_credentials():

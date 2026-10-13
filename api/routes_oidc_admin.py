@@ -65,6 +65,8 @@ async def list_providers(tenant_id: str, request: Request):
         _require_admin(request)
     except PermissionError:
         return JSONResponse(status_code=403, content={"error": "forbidden"})
+    from core.auth import require_admin_scope
+    require_admin_scope(request, "oidc:read", tenant_id)
 
     providers = await oidc_registry.get_providers(tenant_id)
     return {
@@ -98,6 +100,8 @@ async def register_provider(tenant_id: str, request: Request):
         _require_admin(request)
     except PermissionError:
         return JSONResponse(status_code=403, content={"error": "forbidden"})
+    from core.auth import require_admin_scope
+    require_admin_scope(request, "oidc:write", tenant_id)
 
     body = await request.json()
     name = body.get("name", "").strip()
@@ -170,6 +174,8 @@ async def delete_provider(tenant_id: str, provider_name: str, request: Request):
         _require_admin(request)
     except PermissionError:
         return JSONResponse(status_code=403, content={"error": "forbidden"})
+    from core.auth import require_admin_scope
+    require_admin_scope(request, "oidc:write", tenant_id)
 
     removed = await oidc_registry.remove_provider(tenant_id, provider_name)
     if not removed:

@@ -37,9 +37,18 @@ def _source_ip(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
+def _scope(request: Request, operation: str, tenant_id: str = "",
+           *, cross_tenant: bool = False) -> None:
+    """Enforce a managed credential's scope (Task 2). No-op for the root key,
+    an SSO operator, or an unscoped (full-admin) credential."""
+    from core.auth import require_admin_scope
+    require_admin_scope(request, operation, tenant_id, cross_tenant=cross_tenant)
+
+
 @router.get("")
-async def list_all_tenants(include_deleted: bool = Query(False)):
+async def list_all_tenants(request: Request, include_deleted: bool = Query(False)):
     """List all tenants with summary info."""
+    _scope(request, "tenants:read", cross_tenant=True)
     return {"tenants": list_tenants(include_deleted=include_deleted)}
 
 
@@ -47,6 +56,7 @@ async def list_all_tenants(include_deleted: bool = Query(False)):
 async def create_new_tenant(request: Request, body: TenantCreateRequest):
     """Create a new tenant with validated config."""
     tenant_id = body.tenant_id
+    _scope(request, "tenants:write", tenant_id)
 
     existing = get_tenant(tenant_id, include_deleted=True)
     if existing and not existing.get("deleted_at"):
@@ -70,8 +80,9 @@ async def create_new_tenant(request: Request, body: TenantCreateRequest):
 
 
 @router.get("/{tenant_id}")
-async def get_tenant_config(tenant_id: str):
+async def get_tenant_config(tenant_id: str, request: Request):
     """Get a tenant's full config."""
+    _scope(request, "tenants:read", tenant_id)
     config = get_tenant(tenant_id)
     if not config:
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
@@ -81,6 +92,7 @@ async def get_tenant_config(tenant_id: str):
 @router.put("/{tenant_id}")
 async def update_tenant_config(tenant_id: str, body: TenantUpdateRequest, request: Request):
     """Update a tenant's config (merges with existing)."""
+    _scope(request, "tenants:write", tenant_id)
     before = get_tenant(tenant_id)
     if not before:
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
@@ -108,6 +120,7 @@ async def delete_tenant_config(
     hard: bool = Query(False, description="If true, permanently delete; otherwise soft delete"),
 ):
     """Delete a tenant (soft by default)."""
+    _scope(request, "tenants:write", tenant_id)
     before = get_tenant(tenant_id, include_deleted=True)
     if not before:
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
@@ -128,6 +141,7 @@ async def delete_tenant_config(
 @router.post("/{tenant_id}/api-keys")
 async def add_tenant_api_key(tenant_id: str, body: dict, request: Request):
     """Add an API key for a tenant."""
+    _scope(request, "tenants:write", tenant_id)
     existing = get_tenant(tenant_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
@@ -176,6 +190,7 @@ async def list_tenant_api_keys_endpoint(tenant_id: str, request: Request):
     An unknown tenant returns an empty list identical to a tenant with no
     keys, so this cannot be used to enumerate tenants.
     """
+    _scope(request, "tenants:read", tenant_id)
     from storage.tenant_store import list_tenant_api_keys
     keys = list_tenant_api_keys(tenant_id)
     return {"tenant_id": tenant_id, "count": len(keys), "keys": keys}
@@ -184,6 +199,7 @@ async def list_tenant_api_keys_endpoint(tenant_id: str, request: Request):
 @router.delete("/{tenant_id}/api-keys")
 async def remove_tenant_api_key(tenant_id: str, body: dict, request: Request):
     """Remove an API key for a tenant."""
+    _scope(request, "tenants:write", tenant_id)
     api_key = body.get("api_key")
     if not api_key:
         raise HTTPException(status_code=400, detail="'api_key' is required")
@@ -201,8 +217,9 @@ async def remove_tenant_api_key(tenant_id: str, body: dict, request: Request):
 
 
 @router.get("/{tenant_id}/usage")
-async def get_tenant_usage(tenant_id: str):
+async def get_tenant_usage(tenant_id: str, request: Request):
     """Get current usage stats for a tenant (requests/tokens)."""
+    _scope(request, "tenants:read", tenant_id)
     existing = get_tenant(tenant_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
@@ -219,11 +236,13 @@ async def get_tenant_usage(tenant_id: str):
 @router.get("/{tenant_id}/audit")
 async def get_tenant_audit_log(
     tenant_id: str,
+    request: Request,
     action: Optional[str] = None,
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ):
     """Get admin audit log for a specific tenant."""
+    _scope(request, "tenants:read", tenant_id)
     entries = query_admin_audit(tenant_id=tenant_id, action=action, limit=limit, offset=offset)
     return {"tenant_id": tenant_id, "entries": entries}
 
@@ -246,6 +265,7 @@ async def set_parent(tenant_id: str, body: SetParentRequest, request: Request):
     Child tenants inherit parent policies. Child can add restrictions but cannot
     weaken parent policies (e.g., cannot change block → allow).
     """
+    _scope(request, "tenants:write", tenant_id)
     # Verify both tenants exist
     tenant = get_tenant(tenant_id)
     if not tenant:
@@ -278,8 +298,9 @@ async def set_parent(tenant_id: str, body: SetParentRequest, request: Request):
 
 
 @router.get("/{tenant_id}/parent")
-async def get_parent(tenant_id: str):
+async def get_parent(tenant_id: str, request: Request):
     """Get parent tenant and full ancestry chain."""
+    _scope(request, "tenants:read", tenant_id)
     parent_id = get_tenant_parent(tenant_id)
     ancestors = get_tenant_ancestors(tenant_id)
 
@@ -293,6 +314,7 @@ async def get_parent(tenant_id: str):
 @router.delete("/{tenant_id}/parent")
 async def remove_parent(tenant_id: str, request: Request):
     """Remove parent tenant relationship (stop inheriting)."""
+    _scope(request, "tenants:write", tenant_id)
     removed = clear_tenant_parent(tenant_id)
     if not removed:
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' has no parent")
@@ -308,8 +330,9 @@ async def remove_parent(tenant_id: str, request: Request):
 
 
 @router.get("/{tenant_id}/effective-policies")
-async def get_effective_policies_endpoint(tenant_id: str):
+async def get_effective_policies_endpoint(tenant_id: str, request: Request):
     """Get the effective policy set including inherited policies from parent tenants."""
+    _scope(request, "tenants:read", tenant_id)
     tenant = get_tenant(tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
@@ -332,6 +355,7 @@ global_router = APIRouter(prefix="/v1/admin", tags=["admin-audit"])
 
 @global_router.get("/audit")
 async def get_global_audit_log(
+    request: Request,
     tenant_id: Optional[str] = None,
     action: Optional[str] = None,
     actor: Optional[str] = None,
@@ -339,6 +363,9 @@ async def get_global_audit_log(
     offset: int = Query(0, ge=0),
 ):
     """Query the global admin audit log with filters."""
+    # A tenant filter binds the scope to that tenant; without one this is a
+    # cross-tenant read, barred for a tenant-restricted credential.
+    _scope(request, "tenants:read", tenant_id or "", cross_tenant=not tenant_id)
     entries = query_admin_audit(
         tenant_id=tenant_id,
         action=action,
@@ -350,8 +377,9 @@ async def get_global_audit_log(
 
 
 @global_router.get("/dashboard")
-async def get_admin_dashboard():
+async def get_admin_dashboard(request: Request):
     """Aggregate dashboard — all tenants with usage and quota info in one call."""
+    _scope(request, "tenants:read", cross_tenant=True)
     tenants = list_tenants(include_deleted=False)
 
     rows = []

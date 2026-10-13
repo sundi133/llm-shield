@@ -565,6 +565,10 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         New Tenant
       </div>
+      <div class="nav-item" data-tab="credentials">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+        Admin Keys
+      </div>
     </div>
 
     <div class="nav-section">
@@ -690,6 +694,64 @@
           <button class="small" onclick="loadTemplate('financial')">Financial</button>
         </div>
         <div id="create-msg"></div>
+      </div>
+    </div>
+
+    <!-- Admin Keys (credentials) -->
+    <div id="tab-credentials" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Admin Keys</div>
+        <div class="page-desc">Named, expiring, revocable admin credentials — give a partner or automation its own key instead of the shared root secret. Managing these needs the root key or an SSO operator.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Mint a credential</div>
+            <div class="card-subtitle">The secret is shown once. Leave scope empty for full admin.</div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Name</label>
+            <input type="text" id="cred-name" placeholder="partner-rafay" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Expires after (days) — blank = never</label>
+            <input type="number" id="cred-expiry" min="1" max="3650" placeholder="90">
+          </div>
+        </div>
+        <div class="field">
+          <label>Operations (none selected = full admin)</label>
+          <div style="display:flex; flex-wrap:wrap; gap:0.4rem 1.2rem; font-size:12.5px;">
+            <label style="display:inline-flex; align-items:center; gap:0.4rem; margin:0;"><input type="checkbox" class="cred-op" value="tenants:read" style="width:auto;margin:0;"> tenants:read</label>
+            <label style="display:inline-flex; align-items:center; gap:0.4rem; margin:0;"><input type="checkbox" class="cred-op" value="tenants:write" style="width:auto;margin:0;"> tenants:write</label>
+            <label style="display:inline-flex; align-items:center; gap:0.4rem; margin:0;"><input type="checkbox" class="cred-op" value="oidc:read" style="width:auto;margin:0;"> oidc:read</label>
+            <label style="display:inline-flex; align-items:center; gap:0.4rem; margin:0;"><input type="checkbox" class="cred-op" value="oidc:write" style="width:auto;margin:0;"> oidc:write</label>
+          </div>
+        </div>
+        <div class="field">
+          <label>Tenants (comma-separated, blank = all). Requires at least one operation selected.</label>
+          <input type="text" id="cred-tenants" placeholder="acme, globex" autocomplete="off">
+        </div>
+        <div class="toolbar">
+          <button class="primary" onclick="mintCredential()">Mint credential</button>
+          <button class="small" onclick="loadCredentials()">Refresh list</button>
+        </div>
+        <div id="cred-secret"></div>
+        <div id="cred-msg"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">Credentials</div><div class="card-subtitle">Prefix only — the secret is never shown again</div></div>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Prefix</th><th>Scope</th><th>Expires</th><th>Last used</th><th></th></tr>
+          </thead>
+          <tbody id="cred-list"><tr><td colspan="6" class="empty-state">Loading…</td></tr></tbody>
+        </table>
       </div>
     </div>
 
@@ -1175,6 +1237,110 @@ function loadTemplate(name) {
 }
 
 // ── Tab + modal switching ─────────────────
+// ── Admin credentials (named partner keys) ─────────────────────────────────
+function _escCred(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function credScopeLabel(scope) {
+  if (!scope) return 'full admin';
+  const ops = scope.operations || [];
+  const opStr = ops.includes('*') ? 'all ops' : (ops.join(', ') || 'none');
+  const tns = scope.tenants || [];
+  const tStr = (!tns.length || tns.includes('*')) ? 'all tenants' : tns.join(', ');
+  return _escCred(opStr + ' · ' + tStr);
+}
+function credWhen(epoch) {
+  return epoch ? new Date(epoch * 1000).toISOString().slice(0, 10) : '—';
+}
+function credSecretOnce(out) {
+  return '<div style="border:1px solid var(--accent,#d4a017);border-radius:6px;padding:0.6rem 0.8rem;margin:0.6rem 0;font-size:12.5px;">' +
+    '<div style="font-weight:600;margin-bottom:0.3rem;">Copy this now — it will not be shown again.</div>' +
+    '<div>Secret: <code style="user-select:all;">' + _escCred(out.secret) + '</code></div>' +
+    '<div style="color:var(--text-dim);">Send it as <code>X-Admin-Key</code>.</div>' +
+    '<button class="small" style="margin-top:0.4rem;" onclick="document.getElementById(\'cred-secret\').innerHTML=\'\'">I have stored it</button></div>';
+}
+
+async function loadCredentials() {
+  const tbody = document.getElementById('cred-list');
+  try {
+    const data = await apiCall('/v1/admin/credentials');
+    const rows = data.credentials || [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No admin credentials yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(c => {
+      const expired = c.expires_at && (c.expires_at * 1000 < Date.now());
+      return '<tr>' +
+        '<td>' + _escCred(c.name) + '</td>' +
+        '<td class="mono">' + _escCred(c.prefix) + '…</td>' +
+        '<td>' + credScopeLabel(c.scope) + '</td>' +
+        '<td>' + credWhen(c.expires_at) + (expired ? ' <span style="color:var(--danger,#e05260)">(expired)</span>' : '') + '</td>' +
+        '<td>' + credWhen(c.last_used) + '</td>' +
+        '<td style="white-space:nowrap;">' +
+          '<button class="small" onclick="rotateCredential(\'' + c.id + '\')">Rotate</button> ' +
+          '<button class="small" onclick="revokeCredential(\'' + c.id + '\', \'' + _escCred(c.name) + '\')">Revoke</button>' +
+        '</td></tr>';
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">' + _escCred(e.message) + '</td></tr>';
+  }
+}
+
+async function mintCredential() {
+  const name = document.getElementById('cred-name').value.trim();
+  if (!name) return showError('cred-msg', 'Enter a name');
+  const body = { name };
+  const days = document.getElementById('cred-expiry').value.trim();
+  if (days) body.expires_in_days = parseInt(days, 10);
+  const ops = [...document.querySelectorAll('.cred-op:checked')].map(c => c.value);
+  const tenants = document.getElementById('cred-tenants').value.split(',').map(s => s.trim()).filter(Boolean);
+  if (ops.length) {
+    body.scope = { operations: ops, tenants };
+  } else if (tenants.length) {
+    return showError('cred-msg', 'Select at least one operation to restrict by tenant');
+  }
+  try {
+    const out = await apiCall('/v1/admin/credentials', { method: 'POST', body: JSON.stringify(body) });
+    document.getElementById('cred-secret').innerHTML = credSecretOnce(out);
+    document.getElementById('cred-name').value = '';
+    document.getElementById('cred-expiry').value = '';
+    document.getElementById('cred-tenants').value = '';
+    document.querySelectorAll('.cred-op:checked').forEach(c => { c.checked = false; });
+    showSuccess('cred-msg', 'Credential minted');
+    loadCredentials();
+  } catch (e) { showError('cred-msg', 'Failed: ' + e.message); }
+}
+
+async function rotateCredential(id) {
+  if (!confirm('Rotate this credential? A new secret is issued now and the old one is refused from the next call. Its name and scope carry over.')) return;
+  const days = prompt('Expire the new credential after how many days? Leave blank for no expiry:', '');
+  if (days === null) return;
+  const body = {};
+  const d = days.trim();
+  if (d) {
+    const n = parseInt(d, 10);
+    if (!Number.isFinite(n) || n <= 0) return showError('cred-msg', 'Expiry must be a positive number');
+    body.expires_in_days = n;
+  }
+  try {
+    const out = await apiCall('/v1/admin/credentials/' + encodeURIComponent(id) + '/rotate', { method: 'POST', body: JSON.stringify(body) });
+    document.getElementById('cred-secret').innerHTML = credSecretOnce(out);
+    showSuccess('cred-msg', 'Rotated — new secret above');
+    loadCredentials();
+  } catch (e) { showError('cred-msg', 'Failed: ' + e.message); }
+}
+
+async function revokeCredential(id, name) {
+  if (!confirm('Revoke ' + (name || 'this credential') + '? Anything using it is refused from the next call.')) return;
+  try {
+    await apiCall('/v1/admin/credentials/' + encodeURIComponent(id), { method: 'DELETE' });
+    showSuccess('cred-msg', 'Revoked');
+    loadCredentials();
+  } catch (e) { showError('cred-msg', 'Failed: ' + e.message); }
+}
+
 document.addEventListener('click', (e) => {
   if (e.target.closest('.nav-item[data-tab]')) {
     const el = e.target.closest('.nav-item[data-tab]');
@@ -1185,6 +1351,7 @@ document.addEventListener('click', (e) => {
     document.getElementById(`tab-${tab}`).classList.remove('hidden');
     if (tab === 'dashboard') loadDashboard();
     if (tab === 'tenants') loadTenants();
+    if (tab === 'credentials') loadCredentials();
   }
   if (e.target.matches('.modal-tab[data-modal-tab]')) {
     const tab = e.target.getAttribute('data-modal-tab');
