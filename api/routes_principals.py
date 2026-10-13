@@ -48,6 +48,17 @@ class ServiceAccountUpdate(BaseModel):
 
 class KeyRequest(BaseModel):
     label: str = Field("", max_length=100)
+    # Credential hardening (G8). All optional and backward-compatible: omit for
+    # today's behaviour (non-expiring, principal-wide, no audience).
+    expires_in_days: Optional[int] = Field(None, ge=1, le=3650)
+    scope_ceiling: Optional[list[str]] = Field(
+        None, description="tool names this key may call; narrows the principal, "
+                          "never widens. [] = deny all; omit = no ceiling.")
+    audience: Optional[str] = Field(None, max_length=256)
+
+
+class RotateKeyRequest(BaseModel):
+    expires_in_days: Optional[int] = Field(None, ge=1, le=3650)
 
 
 def _admin(request: Request) -> str:
@@ -213,11 +224,42 @@ async def create_key(pid: str, request: Request, body: Optional[KeyRequest] = No
     doc = _service_account(tenant_id, pid)
     if not is_active(doc):
         raise HTTPException(status_code=409, detail="the service account is not active")
-    key, record = create_principal_key(tenant_id, pid, label=(body.label if body else ""))
+    try:
+        key, record = create_principal_key(
+            tenant_id, pid,
+            label=(body.label if body else ""),
+            expires_in_days=(body.expires_in_days if body else None),
+            scope_ceiling=(body.scope_ceiling if body else None),
+            audience=(body.audience or "") if body else "",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     _audit(request, tenant_id, "service_account_key_created",
-           {"principal_id": pid, "key_id": record["key_id"], "prefix": record["prefix"]})
+           {"principal_id": pid, "key_id": record["key_id"], "prefix": record["prefix"],
+            "expires_at": record.get("expires_at"),
+            "scoped": record.get("scope_ceiling") is not None})
     return {"key": key, **{k: v for k, v in record.items() if k != "tenant_id"},
             "note": "Store this key now. Shield keeps only its hash and cannot show it again."}
+
+
+@router.post("/{pid}/keys/{key_id}/rotate")
+async def rotate_key(pid: str, key_id: str, request: Request,
+                     body: Optional[RotateKeyRequest] = None):
+    """Mint a replacement key (carrying the old key's scope + audience) and
+    revoke the old one. The new key is in this response only."""
+    from storage.principal_store import rotate_principal_key
+    tenant_id = _admin(request)
+    _service_account(tenant_id, pid)
+    try:
+        key, record = rotate_principal_key(
+            tenant_id, pid, key_id,
+            expires_in_days=(body.expires_in_days if body else None))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _audit(request, tenant_id, "service_account_key_rotated",
+           {"principal_id": pid, "old_key_id": key_id, "new_key_id": record["key_id"]})
+    return {"key": key, **{k: v for k, v in record.items() if k != "tenant_id"},
+            "note": "Store this key now; the old key is revoked."}
 
 
 @router.delete("/{pid}/keys/{key_id}")

@@ -14433,11 +14433,65 @@ async function mcpRemoveServiceAccount(encPid) {
   } catch (e) { showToast('Failed: ' + e.message, 'error'); }
 }
 
+// Render the hardening metadata (expiry, scope ceiling) shown next to a key row.
+function mcpKeyMeta(k) {
+  const bits = [];
+  if (k && k.expires_at) {
+    const dt = new Date(k.expires_at * 1000);
+    const day = isNaN(dt.getTime()) ? String(k.expires_at) : dt.toISOString().slice(0, 10);
+    bits.push('expires ' + day);
+  } else {
+    bits.push('no expiry');
+  }
+  if (k && Array.isArray(k.scope_ceiling)) {
+    bits.push(k.scope_ceiling.length ? ('scoped to ' + k.scope_ceiling.length + ' tool' + (k.scope_ceiling.length === 1 ? '' : 's')) : 'scoped to none');
+  }
+  return ' <span style="color:var(--text-dim);font-size:0.85em;">(' + _esc(bits.join(' · ')) + ')</span>';
+}
+
+// Shared prompt for expiry + scope ceiling; returns {expires_in_days, scope_ceiling} or null if cancelled.
+function mcpKeyHardeningPrompt() {
+  const daysStr = prompt('Expire this key after how many days? Leave blank for no expiry:', '90');
+  if (daysStr === null) return null;
+  const body = {};
+  const trimmed = daysStr.trim();
+  if (trimmed !== '') {
+    const days = parseInt(trimmed, 10);
+    if (!Number.isFinite(days) || days <= 0) { showToast('Expiry must be a positive number of days.', 'error'); return null; }
+    body.expires_in_days = days;
+  }
+  const scopeStr = prompt('Restrict this key to specific tools? Enter a comma-separated list of tool names, or leave blank for no restriction:', '');
+  if (scopeStr === null) return null;
+  const scope = scopeStr.split(',').map(s => s.trim()).filter(Boolean);
+  if (scope.length) body.scope_ceiling = scope;
+  return body;
+}
+
 async function mcpCreateKey(encPid) {
   const label = prompt('Label for this key (e.g. where it is used):', '') ?? null;
   if (label === null) return;
+  const hardening = mcpKeyHardeningPrompt();
+  if (hardening === null) return;
   try {
-    const out = await apiCall(`/v1/tenant/me/principals/${encPid}/keys`, { method: 'POST', body: JSON.stringify({ label }) });
+    const out = await apiCall(`/v1/tenant/me/principals/${encPid}/keys`, { method: 'POST', body: JSON.stringify({ label, ...hardening }) });
+    document.getElementById('mcp-people-secret').innerHTML = mcpSecretOnceHtml('key', out);
+    mcpShowPerson(encPid);
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+}
+
+async function mcpRotateKey(encPid, encKey) {
+  if (!confirm('Rotate this key? A new secret is issued now and the old one is refused from the next call. Its label and scope carry over.')) return;
+  const daysStr = prompt('Expire the new key after how many days? Leave blank to keep the current key’s expiry window:', '');
+  if (daysStr === null) return;
+  const body = {};
+  const trimmed = daysStr.trim();
+  if (trimmed !== '') {
+    const days = parseInt(trimmed, 10);
+    if (!Number.isFinite(days) || days <= 0) { showToast('Expiry must be a positive number of days.', 'error'); return; }
+    body.expires_in_days = days;
+  }
+  try {
+    const out = await apiCall(`/v1/tenant/me/principals/${encPid}/keys/${encKey}/rotate`, { method: 'POST', body: JSON.stringify(body) });
     document.getElementById('mcp-people-secret').innerHTML = mcpSecretOnceHtml('key', out);
     mcpShowPerson(encPid);
   } catch (e) { showToast('Failed: ' + e.message, 'error'); }
@@ -14758,7 +14812,8 @@ function mcpPersonDetailHtml(d) {
   const pid = encodeURIComponent((d && d.id) || '');
   const keys = (d && d.keys) || [];
   const clients = (d && d.oauth_clients) || [];
-  const keyRows = keys.map(k => '<li><span class="mono">' + _esc(k.prefix || '') + '…</span> ' + _esc(k.label || '') +
+  const keyRows = keys.map(k => '<li><span class="mono">' + _esc(k.prefix || '') + '…</span> ' + _esc(k.label || '') + mcpKeyMeta(k) +
+    ' <button class="small" onclick="mcpRotateKey(\'' + pid + '\', \'' + encodeURIComponent(k.key_id || '') + '\')">Rotate</button>' +
     ' <button class="small" onclick="mcpDeleteKey(\'' + pid + '\', \'' + encodeURIComponent(k.key_id || '') + '\')">Delete</button></li>').join('');
   const clientRows = clients.map(c => '<li><span class="mono">' + _esc(c.client_id || '') + '</span>' +
     ' <button class="small" onclick="mcpDeleteClient(\'' + pid + '\', \'' + encodeURIComponent(c.client_id || '') + '\')">Delete</button></li>').join('');

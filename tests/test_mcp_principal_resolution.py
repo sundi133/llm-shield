@@ -419,3 +419,92 @@ def test_a_status_change_is_seen_once_the_cache_expires(client, router, audit, m
     now = time.monotonic()
     monkeypatch.setattr(principal.time, "monotonic", lambda: now + principal._CACHE_TTL_S + 1)
     assert _call(client, _bearer(token)).status_code == 401
+
+
+# ── G8: credential hardening (expiry, rotation, scope ceiling) ────────────
+
+
+def _sa_key(**kw):
+    sa = ps.create_service_account(TENANT, name="bot")
+    key, rec = ps.create_principal_key(TENANT, sa["id"], **kw)
+    return sa, key, rec
+
+
+def test_a_key_without_expiry_resolves():
+    _sa, key, _ = _sa_key()
+    assert ps.resolve_principal_key(key) is not None
+
+
+def test_an_expired_key_resolves_to_none(monkeypatch):
+    _sa, key, rec = _sa_key(expires_in_days=1)
+    assert ps.resolve_principal_key(key) is not None          # still valid now
+    monkeypatch.setattr(ps.time, "time", lambda: rec["created_at"] + 2 * 86400)
+    assert ps.resolve_principal_key(key) is None              # past expiry → gone
+
+
+def test_expiry_must_be_positive():
+    sa = ps.create_service_account(TENANT, name="bot")
+    with pytest.raises(ValueError):
+        ps.create_principal_key(TENANT, sa["id"], expires_in_days=0)
+
+
+def test_scope_ceiling_is_stored_and_resolved():
+    _sa, key, rec = _sa_key(scope_ceiling=["t1", "t2"])
+    assert rec["scope_ceiling"] == ["t1", "t2"]
+    assert ps.resolve_principal_key(key)["scope_ceiling"] == ["t1", "t2"]
+
+
+def test_rotate_mints_a_new_key_and_revokes_the_old():
+    sa, old_key, old_rec = _sa_key(scope_ceiling=["t1"], label="ci")
+    new_key, new_rec = ps.rotate_principal_key(TENANT, sa["id"], old_rec["key_id"])
+    assert ps.resolve_principal_key(old_key) is None          # old revoked
+    r = ps.resolve_principal_key(new_key)
+    assert r is not None
+    assert r["scope_ceiling"] == ["t1"] and r["label"] == "ci"   # carried over
+
+
+def test_rotate_unknown_key_raises():
+    sa = ps.create_service_account(TENANT, name="bot")
+    with pytest.raises(ValueError):
+        ps.rotate_principal_key(TENANT, sa["id"], "pk_nope")
+
+
+# ── the ceiling narrows at the gateway dispatch ──────────────────────────
+
+
+def _call_named(client, key, name):
+    return client.post("/gateway/drive/mcp", headers={"x-api-key": key}, json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": name, "arguments": {}}})
+
+
+def test_scope_ceiling_allows_a_tool_in_the_set(client, router):
+    _sa, key, _ = _sa_key(scope_ceiling=["t1"])
+    r = _call_named(client, key, "t1")
+    assert r.status_code == 200 and r.json()["result"]["isError"] is False
+    assert router.callers and router.callers[-1].scope_ceiling == ["t1"]
+
+
+def test_scope_ceiling_denies_a_tool_outside_the_set(client, router):
+    _sa, key, _ = _sa_key(scope_ceiling=["t1"])
+    before = len(router.calls)
+    r = _call_named(client, key, "t2")
+    body = r.json()["result"]
+    assert body["isError"] is True and "not scoped" in body["content"][0]["text"]
+    assert body["shield"]["code"] == "GATEWAY_POLICY_DENIED"
+    assert len(router.calls) == before          # never reached the upstream router
+
+
+def test_no_ceiling_means_no_extra_restriction(client, router):
+    _sa, key, _ = _sa_key()                      # scope_ceiling absent
+    r = _call_named(client, key, "anything")
+    assert r.json()["result"]["isError"] is False
+    assert router.callers[-1].scope_ceiling is None
+
+
+def test_tools_list_is_filtered_by_the_ceiling(client, router):
+    # router.list_tools returns [{"name": "t1"}]
+    _sa, key, _ = _sa_key(scope_ceiling=["other"])
+    r = client.post("/gateway/drive/mcp", headers={"x-api-key": key}, json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+    assert r.json()["result"]["tools"] == []     # t1 filtered out (not in ceiling)
