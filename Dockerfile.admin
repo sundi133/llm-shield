@@ -99,6 +99,7 @@ COPY core/a2a/ core/a2a/
 COPY api/__init__.py api/
 COPY api/routes_tenant.py api/
 COPY api/routes_admin_credentials.py api/
+COPY api/routes_admin_principals.py api/
 COPY api/routes_tenant_self.py api/
 COPY api/routes_agents_registry.py api/
 COPY api/routes_governance.py api/
