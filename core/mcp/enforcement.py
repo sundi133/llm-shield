@@ -411,6 +411,15 @@ async def enforce_tool_call(
     guards = _tool_guard_chain()
     results: list[dict] = []
 
+    # Declarative authorization (M2): a tenant in `declarative` mode decides this
+    # (role, tool) from its published, compiled policy snapshot — default-deny.
+    # Legacy tenants return None here and are unchanged. A deny is a normal block,
+    # so monitor mode previews it; it is recorded first, so it is the reason.
+    from core.mcp import policy_runtime
+    _az = policy_runtime.authz_result(tenant_id, tenant_config, user_role, tool_name)
+    if _az is not None:
+        results.append(_az)
+
     # Session-scoped guards (confirmation, per-session rate limits) silently
     # self-skip without a session_id. When parity is on, an operator believes
     # those guards are active, so make the degradation visible instead of
