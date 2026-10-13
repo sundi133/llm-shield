@@ -64,7 +64,7 @@ def env(monkeypatch):
     monkeypatch.delenv("SHIELD_MCP_OAUTH_BROKER", raising=False)
     for mod in (ts, grants, ostore, ps):
         monkeypatch.setattr(mod, "_get_redis", lambda: None)
-    monkeypatch.setattr("core.url_safety.validate_outbound_url", lambda u, purpose=None: u)
+    monkeypatch.setattr("core.url_safety.validate_outbound_url", lambda u, **kw: u)
     _reset_provider_for_tests()
     yield
     _reset_provider_for_tests()
