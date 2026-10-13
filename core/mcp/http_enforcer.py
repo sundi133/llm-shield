@@ -108,8 +108,15 @@ class HTTPEnforcer:
         confirmation_token: Optional[str] = None,
         route: Optional[str] = None,
         policy: Optional[dict] = None,
+        schema_version: str = "",
+        connector_version: str = "",
     ) -> dict:
         """Map POST /v1/shield/tool/check to the MCPProxy decision shape.
+
+        ``schema_version`` / ``connector_version`` are decision-binding metadata
+        (M2 Task 3). Accepted for a uniform enforcer interface but NOT forwarded:
+        this backend's decision is audited on the central Shield, which stamps its
+        own binding fields; forwarding ours would double-count.
 
         ``session_id`` comes from a verified agent-token claim upstream; it was
         previously hardcoded to "", which silently disabled the session-scoped

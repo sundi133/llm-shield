@@ -17,6 +17,7 @@ may use) and risk-annotation of tool listings.
 from __future__ import annotations
 
 import os
+import time
 from typing import Optional
 
 from guardrails.agentic.rbac_guard import RBACGuard
@@ -328,6 +329,8 @@ async def enforce_tool_call(
     confirmation_token: Optional[str] = None,
     route: Optional[str] = None,
     policy: Optional[dict] = None,
+    schema_version: str = "",
+    connector_version: str = "",
 ) -> dict:
     """Decide whether an MCP tools/call may proceed.
 
@@ -514,6 +517,24 @@ async def enforce_tool_call(
         )
     # MCP decisions were absent from the decision audit entirely, so a gateway
     # denial left no forensic record. Never let logging fail the call.
+    # Decision binding (M2 Task 3): tie this decision to the exact inputs it was
+    # made against. Arguments are hashed, never stored (preserving the
+    # no-arguments-in-audit property); the versions let an access review prove
+    # which policy, against which tool schema and which connector revision,
+    # produced this outcome.
+    import hashlib
+    import json as _json
+    try:
+        _arg_blob = _json.dumps(arguments, sort_keys=True, default=str)[:65536]
+        _arg_hash = hashlib.sha256(_arg_blob.encode()).hexdigest()
+    except Exception:
+        _arg_hash = ""
+    _policy_version = 0
+    for _rr in results:
+        if _rr.get("guardrail") == "policy_authz":
+            _policy_version = (_rr.get("details") or {}).get("policy_version", 0)
+            break
+
     try:
         from storage.decision_audit import log_decision
         _failed = [rr for rr in results if not rr["passed"]]
@@ -534,10 +555,44 @@ async def enforce_tool_call(
                 # role from a verified one. Record the source so it can.
                 "role_source": "header",
                 "guardrails": [rr["guardrail"] for rr in results if not rr["passed"]],
+                # Decision binding (M2 Task 3).
+                "arg_hash": _arg_hash,
+                "policy_version": _policy_version,
+                "schema_version": schema_version or "",
+                "connector_version": connector_version or "",
             },
         )
     except Exception:
         pass
+
+    # Durable audit outbox (M2 Task 4): a synchronous write-ahead copy of this
+    # decision. With SHIELD_MCP_AUDIT_REQUIRED, a decision that cannot be durably
+    # queued must not execute — deny instead of acting unrecorded. Default is
+    # best-effort (today's behaviour).
+    _audit_required = os.environ.get(
+        "SHIELD_MCP_AUDIT_REQUIRED", "").strip().lower() in ("1", "true", "on", "yes")
+    _queued = False
+    try:
+        from storage import audit_outbox
+        _queued = audit_outbox.enqueue({
+            "tenant_id": tenant_id or "", "action": str(decision.get("action", action)),
+            "agent_key": agent_key or "", "tool_name": tool_name,
+            "user_role": user_role or "", "session_id": session_id or "",
+            "allowed": bool(decision.get("allowed", allowed)),
+            "arg_hash": _arg_hash, "policy_version": _policy_version,
+            "schema_version": schema_version or "", "connector_version": connector_version or "",
+            "ts": int(time.time()),
+        })
+    except Exception:
+        _queued = False
+    if _audit_required and not _queued:
+        blk = [{"guardrail": "audit_outbox", "passed": False, "action": "block",
+                "message": "Audit is required but this decision could not be durably "
+                           "recorded; the call was refused rather than run unrecorded.",
+                "details": {"administrative": True, "shield_code": "AUDIT_UNAVAILABLE"}}]
+        fc = policy_mode.apply(blk, allowed=False, action="block", mode=mode)
+        return _shape(fc, results + blk, risk)
+
     return _shape(decision, results, risk)
 
 

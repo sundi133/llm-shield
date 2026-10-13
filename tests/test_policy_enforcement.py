@@ -111,14 +111,16 @@ H = {"X-Admin-Key": ROOT}
 
 
 def test_new_tenant_gets_declarative_with_starter(client, monkeypatch):
+    import uuid
+    tid = "t-" + uuid.uuid4().hex[:10]
     monkeypatch.setenv("SHIELD_MCP_AUTHZ_DEFAULT", "declarative")
-    r = client.post("/v1/admin/tenants", json={"tenant_id": "acme"}, headers=H)
+    r = client.post("/v1/admin/tenants", json={"tenant_id": tid}, headers=H)
     assert r.status_code == 200
     assert r.json()["config"].get("authz_mode") == "declarative"
     # The starter is a visible allow-all (not a hidden deny-all).
-    assert store.get_current_version("acme") == 1
-    policy_runtime.invalidate_cache("acme")
-    assert asyncio.run(_enforce("acme", "anything"))["allowed"] is True
+    assert store.get_current_version(tid) == 1
+    policy_runtime.invalidate_cache(tid)
+    assert asyncio.run(_enforce(tid, "anything"))["allowed"] is True
 
 
 def test_authz_mode_endpoint_requires_policy_for_declarative(client, monkeypatch):

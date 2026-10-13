@@ -273,6 +273,14 @@ def create_app() -> FastAPI:
         # A delegation depth limit set without parent proof bounds nothing:
         # the depth is derived from a caller-asserted parent. Say so at boot
         # rather than let an operator believe they have a control they do not.
+        # M2: drain the durable audit outbox in the background (opt-out via
+        # SHIELD_AUDIT_OUTBOX_WORKER=off). Decisions are written to the outbox on
+        # the guard path; this ships them to the tamper-evident chain with retry.
+        try:
+            from storage.audit_outbox import start_worker
+            start_worker()
+        except Exception:
+            pass
         try:
             from core.agent_tokens import warn_if_depth_limit_is_unenforceable
             warn_if_depth_limit_is_unenforceable()
