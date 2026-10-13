@@ -240,22 +240,71 @@ def looks_like_principal_key(value: str) -> bool:
     return bool(value) and value.startswith(KEY_PREFIX)
 
 
-def create_principal_key(tenant_id: str, pid: str, *, label: str = "") -> tuple[str, dict]:
+def create_principal_key(tenant_id: str, pid: str, *, label: str = "",
+                         expires_in_days: Optional[int] = None,
+                         scope_ceiling: Optional[list] = None,
+                         audience: str = "") -> tuple[str, dict]:
     """Mint a key for one principal. Returns (key, public record); the key is
-    shown once and never stored."""
+    shown once and never stored.
+
+    expires_in_days: positive int -> the key stops working after this window
+        (enforced in resolve_principal_key). None -> no expiry.
+    scope_ceiling: a list of tool names this key may call. It can only NARROW
+        the principal's permissions, never widen them. [] denies every tool (a
+        deliberate read-nothing key); None means "no ceiling" (full principal
+        permissions). Enforced at the gateway dispatch.
+    audience: optional value the key is bound to (recorded for the caller/audit).
+    """
     if get_principal(tenant_id, pid) is None:
         raise ValueError("unknown principal")
     key = KEY_PREFIX + secrets.token_urlsafe(32)
+    now = int(time.time())
     record = {
         "key_id": "pk_" + secrets.token_hex(6),
         "tenant_id": tenant_id, "principal_id": pid,
         "label": label, "prefix": key[:_KEY_PREFIX_LEN],
-        "created_at": int(time.time()),
+        "created_at": now,
     }
+    if expires_in_days is not None:
+        days = int(expires_in_days)
+        if days <= 0:
+            raise ValueError("expires_in_days must be a positive integer")
+        record["expires_at"] = now + days * 86400
+    if scope_ceiling is not None:
+        record["scope_ceiling"] = [str(t) for t in scope_ceiling]
+    if audience:
+        record["audience"] = str(audience)
     key_hash = _hash(key)
     _put(_pkey_key(key_hash), json.dumps(record))
     _add_member(_pkeys_set(tenant_id, pid), key_hash)
     return key, dict(record)
+
+
+def rotate_principal_key(tenant_id: str, pid: str, old_key_id: str, *,
+                         expires_in_days: Optional[int] = None) -> tuple[str, dict]:
+    """Replace a key: mint a new one carrying the old key's label, scope_ceiling
+    and audience, then revoke the old key. Returns (new_key, public record).
+
+    Rotation is mint-then-revoke so a caller can roll a key without a window of
+    no access (swap the new key in, then this revokes the old). Raises ValueError
+    if the key_id is unknown.
+    """
+    old = None
+    for key_hash in _members(_pkeys_set(tenant_id, pid)):
+        rec = _decode(_get(_pkey_key(key_hash)))
+        if rec and rec.get("key_id") == old_key_id:
+            old = rec
+            break
+    if old is None:
+        raise ValueError("unknown key_id")
+    new_key, record = create_principal_key(
+        tenant_id, pid, label=old.get("label", ""),
+        expires_in_days=expires_in_days,
+        scope_ceiling=old.get("scope_ceiling"),
+        audience=old.get("audience", ""),
+    )
+    delete_principal_key_by_id(tenant_id, pid, old_key_id)
+    return new_key, record
 
 
 def list_principal_keys(tenant_id: str, pid: str) -> list[dict]:
@@ -319,10 +368,21 @@ def delete_principal_keys(tenant_id: str, pid: str) -> int:
 
 
 def resolve_principal_key(key: str) -> Optional[dict]:
-    """The key's record ({tenant_id, principal_id, ...}) or None. One read."""
+    """The key's record ({tenant_id, principal_id, ...}) or None. One read.
+
+    An EXPIRED key resolves to None — the single choke point every request path
+    goes through, so expiry is enforced everywhere at once (same as a revoked key
+    being absent).
+    """
     if not looks_like_principal_key(key):
         return None
-    return _decode(_get(_pkey_key(_hash(key))))
+    rec = _decode(_get(_pkey_key(_hash(key))))
+    if rec is None:
+        return None
+    expires_at = rec.get("expires_at")
+    if isinstance(expires_at, int) and int(time.time()) >= expires_at:
+        return None
+    return rec
 
 
 def revoke_principal_key(key: str) -> bool:

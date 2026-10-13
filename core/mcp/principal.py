@@ -71,6 +71,10 @@ class Caller:
     role_override_refused: bool = False
     credential_scope: str = ""      # set by the router once the route is read
     upstream_account: str = ""      # per-person routes: whose upstream account
+    # A per-CREDENTIAL tool allowlist that can only NARROW the principal's
+    # permissions (from the API key's scope_ceiling). None = no ceiling; a list
+    # (incl. empty) restricts this credential to exactly those tools.
+    scope_ceiling: Optional[list] = None
 
     def audit_fields(self) -> dict:
         return {
@@ -214,6 +218,9 @@ def _attach_principal(caller: Caller, request, oauth_claims: Callable[[Any], Opt
         if not rec:
             caller.identity_method = METHOD_PRINCIPAL_INACTIVE
             return
+        # The key may carry a scope ceiling that narrows what it can call,
+        # independent of the principal's role (enforced at the gateway dispatch).
+        caller.scope_ceiling = rec.get("scope_ceiling")
         key_tenant = rec.get("tenant_id") or ""
         tenant_from_key = not caller.tenant_id and bool(key_tenant)
         if tenant_from_key:

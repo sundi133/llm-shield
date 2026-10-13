@@ -300,17 +300,35 @@ async def _dispatch_as(route: str, method: Any, params: dict, rpc_id: Any, reque
             "serverInfo": {"name": "shield-mcp-gateway", "version": "1.0.0"},
         })
 
+    # A credential's scope ceiling (from its API key) narrows what it may do,
+    # on top of role-based policy. None = no ceiling; a list restricts to exactly
+    # those tools. Applied here so it governs both discovery and invocation.
+    _caller = current_caller()
+    _ceiling = _caller.scope_ceiling if _caller is not None else None
+
     try:
         if method == "tools/list":
             tools = await gateway_router.list_tools(
                 tenant_id, route, agent_key=agent_key, user_role=user_role,
             )
+            if _ceiling is not None:
+                tools = [t for t in tools if t.get("name") in _ceiling]
             return _ok(rpc_id, {"tools": tools})
 
         if method == "tools/call":
             name = params.get("name")
             if not name:
                 return _err(rpc_id, -32602, "tools/call requires params.name")
+            if _ceiling is not None and name not in _ceiling:
+                # Deny before dispatch — this credential is scoped away from it.
+                return _ok(rpc_id, {
+                    "content": [{"type": "text", "text": (
+                        f"Blocked by Shield: this credential is not scoped for "
+                        f"tool '{name}'.")}],
+                    "isError": True,
+                    "shield": {"action": "deny", "reason": "credential_scope_ceiling",
+                               "code": "GATEWAY_POLICY_DENIED"},
+                })
             out = await gateway_router.call_tool(
                 tenant_id, route, name, params.get("arguments") or {},
                 agent_key=agent_key, user_role=user_role,
