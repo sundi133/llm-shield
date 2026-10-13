@@ -25,12 +25,12 @@ router = APIRouter(prefix="/v1/admin/tenants", tags=["tenants"])
 
 
 def _actor_from_request(request: Request) -> str:
-    """Extract admin actor identity from the X-Admin-Key header (hashed)."""
-    import hashlib
-    key = request.headers.get("X-Admin-Key", "")
-    if not key:
-        return "unknown"
-    return f"admin:{hashlib.sha256(key.encode()).hexdigest()[:12]}"
+    """Who made this admin action: `operator:{sub}` for an SSO operator,
+    `adminkey:{id}` for a named managed credential, or `adminroot` for the
+    SHIELD_ADMIN_KEY. See core.auth.admin_actor — this used to be an opaque
+    hash of the one shared key, identical for every caller."""
+    from core.auth import admin_actor
+    return admin_actor(request)
 
 
 def _source_ip(request: Request) -> str:

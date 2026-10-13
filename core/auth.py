@@ -151,15 +151,46 @@ class AuthMiddleware(BaseHTTPMiddleware):
                              "(break-glass) for /v1/admin/* routes."},
                 )
 
-            if not hmac.compare_digest(provided, admin_key):
-                _record_auth_failure(client_ip)
-                return JSONResponse(
-                    status_code=403,
-                    content={"error": "Invalid admin key"},
-                )
+            # Root key: the env secret, compared first and WITHOUT touching
+            # Redis, so an existing single-key deployment is byte-identical.
+            if hmac.compare_digest(provided, admin_key):
+                request.state.admin_identity = {
+                    "kind": "admin_root", "id": "root", "name": "root"}
+                _clear_auth_failures(client_ip)
+                return await call_next(request)
 
-            _clear_auth_failures(client_ip)
-            return await call_next(request)
+            # A named, managed credential (shadm_...): a partner or automation
+            # key that is attributable, expirable and revocable on its own. Only
+            # a non-root value reaches here, so the Redis lookup never burdens
+            # the root path. A store error falls through to the 403 below —
+            # never fail-open on a store hiccup.
+            if os.environ.get("SHIELD_ADMIN_CREDENTIALS", "on").strip().lower() \
+                    not in ("off", "0", "false", "no"):
+                try:
+                    from storage.admin_credentials import (
+                        record_last_used, resolve_admin_credential)
+                    rec = resolve_admin_credential(provided)
+                    if rec:
+                        request.state.admin_identity = {
+                            "kind": "admin_credential",
+                            "id": rec.get("id", ""),
+                            "name": rec.get("name", ""),
+                            "scope": rec.get("scope"),
+                        }
+                        try:
+                            record_last_used(rec.get("key_hash", ""))
+                        except Exception:
+                            pass
+                        _clear_auth_failures(client_ip)
+                        return await call_next(request)
+                except Exception:
+                    pass
+
+            _record_auth_failure(client_ip)
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Invalid admin key"},
+            )
 
         if cfg is None or not cfg.auth.enabled:
             return await call_next(request)
@@ -782,3 +813,48 @@ def acting_user_sub(request) -> str:
     """
     principal = portal_principal(request)
     return f"user:{principal['sub']}" if principal and principal.get("sub") else ""
+
+
+def admin_actor(request) -> str:
+    """Who to record for an ADMIN-PLANE action (/v1/admin/*).
+
+    `operator:{sub}` for an SSO operator, `adminkey:{id}` for a named managed
+    credential, `adminroot` for the SHIELD_ADMIN_KEY, else `unknown`. This is
+    the admin-plane counterpart to audit_actor, which only knows portal humans
+    and tenants and never had an admin-key branch — so admin-key actions used to
+    log as an opaque hash of the one shared key, identical for every caller.
+    """
+    operator = admin_principal(request)
+    if operator and operator.get("sub"):
+        return f"operator:{operator['sub']}"
+    ident = getattr(getattr(request, "state", None), "admin_identity", None)
+    if isinstance(ident, dict):
+        kind = ident.get("kind")
+        if kind == "admin_credential":
+            return f"adminkey:{ident.get('id', '')}"
+        if kind == "admin_root":
+            return "adminroot"
+    return "unknown"
+
+
+def require_admin_root_or_operator(request) -> None:
+    """Allow only the root SHIELD_ADMIN_KEY or a signed-in operator; refuse a
+    managed admin credential.
+
+    Credential administration must not be reachable from a managed credential:
+    a minted key that could mint itself more keys or revoke the operator's would
+    escalate past its own revocation. Bootstrapping therefore always starts from
+    the root secret or an operator session.
+    """
+    from fastapi import HTTPException
+
+    if admin_principal(request) is not None:
+        return
+    ident = getattr(getattr(request, "state", None), "admin_identity", None)
+    if isinstance(ident, dict) and ident.get("kind") == "admin_root":
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Managing admin credentials requires the root SHIELD_ADMIN_KEY "
+               "or a signed-in operator; a managed credential cannot.",
+    )
