@@ -43,6 +43,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.routes_tenant import router as tenant_router, global_router as tenant_audit_router
+from api.routes_admin_credentials import router as admin_credentials_router
 from api.routes_tenant_self import router as tenant_self_router
 from api.routes_agents_registry import router as agents_registry_router
 try:
@@ -1069,6 +1070,7 @@ def create_admin_app() -> FastAPI:
     # Mount admin + tenant routers
     app.include_router(tenant_router)           # /v1/admin/tenants/*
     app.include_router(tenant_audit_router)     # /v1/admin/audit, /v1/admin/dashboard
+    app.include_router(admin_credentials_router)  # /v1/admin/credentials/*
     app.include_router(tenant_self_router)      # /v1/tenant/* (includes policies and custom policy CRUD)
     app.include_router(agents_registry_router)  # /v1/agents/* (registry, roles, tool policies)
     if governance_router is not None:

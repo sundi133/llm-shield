@@ -98,6 +98,7 @@ COPY core/oauth/ core/oauth/
 COPY core/a2a/ core/a2a/
 COPY api/__init__.py api/
 COPY api/routes_tenant.py api/
+COPY api/routes_admin_credentials.py api/
 COPY api/routes_tenant_self.py api/
 COPY api/routes_agents_registry.py api/
 COPY api/routes_governance.py api/
@@ -165,6 +166,11 @@ COPY storage/portal_sessions.py storage/
 # Admin-operator SSO sessions, imported by api/routes_admin_auth.py and lazily by
 # core/auth.py's middleware. Required or the admin image crash-loops at boot.
 COPY storage/admin_sessions.py storage/
+# Admin-plane credentials (named partner keys), imported by
+# api/routes_admin_credentials.py and lazily by core/auth.py's middleware. The
+# lazy import is invisible to tests/test_admin_dockerfile_imports.py (it skips
+# function-body imports), so this COPY is pinned by test_admin_credentials.py.
+COPY storage/admin_credentials.py storage/
 COPY storage/tenant_models.py storage/
 COPY storage/admin_audit.py storage/
 COPY storage/custom_policies.py storage/

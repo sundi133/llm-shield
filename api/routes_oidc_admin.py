@@ -17,26 +17,45 @@ router = APIRouter(prefix="/v1/admin/oidc-providers", tags=["oidc-admin"])
 
 
 def _require_admin(request: Request) -> None:
-    """Check that the request carries a valid admin key.
+    """Confirm the caller is an authenticated admin.
 
-    Fails closed when SHIELD_ADMIN_KEY is unset — matching the admin gate
-    used everywhere else (core/auth.py, core/app.py, routes_agent_auth.py).
-    An unconfigured key must never mean "open access": these endpoints
-    register the OIDC providers a tenant trusts, so leaving them open to
-    unauthenticated callers would let anyone establish IdP trust for any
-    tenant. The key comparison is constant-time to avoid leaking it via
-    timing.
+    The admin gate is core/auth.AuthMiddleware, which admits the root
+    SHIELD_ADMIN_KEY, a named managed credential, or an SSO operator and records
+    the identity on request.state before any handler runs (and returns 500 when
+    SHIELD_ADMIN_KEY is unset, so this handler never runs in that case). This
+    re-check prefers that identity over re-comparing the raw key: the old
+    version accepted X-Admin-Key ONLY, so it 403'd both operators and managed
+    credentials the middleware had already let through. When no identity is on
+    state (e.g. the router is mounted without AuthMiddleware, as some tests do),
+    it falls back to validating the admin key directly, still fail-closed.
     """
+    state = getattr(request, "state", None)
+    if getattr(state, "admin_identity", None) or getattr(state, "admin_session", None):
+        return
+
     import hmac
     import os
     admin_key = os.environ.get("SHIELD_ADMIN_KEY", "").strip()
     if not admin_key:
         raise PermissionError(
-            "SHIELD_ADMIN_KEY not configured — admin endpoints disabled"
-        )
+            "SHIELD_ADMIN_KEY not configured — admin endpoints disabled")
     provided = request.headers.get("X-Admin-Key", "").strip()
     if not provided or not hmac.compare_digest(provided, admin_key):
         raise PermissionError("invalid admin key")
+
+
+def _audit_oidc(request: Request, tenant_id: str, action: str, after: dict) -> None:
+    """Record who changed a tenant's IdP trust. These endpoints were previously
+    unaudited; with named credentials the actor is now meaningful."""
+    try:
+        from core.auth import admin_actor
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action=action, actor=admin_actor(request),
+                         tenant_id=tenant_id,
+                         source_ip=(request.client.host if request.client else ""),
+                         after=after)
+    except Exception:       # noqa: BLE001 — audit must never fail the action
+        pass
 
 
 @router.get("/{tenant_id}")
@@ -125,6 +144,8 @@ async def register_provider(tenant_id: str, request: Request):
         claim_mapping=body.get("claim_mapping", {}),
     )
     await oidc_registry.register_provider(tenant_id, name, provider)
+    _audit_oidc(request, tenant_id, "oidc_provider_registered",
+                {"name": name, "issuer": issuer})
 
     return {
         "status": "registered",
@@ -157,4 +178,5 @@ async def delete_provider(tenant_id: str, provider_name: str, request: Request):
             content={"error": f"provider {provider_name!r} not found"},
         )
 
+    _audit_oidc(request, tenant_id, "oidc_provider_removed", {"name": provider_name})
     return {"status": "removed", "tenant_id": tenant_id, "name": provider_name}
