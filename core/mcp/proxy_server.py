@@ -53,6 +53,7 @@ class Enforcer(Protocol):
         session_id: Optional[str] = None, workflow: Optional[str] = None,
         confirmation_token: Optional[str] = None, route: Optional[str] = None,
         policy: Optional[dict] = None,
+        schema_version: str = "", connector_version: str = "",
     ) -> dict: ...
     async def sanitize_tool_result(
         self, name: str, raw: Any, *, agent_key: str, tenant_id: Optional[str],
@@ -101,8 +102,15 @@ class MCPProxy:
         enforcer: Optional[Enforcer] = None,
         policy: Optional[dict] = None,
         route: Optional[str] = None,
+        catalog_hash: str = "",
+        connector_rev: str = "",
     ):
         self._upstream = upstream
+        # Decision binding (M2 Task 3): the route's approved tool-schema
+        # fingerprint (M1 catalog_hash) and its connector/policy revision, stamped
+        # on each decision so an audit can prove what the decision was made against.
+        self._catalog_hash = catalog_hash or ""
+        self._connector_rev = connector_rev or ""
         # Which MCP server this proxy fronts. Scopes the kill switch so one
         # compromised server can be isolated without disabling that tool name
         # everywhere. Fixed for the life of the proxy — the pool is keyed on it.
@@ -119,16 +127,22 @@ class MCPProxy:
         # enforcement (e.g. HTTP to a central Shield) without touching this class.
         self._enforcer: Enforcer = enforcer or _inprocess_enforcement
 
-    def set_policy(self, policy: Optional[dict]) -> None:
+    def set_policy(self, policy: Optional[dict], *, catalog_hash: Optional[str] = None,
+                   connector_rev: Optional[str] = None) -> None:
         """Refresh the server-scoped floor on an already-constructed proxy.
 
         stdio upstreams are pooled across requests, so a policy baked in at
         construction would keep enforcing a superseded revision until the pool
         cycled. The gateway re-reads route config on every call and pushes it
         here, preserving the property that config is always re-read even though
-        the connection is not.
+        the connection is not. The decision-binding versions are refreshed too,
+        so a pooled connection does not stamp a stale schema/connector version.
         """
         self._policy = policy or None
+        if catalog_hash is not None:
+            self._catalog_hash = catalog_hash or ""
+        if connector_rev is not None:
+            self._connector_rev = connector_rev or ""
 
     async def list_tools(
         self, *, agent_key: str, user_role: Optional[str], tenant_id: Optional[str]
@@ -198,6 +212,7 @@ class MCPProxy:
             session_id=session_id, workflow=workflow,
             confirmation_token=confirmation_token, route=self._route,
             policy=self._policy,
+            schema_version=self._catalog_hash, connector_version=self._connector_rev,
         )
         audit_base = {"phase": "call", "tool": name, "agent_key": agent_key,
                       "tenant_id": tenant_id, "route": self._route,

@@ -334,6 +334,10 @@ async def _default_proxy_factory(cfg: dict, tenant_id: str):
         # absent on an unbound route, which then behaves exactly as before.
         policy=cfg.get("effective_policy"),
         route=cfg.get("route"),
+        # Decision binding (M2 Task 3): the approved tool-schema fingerprint (M1)
+        # and the connector/policy revision, stamped on each decision's audit.
+        catalog_hash=cfg.get("catalog_approved_hash", ""),
+        connector_rev=str(cfg.get("effective_rev", "") or ""),
         # Without this the proxy's decision sink is None and every enforcement
         # decision on the MCP path is discarded.
         on_decision=_audit_decision,
@@ -470,7 +474,9 @@ class MCPGatewayRouter:
         # rather than when its subprocess happens to cycle.
         setter = getattr(proxy, "set_policy", None)
         if callable(setter):
-            setter(cfg.get("effective_policy"))
+            setter(cfg.get("effective_policy"),
+                   catalog_hash=cfg.get("catalog_approved_hash", ""),
+                   connector_rev=str(cfg.get("effective_rev", "") or ""))
         try:
             return await fn(proxy)
         except Exception as e:
