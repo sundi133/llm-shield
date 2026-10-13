@@ -40,7 +40,7 @@ shield = Shield()
 
 def handle_tool_call(name, args, session):
     v = shield.check_tool(
-        agent_key="jumpcloud-gateway",
+        agent_key="partner-gateway",
         tool_name=name,
         user_role=session.role,        # from your IdP, never from a tool arg
         session_id=session.id,
@@ -51,7 +51,7 @@ def handle_tool_call(name, args, session):
 
     result = upstream.call(name, args)
 
-    out = shield.screen_tool_output(name, result, agent_key="jumpcloud-gateway")
+    out = shield.screen_tool_output(name, result, agent_key="partner-gateway")
     return out.sanitized_output or result
 ```
 
@@ -62,7 +62,7 @@ attacker who reached the model can choose too.
 looks like a broken API and is unfinished setup:
 
 ```python
-shield.register_agent("jumpcloud-gateway", name="JumpCloud AI Gateway")
+shield.register_agent("partner-gateway", name="Partner AI Gateway")
 shield.set_tool_policy({"tool_name": "read_logs", "allowed_roles": ["sre", "oncall"]})
 ```
 

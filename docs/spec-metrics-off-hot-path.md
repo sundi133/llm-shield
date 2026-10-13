@@ -101,7 +101,7 @@ Deliberately *not* stated as an absolute p50 target, because total latency is
 dominated by the pipeline, which moved 4x between measurement days for unrelated
 reasons.
 
-**Why now.** This number goes in front of JumpCloud. Their engineering memo
+**Why now.** This number goes in front of an enterprise evaluator. Their engineering review
 already said not to present latency before capturing p50/p95, and re-measuring
 proved them right: the header understated reality by 3.0x on one day and 1.2x on
 the next. A figure that swings that much is not one to quote in a partner

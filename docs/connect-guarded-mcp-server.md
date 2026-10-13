@@ -169,6 +169,6 @@ to one tenant.
 
 ## Related
 
-- [JumpCloud AI Gateway: add Shield guardrails](/jumpcloud-mcp-setup/) for the full operator walkthrough
+- [Vendor AI Gateway: add Shield guardrails](/vendor-ai-gateway-setup/) for the full operator walkthrough
 - [MCP input protection: a demo runbook](/mcp-input-protection-demo/) for what the policy stops
 - [Tool Data Policies](/tool-data-policies/) for per-tool rules

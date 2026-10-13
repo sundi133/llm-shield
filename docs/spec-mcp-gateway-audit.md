@@ -46,7 +46,7 @@ allowed. Afterwards:
 - `GET /v1/tenant/me/telemetry` returned nothing for them
 
 The comparable path is wired: `/v1/shield/tool/check` writes to `audit_logger`
-(`api/routes_tool.py:216`), which is why `agent_key=jumpcloud-mcp-gateway`
+(`api/routes_tool.py:216`), which is why `agent_key=partner-gateway`
 entries exist from that endpoint and none exist from the gateway.
 
 **Why this matters more than it looks.** Shield is sold as a governance control.

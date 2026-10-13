@@ -227,5 +227,5 @@ an MCP client.
 ## Related
 
 - [Tool Data Policies](/tool-data-policies/) for per-tool policies
-- [JumpCloud AI Gateway: add Shield guardrails](/jumpcloud-mcp-setup/) for registering a route
+- [Vendor AI Gateway: add Shield guardrails](/vendor-ai-gateway-setup/) for registering a route
 - [MCP Gateway](/mcp-gateway/) for the enforcement pipeline

@@ -1,15 +1,15 @@
 ---
-title: "JumpCloud AI Gateway: add Shield guardrails"
+title: "Vendor AI Gateway: add Shield guardrails"
 layout: default
 nav_order: 52
-permalink: /jumpcloud-mcp-setup/
-description: "Put Shield in front of an MCP server registered in JumpCloud's AI Gateway. No code changes to the MCP server, no custom headers required. Deploy, register, mint an OAuth client, fill in Add Server."
+permalink: /vendor-ai-gateway-setup/
+description: "Put Shield in front of an MCP server registered in a vendor AI Gateway. No code changes to the MCP server, no custom headers required. Deploy, register, mint an OAuth client, fill in Add Server."
 ---
 
-# JumpCloud AI Gateway: add Shield guardrails
+# Vendor AI Gateway: add Shield guardrails
 {: .no_toc }
 
-JumpCloud's **Add Server** dialog takes a URL and an authentication method. That
+The vendor's **Add Server** dialog takes a URL and an authentication method. That
 is the whole integration surface, and it is enough: point it at Shield instead
 of your MCP server, and Shield forwards to the server unchanged.
 {: .fs-6 .fw-300 }
@@ -26,7 +26,7 @@ of your MCP server, and Shield forwards to the server unchanged.
 ## What you are building
 
 ```
-JumpCloud AI Gateway
+Vendor AI Gateway
         |
         |  Authorization: Bearer <OAuth token>
         v
@@ -42,7 +42,7 @@ ordinary client. This is enforced by
 `tests/test_mcp_upstream_needs_no_changes.py`, which drives a real MCP server
 built with only the official SDK over real stdio.
 
-JumpCloud's dialog has no custom-headers field, so identity has to travel over
+the gateway's dialog has no custom-headers field, so identity has to travel over
 OAuth. Step 3 covers that.
 
 ## Step 1: deploy an MCP server to Railway
@@ -108,7 +108,7 @@ Grant exactly the tool names the upstream advertises:
 curl -s -X POST "$SHIELD/v1/agents/registry" \
   -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
   -d '{"agent_id":"mcp-agent",
-       "name":"JumpCloud AI Gateway connection",
+       "name":"Partner AI Gateway connection",
        "tools":["customer_profile_get","transaction_history",
                 "statement_generate","wire_transfer_execute","email_send"],
        "role_permissions":{
@@ -131,7 +131,7 @@ agent.
 | Field | Value |
 |---|---|
 | **Name** | Anything, for example `Bank Core (guarded)` |
-| **Prefix** | Required by JumpCloud, but cosmetic. Grant Shield the UNPREFIXED names. See [Grant tools by their real names](#grant-tools-by-their-real-names-not-the-prefix) |
+| **Prefix** | Required by many AI gateways, but cosmetic. Grant Shield the UNPREFIXED names. See [Grant tools by their real names](#grant-tools-by-their-real-names-not-the-prefix) |
 | **URL** | `https://api.guardrails.votal.ai/gateway/bankco-prod/mcp` |
 | **MCP authentication method** | **API Token**, with your tenant key |
 | Client ID / Secret / Scopes | leave empty |
@@ -170,7 +170,7 @@ two-pass setup whose first attempt fails.
 A guardrail that has never refused anything is indistinguishable from one that
 is not wired up, so confirm a **block**, not just a pass:
 
-1. In the JumpCloud AI Gateway, ask the agent to use a low-risk tool. It should
+1. In the Vendor AI Gateway, ask the agent to use a low-risk tool. It should
    work exactly as before.
 2. Ask it to use a tool the caller's role is not permitted to use. It should be
    refused by Shield, and the tool should not appear in the agent's tool list at
@@ -186,7 +186,7 @@ different people, and the MCP server knows nothing about it.
 
 ### Grant tools by their real names, NOT the prefix
 
-The Prefix field is cosmetic. JumpCloud handles it entirely on its own side:
+The Prefix field is cosmetic. the gateway handles it entirely on its own side:
 it prepends the prefix to the tool names it **displays**, and strips it again
 before **calling** Shield. Shield therefore only ever sees the upstream's real,
 unprefixed names, at both `tools/list` and `tools/call` time.
@@ -201,10 +201,10 @@ agent granted "DEMO_customer_profile_get"   -> 0 tools visible, empty connector
 
 The prefixed grant is the trap, and its failure is silent: `tools/list` filters
 the upstream's unprefixed names against a grant that only contains prefixed
-ones, nothing matches, and JumpCloud shows an empty connector with no error.
+ones, nothing matches, and the gateway shows an empty connector with no error.
 
 Use `scripts/grant_agent_tools.py` **without** `--prefix` (the flag exists for
-non-JumpCloud clients that genuinely rename tools; JumpCloud is not one). It
+clients that genuinely rename tools; a prefix-stripping gateway is not one). It
 discovers the current tools from the upstream, so it cannot miss a tool you
 added:
 
@@ -240,11 +240,11 @@ A connection carrying only a tenant key has no user role, so it resolves to the
 empty role `""`. Role-based filtering still works (that is what step 3
 configures), but every caller shares one role.
 
-For genuine per-user decisions JumpCloud must forward the end user's identity.
-Since JumpCloud is itself the IdP the role is already in a token they hold, and
+For genuine per-user decisions the gateway must forward the end user's identity.
+If the gateway is itself your IdP the role is already in a token they hold, and
 Shield verifies a signed role claim from a configurable path
 (`core/identity_resolution.py` handles Keycloak `realm_access.roles`, Okta
-`groups`, Entra `roles`). This is the thing worth asking their engineering for.
+`groups`, Entra `roles`). This is the thing worth asking your gateway vendor for.
 
 ### Isolation is a real requirement
 

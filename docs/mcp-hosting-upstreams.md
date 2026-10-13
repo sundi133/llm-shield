@@ -30,7 +30,7 @@ go around it.
 
 | Your MCP server is | Examples | What to do |
 |---|---|---|
-| **A vendor's hosted server** | Google Drive, Gmail, JumpCloud, Higgsfield | [Register its URL](#a-vendor-hosted-servers); Shield holds the credential |
+| **A vendor's hosted server** | Google Drive, Gmail, Higgsfield | [Register its URL](#a-vendor-hosted-servers); Shield holds the credential |
 | **Your own server, and it may be reachable from the internet** | A service you deploy on Cloud Run, AWS, Azure or Railway | [Host it on HTTPS and let only Shield in](#b-your-own-server-on-the-internet) |
 | **Your own server, and it must stay on your private network** | Core banking, internal databases, on-premises systems | [Run the Shield gateway inside your network](#c-servers-on-a-private-network) |
 
@@ -62,7 +62,7 @@ only reachable through Shield**). Until then the console marks the server
 
 ## A. Vendor-hosted servers
 
-Vendors such as Google, JumpCloud and Higgsfield run MCP servers on the
+Vendors such as Google and Higgsfield run MCP servers on the
 internet. Shield can reach them directly.
 
 1. In the Shield console, open **MCP Gateway**, then **Add Server**.
