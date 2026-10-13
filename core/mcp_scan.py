@@ -17,11 +17,43 @@ audited.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from typing import Any, Optional
 
 logger = logging.getLogger("votal.mcp_scan")
+
+
+def catalog_fingerprint(catalog: Any) -> str:
+    """A stable hash of a server's advertised tools / resources / prompts.
+
+    Covers the surface a client actually acts on — names, descriptions and input
+    schemas — so a later silent change (a "rug pull": a widened schema, or an
+    instruction injected into a description) yields a different fingerprint.
+    Order- and formatting-independent. Returns "" when the catalog cannot be
+    read, which the caller treats as "no fingerprint" (never a false quarantine).
+    """
+    if catalog is None:
+        return ""
+    try:
+        def _items(seq, keys):
+            out = []
+            for it in (seq or []):
+                get = (it.get if isinstance(it, dict) else (lambda k: getattr(it, k, None)))
+                out.append({k: get(k) for k in keys})
+            out.sort(key=lambda d: str(d.get("name") or ""))
+            return out
+        canon = {
+            "tools": _items(getattr(catalog, "tools", None), ("name", "description", "inputSchema")),
+            "resources": _items(getattr(catalog, "resources", None), ("name", "uri", "description")),
+            "prompts": _items(getattr(catalog, "prompts", None), ("name", "description", "arguments")),
+        }
+        blob = json.dumps(canon, sort_keys=True, default=str)
+        return hashlib.sha256(blob.encode()).hexdigest()
+    except Exception:       # noqa: BLE001 — a fingerprint is best-effort
+        return ""
 
 #: Findings kept on the stored report. Enough to act on; bounded so one
 #: pathological server cannot bloat the store.
@@ -139,7 +171,11 @@ async def scan_upstream(cfg: dict, tenant_id: str, *, timeout: float = 20.0) -> 
         return _unscanned("unreachable",
                           f"could not fetch the server's catalog: {type(e).__name__}")
 
-    return _summarize(report)
+    summary = _summarize(report)
+    # Fingerprint the observed catalog so a later silent change is detectable
+    # (approve-before-publish, M1). Only ever set when the catalog was fetched.
+    summary["catalog_hash"] = catalog_fingerprint(catalog)
+    return summary
 
 
 def _summarize(report: Any) -> dict:
@@ -193,6 +229,7 @@ def summary_for_route(report: Optional[dict]) -> Optional[dict]:
         "verdict": report.get("verdict"),
         "gating_count": report.get("gating_count", 0),
         "scanned_at": report.get("scanned_at"),
+        "catalog_hash": report.get("catalog_hash", ""),
     }
 
 

@@ -50,6 +50,23 @@ class Delegation:
     user_sub: str = ""
     user_roles: tuple = ()
     error: str = ""
+    # Retained so a delegation can be audited and revoked (M1). jti is the
+    # revocation handle (storage.revocation); expires_at bounds the record TTL.
+    jti: str = ""
+    issuer: str = ""
+    expires_at: int = 0
+
+
+def delegation_persist_enabled() -> bool:
+    """Whether to write a persisted record of each verified delegation.
+
+    Off by default: resolve_delegation is on the guard path, and a store write
+    there is exactly the latency the repo keeps governance away from. Enabling it
+    is opt-in for deployments that want an auditable, enumerable delegation trail.
+    The revocation CHECK is independent and always on when delegation is enabled.
+    """
+    v = os.environ.get("SHIELD_DELEGATION_PERSIST", "").strip().lower()
+    return v in ("1", "true", "on", "yes")
 
 
 def delegation_mode() -> str:
@@ -119,10 +136,26 @@ def verify_user_token(token: str, *, audience: Optional[str] = None,
         logger.debug("delegated user token rejected: %s", e)
         return Delegation(present=True, error=f"delegated token rejected: {e}")
 
+    jti = str(claims.get("jti", "") or "")
+    # A delegation is revocable by its jti, the same axis the MCP path already
+    # uses to revoke a Shield access token. A revoked delegated token verifies
+    # cryptographically but must not be honoured.
+    if jti:
+        try:
+            from storage.revocation import is_jti_revoked
+            if is_jti_revoked(jti):
+                return Delegation(present=True, error="delegated token revoked",
+                                  jti=jti, issuer=iss)
+        except Exception:       # noqa: BLE001 — a revocation-store hiccup must
+            pass                # not silently ACCEPT; absence of a hit = not revoked
+
+    exp = claims.get("exp")
     return Delegation(
         present=True, verified=True,
         user_sub=str(claims.get("sub", "")),
         user_roles=_roles_from(claims, tenant_id),
+        jti=jti, issuer=iss,
+        expires_at=int(exp) if isinstance(exp, (int, float)) else 0,
     )
 
 
@@ -160,6 +193,32 @@ def actor_from_act_claim(claims: dict) -> str:
     return ""
 
 
+def _agent_id(request: Any) -> str:
+    """Best-effort id of the agent doing the acting (its own verified workload
+    identity), for the delegation record. Empty when unknown."""
+    try:
+        wi = getattr(getattr(request, "state", None), "workload_identity", None)
+        claims = getattr(wi, "claims", None) if wi is not None else None
+        if isinstance(claims, dict):
+            return str(claims.get("sub") or claims.get("client_id") or "")
+    except Exception:       # noqa: BLE001
+        pass
+    return ""
+
+
+def _persist_delegation(deleg: "Delegation", tenant_id: str, request: Any) -> None:
+    """Record a verified delegation for audit + revocation. Best-effort: losing
+    the record must never fail the guarded request."""
+    try:
+        from storage.delegation_store import record_delegation
+        record_delegation(
+            tenant_id, jti=deleg.jti, issuer=deleg.issuer,
+            user_sub=deleg.user_sub, agent=_agent_id(request),
+            roles=list(deleg.user_roles or ()), expires_at=deleg.expires_at)
+    except Exception as e:       # noqa: BLE001
+        logger.debug("delegation not persisted: %s", e)
+
+
 def resolve_delegation(request: Any, tenant_id: Optional[str] = None) -> Delegation:
     """Delegation for this request. Never raises — it is on the guard path."""
     if delegation_mode() == MODE_OFF:
@@ -173,9 +232,12 @@ def resolve_delegation(request: Any, tenant_id: Optional[str] = None) -> Delegat
         token = token[7:].strip()
     if token:
         try:
-            return verify_user_token(token, tenant_id=tenant_id)
+            deleg = verify_user_token(token, tenant_id=tenant_id)
         except Exception as e:
             return Delegation(present=True, error=str(e))
+        if deleg.verified and deleg.jti and tenant_id and delegation_persist_enabled():
+            _persist_delegation(deleg, tenant_id, request)
+        return deleg
 
     # No second token. A single RFC 8693 exchanged token carries the delegation
     # inside it: sub is the user the agent acts for, act names the actor. Those

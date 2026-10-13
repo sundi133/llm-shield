@@ -228,12 +228,14 @@ def test_a_scan_that_could_not_run_never_gates(verdict):
 # ── the route-document summary stays small ───────────────────────────
 
 
-def test_route_summary_is_three_fields():
+def test_route_summary_is_minimal():
     """The route config is read once per guarded call. The full report — findings
-    and evidence — belongs under its own key, not on that hot-path read."""
+    and evidence — belongs under its own key, not on that hot-path read. The
+    summary carries only small scalars (incl. the approve-before-publish
+    catalog_hash)."""
     full = mcp_scan._summarize(_Report([_F("critical", evidence="x" * 200)] * 10))
     summary = mcp_scan.summary_for_route(full)
-    assert set(summary) == {"verdict", "gating_count", "scanned_at"}
+    assert set(summary) == {"verdict", "gating_count", "scanned_at", "catalog_hash"}
     assert "findings" not in summary
 
 
@@ -290,7 +292,7 @@ def test_register_runs_a_scan_and_stores_it(client):
     assert store.get_scan_report("acme", "higgsfield")["verdict"] == "pass"
     # Only the summary rides on the route document.
     assert set(gstore.get_upstream("acme", "higgsfield")["scan"]) == {
-        "verdict", "gating_count", "scanned_at"}
+        "verdict", "gating_count", "scanned_at", "catalog_hash"}
 
 
 def test_register_warns_when_the_server_was_not_audited(client):

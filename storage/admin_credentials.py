@@ -55,6 +55,10 @@ ADMIN_OPERATIONS = (
     "tenants:write",    # create/update/delete tenants, tenant API keys, parent
     "oidc:read",        # read a tenant's trusted OIDC providers
     "oidc:write",       # register/remove a tenant's OIDC providers
+    "principals:read",  # list/read principals (people, service accounts) cross-tenant
+    "principals:write", # suspend/reactivate a principal (operator incident response)
+    "delegations:read", # list recorded agent-for-user delegations
+    "delegations:write",# revoke a delegation
 )
 
 

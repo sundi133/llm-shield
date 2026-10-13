@@ -99,6 +99,8 @@ COPY core/a2a/ core/a2a/
 COPY api/__init__.py api/
 COPY api/routes_tenant.py api/
 COPY api/routes_admin_credentials.py api/
+COPY api/routes_admin_principals.py api/
+COPY api/routes_admin_delegations.py api/
 COPY api/routes_tenant_self.py api/
 COPY api/routes_agents_registry.py api/
 COPY api/routes_governance.py api/
@@ -193,6 +195,7 @@ COPY storage/decision_audit.py storage/
 COPY storage/tool_killswitch.py storage/
 COPY storage/webhook_store.py storage/
 COPY storage/revocation.py storage/
+COPY storage/delegation_store.py storage/
 COPY storage/agent_auth_stats.py storage/
 COPY storage/oauth_store.py storage/
 COPY storage/agentic_control_plane.py storage/
