@@ -29,9 +29,14 @@ _MAX_NAME_LEN = 128
 class CreateCredentialRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=_MAX_NAME_LEN)
     expires_in_days: Optional[int] = Field(None, ge=1, le=3650)
-    # scope is accepted but not yet enforced (Task 2). Stored as-is; null = full
-    # admin. Documented so an operator is not misled into thinking it narrows.
+    # Optional scope (Task 2), enforced per request by core.auth.require_admin_scope.
+    # null = full admin. Shape: {"operations": [...], "tenants": [...]}; validated
+    # by storage.admin_credentials.normalize_scope (unknown operation -> 400).
     scope: Optional[dict] = None
+
+
+class RotateCredentialRequest(BaseModel):
+    expires_in_days: Optional[int] = Field(None, ge=1, le=3650)
 
 
 def _audit(request: Request, action: str, after: dict) -> None:
@@ -83,6 +88,25 @@ async def get_credential(cred_id: str, request: Request):
     if record is None:
         raise HTTPException(status_code=404, detail="no such credential")
     return record
+
+
+@router.post("/{cred_id}/rotate")
+async def rotate_credential(cred_id: str, request: Request,
+                            body: Optional[RotateCredentialRequest] = None):
+    """Mint a replacement (carrying the old credential's name + scope) and
+    revoke the old one. The new secret is in this response only."""
+    require_admin_root_or_operator(request)
+    from storage.admin_credentials import rotate_credential as _rotate
+    try:
+        secret, record = _rotate(
+            cred_id,
+            expires_in_days=(body.expires_in_days if body else None))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _audit(request, "admin_credential_rotated",
+           {"old_id": cred_id, "new_id": record["id"], "name": record["name"]})
+    return {"secret": secret, **record,
+            "note": "Store this now; the old credential is revoked."}
 
 
 @router.delete("/{cred_id}")
