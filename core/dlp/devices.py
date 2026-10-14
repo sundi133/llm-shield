@@ -6,6 +6,7 @@ Spec: docs/specs/device-dlp-agent.md §5.2, §6.
   device_enroll_used:{tenant_id}:{token_sha256}  counter, INCR'd per enrollment (atomic)
   devices:{tenant_id}                            HASH device_id -> identity + key_hash
   device_seen:{tenant_id}                        HASH device_id -> last heartbeat
+  device_serial:{tenant_id} and device_index_*   the serial index (core/dlp/device_index.py)
 
 An enrollment token looks like `vde.<tenant_id>.<secret>`: the agent has
 nothing else to go on at install, so the token names its tenant. Only the
@@ -188,9 +189,11 @@ def _counter(key: str) -> int:
 
 
 def reset_memory() -> None:
+    from core.dlp import device_index
     _mem_hash.clear()
     _mem_counter.clear()
     _mem_sets.clear()
+    device_index.reset_memory()
 
 
 # ── enrollment tokens ────────────────────────────────────────────────
@@ -451,6 +454,32 @@ def _text(body: dict, field: str, n: int, required: bool = True) -> str:
     return v.strip()
 
 
+def _serial_match(tenant_id: str, fleet: str, serial_hash: str) -> Optional[tuple[str, dict, int]]:
+    """The enrolled device with this serial in this fleet, and when it was last
+    heard from: (device_id, record, last_seen), or None.
+
+    Uses the serial index (core/dlp/device_index.py) when it can be trusted, so
+    an enrollment costs the same at ten laptops as at ten thousand. Otherwise,
+    and when the index names a device that is gone, it reads the whole fleet
+    as it did before the index existed."""
+    from core.dlp import device_index
+    if device_index.ready(tenant_id):
+        did = device_index.lookup(tenant_id, fleet, serial_hash)
+        if did is None:
+            return None
+        d = _hget(_devices_key(tenant_id), did)
+        if d and d.get("serial_hash") == serial_hash and d.get("fleet") == fleet:
+            s = _hget(_seen_key(tenant_id), did) or {}
+            return did, d, int(s.get("at") or d.get("enrolled_at") or 0)
+        # A stale entry (its device was revoked by a plane without the index):
+        # fall through to the full read, and this enrollment's write fixes it.
+    seen = _hgetall(_seen_key(tenant_id))
+    for did, d in _hgetall(_devices_key(tenant_id)).items():
+        if d.get("serial_hash") == serial_hash and d.get("fleet") == fleet:
+            return did, d, int((seen.get(did) or {}).get("at") or d.get("enrolled_at") or 0)
+    return None
+
+
 def enroll(token: str, body: dict) -> dict:
     """Register a laptop and mint its key. Returns what the agent stores:
     {device_id, api_key, fleet, tenant_id, pinned_public_key, kid}."""
@@ -492,20 +521,18 @@ def enroll(token: str, body: dict) -> dict:
     # replaced: the enrollment is refused and raised as an alert.
     device_id, replaced = None, None
     if info["serial_hash"]:
-        seen = _hgetall(_seen_key(tenant_id))
-        for did, d in _hgetall(_devices_key(tenant_id)).items():
-            if d.get("serial_hash") == info["serial_hash"] and d.get("fleet") == fleet:
-                last = int((seen.get(did) or {}).get("at") or d.get("enrolled_at") or 0)
-                if time.time() - last < LIVE_WINDOW_S and reenroll_live_mode() == "reject":
-                    raise DeviceError(
-                        "a device with this serial is still reporting; to reinstall it, "
-                        "revoke it in the portal first", status=409,
-                        alert={"tenant_id": tenant_id, "why": "live_serial",
-                               "device_id": did, "fleet": fleet,
-                               "hostname_claimed": info["hostname"],
-                               "token_id": rec.get("token_id", token_sha[:16])})
-                device_id, replaced = did, d
-                break
+        match = _serial_match(tenant_id, fleet, info["serial_hash"])
+        if match:
+            did, d, last = match
+            if time.time() - last < LIVE_WINDOW_S and reenroll_live_mode() == "reject":
+                raise DeviceError(
+                    "a device with this serial is still reporting; to reinstall it, "
+                    "revoke it in the portal first", status=409,
+                    alert={"tenant_id": tenant_id, "why": "live_serial",
+                           "device_id": did, "fleet": fleet,
+                           "hostname_claimed": info["hostname"],
+                           "token_id": rec.get("token_id", token_sha[:16])})
+            device_id, replaced = did, d
     _take_use(tenant_id, rec, token_sha)       # checks passed: only now spend a use
     if replaced:
         remove_api_key_by_hash(replaced.get("key_hash", ""))
@@ -518,6 +545,8 @@ def enroll(token: str, body: dict) -> dict:
               "enrollment_token_id": rec.get("token_id", token_sha[:16]),
               "reenrolled": int((replaced or {}).get("reenrolled", -1)) + 1}
     _hset(_devices_key(tenant_id), device_id, record)
+    from core.dlp import device_index
+    device_index.note_enrolled(tenant_id, fleet, info["serial_hash"], device_id)
     return {"device_id": device_id, "api_key": api_key, "fleet": fleet, "tenant_id": tenant_id,
             "pinned_public_key": public_key, "kid": edge_bundle.kid(),
             "note": "Verify pinned_public_key equals the key your MDM installed; if they "
@@ -736,4 +765,6 @@ def revoke(tenant_id: str, device_id: str) -> Optional[dict]:
     remove_api_key_by_hash(record.get("key_hash", ""))
     _hdel(_devices_key(tenant_id), device_id)
     _hdel(_seen_key(tenant_id), device_id)
+    from core.dlp import device_index
+    device_index.note_revoked(tenant_id, record, device_id)
     return {k: v for k, v in record.items() if k != "key_hash"}

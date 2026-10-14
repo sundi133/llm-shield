@@ -8,7 +8,9 @@ description: Keep device enrollment, the device list and the Device DLP portal p
 
 # Spec: Device DLP at fleet scale
 
-> Status: **DRAFT, awaiting approval.** Branch `device-fleet-scale`.
+> Status: **APPROVED 2026-10-15.** Branch `device-fleet-scale`.
+> Task 1 (serial index) built: `core/dlp/device_index.py`, `enroll()` and
+> `revoke()` in `core/dlp/devices.py`, `tests/test_device_fleet_scale.py`.
 > Builds on: `docs/specs/device-dlp-agent.md` (enrollment, heartbeat, revoke,
 > §5.2 and §6) and `docs/specs/device-rollout-kit.md` (kits, inventory).
 
@@ -76,8 +78,9 @@ counting fake), and the portal's Devices tab paints one page.
 ## 3. Data model
 
 New keys, all tenant-scoped by `{tenant_id}` in the key name, exactly like
-the existing `devices:` and `device_seen:` hashes. No TTLs: they live as long
-as the device records they index, and revoke removes entries.
+the existing `devices:` and `device_seen:` hashes. Index entries have no TTL:
+they live as long as the device records they index, and revoke removes them.
+Only the version key expires (below).
 
 | Key | Type | Member / field → value | Written by | Read by |
 |---|---|---|---|---|
@@ -87,7 +90,8 @@ as the device records they index, and revoke removes entries.
 | `device_last:{tenant_id}` | ZSET | `device_id`, score = last heartbeat, or `enrolled_at` until the first one | enroll, heartbeat, revoke | stale count (ZCOUNT), stale-only list |
 | `device_state:{tenant_id}:{state}` | SET | `device_id` | enroll (`never_seen`), heartbeat on a state change, revoke | list filtered by state |
 | `device_counts:{tenant_id}` | HASH | `fleet:{fleet}` and `state:{state}` → integer | enroll, heartbeat on a state change, revoke (HINCRBY) | summary |
-| `device_index_v:{tenant_id}` | STRING | index version, `1` | the rebuild | every indexed read (is the index present?) |
+| `device_index_v:{tenant_id}` | STRING, expires after `REFRESH_S` (1 h) | index version, `1` | the rebuild | every indexed read (is the index present and fresh?) |
+| `device_index_lock:{tenant_id}` | STRING, `SET NX EX 60` | `1` | the rebuild | the rebuild (one at a time) |
 
 Notes:
 - **Why a lexical ZSET for names.** `ZRANGEBYLEX` gives hostname order,
@@ -115,7 +119,26 @@ EX 60`). Until the rebuild finishes, callers use today's full-scan code, so
 results are never wrong, only as slow as today. A tenant with no devices
 builds an empty index instantly.
 
-**Drift check.** An indexed list compares `HLEN devices:{tenant_id}` with
+**Hourly refresh (built in task 1).** The version key expires after
+`REFRESH_S` (1 hour). The next enrollment after that rebuilds the serial index
+under the lock, which picks up any device written without it: one enrolled by
+an older data-plane worker during a rolling deploy, or one whose enrollment
+crashed between its two writes. That costs one full read per tenant per hour,
+against one per enrollment before. A rebuild only adds entries, or replaces
+an entry whose device is gone; it never overwrites an entry naming a device
+that exists, so it cannot race an enrollment back to an older device. Where
+an older Shield left two devices with one serial in one fleet, the one heard
+from most recently is indexed.
+
+**The serial index is a hint, not the authority.** A hit is checked against
+the device record (same serial, same fleet) before it is used; a hit naming a
+device that is gone falls back to the full read for that enrollment. A miss
+only ever leads to enrolling a **new** device, never to replacing one. So a
+missing entry can at worst let one duplicate-serial enrollment through without
+the refusal and alert, until the next refresh; it can never knock a live
+laptop off the fleet.
+
+**Drift check (task 2).** An indexed list compares `HLEN devices:{tenant_id}` with
 `ZCARD device_names:{tenant_id}`. If they differ, it serves this request
 from the full scan and triggers a rebuild. An operator can also force one
 (§4).
@@ -247,7 +270,7 @@ returned.
 | Index absent (existing tenant, first request) | Full-scan path for that request; rebuild under the lock |
 | Two workers rebuild at once | `SET NX EX 60` lock: one rebuilds, the other serves the full scan |
 | Process dies mid-update (counts drift) | Totals stay exact (HLEN, ZCOUNT). Breakdowns may be off until the next rebuild. Drift check rebuilds when HLEN and ZCARD differ; `/reindex` forces it |
-| An un-upgraded plane enrolls or revokes during rollout | Drift check catches it on the next list; the live-serial check reads the index first and, on a miss, also confirms against the device record before allowing a replacement |
+| An un-upgraded plane enrolls or revokes during rollout | An enrollment it makes has no serial entry until the hourly refresh; meanwhile a claim to that serial enrolls as a new device (no replacement, no alert). A revoke it makes leaves a stale entry, which fails the record check and sends that enrollment to the full read. The task 2 drift check catches both for the list |
 | Same hostname on many laptops (images, `MacBook-Pro`) | Distinct members (`\x00{device_id}`); ordering stable by device id within a name |
 | Hostname over 255 characters | Already rejected at enrollment (`_text(..., 255)`) |
 | Hostname containing `\x00` | Not rejected today. The index parses a member by splitting at the **last** `\x00`, and device ids never contain one (`_ID`), so the id is always recovered. Search treats the name as given |
