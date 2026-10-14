@@ -44,10 +44,19 @@ async def oauth_metadata(request: Request):
     SHIELD_OAUTH_ISSUER_URL, when set, is the public URL of this server: the
     endpoints are built on it (behind a TLS proxy the request's own base URL is
     http) and it is the issuer, which RFC 8414 requires to equal the URL the
-    metadata was fetched from. Unset, the response is exactly as before.
+    metadata was fetched from. SHIELD_PUBLIC_BASE_URL is honoured next, so the
+    SAME variable that fixes the protected-resource metadata (below) also fixes
+    this document — otherwise an operator who set only SHIELD_PUBLIC_BASE_URL got
+    a correct protected-resource but an authorization-server metadata still
+    advertising the internal request host, and MCP client registration/authorize
+    failed against that host. Unset both, the response is exactly as before.
     """
     from core.mcp.resource import issuer_url
-    base_url = issuer_url() or str(request.base_url).rstrip("/")
+    base_url = (
+        issuer_url()
+        or os.environ.get("SHIELD_PUBLIC_BASE_URL", "").strip().rstrip("/")
+        or str(request.base_url).rstrip("/")
+    )
     return build_server_metadata(base_url)
 
 
