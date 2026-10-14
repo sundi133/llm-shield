@@ -29,9 +29,8 @@
 
   <label>Mode</label>
   <select id="mode">
-    <option value="warn">monitor — flag but never block (recommended to start)</option>
+    <option value="monitor">monitor — flag but never block (recommended to start)</option>
     <option value="enforce">enforce — block on a Shield block verdict</option>
-    <option value="off">off</option>
   </select>
 
   <label>Screening timeout (ms)</label>
@@ -43,7 +42,7 @@
     <option value="false">block the prompt (fail closed)</option>
     <option value="true">send it unscreened (fail open)</option>
   </select>
-  <div class="hint">Applies to enforce mode. A timeout is not an approval: enforce that passes unscreened prompts when Shield is slow is not enforcement. Warn mode always fails open, because it never blocks anything.</div>
+  <div class="hint">Applies to enforce mode. A timeout is not an approval: enforce that passes unscreened prompts when Shield is slow is not enforcement. Monitor mode always fails open, because it never blocks anything.</div>
 
   <div><button id="save">Save</button><span id="status"></span></div>
 

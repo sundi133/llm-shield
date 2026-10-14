@@ -2,7 +2,7 @@ const modeSel = document.getElementById("mode");
 const result = document.getElementById("result");
 
 chrome.storage.local.get(["mode"]).then((c) => {
-  modeSel.value = c.mode || "warn";
+  modeSel.value = (c.mode === "enforce") ? "enforce" : "monitor";
 });
 
 modeSel.addEventListener("change", () =>

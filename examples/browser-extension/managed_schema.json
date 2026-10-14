@@ -6,7 +6,7 @@
     "proxyToken": { "type": "string", "description": "Optional Authorization bearer for a fronting proxy/gateway (policy-pushed; overrides local)." },
     "deviceId":   { "type": "string", "description": "Device / asset identifier injected by MDM policy, e.g. ${machine_name} or an asset tag." },
     "userId":     { "type": "string", "description": "User identifier injected by MDM policy (employee id, AD account, or email — the org's choice). Drives the Telemetry agent column." },
-    "mode":       { "type": "string", "enum": ["off", "warn", "enforce"], "description": "Screening mode (policy-pushed; overrides local)." },
+    "mode":       { "type": "string", "enum": ["monitor", "enforce"], "description": "Screening mode (policy-pushed; overrides local). monitor = screen but never block; enforce = block on a block verdict. A legacy or unknown value is read as monitor." },
     "timeoutMs":  { "type": "integer", "description": "Screening deadline for a text screen in milliseconds (default 45000; a cloud screen measures 14-20s, so a shorter deadline aborts ordinary requests; file screens add 2000/MB). Clamped to 1000-120000." },
     "failOpen":   { "type": "boolean", "description": "If Shield cannot be reached in enforce mode: false (default) blocks the prompt, true sends it unscreened. A timeout is not an approval." }
   }

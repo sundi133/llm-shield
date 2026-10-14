@@ -15,14 +15,14 @@ const DEFAULTS = {
   shieldUrl: "https://api.guardrails.votal.ai",
   tenantKey: "",
   proxyToken: "",
-  mode: "warn",
+  mode: "monitor",
   // Measured against the cloud data plane: an input screen with LLM-evaluated
   // custom policies takes 14-20s, and an output screen 17-20s. A 20s deadline
   // sat AT the p99, so ordinary requests aborted. 45s leaves real headroom.
   timeoutMs: 45000,
   // On a timeout or transport error: false = block (fail closed). "enforce"
   // that silently passes unscreened prompts when Shield is slow is not
-  // enforcement. Warn mode still fails open — it never blocks anything.
+  // enforcement. Monitor mode still fails open — it never blocks anything.
   failOpen: false,
 };
 
@@ -61,6 +61,10 @@ async function getConfig() {
     managed[k] != null && managed[k] !== "" ? managed[k] : local[k];
   const out = {};
   for (const k of Object.keys(DEFAULTS)) out[k] = pick(k) || DEFAULTS[k];
+  // Two modes only: enforce (block) and monitor (screen but never block).
+  // Any legacy or unknown value — including the removed "off" and "warn" — is
+  // read as monitor, so screening is never silently disabled.
+  out.mode = out.mode === "enforce" ? "enforce" : "monitor";
   return out;
 }
 
@@ -121,7 +125,6 @@ async function resolveIdentity() {
 async function screen(text, origin) {
   const cfg = await getConfig();
   const identity = await resolveIdentity();
-  if (cfg.mode === "off") return { block: false, warn: false, reason: "", mode: "off", identity };
   // A managed laptop with the Votal device agent decides locally, on the
   // tenant's signed policy: the prompt does not leave the laptop to be judged.
   const local = await agentScreen(text, origin);
@@ -164,7 +167,7 @@ async function screen(text, origin) {
       status: exc.rec && outcome !== "released" ? exc.rec.status : "",   // earlier request for this prompt
       decision: (exc.rec && exc.rec.decision) || null,
     };
-    if (cfg.mode === "warn") return { block: false, warn: flagged, reason, blocked_by, exception, mode: "warn", identity };
+    if (cfg.mode === "monitor") return { block: false, warn: flagged, reason, blocked_by, exception, mode: "monitor", identity };
     return { block: flagged, warn: false, reason, blocked_by, exception, mode: "enforce", identity };
   } catch (e) {
     // A timeout is not an approval. In enforce mode the prompt is held unless
@@ -174,10 +177,10 @@ async function screen(text, origin) {
     const error = timedOut
       ? `Shield did not respond within ${secs}s`
       : `Could not reach Shield: ${e && e.message ? e.message : String(e)}`;
-    const failOpen = cfg.failOpen === true || cfg.mode === "warn";
+    const failOpen = cfg.failOpen === true || cfg.mode === "monitor";
     return {
       block: !failOpen,
-      warn: failOpen && cfg.mode === "warn",
+      warn: failOpen && cfg.mode === "monitor",
       reason: failOpen ? "" : "guardrails unavailable",
       error,
       mode: cfg.mode,
@@ -206,7 +209,6 @@ function b64ToBlob(b64, type) {
 async function screenFile(meta) {
   const cfg = await getConfig();
   const identity = await resolveIdentity();
-  if (cfg.mode === "off") return { block: false, warn: false, reason: "", mode: "off", identity };
   if (!cfg.shieldUrl) return { block: false, warn: false, reason: "", error: "no shieldUrl configured", mode: cfg.mode, identity };
   if (meta.size > FILE_MAX_BYTES) {
     // fail-open above the cap — the server would 413 anyway; skip the upload
@@ -239,7 +241,7 @@ async function screenFile(meta) {
     // keeps each failed guardrail for an exception request.
     const { reason, items: blocked_by } = explainVerdict(data);
     const note = data.file && data.file.note ? data.file.note : undefined;
-    if (cfg.mode === "warn") return { block: false, warn: flagged, reason, blocked_by, note, mode: "warn", identity };
+    if (cfg.mode === "monitor") return { block: false, warn: flagged, reason, blocked_by, note, mode: "monitor", identity };
     return { block: flagged, warn: false, reason, blocked_by, note, mode: "enforce", identity };
   } catch (e) {
     return { block: false, warn: false, reason: "", error: String(e), mode: cfg.mode, identity };
@@ -286,7 +288,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           effective: {
             timeoutMs: resolveTimeoutMs(cfg),
             mode: cfg.mode,
-            failOpen: cfg.failOpen === true || cfg.mode === "warn",
+            failOpen: cfg.failOpen === true || cfg.mode === "monitor",
             shieldUrl: cfg.shieldUrl,
           },
         })

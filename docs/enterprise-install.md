@@ -123,7 +123,7 @@ the laptop, and a value set by policy overrides anything entered locally.
 | Setting | Required | What it is |
 |---|---|---|
 | `tenantKey` | yes | Your Shield tenant API key. It selects your tenant and its policy |
-| `mode` | yes | `enforce` blocks, `warn` shows a warning and lets the user continue, `off` disables screening |
+| `mode` | yes | `enforce` blocks on a block verdict; `monitor` screens and flags but never blocks (and always fails open). Those are the only two modes; there is no off switch |
 | `userId` | recommended | Who the user is, shown in Shield Telemetry (employee id, AD account or email: your choice) |
 | `deviceId` | recommended | The machine, for example `${machine_name}` or an asset tag |
 | `shieldUrl` | no | Defaults to `https://api.guardrails.votal.ai` |
