@@ -102,11 +102,23 @@ class AuditLogger:
 
             key = self._redis_key(tenant_id)
             r.zadd(key, {json.dumps(record): ts})
+            # Retention by AGE, per entry. Drop only entries older than the TTL
+            # window (score = ts), so an active tenant always keeps its last
+            # _AUDIT_TTL of history.
+            #
+            # A key-level `expire` was the bug this replaces: it set a 30-day TTL
+            # ONCE (when ttl==-1) and never refreshed it, so the WHOLE key — every
+            # message — expired ~30 days after its FIRST write regardless of
+            # activity, wiping all audit/telemetry at once.
+            r.zremrangebyscore(key, 0, ts - _AUDIT_TTL)
             count = r.zcard(key)
             if count and count > _MAX_ENTRIES:
                 r.zremrangebyrank(key, 0, count - _MAX_ENTRIES - 1)
-            if r.ttl(key) == -1:
-                r.expire(key, _AUDIT_TTL)
+            # A SLIDING key TTL as a space backstop only: refreshed on every write
+            # so it never fires while the tenant is active, and reclaims the key
+            # after _AUDIT_TTL of total silence (by which point score-trimming has
+            # already emptied it anyway).
+            r.expire(key, _AUDIT_TTL)
 
             # Tamper-evident chain (opt-in). This already runs in a thread-pool
             # executor, so appending here is off the guard hot path.
