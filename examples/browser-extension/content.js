@@ -410,7 +410,7 @@
   // Cached mode so interceptors can no-op synchronously when mode=off — the
   // event must be cancelled before any await, so we can't ask the background
   // worker first. Managed policy wins over local, like getConfig().
-  let shieldMode = "warn";
+  let shieldMode = "monitor";
   async function refreshShieldMode() {
     try {
       let managedMode = "";
@@ -418,7 +418,7 @@
         managedMode = ((await chrome.storage.managed.get("mode")) || {}).mode || "";
       } catch (_) {}
       const local = (await chrome.storage.local.get("mode")) || {};
-      shieldMode = managedMode || local.mode || "warn";
+      shieldMode = (managedMode || local.mode) === "enforce" ? "enforce" : "monitor";
     } catch (_) {}
   }
   refreshShieldMode();
@@ -519,7 +519,6 @@
   document.addEventListener(
     "change",
     async (e) => {
-      if (shieldMode === "off") return;
       const input = e.target;
       if (!input || input.type !== "file" || !input.files || !input.files.length) return;
       if (approvedEvents.has(e)) return;
@@ -540,7 +539,6 @@
   document.addEventListener(
     "drop",
     async (e) => {
-      if (shieldMode === "off") return;
       const files = e.dataTransfer && e.dataTransfer.files;
       if (!files || !files.length) return; // text drags pass through
       if (approvedEvents.has(e)) return;
@@ -569,7 +567,6 @@
   document.addEventListener(
     "paste",
     async (e) => {
-      if (shieldMode === "off") return;
       const files = e.clipboardData && e.clipboardData.files;
       if (!files || !files.length) return; // plain text paste passes through
       if (approvedEvents.has(e)) return;

@@ -6,7 +6,7 @@ async function load() {
   const c = await chrome.storage.local.get([...FIELDS, ...BOOL_FIELDS]);
   for (const f of FIELDS) if (c[f] != null) document.getElementById(f).value = c[f];
   for (const f of BOOL_FIELDS) document.getElementById(f).value = c[f] === true ? "true" : "false";
-  if (!c.mode) document.getElementById("mode").value = "warn";
+  if (!c.mode) document.getElementById("mode").value = "monitor";
 }
 
 async function save() {

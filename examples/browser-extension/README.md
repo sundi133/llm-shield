@@ -28,7 +28,8 @@ chance of working.
   (so it bypasses the page CSP and can attach the optional `Authorization`
   bearer + tenant `X-API-Key` headers).
 - **monitor** mode: flags (yellow banner) but always sends. **enforce** mode:
-  blocks on a Shield block verdict (red banner). **off**: does nothing.
+  blocks on a Shield block verdict (red banner). Those are the only two modes;
+  there is no off switch, so screening can't be silently disabled.
 - The block banner names the policy and says why. If your organisation has
   turned on exception requests, it also has **Request exception**: the user
   gives a reason, an admin approves or denies it in the portal
