@@ -8,7 +8,9 @@ description: Keep the Tool Registry page usable at thousands of tools, by paging
 
 # Spec: Tool Registry at scale
 
-> Status: **DRAFT, awaiting approval.** Branch `spec/tool-registry-scale`.
+> Status: **APPROVED 2026-10-15.** Branch `spec/tool-registry-scale`.
+> Task 1 (catalog and list API) built: `storage/tool_catalog.py`,
+> `api/routes_tool_catalog.py`, `tests/test_tool_catalog.py`.
 > Builds on: `docs/spec-global-tool-data-policy.md` (the default policy),
 > `docs/specs/tool-policy-editor.md` (the per-tool editor). Same approach as
 > `docs/specs/device-fleet-scale.md` (paged list, summary cards, filters).
@@ -130,7 +132,10 @@ up within 10 s; **Refresh** sends `fresh=1` to rebuild now. Bounded: at most
 
 Auth as today: tenant `X-API-Key` (portal session on the admin plane).
 
-### `GET /v1/tenant/me/tools` (admin plane; new module `api/routes_tool_catalog.py`)
+### `GET /v1/tenant/me/tool-catalog` (admin plane; new module `api/routes_tool_catalog.py`)
+
+Not `/v1/tenant/me/tools`: that path already exists (`GET`/`PUT` the tenant's
+OpenAI-format tool definitions, `api/routes_tenant_self.py`) and keeps its meaning.
 
 | Query | Meaning |
 |---|---|
@@ -322,7 +327,7 @@ default policy untouched by `remove`.
 
 **Task 3** (`tests/test_tool_registry_portal.py`, static, like
 `tests/test_device_dlp_portal.py`): tabs and panes; the list calls
-`/v1/tenant/me/tools` with the parameters the route accepts; a row's role
+`/v1/tenant/me/tool-catalog` with the parameters the route accepts; a row's role
 table is fetched on open; the editor loads one policy; no `${toolName}`,
 `${a}` or `${r}` reaches `innerHTML` unescaped; handlers read `data-`
 attributes. Plus a browser check against a tenant seeded with 5,000 tools and

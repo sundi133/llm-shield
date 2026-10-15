@@ -212,6 +212,11 @@ async def set_tool_policies_endpoint(
             policies_dict[tool_name] = policy.dict(exclude_none=True)
 
         result = set_tool_policies(tenant_id, policies_dict)
+        try:
+            from storage import tool_catalog          # docs/specs/tool-registry-scale.md §3
+            tool_catalog.invalidate(tenant_id)
+        except Exception:
+            pass
         return {"success": True, "tool_policies": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

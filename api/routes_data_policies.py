@@ -233,6 +233,17 @@ def _save_all(tenant_id: str, data: dict):
     if not r:
         raise Exception("Redis connection not available")
     r.set(_data_policies_key(tenant_id), json.dumps(data))
+    _invalidate_tool_catalog(tenant_id)
+
+
+def _invalidate_tool_catalog(tenant_id: str) -> None:
+    """Drop the portal's cached tool catalog for this tenant (best effort; the
+    cache also expires on its own). Spec: docs/specs/tool-registry-scale.md §3."""
+    try:
+        from storage import tool_catalog
+        tool_catalog.invalidate(tenant_id)
+    except Exception:
+        pass
 
 
 @router.post("/tools/{tool_name}/policy")
