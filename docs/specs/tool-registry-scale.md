@@ -9,8 +9,10 @@ description: Keep the Tool Registry page usable at thousands of tools, by paging
 # Spec: Tool Registry at scale
 
 > Status: **APPROVED 2026-10-15.** Branch `spec/tool-registry-scale`.
-> Task 1 (catalog and list API) built: `storage/tool_catalog.py`,
-> `api/routes_tool_catalog.py`, `tests/test_tool_catalog.py`.
+> All four tasks built: catalog and list API (`storage/tool_catalog.py`,
+> `api/routes_tool_catalog.py`), bulk (`POST /v1/data-policies/tools/bulk`),
+> portal and portal bulk (`static/tenant.html`). Tests: `tests/test_tool_catalog.py`,
+> `tests/test_tool_policy_bulk.py`, `tests/test_tool_registry_portal.py`.
 > Builds on: `docs/spec-global-tool-data-policy.md` (the default policy),
 > `docs/specs/tool-policy-editor.md` (the per-tool editor). Same approach as
 > `docs/specs/device-fleet-scale.md` (paged list, summary cards, filters).
