@@ -1,5 +1,6 @@
 """Data Policies API - Advanced tool-specific data protection with Redis persistence."""
 
+import copy
 import json
 import logging
 import os
@@ -9,10 +10,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 from fastapi import APIRouter, HTTPException, Request, Depends
-from pydantic import BaseModel
-from typing import Dict, List, Optional
+from pydantic import BaseModel, ValidationError
+from typing import Any, Dict, List, Optional
 
-from core.auth import get_tenant_from_request
+from core.auth import get_tenant_from_request, require_registry_write
 from core.dlp import floor
 from core.dlp_settings import (
     dlp_echo_check, dlp_fail_closed, dlp_llm_timeout_s, payload_delimiters, verdict_echoed,
@@ -350,6 +351,196 @@ async def delete_tool_data_policy(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Bulk changes ──────────────────────────────────────────────────────────
+#
+# One change applied to up to BULK_MAX tools' own policies, in one read and
+# one write of data_policies:{tenant}. Every result is validated as a single
+# save would validate it before anything is written, so one bad result
+# changes nothing. Spec: docs/specs/tool-registry-scale.md §4 (task 2).
+
+BULK_MAX = 500
+BULK_OPS = ("set_audit", "set_compliance", "set_role_action", "copy_from", "remove")
+ROLE_ACTIONS = ("allow", "redact", "block", "mask")
+_MATCH_KEYS = ("q", "agent", "source", "policy", "sanitization", "audit", "role")
+_TOOL_NAME_MAX = 256
+
+
+class BulkChange(BaseModel):
+    op: str
+    value: Optional[Any] = None
+
+
+class BulkToolPolicyRequest(BaseModel):
+    tools: Optional[List[str]] = None
+    match: Optional[Dict[str, Any]] = None
+    change: BulkChange
+    dry_run: bool = False
+
+
+def _bulk_bad(message: str, **extra) -> HTTPException:
+    return HTTPException(status_code=400, detail={"message": message, **extra})
+
+
+def _check_change(change: BulkChange, all_policies: dict) -> None:
+    op, v = change.op, change.value
+    if op not in BULK_OPS:
+        raise _bulk_bad(f"change.op: one of {', '.join(BULK_OPS)}")
+    if op == "set_audit" and not isinstance(v, bool):
+        raise _bulk_bad("set_audit: value true or false")
+    if op == "set_compliance" and not (v == "" or v in COMPLIANCE_FRAMEWORKS):
+        raise _bulk_bad(f"set_compliance: value one of {', '.join(COMPLIANCE_FRAMEWORKS)}, or \"\" to clear")
+    if op == "set_role_action":
+        role = v.get("role") if isinstance(v, dict) else None
+        if not (isinstance(role, str) and 0 < len(role.strip()) <= 128) or \
+                (v or {}).get("action") not in ROLE_ACTIONS:
+            raise _bulk_bad(f"set_role_action: value {{role, action}}, action one of {', '.join(ROLE_ACTIONS)}")
+    if op == "copy_from":
+        if not isinstance(v, str) or v == GLOBAL_POLICY_KEY or not isinstance(all_policies.get(v), dict):
+            raise _bulk_bad("copy_from: value names a tool that has a policy of its own; there is nothing to copy")
+
+
+def _bulk_targets(tenant_id: str, body: BulkToolPolicyRequest) -> list[str]:
+    if (body.tools is None) == (body.match is None):
+        raise _bulk_bad("give either tools (a list of names) or match (the list's filters), not both")
+    if body.tools is not None:
+        names: list[str] = []
+        for t in body.tools:
+            if not isinstance(t, str) or not 0 < len(t) <= _TOOL_NAME_MAX:
+                raise _bulk_bad(f"tools: names of 1 to {_TOOL_NAME_MAX} characters")
+            _reject_reserved(t)
+            if t not in names:
+                names.append(t)
+        if not 1 <= len(names) <= BULK_MAX:
+            raise _bulk_bad(f"tools: 1 to {BULK_MAX} names", count=len(names))
+        return names
+    from storage import tool_catalog
+    unknown = sorted(set(body.match) - set(_MATCH_KEYS))
+    if unknown:
+        raise _bulk_bad(f"match: unknown filter {', '.join(unknown)}; allowed: {', '.join(_MATCH_KEYS)}")
+    raw = {k: ("true" if v is True else "false" if v is False else "" if v is None else str(v))
+           for k, v in body.match.items()}
+    try:
+        f = tool_catalog.parse_params({**raw, "limit": "1"})
+    except tool_catalog.CatalogError as e:
+        raise _bulk_bad(f"match: {e}")
+    _built, rows, _keys, _summary = tool_catalog.catalog(tenant_id, fresh=True)
+    names = [r["tool"] for r in rows if tool_catalog._matches(r, f)]
+    if len(names) > BULK_MAX:
+        raise _bulk_bad(f"match selects {len(names)} tools; at most {BULK_MAX} can change at once. "
+                        f"Narrow the filters.", count=len(names))
+    return names
+
+
+def _apply_change(change: BulkChange, current: Optional[dict], all_policies: dict) -> Optional[dict]:
+    """The tool's policy after the change, unvalidated; None means no policy."""
+    op, v = change.op, change.value
+    if op == "remove":
+        return None
+    if op == "copy_from":
+        entry = copy.deepcopy(all_policies[v])
+    else:
+        entry = copy.deepcopy(current) if current else {}
+    for stamp in ("created_at", "updated_at"):
+        entry.pop(stamp, None)
+    if op == "set_audit":
+        entry["audit_required"] = v
+    elif op == "set_compliance":
+        entry["compliance_framework"] = v or None
+    elif op == "set_role_action":
+        role, action = v["role"].strip(), v["action"]
+        rps = [dict(rp) for rp in (entry.get("role_policies") or []) if isinstance(rp, dict)]
+        for rp in rps:
+            if rp.get("role") == role:
+                rp["action"] = action
+                break
+        else:
+            rps.append({"role": role, "action": action})
+        entry["role_policies"] = rps
+    return entry
+
+
+def _validated(tool_name: str, entry: dict) -> dict:
+    """The policy as a single save would store it, or 400 naming the tool."""
+    try:
+        policy = ToolDataPolicy(**{**entry, "tool_name": tool_name}).dict()
+    except ValidationError as e:
+        raise _bulk_bad(f"the change would leave {tool_name!r} with an invalid policy",
+                        tool=tool_name, errors=[err.get("msg", "") for err in e.errors()])
+    problems = floor.validate_policy_floor(policy)
+    if problems:
+        raise _bulk_bad(f"the change would leave {tool_name!r} with an invalid policy",
+                        tool=tool_name, errors=problems)
+    return policy
+
+
+def _normalized(tool_name: str, entry: Optional[dict]):
+    """For comparing before and after: what a save would store, or the raw
+    value when the stored policy is itself not valid."""
+    if entry is None:
+        return None
+    try:
+        return ToolDataPolicy(**{**entry, "tool_name": tool_name}).dict()
+    except ValidationError:
+        return {k: v for k, v in entry.items() if k not in ("created_at", "updated_at")}
+
+
+@router.post("/tools/bulk")
+async def bulk_tool_data_policies(
+    body: BulkToolPolicyRequest,
+    request: Request,
+    tenant_id: str = Depends(get_tenant_from_request),
+):
+    """Apply one change to up to 500 tools' own policies: set_audit,
+    set_compliance, set_role_action, copy_from, or remove. Name the tools, or
+    give `match` (the Tool Registry list's filters). `dry_run` reports what
+    would change and writes nothing. The default policy is never touched."""
+    require_registry_write(request, tenant_id, "change tool data policies in bulk")
+    if not _get_redis():
+        raise HTTPException(status_code=503, detail="Redis connection not available")
+    all_policies = _load_all(tenant_id)
+    _check_change(body.change, all_policies)
+    names = _bulk_targets(tenant_id, body)
+
+    results: dict[str, Optional[dict]] = {}
+    changed: list[str] = []
+    for name in names:
+        current = all_policies.get(name) if isinstance(all_policies.get(name), dict) else None
+        after = _apply_change(body.change, current, all_policies)
+        new = None if after is None else _validated(name, after)
+        if _normalized(name, current) != new:
+            results[name] = new
+            changed.append(name)
+
+    if changed and not body.dry_run:
+        now = int(time.time())
+        for name in changed:
+            new = results[name]
+            if new is None:
+                all_policies.pop(name, None)
+            else:
+                old = all_policies.get(name) if isinstance(all_policies.get(name), dict) else {}
+                all_policies[name] = {**new, "created_at": old.get("created_at", now), "updated_at": now}
+        _save_all(tenant_id, all_policies)
+        try:
+            from storage.admin_audit import log_admin_action
+            from core.auth import portal_principal
+            principal = portal_principal(request) or {}
+            log_admin_action(
+                action="tenant_bulk_tool_policy",
+                actor=(f"user:{principal.get('email') or principal.get('sub')}" if principal
+                       else f"tenant:{tenant_id}"),
+                tenant_id=tenant_id,
+                source_ip=request.client.host if request.client else "",
+                metadata={"op": body.change.op, "value": body.change.value,
+                          "changed": len(changed), "tools": changed[:50]})
+        except Exception:
+            logger.warning("bulk tool policy change was not audited", exc_info=True)
+
+    return {"success": True, "dry_run": body.dry_run, "op": body.change.op,
+            "targets": len(names), "changed": len(changed),
+            "unchanged": len(names) - len(changed), "tools": changed}
+
+
 # ── Tenant-wide default policy ────────────────────────────────────────────
 #
 # Data policies are per tool and exact-match only, so a tool nobody has written
@@ -444,34 +635,36 @@ async def delete_global_data_policy(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+#: The compliance frameworks a policy may name (compliance_framework).
+COMPLIANCE_FRAMEWORKS = {
+    "hipaa": {
+        "name": "Health Insurance Portability and Accountability Act",
+        "description": "US healthcare data protection",
+        "required_protections": ["phi", "ssn", "medical_records"],
+        "audit_required": True,
+        "retention_max_days": 365
+    },
+    "pci_dss": {
+        "name": "Payment Card Industry Data Security Standard",
+        "description": "Credit card data protection",
+        "required_protections": ["pan", "cvv", "cardholder_data"],
+        "audit_required": True,
+        "retention_max_days": 365
+    },
+    "gdpr": {
+        "name": "General Data Protection Regulation",
+        "description": "EU personal data protection",
+        "required_protections": ["personal_data", "sensitive_data"],
+        "audit_required": True,
+        "retention_max_days": 1095
+    }
+}
+
+
 @router.get("/compliance/frameworks")
 async def get_compliance_frameworks():
     """Get available compliance frameworks and their requirements."""
-    return {
-        "frameworks": {
-            "hipaa": {
-                "name": "Health Insurance Portability and Accountability Act",
-                "description": "US healthcare data protection",
-                "required_protections": ["phi", "ssn", "medical_records"],
-                "audit_required": True,
-                "retention_max_days": 365
-            },
-            "pci_dss": {
-                "name": "Payment Card Industry Data Security Standard",
-                "description": "Credit card data protection",
-                "required_protections": ["pan", "cvv", "cardholder_data"],
-                "audit_required": True,
-                "retention_max_days": 365
-            },
-            "gdpr": {
-                "name": "General Data Protection Regulation",
-                "description": "EU personal data protection",
-                "required_protections": ["personal_data", "sensitive_data"],
-                "audit_required": True,
-                "retention_max_days": 1095
-            }
-        }
-    }
+    return {"frameworks": COMPLIANCE_FRAMEWORKS}
 
 
 # ── Reasoning-based (LLM) sanitization ───────────────────────────────────
