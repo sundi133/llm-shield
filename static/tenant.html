@@ -5022,14 +5022,42 @@ if __name__ == "__main__":
         <div class="page-desc">An agent on each Mac and Windows laptop checks prompts to AI tools before they leave the device: your DLP rules first, then a small local model (Tev1 0.8B through Ollama) for what rules cannot see. Prompts are never sent to Shield for inspection; laptops report verdicts and hashes. Devices start in monitor mode.</div>
       </div>
 
-      <div class="card">
-        <div class="card-header"><div><div class="card-title">Devices</div>
-          <div class="card-desc">Every enrolled laptop, its last heartbeat and what it runs. A device that stops reporting turns stale: uninstalled, blocked from reaching Shield, switched off, or tampered with.</div></div>
-          <button class="small" onclick="ddLoad()">Refresh</button></div>
-        <div id="dd-summary" style="font-size:13px;margin-bottom:0.6rem;"></div>
-        <div id="dd-list" style="font-size:13px;overflow-x:auto;">Loading...</div>
+      <!-- Sub-tabs: each loads its data when first opened (docs/specs/device-fleet-scale.md §4) -->
+      <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:1rem;">
+        <button class="dd-subtab active" data-subtab="devices" onclick="switchDDSubtab('devices')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid var(--primary);margin-bottom:-2px;transition:all 0.15s;">Devices</button>
+        <button class="dd-subtab" data-subtab="enrollment" onclick="switchDDSubtab('enrollment')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Enrollment</button>
+        <button class="dd-subtab" data-subtab="policy" onclick="switchDDSubtab('policy')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Policy</button>
       </div>
 
+      <div id="dd-sub-devices" class="dd-subtab-pane">
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Devices</div>
+          <div class="card-desc">Every enrolled laptop, its last heartbeat and what it runs. A device that stops reporting turns stale: uninstalled, blocked from reaching Shield, switched off, or tampered with. Click a card to filter.</div></div>
+          <button class="small" onclick="ddDevices()">Refresh</button></div>
+        <div id="dd-cards" class="stats-grid stat-grid-compact" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr));margin-bottom:0.75rem;"></div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem;font-size:13px;">
+          <input id="dd-q" type="text" autocomplete="off" maxlength="64" placeholder="Search hostname (starts with)" oninput="ddSearch()" style="flex:1;min-width:180px;">
+          <select id="dd-f-fleet" style="width:auto;" onchange="ddSetFilter({fleet: this.value})"><option value="">All fleets</option></select>
+          <select id="dd-f-state" style="width:auto;" onchange="ddSetFilter({state: this.value})">
+            <option value="">All states</option>
+            <option value="ok">ok</option>
+            <option value="never_seen">never_seen</option>
+            <option value="no_bundle">no_bundle</option>
+            <option value="stale_bundle">stale_bundle</option>
+            <option value="model_unavailable">model_unavailable</option>
+            <option value="model_unsupported">model_unsupported</option>
+            <option value="model_mismatch">model_mismatch</option>
+            <option value="degraded">degraded</option>
+          </select>
+          <label title="No heartbeat within the stale window, oldest first"><input type="checkbox" id="dd-f-stale" onchange="ddSetFilter({stale: this.checked})"> Stale only</label>
+          <button class="small" onclick="ddClearFilters()">Clear filters</button>
+        </div>
+        <div id="dd-list" style="font-size:13px;overflow-x:auto;">Loading...</div>
+        <div id="dd-pager" style="display:flex;gap:0.5rem;align-items:center;margin-top:0.6rem;font-size:13px;"></div>
+      </div>
+      </div>
+
+      <div id="dd-sub-enrollment" class="dd-subtab-pane" style="display:none;">
       <div class="card">
         <div class="card-header"><div><div class="card-title">Rollout kits</div>
           <div class="card-desc">One download per fleet and MDM with everything filled in: upload its files to Jamf, Kandji or Intune and scope them to a group. The zip contains a new enrollment token and is its only copy; treat it like a password and delete it once uploaded.</div></div></div>
@@ -5087,7 +5115,9 @@ if __name__ == "__main__":
           <div class="card-desc">Values for the agent's MDM settings profile (macOS) or MSI properties (Windows). <code>PinnedPublicKey</code> is the key laptops check every policy bundle against; copy it from here into MDM, never from anywhere else.</div></div></div>
         <div id="dd-mdm" style="font-size:13px;">Loading...</div>
       </div>
+      </div>
 
+      <div id="dd-sub-policy" class="dd-subtab-pane" style="display:none;">
       <div class="card">
         <div class="card-header"><div><div class="card-title">DLP policy</div>
           <div class="card-desc">What every laptop enforces, signed into its bundle. <code>mode</code> is monitor or enforce, per fleet in <code>fleet_modes</code>. <code>enforcement</code> sets which categories the model may act on; source code, financial data and exfiltration intent are monitor-only by default because Tev1 0.8B misses too many of them. Rules come from your Data Policies.</div></div></div>
@@ -5097,6 +5127,7 @@ if __name__ == "__main__":
           <button class="primary small" onclick="ddSave()">Save policy</button>
         </div>
         <div id="dd-msg" style="margin-top:0.75rem;font-size:13px;"></div>
+      </div>
       </div>
     </div>
 
@@ -18797,8 +18828,31 @@ async function diClear() {
   try { await ddApi('/devices/inventory', { method: 'DELETE' }); xfMsg('di-msg', 'Inventory cleared.', 'ok'); diLoad(); }
   catch (e) { xfMsg('di-msg', xfErrors(e), 'error'); }
 }
+// The page has three sub-tabs; each loads its data the first time it is
+// opened, and Refresh (or coming back to the page) reloads only the open one.
+let ddSub = 'devices';
+let ddLoaded = {};
+function ddLoadSub(name) {
+  if (name === 'devices') ddDevices();
+  else if (name === 'enrollment') { ddTokens(); ddMdm(); dkLoad(); dkPlatforms(); diLoad(); }
+  else if (name === 'policy') ddPolicy();
+}
+function switchDDSubtab(name) {
+  ddSub = name;
+  document.querySelectorAll('.dd-subtab').forEach(b => {
+    const on = b.dataset.subtab === name;
+    b.classList.toggle('active', on);
+    b.style.borderBottomColor = on ? 'var(--primary)' : 'transparent';
+    b.style.color = on ? 'var(--text)' : 'var(--text-muted)';
+  });
+  document.querySelectorAll('.dd-subtab-pane').forEach(p => { p.style.display = p.id === `dd-sub-${name}` ? '' : 'none'; });
+  if (!ddLoaded[name]) { ddLoaded[name] = true; ddLoadSub(name); }
+}
 async function ddLoad() {
-  ddDevices(); ddTokens(); ddMdm(); dkLoad(); dkPlatforms(); diLoad();
+  ddLoaded = {};
+  switchDDSubtab(ddSub);
+}
+async function ddPolicy() {
   try {
     const p = await ddApi('/dlp-policy');
     document.getElementById('dd-policy').value = JSON.stringify(p.policy, null, 2);
@@ -18806,27 +18860,104 @@ async function ddLoad() {
                              : 'Defaults (nothing saved yet). These are the values the task 1 benchmark chose for Tev1 0.8B.');
   } catch (e) { xfMsg('dd-msg', xfErrors(e), 'error'); }
 }
+
+// Devices: one page at a time from GET /v1/tenant/me/devices?limit=..., with a
+// summary of the whole tenant. `cursors[i]` is the cursor that fetches page i
+// (page 0 has none), so Previous is just stepping back through it.
+const DD_PAGE = 50;
+const DD_STATES = ['ok', 'never_seen', 'no_bundle', 'stale_bundle', 'model_unavailable',
+                   'model_unsupported', 'model_mismatch', 'degraded'];
+let ddView = { fleet: '', state: '', stale: false, q: '', cursors: [''], page: 0 };
+let ddSeq = 0;
+let ddQTimer = null;
+function ddSetFilter(change) {
+  Object.assign(ddView, change, { cursors: [''], page: 0 });
+  ddDevices();
+}
+function ddClearFilters() {
+  document.getElementById('dd-q').value = '';
+  ddSetFilter({ fleet: '', state: '', stale: false, q: '' });
+}
+function ddSearch() {
+  clearTimeout(ddQTimer);
+  ddQTimer = setTimeout(() => ddSetFilter({ q: document.getElementById('dd-q').value.trim().toLowerCase() }), 300);
+}
+function ddPageStep(delta) {
+  ddView.page = Math.max(0, ddView.page + delta);
+  ddDevices();
+}
+function ddQuery() {
+  const p = new URLSearchParams({ limit: String(DD_PAGE) });
+  if (ddView.fleet) p.set('fleet', ddView.fleet);
+  if (ddView.state) p.set('state', ddView.state);
+  if (ddView.stale) p.set('stale', 'true');
+  if (ddView.q) p.set('q', ddView.q);
+  const c = ddView.cursors[ddView.page];
+  if (c) p.set('cursor', c);
+  return p.toString();
+}
+function ddCard(label, value, active, onclick, tone) {
+  const color = tone === 'danger' && value ? 'var(--danger)' : tone === 'warn' && value ? 'var(--warning, #fbbf24)' : 'inherit';
+  return `<div class="stat" role="button" tabindex="0" onclick="${onclick}" onkeydown="if(event.key==='Enter')${onclick}"
+    style="cursor:pointer;padding:0.6rem 0.8rem;${active ? 'outline:2px solid var(--primary);' : ''}">
+    <div class="stat-label" title="${xfEsc(label)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${xfEsc(label)}</div>
+    <div class="stat-value" style="color:${color};">${value}</div></div>`;
+}
+function ddRenderControls(s) {
+  const any = ddView.fleet || ddView.state || ddView.stale || ddView.q;
+  const cards = [ddCard('All devices', s.devices, !any, 'ddClearFilters()'),
+                 ddCard('Stale', s.stale, ddView.stale, 'ddSetFilter({stale: true})', 'danger')];
+  Object.entries(s.by_fleet).forEach(([f, n]) => cards.push(
+    ddCard(`Fleet: ${f}`, n, ddView.fleet === f, `ddSetFilter({fleet: ${xfEsc(JSON.stringify(f))}})`)));
+  Object.entries(s.by_state).filter(([st]) => st !== 'ok').forEach(([st, n]) => cards.push(
+    ddCard(st, n, ddView.state === st, `ddSetFilter({state: ${xfEsc(JSON.stringify(st))}})`, 'warn')));
+  document.getElementById('dd-cards').innerHTML = cards.join('');
+  const fleetSel = document.getElementById('dd-f-fleet');
+  const fleets = Object.keys(s.by_fleet);
+  if (ddView.fleet && !fleets.includes(ddView.fleet)) fleets.push(ddView.fleet);
+  fleetSel.innerHTML = '<option value="">All fleets</option>'
+    + fleets.map(f => `<option value="${xfEsc(f)}">${xfEsc(f)}</option>`).join('');
+  fleetSel.value = ddView.fleet;
+  document.getElementById('dd-f-state').value = ddView.state;
+  document.getElementById('dd-f-stale').checked = ddView.stale;
+}
 async function ddDevices() {
+  const seq = ++ddSeq;          // a slow, older response must not overwrite a newer one
+  let d;
   try {
-    const d = await ddApi('/devices');
-    const s = d.summary;
-    document.getElementById('dd-summary').innerHTML = `<b>${s.devices}</b> device(s), <b style="color:${s.stale ? 'var(--danger)' : 'inherit'};">${s.stale}</b> stale (no heartbeat for ${Math.round(s.stale_after_s / 60)} min). `
-      + Object.entries(s.by_fleet).map(([f, n]) => `<span class="badge">${xfEsc(f)}: ${n}</span>`).join(' ');
-    document.getElementById('dd-list').innerHTML = !d.devices.length
-      ? '<div class="muted">No devices yet. Create an enrollment token below and add it to your MDM install profile.</div>'
-      : `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
-          <th style="${DD_TD}">Device</th><th style="${DD_TD}">Fleet</th><th style="${DD_TD}">OS</th><th style="${DD_TD}">Agent</th><th style="${DD_TD}">Last seen</th><th style="${DD_TD}">State</th><th style="${DD_TD}">Mode</th><th style="${DD_TD}">Model</th><th style="${DD_TD}"></th></tr></thead>
-        <tbody>${d.devices.map(r => `<tr>
-          <td style="${DD_TD}"><b>${xfEsc(r.hostname)}</b><div class="muted" style="font-size:11px;"><code>${xfEsc(r.device_id)}</code></div></td>
-          <td style="${DD_TD}">${xfEsc(r.fleet)}</td>
-          <td style="${DD_TD}">${xfEsc(r.os)} ${xfEsc(r.os_version)}</td>
-          <td style="${DD_TD}">${xfEsc(r.agent_version)}</td>
-          <td style="${DD_TD}">${r.stale ? '<span class="badge badge-danger">stale</span> ' : ''}${xfEsc(ddAgo(r.last_seen))}</td>
-          <td style="${DD_TD}"><span class="badge ${r.state === 'ok' ? '' : 'badge-warn'}">${xfEsc(r.state)}</span></td>
-          <td style="${DD_TD}">${xfEsc(r.mode || '-')}</td>
-          <td style="${DD_TD}">${r.model_ok === null ? '-' : r.model_ok ? 'as pinned' : '<span class="badge badge-danger">digest differs</span>'}</td>
-          <td style="${DD_TD}"><button class="small danger" onclick="ddRevoke('${xfEsc(r.device_id)}','${xfEsc(r.hostname)}')">Revoke</button></td></tr>`).join('')}</tbody></table>`;
-  } catch (e) { xfMsg('dd-list', xfErrors(e), 'error'); }
+    d = await ddApi(`/devices?${ddQuery()}`);
+  } catch (e) {
+    if (seq !== ddSeq) return;
+    if (e.status === 400 && ddView.page) { ddView.cursors = ['']; ddView.page = 0; return ddDevices(); }
+    return xfMsg('dd-list', xfErrors(e), 'error');
+  }
+  if (seq !== ddSeq) return;
+  const s = d.summary;
+  ddRenderControls(s);
+  if (d.next_cursor) ddView.cursors[ddView.page + 1] = d.next_cursor;
+  const any = ddView.fleet || ddView.state || ddView.stale || ddView.q;
+  document.getElementById('dd-list').innerHTML = !d.devices.length
+    ? `<div class="muted">${!s.devices ? 'No devices yet. Create an enrollment token under Enrollment and add it to your MDM install profile.'
+        : any ? (d.next_cursor ? 'No matching devices on this page; try Next.' : 'No devices match these filters.') : 'No devices on this page.'}</div>`
+    : `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
+        <th style="${DD_TD}">Device</th><th style="${DD_TD}">Fleet</th><th style="${DD_TD}">OS</th><th style="${DD_TD}">Agent</th><th style="${DD_TD}">Last seen</th><th style="${DD_TD}">State</th><th style="${DD_TD}">Mode</th><th style="${DD_TD}">Model</th><th style="${DD_TD}"></th></tr></thead>
+      <tbody>${d.devices.map(r => `<tr>
+        <td style="${DD_TD}"><b>${xfEsc(r.hostname)}</b><div class="muted" style="font-size:11px;"><code>${xfEsc(r.device_id)}</code></div></td>
+        <td style="${DD_TD}">${xfEsc(r.fleet)}</td>
+        <td style="${DD_TD}">${xfEsc(r.os)} ${xfEsc(r.os_version)}</td>
+        <td style="${DD_TD}">${xfEsc(r.agent_version)}</td>
+        <td style="${DD_TD}">${r.stale ? '<span class="badge badge-danger">stale</span> ' : ''}${xfEsc(ddAgo(r.last_seen))}</td>
+        <td style="${DD_TD}"><span class="badge ${r.state === 'ok' ? '' : 'badge-warn'}">${xfEsc(r.state)}</span></td>
+        <td style="${DD_TD}">${xfEsc(r.mode || '-')}</td>
+        <td style="${DD_TD}">${r.model_ok === null ? '-' : r.model_ok ? 'as pinned' : '<span class="badge badge-danger">digest differs</span>'}</td>
+        <td style="${DD_TD}"><button class="small danger" data-id="${xfEsc(r.device_id)}" data-host="${xfEsc(r.hostname)}" onclick="ddRevoke(this.dataset.id, this.dataset.host)">Revoke</button></td></tr>`).join('')}</tbody></table>`;
+  const prev = ddView.page > 0, next = !!d.next_cursor;
+  const short = d.devices.length < DD_PAGE && next;
+  document.getElementById('dd-pager').innerHTML = (prev || next) ? `
+    <button class="small" ${prev ? '' : 'disabled'} onclick="ddPageStep(-1)">Previous</button>
+    <span class="muted">Page ${ddView.page + 1}</span>
+    <button class="small" ${next ? '' : 'disabled'} onclick="ddPageStep(1)">Next</button>
+    ${short ? '<span class="muted">Pages can be shorter when filters are combined.</span>' : ''}` : '';
 }
 async function ddTokens() {
   try {

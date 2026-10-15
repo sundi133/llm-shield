@@ -9,8 +9,10 @@ description: Keep device enrollment, the device list and the Device DLP portal p
 # Spec: Device DLP at fleet scale
 
 > Status: **APPROVED 2026-10-15.** Branch `device-fleet-scale`.
-> Task 1 (serial index) built: `core/dlp/device_index.py`, `enroll()` and
-> `revoke()` in `core/dlp/devices.py`, `tests/test_device_fleet_scale.py`.
+> Task 1 (serial index) merged in #494. Task 2 (fleet indexes, paged list,
+> reindex) built: `core/dlp/device_index.py`, `api/routes_devices.py`,
+> `tests/test_device_fleet_list.py`. Task 3 (portal) built: `static/tenant.html`,
+> `tests/test_device_dlp_portal.py`.
 > Builds on: `docs/specs/device-dlp-agent.md` (enrollment, heartbeat, revoke,
 > §5.2 and §6) and `docs/specs/device-rollout-kit.md` (kits, inventory).
 
@@ -85,19 +87,29 @@ Only the version key expires (below).
 | Key | Type | Member / field → value | Written by | Read by |
 |---|---|---|---|---|
 | `device_serial:{tenant_id}` | HASH | `{fleet}\|{serial_hash}` → `device_id` | enroll, revoke | enroll (live-serial check) |
-| `device_names:{tenant_id}` | ZSET, score 0 (lexical) | `{hostname_lower}\x00{device_id}` | enroll, revoke | paged list, prefix search |
-| `device_names:{tenant_id}:{fleet}` | ZSET, score 0 (lexical) | same member | enroll, revoke | paged list filtered by fleet |
+| `device_names:{tenant_id}` | ZSET, score 0 (lexical) | `{hostname_lower} {device_id}` | enroll, revoke | paged list, prefix search |
+| `device_names:{tenant_id}:{fleet}` | ZSET, score 0 (lexical) | same member | enroll, revoke | paged list filtered by fleet; by-fleet counts (ZCARD) |
+| `device_fleets:{tenant_id}` | SET | fleet | enroll | which per-fleet indexes exist |
 | `device_last:{tenant_id}` | ZSET | `device_id`, score = last heartbeat, or `enrolled_at` until the first one | enroll, heartbeat, revoke | stale count (ZCOUNT), stale-only list |
-| `device_state:{tenant_id}:{state}` | SET | `device_id` | enroll (`never_seen`), heartbeat on a state change, revoke | list filtered by state |
-| `device_counts:{tenant_id}` | HASH | `fleet:{fleet}` and `state:{state}` → integer | enroll, heartbeat on a state change, revoke (HINCRBY) | summary |
-| `device_index_v:{tenant_id}` | STRING, expires after `REFRESH_S` (1 h) | index version, `1` | the rebuild | every indexed read (is the index present and fresh?) |
+| `device_state:{tenant_id}:{state}` | ZSET, score 0 (lexical) | same member as names | enroll (`never_seen`), every heartbeat, revoke | list filtered by state; by-state counts (ZCARD) |
+| `device_index_v:{tenant_id}` | STRING, expires after `REFRESH_S` (1 h) | index version, `2` (`1` was the serial index alone) | the rebuild | every indexed read (is the index present and fresh?) |
 | `device_index_lock:{tenant_id}` | STRING, `SET NX EX 60` | `1` | the rebuild | the rebuild (one at a time) |
+| `device_index_drift:{tenant_id}` | STRING, `SET NX EX 300` | `1` | a listing that found drift | the drift check (one rebuild per 5 min) |
+
+As built in task 2, two changes from the first draft: the per-state indexes
+are lexical ZSETs like the name indexes (not SETs), so every walk is in
+hostname order with one cursor format; and there is no counter hash, because
+the per-fleet and per-state counts are the sizes of those indexes (ZCARD), so
+there are no counters to drift.
 
 Notes:
 - **Why a lexical ZSET for names.** `ZRANGEBYLEX` gives hostname order,
-  prefix search (`[{q}` to `[{q}\xff`) and a stable cursor (the last member
-  returned) in one structure. Appending `\x00{device_id}` keeps two laptops
-  with the same hostname distinct.
+  prefix search (`[{q}` to `[{q}` followed by U+10FFFF) and a stable cursor
+  (the last member returned) in one structure. Appending ` {device_id}` keeps
+  two laptops with the same hostname distinct. The separator is a space, not
+  NUL, because Upstash speaks JSON over HTTP; a space still sorts `ana` before
+  `ana-mbp`, and device ids never contain one, so splitting at the last space
+  always recovers the id.
 - **Hostnames only change at enrollment.** A re-enrollment that replaces a
   device (same serial, same fleet) reuses the `device_id`; the index update
   removes the old name member and adds the new one.
@@ -105,11 +117,14 @@ Notes:
   `never_seen` (what `list_devices` already reports before the first
   heartbeat). The heartbeat's `state` field is already validated against
   `STATES`.
-- **`device_counts` can drift** if a process dies between commands. The
-  summary therefore takes the device total from `HLEN devices:{tenant_id}`
-  (exact, O(1)) and the stale count from `ZCOUNT device_last` (exact). Only
-  the per-fleet and per-state breakdowns come from counters, and the rebuild
-  (below) resets them.
+- **What can drift, and what cannot.** The summary takes the device total
+  from `HLEN devices:{tenant_id}` (exact, O(1)) and the stale count from
+  `ZCOUNT device_last`. The per-fleet and per-state breakdowns are index sizes,
+  which can be off by a device if a process dies between commands, or a
+  rebuild races a heartbeat; every heartbeat re-adds its device to its state,
+  and the hourly rebuild (or `/reindex`) resets them. A listed page is built
+  from the device records and every filter is checked on them, so drift can
+  leave a row off a page until the next rebuild, never put a wrong row on one.
 
 **Building the index for existing tenants (no migration step).** On the
 first indexed read or enrollment for a tenant, if `device_index_v:{tenant_id}`
@@ -139,9 +154,11 @@ the refusal and alert, until the next refresh; it can never knock a live
 laptop off the fleet.
 
 **Drift check (task 2).** An indexed list compares `HLEN devices:{tenant_id}` with
-`ZCARD device_names:{tenant_id}`. If they differ, it serves this request
-from the full scan and triggers a rebuild. An operator can also force one
-(§4).
+`ZCARD device_names:{tenant_id}`. If they differ, it rebuilds before
+answering, at most once per 5 minutes per tenant (`device_index_drift`), so
+a rollout, where the two briefly differ between an enrollment's writes, does
+not turn every portal refresh into a full read. An operator can also force a
+rebuild (§4).
 
 ## 4. API / interface
 
@@ -271,9 +288,9 @@ returned.
 | Two workers rebuild at once | `SET NX EX 60` lock: one rebuilds, the other serves the full scan |
 | Process dies mid-update (counts drift) | Totals stay exact (HLEN, ZCOUNT). Breakdowns may be off until the next rebuild. Drift check rebuilds when HLEN and ZCARD differ; `/reindex` forces it |
 | An un-upgraded plane enrolls or revokes during rollout | An enrollment it makes has no serial entry until the hourly refresh; meanwhile a claim to that serial enrolls as a new device (no replacement, no alert). A revoke it makes leaves a stale entry, which fails the record check and sends that enrollment to the full read. The task 2 drift check catches both for the list |
-| Same hostname on many laptops (images, `MacBook-Pro`) | Distinct members (`\x00{device_id}`); ordering stable by device id within a name |
+| Same hostname on many laptops (images, `MacBook-Pro`) | Distinct members (` {device_id}`); ordering stable by device id within a name |
 | Hostname over 255 characters | Already rejected at enrollment (`_text(..., 255)`) |
-| Hostname containing `\x00` | Not rejected today. The index parses a member by splitting at the **last** `\x00`, and device ids never contain one (`_ID`), so the id is always recovered. Search treats the name as given |
+| Hostname containing spaces | Allowed. The index parses a member by splitting at the **last** space, and device ids never contain one (`_ID`), so the id is always recovered. Search matches the lowercased name as given |
 | Fleet renamed or a device moves fleet | Not possible today (fleet is fixed by the token at enrollment); re-enrollment into another fleet is a new device |
 | Empty tenant | `{"summary": {"devices": 0, ...}, "devices": [], "next_cursor": null}` |
 | `limit` absent on a 10,000-device tenant | Today's full response, as before. The portal stops calling it this way; a script that does keeps today's cost |
