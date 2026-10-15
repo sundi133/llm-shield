@@ -290,10 +290,65 @@ def test_index_off_reads_the_fleet_and_writes_no_index(monkeypatch):
 
 
 class _FakeRedis:
-    """The commands the index uses, with the clients' positional signatures."""
+    """The commands the indexes use, with the clients' positional signatures.
+    `style` picks the paging keyword names: "upstash" (offset/count) or
+    "redis-py" (start/num), so both branches of the index's fallback run."""
 
-    def __init__(self, pipeline=False):
+    def __init__(self, pipeline=False, style="upstash"):
         self.h, self.s, self.has_pipeline, self.batches = {}, {}, pipeline, 0
+        self.z, self.sets, self.style = {}, {}, style
+
+    def _page(self, kw):
+        if self.style == "upstash":
+            if "start" in kw or "num" in kw:
+                raise TypeError("unexpected keyword")
+            return kw.get("offset") or 0, kw.get("count")
+        if "offset" in kw or "count" in kw:
+            raise TypeError("unexpected keyword")
+        return kw.get("start") or 0, kw.get("num")
+
+    def zadd(self, k, mapping, gt=False):
+        z = self.z.setdefault(k, {})
+        for m, s in mapping.items():
+            if not (gt and m in z and z[m] >= s):
+                z[m] = float(s)
+
+    def zrem(self, k, *ms):
+        for m in ms:
+            self.z.get(k, {}).pop(m, None)
+
+    def zcard(self, k):
+        return len(self.z.get(k, {}))
+
+    def zrange(self, k, start, stop):
+        return sorted(self.z.get(k, {}))
+
+    def zcount(self, k, lo, hi):
+        cut = float(hi.lstrip("("))
+        return sum(1 for s in self.z.get(k, {}).values() if s < cut)
+
+    def zrangebylex(self, k, lo, hi, **kw):
+        off, n = self._page(kw)
+        ms = [m for m in sorted(self.z.get(k, {})) if dix._in_lex(m, lo, hi)]
+        return ms[off:off + n if n is not None else None]
+
+    def zrangebyscore(self, k, lo, hi, **kw):
+        off, n = self._page(kw)
+        cut = float(hi.lstrip("("))
+        ms = [m for s, m in sorted((s, m) for m, s in self.z.get(k, {}).items()) if s < cut]
+        return ms[off:off + n if n is not None else None]
+
+    def sadd(self, k, *ms):
+        self.sets.setdefault(k, set()).update(ms)
+
+    def smembers(self, k):
+        return set(self.sets.get(k, set()))
+
+    def hlen(self, k):
+        return len(self.h.get(k, {}))
+
+    def hmget(self, k, *fs):
+        return [self.h.get(k, {}).get(f) for f in fs]
 
     def hget(self, k, f):
         return self.h.get(k, {}).get(f)
@@ -358,7 +413,7 @@ def test_the_index_works_on_a_redis_client(monkeypatch, pipeline):
     assert fake.s[dix._version_key(tid)] == dix.VERSION
     assert dix._lock_key(tid) not in fake.s                 # released
     assert fake.batches == (3 if pipeline else 0)           # 450 writes in chunks of 200
-    dix.note_enrolled(tid, "sales", _serial("s7"), "dev_" + "a" * 16)
+    dix.note_enrolled(tid, "dev_" + "a" * 16, {"fleet": "sales", "serial_hash": _serial("s7"), "hostname": "h", "enrolled_at": 1})
     assert dix.lookup(tid, "sales", _serial("s7")) == "dev_" + "a" * 16
     dix.note_revoked(tid, {"serial_hash": _serial("s7"), "fleet": "sales"}, "dev_" + "a" * 16)
     assert dix.lookup(tid, "sales", _serial("s7")) is None
