@@ -220,6 +220,17 @@ is daily), apps on it may refuse the agent's certificate for AI services. They
 are then passed through uninspected for an hour at a time, and each one is
 recorded. Expect up to a day of reduced inspection on Macs.
 
+## Enrollment at scale (the serial index)
+
+Shield keeps an index of serial numbers per fleet, so an enrollment costs the
+same at ten laptops as at ten thousand. You do not need to do anything: it is
+built by the first enrollment after an upgrade and refreshed hourly.
+
+If you suspect it, set `SHIELD_DEVICE_INDEX=off` on Shield. Enrollment then
+reads the whole fleet each time, as before the index (slower for large fleets,
+same answers). Setting it back to `on` rebuilds the index at the next
+enrollment.
+
 ## Remove the agent from a fleet
 
 1. **Uninstall through the MDM:**
