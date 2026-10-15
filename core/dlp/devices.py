@@ -546,7 +546,7 @@ def enroll(token: str, body: dict) -> dict:
               "reenrolled": int((replaced or {}).get("reenrolled", -1)) + 1}
     _hset(_devices_key(tenant_id), device_id, record)
     from core.dlp import device_index
-    device_index.note_enrolled(tenant_id, fleet, info["serial_hash"], device_id)
+    device_index.note_enrolled(tenant_id, device_id, record, replaced)
     return {"device_id": device_id, "api_key": api_key, "fleet": fleet, "tenant_id": tenant_id,
             "pinned_public_key": public_key, "kid": edge_bundle.kid(),
             "note": "Verify pinned_public_key equals the key your MDM installed; if they "
@@ -677,9 +677,12 @@ def _hook_state(name: str, v) -> dict:
     return out
 
 
-def heartbeat(tenant_id: str, device_id: str, body: dict) -> dict:
+def heartbeat(tenant_id: str, device_id: str, body: dict, record: Optional[dict] = None) -> dict:
     """Record what the agent reports. Unknown fields are ignored (a newer agent
-    may send more); the known ones are validated."""
+    may send more); the known ones are validated. `record` is the device record
+    the caller already holds (caller_device), so the index can name the device
+    without another read."""
+    from core.dlp import device_index
     if not isinstance(body, dict):
         raise DeviceError("body: an object")
     bv = body.get("bundle_version")
@@ -710,7 +713,11 @@ def heartbeat(tenant_id: str, device_id: str, body: dict) -> dict:
     av = body.get("agent_version")
     if isinstance(av, str) and 0 < len(av) <= 40:
         seen["agent_version"] = av
+    # The previous heartbeat, read only when the index needs the state it
+    # moves the device from.
+    prev = _hget(_seen_key(tenant_id), device_id) if device_index.enabled() else None
     _hset(_seen_key(tenant_id), device_id, seen)
+    device_index.note_heartbeat(tenant_id, device_id, record, device_state(prev), state, seen["at"])
     return seen
 
 
@@ -721,31 +728,90 @@ def note_ca(tenant_id: str, device_id: str, not_after: int) -> None:
         _hset(_devices_key(tenant_id), device_id, rec)
 
 
+def device_state(seen: Optional[dict]) -> str:
+    """The state a device is listed under: what its last heartbeat reported, or
+    never_seen before the first one."""
+    s = seen or {}
+    return s.get("state", "never_seen" if not s.get("at") else "ok")
+
+
+def last_heard(record: dict, seen: Optional[dict]) -> int:
+    """When the device was last heard from: its last heartbeat, or its
+    enrollment until the first one. What `stale` is computed from."""
+    return int((seen or {}).get("at") or record.get("enrolled_at", 0) or 0)
+
+
+def _row(did: str, d: dict, s: Optional[dict], now: int, limit: int,
+         expected_digest: str = "") -> dict:
+    """One device as the fleet view shows it."""
+    s = s or {}
+    last = s.get("at")
+    row = {"device_id": did, **{k: v for k, v in d.items() if k != "key_hash"},
+           "last_seen": last, "stale": now - (last or d.get("enrolled_at", 0)) > limit,
+           "bundle_version": s.get("bundle_version"), "model_digest": s.get("model_digest", ""),
+           "mode": s.get("mode", ""), "state": device_state(s),
+           "counters": s.get("counters", {})}
+    if s.get("agent_version"):
+        row["agent_version"] = s["agent_version"]
+    if s.get("agent_hooks"):
+        row["agent_hooks"] = s["agent_hooks"]
+    if s.get("os_events"):
+        row["os_events"] = s["os_events"]
+    row["model_ok"] = (None if not (expected_digest and row["model_digest"])
+                       else row["model_digest"] == expected_digest)
+    return row
+
+
+def _hmget(key: str, fields: list[str]) -> list[Optional[dict]]:
+    """Several fields of one hash in one command, in order; None where absent."""
+    if not fields:
+        return []
+    r = _redis()
+    raw = ([_mem_hash.get(key, {}).get(f) for f in fields] if r is None
+           else (r.hmget(key, *fields) or []))
+    out: list[Optional[dict]] = []
+    for v in raw:
+        try:
+            out.append(None if v is None else json.loads(_decode(v)))
+        except (ValueError, TypeError):
+            out.append(None)
+    return out
+
+
+def rows_for(tenant_id: str, device_ids: list[str], expected_digest: str = "") -> dict[str, dict]:
+    """Fleet-view rows for just these devices (two HMGETs, not the fleet).
+    A device that no longer exists is left out."""
+    now, limit = int(time.time()), stale_after_s()
+    records = _hmget(_devices_key(tenant_id), device_ids)
+    seen = _hmget(_seen_key(tenant_id), device_ids)
+    return {did: _row(did, d, s, now, limit, expected_digest)
+            for did, d, s in zip(device_ids, records, seen) if d}
+
+
+def records_for(tenant_id: str, device_ids: list[str]) -> dict[str, dict]:
+    """device_id -> device record (without its key hash) for the enrolled
+    devices among these ids. One HMGET per 500 ids, not a read of the fleet."""
+    ids, out = sorted({i for i in device_ids if i}), {}
+    for start in range(0, len(ids), 500):
+        part = ids[start:start + 500]
+        for did, d in zip(part, _hmget(_devices_key(tenant_id), part)):
+            if d:
+                out[did] = {k: v for k, v in d.items() if k != "key_hash"}
+    return out
+
+
 def list_devices(tenant_id: str, expected_digest: str = "") -> dict:
     """The fleet view: every enrolled device with its last heartbeat, and a
     summary. `stale` is computed from `at`, so a device that stops reporting
-    (uninstalled, blocked, powered off) shows up without anyone polling it."""
+    (uninstalled, blocked, powered off) shows up without anyone polling it.
+
+    Reads the whole fleet. The portal pages through it instead
+    (device_index.page, GET /v1/tenant/me/devices?limit=...)."""
     devices = _hgetall(_devices_key(tenant_id))
     seen = _hgetall(_seen_key(tenant_id))
     now, limit = int(time.time()), stale_after_s()
-    rows = []
-    for did, d in sorted(devices.items(), key=lambda kv: kv[1].get("hostname", "")):
-        s = seen.get(did) or {}
-        last = s.get("at")
-        row = {"device_id": did, **{k: v for k, v in d.items() if k != "key_hash"},
-               "last_seen": last, "stale": now - (last or d.get("enrolled_at", 0)) > limit,
-               "bundle_version": s.get("bundle_version"), "model_digest": s.get("model_digest", ""),
-               "mode": s.get("mode", ""), "state": s.get("state", "never_seen" if not last else "ok"),
-               "counters": s.get("counters", {})}
-        if s.get("agent_version"):
-            row["agent_version"] = s["agent_version"]
-        if s.get("agent_hooks"):
-            row["agent_hooks"] = s["agent_hooks"]
-        if s.get("os_events"):
-            row["os_events"] = s["os_events"]
-        row["model_ok"] = (None if not (expected_digest and row["model_digest"])
-                           else row["model_digest"] == expected_digest)
-        rows.append(row)
+    rows = [_row(did, d, seen.get(did), now, limit, expected_digest)
+            for did, d in sorted(devices.items(), key=lambda kv: kv[1].get("hostname", ""))]
     summary = {"devices": len(rows), "stale": sum(r["stale"] for r in rows),
                "by_state": {}, "by_fleet": {}, "stale_after_s": limit}
     for r in rows:

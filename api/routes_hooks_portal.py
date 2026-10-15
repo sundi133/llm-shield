@@ -65,7 +65,7 @@ async def claude_code_overview(request: Request):
     url, source = hook_kit.public_url_and_source(str(request.base_url))
     laptops = hook_seen.list_seen(tenant_id)
     try:
-        enrolled = dv._hgetall(dv._devices_key(tenant_id))
+        enrolled = dv.records_for(tenant_id, [row.get("device") or "" for row in laptops])
     except Exception:
         enrolled = {}
     for row in laptops:
@@ -290,7 +290,8 @@ async def os_events_overview(request: Request, since: float = 0):
     # Name agent-managed laptops, as the hook overview does.
     try:
         from core.dlp import devices as dv
-        enrolled = dv._hgetall(dv._devices_key(tenant_id))
+        enrolled = dv.records_for(tenant_id, [row.get("device") or ""
+                                              for row in out["laptops"] + out["alerts"]])
     except Exception:
         enrolled = {}
     for row in out["laptops"] + out["alerts"]:

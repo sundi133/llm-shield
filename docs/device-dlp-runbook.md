@@ -220,16 +220,21 @@ is daily), apps on it may refuse the agent's certificate for AI services. They
 are then passed through uninspected for an hour at a time, and each one is
 recorded. Expect up to a day of reduced inspection on Macs.
 
-## Enrollment at scale (the serial index)
+## Large fleets (the device indexes)
 
-Shield keeps an index of serial numbers per fleet, so an enrollment costs the
-same at ten laptops as at ten thousand. You do not need to do anything: it is
-built by the first enrollment after an upgrade and refreshed hourly.
+Shield keeps indexes of your devices (by serial, hostname, fleet, state and
+last heartbeat), so an enrollment, and a page of the Devices list, cost the
+same at ten laptops as at ten thousand. You do not need to do anything: they
+are built on first use after an upgrade and refreshed hourly.
 
-If you suspect it, set `SHIELD_DEVICE_INDEX=off` on Shield. Enrollment then
-reads the whole fleet each time, as before the index (slower for large fleets,
-same answers). Setting it back to `on` rebuilds the index at the next
-enrollment.
+If counts under Devices look wrong (for example right after an upgrade of
+only some Shield servers), rebuild them: `POST /v1/tenant/me/devices/reindex`.
+It takes effect at once.
+
+If you suspect the indexes themselves, set `SHIELD_DEVICE_INDEX=off` on
+Shield. Enrollment and the Devices list then read the whole fleet each time,
+as before the indexes (slower for large fleets, same answers). Setting it back
+to `on` rebuilds them on next use.
 
 ## Remove the agent from a fleet
 
@@ -260,6 +265,8 @@ gate is enforced)
 | Purpose | API |
 |---|---|
 | Devices, with enrollment token and times | `GET /v1/tenant/me/devices` |
+| One page of devices (what the portal uses) | `GET /v1/tenant/me/devices?limit=50`, with optional `fleet`, `state`, `stale=true`, `q` (hostname prefix) and the previous page's `next_cursor` as `cursor` |
+| Rebuild the device indexes | `POST /v1/tenant/me/devices/reindex` |
 | Revoke a device | `DELETE /v1/tenant/me/devices/{device_id}` |
 | Kits | `GET`, `POST /v1/tenant/me/devices/rollout-kits`; `DELETE .../{kit_id}` |
 | Company inventory | `GET`, `PUT`, `DELETE /v1/tenant/me/devices/inventory` |

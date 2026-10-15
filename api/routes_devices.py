@@ -114,8 +114,8 @@ async def device_heartbeat(request: Request, body: dict = Body(...)):
         caller = dv.caller_device(request)
         if caller is None:
             raise dv.DeviceError("heartbeats come from a device key", status=403)
-        tenant_id, device_id, _record = caller
-        dv.heartbeat(tenant_id, device_id, body)
+        tenant_id, device_id, record = caller
+        dv.heartbeat(tenant_id, device_id, body, record)
     except dv.DeviceError as e:
         raise _http(e)
     return Response(status_code=204)
@@ -328,15 +328,48 @@ async def revoke_rollout_kit(kit_id: str, request: Request):
     return {"tenant_id": tenant_id, "kit_id": kit_id, "revoked": True}
 
 
+_PAGE_PARAMS = ("limit", "cursor", "fleet", "state", "stale", "q")
+
+
 @tenant_router.get("")
 async def list_devices(request: Request):
+    """Every device (no query: unchanged), or one page of them with a tenant-wide
+    summary (limit=1..500, optional cursor, fleet, state, stale=true, q=hostname
+    prefix). Spec: docs/specs/device-fleet-scale.md §4."""
     tenant_id = get_tenant_from_request(request)
     try:
         from core.dlp import device_store
         expected = device_store.get_policy(tenant_id)["model"].get("digest", "")
     except Exception:
         expected = ""
-    return {"tenant_id": tenant_id, **dv.list_devices(tenant_id, expected_digest=expected)}
+    params = request.query_params
+    if "limit" not in params:
+        if any(k in params for k in _PAGE_PARAMS):
+            raise HTTPException(status_code=400,
+                                detail="limit is required with cursor, fleet, state, stale or q")
+        return {"tenant_id": tenant_id, **dv.list_devices(tenant_id, expected_digest=expected)}
+    from core.dlp import device_index
+    try:
+        out = device_index.page(tenant_id, **device_index.parse_page_params(params),
+                                expected_digest=expected)
+    except dv.DeviceError as e:
+        raise _http(e)
+    return {"tenant_id": tenant_id, **out}
+
+
+@tenant_router.post("/reindex")
+async def reindex_devices(request: Request):
+    """Rebuild this tenant's device indexes from the device records (after a
+    suspected drift; the indexes otherwise refresh hourly on their own)."""
+    from core.dlp import device_index
+    tenant_id = get_tenant_from_request(request)
+    require_registry_write(request, tenant_id, "rebuild the device indexes")
+    try:
+        out = device_index.force_rebuild(tenant_id)
+    except dv.DeviceError as e:
+        raise _http(e)
+    _audit(request, "tenant_reindex_devices", tenant_id, _actor(request, tenant_id), out)
+    return {"tenant_id": tenant_id, **out}
 
 
 @tenant_router.post("/enrollment-tokens")
