@@ -314,10 +314,21 @@ def get_redis_data(key: str):
     return kv_get(key)
 
 
+def _invalidate_tool_catalog(tenant_id: str) -> None:
+    """Drop the portal's cached tool catalog for this tenant (best effort; the
+    cache also expires on its own). Spec: docs/specs/tool-registry-scale.md §3."""
+    try:
+        from storage import tool_catalog
+        tool_catalog.invalidate(tenant_id)
+    except Exception:
+        pass
+
+
 def _save_agents(tenant_id: str, agents: dict) -> None:
     """Persist the tenant's agents and invalidate the middleware cache so
     enable/disable toggles take effect immediately."""
     kv_set(f"agents:{tenant_id}", agents)
+    _invalidate_tool_catalog(tenant_id)
     try:
         from core.middleware import invalidate_registry_cache
         invalidate_registry_cache(tenant_id)
@@ -459,6 +470,7 @@ async def save_all_tool_policies(request: Request):
         body["updated_at"] = int(_time.time())
 
         kv_set(policies_key, body)
+        _invalidate_tool_catalog(tenant_id)
 
         return {"success": True, "message": "Tool policies saved"}
 
@@ -485,6 +497,7 @@ async def delete_tool_policy(tool_name: str, request: Request):
         del policies[tool_name]
 
         kv_set(policies_key, policies)
+        _invalidate_tool_catalog(tenant_id)
 
         return {"success": True, "message": f"Tool policy '{tool_name}' deleted"}
 
@@ -741,6 +754,7 @@ async def seed_test_data():
 
         _save_agents(tenant_id, agents)
         kv_set(f"policies:{tenant_id}", policies)
+        _invalidate_tool_catalog(tenant_id)
 
         # Register the tenant and map the test API key to it so the tenant
         # portal can actually sign in. Without this apikey->tenant mapping,

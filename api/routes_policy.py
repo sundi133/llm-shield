@@ -662,6 +662,12 @@ async def import_policies(
             _fallback_store[f"data_policies:{tenant_id}"] = json.dumps(bundle.data_policies)
         data_policies_imported = True
 
+    try:
+        from storage import tool_catalog              # docs/specs/tool-registry-scale.md §3
+        tool_catalog.invalidate(tenant_id)
+    except Exception:
+        pass
+
     log_admin_action(
         action="import_policies",
         actor=_actor_from_request(request),

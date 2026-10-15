@@ -2887,14 +2887,37 @@
 
       <!-- Sub-tab: Data Policies -->
       <div id="tp-sub-data-policies" class="tp-subtab-pane">
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
-          <input id="data-policies-search" type="text" placeholder="Search tools by name..." oninput="filterDataPolicies()" style="flex:1;padding:0.45rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
-          <button class="small" onclick="downloadTenantBundle()">Download Config</button>
-          <button class="small" onclick="triggerTenantBundleUpload()">Upload Config</button>
-          <button class="small" onclick="loadDataPolicies()">Refresh</button>
+        <!-- Tools and the tenant-wide default, each in its own tab
+             (docs/specs/tool-registry-scale.md §4). The list is paged on the
+             server: GET /v1/tenant/me/tool-catalog. -->
+        <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:0.9rem;">
+          <button class="dpl-subtab active" data-subtab="tools" onclick="switchDPLSubtab('tools')" style="padding:0.4rem 1rem;border:none;background:none;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid var(--primary);margin-bottom:-1px;">Tools</button>
+          <button class="dpl-subtab" data-subtab="default" onclick="switchDPLSubtab('default')" style="padding:0.4rem 1rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">Default policy</button>
+          <div style="margin-left:auto;display:flex;gap:0.5rem;padding-bottom:0.4rem;">
+            <button class="small" onclick="downloadTenantBundle()">Download Config</button>
+            <button class="small" onclick="triggerTenantBundleUpload()">Upload Config</button>
+            <button class="small" onclick="loadDataPolicies()">Refresh</button>
+          </div>
         </div>
-        <div id="global-policy-card" style="margin-bottom:1rem;"></div>
-        <div id="data-policies-content">Loading data policies...</div>
+
+        <div id="dpl-pane-tools" class="dpl-subtab-pane">
+          <div id="dpl-default" class="muted" style="font-size:12.5px;margin-bottom:0.6rem;"></div>
+          <div id="dpl-cards" class="stats-grid stat-grid-compact" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr));margin-bottom:0.75rem;"></div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem;font-size:13px;">
+            <input id="dpl-q" type="text" autocomplete="off" maxlength="128" placeholder="Search tools by name..." oninput="dplSearch()" style="flex:2;min-width:180px;">
+            <input id="dpl-agent" type="text" autocomplete="off" maxlength="256" list="dpl-agents" placeholder="Agent" onchange="dplSetFilter({agent: this.value.trim()})" style="flex:1;min-width:140px;">
+            <datalist id="dpl-agents"></datalist>
+            <select id="dpl-role" style="width:auto;" onchange="dplSetFilter({role: this.value})"><option value="">All roles</option></select>
+            <button class="small" onclick="dplClearFilters()">Clear filters</button>
+          </div>
+          <div id="dpl-bulk" style="display:none;margin-bottom:0.6rem;"></div>
+          <div id="data-policies-content">Loading data policies...</div>
+          <div id="dpl-pager" style="display:flex;gap:0.5rem;align-items:center;margin-top:0.6rem;font-size:13px;"></div>
+        </div>
+
+        <div id="dpl-pane-default" class="dpl-subtab-pane" style="display:none;">
+          <div id="global-policy-card" style="margin-bottom:1rem;"></div>
+        </div>
       </div>
 
       <!-- Sub-tab: Roles Overview -->
@@ -9570,15 +9593,6 @@ function switchTPSubtab(name) {
   if (name === 'roles') loadRolesOverview();
 }
 
-function filterDataPolicies() {
-  const q = (document.getElementById('data-policies-search')?.value || '').toLowerCase();
-  document.querySelectorAll('#data-policies-content [id^="dp-expand-"]').forEach(section => {
-    const row = section.closest('div[style*="border-bottom:1px solid var(--border);"]');
-    if (!row) return;
-    const text = row.textContent.toLowerCase();
-    row.style.display = !q || text.includes(q) ? '' : 'none';
-  });
-}
 
 // Initialize the default sub-tab styling
 setTimeout(() => {
@@ -10703,148 +10717,329 @@ async function deleteGlobalDataPolicy() {
   } catch (e) { showToast('Failed: ' + e.message, 'error'); }
 }
 
+// ── Tool Registry list (Data Policies → Tools) ─────────────────────────────
+// Spec: docs/specs/tool-registry-scale.md, tasks 3 and 4. One page of tools
+// at a time from GET /v1/tenant/me/tool-catalog (built on the server from the
+// agent registry and the stored policies), instead of downloading every agent
+// and every policy. A tool's role table is fetched when its row is opened.
+// Every name here is user- or agent-supplied: it goes through _esc, and
+// handlers read it back from data- attributes.
+const DPL_PAGE = 50;
+const DPL_ACTIONS = ['allow', 'redact', 'mask', 'block'];
+let dplSub = 'tools';
+let dplView = { q: '', agent: '', role: '', source: 'registered', policy: 'any', sanitization: false, audit: '', cursors: [''], page: 0 };
+let dplSeq = 0;
+let dplQTimer = null;
+let dplSummary = null;
+let dplRows = [];
+let dplSelected = new Set();
+let dplFrameworks = null;
+
+function switchDPLSubtab(name) {
+  dplSub = name;
+  document.querySelectorAll('.dpl-subtab').forEach(b => {
+    const on = b.dataset.subtab === name;
+    b.classList.toggle('active', on);
+    b.style.borderBottomColor = on ? 'var(--primary)' : 'transparent';
+    b.style.color = on ? 'var(--text)' : 'var(--text-muted)';
+  });
+  document.querySelectorAll('.dpl-subtab-pane').forEach(p => { p.style.display = p.id === `dpl-pane-${name}` ? '' : 'none'; });
+  if (name === 'default') loadGlobalDataPolicy();
+  else dplLoad();
+}
+// Kept by name: the sub-tab switch, Refresh and config upload all call it.
 async function loadDataPolicies() {
-  loadGlobalDataPolicy();
+  if (dplSub === 'default') return loadGlobalDataPolicy();
+  return dplLoad(true);
+}
+function dplSetFilter(change) {
+  Object.assign(dplView, change, { cursors: [''], page: 0 });
+  dplSelected.clear();
+  dplLoad();
+}
+function dplClearFilters() {
+  document.getElementById('dpl-q').value = '';
+  document.getElementById('dpl-agent').value = '';
+  dplSetFilter({ q: '', agent: '', role: '', source: 'registered', policy: 'any', sanitization: false, audit: '' });
+}
+function dplSearch() {
+  clearTimeout(dplQTimer);
+  dplQTimer = setTimeout(() => dplSetFilter({ q: document.getElementById('dpl-q').value.trim().toLowerCase() }), 300);
+}
+function dplPageStep(delta) {
+  dplView.page = Math.max(0, dplView.page + delta);
+  dplLoad();
+}
+// The list's filters, as the catalog and the bulk endpoint's `match` take them.
+function dplFilters() {
+  const f = {};
+  if (dplView.q) f.q = dplView.q;
+  if (dplView.agent) f.agent = dplView.agent;
+  if (dplView.role) f.role = dplView.role;
+  if (dplView.source !== 'registered') f.source = dplView.source;
+  if (dplView.policy !== 'any') f.policy = dplView.policy;
+  if (dplView.sanitization) f.sanitization = true;
+  if (dplView.audit) f.audit = dplView.audit;
+  return f;
+}
+function dplQuery(fresh) {
+  const p = new URLSearchParams({ limit: String(DPL_PAGE) });
+  Object.entries(dplFilters()).forEach(([k, v]) => p.set(k, String(v)));
+  const c = dplView.cursors[dplView.page];
+  if (c) p.set('cursor', c);
+  if (fresh) p.set('fresh', '1');
+  return p.toString();
+}
+async function dplLoad(fresh) {
+  const seq = ++dplSeq;             // a slow, older response must not overwrite a newer one
   const container = document.getElementById('data-policies-content');
-  container.innerHTML = '<div class="muted" style="padding:1rem;">Loading data policies...</div>';
-
-  if (!REGISTERED_AGENT_TOOLS.length) {
-    await loadToolPolicyData();
-  }
-
-  if (!REGISTERED_AGENT_TOOLS.length) {
-    container.innerHTML = '<div class="muted" style="padding:2rem;text-align:center;">No tools registered. Go to Agent Registry first.</div>';
+  let d;
+  try {
+    const r = await fetch(`/v1/tenant/me/tool-catalog?${dplQuery(fresh)}`, { headers: { 'X-API-Key': API_KEY } });
+    d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (seq !== dplSeq) return;
+      if (r.status === 400 && dplView.page) { dplView.cursors = ['']; dplView.page = 0; return dplLoad(); }
+      container.innerHTML = `<div class="muted" style="padding:1rem;">${_esc(typeof d.detail === 'string' ? d.detail : `Could not load tools (HTTP ${r.status}).`)}</div>`;
+      return;
+    }
+  } catch (e) {
+    if (seq === dplSeq) container.innerHTML = `<div class="muted" style="padding:1rem;">${_esc('Network error: ' + e.message)}</div>`;
     return;
   }
-
-  // Fetch all data policies in one call
-  DATA_POLICIES_CACHE = {};
-  try {
-    const res = await fetch('/v1/data-policies/tools', { headers: { 'X-API-Key': API_KEY } });
-    if (res.ok) {
-      const data = await res.json();
-      DATA_POLICIES_CACHE = (data.success && data.policies) ? data.policies : {};
-    }
-  } catch (e) { /* skip */ }
-
-  // Also fetch the lightweight tool_policies from agents registry
-  if (!Object.keys(TOOL_POLICIES).length) {
-    try {
-      const r = await apiCall('/v1/agents/tools/policies');
-      if (r && r.success && r.tool_policies) TOOL_POLICIES = r.tool_policies;
-    } catch (e) {}
+  if (seq !== dplSeq) return;
+  dplSummary = d.summary;
+  dplRows = d.tools || [];
+  if (d.next_cursor) dplView.cursors[dplView.page + 1] = d.next_cursor;
+  dplRenderControls(d.summary);
+  dplRenderList(d);
+  dplRenderBulk();
+}
+function dplCard(label, value, active, onclick, tone) {
+  const color = tone === 'warn' && value ? 'var(--warning)' : 'inherit';
+  return `<div class="stat" role="button" tabindex="0" onclick="${onclick}" onkeydown="if(event.key==='Enter')${onclick}"
+    style="cursor:pointer;padding:0.6rem 0.8rem;${active ? 'outline:2px solid var(--primary);' : ''}">
+    <div class="stat-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(label)}</div>
+    <div class="stat-value" style="color:${color};">${value}</div></div>`;
+}
+function dplRenderControls(s) {
+  const v = dplView;
+  const plain = !v.q && !v.agent && !v.role && v.source === 'registered' && v.policy === 'any' && !v.sanitization && !v.audit;
+  const reset = "{source:'registered',policy:'any',sanitization:false,audit:''}";
+  document.getElementById('dpl-cards').innerHTML = [
+    dplCard('Tools', s.registered, plain, `dplSetFilter(${reset})`),
+    dplCard('No policy', s.without_policy, v.policy === 'none', `dplSetFilter({...${reset},policy:'none'})`, 'warn'),
+    // Counted over every tool (with a policy but no agent included), so these
+    // two filter every source too: the card and the list it opens agree.
+    dplCard('With sanitization', s.with_sanitization, v.sanitization, `dplSetFilter({...${reset},source:'all',sanitization:true})`),
+    dplCard('Audit off', s.tools - s.audit_on, v.audit === 'off', `dplSetFilter({...${reset},source:'all',audit:'off'})`, 'warn'),
+    dplCard('Policy, no agent', s.policy_only, v.source === 'policy_only', `dplSetFilter({...${reset},source:'policy_only'})`, 'warn'),
+  ].join('');
+  const dp = s.default_policy || {};
+  document.getElementById('dpl-default').innerHTML = `Default policy (applies to every tool): <b>${!dp.exists ? 'not set' : dp.enabled ? 'on' : 'off'}</b>`
+    + (dp.exists ? `, ${dp.role_rules} role rule(s), ${dp.sanitization_rules} sanitization rule(s)` : '')
+    + ` · <a href="#" onclick="switchDPLSubtab('default');return false;">Edit</a>`
+    + ((s.warnings || []).length ? ` · <span style="color:var(--warning);">${_esc(s.warnings.join('; '))}</span>` : '');
+  document.getElementById('dpl-agents').innerHTML = (s.top_agents || [])
+    .map(a => `<option value="${_esc(a.agent)}">${_esc(a.agent)} (${a.tools})</option>`).join('');
+  const roleSel = document.getElementById('dpl-role');
+  const roles = [...(s.roles || [])];
+  if (v.role && !roles.includes(v.role)) roles.push(v.role);
+  roleSel.innerHTML = '<option value="">All roles</option>' + roles.map(r => `<option value="${_esc(r)}">${_esc(r)}</option>`).join('');
+  roleSel.value = v.role;
+}
+function dplActionColor(a) {
+  return a === 'allow' ? '#10b981' : a === 'block' ? '#ef4444' : a === 'redact' ? '#f59e0b' : a === 'mask' ? '#8b5cf6' : '#71717a';
+}
+function dplRenderList(d) {
+  const container = document.getElementById('data-policies-content');
+  const s = d.summary;
+  const rows = d.tools || [];
+  const filtered = Object.keys(dplFilters()).length > 0;
+  if (!rows.length) {
+    container.innerHTML = `<div class="muted" style="padding:2rem;text-align:center;">${
+      !s.tools ? 'No tools registered. Go to Agent Registry first.'
+      : filtered ? (d.next_cursor ? 'No matching tools on this page; try Next.' : 'No tools match these filters.') : 'No tools on this page.'}</div>`;
+  } else {
+    const allOnPage = rows.every(r => dplSelected.has(r.tool));
+    container.innerHTML = `<div class="card" style="padding:0;">
+      <div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 1rem;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-muted);">
+        <label><input type="checkbox" id="dpl-select-page" ${allOnPage ? 'checked' : ''} onchange="dplSelectPage(this.checked)"> Select this page</label>
+      </div>
+      ${rows.map((r, i) => dplRow(r, i)).join('')}
+    </div>
+    <div style="margin-top:0.75rem;display:flex;gap:1.25rem;font-size:12px;color:var(--text-muted);flex-wrap:wrap;align-items:center;">
+      ${DPL_ACTIONS.map(a => `<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${dplActionColor(a)};margin-right:5px;vertical-align:middle;"></span>${_esc(a)}</span>`).join('')}
+    </div>`;
   }
-
-  displayDataPolicies();
+  const prev = dplView.page > 0, next = !!d.next_cursor;
+  const short = rows.length < DPL_PAGE && next;
+  document.getElementById('dpl-pager').innerHTML = (prev || next) ? `
+    <button class="small" ${prev ? '' : 'disabled'} onclick="dplPageStep(-1)">Previous</button>
+    <span class="muted">Page ${dplView.page + 1}</span>
+    <button class="small" ${next ? '' : 'disabled'} onclick="dplPageStep(1)">Next</button>
+    ${short ? '<span class="muted">Pages can be shorter when filters are combined.</span>' : ''}` : '';
+}
+function dplRow(r, i) {
+  const roles = Object.entries(r.role_actions || {});
+  const roleSummary = roles.length
+    ? roles.slice(0, 6).map(([role, a]) => `<span style="color:${dplActionColor(a)};font-weight:600;">${_esc(role)}</span>`).join(', ') + (roles.length > 6 ? ` +${roles.length - 6}` : '')
+    : '<span style="color:var(--text-muted);">No role policies</span>';
+  const agents = (r.agents || []).map(a => `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(88,166,255,0.1);color:#58a6ff;font-weight:500;">${_esc(a)}</span>`).join('')
+    + (r.agent_count > (r.agents || []).length ? `<span class="muted" style="font-size:11px;">+${r.agent_count - r.agents.length} more</span>` : '');
+  const sep = '<span style="color:var(--border);">|</span>';
+  return `<div style="border-bottom:1px solid var(--border);">
+    <div style="display:flex;align-items:center;gap:0.75rem;padding:0.85rem 1rem;">
+      <input type="checkbox" data-tool="${_esc(r.tool)}" ${dplSelected.has(r.tool) ? 'checked' : ''} onchange="dplSelect(this.dataset.tool, this.checked)" aria-label="Select ${_esc(r.tool)}">
+      <div style="flex:1;min-width:0;cursor:pointer;" data-i="${i}" onclick="dplToggle(Number(this.dataset.i))">
+        <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+          <span style="font-weight:700;font-size:14px;">${_esc(r.tool)}</span>
+          ${r.source === 'policy_only' ? '<span class="badge badge-warn" title="Has a policy, but no agent lists this tool">no agent</span>' : ''}
+          ${agents}
+        </div>
+        <div style="display:flex;align-items:center;gap:0.75rem;margin-top:0.35rem;font-size:12px;color:var(--text-muted);flex-wrap:wrap;">
+          ${r.compliance_framework ? `<span>Compliance: <span style="font-weight:600;color:#8b5cf6;text-transform:uppercase;">${_esc(r.compliance_framework)}</span></span>${sep}` : ''}
+          <span>Roles: ${roleSummary}</span>${sep}
+          <span>Sanitization: <span style="font-weight:600;color:${r.sanitization_count ? '#10b981' : 'var(--text-muted)'};">${r.sanitization_count ? `${r.sanitization_count} rule${r.sanitization_count > 1 ? 's' : ''}` : 'None'}</span></span>${sep}
+          <span>Audit: <span style="font-weight:600;color:${r.audit_required ? '#10b981' : 'var(--text-muted)'};">${r.audit_required ? 'On' : 'Off'}</span></span>
+          ${r.has_policy ? '' : `${sep}<span>No policy of its own</span>`}
+        </div>
+      </div>
+      <button class="primary small" data-tool="${_esc(r.tool)}" onclick="openDataPolicyModal(this.dataset.tool)" style="font-size:11px;padding:0.3rem 0.7rem;flex-shrink:0;">Configure</button>
+    </div>
+    <div id="dpl-detail-${i}" class="hidden" style="padding:0 1rem 0.85rem 2.6rem;"></div>
+  </div>`;
+}
+// One tool's policy, fetched when needed (a row opened, the editor opened).
+async function dplPolicy(tool) {
+  const r = await fetch(`/v1/data-policies/tools/${encodeURIComponent(tool)}/policy`, { headers: { 'X-API-Key': API_KEY } });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const d = await r.json();
+  DATA_POLICIES_CACHE[tool] = d.policy || {};
+  return DATA_POLICIES_CACHE[tool];
+}
+async function dplToggle(i) {
+  const el = document.getElementById(`dpl-detail-${i}`);
+  const row = dplRows[i];
+  if (!el || !row) return;
+  if (!el.classList.contains('hidden')) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.innerHTML = '<div class="muted" style="font-size:12px;">Loading...</div>';
+  let dp;
+  try { dp = await dplPolicy(row.tool); } catch (e) { el.innerHTML = `<div class="muted">${_esc('Could not load the policy: ' + e.message)}</div>`; return; }
+  const rps = (dp.role_policies || []).filter(rp => rp && rp.role);
+  const rules = list => (list && list.length) ? list.map(x => `<span style="display:block;font-size:11px;color:var(--text-dim);padding:1px 0;">• ${_esc(x)}</span>`).join('') : '<span style="color:var(--text-muted);font-size:11px;">-</span>';
+  const th = 'text-align:left;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;';
+  el.innerHTML = !rps.length ? '<div class="muted" style="font-size:13px;">No role policies on this tool. The default policy still applies.</div>' : `
+    <table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+      <thead><tr style="background:rgba(255,255,255,0.03);"><th style="${th}width:15%;">Role</th><th style="${th}width:10%;">Action</th><th style="${th}width:20%;">Data scope</th><th style="${th}">Input rules</th><th style="${th}">Output rules</th></tr></thead>
+      <tbody>${rps.map(rp => `<tr style="border-top:1px solid var(--border);vertical-align:top;">
+        <td style="padding:0.5rem 0.75rem;font-weight:600;">${_esc(rp.role)}</td>
+        <td style="padding:0.5rem 0.75rem;"><span style="color:${dplActionColor(rp.action)};font-weight:600;">${_esc(rp.action || '-')}</span></td>
+        <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);">${_esc((rp.data_scope || []).join(', ') || '-')}</td>
+        <td style="padding:0.5rem 0.75rem;">${rules(rp.input_rules)}</td>
+        <td style="padding:0.5rem 0.75rem;">${rules(rp.output_rules)}</td></tr>`).join('')}</tbody>
+    </table>`;
 }
 
-function displayDataPolicies() {
-  const container = document.getElementById('data-policies-content');
-  const roles = [...REGISTERED_AGENT_ROLES].sort();
-  const tools = [...REGISTERED_AGENT_TOOLS].sort();
-
-  if (!tools.length) {
-    container.innerHTML = '<div class="muted" style="padding:2rem;text-align:center;">No tools registered.</div>';
+// ── Bulk changes (task 4): POST /v1/data-policies/tools/bulk ──────────────
+// Selected tools, or every tool matching the current filters (the server
+// refuses more than 500, with the count). Always a dry run first.
+function dplSelect(tool, on) {
+  if (on) dplSelected.add(tool); else dplSelected.delete(tool);
+  const all = document.getElementById('dpl-select-page');
+  if (all) all.checked = dplRows.length > 0 && dplRows.every(r => dplSelected.has(r.tool));
+  dplRenderBulk();
+}
+function dplSelectPage(on) {
+  dplRows.forEach(r => { if (on) dplSelected.add(r.tool); else dplSelected.delete(r.tool); });
+  document.querySelectorAll('#data-policies-content input[type=checkbox][data-tool]').forEach(cb => { cb.checked = on; });
+  dplRenderBulk();
+}
+function dplRenderBulk() {
+  const el = document.getElementById('dpl-bulk');
+  const n = dplSelected.size;
+  // Shown once there is something to change: a selection, or a filter (with
+  // none, "every matching tool" is the whole registry).
+  if (!dplSummary || !dplSummary.tools || (!n && !Object.keys(dplFilters()).length)) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  const keep = document.getElementById('dpl-bulk-op');
+  const op = keep ? keep.value : 'set_audit';
+  el.innerHTML = `<div class="card" style="padding:0.6rem 0.9rem;margin:0;display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;font-size:13px;">
+    <b>Change</b>
+    <select id="dpl-bulk-scope" style="width:auto;">
+      <option value="selected" ${n ? 'selected' : ''} ${n ? '' : 'disabled'}>${n} selected tool${n === 1 ? '' : 's'}</option>
+      <option value="match" ${n ? '' : 'selected'}>every tool matching these filters (up to 500)</option>
+    </select>
+    <select id="dpl-bulk-op" style="width:auto;" onchange="dplBulkValue()">
+      <option value="set_audit">Audit</option>
+      <option value="set_compliance">Compliance framework</option>
+      <option value="set_role_action">A role's action</option>
+      <option value="copy_from">Copy the policy of another tool</option>
+      <option value="remove">Remove their own policy</option>
+    </select>
+    <span id="dpl-bulk-value" style="display:inline-flex;gap:0.4rem;align-items:center;"></span>
+    <button class="small" onclick="dplBulk(true)">Preview</button>
+    ${n ? '<button class="small" onclick="dplSelected.clear();dplLoad();">Clear selection</button>' : ''}
+    <span id="dpl-bulk-msg" style="flex-basis:100%;"></span>
+  </div>`;
+  document.getElementById('dpl-bulk-op').value = op;
+  dplBulkValue();
+}
+async function dplBulkValue() {
+  const op = document.getElementById('dpl-bulk-op').value;
+  const el = document.getElementById('dpl-bulk-value');
+  const roleOpts = (dplSummary.roles || []).map(r => `<option value="${_esc(r)}">`).join('');
+  if (op === 'set_audit') el.innerHTML = '<select id="dpl-bulk-v" style="width:auto;"><option value="true">on</option><option value="false">off</option></select>';
+  else if (op === 'set_compliance') {
+    if (!dplFrameworks) {
+      try { dplFrameworks = (await (await fetch('/v1/data-policies/compliance/frameworks', { headers: { 'X-API-Key': API_KEY } })).json()).frameworks || {}; }
+      catch (e) { dplFrameworks = {}; }
+    }
+    el.innerHTML = '<select id="dpl-bulk-v" style="width:auto;">' + Object.keys(dplFrameworks).map(k => `<option value="${_esc(k)}">${_esc(k.toUpperCase())}</option>`).join('') + '<option value="">none (clear)</option></select>';
+  } else if (op === 'set_role_action') el.innerHTML = `<input id="dpl-bulk-role" type="text" list="dpl-bulk-roles" placeholder="role" maxlength="128" style="width:140px;"><datalist id="dpl-bulk-roles">${roleOpts}</datalist>
+    <select id="dpl-bulk-v" style="width:auto;">${DPL_ACTIONS.map(a => `<option value="${_esc(a)}">${_esc(a)}</option>`).join('')}</select>`;
+  else if (op === 'copy_from') el.innerHTML = '<input id="dpl-bulk-v" type="text" placeholder="tool to copy from" maxlength="256" style="width:200px;">';
+  else el.innerHTML = '<span class="muted">The default policy still applies to them.</span>';
+}
+function dplBulkBody(dryRun) {
+  const op = document.getElementById('dpl-bulk-op').value;
+  const v = document.getElementById('dpl-bulk-v');
+  let value = null;
+  if (op === 'set_audit') value = v.value === 'true';
+  else if (op === 'set_compliance') value = v.value;
+  else if (op === 'set_role_action') value = { role: document.getElementById('dpl-bulk-role').value.trim(), action: v.value };
+  else if (op === 'copy_from') value = v.value.trim();
+  const body = { change: { op, value }, dry_run: dryRun };
+  if (document.getElementById('dpl-bulk-scope').value === 'selected') body.tools = [...dplSelected];
+  else body.match = dplFilters();
+  return body;
+}
+async function dplBulk(dryRun) {
+  const msg = document.getElementById('dpl-bulk-msg');
+  const body = dplBulkBody(dryRun);
+  msg.innerHTML = '<span class="muted">Working...</span>';
+  let r, d;
+  try {
+    r = await fetch('/v1/data-policies/tools/bulk', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY }, body: JSON.stringify(body) });
+    d = await r.json().catch(() => ({}));
+  } catch (e) { msg.innerHTML = `<span style="color:var(--danger);">${_esc('Network error: ' + e.message)}</span>`; return; }
+  if (!r.ok) {
+    const det = d.detail;
+    const text = typeof det === 'string' ? det : det && det.message ? det.message + (det.errors ? ': ' + det.errors.join('; ') : '') : `HTTP ${r.status}`;
+    msg.innerHTML = `<span style="color:var(--danger);">${_esc(text)}</span>`;
     return;
   }
-
-  const actionColor = (a) => a === 'allow' ? '#10b981' : a === 'block' ? '#ef4444' : a === 'redact' ? '#f59e0b' : a === 'mask' ? '#8b5cf6' : '#71717a';
-  const badge = (a, sz) => {
-    sz = sz || '12px';
-    return a ? `<span style="display:inline-block;padding:0.15rem 0.5rem;background:${actionColor(a)}18;color:${actionColor(a)};border-radius:4px;font-size:${sz};font-weight:600;">${a}</span>` : `<span style="color:var(--text-muted);font-size:${sz};">—</span>`;
-  };
-
-  let html = `<div class="card" style="padding:0;">`;
-
-  tools.forEach(toolName => {
-    const dp = DATA_POLICIES_CACHE[toolName] || {};
-    const rolePolicies = {};
-    (dp.role_policies || []).forEach(rp => { rolePolicies[rp.role] = rp; });
-
-    const sanRules = dp.sanitization_rules || [];
-    const compliance = dp.compliance_framework || null;
-    const auditReq = dp.audit_required || false;
-    const tpRoles = (TOOL_POLICIES[toolName] || {}).role_restrictions || {};
-
-    const hasData = Object.keys(rolePolicies).length > 0 || sanRules.length > 0;
-    const sanText = sanRules.length ? `${sanRules.length} rule${sanRules.length > 1 ? 's' : ''}` : 'None';
-
-    const roleSummaryParts = [];
-    roles.forEach(r => {
-      const rp = rolePolicies[r];
-      const tp = tpRoles[r];
-      const action = rp ? rp.action : (typeof tp === 'string' ? tp : (tp && tp.input ? tp.input : null));
-      if (action) roleSummaryParts.push(`<span style="color:${actionColor(action)};font-weight:600;">${r}</span>`);
-    });
-    const roleSummary = roleSummaryParts.length ? roleSummaryParts.join(', ') : `<span style="color:var(--text-muted);">No role policies</span>`;
-
-    const dpId = `dp-expand-${toolName.replace(/[^a-zA-Z0-9]/g, '_')}`;
-
-    html += `
-      <div style="border-bottom:1px solid var(--border);">
-        <div onclick="document.getElementById('${dpId}').classList.toggle('hidden')" style="display:flex;align-items:center;gap:1rem;padding:0.85rem 1rem;cursor:pointer;transition:background 0.1s;" onmouseenter="this.style.background='rgba(255,255,255,0.03)'" onmouseleave="this.style.background=''">
-          <div style="flex:1;min-width:0;">
-            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-              <span style="font-weight:700;font-size:14px;">${toolName}</span>
-              <code style="font-size:11px;color:var(--text-muted);background:rgba(255,255,255,0.05);padding:1px 6px;border-radius:3px;">${toolName}</code>
-              ${(TOOL_AGENT_MAP[toolName] || []).map(a => `<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(88,166,255,0.1);color:#58a6ff;font-weight:500;">${a}</span>`).join('')}
-            </div>
-            <div style="display:flex;align-items:center;gap:0.75rem;margin-top:0.35rem;font-size:12px;color:var(--text-muted);flex-wrap:wrap;">
-              ${compliance ? `<span>Compliance: <span style="font-weight:600;color:#8b5cf6;text-transform:uppercase;">${compliance}</span></span><span style="color:var(--border);">|</span>` : ''}
-              <span>Roles: ${roleSummary}</span>
-              <span style="color:var(--border);">|</span>
-              <span>Sanitization: <span style="font-weight:600;color:${sanRules.length ? '#10b981' : 'var(--text-muted)'};">${sanText}</span></span>
-              <span style="color:var(--border);">|</span>
-              <span>Audit: <span style="font-weight:600;color:${auditReq ? '#10b981' : 'var(--text-muted)'};">${auditReq ? 'On' : 'Off'}</span></span>
-            </div>
-          </div>
-          <button class="primary small" data-tool="${_esc(toolName)}" onclick="event.stopPropagation();openDataPolicyModal(this.dataset.tool)" style="font-size:11px;padding:0.3rem 0.7rem;flex-shrink:0;">Configure</button>
-        </div>
-        <div id="${dpId}" class="hidden" style="padding:0 1rem 0.85rem 1rem;">
-          ${roles.length ? `
-          <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:0.25rem;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
-            <thead>
-              <tr style="background:rgba(255,255,255,0.03);">
-                <th style="text-align:left;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:15%;">Role</th>
-                <th style="text-align:center;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:10%;">Action</th>
-                <th style="text-align:left;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:20%;">Data Scope</th>
-                <th style="text-align:left;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:27%;">Input Rules</th>
-                <th style="text-align:left;padding:0.5rem 0.75rem;font-size:12px;color:var(--text-muted);font-weight:600;width:27%;">Output Rules</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${roles.map(r => {
-                const rp = rolePolicies[r];
-                const tp = tpRoles[r];
-                const action = rp ? rp.action : (typeof tp === 'string' ? tp : (tp && tp.input ? tp.input : null));
-                const scope = rp && rp.data_scope && rp.data_scope.length ? rp.data_scope.join(', ') : '—';
-                const inRules = rp && rp.input_rules && rp.input_rules.length ? rp.input_rules : [];
-                const outRules = rp && rp.output_rules && rp.output_rules.length ? rp.output_rules : [];
-                const renderRules = (rules) => rules.length ? rules.map(r => '<span style="display:block;font-size:11px;color:var(--text-dim);padding:1px 0;">• ' + r + '</span>').join('') : '<span style="color:var(--text-muted);font-size:11px;">—</span>';
-                return `<tr style="border-top:1px solid var(--border);vertical-align:top;">
-                  <td style="padding:0.5rem 0.75rem;font-weight:600;font-size:13px;">${r}</td>
-                  <td style="text-align:center;padding:0.5rem 0.75rem;">${badge(action, '12px')}</td>
-                  <td style="padding:0.5rem 0.75rem;font-size:12px;color:var(--text-dim);">${scope}</td>
-                  <td style="padding:0.5rem 0.75rem;">${renderRules(inRules)}</td>
-                  <td style="padding:0.5rem 0.75rem;">${renderRules(outRules)}</td>
-                </tr>`;
-              }).join('')}
-            </tbody>
-          </table>` : `<div style="padding:0.5rem 0;font-size:13px;color:var(--text-muted);">No roles configured.</div>`}
-        </div>
-      </div>`;
-  });
-
-  html += `</div>
-    <div style="margin-top:0.75rem;display:flex;gap:1.25rem;font-size:12px;color:var(--text-muted);flex-wrap:wrap;align-items:center;">
-      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#10b981;margin-right:5px;vertical-align:middle;"></span>allow</span>
-      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f59e0b;margin-right:5px;vertical-align:middle;"></span>redact</span>
-      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#8b5cf6;margin-right:5px;vertical-align:middle;"></span>mask</span>
-      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ef4444;margin-right:5px;vertical-align:middle;"></span>block</span>
-      <span style="margin-left:auto;font-size:12px;">scope = data types visible to role</span>
-    </div>`;
-
-  container.innerHTML = html;
+  if (dryRun) {
+    msg.innerHTML = d.changed
+      ? `Will change <b>${d.changed}</b> of ${d.targets} tool(s); ${d.unchanged} already match. <button class="primary small" onclick="dplBulk(false)">Apply</button>
+         <span class="muted" style="font-size:11px;">${_esc(d.tools.slice(0, 8).join(', '))}${d.tools.length > 8 ? ', ...' : ''}</span>`
+      : `Nothing to change: all ${d.targets} tool(s) already match.`;
+    return;
+  }
+  showToast(`Changed ${d.changed} tool polic${d.changed === 1 ? 'y' : 'ies'}`, 'success');
+  dplSelected.clear();
+  dplLoad(true);
 }
 
 async function openDataPolicyModal(toolName) {
@@ -10852,7 +11047,11 @@ async function openDataPolicyModal(toolName) {
   // (docs/specs/tool-policy-editor.md, task 3). It starts from the whole stored
   // policy and changes only what it edits, so nothing it does not show is lost
   // on save. The allowlist and compliance sections below are unchanged.
-  const dp = DATA_POLICIES_CACHE[toolName] || {};
+  // The one policy, fetched now: the list no longer downloads every policy
+  // (docs/specs/tool-registry-scale.md, task 3).
+  let dp;
+  try { dp = await dplPolicy(toolName); }
+  catch (e) { showToast('Could not load the policy: ' + e.message, 'error'); return; }
   await peLoadLibrary();
   const status = await peFetchStatus();
   const compliance = (dp.compliance_framework || '').toLowerCase();
@@ -10973,7 +11172,7 @@ async function openDataPolicyModal(toolName) {
 
   document.body.insertAdjacentHTML('beforeend', html);
   peMount('dp-editor', 'tdp', dp, {
-    role: initialRole, roles: [...REGISTERED_AGENT_ROLES], embedded: true,
+    role: initialRole, roles: [...new Set([...REGISTERED_AGENT_ROLES, ...((dplSummary && dplSummary.roles) || [])])].sort(), embedded: true,
     inheritedFailClosed: !!(status && status.fail_closed),
     // In the JSON view the whole policy is the one source: hide the sections
     // that would otherwise also edit the floor and compliance fields.
@@ -11883,7 +12082,7 @@ async function saveDataPolicy(toolName) {
       showToast(`Data policy saved for "${toolName}"`, 'success');
       document.getElementById('dp-modal-overlay').remove();
       DATA_POLICIES_CACHE[toolName] = policy;
-      displayDataPolicies();
+      dplLoad(true);
     } else {
       // 400 from the floor validator carries {errors: [...]}: name every one.
       const errs = data && data.detail && Array.isArray(data.detail.errors) ? data.detail.errors : null;
