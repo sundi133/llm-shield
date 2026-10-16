@@ -4,6 +4,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
+from guardrails.nemo import adapter_for
 from core.llm_backend import as_float, async_llm_call, parse_csv_response
 from core.text_utils import estimate_tokens, chunk_text, adaptive_chunk_budget
 
@@ -33,21 +34,30 @@ class BiasDetectionGuardrail(BaseGuardrail):
         self, content: str, system_prompt: str, threshold: float
     ) -> GuardrailResult:
         """Run bias detection on a single piece of content."""
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Analyze this response for bias: {content}"},
-        ]
+        # Family seam: None under the default vai family, leaving the path below
+        # unchanged. See guardrails/nemo/__init__.py.
+        adapter = adapter_for(self.name)
+        if adapter is not None:
+            messages = adapter.build_messages(content, {}, self.settings)
+            max_tokens = adapter.max_tokens
+        else:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Analyze this response for bias: {content}"},
+            ]
+            max_tokens = 20
 
         start = time.perf_counter()
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=20,
+                max_tokens=max_tokens,
                 temperature=0,
                 guardrail_name=self.name,
             )
             raw = response["choices"][0]["message"]["content"]
-            result = parse_csv_response(raw, _CSV_FIELDS)
+            result = (adapter.parse(raw) if adapter is not None
+                      else parse_csv_response(raw, _CSV_FIELDS))
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(

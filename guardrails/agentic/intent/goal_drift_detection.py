@@ -170,17 +170,29 @@ class GoalDriftDetectionGuardrail(BaseGuardrail):
                 history=history_text,
                 action=current_action,
             )
-            response = await async_llm_call(
-                messages=[
+            # Family seam: None under the default vai family.
+            from guardrails.nemo import adapter_for
+            adapter = adapter_for(self.name)
+            if adapter is not None:
+                messages = adapter.build_messages(
+                    current_action, {}, self.settings)
+                max_tokens = adapter.max_tokens
+            else:
+                messages = [
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": current_action},
-                ],
-                max_tokens=30,
+                ]
+                max_tokens = 30
+
+            response = await async_llm_call(
+                messages=messages,
+                max_tokens=max_tokens,
                 temperature=0,
                 guardrail_name=self.name,
             )
             raw = response["choices"][0]["message"]["content"]
-            result = parse_csv_response(raw, _CSV_FIELDS)
+            result = (adapter.parse(raw) if adapter is not None
+                      else parse_csv_response(raw, _CSV_FIELDS))
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(
