@@ -206,16 +206,37 @@ def test_an_unreachable_key_store_is_503_not_the_named_tenant(app):
     assert not disabled("tenant-b")
 
 
-def test_the_escape_hatch_restores_the_old_behavior_and_warns_once(client, monkeypatch, caplog):
+def test_the_escape_hatch_lets_a_tenant_key_act_for_another_tenant(client, monkeypatch, caplog, audit):
     import api.routes_killswitch as ks
     monkeypatch.setenv("SHIELD_KILLSWITCH_TRUST_BODY_TENANT", "true")
     monkeypatch.setattr(ks, "_warned_open", False)
     with caplog.at_level(logging.WARNING, logger="votal.killswitch"):
-        assert disable(client, tenant_id="tenant-b").status_code == 200
-        assert listing(client, tenant="tenant-b").status_code == 200
+        assert disable(client, A, tenant_id="tenant-b").status_code == 200
+        assert listing(client, A, "tenant-b").status_code == 200
     assert disabled("tenant-b")
-    warnings = [r for r in caplog.records if "SHIELD_KILLSWITCH_TRUST_BODY_TENANT" in r.getMessage()]
-    assert len(warnings) == 1
+    once = [r for r in caplog.records if "Turn it off" in r.getMessage()]
+    each = [r for r in caplog.records if "acted for tenant tenant-b" in r.getMessage()]
+    assert len(once) == 1 and len(each) == 2
+    assert audit[0]["metadata"] == {"scope": "cross_tenant", "caller_tenant": "tenant-a"}
+
+
+@pytest.mark.parametrize("call", [
+    lambda c: disable(c, tenant_id="tenant-b"),
+    lambda c: enable(c, tenant_id="tenant-b"),
+    lambda c: listing(c, tenant="tenant-b"),
+    lambda c: disable(c, {"X-API-Key": "sk-nobody"}, tenant_id="tenant-b"),
+])
+def test_the_escape_hatch_still_needs_a_credential(client, monkeypatch, call):
+    monkeypatch.setenv("SHIELD_KILLSWITCH_TRUST_BODY_TENANT", "true")
+    assert call(client).status_code == 401
+    assert not disabled("tenant-b")
+
+
+def test_the_escape_hatch_keeps_the_write_gate(client, monkeypatch):
+    monkeypatch.setenv("SHIELD_KILLSWITCH_TRUST_BODY_TENANT", "true")
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    assert disable(client, A, tenant_id="tenant-b").status_code == 403
+    assert not disabled("tenant-b")
 
 
 # ── 6. audit ───────────────────────────────────────────────────────

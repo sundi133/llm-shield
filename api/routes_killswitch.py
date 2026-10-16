@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 import asyncio
-from core.auth import SCOPE_ADMIN, SCOPE_TENANT, authorized_tenant_scope, require_registry_write
+from core.auth import (SCOPE_ADMIN, SCOPE_TENANT, authorized_tenant_scope,
+                       caller_tenant_scope, require_registry_write)
 from storage.tool_killswitch import disable_tool, enable_tool, list_disabled_tools
 from storage.admin_audit import log_admin_action
 from core.webhook_dispatcher import dispatch_event
@@ -21,9 +22,11 @@ logger = logging.getLogger("votal.killswitch")
 
 router = APIRouter(prefix="/v1/shield/tools", tags=["killswitch"])
 
-# Escape hatch for one release: the old behavior, where any caller acts for
-# whichever tenant it names. Temporary; see the spec's migration note.
+# Escape hatch for one release: a tenant credential may act for whichever
+# tenant it names, as before. A credential is still required. Temporary; see
+# the spec's migration note.
 _TRUST_BODY_ENV = "SHIELD_KILLSWITCH_TRUST_BODY_TENANT"
+SCOPE_CROSS_TENANT = "cross_tenant"
 _warned_open = False
 
 
@@ -34,16 +37,22 @@ def _trust_body_tenant() -> bool:
 def _scope(request: Request, claimed: Optional[str], write: bool) -> tuple:
     """(tenant_id, scope) for this request, or raise 400/401/403/503."""
     global _warned_open
+    claimed = (claimed or "").strip()
     if _trust_body_tenant():
-        if not _warned_open:
-            _warned_open = True
-            logger.warning("%s is on: the tool kill switch acts for any tenant a "
-                           "request names, for every caller, including callers "
-                           "with no credentials. Turn it off.", _TRUST_BODY_ENV)
-        if not claimed:
-            raise HTTPException(status_code=400, detail="tenant_id is required")
-        return claimed, "unchecked"
-    tenant_id, scope = authorized_tenant_scope(request, claimed or "")
+        # Still a credential: the hatch exists for tenant keys that act for
+        # other tenants during migration, never for anonymous callers.
+        scope, own = caller_tenant_scope(request)
+        if scope == SCOPE_TENANT and claimed and claimed != own:
+            if not _warned_open:
+                _warned_open = True
+                logger.warning("%s is on: tenant credentials may use the tool kill "
+                               "switch for other tenants. Turn it off.", _TRUST_BODY_ENV)
+            logger.warning("kill switch: tenant %s acted for tenant %s (%s)",
+                           own, claimed, _TRUST_BODY_ENV)
+            if write:
+                require_registry_write(request, own, action="use the tool kill switch")
+            return claimed, SCOPE_CROSS_TENANT
+    tenant_id, scope = authorized_tenant_scope(request, claimed)
     if write and scope == SCOPE_TENANT:
         require_registry_write(request, tenant_id, action="use the tool kill switch")
     return tenant_id, scope
@@ -65,9 +74,13 @@ def _source_ip(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
-def _audit_metadata(scope: str, tenant_id: str) -> dict:
+def _audit_metadata(request: Request, scope: str, tenant_id: str) -> dict:
     """Who acted, and for whom: an admin acting for a tenant shows as such."""
-    return {"scope": scope, "caller_tenant": tenant_id if scope != SCOPE_ADMIN else None}
+    if scope == SCOPE_ADMIN:
+        return {"scope": scope, "caller_tenant": None}
+    if scope == SCOPE_CROSS_TENANT:
+        return {"scope": scope, "caller_tenant": caller_tenant_scope(request)[1]}
+    return {"scope": scope, "caller_tenant": tenant_id}
 
 
 class DisableToolRequest(BaseModel):
@@ -100,7 +113,7 @@ async def disable_tool_endpoint(tool_name: str, body: DisableToolRequest, reques
         tenant_id=tenant_id,
         source_ip=_source_ip(request),
         after={"tool_name": tool_name, "reason": body.reason},
-        metadata=_audit_metadata(scope, tenant_id),
+        metadata=_audit_metadata(request, scope, tenant_id),
     )
 
     # Fire webhook event (only if webhooks enabled)
@@ -140,7 +153,7 @@ async def enable_tool_endpoint(tool_name: str, body: EnableToolRequest, request:
         tenant_id=tenant_id,
         source_ip=_source_ip(request),
         after={"tool_name": tool_name},
-        metadata=_audit_metadata(scope, tenant_id),
+        metadata=_audit_metadata(request, scope, tenant_id),
     )
 
     return {

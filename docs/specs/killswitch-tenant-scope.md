@@ -106,10 +106,14 @@ visible as such.
 | A tenant key with the write gate enforced | **403** for disable/enable unless admin-scoped (consistent with other registry writes) |
 
 Escape hatch, as the repo requires for behavior changes:
-`SHIELD_KILLSWITCH_TRUST_BODY_TENANT=true` restores the old behavior for one
-release (any caller, any named tenant), logs a warning once per process that
-the kill switch is open to every caller, and is documented as temporary. Default
-off. Migration note in the release notes: callers that act for other tenants
+`SHIELD_KILLSWITCH_TRUST_BODY_TENANT=true`, for one release, lets a **tenant
+credential** act for whichever tenant it names, as before. A credential is
+still required (no credentials stays 401), the registry write gate still
+applies, every cross-tenant call logs a warning, and its audit row has
+`scope: "cross_tenant"` with the caller's tenant. Documented as temporary.
+Default off. (The first draft restored the old behavior for every caller,
+including anonymous ones; the Pepper review on PR #497 rated that critical,
+and anonymous callers have no legitimate use for it.) Migration note in the release notes: callers that act for other tenants
 must use an admin identity.
 
 ## 6. Packaging & deploy
@@ -126,7 +130,7 @@ No new module (`core/auth.py` and `api/routes_killswitch.py` are already in
 | Admin identity naming a tenant that does not exist | As today (the write lands; nothing reads it). Not made worse |
 | Portal session for tenant A, body names A | 200 |
 | `tool_name` path parameter | Unchanged |
-| Escape hatch on | Old behavior, one warning per process |
+| Escape hatch on | Tenant credentials may name another tenant; still 401 without one; warning per cross-tenant call |
 
 Fail mode: fail closed. Anything that cannot establish the caller's tenant is
 refused.
@@ -143,7 +147,7 @@ New `tests/test_killswitch_tenant_scope.py`, through the app:
 3. Admin key: acts for any named tenant; 400 without `tenant_id`.
 4. Write gate enforced: a runtime-scoped tenant key gets 403 on disable/enable,
    200 on list; an admin-scoped key works.
-5. Escape hatch: old behavior, warning logged once.
+5. Escape hatch: a tenant key may act for another tenant, logged and audited; no credentials is still 401; the write gate still applies.
 6. Audit rows carry the scope and caller tenant.
 7. `api/routes_agent_identity.py` behaves exactly as before on the shared
    helper (its existing tests: `tests/test_agent_identity_authz.py`,

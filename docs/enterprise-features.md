@@ -104,8 +104,9 @@ writes. Listing does not.
 
 Migration: before this check, these routes acted for whichever tenant the
 request named, for any caller. Callers that act for other tenants must use an
-admin identity. `SHIELD_KILLSWITCH_TRUST_BODY_TENANT=true` restores the old
-behavior for one release and logs a warning; do not leave it on.
+admin identity. `SHIELD_KILLSWITCH_TRUST_BODY_TENANT=true` lets a tenant key
+act for another tenant for one release, logging and auditing each such call. A
+credential is still required. Do not leave it on.
 
 ---
 
