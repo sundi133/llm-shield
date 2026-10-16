@@ -361,6 +361,18 @@ async def agent_chat(request: Request):
     _resolved = resolve_identity(request, body_agent_key=agent_key,
                                  body_user_role=body.get("user_role"))
     user_role = _resolved.user_role or None
+    # identity.require for an agent named in the body (the header case is
+    # ShieldMiddleware's). Spec: docs/specs/agent-cert-identity.md, task 4.
+    _tid = getattr(getattr(request, "state", None), "tenant_id", None) or ""
+    if agent_key and _tid:
+        try:
+            from core.cert_identity import enforce_requirement
+            _req_err = enforce_requirement(request, _tid, agent_key, "agent_chat")
+        except ImportError:
+            _req_err = None
+        if _req_err:
+            return JSONResponse(status_code=401, content={
+                "error": "identity_required", "detail": _req_err, "agent_key": agent_key})
     llm_api_key = body.get("llm_master_key") or body.get("llm_api_key")
     llm_base_url = body.get("llm_base_url")
     llm_model = body.get("llm_model")

@@ -427,6 +427,19 @@ async def _run_a2a_authz(
     if not effective_agent:
         return {"blocked": False, "reason": "", "results": []}
 
+    # identity.require (docs/specs/agent-cert-identity.md, task 4). /a2a/* is
+    # outside ShieldMiddleware, so this is the only place it is checked here.
+    try:
+        from core.cert_identity import enforce_requirement
+        req_err = enforce_requirement(request, tenant_id, effective_agent, "a2a")
+    except ImportError:
+        req_err = None
+    if req_err:
+        return {"blocked": True, "reason": req_err, "results": [{
+            "guardrail": "identity_required", "passed": False, "action": "block",
+            "message": req_err, "details": {"agent_key": effective_agent},
+        }]}
+
     context = {
         "agent_key": effective_agent,
         "delegate_to": metadata.get("to_agent"),

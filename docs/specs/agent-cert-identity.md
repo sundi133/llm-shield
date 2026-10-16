@@ -8,7 +8,12 @@ description: Make certificate-based agent identity mean what it says. Headers th
 
 # Spec: Certificate-based agent identity that enterprises can rely on
 
-> Status: **DRAFT, awaiting approval.** Branch `spec/agent-cert-identity`.
+> Status: **APPROVED 2026-10-16** (tasks 2 to 5). Branch `spec/agent-cert-identity`.
+> Tasks 2 to 5 built: `core/cert_identity.py`, `guardrails/agentic/identity/cert_registry.py`,
+> `core/mtls_middleware.py`, `api/routes_agent_cert_identity.py`, `api/routes_agent_identity.py`,
+> `identity.require` in `core/middleware.py`, `api/routes_tool.py`, `api/routes_agent_chat.py`,
+> `api/routes_a2a.py`, the Agent Identity page, `docs/agent-cert-identity-runbook.md`.
+> Task 1 is the narrower fix in `docs/specs/cert-fingerprint-identity.md`. See "As built" below.
 > Related: `docs/spec-modular-workload-identity.md`, `docs/spec-agent-token-pop.md`,
 > `docs/AGENT_AUTH_ARCHITECTURE.md`, `core/proxy_trust.py`, `core/oauth/spiffe.py`.
 > A narrower fix (task 1 below, on its own) was started separately as task
@@ -257,7 +262,7 @@ customer-facing text.
 | Rule captures an unregistered agent | No identity |
 | Pinned fingerprint and anchor both match, different agents | Pinned wins; audit notes the conflict |
 | Revoke on one worker | Immediate there; at most 5 minutes elsewhere (cache TTL). Documented |
-| Redis down | Pinned and anchor lookups fail closed to "no certificate identity" (the request continues as string key); `identity.require: cert` agents are refused |
+| Redis down | Pinned and anchor lookups fail closed to "no certificate identity" (the request continues as string key). `identity.require` is read from a 60 s cached copy of the registry; if the registry cannot be read the last cached copy is used, and with none the agent is treated as `any` (an outage does not invent a requirement; logged). As built: see below |
 | `identity.require: cert`, agent behind a proxy that does not forward certs | Every call refused with a clear reason naming the missing header; this is the point |
 | Proxy appends instead of overwriting the header (a client value survives) | Not detectable by Shield; the runbook's proxy configuration is mandatory and its check (`/test` with a crafted header) is in the acceptance list |
 | 10,000+ distinct certificates per process | LRU eviction; a miss costs one verification (under 2 ms) |
@@ -324,3 +329,38 @@ Full suite green in a clean venv; CI `pytest` passes; Dockerfile import guard.
 Tasks 1 and 4 are what an enterprise security review will ask for first;
 tasks 2 and 3 are what makes it operable at scale; task 5 completes revocation
 for customers who cannot use short-lived certificates.
+
+
+## As built (tasks 2 to 5)
+
+Found while building, and fixed in the same branch:
+
+- **mTLS identity never resolved.** `MTLSMiddleware` runs before
+  `ShieldMiddleware`, which is what sets `request.state.tenant_id`, so every
+  lookup used an empty tenant and no forwarded certificate ever identified an
+  agent, even through a correctly configured proxy. It now resolves the tenant
+  from the API key through `ShieldMiddleware`'s tenant cache. Without this,
+  the "proxy mTLS earns high trust" path in task 1 would have nothing to
+  promote.
+- **Envoy's header was hashed as text.** A forwarded certificate in Envoy's
+  `X-Forwarded-Client-Cert` format (or URL-encoded by nginx) failed to parse,
+  and the fallback hashed the raw header, a fingerprint that matched nothing.
+  `parse_forwarded_cert` reads Envoy (`Cert=` and `Chain=`, last hop),
+  URL-encoded and raw PEM.
+- **Cross-tenant read.** `GET /v1/shield/agent/identity/{agent_key}` took
+  `tenant_id` from the query with no check. It is now confined to the
+  caller's tenant, as register and revoke already were.
+
+Differences from the plan:
+
+- **CRLs are uploaded, not fetched.** Fetching from a distribution point
+  means outbound requests from the guard path's process; left for later.
+- **Registration refuses a value that is not a SHA-256 fingerprint.**
+  Existing registrations in any form still resolve.
+- **`identity.require` with an unreadable registry** uses the last cached
+  copy, else `any` (the failure-mode row above was updated).
+- **The page's "How It Works" copy and the self-sent header guidance** are
+  left to task 1, which rewrites them; the new cards (setup check,
+  certificates, anchors and CRLs, rules, test) are added above it.
+- **One verifier for the SPIFFE path** is not done: SPIFFE keeps its own trust
+  domains. Task 1's remainder.

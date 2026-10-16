@@ -51,6 +51,7 @@ from api.routes_exceptions import router as exceptions_router
 from api.routes_exception_review import tenant_router as exceptions_tenant_router
 from api.routes_hooks_portal import router as hooks_portal_router
 from api.routes_devices import router as device_agent_router, tenant_router as devices_router
+from api.routes_agent_cert_identity import router as agent_cert_identity_router
 from api.routes_runtime import router as runtime_events_router
 from api.routes_hooks import router as agent_hooks_router
 from api.routes_custom_policies import router as custom_policies_router
@@ -154,6 +155,7 @@ def create_app() -> FastAPI:
     app.include_router(device_dlp_bundle_router)   # data plane only: laptops poll it
     app.include_router(device_agent_router)        # data plane only: enroll, heartbeat
     app.include_router(devices_router)
+    app.include_router(agent_cert_identity_router)   # /v1/tenant/me/agent-identity/*
     app.include_router(runtime_events_router)
     app.include_router(agent_hooks_router)       # coding-agent hooks: data plane only
     app.include_router(custom_policies_router)

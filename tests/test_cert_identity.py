@@ -35,39 +35,39 @@ class TestCertRegistry:
     """Test certificate registry operations."""
 
     def test_register_cert(self, mock_redis):
-        record = register_cert("t1", "agent1", "abc123def456")
+        record = register_cert("t1", "agent1", "e861b2eab679927cfa36fe256e9deb1969b0468ad0744d61064f9d188333aec6")
         assert record["agent_key"] == "agent1"
         assert record["trust_level"] == "high"
         assert record["identity_method"] == "cert"
 
     def test_resolve_agent_by_cert(self, mock_redis):
-        register_cert("t1", "agent1", "fingerprint_123")
-        agent = resolve_agent_by_cert("t1", "fingerprint_123")
+        register_cert("t1", "agent1", "6c8b00b3b332c941452a711741f5c5687bda3d283537d8584b10390a42ddc67f")
+        agent = resolve_agent_by_cert("t1", "6c8b00b3b332c941452a711741f5c5687bda3d283537d8584b10390a42ddc67f")
         assert agent == "agent1"
 
     def test_resolve_agent_not_found(self, mock_redis):
-        agent = resolve_agent_by_cert("t1", "unknown_fingerprint")
+        agent = resolve_agent_by_cert("t1", "df608b275f51d9c0be6cc150a3508608c1c7b692683915cf1a3cab98ec1f89dd")
         assert agent is None
 
     def test_resolve_agent_tenant_isolation(self, mock_redis):
-        register_cert("t1", "agent1", "fp_123")
-        agent = resolve_agent_by_cert("t2", "fp_123")
+        register_cert("t1", "agent1", "f077956341eb886479b75fe50f8ea90d7235b93af7484b6dfa88ac6255c9c94c")
+        agent = resolve_agent_by_cert("t2", "f077956341eb886479b75fe50f8ea90d7235b93af7484b6dfa88ac6255c9c94c")
         assert agent is None
 
     def test_revoke_cert(self, mock_redis):
-        register_cert("t1", "agent1", "fp_123")
-        assert resolve_agent_by_cert("t1", "fp_123") == "agent1"
+        register_cert("t1", "agent1", "f077956341eb886479b75fe50f8ea90d7235b93af7484b6dfa88ac6255c9c94c")
+        assert resolve_agent_by_cert("t1", "f077956341eb886479b75fe50f8ea90d7235b93af7484b6dfa88ac6255c9c94c") == "agent1"
 
         revoked = revoke_cert("t1", "agent1")
         assert revoked is True
-        assert resolve_agent_by_cert("t1", "fp_123") is None
+        assert resolve_agent_by_cert("t1", "f077956341eb886479b75fe50f8ea90d7235b93af7484b6dfa88ac6255c9c94c") is None
 
     def test_revoke_cert_not_found(self, mock_redis):
         revoked = revoke_cert("t1", "nonexistent")
         assert revoked is False
 
     def test_revoke_resets_trust_to_medium(self, mock_redis):
-        register_cert("t1", "agent1", "fp_123")
+        register_cert("t1", "agent1", "f077956341eb886479b75fe50f8ea90d7235b93af7484b6dfa88ac6255c9c94c")
         trust = get_agent_trust("t1", "agent1")
         assert trust["trust_level"] == "high"
 
@@ -82,7 +82,7 @@ class TestCertRegistry:
         assert trust["identity_method"] == "string_key"
 
     def test_get_agent_trust_after_cert(self, mock_redis):
-        register_cert("t1", "agent1", "fp_123")
+        register_cert("t1", "agent1", "f077956341eb886479b75fe50f8ea90d7235b93af7484b6dfa88ac6255c9c94c")
         trust = get_agent_trust("t1", "agent1")
         assert trust["trust_level"] == "high"
         assert trust["identity_method"] == "cert"
@@ -180,7 +180,7 @@ class TestCertIdentityGuardrail:
     @patch("guardrails.agentic.identity.cert_registry._get_redis", return_value=None)
     @pytest.mark.asyncio
     async def test_lookup_trust_from_registry(self, mock_redis, guard):
-        register_cert("t1", "a1", "fp_123")
+        register_cert("t1", "a1", "f077956341eb886479b75fe50f8ea90d7235b93af7484b6dfa88ac6255c9c94c")
 
         with patch.object(type(guard), 'settings', new_callable=lambda: property(
             lambda self: {"min_trust_for_tools": {"payment": "high"}}
@@ -236,7 +236,7 @@ class TestCertIdentityRouteIntegration:
     def test_register_cert_endpoint(self, mock_redis, client):
         resp = client.post("/v1/shield/agent/identity/register", json={
             "agent_key": "agent1",
-            "fingerprint": "abc123def456",
+            "fingerprint": "e861b2eab679927cfa36fe256e9deb1969b0468ad0744d61064f9d188333aec6",
             "tenant_id": "t1",
         }, headers=ADMIN)
         assert resp.status_code == 200
@@ -246,8 +246,8 @@ class TestCertIdentityRouteIntegration:
 
     @patch("guardrails.agentic.identity.cert_registry._get_redis", return_value=None)
     def test_get_identity_endpoint(self, mock_redis, client):
-        register_cert("t1", "agent1", "fp_123")
-        resp = client.get("/v1/shield/agent/identity/agent1?tenant_id=t1")
+        register_cert("t1", "agent1", "f077956341eb886479b75fe50f8ea90d7235b93af7484b6dfa88ac6255c9c94c")
+        resp = client.get("/v1/shield/agent/identity/agent1?tenant_id=t1", headers=ADMIN)
         assert resp.status_code == 200
         data = resp.json()
         assert data["trust"]["trust_level"] == "high"
@@ -255,14 +255,29 @@ class TestCertIdentityRouteIntegration:
 
     @patch("guardrails.agentic.identity.cert_registry._get_redis", return_value=None)
     def test_get_identity_default(self, mock_redis, client):
-        resp = client.get("/v1/shield/agent/identity/unknown?tenant_id=t1")
+        resp = client.get("/v1/shield/agent/identity/unknown?tenant_id=t1", headers=ADMIN)
         assert resp.status_code == 200
         data = resp.json()
         assert data["trust"]["trust_level"] == "medium"
 
     @patch("guardrails.agentic.identity.cert_registry._get_redis", return_value=None)
+    def test_get_identity_needs_credentials_and_stays_in_the_tenant(self, mock_redis, client):
+        """The lookup took tenant_id from the query with no check, so anyone
+        could read any tenant's agent trust (docs/specs/agent-cert-identity.md)."""
+        import uuid
+        from storage import tenant_store as ts
+        assert client.get("/v1/shield/agent/identity/agent1?tenant_id=t1").status_code in (401, 403)
+        other, key = "o" + uuid.uuid4().hex[:8], "sk-o-" + uuid.uuid4().hex
+        with patch("storage.tenant_store._get_redis", return_value=None):
+            ts.create_tenant(other, {"name": other, "plan": "enterprise"}, api_keys=[key])
+            r = client.get("/v1/shield/agent/identity/agent1?tenant_id=t1", headers={"X-API-Key": key})
+            assert r.status_code == 403
+            r = client.get(f"/v1/shield/agent/identity/agent1?tenant_id={other}", headers={"X-API-Key": key})
+            assert r.status_code == 200
+
+    @patch("guardrails.agentic.identity.cert_registry._get_redis", return_value=None)
     def test_revoke_cert_endpoint(self, mock_redis, client):
-        register_cert("t1", "agent1", "fp_123")
+        register_cert("t1", "agent1", "f077956341eb886479b75fe50f8ea90d7235b93af7484b6dfa88ac6255c9c94c")
         resp = client.post("/v1/shield/agent/identity/revoke", json={
             "agent_key": "agent1",
             "tenant_id": "t1",
@@ -282,7 +297,7 @@ class TestCertIdentityRouteIntegration:
     @patch("guardrails.agentic.identity.cert_registry._get_redis", return_value=None)
     def test_tool_check_with_cert_header(self, mock_redis, client):
         """Test that middleware resolves cert fingerprint to agent_key."""
-        register_cert("t1", "cert_agent", "my_cert_fingerprint")
+        register_cert("t1", "cert_agent", "2df560922d8a05542d3e2391875649590d1e172d87e20c2110f03f7b4ce77148")
 
         # Send request with cert header — middleware should resolve to cert_agent
         resp = client.post("/v1/shield/tool/check", json={
@@ -290,7 +305,7 @@ class TestCertIdentityRouteIntegration:
             "tool_name": "search",
         }, headers={
             "X-Tenant-ID": "t1",
-            "X-Client-Cert-Fingerprint": "my_cert_fingerprint",
+            "X-Client-Cert-Fingerprint": "2df560922d8a05542d3e2391875649590d1e172d87e20c2110f03f7b4ce77148",
         })
         assert resp.status_code == 200
 

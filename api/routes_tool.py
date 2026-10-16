@@ -343,6 +343,23 @@ def _emit_tool_check_telemetry(
     }))
 
 
+def _identity_requirement_result(request: Request, tenant_id, agent_key, where: str):
+    """A block response when the agent's identity.require is not met, else None."""
+    if not tenant_id or not agent_key:
+        return None
+    try:
+        from core.cert_identity import enforce_requirement
+    except ImportError:
+        return None
+    reason = enforce_requirement(request, tenant_id, agent_key, where)
+    if not reason:
+        return None
+    return {"allowed": False, "action": "block", "guardrail_results": [{
+        "guardrail": "identity_required", "passed": False, "action": "block",
+        "message": reason, "details": {"agent_key": agent_key}, "latency_ms": 0.0,
+    }]}
+
+
 @router.post("/check")
 async def check_tool(body: ToolCheckRequest, request: Request):
     start = time.perf_counter()
@@ -427,6 +444,12 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                 session_id=body.session_id, reason=_id_err, source_ip=source_ip,
             )
         return {"allowed": False, "action": "block", "guardrail_results": results}
+
+    # identity.require: an agent named in the body must be proven, as one named
+    # in X-Agent-Key is by ShieldMiddleware. Spec: docs/specs/agent-cert-identity.md.
+    _req_err = _identity_requirement_result(request, tenant_id, body.agent_key, "tool_check")
+    if _req_err:
+        return _req_err
 
     # Kill switch check — immediate block if tool is globally disabled (enterprise feature)
     if KILLSWITCH_ENABLED and tenant_id and is_tool_disabled(tenant_id, body.tool_name):
@@ -826,6 +849,9 @@ async def check_tool_output(body: ToolOutputRequest, request: Request):
     # Same seam as /tool/check. Defaults to "user" when absent, as before.
     _rid = resolve_identity(request, body_agent_key=body.agent_key)
     user_role = _rid.user_role or "user"
+    _req_err = _identity_requirement_result(request, tenant_id, body.agent_key, "tool_output")
+    if _req_err:
+        return _req_err
 
     # The id a later call names in input_sources to inherit this output's
     # taint. Generated when the caller did not supply one and returned below.
