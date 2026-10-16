@@ -8,7 +8,7 @@ description: The tool kill switch routes act on whatever tenant the request name
 
 # Spec: Kill switch confined to the caller's tenant
 
-> Status: **DRAFT, awaiting approval.** Branch `fix/killswitch-tenant-scope`.
+> Status: **APPROVED and BUILT 2026-10-16.** Branch `fix/killswitch-tenant-scope`.
 > Found while building the agent identity POC (docs/specs/agent-identity-poc.md).
 
 ## 1. Problem & outcome
@@ -157,3 +157,28 @@ unauthenticated `GET /disabled`). Full suite green; CI `pytest` gate passes.
 1. `authorized_tenant_scope` in `core/auth.py`; the three routes use it; write
    gate on disable/enable; escape hatch; audit fields;
    `routes_agent_identity.py` on the shared helper; tests 1 to 7.
+
+## As built
+
+- `core/auth.py`: `caller_tenant_scope` (who is calling) and
+  `authorized_tenant_scope` (which tenant they may act for). Two additions
+  found while building, both in the direction of the spec:
+  - a **global master key** (`auth.api_keys` / `SHIELD_API_KEYS`) counts as an
+    admin identity, as `require_tenant_access` already treats it, so scripts
+    using one keep working;
+  - a **workload identity that carries a tenant** (an mTLS agent, the
+    `tenant_key` provider) is confined to that tenant rather than treated as an
+    operator. This also tightens `api/routes_agent_identity.py`: with `mtls` in
+    `SHIELD_WORKLOAD_IDENTITY_PROVIDERS`, an agent's certificate could
+    previously register certificates in any tenant.
+- `api/routes_agent_identity.py` keeps its status codes (403 with no
+  credentials, 500 when the admin key provider is on and `SHIELD_ADMIN_KEY` is
+  unset) through parameters of the shared helper; it now also accepts a portal
+  session and `X-Tenant-Key`, both confined to their tenant.
+- The registry write gate applies to tenant callers only: an admin identity
+  has no tenant key scope to check.
+- The 503 path applies when the route resolves the key itself; when a
+  middleware already resolved the tenant, that tenant is used.
+- Docs: `docs/enterprise-features.md` (who may use the kill switch, migration).
+- Tests: `tests/test_killswitch_tenant_scope.py` (22); the seven reproduction
+  tests fail on the previous routes and pass now.
