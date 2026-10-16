@@ -379,6 +379,123 @@ def verify_tenant_path_access(request: Request, tenant_id: str | None = None) ->
 
 
 # ---------------------------------------------------------------------------
+# Body-named tenants
+#
+# Some management routes take the tenant from the request body or query rather
+# than from a path parameter or the key (the kill switch, cert registration).
+# Nothing checked that name against the caller, so any caller, with or without
+# a credential, could act for any tenant. One rule, shared, so the routes that
+# need it cannot drift apart.
+#
+# See docs/specs/killswitch-tenant-scope.md
+# ---------------------------------------------------------------------------
+
+SCOPE_ADMIN = "admin"
+SCOPE_TENANT = "tenant"
+
+
+def _is_master_key(api_key: str) -> bool:
+    """A global key from auth.api_keys / SHIELD_API_KEYS: an operator key.
+
+    require_tenant_access already treats these as unrestricted; this keeps the
+    two answers the same.
+    """
+    try:
+        keys = _config_module.config.auth.api_keys if _config_module.config else []
+    except Exception:
+        return False
+    return bool(keys) and _validate_key(api_key, keys)
+
+
+def caller_tenant_scope(request: Request, *, unauthenticated_status: int = 401,
+                        unauthenticated_detail: str = "",
+                        admin_key_unset_detail: str = "") -> tuple:
+    """Who is calling: ("admin", None) or ("tenant", tenant_id). Raises otherwise.
+
+    In order:
+
+    * An admin identity (the workload-identity providers: admin key, SPIFFE,
+      mTLS, whichever are enabled), or a global master key: any tenant. An
+      identity that itself carries a tenant (an mTLS agent, the tenant_key
+      provider) is confined to that tenant instead; it identifies one of the
+      tenant's workloads, not an operator.
+    * A signed-in portal user: their session's tenant.
+    * A tenant API key: its tenant.
+
+    Fails closed: a key that cannot be resolved because the store is down is a
+    503, never "act for whichever tenant the body names".
+    """
+    from fastapi import HTTPException
+    from core.workload_identity import enabled_providers, resolve_workload_identity
+
+    identity = resolve_workload_identity(request)
+    if identity is not None:
+        claims = identity.claims if isinstance(identity.claims, dict) else {}
+        if claims.get("tenant_id"):
+            return SCOPE_TENANT, str(claims["tenant_id"])
+        request.state.workload_identity = identity
+        return SCOPE_ADMIN, None
+
+    principal = portal_principal(request)
+    if principal and principal.get("tenant_id"):
+        return SCOPE_TENANT, principal["tenant_id"]
+
+    state_tenant = getattr(getattr(request, "state", None), "tenant_id", None)
+    if state_tenant:
+        return SCOPE_TENANT, state_tenant
+
+    api_key = _extract_api_key(request)
+    if api_key:
+        if _is_master_key(api_key):
+            return SCOPE_ADMIN, None
+        try:
+            from storage.tenant_store import resolve_tenant_by_api_key
+            tenant = resolve_tenant_by_api_key(api_key)
+        except Exception as exc:
+            logger.warning("could not resolve API key (%s)", exc.__class__.__name__)
+            tenant, degraded = None, True
+        else:
+            degraded = not tenant and _store_is_degraded()
+        if tenant:
+            return SCOPE_TENANT, tenant
+        if degraded:
+            raise HTTPException(
+                status_code=503,
+                detail="Cannot verify the API key (key store unavailable).")
+
+    if admin_key_unset_detail:
+        names = [p.name for p in enabled_providers()]
+        if "admin_key" in names and not os.environ.get("SHIELD_ADMIN_KEY", ""):
+            raise HTTPException(status_code=500, detail=admin_key_unset_detail)
+    raise HTTPException(
+        status_code=unauthenticated_status,
+        detail=unauthenticated_detail or "admin identity or tenant API key required")
+
+
+def authorized_tenant_scope(request: Request, claimed_tenant_id: str = "") -> tuple:
+    """The tenant this request may act for, and how: (tenant_id, scope).
+
+    An admin identity acts for the tenant it names, and must name one (400). A
+    tenant caller acts for its own tenant: the name may be omitted, and naming
+    a different one is a 403.
+    """
+    from fastapi import HTTPException
+
+    claimed = (claimed_tenant_id or "").strip()
+    scope, tenant = caller_tenant_scope(request)
+    if scope == SCOPE_ADMIN:
+        if not claimed:
+            raise HTTPException(status_code=400,
+                                detail="tenant_id is required for an admin caller")
+        return claimed, scope
+    if claimed and claimed != tenant:
+        raise HTTPException(
+            status_code=403,
+            detail="tenant mismatch: this credential is not authorized for that tenant")
+    return tenant, scope
+
+
+# ---------------------------------------------------------------------------
 # Registry write scope
 #
 # A tenant key resolves to a tenant and nothing else, so the credential an

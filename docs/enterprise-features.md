@@ -80,8 +80,33 @@ curl -X POST http://localhost:8080/v1/shield/tools/patient_lookup/enable \
 
 ### List all disabled tools
 ```bash
-curl "http://localhost:8080/v1/shield/tools/disabled?tenant_id=acme"
+curl "http://localhost:8080/v1/shield/tools/disabled?tenant_id=acme" \
+  -H "X-Admin-Key: $ADMIN_KEY"
 ```
+
+### Who may use the kill switch
+- **An admin identity** (`X-Admin-Key`, or SPIFFE/mTLS when enabled as an admin
+  provider) acts for the tenant it names in `tenant_id`, which is required.
+- **A tenant API key, or a signed-in portal user,** acts for its own tenant.
+  `tenant_id` may be left out; naming another tenant returns 403.
+- **No credentials** returns 401.
+
+```bash
+# A tenant disabling one of its own tools
+curl -X POST http://localhost:8080/v1/shield/tools/patient_lookup/disable \
+  -H "X-API-Key: $TENANT_API_KEY" \
+  -d '{"reason": "suspected prompt injection"}'
+```
+
+With `SHIELD_REGISTRY_WRITE_SCOPE=enforce`, disabling and enabling need an
+admin-scoped tenant key (or a portal administrator), like other registry
+writes. Listing does not.
+
+Migration: before this check, these routes acted for whichever tenant the
+request named, for any caller. Callers that act for other tenants must use an
+admin identity. `SHIELD_KILLSWITCH_TRUST_BODY_TENANT=true` lets a tenant key
+act for another tenant for one release, logging and auditing each such call. A
+credential is still required. Do not leave it on.
 
 ---
 

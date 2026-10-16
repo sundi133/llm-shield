@@ -82,8 +82,12 @@ class TestKillswitchRouteIntegration:
     """Test kill switch integration with tool check route."""
 
     @pytest.fixture
-    def app(self):
+    def app(self, monkeypatch):
         from unittest.mock import patch as p
+        # The routes now check the caller (docs/specs/killswitch-tenant-scope.md):
+        # the admin key these tests send has to be the configured one.
+        monkeypatch.setenv("SHIELD_ADMIN_KEY", "admin123")
+        monkeypatch.setenv("SHIELD_WORKLOAD_IDENTITY_PROVIDERS", "admin_key")
         import config.schema as cs
         from config.schema import ShieldConfig, GuardrailConfig, RBACConfig, PipelineConfig, AuthConfig
 
@@ -177,7 +181,8 @@ class TestKillswitchRouteIntegration:
     def test_list_disabled_endpoint(self, mock_redis, client):
         disable_tool("t1", "tool_x")
         disable_tool("t1", "tool_y")
-        resp = client.get("/v1/shield/tools/disabled?tenant_id=t1")
+        resp = client.get("/v1/shield/tools/disabled?tenant_id=t1",
+                          headers={"X-Admin-Key": "admin123"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["count"] == 2

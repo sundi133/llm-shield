@@ -1,7 +1,5 @@
 """Agent identity management routes — register/revoke certs, query trust."""
 
-import os
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -35,33 +33,19 @@ def _authorized_tenant(request: Request) -> Optional[str]:
     Confinement, not exclusion, is the control here: the risk was never that a
     tenant registers its own agents, it was that the request body could name
     somebody else's tenant.
+
+    The rule is core.auth.caller_tenant_scope, shared with the kill switch
+    routes so the two cannot drift; this keeps these routes' status codes.
     """
-    from core.workload_identity import resolve_workload_identity, enabled_providers
+    from core.auth import SCOPE_ADMIN, caller_tenant_scope
 
-    identity = resolve_workload_identity(request)
-    if identity is not None:
-        request.state.workload_identity = identity
-        return None  # admin — unrestricted
-
-    api_key = (
-        request.headers.get("X-API-Key")
-        or request.headers.get("x-api-key")
-        or ""
-    ).strip()
-    if api_key:
-        from storage.tenant_store import resolve_tenant_by_api_key
-
-        tenant = resolve_tenant_by_api_key(api_key)
-        if tenant:
-            return tenant
-
-    names = [p.name for p in enabled_providers()]
-    if "admin_key" in names and not os.environ.get("SHIELD_ADMIN_KEY", ""):
-        raise HTTPException(
-            status_code=500,
-            detail="SHIELD_ADMIN_KEY not configured — cert registration disabled",
-        )
-    raise HTTPException(status_code=403, detail="admin key or tenant API key required")
+    scope, tenant = caller_tenant_scope(
+        request,
+        unauthenticated_status=403,
+        unauthenticated_detail="admin key or tenant API key required",
+        admin_key_unset_detail="SHIELD_ADMIN_KEY not configured — cert registration disabled",
+    )
+    return None if scope == SCOPE_ADMIN else tenant
 
 
 def _confine_to_tenant(scope: Optional[str], body_tenant_id: str) -> None:
