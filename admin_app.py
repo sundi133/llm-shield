@@ -73,6 +73,7 @@ from api.routes_device_dlp import router as device_dlp_router
 from api.routes_exception_review import tenant_router as exceptions_tenant_router
 from api.routes_hooks_portal import router as hooks_portal_router
 from api.routes_devices import tenant_router as devices_router
+from api.routes_agent_cert_identity import router as agent_cert_identity_router
 from api.routes_tool_catalog import router as tool_catalog_router
 from api.routes_guardrail_metrics import router as guardrail_metrics_router
 from api.routes_siem import router as siem_router
@@ -1095,6 +1096,7 @@ def create_admin_app() -> FastAPI:
     app.include_router(exceptions_tenant_router)      # /v1/tenant/me/exceptions
     app.include_router(hooks_portal_router)           # /v1/tenant/me/hooks/claude-code
     app.include_router(devices_router)                # /v1/tenant/me/devices/*
+    app.include_router(agent_cert_identity_router)    # /v1/tenant/me/agent-identity/*
     app.include_router(tool_catalog_router)           # /v1/tenant/me/tool-catalog (portal only)
     app.include_router(identity_config_router)   # /v1/tenant/me/identity/role-binding
     app.include_router(guardrail_metrics_router)       # /v1/tenant/me/guardrails/metrics

@@ -156,6 +156,19 @@ def _validate_agent_body(body: dict) -> None:
                 status_code=400,
                 detail=f"owner_contact must be at most {_MAX_OWNER_CONTACT_LEN} characters")
 
+    identity = body.get("identity")
+    if identity is not None:
+        # How this agent must prove who it is (docs/specs/agent-cert-identity.md,
+        # task 4). Only "require" is understood; anything else is refused rather
+        # than stored and silently ignored.
+        from core.cert_identity import REQUIRE_VALUES
+        if not isinstance(identity, dict) or set(identity) - {"require"}:
+            raise HTTPException(status_code=400, detail='identity must be {"require": ...}')
+        if identity.get("require", "any") not in REQUIRE_VALUES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"identity.require must be one of {', '.join(REQUIRE_VALUES)}")
+
     envs = body.get("environments")
     if envs is not None:
         if not isinstance(envs, list):
@@ -329,6 +342,12 @@ def _save_agents(tenant_id: str, agents: dict) -> None:
     enable/disable toggles take effect immediately."""
     kv_set(f"agents:{tenant_id}", agents)
     _invalidate_tool_catalog(tenant_id)
+    try:
+        # identity.require is read from a cached copy (core/cert_identity.py).
+        from core.cert_identity import invalidate_agents
+        invalidate_agents(tenant_id)
+    except Exception:
+        pass
     try:
         from core.middleware import invalidate_registry_cache
         invalidate_registry_cache(tenant_id)
@@ -826,6 +845,9 @@ def new_agent_record(request: Request, tenant_id: str, agent_id: str, body: dict
         ],
         "runtime_profile": body.get("runtime_profile") or "",
         "action_profile": body.get("action_profile") or "",
+        # How the agent must authenticate: any (default) | cert | token |
+        # cert_or_token. Validated in _validate_agent_body.
+        "identity": {"require": (body.get("identity") or {}).get("require", "any")},
         "status": body.get("status", "active"),
         "created_at": now,
         "updated_at": now,

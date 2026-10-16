@@ -83,6 +83,7 @@ COPY core/agent_identity_middleware.py core/
 COPY core/agent_auth_safety.py core/
 COPY core/jwt_utils.py core/
 COPY core/mtls_middleware.py core/
+COPY core/cert_identity.py core/
 # Identity resolution seam. core/middleware.py imports identity_resolution, and
 # routes_agent_identity imports workload_identity — both TRANSITIVELY, which is
 # how they were missed: the admin allowlist guard only checked what admin_app.py
@@ -114,6 +115,7 @@ COPY api/routes_killswitch.py api/
 COPY api/routes_decisions.py api/
 COPY api/routes_webhooks.py api/
 COPY api/routes_agent_identity.py api/
+COPY api/routes_agent_cert_identity.py api/
 COPY api/routes_agent_auth.py api/
 COPY api/routes_oauth.py api/
 COPY api/routes_oauth_registration.py api/

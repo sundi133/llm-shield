@@ -69,6 +69,17 @@ def _get_registered_agents(tenant_id: str) -> dict[str, str]:
     return {}
 
 
+def _identity_requirement(request, tenant_id: str, agent_key: str) -> Optional[str]:
+    """Why this request may not claim agent_key (its identity.require is not
+    met), or None. Guarded import: a slim image without the module behaves as
+    before rather than 500ing every request."""
+    try:
+        from core.cert_identity import enforce_requirement
+    except ImportError:
+        return None
+    return enforce_requirement(request, tenant_id, agent_key, "guard_path")
+
+
 def invalidate_registry_cache(tenant_id: str) -> None:
     """Drop the cached registry for a tenant (call after registry writes).
 
@@ -432,6 +443,19 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                                     "agent_key": agent_key,
                                     "agent_status": _agent_status,
                                 },
+                            )
+
+                        # An agent whose registry entry sets identity.require
+                        # may only be claimed by a request that proves it: a
+                        # proxy-verified certificate and/or a verified agent
+                        # token. Default "any" changes nothing.
+                        # Spec: docs/specs/agent-cert-identity.md, task 4.
+                        _id_fail = _identity_requirement(request, tenant_id, agent_key)
+                        if _id_fail:
+                            return JSONResponse(
+                                status_code=401,
+                                content={"error": "identity_required", "detail": _id_fail,
+                                         "agent_key": agent_key},
                             )
 
                         if registered and agent_key not in registered:

@@ -75,12 +75,17 @@ def _source_ip(request: Request) -> str:
 
 class CertRegisterRequest(BaseModel):
     agent_key: str = Field(..., description="Agent identifier to bind certificate to")
-    fingerprint: str = Field(..., description="SHA-256 fingerprint of client certificate")
+    fingerprint: Optional[str] = Field(
+        None, description="SHA-256 fingerprint of the client certificate (any common form)")
+    cert_pem: Optional[str] = Field(
+        None, description="The client certificate (PEM). Preferred: records its expiry and names")
     tenant_id: str = Field(..., description="Tenant identifier")
 
 
 class CertRevokeRequest(BaseModel):
     agent_key: str = Field(..., description="Agent whose certificate to revoke")
+    fingerprint: Optional[str] = Field(
+        None, description="Revoke only this certificate; omit to revoke all of the agent's")
     tenant_id: str = Field(..., description="Tenant identifier")
 
 
@@ -96,12 +101,20 @@ async def register_agent_cert(
     this fingerprint will be identified as this agent with 'high' trust level.
     """
     _confine_to_tenant(scope, body.tenant_id)
+    if not body.fingerprint and not body.cert_pem:
+        raise HTTPException(status_code=400, detail="give cert_pem (preferred) or fingerprint")
 
-    trust_record = register_cert(
-        tenant_id=body.tenant_id,
-        agent_key=body.agent_key,
-        fingerprint=body.fingerprint,
-    )
+    from core.cert_identity import CertError
+    try:
+        trust_record = register_cert(
+            tenant_id=body.tenant_id,
+            agent_key=body.agent_key,
+            fingerprint=body.fingerprint,
+            cert_pem=body.cert_pem,
+            registered_by=_actor_from_request(request),
+        )
+    except CertError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
 
     log_admin_action(
         action="register_agent_cert",
@@ -110,7 +123,7 @@ async def register_agent_cert(
         source_ip=_source_ip(request),
         after={
             "agent_key": body.agent_key,
-            "fingerprint": body.fingerprint[:16] + "...",
+            "fingerprint": trust_record["fingerprint"][:16] + "...",
             "trust_level": "high",
         },
     )
@@ -134,12 +147,14 @@ async def revoke_agent_cert(
     """
     _confine_to_tenant(scope, body.tenant_id)
 
-    revoked = revoke_cert(tenant_id=body.tenant_id, agent_key=body.agent_key)
+    revoked = revoke_cert(tenant_id=body.tenant_id, agent_key=body.agent_key,
+                          fingerprint=body.fingerprint)
 
     if not revoked:
         raise HTTPException(
             status_code=404,
-            detail=f"No certificate found for agent '{body.agent_key}'"
+            detail=(f"No such certificate for agent '{body.agent_key}'" if body.fingerprint
+                    else f"No certificate found for agent '{body.agent_key}'")
         )
 
     log_admin_action(
@@ -147,7 +162,8 @@ async def revoke_agent_cert(
         actor=_actor_from_request(request),
         tenant_id=body.tenant_id,
         source_ip=_source_ip(request),
-        after={"agent_key": body.agent_key},
+        after={"agent_key": body.agent_key,
+               "fingerprint": (body.fingerprint or "all")[:16]},
     )
 
     return {
@@ -158,8 +174,14 @@ async def revoke_agent_cert(
 
 
 @router.get("/{agent_key}")
-async def get_agent_identity(agent_key: str, tenant_id: str):
-    """Get trust metadata for an agent."""
+async def get_agent_identity(
+    agent_key: str,
+    tenant_id: str,
+    scope: Optional[str] = Depends(_authorized_tenant),
+):
+    """Get trust metadata for an agent. A tenant key reads only its own tenant
+    (it could read any tenant's by naming it before)."""
+    _confine_to_tenant(scope, tenant_id)
     trust = get_agent_trust(tenant_id, agent_key)
     return {
         "agent_key": agent_key,

@@ -5887,24 +5887,62 @@ X-User-Role: reader</pre></div>
         <div class="page-title">Agent Identity &amp; Certificates</div>
         <div class="page-desc">Register certificate fingerprints for strong agent authentication. Cert-based agents get high trust, string-key agents get medium.</div>
       </div>
+      <!-- Certificate identity management (docs/specs/agent-cert-identity.md, tasks 2, 3, 5) -->
+      <div id="id-status" style="margin-bottom:1rem;"></div>
+
       <div class="card">
-        <div class="card-header">
-          <div><div class="card-title">Register Certificate</div></div>
-        </div>
+        <div class="card-header"><div><div class="card-title">Register a certificate</div>
+          <div class="card-desc">Paste the agent's client certificate (preferred: Shield records its expiry and names) or its SHA-256 fingerprint in any common form. An agent can hold several certificates, so a renewed one can be added before the old one expires.</div></div></div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">
-          <input id="id-agent" type="text" placeholder="Agent key" style="width:160px;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
-          <input id="id-fingerprint" type="text" placeholder="SHA-256 fingerprint" style="flex:1;min-width:200px;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
+          <input id="id-agent" type="text" autocomplete="off" placeholder="Agent key" style="width:180px;">
+          <input id="id-fingerprint" type="text" autocomplete="off" placeholder="or SHA-256 fingerprint (AB:CD:... is fine)" style="flex:1;min-width:220px;">
           <button class="primary" onclick="registerCert()">Register</button>
         </div>
+        <textarea id="id-cert-pem" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----" style="width:100%;min-height:90px;font-family:var(--font-mono,monospace);font-size:12px;"></textarea>
       </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Certificates</div>
+          <div class="card-desc">Every registered certificate, when it expires, and when an agent last presented it through your proxy.</div></div>
+          <label style="font-size:13px;"><input type="checkbox" id="id-expiring" onchange="idCerts()"> Expiring within 14 days</label></div>
+        <div id="id-certs" style="font-size:13px;overflow-x:auto;">Loading...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Trust anchors (your CA)</div>
+          <div class="card-desc">Instead of registering certificates one by one, trust the CA that issues them. Any certificate it issues can identify an agent through a mapping rule below. Each anchor can carry a revocation list (CRL).</div></div></div>
+        <div id="id-anchors" style="font-size:13px;overflow-x:auto;margin-bottom:0.6rem;">Loading...</div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.4rem;">
+          <input id="id-anchor-name" type="text" autocomplete="off" placeholder="Name, e.g. Acme Agents CA" style="flex:1;min-width:200px;">
+          <button class="primary small" onclick="idAddAnchor()">Add anchor</button>
+        </div>
+        <textarea id="id-anchor-pem" spellcheck="false" placeholder="CA certificate (PEM)" style="width:100%;min-height:90px;font-family:var(--font-mono,monospace);font-size:12px;"></textarea>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Mapping rules</div>
+          <div class="card-desc">Map a certificate that chains to an anchor to a registered agent. <code>match</code> is <code>san_uri</code>, <code>san_dns</code> or <code>subject_cn</code>; <code>pattern</code> is an exact value, or contains <code>{agent_id}</code> once, for example <code>spiffe://acme.com/agent/{agent_id}</code>. First match wins; a rule never maps to an unregistered agent.</div></div></div>
+        <textarea id="id-rules" spellcheck="false" style="width:100%;min-height:120px;font-family:var(--font-mono,monospace);font-size:12px;"></textarea>
+        <div style="margin-top:0.5rem;"><button class="primary small" onclick="idSaveRules()">Save rules</button> <span id="id-rules-msg" style="font-size:13px;"></span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div><div class="card-title">Test a certificate</div>
+          <div class="card-desc">See which anchor a certificate chains to, which rule maps it and which agent it identifies, or why not. Changes nothing.</div></div></div>
+        <textarea id="id-test-cert" spellcheck="false" placeholder="Client certificate (PEM)" style="width:100%;min-height:90px;font-family:var(--font-mono,monospace);font-size:12px;"></textarea>
+        <textarea id="id-test-chain" spellcheck="false" placeholder="Intermediate certificates, if your proxy forwards them (PEM, optional)" style="width:100%;min-height:90px;font-family:var(--font-mono,monospace);font-size:12px;"></textarea>
+        <div style="margin-top:0.5rem;"><button class="small" onclick="idTest()">Test</button></div>
+        <div id="id-test-result" style="margin-top:0.6rem;font-size:13px;"></div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <div><div class="card-title">Query Agent Trust</div></div>
         </div>
         <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;">
-          <input id="id-query-agent" type="text" placeholder="Agent key" style="flex:1;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;">
+          <input id="id-query-agent" type="text" placeholder="Agent key" style="flex:1;padding:0.5rem 0.75rem;background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit;font-size:13px;">
           <button class="small" onclick="queryIdentity()">Lookup</button>
-          <button class="small" style="border-color:var(--danger);color:var(--danger);" onclick="revokeCert()">Revoke Cert</button>
+          <button class="small" style="border-color:var(--danger);color:var(--danger);" onclick="revokeCert()">Revoke all certificates</button>
         </div>
         <div id="id-result" class="muted" style="margin-top:0.75rem;"></div>
       </div>
@@ -15582,7 +15620,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'apis') { renderAllApiTabs(); loadApiKeys(); }
     if (tab === 'playground') initPlayground();
     if (tab === 'kill-switch') loadKillSwitchTools();
-    if (tab === 'agent-identity') {} // manual actions
+    if (tab === 'agent-identity') idLoad();
     if (tab === 'agent-authentication') startAuthzPanel();
     else stopAuthzPanel();
   }
@@ -17346,55 +17384,209 @@ window.updateWorkflowApprovalsEnabled = updateWorkflowApprovalsEnabled;
 window.updateWorkflowOpsSettings = updateWorkflowOpsSettings;
 window.applyWorkflowJsonEditors = applyWorkflowJsonEditors;
 
-// ── P1-A: Agent Identity ───────────────────────
+// ── Agent Identity: certificates, trust anchors, rules, CRLs ────────────────
+// Spec: docs/specs/agent-cert-identity.md, tasks 2, 3 and 5. Certificate
+// subjects, names and agent keys are caller- or CA-supplied: every one goes
+// through _esc, and handlers read values back from data- attributes.
+const ID_API = '/v1/tenant/me/agent-identity';
+function idTenant() { return (TENANT_INFO && TENANT_INFO.tenant_id) || 'default'; }
+function idDays(ts) { return ts ? Math.floor((ts - Date.now() / 1000) / 86400) : null; }
+function idExpiryBadge(ts) {
+  const d = idDays(ts);
+  if (d === null) return '<span class="muted">unknown (registered by fingerprint)</span>';
+  if (d < 0) return '<span class="badge badge-danger">expired</span>';
+  return `<span class="badge ${d <= 14 ? 'badge-warn' : ''}" style="text-transform:none;">${d} day${d === 1 ? '' : 's'} left</span>`;
+}
+async function idLoad() { idStatus(); idCerts(); idAnchors(); idRules(); }
+
+async function idStatus() {
+  const el = document.getElementById('id-status');
+  try {
+    const s = await apiCall(`${ID_API}/status`);
+    const warn = [];
+    if (!s.trusted_proxy_only) warn.push('The trusted-proxy boundary is off (<code>SHIELD_TRUSTED_PROXY_ONLY</code>). A forwarded certificate or fingerprint is then a header any caller can send. Terminate mTLS at your proxy and set <code>SHIELD_TRUSTED_PROXY_ONLY=true</code> with <code>SHIELD_TRUSTED_PROXY_SECRET</code>, sent by the proxy as <code>X-Shield-Proxy-Token</code>.');
+    else if (!s.proxy_secret_set) warn.push('<code>SHIELD_TRUSTED_PROXY_SECRET</code> is not set: only the proxy IP list identifies the proxy, which is safe only when forwarded IPs are locked to it.');
+    if (s.trust_header_escape_hatch) warn.push('<code>SHIELD_CERT_IDENTITY_TRUST_HEADER</code> is on: certificate fingerprints are accepted from any caller. Use it only while migrating.');
+    if (s.agent_token_pop !== 'required') warn.push(`Agent tokens are not bound to a key (<code>SHIELD_AGENT_TOKEN_POP=${_esc(s.agent_token_pop)}</code>): a copied token works for whoever holds it. Set it to <code>required</code>.`);
+    el.innerHTML = warn.length ? `<div class="card" style="border-left:3px solid var(--warning);"><div class="card-title" style="margin-bottom:0.4rem;">Setup check</div>${warn.map(w => `<div style="font-size:13px;margin:0.3rem 0;">• ${w}</div>`).join('')}</div>` : '';
+  } catch (e) { el.innerHTML = ''; }
+}
+
 async function registerCert() {
   const agentKey = document.getElementById('id-agent').value.trim();
   const fingerprint = document.getElementById('id-fingerprint').value.trim();
-  if (!agentKey || !fingerprint) return showToast('Fill in agent key and fingerprint', 'error');
+  const certPem = document.getElementById('id-cert-pem').value.trim();
+  if (!agentKey || (!fingerprint && !certPem)) return showToast('Enter the agent key and a certificate or fingerprint', 'error');
+  const body = { agent_key: agentKey, tenant_id: idTenant() };
+  if (certPem) body.cert_pem = certPem; else body.fingerprint = fingerprint;
   try {
-    const tid = (TENANT_INFO && TENANT_INFO.tenant_id) || 'default';
-    const data = await apiCall('/v1/shield/agent/identity/register', {
-      method: 'POST', body: JSON.stringify({ agent_key: agentKey, fingerprint, tenant_id: tid })
-    });
-    showToast(`Certificate registered for ${agentKey} — trust: ${data.trust.trust_level}`, 'success');
+    const data = await apiCall('/v1/shield/agent/identity/register', { method: 'POST', body: JSON.stringify(body) });
+    showToast(`Certificate registered for ${agentKey} (${data.trust.fingerprint.slice(0, 12)}...)`, 'success');
     document.getElementById('id-fingerprint').value = '';
+    document.getElementById('id-cert-pem').value = '';
+    idCerts();
   } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function idCerts() {
+  const el = document.getElementById('id-certs');
+  const p = new URLSearchParams({ limit: '200' });
+  if (document.getElementById('id-expiring').checked) p.set('expiring_days', '14');
+  try {
+    const d = await apiCall(`${ID_API}/certs?${p}`);
+    const td = 'padding:0.4rem 0.6rem;';
+    el.innerHTML = !d.certs.length ? '<div class="muted">No certificates registered.</div>' : `
+      <table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
+        <th style="${td}">Agent</th><th style="${td}">Certificate</th><th style="${td}">Expires</th><th style="${td}">Last seen</th><th style="${td}"></th></tr></thead>
+      <tbody>${d.certs.map(c => `<tr>
+        <td style="${td}"><b>${_esc(c.agent_key)}</b></td>
+        <td style="${td}"><code title="${_esc(c.fingerprint)}">${_esc(c.fingerprint.slice(0, 16))}...</code><div class="muted" style="font-size:11px;">${_esc(c.subject || '')}</div></td>
+        <td style="${td}">${idExpiryBadge(c.not_after)}</td>
+        <td style="${td}">${c.last_seen ? `${_esc(new Date(c.last_seen.at * 1000).toLocaleString())} <span class="muted">(${_esc(c.last_seen.method)})</span>` : '<span class="muted">never</span>'}</td>
+        <td style="${td}"><button class="small danger" data-agent="${_esc(c.agent_key)}" data-fp="${_esc(c.fingerprint)}" onclick="idRevokeOne(this.dataset.agent, this.dataset.fp)">Revoke</button></td></tr>`).join('')}</tbody></table>
+      ${d.total > d.certs.length ? `<div class="muted" style="margin-top:0.4rem;">Showing ${d.certs.length} of ${d.total}.</div>` : ''}`;
+  } catch (e) { el.innerHTML = `<div class="muted">${_esc(e.message)}</div>`; }
+}
+
+async function idRevokeOne(agentKey, fp) {
+  if (!confirm(`Revoke this certificate of ${agentKey}? The agent can no longer authenticate with it.`)) return;
+  try {
+    await apiCall('/v1/shield/agent/identity/revoke', { method: 'POST', body: JSON.stringify({ agent_key: agentKey, fingerprint: fp, tenant_id: idTenant() }) });
+    showToast('Certificate revoked', 'success');
+    idCerts();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function idAnchors() {
+  const el = document.getElementById('id-anchors');
+  try {
+    const d = await apiCall(`${ID_API}/anchors`);
+    const td = 'padding:0.4rem 0.6rem;vertical-align:top;';
+    el.innerHTML = !d.anchors.length ? '<div class="muted">No trust anchors. Certificates are matched only by the fingerprints registered above.</div>' : `
+      <table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
+        <th style="${td}">Anchor</th><th style="${td}">Expires</th><th style="${td}">Revocation list</th><th style="${td}"></th></tr></thead>
+      <tbody>${d.anchors.map(a => {
+        const crl = a.crl;
+        const crlCell = crl
+          ? `${crl.revoked_count} revoked · next update ${crl.next_update ? _esc(new Date(crl.next_update * 1000).toLocaleDateString()) : 'not stated'}${crl.next_update && crl.next_update < Date.now() / 1000 ? ' <span class="badge badge-danger">out of date</span>' : ''} · if stale: ${_esc(crl.stale === 'fail_open' ? 'accept' : 'refuse')}
+             <button class="small" data-id="${_esc(a.id)}" onclick="idRemoveCrl(this.dataset.id)">Remove</button>`
+          : '<span class="muted">none</span>';
+        return `<tr>
+          <td style="${td}"><b>${_esc(a.name)}</b><div class="muted" style="font-size:11px;">${_esc(a.subject)}</div></td>
+          <td style="${td}">${idExpiryBadge(a.not_after)}</td>
+          <td style="${td}">${crlCell}
+            <details style="margin-top:0.3rem;"><summary class="muted" style="cursor:pointer;">Load CRL</summary>
+              <textarea id="id-crl-${_esc(a.id)}" spellcheck="false" placeholder="-----BEGIN X509 CRL-----" style="width:100%;min-height:70px;font-family:var(--font-mono,monospace);font-size:11px;"></textarea>
+              <select id="id-crl-stale-${_esc(a.id)}" style="width:auto;"><option value="fail_closed">If out of date: refuse</option><option value="fail_open">If out of date: accept</option></select>
+              <button class="small" data-id="${_esc(a.id)}" onclick="idUploadCrl(this.dataset.id)">Load</button>
+            </details></td>
+          <td style="${td}"><button class="small danger" data-id="${_esc(a.id)}" data-name="${_esc(a.name)}" onclick="idRemoveAnchor(this.dataset.id, this.dataset.name)">Remove</button></td></tr>`;
+      }).join('')}</tbody></table>`;
+  } catch (e) { el.innerHTML = `<div class="muted">${_esc(e.message)}</div>`; }
+}
+
+async function idAddAnchor() {
+  const pem = document.getElementById('id-anchor-pem').value.trim();
+  if (!pem) return showToast('Paste the CA certificate', 'error');
+  try {
+    await apiCall(`${ID_API}/anchors`, { method: 'POST', body: JSON.stringify({ name: document.getElementById('id-anchor-name').value.trim(), pem }) });
+    showToast('Trust anchor added', 'success');
+    document.getElementById('id-anchor-pem').value = '';
+    document.getElementById('id-anchor-name').value = '';
+    idAnchors(); idStatus();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function idRemoveAnchor(id, name) {
+  if (!confirm(`Stop trusting ${name}? Agents identified through it lose their certificate identity.`)) return;
+  try { await apiCall(`${ID_API}/anchors/${encodeURIComponent(id)}`, { method: 'DELETE' }); idAnchors(); }
+  catch (e) { showToast(e.message, 'error'); }
+}
+
+async function idUploadCrl(id) {
+  const pem = document.getElementById(`id-crl-${id}`).value.trim();
+  if (!pem) return showToast('Paste the CRL', 'error');
+  try {
+    const d = await apiCall(`${ID_API}/crls/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ pem, stale: document.getElementById(`id-crl-stale-${id}`).value }) });
+    showToast(`Revocation list loaded: ${d.crl.revoked_count} revoked`, 'success');
+    idAnchors();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function idRemoveCrl(id) {
+  if (!confirm('Remove this revocation list? Certificates it revoked are accepted again.')) return;
+  try { await apiCall(`${ID_API}/crls/${encodeURIComponent(id)}`, { method: 'DELETE' }); idAnchors(); }
+  catch (e) { showToast(e.message, 'error'); }
+}
+
+async function idRules() {
+  try {
+    const d = await apiCall(`${ID_API}/rules`);
+    document.getElementById('id-rules').value = JSON.stringify(d.rules.length ? d.rules
+      : [{ match: 'san_uri', pattern: 'spiffe://example.com/agent/{agent_id}' }], null, 2);
+  } catch (e) { /* keep what is there */ }
+}
+
+async function idSaveRules() {
+  const msg = document.getElementById('id-rules-msg');
+  let rules;
+  try { rules = JSON.parse(document.getElementById('id-rules').value || '[]'); }
+  catch (e) { msg.innerHTML = `<span style="color:var(--danger);">${_esc('Not valid JSON: ' + e.message)}</span>`; return; }
+  try {
+    const d = await apiCall(`${ID_API}/rules`, { method: 'PUT', body: JSON.stringify({ rules }) });
+    msg.innerHTML = `<span style="color:var(--success);">Saved ${d.rules.length} rule(s).</span>`;
+    document.getElementById('id-rules').value = JSON.stringify(d.rules, null, 2);
+  } catch (e) { msg.innerHTML = `<span style="color:var(--danger);">${_esc(e.message)}</span>`; }
+}
+
+async function idTest() {
+  const el = document.getElementById('id-test-result');
+  const cert = document.getElementById('id-test-cert').value.trim();
+  if (!cert) return showToast('Paste a certificate', 'error');
+  try {
+    const d = await apiCall(`${ID_API}/test`, { method: 'POST', body: JSON.stringify({ cert_pem: cert, chain_pem: document.getElementById('id-test-chain').value }) });
+    const c = d.certificate || {};
+    const how = d.pinned ? 'a registered fingerprint' : d.anchor ? `anchor <b>${_esc(d.anchor.anchor_name)}</b>${d.rule ? `, rule <code>${_esc(d.rule)}</code>` : ''}` : '';
+    el.innerHTML = `<div style="padding:0.75rem;background:var(--bg-3);border-radius:var(--radius-sm);">
+      ${d.agent ? `<div><span class="badge badge-success" style="text-transform:none;">identifies ${_esc(d.agent)}</span> through ${how}</div>` : '<div><span class="badge badge-danger">identifies no agent</span></div>'}
+      ${(d.reasons || []).map(r => `<div style="margin-top:0.3rem;">• ${_esc(r)}</div>`).join('')}
+      <div class="muted" style="margin-top:0.4rem;font-size:12px;">${_esc(c.subject || '')} · SAN URI ${_esc((c.san_uri || []).join(', ') || 'none')} · DNS ${_esc((c.san_dns || []).join(', ') || 'none')} · ${idExpiryBadge(c.not_after)}</div></div>`;
+  } catch (e) { el.innerHTML = `<span style="color:var(--danger);">${_esc(e.message)}</span>`; }
 }
 
 async function queryIdentity() {
   const agentKey = document.getElementById('id-query-agent').value.trim();
   if (!agentKey) return showToast('Enter an agent key', 'error');
   try {
-    const tid = (TENANT_INFO && TENANT_INFO.tenant_id) || 'default';
-    const data = await apiCall(`/v1/shield/agent/identity/${encodeURIComponent(agentKey)}?tenant_id=${tid}`);
+    const data = await apiCall(`/v1/shield/agent/identity/${encodeURIComponent(agentKey)}?tenant_id=${encodeURIComponent(idTenant())}`);
     const t = data.trust || {};
     const levelColor = t.trust_level === 'high' ? 'var(--success)' : t.trust_level === 'medium' ? 'var(--warn)' : 'var(--danger)';
     document.getElementById('id-result').innerHTML = `
       <div style="padding:0.75rem;background:var(--bg-3);border-radius:var(--radius-sm);border:1px solid var(--border);">
         <div style="display:flex;align-items:center;gap:0.75rem;">
-          <span class="mono" style="font-size:14px;font-weight:600;">${agentKey}</span>
-          <span class="badge" style="background:${levelColor}22;color:${levelColor};font-weight:700;">${t.trust_level || 'unknown'}</span>
+          <span class="mono" style="font-size:14px;font-weight:600;">${_esc(agentKey)}</span>
+          <span class="badge" style="background:${levelColor}22;color:${levelColor};font-weight:700;">${_esc(t.trust_level || 'unknown')}</span>
         </div>
         <div style="margin-top:0.4rem;font-size:12px;color:var(--text-muted);">
-          Method: <span class="mono">${t.identity_method || 'string_key'}</span>
-          ${t.fingerprint ? ` &middot; Fingerprint: <span class="mono">${t.fingerprint.slice(0, 16)}...</span>` : ''}
-          ${t.registered_at ? ` &middot; Since: ${new Date(t.registered_at * 1000).toLocaleDateString()}` : ''}
+          Method: <span class="mono">${_esc(t.identity_method || 'string_key')}</span>
+          ${t.fingerprint ? ` &middot; Fingerprint: <span class="mono">${_esc(t.fingerprint.slice(0, 16))}...</span>` : ''}
+          ${t.registered_at ? ` &middot; Since: ${_esc(new Date(t.registered_at * 1000).toLocaleDateString())}` : ''}
         </div>
       </div>
     `;
-  } catch (e) { document.getElementById('id-result').innerHTML = `<span class="muted">${e.message}</span>`; }
+  } catch (e) { document.getElementById('id-result').innerHTML = `<span class="muted">${_esc(e.message)}</span>`; }
 }
 
 async function revokeCert() {
   const agentKey = document.getElementById('id-query-agent').value.trim();
   if (!agentKey) return showToast('Enter an agent key first', 'error');
+  if (!confirm(`Revoke every certificate of ${agentKey}?`)) return;
   try {
-    const tid = (TENANT_INFO && TENANT_INFO.tenant_id) || 'default';
     await apiCall('/v1/shield/agent/identity/revoke', {
-      method: 'POST', body: JSON.stringify({ agent_key: agentKey, tenant_id: tid })
+      method: 'POST', body: JSON.stringify({ agent_key: agentKey, tenant_id: idTenant() })
     });
-    showToast(`Certificate revoked for ${agentKey} — trust dropped to medium`, 'success');
-    queryIdentity();
+    showToast(`Certificates revoked for ${agentKey}`, 'success');
+    queryIdentity(); idCerts();
   } catch (e) { showToast(e.message, 'error'); }
 }
 
