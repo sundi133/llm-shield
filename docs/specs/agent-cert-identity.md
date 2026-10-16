@@ -25,6 +25,7 @@ proof that the sender holds the certificate's private key:
 | Fingerprint, guard path (`core/middleware.py`, `SHIELD_ENABLE_CERT_IDENTITY`) | `X-Client-Cert-Fingerprint` | **None** | Send any registered agent's fingerprint (it is a hash of the **public** cert) and be recorded as that agent with `identity_method: cert`, `trust_level: high` |
 | Fingerprint via mTLS (`core/mtls_middleware.py`, `SHIELD_MTLS_ENABLED`) | `X-Client-Cert-Fingerprint` or the cert in `X-Forwarded-Client-Cert` | Only when `SHIELD_TRUSTED_PROXY_ONLY` is on; otherwise a warning | Same, when the boundary is off |
 | SPIFFE (`core/oauth/spiffe_middleware.py`, `SHIELD_SPIFFE_ENABLED`) | `X-Client-Cert` / `X-Forwarded-Client-Cert` | Only when `SHIELD_TRUSTED_PROXY_ONLY` is on | Replay a captured SVID: the chain check proves the cert is CA-issued, not that the sender holds its key |
+| A2A (`api/routes_a2a.py`, `_A2A_AUTHZ_GUARDS`) | none needed | n/a | `/a2a/*` is not in `ShieldMiddleware._GUARDED_PREFIXES`, so `request.state.trust_level` is never set and the route passes `None`; `CertIdentityGuardrail` then falls back to `get_agent_trust()`, which answers `high` for **any agent with a registered certificate**. The agent is self-asserted with `X-Agent-Key`, so naming it is enough |
 
 And the fingerprint feature itself has gaps an enterprise review will find:
 
@@ -42,16 +43,28 @@ And the fingerprint feature itself has gaps an enterprise review will find:
 4. **No way to require it.** An agent bound to a certificate can still be
    claimed with a plain `X-Agent-Key` header; certificate identity only adds a
    label.
-5. **The portal overstates it.** "Higher trust = more permissive guardrails":
-   no guardrail reads `trust_level`.
+5. **The portal describes it wrongly.** "Higher trust = more permissive
+   guardrails". What actually happens: the `cert_identity` guardrail lets a
+   tenant require a minimum trust per tool (`min_trust_for_tools`), and blocks
+   callers below it.
+6. **Verified identities do not count as high.** An agent token whose DPoP
+   proof verified (`IdentityTuple.pop_verified`), or an mTLS identity from the
+   trusted proxy, is recorded as `medium`/`low` by `ShieldMiddleware`. A tenant
+   that moves from the spoofable header to real proof of possession would be
+   blocked by its own `min_trust: high` gates.
 
-**What is not broken.** Authorization (`cap/mint`, RBAC,
-`core/identity_resolution.resolve_identity`) uses verified identities: a
-signed agent token, or proxy-gated mTLS/SPIFFE. The spoofable path changes
-`request.state.agent_key` (which `X-Agent-Key` can already assert) and the
-audit labels. So today's impact is **false attribution in audit and
-telemetry**, not an access bypass. Task 4 is what turns certificate identity
-into an enforced control.
+**Impact (corrected).** An earlier version of this spec said the impact was
+labels only. That is wrong. `trust_level` is enforced by `CertIdentityGuardrail`
+(`guardrails/agentic/identity/cert_identity.py`) on `/v1/shield/tool/check`
+(`api/routes_tool.py`, when cert identity is on) and on A2A
+(`api/routes_a2a.py`). With cert identity on and `min_trust_for_tools`
+configured, both the header spoof and the A2A registry fallback are an
+**authorization bypass within the caller's own tenant**: a tenant-key holder
+passes tool gates that require `high`. Not affected: `cap/mint`, RBAC role
+resolution and `core/identity_resolution.resolve_identity`, which use verified
+identities; and tenants without cert identity or without `min_trust_for_tools`
+(labels only for them). Task 1 closes the bypass; task 4 adds a per-agent
+requirement on top.
 
 **Outcome.** A certificate identity in Shield means: a proxy performed a TLS
 handshake in which the agent proved possession of a private key, for a
@@ -107,8 +120,26 @@ normalization is refused.
   `X-Shield-Proxy-Token` secret; IP lists only as an extra constraint). That is
   one function, called by all three, instead of three implementations.
 - With the boundary off, certificate headers are **ignored**, not trusted with
-  a warning. Escape hatch for development: `SHIELD_CERT_HEADER_UNGUARDED=allow`,
-  logged loudly at start-up and on the portal's Agent Identity page.
+  a warning; the first ignored header logs once per process.
+- **Verified identities earn `high`.** `request.state.trust_level` precedence:
+  a certificate verified through the trusted proxy (`cert`), then a verified
+  identity from `AgentIdentityMiddleware`: an agent token whose DPoP proof
+  verified (`pop_verified=True`, `agent_token`/`high`) or an mTLS identity from
+  the trusted proxy (`mtls`/`high`); then today's `string_key`/`medium` or
+  `anonymous`/`low`. A bearer agent token without a verified proof stays
+  `medium`. An mTLS identity without the boundary is not promoted.
+- **A2A never passes an empty trust level.** `context["trust_level"]` for
+  `cert_identity` on `/a2a/*` follows the same precedence and is never `None`,
+  so `CertIdentityGuardrail` no longer reads the registry's agent-level `high`
+  for a request that presented nothing.
+- **Escape hatch: `SHIELD_CERT_IDENTITY_TRUST_HEADER=true`** (default off,
+  temporary). Restores both old behaviors: the fingerprint header accepted from
+  any peer on the `ShieldMiddleware` path, and the A2A registry fallback. Logs
+  once per process that identity is spoofable, and the portal's Agent Identity
+  page shows a banner while it is on. For tenants whose `min_trust: high` gates
+  would otherwise start blocking while they move to DPoP tokens or proxy mTLS.
+  (Same name as the narrower spec, `docs/specs/cert-fingerprint-identity.md`,
+  so either can land first.)
 - The proxy must overwrite, not append, the certificate headers it forwards
   (Envoy `forward_client_cert_details: SANITIZE_SET`; nginx
   `proxy_set_header X-Forwarded-Client-Cert $ssl_client_escaped_cert`). The
@@ -173,7 +204,9 @@ customer-facing text.
 
 | Change | Who notices | Cushion |
 |---|---|---|
-| Certificate headers ignored without the proxy boundary | Deployments using `SHIELD_ENABLE_CERT_IDENTITY` or `SHIELD_MTLS_ENABLED` without `SHIELD_TRUSTED_PROXY_ONLY` | Labels only today (§1): their agents drop from `cert/high` to `string_key/medium` in audit; no request is refused. Escape hatch `SHIELD_CERT_HEADER_UNGUARDED=allow` for one release; migration note in the release notes and the runbook |
+| Certificate headers ignored without the proxy boundary | Deployments using `SHIELD_ENABLE_CERT_IDENTITY` or `SHIELD_MTLS_ENABLED` without `SHIELD_TRUSTED_PROXY_ONLY` | Their agents drop from `cert/high` to `string_key/medium`. Where `min_trust_for_tools` requires `high`, those tool calls **now block**: that is the fix. Escape hatch `SHIELD_CERT_IDENTITY_TRUST_HEADER=true` while they migrate; migration note (DPoP tokens first, proxy mTLS second) in the release notes, the runbook and the portal |
+| A2A trust no longer falls back to the registry | A2A callers naming an agent with a registered certificate, on tools gated at `high` | Now blocked unless they present a verified identity. Same escape hatch |
+| Verified identities become `high` | Callers with DPoP-verified tokens or trusted-proxy mTLS | Only gains: gates they failed before may now pass. Called out in the release notes |
 | Fingerprint normalization | Registrations in colon format | Normalized on read and rewritten on first touch, so existing registrations start matching real mTLS; nothing that matched stops matching |
 | `identity.require` | Nobody until set | Default `any` |
 
@@ -204,7 +237,7 @@ customer-facing text.
   `tests/test_admin_dockerfile_imports.py`.
 - `cryptography` is already a dependency (`core/oauth/spiffe.py`); no new pip
   dependency.
-- Env flags: `SHIELD_CERT_HEADER_UNGUARDED` (new, escape hatch, default off);
+- Env flags: `SHIELD_CERT_IDENTITY_TRUST_HEADER` (new, escape hatch, default off);
   `SHIELD_TRUSTED_PROXY_SECRET` accepts a comma-separated list (rotation).
 - Runbook: `docs/agent-cert-identity-runbook.md` with Envoy and nginx
   configurations, the proxy secret, uploading a CA, writing rules, rotating
@@ -234,7 +267,14 @@ customer-facing text.
 **Task 1** (`tests/test_cert_identity_boundary.py`): for each of the three
 paths, a certificate header without the proxy secret is ignored (no
 `agent_key` override, no `cert`/`high` labels) and with it is honored;
-boundary off + escape hatch honors it and logs; colon, `SHA256:` and plain
+boundary off + `SHIELD_CERT_IDENTITY_TRUST_HEADER` honors it and logs once;
+end to end on `/v1/shield/tool/check` with `cert_identity` and
+`min_trust_for_tools: {tool: high}`, a spoofed header **blocks** and the
+trusted proxy **passes**; A2A with a self-asserted `X-Agent-Key` for an agent
+with a registered certificate **blocks** on a `high` tool, and the escape hatch
+restores the old result; a token with `pop_verified=True` gives
+`agent_token`/`high`, `False` stays `medium`; trusted-proxy mTLS gives
+`mtls`/`high`, unguarded mTLS does not; colon, `SHA256:` and plain
 forms normalize to one value; existing colon registrations match a computed
 fingerprint; audit rows carry the verified path. Regression: existing tests
 for `tests/test_agent_auth*.py`, SPIFFE and mTLS stay green.
@@ -264,11 +304,15 @@ Full suite green in a clean venv; CI `pytest` passes; Dockerfile import guard.
 
 ## Tasks (one branch, one PR, or one PR each)
 
-1. **Trust boundary, normalization, truthful audit.** One shared verifier for
-   the three middlewares, header ignored without the proxy secret, escape
-   hatch, fingerprint normalization with migration, audit records the verified
-   path, runbook proxy configs. (This is the narrower fix started separately;
-   if that lands first, this task shrinks to normalization and audit.)
+1. **Close the bypass.** One shared verifier for the three middlewares,
+   certificate headers ignored without the proxy secret, verified identities
+   (DPoP-verified tokens, trusted-proxy mTLS) earn `high`, A2A never passes an
+   empty trust level, escape hatch `SHIELD_CERT_IDENTITY_TRUST_HEADER`,
+   fingerprint normalization with migration, audit records the verified path,
+   portal copy fixed, runbook proxy configs. (The narrower spec
+   `docs/specs/cert-fingerprint-identity.md`, being built separately, covers all
+   of this except normalization and the shared verifier; if it lands first,
+   this task shrinks to those two.)
 2. **Registry v2 and portal.** Register by PEM, expiry, several fingerprints
    per agent, revoke one, certs list, portal page rewritten.
 3. **CA anchors and mapping rules.** Chain validation, rules, `/test`, cache,
