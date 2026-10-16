@@ -66,6 +66,32 @@ shield.register_agent("partner-gateway", name="Partner AI Gateway")
 shield.set_tool_policy({"tool_name": "read_logs", "allowed_roles": ["sre", "oncall"]})
 ```
 
+## Agent identity: key-bound tokens and capabilities
+
+`shield_agent` (install the `agent` extra: `pip install "votalai-shield[agent]"`)
+handles the agent side of Shield's agent identity: an Ed25519 key made in
+memory, an agent token bound to it, a fresh DPoP proof (RFC 9449) on every
+request, and one capability per tool call.
+
+```python
+from shield_agent import ShieldAgent, CapabilityVerifier, ApprovalRequired
+
+agent = ShieldAgent(agent_id="support-bot", user_sub="user-123",
+                    session_id="ticket-9912", user_role="support")
+try:
+    cap = agent.mint("refund_process", resource="order/88123",
+                     tool_params={"order_id": "88123", "amount": 40})
+except ApprovalRequired as e:
+    ...  # a person approves request e.request_id, then mint(..., approval_grant=grant)
+
+# the tool server, before acting
+claims = CapabilityVerifier().verify(cap.token, expected_tool="refund_process",
+                                     expected_resource="order/88123")
+```
+
+Denials raise `CapabilityDenied` with Shield's reasons; capabilities are single
+use. A runnable nine-scenario demo built on it: `examples/agent-identity-poc/`.
+
 ## Timeouts
 
 The guard path has been measured in seconds, not milliseconds, on a cold
