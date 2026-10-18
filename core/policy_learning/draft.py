@@ -314,6 +314,10 @@ def build(tenant_id: str, agent: str, *, window_days: int = 14, created_by: str 
         "answers": answers,
         "skipped_resources": skipped,
         "model": (model or {}).get("meta") or {"used": False},
+        # The model's validated output, so answering a question rebuilds the
+        # draft without asking the model again.
+        "model_output": ({"tools": model.get("tools") or [], "questions": model.get("questions") or [],
+                          "meta": model.get("meta")} if model else None),
         "applied": (previous or {}).get("applied"),
     }
     return draft

@@ -8,6 +8,7 @@ gate.
     GET  /v1/tenant/me/agents/{agent_id}/policy/observations?days=14
     POST /v1/tenant/me/agents/{agent_id}/policy/draft       {window_days, use_model}
     GET  /v1/tenant/me/agents/{agent_id}/policy/draft
+    PUT  /v1/tenant/me/agents/{agent_id}/policy/draft/answers   {answers: {question_id: option}}
     POST /v1/tenant/me/agents/{agent_id}/policy/draft/simulate
 """
 
@@ -23,6 +24,10 @@ from core.policy_learning import draft as drafts
 from core.policy_learning import observe
 
 router = APIRouter(prefix="/v1/tenant/me/agents/{agent_id}/policy", tags=["agent-policy-draft"])
+
+
+class AnswersRequest(BaseModel):
+    answers: dict[str, str] = Field(default_factory=dict)
 
 
 class DraftRequest(BaseModel):
@@ -81,6 +86,31 @@ async def build_draft(agent_id: str, request: Request, body: Optional[DraftReque
 async def get_draft(agent_id: str, request: Request):
     tenant_id = get_tenant_from_request(request)
     return _draft_or_404(tenant_id, agent_id)
+
+
+@router.put("/draft/answers")
+async def answer_questions(agent_id: str, body: AnswersRequest, request: Request):
+    """Answer the draft's questions; it is rebuilt with the answers (the model
+    is not asked again). Only a question's listed options are accepted."""
+    tenant_id = get_tenant_from_request(request)
+    require_config_write(request, tenant_id, "answer a suggested policy's questions")
+    previous = _draft_or_404(tenant_id, agent_id)
+    questions = {q["id"]: q for q in previous.get("questions") or []}
+    for qid, option in body.answers.items():
+        q = questions.get(qid)
+        if q is None:
+            raise HTTPException(status_code=422, detail=f"no question '{qid}' in this draft")
+        if option not in q["options"]:
+            raise HTTPException(status_code=422,
+                                detail=f"'{option}' is not an answer to '{qid}'; one of {q['options']}")
+    try:
+        d = drafts.build(tenant_id, agent_id, window_days=int(previous.get("window_days") or 14),
+                         created_by=_actor(request), model=previous.get("model_output"),
+                         answers=body.answers, previous=previous)
+    except drafts.DraftError as e:
+        raise HTTPException(status_code=e.status, detail={"error": e.code, "message": str(e)})
+    drafts.save(tenant_id, agent_id, d)
+    return d
 
 
 @router.post("/draft/simulate")
