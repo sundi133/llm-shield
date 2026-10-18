@@ -948,6 +948,11 @@ async def create_my_api_key(request: Request, body: dict = None):
 
     if len(api_key) < 16:
         raise HTTPException(status_code=400, detail="API key must be at least 16 characters")
+    if custom_key:
+        from storage.tenant_store import reserved_key_problem
+        problem = reserved_key_problem(tenant_id, api_key)
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
 
     # Deliberately NOT passing a scope, and deliberately not reading one from
     # the body. A caller that could choose the scope of a key it mints could
@@ -959,9 +964,13 @@ async def create_my_api_key(request: Request, body: dict = None):
     # calls, silently did not.
     label = (body or {}).get("label") or "" if body else ""
     expires_in_days = (body or {}).get("expires_in_days") if body else None
+    from storage.tenant_store import KeyInUseError
     try:
         add_api_key(tenant_id, api_key, label=label,
                     expires_in_days=expires_in_days)
+    except KeyInUseError as e:
+        # Never "moves" the key: it stays with the tenant that holds it.
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -995,6 +1004,11 @@ async def revoke_my_api_key(request: Request, body: dict):
     api_key = (body or {}).get("api_key", "").strip()
     if not api_key:
         raise HTTPException(status_code=400, detail="'api_key' is required")
+    # Revoking the tenant's keys is a credential change like minting one;
+    # under enforce a runtime key must not lock the tenant out
+    # (docs/specs/principals-and-template-authz.md, gap 3).
+    from core.auth import require_registry_write
+    require_registry_write(request, tenant_id, "revoke an API key")
 
     # Verify the key belongs to this tenant before revoking
     from storage.tenant_store import resolve_tenant_by_api_key, remove_api_key

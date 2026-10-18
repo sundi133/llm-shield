@@ -66,7 +66,15 @@ async def create_new_tenant(request: Request, body: TenantCreateRequest):
     config_dict = body.model_dump(exclude={"api_keys"})
     api_keys = body.api_keys
 
-    config = create_tenant(tenant_id, config_dict, api_keys)
+    from storage.tenant_store import KeyInUseError, reserved_key_problem
+    for key in api_keys or []:
+        problem = reserved_key_problem(tenant_id, key)
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
+    try:
+        config = create_tenant(tenant_id, config_dict, api_keys)
+    except KeyInUseError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
     log_admin_action(
         action="create_tenant",
@@ -176,9 +184,18 @@ async def add_tenant_api_key(tenant_id: str, body: dict, request: Request):
     # Both optional. A key minted without them behaves exactly as before.
     label = body.get("label") or ""
     expires_in_days = body.get("expires_in_days")
+    from storage.tenant_store import KeyInUseError, reserved_key_problem
+    problem = reserved_key_problem(tenant_id, api_key)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
     try:
         add_api_key(tenant_id, api_key, scope=scope, label=label,
                     expires_in_days=expires_in_days)
+    except KeyInUseError as e:
+        # Another tenant holds this key. Adding it here used to move it, and
+        # every request made with it, into this tenant. Remove it from its
+        # tenant first to move it on purpose.
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -220,6 +237,13 @@ async def remove_tenant_api_key(tenant_id: str, body: dict, request: Request):
     api_key = body.get("api_key")
     if not api_key:
         raise HTTPException(status_code=400, detail="'api_key' is required")
+
+    # Only the tenant in the path, the one the credential's scope was checked
+    # against, may lose the key. The same answer whether the key is unknown or
+    # another tenant's, so this cannot be used to probe who owns a key.
+    from storage.tenant_store import key_owner
+    if key_owner(api_key) != tenant_id:
+        raise HTTPException(status_code=404, detail="no such key for this tenant")
 
     remove_api_key(api_key)
 

@@ -8,7 +8,7 @@ description: A runtime tenant key can make itself a verified MCP caller with any
 
 # Spec: identity writes behind the write gate, scoped admin keys on policy templates, and keys that cannot change tenant
 
-> Status: **DRAFT, awaiting approval.** Branch `spec/principals-template-authz`.
+> Status: **APPROVED and BUILT 2026-10-18** (all three tasks). Branch `spec/principals-template-authz`.
 > Found mapping who can mint which credentials (2026-10-18). Related:
 > `docs/spec-registry-write-authorization.md` (the write gate),
 > `docs/specs/mcp-verified-callers-and-user-credentials.md` (principals,
@@ -359,3 +359,46 @@ runtime key can still rewrite the tenant's guardrail policies, tool settings,
 custom policies and MCP server configuration (about 40 routes, listed by the
 same route-table scan). Proposed: the same gate, the same modes, with a
 `warn` preflight period, and a decision on which reads a runtime key keeps.
+
+
+## As built
+
+- **Gap 1.** `api/routes_principals.py` `_admin(request, action)` now runs
+  `require_portal_admin` then `require_registry_write`; suspend and reactivate
+  use it too. `PUT /v1/tenant/me/identity/policy`,
+  `PUT /v1/tenant/me/mcp/servers/{route}/identity` and
+  `PUT /v1/tenant/me/identity/role-binding` call the gate directly. Role
+  binding did not get a portal-admin check (not in this spec); under
+  `enforce` the gate already refuses a signed-in non-administrator.
+- **Gap 2.** `_scope` in `api/routes_policy_templates.py`, `admin_actor` in
+  its audit rows; `docs/policy-lifecycle.md` has the migration note.
+- **Gap 3.** `storage.tenant_store`: `KeyInUseError` (a `ValueError`, so an
+  unchanged caller that catches `ValueError` still refuses rather than
+  succeeding), `_claim_key` (set-if-absent, then compare), `key_owner`,
+  `reserved_key_problem` and `SANDBOX_KEY_PREFIX`. `create_tenant` checks
+  every key before writing the tenant; a key lost to a concurrent claim after
+  that check still raises, after the tenant record was written (a race
+  window, not reachable by a single caller). The seed route returns 409 when
+  `SEED_TEST_API_KEY` belongs to another tenant, and no longer turns its own
+  HTTP errors into 500s.
+- **Guards.** `test_no_ungated_write_route_has_appeared` builds the admin
+  plane too; two new route-table tests cover identity writes and every
+  `/v1/admin/*` route on both apps.
+- **Tests.** `tests/test_principals_template_authz.py` (107). On the previous
+  code: 41 of the gap 1 tests fail, 6 of the gap 2 tests, 12 of the gap 3
+  tests.
+
+### Migration notes (release)
+
+1. Under `SHIELD_REGISTRY_WRITE_SCOPE=enforce`, service accounts, their keys
+   and OAuth clients, suspend and reactivate, the identity policy, a server's
+   verified-caller setting and role binding need an admin-scoped tenant key or
+   a portal administrator. Run `warn` first to see who would be refused.
+   Self-service key revoke is under the same gate.
+2. A managed admin credential with an explicit scope needs `tenants:write`
+   (or `tenants:read`) on the tenant for the policy template routes.
+3. Adding an API key that another tenant holds returns 409 instead of moving
+   it; to move a key, remove it from its tenant, then add it.
+   `DELETE /v1/admin/tenants/{tenant_id}/api-keys` returns 404 for a key that
+   tenant does not own. New `sk-test-` keys are refused outside the sandbox
+   tenant; existing ones keep working.

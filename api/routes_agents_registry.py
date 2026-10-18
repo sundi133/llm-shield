@@ -779,18 +779,24 @@ async def seed_test_data():
         # portal can actually sign in. Without this apikey->tenant mapping,
         # resolve_tenant_by_api_key() returns None and every authenticated
         # route 401s even though the agent data exists.
-        from storage.tenant_store import create_tenant, get_tenant, add_api_key
+        from storage.tenant_store import (KeyInUseError, add_api_key, create_tenant,
+                                          get_tenant)
         test_api_key = os.environ.get("SEED_TEST_API_KEY", "sk-test-healthcare")
-        if not get_tenant(tenant_id):
-            create_tenant(tenant_id, {
-                "name": "Test Healthcare Organization",
-                "plan": "enterprise",
-                "description": "Test tenant for healthcare AI agents",
-                "industry": "healthcare",
-                "compliance_frameworks": ["hipaa"],
-            }, api_keys=[test_api_key])
-        else:
-            add_api_key(tenant_id, test_api_key)
+        try:
+            if not get_tenant(tenant_id):
+                create_tenant(tenant_id, {
+                    "name": "Test Healthcare Organization",
+                    "plan": "enterprise",
+                    "description": "Test tenant for healthcare AI agents",
+                    "industry": "healthcare",
+                    "compliance_frameworks": ["hipaa"],
+                }, api_keys=[test_api_key])
+            else:
+                add_api_key(tenant_id, test_api_key)
+        except KeyInUseError:
+            raise HTTPException(status_code=409, detail=(
+                "the seed API key is already in use by another tenant; set "
+                "SEED_TEST_API_KEY to a different value"))
 
         return {
             "success": True,
@@ -800,6 +806,8 @@ async def seed_test_data():
             "api_key": test_api_key,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to seed test data: {str(e)}")
 

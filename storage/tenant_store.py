@@ -116,6 +116,70 @@ def _hash_key(api_key: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+class KeyInUseError(ValueError):
+    """The API key already belongs to another tenant.
+
+    A key's tenant is fixed for its life: adding it to another tenant used to
+    overwrite the mapping, which moved the key and all its traffic to whoever
+    named it (docs/specs/principals-and-template-authz.md, gap 3). Moving a key
+    on purpose is two audited steps: remove it, then add it. The message never
+    names the owner."""
+
+    def __init__(self):
+        super().__init__("this API key is already in use")
+
+
+def _decode_owner(value) -> Optional[str]:
+    if isinstance(value, bytes):
+        value = value.decode()
+    return value or None
+
+
+def _claim_key(key_hash: str, tenant_id: str) -> None:
+    """Map apikey:{hash} to tenant_id unless another tenant holds it. Atomic:
+    set-if-absent, so two tenants adding one key at once cannot both win.
+    Re-claiming a key the tenant already owns is allowed (re-scoping it)."""
+    name = f"apikey:{key_hash}"
+    r = _get_redis()
+    if r:
+        if r.set(name, tenant_id, nx=True):
+            return
+        owner = _decode_owner(r.get(name))
+        if owner is None:                    # removed between the two calls
+            if r.set(name, tenant_id, nx=True):
+                return
+            owner = _decode_owner(r.get(name))
+    else:
+        owner = _fallback_store.setdefault(name, tenant_id)
+    if owner != tenant_id:
+        raise KeyInUseError()
+
+
+SANDBOX_KEY_PREFIX = "sk-test-"
+
+
+def reserved_key_problem(tenant_id: str, api_key: str) -> Optional[str]:
+    """Why a caller-chosen key may not be created in this tenant, or None.
+
+    An sk-test- key that resolves to no tenant falls back to the sandbox
+    (core/auth.py), and the quickstart's sk-test-healthcare is published. A
+    tenant that claims one captures every request made with it, so the prefix
+    is the sandbox tenant's alone. Checked where a caller chooses the key
+    string (the routes), not in add_api_key: generated keys never start with it.
+    """
+    from core.auth import _SANDBOX_TENANT_ID
+    if (api_key or "").startswith(SANDBOX_KEY_PREFIX) and tenant_id != _SANDBOX_TENANT_ID:
+        return f"keys starting with {SANDBOX_KEY_PREFIX} are reserved for the sandbox tenant"
+    return None
+
+
+def key_owner(api_key: str) -> Optional[str]:
+    """The tenant an API key belongs to, from the store (not the cache)."""
+    name = f"apikey:{_hash_key(api_key)}"
+    r = _get_redis()
+    return _decode_owner(r.get(name) if r else _fallback_store.get(name))
+
+
 def create_tenant(tenant_id: str, config: dict, api_keys: list[str] = None) -> dict:
     """Create a new tenant with guardrail config and API keys.
 
@@ -135,19 +199,22 @@ def create_tenant(tenant_id: str, config: dict, api_keys: list[str] = None) -> d
     config.setdefault("tenant_id", tenant_id)
     config_json = json.dumps(config)
 
+    # Every key first, then anything else: a key another tenant holds refuses
+    # the whole call, so there is no half-created tenant. Each key is claimed
+    # atomically; one lost to a concurrent claim also refuses (raises).
+    for key in (api_keys or []):
+        owner = key_owner(key)
+        if owner is not None and owner != tenant_id:
+            raise KeyInUseError()
+
     r = _get_redis()
     if r:
         r.set(f"tenant:{tenant_id}", config_json)
         r.sadd("tenants:index", tenant_id)
-        # Map API keys to tenant
-        for key in (api_keys or []):
-            key_hash = _hash_key(key)
-            r.set(f"apikey:{key_hash}", tenant_id)
     else:
         _fallback_store[f"tenant:{tenant_id}"] = config_json
-        for key in (api_keys or []):
-            key_hash = _hash_key(key)
-            _fallback_store[f"apikey:{key_hash}"] = tenant_id
+    for key in (api_keys or []):
+        _claim_key(_hash_key(key), tenant_id)
 
     _cache_set(f"tenant:{tenant_id}", config)
     logger.info(f"Created tenant: {tenant_id}")
@@ -752,11 +819,10 @@ def add_api_key(tenant_id: str, api_key: str, scope: Optional[str] = None,
     """
     key_hash = _hash_key(api_key)
 
-    r = _get_redis()
-    if r:
-        r.set(f"apikey:{key_hash}", tenant_id)
-    else:
-        _fallback_store[f"apikey:{key_hash}"] = tenant_id
+    # Raises KeyInUseError if another tenant holds the key; nothing below runs,
+    # so its scope and metadata stay the owner's.
+    _claim_key(key_hash, tenant_id)
+    _cache_delete(f"apikey:{key_hash}")
 
     # Set unconditionally, including the None case: minting over a hash that
     # already carried a scope must not silently inherit the old one.

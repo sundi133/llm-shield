@@ -425,3 +425,210 @@ def test_every_admin_route_holds_a_credential_to_its_scope():
             if not _reaches(ep, ("require_admin_scope(", "require_admin_root_or_operator(")):
                 missing.append((plane, m, path))
     assert not missing, f"/v1/admin route(s) that ignore a credential's scope: {sorted(set(missing))}"
+
+
+# ── gap 3 ────────────────────────────────────────────────────────────
+#
+# Every writer overwrote apikey:{hash}, so whoever could name a key string
+# moved the key, and all its traffic, into their tenant. sk-test-healthcare is
+# published and long enough to be a custom key.
+
+KEY_A, KEY_B = "sk-tenant-a-key-0000001", "sk-tenant-b-key-0000001"
+
+
+@pytest.fixture
+def keys(monkeypatch):
+    import storage.tenant_store as ts
+    monkeypatch.setattr(ts, "_get_redis", lambda: None)
+    for name in ("SHIELD_REGISTRY_WRITE_SCOPE", "REDIS_URL", "UPSTASH_REDIS_REST_URL"):
+        monkeypatch.delenv(name, raising=False)
+    ts._fallback_store.clear()
+    ts._cache.clear() if hasattr(ts, "_cache") else None
+    ts.create_tenant("ta", {"name": "A"}, api_keys=[KEY_A])
+    ts.create_tenant("tb", {"name": "B"}, api_keys=[KEY_B])
+    yield ts
+    ts._fallback_store.clear()
+
+
+def test_a_key_cannot_be_added_to_another_tenant(keys):
+    with pytest.raises(keys.KeyInUseError):
+        keys.add_api_key("ta", KEY_B, scope="admin")
+    assert keys.key_owner(KEY_B) == "tb" and keys.key_scope(KEY_B) is None
+    with pytest.raises(keys.KeyInUseError):
+        keys.create_tenant("tc", {"name": "C"}, api_keys=["sk-fresh-key-00000001", KEY_B])
+    assert keys.get_tenant("tc") is None                       # nothing half-created
+    assert keys.key_owner("sk-fresh-key-00000001") is None
+    assert keys.key_owner(KEY_B) == "tb"
+
+
+def test_re_adding_to_the_owner_rescopes_and_delete_then_add_moves(keys):
+    keys.add_api_key("tb", KEY_B, scope="admin")
+    assert keys.key_scope(KEY_B) == "admin" and keys.key_owner(KEY_B) == "tb"
+    keys.remove_api_key(KEY_B)
+    keys.add_api_key("ta", KEY_B)
+    assert keys.key_owner(KEY_B) == "ta"
+
+
+class _FakeRedis:
+    """SET NX and GET with a lock, like Redis, to race two claims."""
+
+    def __init__(self):
+        import threading
+        self.d, self.lock = {}, threading.Lock()
+
+    def set(self, k, v, nx=False, ex=None):
+        with self.lock:
+            if nx and k in self.d:
+                return None
+            self.d[k] = v
+            return True
+
+    def get(self, k):
+        with self.lock:
+            return self.d.get(k)
+
+
+def test_two_tenants_racing_for_one_key_cannot_both_win(keys, monkeypatch):
+    import threading
+    fake = _FakeRedis()
+    monkeypatch.setattr(keys, "_get_redis", lambda: fake)
+    barrier, won, lost = threading.Barrier(2), [], []
+
+    def claim(t):
+        barrier.wait()
+        try:
+            keys._claim_key("racehash", t)
+            won.append(t)
+        except keys.KeyInUseError:
+            lost.append(t)
+    threads = [threading.Thread(target=claim, args=(t,)) for t in ("ta", "tb")]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert len(won) == 1 and len(lost) == 1
+    assert fake.get("apikey:racehash") == won[0]
+
+
+def test_bytes_from_redis_are_the_owner(keys, monkeypatch):
+    fake = _FakeRedis()
+    fake.d["apikey:h"] = b"ta"
+    monkeypatch.setattr(keys, "_get_redis", lambda: fake)
+    keys._claim_key("h", "ta")                                  # its own: fine
+    with pytest.raises(keys.KeyInUseError):
+        keys._claim_key("h", "tb")
+
+
+@pytest.fixture
+def self_service(keys):
+    import api.routes_tenant_self as rts
+    from storage.tenant_store import _hash_key, resolve_tenant_by_api_key
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _auth(request: Request, call_next):
+        key = request.headers.get("X-API-Key", "")
+        tenant = resolve_tenant_by_api_key(key) if key else None
+        if tenant:
+            request.state.tenant_id = tenant
+            request.state.api_key_hash = _hash_key(key)
+        return await call_next(request)
+    app.include_router(rts.router)
+    return TestClient(app)
+
+
+def test_self_service_cannot_claim_another_tenants_key(self_service, keys):
+    r = self_service.post("/v1/tenant/me/api-keys", json={"custom_key": KEY_B},
+                          headers={"X-API-Key": KEY_A})
+    assert r.status_code == 409 and "tb" not in r.text
+    assert keys.key_owner(KEY_B) == "tb"
+
+
+def test_self_service_cannot_claim_the_quickstart_key(self_service, keys):
+    r = self_service.post("/v1/tenant/me/api-keys", json={"custom_key": "sk-test-healthcare"},
+                          headers={"X-API-Key": KEY_A})
+    assert r.status_code == 400 and "reserved for the sandbox" in r.text
+    assert keys.key_owner("sk-test-healthcare") is None          # still the sandbox fallback
+
+
+def test_self_service_generated_keys_still_work(self_service, keys):
+    r = self_service.post("/v1/tenant/me/api-keys", json={"label": "ci"}, headers={"X-API-Key": KEY_A})
+    assert r.status_code == 200 and keys.key_owner(r.json()["api_key"]) == "ta"
+
+
+def test_self_service_revoke_is_behind_the_write_gate(self_service, keys, monkeypatch):
+    keys.add_api_key("ta", "sk-tenant-a-runtime-01", scope="runtime")
+    keys.add_api_key("ta", "sk-tenant-a-other-0001")
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    r = self_service.request("DELETE", "/v1/tenant/me/api-keys", json={"api_key": "sk-tenant-a-other-0001"},
+                             headers={"X-API-Key": "sk-tenant-a-runtime-01"})
+    assert r.status_code == 403 and keys.key_owner("sk-tenant-a-other-0001") == "ta"
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "off")
+    r = self_service.request("DELETE", "/v1/tenant/me/api-keys", json={"api_key": "sk-tenant-a-other-0001"},
+                             headers={"X-API-Key": "sk-tenant-a-runtime-01"})
+    assert r.status_code == 200 and keys.key_owner("sk-tenant-a-other-0001") is None
+
+
+@pytest.fixture
+def tenants_admin(keys, monkeypatch):
+    import core.auth as auth
+    from api.routes_admin_credentials import router as creds_router
+    from api.routes_tenant import router as tenant_router
+    from core.auth import AuthMiddleware
+    auth._failed_attempts.clear()
+    monkeypatch.setenv("SHIELD_ADMIN_KEY", ROOT)
+    monkeypatch.delenv("SHIELD_ADMIN_CREDENTIALS", raising=False)
+    app = FastAPI()
+    app.include_router(creds_router)
+    app.include_router(tenant_router)
+    app.add_middleware(AuthMiddleware)
+    yield TestClient(app)
+    auth._failed_attempts.clear()
+
+
+def test_admin_add_cannot_move_another_tenants_key(tenants_admin, keys):
+    h, _ = _cred(tenants_admin, "a-writer", {"operations": ["tenants:write"], "tenants": ["ta"]})
+    r = tenants_admin.post("/v1/admin/tenants/ta/api-keys", json={"api_key": KEY_B}, headers=h)
+    assert r.status_code == 409 and keys.key_owner(KEY_B) == "tb"
+    r = tenants_admin.post("/v1/admin/tenants/ta/api-keys", json={"api_key": "sk-test-quickstart-1"},
+                           headers={"X-Admin-Key": ROOT})
+    assert r.status_code == 400
+    r = tenants_admin.post("/v1/admin/tenants/test-tenant-001/api-keys",
+                           json={"api_key": "sk-test-quickstart-1"}, headers={"X-Admin-Key": ROOT})
+    assert r.status_code == 404                                   # no sandbox tenant yet
+    keys.create_tenant("test-tenant-001", {"name": "sandbox"})
+    r = tenants_admin.post("/v1/admin/tenants/test-tenant-001/api-keys",
+                           json={"api_key": "sk-test-quickstart-1"}, headers={"X-Admin-Key": ROOT})
+    assert r.status_code == 200 and keys.key_owner("sk-test-quickstart-1") == "test-tenant-001"
+
+
+def test_admin_create_tenant_cannot_take_a_key(tenants_admin, keys):
+    r = tenants_admin.post("/v1/admin/tenants", json={"tenant_id": "tc", "api_keys": [KEY_B]},
+                           headers={"X-Admin-Key": ROOT})
+    assert r.status_code == 409 and keys.get_tenant("tc") is None and keys.key_owner(KEY_B) == "tb"
+    r = tenants_admin.post("/v1/admin/tenants", json={"tenant_id": "tc", "api_keys": ["sk-test-mine-00000"]},
+                           headers={"X-Admin-Key": ROOT})
+    assert r.status_code == 400 and keys.get_tenant("tc") is None
+
+
+def test_admin_delete_only_removes_the_tenants_own_key(tenants_admin, keys):
+    h, _ = _cred(tenants_admin, "a-writer", {"operations": ["tenants:write"], "tenants": ["ta"]})
+    r = tenants_admin.request("DELETE", "/v1/admin/tenants/ta/api-keys", json={"api_key": KEY_B}, headers=h)
+    assert r.status_code == 404 and keys.key_owner(KEY_B) == "tb"
+    unknown = tenants_admin.request("DELETE", "/v1/admin/tenants/ta/api-keys",
+                                    json={"api_key": "sk-nobody-has-this-1"}, headers=h)
+    assert unknown.status_code == 404 and unknown.json() == r.json()   # cannot probe ownership
+    r = tenants_admin.request("DELETE", "/v1/admin/tenants/ta/api-keys", json={"api_key": KEY_A}, headers=h)
+    assert r.status_code == 200 and keys.key_owner(KEY_A) is None
+
+
+def test_the_seed_route_reports_a_taken_seed_key(keys, monkeypatch):
+    import api.routes_agents_registry as reg
+    monkeypatch.setenv("SEED_TEST_API_KEY", KEY_B)
+    monkeypatch.delenv("SHIELD_ENV", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    app = FastAPI()
+    app.include_router(reg.router)
+    r = TestClient(app).post("/v1/agents/seed-test-data")
+    if r.status_code in (403, 404):
+        pytest.skip(f"seed route not reachable in this configuration ({r.status_code})")
+    assert r.status_code == 409 and "SEED_TEST_API_KEY" in r.text
+    assert keys.key_owner(KEY_B) == "tb"
