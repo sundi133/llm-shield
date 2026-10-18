@@ -13,8 +13,12 @@
     DELETE /v1/tenant/me/service-accounts/{pid}           remove (deprovision)
 
 Tasks B4 and A3 of docs/specs/mcp-verified-callers-and-user-credentials.md.
-Reads need the tenant; changes also need a portal administrator when the
-caller is a signed-in person. Off the guard path.
+Reads need the tenant. Changes need a portal administrator when the caller is
+a signed-in person, and go through the registry write gate
+(SHIELD_REGISTRY_WRITE_SCOPE) when it is a key: these routes decide who is a
+verified caller and with which roles, so under `enforce` a runtime key must
+not be able to make itself one (docs/specs/principals-and-template-authz.md,
+gap 1). Off the guard path.
 
 **Keys and OAuth clients are for service accounts only.** An administrator who
 could mint a key for a person could act as that person, with their roles and
@@ -61,10 +65,14 @@ class RotateKeyRequest(BaseModel):
     expires_in_days: Optional[int] = Field(None, ge=1, le=3650)
 
 
-def _admin(request: Request) -> str:
-    from core.auth import require_portal_admin
+def _admin(request: Request, action: str) -> str:
+    """The tenant, for a change: a signed-in person must be a portal
+    administrator, and a key must pass the registry write gate.
+    require_portal_admin alone returns for a key caller."""
+    from core.auth import require_portal_admin, require_registry_write
     tenant_id = get_tenant_from_request(request)
     require_portal_admin(request)
+    require_registry_write(request, tenant_id, action=action)
     return tenant_id
 
 
@@ -143,11 +151,11 @@ async def get_person(pid: str, request: Request):
 
 
 async def _change(pid: str, request: Request, status: str, action: str) -> dict:
-    from core.auth import audit_actor, require_portal_admin
+    from core.auth import audit_actor
     from core.principal_lifecycle import change_status
     from storage.admin_audit import log_admin_action
-    tenant_id = get_tenant_from_request(request)
-    require_portal_admin(request)
+    tenant_id = _admin(request, f"{'suspend' if status == 'suspended' else 'reactivate'} "
+                                f"a person or service account")
     try:
         summary = await change_status(tenant_id, pid, status)
     except KeyError:
@@ -182,7 +190,7 @@ async def create_service_account(body: ServiceAccountRequest, request: Request):
     """A headless caller (CI job, nightly agent) that cannot sign in through a
     browser. It acts with exactly the roles set here."""
     from storage.principal_store import create_service_account as create
-    tenant_id = _admin(request)
+    tenant_id = _admin(request, "create a service account")
     from core.auth import audit_actor
     doc = create(tenant_id, name=body.name, roles=_roles(body.roles),
                  created_by=audit_actor(request, tenant_id))
@@ -196,7 +204,7 @@ async def remove_service_account(pid: str, request: Request):
     """Deprovision: refused from the next call, keys and OAuth clients deleted,
     personal connections revoked. The record stays for the audit trail."""
     from core.principal_lifecycle import change_status
-    tenant_id = _admin(request)
+    tenant_id = _admin(request, "remove a service account")
     _service_account(tenant_id, pid)
     summary = await change_status(tenant_id, pid, "deprovisioned")
     _audit(request, tenant_id, "service_account_removed", summary)
@@ -206,7 +214,7 @@ async def remove_service_account(pid: str, request: Request):
 @router.patch("/{pid}")
 async def update_service_account(pid: str, body: ServiceAccountUpdate, request: Request):
     from storage.principal_store import update_service_account as update
-    tenant_id = _admin(request)
+    tenant_id = _admin(request, "change a service account's name or roles")
     before = _service_account(tenant_id, pid)
     doc = update(tenant_id, pid, name=body.name,
                  roles=_roles(body.roles) if body.roles is not None else None)
@@ -220,7 +228,7 @@ async def update_service_account(pid: str, body: ServiceAccountUpdate, request: 
 async def create_key(pid: str, request: Request, body: Optional[KeyRequest] = None):
     """A key for a service account. The key is in this response only."""
     from storage.principal_store import create_principal_key, is_active
-    tenant_id = _admin(request)
+    tenant_id = _admin(request, "mint a service account key")
     doc = _service_account(tenant_id, pid)
     if not is_active(doc):
         raise HTTPException(status_code=409, detail="the service account is not active")
@@ -248,7 +256,7 @@ async def rotate_key(pid: str, key_id: str, request: Request,
     """Mint a replacement key (carrying the old key's scope + audience) and
     revoke the old one. The new key is in this response only."""
     from storage.principal_store import rotate_principal_key
-    tenant_id = _admin(request)
+    tenant_id = _admin(request, "rotate a service account key")
     _service_account(tenant_id, pid)
     try:
         key, record = rotate_principal_key(
@@ -265,7 +273,7 @@ async def rotate_key(pid: str, key_id: str, request: Request,
 @router.delete("/{pid}/keys/{key_id}")
 async def delete_key(pid: str, key_id: str, request: Request):
     from storage.principal_store import delete_principal_key_by_id
-    tenant_id = _admin(request)
+    tenant_id = _admin(request, "delete a service account key")
     _service_account(tenant_id, pid)
     if not delete_principal_key_by_id(tenant_id, pid, key_id):
         raise HTTPException(status_code=404, detail="no such key")
@@ -282,7 +290,7 @@ async def create_oauth_client(pid: str, request: Request):
     from core.oauth.authz_server import generate_client_id, generate_client_secret
     from storage.oauth_store import OAuthClient, hash_client_secret, save_client
     from storage.principal_store import is_active
-    tenant_id = _admin(request)
+    tenant_id = _admin(request, "create a service account OAuth client")
     doc = _service_account(tenant_id, pid)
     if not is_active(doc):
         raise HTTPException(status_code=409, detail="the service account is not active")
@@ -302,7 +310,7 @@ async def create_oauth_client(pid: str, request: Request):
 async def delete_oauth_client(pid: str, client_id: str, request: Request):
     from core.principal_lifecycle import principal_clients
     from storage.oauth_store import delete_client
-    tenant_id = _admin(request)
+    tenant_id = _admin(request, "delete a service account OAuth client")
     _service_account(tenant_id, pid)
     if client_id not in {c.client_id for c in await principal_clients(tenant_id, pid)}:
         raise HTTPException(status_code=404, detail="no such OAuth client")

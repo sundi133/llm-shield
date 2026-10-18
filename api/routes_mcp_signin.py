@@ -312,11 +312,14 @@ async def get_identity_policy(request: Request):
 
 @router.put("/v1/tenant/me/identity/policy")
 async def put_identity_policy(request: Request):
-    from core.auth import audit_actor, require_portal_admin
+    from core.auth import audit_actor, require_portal_admin, require_registry_write
     from storage.admin_audit import log_admin_action
     from storage.identity_policy import get_policy, set_policy
     tenant_id = get_tenant_from_request(request)
     require_portal_admin(request)
+    # Turning require_verified_identity off, or widening who may sign in, is
+    # as good as minting a verified caller (docs/specs/principals-and-template-authz.md).
+    require_registry_write(request, tenant_id, action="change who must be a verified caller")
     try:
         body = await request.json()
     except Exception:

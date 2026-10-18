@@ -330,7 +330,10 @@ def test_no_ungated_write_route_has_appeared():
     when a new write route appears in a module that can reach the registry.
     """
     import core.app as ca
-    app = ca.create_app() if hasattr(ca, "create_app") else ca.app
+    import admin_app
+    # Both planes: the admin plane mounts writers the data plane does not
+    # (docs/specs/principals-and-template-authz.md found three such routes).
+    apps = [ca.create_app() if hasattr(ca, "create_app") else ca.app, admin_app.app]
 
     known = {
         ("POST", "/v1/agents/registry"),
@@ -345,8 +348,9 @@ def test_no_ungated_write_route_has_appeared():
                "api.routes_policy", "api.routes_tenant_self"}
 
     import inspect
+    from tests.route_tables import flat_routes
     found = set()
-    for r in app.routes:
+    for path, r in (pr for app in apps for pr in flat_routes(app)):
         ep = getattr(r, "endpoint", None)
         if not ep or ep.__module__ not in writers:
             continue
@@ -359,8 +363,10 @@ def test_no_ungated_write_route_has_appeared():
             continue
         for m in (getattr(r, "methods", None) or ()):
             if m in ("POST", "PUT", "DELETE"):
-                found.add((m, r.path))
+                found.add((m, path))
 
+    # A walk that saw nothing proves nothing (tests/route_tables.py).
+    assert ("POST", "/v1/agents/registry") in found, sorted(found)
     new = found - known
     assert not new, (
         f"new route(s) reach a registry write and may be ungated: {sorted(new)}. "
