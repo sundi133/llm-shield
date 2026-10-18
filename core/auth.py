@@ -372,10 +372,28 @@ def verify_tenant_path_access(request: Request, tenant_id: str | None = None) ->
     FastAPI resolves ``tenant_id`` from the route's path parameter when one
     exists; routes without a ``{tenant_id}`` path parameter receive ``None``
     and are left unaffected.
+
+    The caller must be someone. An admin caller (admin_caller: root key,
+    managed admin credential within its scope, SSO operator, admin workload
+    identity, global master key) may act on any tenant; a tenant caller on its
+    own. A caller with no recognized credential used to pass, because "no
+    tenant on request.state" was read as "master key": with the shipped config
+    that let anyone read or change any tenant's policies, webhooks and decision
+    audit (docs/specs/tenant-config-write-scope.md, finding B).
     """
     if tenant_id is None:
         return
-    require_tenant_access(tenant_id, request)
+    from fastapi import HTTPException
+    if admin_caller(request) is not None:
+        write = (getattr(request, "method", "GET") or "GET").upper() not in ("GET", "HEAD", "OPTIONS")
+        require_admin_scope(request, "tenants:write" if write else "tenants:read", tenant_id)
+        return
+    scope, caller_tenant = caller_tenant_scope(request)
+    if scope == SCOPE_TENANT and caller_tenant != tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: API key is not authorized for this tenant.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +488,73 @@ def caller_tenant_scope(request: Request, *, unauthenticated_status: int = 401,
     raise HTTPException(
         status_code=unauthenticated_status,
         detail=unauthenticated_detail or "admin identity or tenant API key required")
+
+
+def admin_caller(request: Request):
+    """The admin identity behind this request, on any route, or None.
+
+    AuthMiddleware recognizes admin credentials only on /v1/admin/*. Routes
+    elsewhere that must be admin-only (the global config) or must let an admin
+    act for any tenant (path-tenant routes) ask here:
+
+    * an admin identity already on request.state (the /v1/admin/* gate);
+    * an SSO operator session;
+    * X-Admin-Key: the root SHIELD_ADMIN_KEY, or a managed admin credential
+      (held to its scope through require_admin_scope, which reads
+      request.state.admin_identity, set here);
+    * an admin workload identity (SPIFFE / mTLS providers, not one that names
+      a tenant), or a global master key.
+
+    Never raises.
+    """
+    state = getattr(request, "state", None)
+    ident = getattr(state, "admin_identity", None)
+    if isinstance(ident, dict):
+        return ident
+    try:
+        if admin_principal(request) is not None:
+            return {"kind": "admin_operator"}
+        provided = (request.headers.get("X-Admin-Key") or "").strip()
+        root = os.environ.get("SHIELD_ADMIN_KEY", "")
+        if provided and root and hmac.compare_digest(provided, root):
+            ident = {"kind": "admin_root", "id": "root", "name": "root"}
+        elif provided and os.environ.get("SHIELD_ADMIN_CREDENTIALS", "on").strip().lower() \
+                not in ("off", "0", "false", "no"):
+            from storage.admin_credentials import resolve_admin_credential
+            rec = resolve_admin_credential(provided)
+            if rec:
+                ident = {"kind": "admin_credential", "id": rec.get("id", ""),
+                         "name": rec.get("name", ""), "scope": rec.get("scope")}
+        if ident is None:
+            from core.workload_identity import resolve_workload_identity
+            wid = resolve_workload_identity(request)
+            claims = getattr(wid, "claims", None) if wid is not None else None
+            if wid is not None and not (isinstance(claims, dict) and claims.get("tenant_id")):
+                ident = {"kind": "workload", "provider": wid.provider, "subject": wid.subject}
+        if ident is None:
+            key = _extract_api_key(request)
+            if key and _is_master_key(key):
+                ident = {"kind": "master_key"}
+    except Exception:
+        logger.debug("admin caller lookup failed", exc_info=True)
+        return None
+    if ident is not None and state is not None:
+        state.admin_identity = ident
+    return ident
+
+
+def require_admin_caller(request: Request, operation: str, tenant_id: str = "",
+                         *, cross_tenant: bool = False) -> dict:
+    """An admin caller held to its scope, or 401 (no credential) / 403."""
+    from fastapi import HTTPException
+    ident = admin_caller(request)
+    if ident is None:
+        has_credential = bool(_extract_api_key(request) or request.headers.get("X-Admin-Key")
+                              or portal_principal(request))
+        raise HTTPException(status_code=403 if has_credential else 401,
+                            detail="an admin identity is required")
+    require_admin_scope(request, operation, tenant_id, cross_tenant=cross_tenant)
+    return ident
 
 
 def authorized_tenant_scope(request: Request, claimed_tenant_id: str = "") -> tuple:

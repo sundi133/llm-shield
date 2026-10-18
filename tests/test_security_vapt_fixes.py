@@ -191,10 +191,18 @@ class TestIDORShieldPathScoping:
         r = shield_client.get("/v1/shield/policies/acme", headers={"X-API-Key": "acme-key"})
         assert r.status_code != 403
 
-    def test_master_key_cross_tenant_allowed(self, shield_client):
-        # No X-API-Key → no tenant_id on state → treated as master/admin.
-        r = shield_client.get("/v1/shield/policies/corp")
-        assert r.status_code != 403
+    def test_admin_key_cross_tenant_allowed(self, shield_client, monkeypatch):
+        # An admin identity keeps cross-tenant access for the admin portal.
+        monkeypatch.setenv("SHIELD_ADMIN_KEY", "vapt-admin-key")
+        r = shield_client.get("/v1/shield/policies/corp", headers={"X-Admin-Key": "vapt-admin-key"})
+        assert r.status_code not in (401, 403)
+
+    def test_no_credentials_is_not_a_master_key(self, shield_client):
+        # It used to be: "no tenant on request.state" was read as "master
+        # key" (docs/specs/tenant-config-write-scope.md, finding B).
+        for path in ("/v1/shield/policies/corp", "/v1/shield/webhooks/corp",
+                     "/v1/shield/decisions/corp"):
+            assert shield_client.get(path).status_code == 401, path
 
     def test_non_tenant_route_unaffected(self, shield_client):
         # POST /v1/shield/policies/test has no tenant_id path param and must

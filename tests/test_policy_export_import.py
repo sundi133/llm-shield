@@ -65,9 +65,12 @@ class TestPolicyExportImport:
         cs.config = original
 
     @pytest.fixture
-    def client(self, app):
+    def client(self, app, monkeypatch):
         from starlette.testclient import TestClient
-        return TestClient(app)
+        # Path-tenant routes need a caller (docs/specs/tenant-config-write-scope.md,
+        # finding B): these tests act as an operator on the tenant they name.
+        monkeypatch.setenv("SHIELD_ADMIN_KEY", "test-operator-key")
+        return TestClient(app, headers={"X-Admin-Key": "test-operator-key"})
 
     @patch("storage.policy_store._get_redis", return_value=None)
     @patch("api.routes_policy.get_tenant", return_value={"tenant_id": "t1"})
