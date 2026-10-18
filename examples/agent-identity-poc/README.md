@@ -111,4 +111,6 @@ permission is good for one call.
 | `cannot set identity.require` | This Shield predates certificate identity; deploy a build that has it |
 | `the agent's verified certificate was not accepted` | The proxy is not forwarding the certificate with its secret, or the certificate's CA is not a trust anchor; test it under Agent Identity, then Test a certificate |
 | `the revoked certificate still identified the agent` | Several Shield servers: run with `--propagation-wait 330` |
-| `kill switch not available here` | Set `SHIELD_ENABLE_KILLSWITCH=true` |
+| `the killed tool was not blocked by the kill switch` | Set `SHIELD_ENABLE_KILLSWITCH=true` |
+| `this API key may not use the kill switch while the registry write gate is enforced` | Your tenant enforces `SHIELD_REGISTRY_WRITE_SCOPE`: run the POC with an admin-scoped tenant key |
+| `the API key belongs to a different tenant` | The kill switch acts only for the key's own tenant; use a key from the tenant the POC runs in |

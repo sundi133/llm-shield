@@ -463,6 +463,30 @@ def s7_stale_sandbox(env: Env) -> Result:
     return res
 
 
+def _killswitch_refusal(resp) -> str:
+    """What to do when Shield refuses to flip the kill switch, by why it refused."""
+    try:
+        detail = str(resp.json().get("detail", ""))
+    except Exception:
+        detail = resp.text[:200]
+    low = detail.lower()
+    if resp.status_code == 403 and ("scope" in low or "registry_write" in low or "admin-scoped" in low):
+        return ("this API key may not use the kill switch while the registry write gate is "
+                "enforced (SHIELD_REGISTRY_WRITE_SCOPE=enforce): run the POC with an "
+                "admin-scoped tenant key")
+    if resp.status_code == 403 and "not a portal administrator" in low:
+        return "the signed-in user is not a portal administrator for this tenant"
+    if resp.status_code == 403 and "tenant mismatch" in low:
+        return "the API key belongs to a different tenant than the one the POC is using"
+    if resp.status_code == 401:
+        return "Shield did not recognize the API key for the kill switch"
+    if resp.status_code == 404:
+        return "this Shield has no kill switch routes: deploy a current build"
+    if resp.status_code == 503:
+        return "Shield could not verify the API key (its key store is unavailable): try again"
+    return f"the kill switch refused ({resp.status_code}): {detail[:160]}"
+
+
 def s8_incident_response(env: Env) -> Result:
     res = Result(8, "Incident response")
     agent = env.agent("support", role="support")
@@ -480,9 +504,8 @@ def s8_incident_response(env: Env) -> Result:
     off = env.post(f"/v1/shield/tools/{env.tool}/disable", {"tenant_id": env.tenant_id,
                                                            "reason": "POC kill switch"})
     if off.status_code != 200:
-        res.step(f"kill switch not available here ({off.status_code}): set SHIELD_ENABLE_KILLSWITCH=true")
-        res.summary = "a revoked instance stops at once (kill switch not enabled on this Shield)"
-        return res
+        res.step(f"kill switch refused: {_short(off)}")
+        return res.fail(_killswitch_refusal(off))
     try:
         check = env.post("/v1/shield/tool/check", {"tool_name": env.tool, "agent_key": env.agents["support"],
                                                    "tool_params": {}},
@@ -493,7 +516,9 @@ def s8_incident_response(env: Env) -> Result:
     finally:
         env.post(f"/v1/shield/tools/{env.tool}/enable", {"tenant_id": env.tenant_id})
     if not blocked:
-        return res.fail("the killed tool was not blocked")
+        return res.fail("the killed tool was not blocked by the kill switch: set "
+                        "SHIELD_ENABLE_KILLSWITCH=true on Shield (the switch can be turned on "
+                        "without it, but tool checks only enforce it with it)")
     res.summary = "a compromised agent or tool is stopped immediately, everywhere"
     return res
 
