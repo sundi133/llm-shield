@@ -250,6 +250,19 @@ async def _audit_decision(event: dict) -> None:
     Never raises: a logging outage must not fail a guarded call.
     Spec: docs/spec-mcp-gateway-audit.md
     """
+    # What the agent was seen doing, for least-privilege drafts
+    # (docs/specs/policy-from-purpose.md). In-process only, no I/O; recorded
+    # whether or not the audit is on.
+    try:
+        from core.policy_learning.observe import record
+        action = event.get("action") or ""
+        record(event.get("tenant_id") or "", event.get("agent_key") or "", event.get("tool") or "",
+               event.get("user_role") or "",
+               "allowed" if event.get("allowed") else
+               "held" if action in ("pending_confirmation", "approval_required") else "blocked",
+               via="mcp")
+    except Exception:
+        pass
     if not _audit_enabled():
         return
     try:

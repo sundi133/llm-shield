@@ -527,6 +527,38 @@ async def mint_capability(
     # several tests do — keep working.
     request: Request = None,
 ):
+    """See _mint_capability. This wrapper only notes the outcome for policy
+    learning (docs/specs/policy-from-purpose.md): in-process, no I/O."""
+    try:
+        out = await _mint_capability(body, identity, request)
+    except HTTPException as e:
+        if e.status_code == 403:
+            detail = e.detail if isinstance(e.detail, dict) else {}
+            held = detail.get("reason") == "approval_required"
+            _observe_mint(identity, body, request, "held" if held else "blocked")
+        raise
+    _observe_mint(identity, body, request, "allowed")
+    return out
+
+
+def _observe_mint(identity, body, request, outcome: str) -> None:
+    try:
+        from core.policy_learning.observe import record
+        role = ""
+        if request is not None:
+            role = resolve_identity(request).user_role or ""
+        method = "agent_token_dpop" if getattr(identity, "pop_verified", False) else "agent_token"
+        record(identity.tenant_id, identity.agent_id, body.tool, role, outcome, via="cap_mint",
+               resource=body.resource, params=body.tool_params, identity=method)
+    except Exception:
+        pass
+
+
+async def _mint_capability(
+    body: CapMintRequest,
+    identity: IdentityTuple,
+    request: Request = None,
+):
     """Run AuthZ policy. If allowed, freeze the decision as a cap token.
 
     Requires a valid X-Agent-Token (verified by AgentIdentityMiddleware).

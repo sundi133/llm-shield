@@ -360,6 +360,23 @@ def _identity_requirement_result(request: Request, tenant_id, agent_key, where: 
     }]}
 
 
+def _observe(request, tenant_id, agent_key, tool, role, result, via, *, params=None, resource=None):
+    """Note a guarded decision for policy learning. Never raises; no I/O."""
+    try:
+        from core.policy_learning.observe import record
+    except ImportError:
+        return
+    action = (result or {}).get("action")
+    outcome = ("allowed" if (result or {}).get("allowed")
+               else "held" if action in ("pending_confirmation", "approval_required") else "blocked")
+    state = getattr(request, "state", None)
+    method = getattr(state, "identity_method", "") or ""
+    if method == "agent_token" and getattr(state, "identity_verified_by", "") == "dpop":
+        method = "agent_token_dpop"
+    record(tenant_id or "", agent_key or "", tool or "", role or "", outcome, via=via,
+           resource=resource, params=params, identity=method)
+
+
 @router.post("/check")
 async def check_tool(body: ToolCheckRequest, request: Request):
     start = time.perf_counter()
@@ -815,6 +832,11 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         }
         return _final_result
     finally:
+        # What the agent was seen doing, for least-privilege drafts
+        # (docs/specs/policy-from-purpose.md). In-process only, no I/O.
+        if _final_result is not None:
+            _observe(request, tenant_id, body.agent_key, body.tool_name, user_role,
+                     _final_result, "tool_check", params=body.tool_params)
         # Emit SIEM telemetry for every tool check decision (all paths)
         if _final_result is not None:
             _emit_tool_check_telemetry(
