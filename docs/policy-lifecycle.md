@@ -163,6 +163,14 @@ logic only ever *relaxes* a decision, and only for a tenant that explicitly opte
 - **Per-guardrail monitor** (running only *some* guardrails in dry-run while others
   enforce) is a natural extension of `resolve_mode()` in `core/policy_mode.py` — not
   wired yet.
+- **Managed admin credentials need the scope.** A managed credential (`shadm_...`)
+  issued with an explicit scope needs `tenants:write` on the tenant to apply a
+  template or change its mode, and `tenants:read` to read the mode or the template
+  catalog. The root `SHIELD_ADMIN_KEY`, SSO operators and credentials issued without
+  a scope are unaffected. Before this check, any managed credential could switch any
+  tenant to monitor mode. If a scoped credential now gets 403 here, issue one with
+  `tenants:write` for the tenants it manages (`POST /v1/admin/credentials`) and
+  revoke the old one; a credential's scope cannot be edited in place.
 
 ## Tuning a custom policy that missed
 

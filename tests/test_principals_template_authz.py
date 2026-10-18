@@ -292,3 +292,136 @@ def test_every_identity_write_route_passes_the_write_gate():
                 ungated.append((plane, m, path))
     assert len(seen) >= 13, sorted(seen)
     assert not ungated, f"identity write route(s) without the write gate: {ungated}"
+
+
+# ── gap 2 ────────────────────────────────────────────────────────────
+#
+# The policy-template routes were the only /v1/admin routes that did not hold
+# a managed admin credential to its scope: one scoped to oidc:read on one
+# tenant could switch any tenant to monitor mode (nothing blocks).
+
+ROOT = "root-secret-key-templates"
+
+
+@pytest.fixture
+def admin_client(monkeypatch):
+    import core.auth as auth
+    import storage.tenant_store as ts
+    from api.routes_admin_credentials import router as creds_router
+    from api.routes_policy_templates import router as templates_router
+    from core.auth import AuthMiddleware
+    ts._fallback_store.clear()
+    auth._failed_attempts.clear()
+    monkeypatch.setattr(ts, "_get_redis", lambda: None)
+    monkeypatch.setenv("SHIELD_ADMIN_KEY", ROOT)
+    monkeypatch.delenv("SHIELD_ADMIN_CREDENTIALS", raising=False)
+    for t in ("acme", "globex"):
+        ts.create_tenant(t, {"name": t, "policy_mode": "enforce"})
+    app = FastAPI()
+    app.include_router(creds_router)
+    app.include_router(templates_router)
+    app.add_middleware(AuthMiddleware)
+    yield TestClient(app)
+    ts._fallback_store.clear()
+    auth._failed_attempts.clear()
+
+
+def _cred(client, name, scope=None):
+    body = {"name": name, **({"scope": scope} if scope is not None else {})}
+    r = client.post("/v1/admin/credentials", json=body, headers={"X-Admin-Key": ROOT})
+    assert r.status_code == 200, r.text
+    return {"X-Admin-Key": r.json()["secret"]}, r.json()["id"]
+
+
+def _template_id():
+    from core.policy_templates import list_templates
+    t = list_templates()
+    return (t[0]["id"] if isinstance(t[0], dict) else t[0])
+
+
+def _mode(t):
+    from storage.tenant_store import get_tenant
+    return get_tenant(t).get("policy_mode")
+
+
+def _guardrails(t):
+    from storage.tenant_store import get_tenant
+    cfg = get_tenant(t) or {}
+    return cfg.get("input_guardrails"), cfg.get("output_guardrails")
+
+
+def test_a_credential_scoped_to_something_else_cannot_switch_a_tenant_to_monitor(admin_client):
+    h, _ = _cred(admin_client, "oidc-reader", {"operations": ["oidc:read"], "tenants": ["acme"]})
+    before = _guardrails("globex")
+    r = admin_client.put("/v1/admin/tenants/globex/policy-mode", json={"mode": "monitor"}, headers=h)
+    assert r.status_code == 403 and _mode("globex") == "enforce"
+    r = admin_client.post("/v1/admin/tenants/globex/apply-template",
+                          json={"template_id": _template_id()}, headers=h)
+    assert r.status_code == 403 and _guardrails("globex") == before
+
+
+def test_tenants_write_works_on_its_tenant_only(admin_client):
+    h, _ = _cred(admin_client, "acme-writer", {"operations": ["tenants:write", "tenants:read"],
+                                               "tenants": ["acme"]})
+    assert admin_client.put("/v1/admin/tenants/acme/policy-mode", json={"mode": "monitor"},
+                            headers=h).status_code == 200
+    assert _mode("acme") == "monitor"
+    assert admin_client.post("/v1/admin/tenants/acme/apply-template",
+                             json={"template_id": _template_id()}, headers=h).status_code == 200
+    assert admin_client.put("/v1/admin/tenants/globex/policy-mode", json={"mode": "monitor"},
+                            headers=h).status_code == 403
+    assert _mode("globex") == "enforce"
+
+
+def test_tenants_read_reads_but_does_not_write(admin_client):
+    h, _ = _cred(admin_client, "acme-reader", {"operations": ["tenants:read"], "tenants": ["acme"]})
+    assert admin_client.get("/v1/admin/tenants/acme/policy-mode", headers=h).status_code == 200
+    assert admin_client.get("/v1/admin/tenants/globex/policy-mode", headers=h).status_code == 403
+    assert admin_client.get("/v1/admin/policy-templates", headers=h).status_code == 200
+    assert admin_client.put("/v1/admin/tenants/acme/policy-mode", json={"mode": "monitor"},
+                            headers=h).status_code == 403
+
+
+def test_the_catalog_needs_tenants_read(admin_client):
+    h, _ = _cred(admin_client, "oidc-only", {"operations": ["oidc:read"]})
+    assert admin_client.get("/v1/admin/policy-templates", headers=h).status_code == 403
+    assert admin_client.get(f"/v1/admin/policy-templates/{_template_id()}", headers=h).status_code == 403
+
+
+def test_root_operators_and_full_admin_credentials_are_unaffected(admin_client):
+    from core.auth import ADMIN_COOKIE_NAME
+    from storage.admin_sessions import create_session
+    full, _ = _cred(admin_client, "full-admin")
+    for h in ({"X-Admin-Key": ROOT}, full):
+        assert admin_client.put("/v1/admin/tenants/globex/policy-mode", json={"mode": "monitor"},
+                                headers=h).status_code == 200
+        assert admin_client.get("/v1/admin/policy-templates", headers=h).status_code == 200
+    sid = create_session({"sub": "op-1", "email": "op@votal.ai"}, roles=["platform-admin"])
+    admin_client.cookies.set(ADMIN_COOKIE_NAME, sid)
+    assert admin_client.put("/v1/admin/tenants/acme/policy-mode", json={"mode": "monitor"}).status_code == 200
+    admin_client.cookies.delete(ADMIN_COOKIE_NAME)
+
+
+def test_audit_rows_name_the_credential(admin_client, monkeypatch):
+    import api.routes_policy_templates as rt
+    rows = []
+    monkeypatch.setattr(rt, "log_admin_action", lambda **kw: rows.append(kw["actor"]))
+    h, cid = _cred(admin_client, "acme-writer", {"operations": ["tenants:write"], "tenants": ["acme"]})
+    admin_client.put("/v1/admin/tenants/acme/policy-mode", json={"mode": "monitor"}, headers=h)
+    admin_client.post("/v1/admin/tenants/acme/apply-template", json={"template_id": _template_id()},
+                      headers={"X-Admin-Key": ROOT})
+    assert rows == [f"adminkey:{cid}", "adminroot"]
+
+
+def test_every_admin_route_holds_a_credential_to_its_scope():
+    """Every /v1/admin route on both apps reaches require_admin_scope (or is
+    root/operator only). The policy-template routes were the gap; this keeps
+    the next one from appearing."""
+    missing = []
+    for plane, app in _apps().items():
+        for m, path, ep in _routes(app):
+            if not path.startswith("/v1/admin/") or path.startswith("/v1/admin/auth/"):
+                continue
+            if not _reaches(ep, ("require_admin_scope(", "require_admin_root_or_operator(")):
+                missing.append((plane, m, path))
+    assert not missing, f"/v1/admin route(s) that ignore a credential's scope: {sorted(set(missing))}"
