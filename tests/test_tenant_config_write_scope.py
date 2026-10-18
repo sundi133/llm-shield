@@ -173,3 +173,119 @@ def test_a_global_master_key_is_an_admin_caller(client):
         assert r.status_code == 200
     finally:
         cs.config.auth.api_keys = []
+
+
+# ── C: approvals ─────────────────────────────────────────────────────
+#
+# A runtime key could approve the request its own agent raised and receive the
+# signed grant that satisfies the approval rule, and X-Approver-Sub from any
+# caller was recorded as an SSO-verified approver.
+
+RUNTIME, UNSCOPED, ADMIN_SCOPED = "sk-tcws-a-runtime-01", "sk-tcws-a-unscoped-1", "sk-tcws-a-admin-0001"
+PROXY_SECRET = "tcws-proxy-secret"
+
+
+@pytest.fixture
+def approvals(env, monkeypatch):
+    from core import approvals as ap
+    monkeypatch.setenv("SHIELD_SIGNER_BACKEND", "local")
+    monkeypatch.setenv("SHIELD_APPROVAL_TOKEN_PRIVATE_KEY", "5c" * 32)
+    ap.reset_signer_cache_for_tests()
+    env.add_api_key("ta", RUNTIME, scope="runtime")
+    env.add_api_key("ta", UNSCOPED)
+    env.add_api_key("ta", ADMIN_SCOPED, scope="admin")
+    yield ap
+    ap.reset_signer_cache_for_tests()
+
+
+def pending(min_approvals=1):
+    from storage.agentic_control_plane import create_approval_request
+    return create_approval_request("ta", agent_key="billing-bot", tool_name="refund", session_id="s1",
+                                   workflow="default", tool_params={"amount": 900},
+                                   rule={"min_approvals": min_approvals})["request_id"]
+
+
+def status(rid):
+    from storage.agentic_control_plane import list_approval_requests
+    return next(r for r in list_approval_requests("ta") if r["request_id"] == rid)
+
+
+def decide(client, rid, headers, decision="approve", approver="cfo@acme.example"):
+    return client.post(f"/v1/tenant/me/agentic/approvals/{rid}/{decision}", headers=headers,
+                       json={"approver": approver, "reason": "test"})
+
+
+@pytest.mark.parametrize("mode", ["off", "warn", "enforce"])
+@pytest.mark.parametrize("decision", ["approve", "deny"])
+def test_an_agents_key_cannot_decide_an_approval_in_any_mode(client, approvals, monkeypatch, mode, decision):
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", mode)
+    for key in (RUNTIME, UNSCOPED):
+        rid = pending()
+        r = decide(client, rid, {"X-API-Key": key}, decision)
+        assert r.status_code == 403, (key, r.text)
+        assert status(rid)["status"] == "pending" and not status(rid).get("approval_grant")
+
+
+def test_an_admin_scoped_key_decides_and_is_recorded_as_admin(client, approvals):
+    rid = pending()
+    r = decide(client, rid, {"X-API-Key": ADMIN_SCOPED})
+    assert r.status_code == 200 and r.json()["status"] == "approved"
+    claims = approvals.verify_grant(r.json()["approval_grant"], expected_tool="refund",
+                                    expected_params_hash=approvals.params_hash({"amount": 900}),
+                                    expected_session="s1")
+    assert claims.approvers == [{"sub": "cfo@acme.example", "method": "admin", "at": claims.approvers[0]["at"]}]
+
+
+def test_a_signed_in_person_is_the_approver_whatever_the_body_says(client, approvals, monkeypatch):
+    person = {"kind": "user", "tenant_id": "ta", "sub": "u-77", "email": "dana@acme.example", "is_admin": False}
+    monkeypatch.setattr("core.auth.portal_principal", lambda r: person)
+    rid = pending()
+    r = decide(client, rid, {"X-API-Key": UNSCOPED}, approver="someone-else@acme.example")
+    assert r.status_code == 200
+    assert status(rid)["approvals"][0]["approver"] == "dana@acme.example"
+    assert status(rid)["approvals"][0]["method"] == "portal_session"
+
+
+def test_x_approver_sub_counts_only_from_the_trusted_proxy(client, approvals, monkeypatch):
+    rid = pending()
+    r = decide(client, rid, {"X-API-Key": ADMIN_SCOPED, "X-Approver-Sub": "ceo@acme.example"})
+    assert r.status_code == 200
+    assert status(rid)["approvals"][0] == {**status(rid)["approvals"][0],
+                                           "approver": "cfo@acme.example", "method": "admin"}
+    rid = pending()
+    r = decide(client, rid, {"X-API-Key": RUNTIME, "X-Approver-Sub": "ceo@acme.example"})
+    assert r.status_code == 403                                  # the header grants nothing
+    monkeypatch.setenv("SHIELD_TRUSTED_PROXY_ONLY", "true")
+    monkeypatch.setenv("SHIELD_TRUSTED_PROXY_SECRET", PROXY_SECRET)
+    r = decide(client, rid, {"X-API-Key": RUNTIME, "X-Approver-Sub": "ceo@acme.example",
+                             "X-Shield-Proxy-Token": PROXY_SECRET})
+    assert r.status_code == 200
+    assert status(rid)["approvals"][0]["approver"] == "ceo@acme.example"
+    assert status(rid)["approvals"][0]["method"] == "sso"
+
+
+def test_two_approvals_need_two_people(client, approvals):
+    rid = pending(min_approvals=2)
+    assert decide(client, rid, {"X-API-Key": ADMIN_SCOPED}).json()["status"] == "pending"
+    assert decide(client, rid, {"X-API-Key": ADMIN_SCOPED}).json()["status"] == "pending"
+    assert len(status(rid)["approvals"]) == 1
+    r = decide(client, rid, {"X-API-Key": ADMIN_SCOPED}, approver="ciso@acme.example")
+    assert r.json()["status"] == "approved" and r.json().get("approval_grant")
+
+
+def test_the_hatch_lets_an_unscoped_key_decide_but_never_a_runtime_key(client, approvals, monkeypatch, caplog):
+    import api.routes_agentic_control_plane as cp
+    monkeypatch.setenv("SHIELD_APPROVALS_TENANT_KEY", "true")
+    monkeypatch.setattr(cp, "_warned_hatch", False)
+    rid = pending()
+    with caplog.at_level(logging.WARNING, logger="votal.agentic_control_plane"):
+        assert decide(client, rid, {"X-API-Key": UNSCOPED}).status_code == 200
+    assert status(rid)["approvals"][0]["method"] == "asserted"
+    assert any("SHIELD_APPROVALS_TENANT_KEY" in r.getMessage() for r in caplog.records)
+    assert decide(client, pending(), {"X-API-Key": RUNTIME}).status_code == 403
+
+
+def test_the_root_admin_key_decides(client, approvals):
+    rid = pending()
+    assert decide(client, rid, {"X-API-Key": RUNTIME, "X-Admin-Key": ROOT}).status_code == 200
+    assert status(rid)["approvals"][0]["method"] == "admin"

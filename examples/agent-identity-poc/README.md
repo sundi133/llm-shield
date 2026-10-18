@@ -32,7 +32,7 @@ It needs a checkout of this repository and its Python requirements.
 
 | For | You need |
 |---|---|
-| Scenarios 1 to 3, 6 to 9 | A Shield URL and a tenant API key. If your tenant enforces the registry write gate, an admin-scoped key |
+| Scenarios 1 to 3, 6 to 9 | A Shield URL and an **admin-scoped** tenant API key (`POST /v1/admin/tenants/{tenant}/api-keys` with `scope: admin`). Scenario 3 approves a request, and an agent's key cannot decide approvals |
 | Scenarios 4 and 5 | Your mTLS proxy in front of Shield (Envoy, nginx or a load balancer), and a client certificate and key it accepts. Set up as in the agent certificate identity runbook |
 | Scenario 5 with your CA | Optionally, a CRL from your CA that lists that client certificate, and the trust anchor id it belongs to. Without them the scenario revokes the certificate in Shield instead |
 
@@ -108,6 +108,7 @@ permission is good for one call.
 |---|---|
 | `a token without its proof was accepted` | Set `SHIELD_AGENT_TOKEN_POP=required` on Shield |
 | `cannot register ...` | The key cannot write the agent registry; use an admin-scoped key |
+| `this key may not decide approvals` | Use an admin-scoped tenant key; approvals are decided by a person or an admin key |
 | `cannot set identity.require` | This Shield predates certificate identity; deploy a build that has it |
 | `the agent's verified certificate was not accepted` | The proxy is not forwarding the certificate with its secret, or the certificate's CA is not a trust anchor; test it under Agent Identity, then Test a certificate |
 | `the revoked certificate still identified the agent` | Several Shield servers: run with `--propagation-wait 330` |

@@ -21,6 +21,10 @@ def _env(monkeypatch):
     monkeypatch.setenv("SHIELD_SIGNER_BACKEND", "local")
     monkeypatch.setenv("SHIELD_APPROVAL_TOKEN_PRIVATE_KEY", _KEY)
     monkeypatch.setenv("SHIELD_APPROVAL_TOKEN_KID", "approval-test")
+    # Approvals are decided by a person or an admin caller, not an agent's
+    # key (docs/specs/tenant-config-write-scope.md, finding C).
+    monkeypatch.setenv("SHIELD_ADMIN_KEY", _ADMIN)
+    monkeypatch.setenv("SHIELD_WORKLOAD_IDENTITY_PROVIDERS", "admin_key")
     ap.reset_signer_cache_for_tests()
     ap.clear_nonce_store_for_tests()
     from storage.tenant_store import _fallback_store
@@ -52,6 +56,10 @@ def _seed_request(tenant="acme", tool="delete_account", params=None, session="s1
     )
 
 
+_ADMIN = "hitl-operator-key"
+_PROXY_SECRET = "hitl-proxy-secret"
+
+
 def _approve(tenant, request_id, approver="alice@acme.com", headers=None):
     from api import routes_agentic_control_plane as cp
     from api.routes_agentic_control_plane import ApprovalDecisionRequest
@@ -61,7 +69,7 @@ def _approve(tenant, request_id, approver="alice@acme.com", headers=None):
             cp.approve_request(
                 request_id,
                 ApprovalDecisionRequest(approver=approver),
-                _FakeRequest(headers=headers),
+                _FakeRequest(headers=headers if headers is not None else {"X-Admin-Key": _ADMIN}),
             )
         )
 
@@ -81,7 +89,7 @@ def test_approve_issues_signed_grant():
         expected_session="s1",
     )
     assert claims.approvers[0]["sub"] == "alice@acme.com"
-    assert claims.approvers[0]["method"] == "asserted"
+    assert claims.approvers[0]["method"] == "admin"
     assert claims.breakglass is False
 
 
@@ -97,9 +105,13 @@ def test_grant_is_bound_to_params():
         )
 
 
-def test_sso_verified_approver_recorded():
+def test_sso_verified_approver_recorded(monkeypatch):
+    # Only the trusted proxy may vouch for an SSO approver.
+    monkeypatch.setenv("SHIELD_TRUSTED_PROXY_ONLY", "true")
+    monkeypatch.setenv("SHIELD_TRUSTED_PROXY_SECRET", _PROXY_SECRET)
     req = _seed_request()
-    resp = _approve("acme", req["request_id"], headers={"x-approver-sub": "carol@corp.com"})
+    resp = _approve("acme", req["request_id"], headers={
+        "x-approver-sub": "carol@corp.com", "X-Shield-Proxy-Token": _PROXY_SECRET})
     claims = ap.verify_grant(
         resp["approval_grant"], expected_tool="delete_account",
         expected_params_hash=ap.params_hash({"account_id": "1"}), expected_session="s1",
