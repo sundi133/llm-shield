@@ -1,0 +1,294 @@
+"""Identity writes behind the write gate, scoped admin keys on policy templates,
+and API keys that cannot change tenant.
+Spec: docs/specs/principals-and-template-authz.md.
+
+Gap 1: with SHIELD_REGISTRY_WRITE_SCOPE=enforce, a runtime tenant key could
+still create a service account with any roles and mint it a key (a verified MCP
+caller), switch "verified callers only" off, or remap IdP groups to roles. The
+routes relied on require_portal_admin, which returns for a key caller, or on
+nothing.
+"""
+
+import pytest
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+
+T = "acme"
+RUNTIME, UNSCOPED, ADMIN = "sk-acme-runtime-0001", "sk-acme-unscoped-001", "sk-acme-admin-00001"
+
+
+# ── gap 1 ────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def stores(monkeypatch):
+    import storage.oauth_store as os_store
+    import storage.principal_store as ps
+    import storage.revocation as rev
+    import storage.tenant_store as ts
+    from storage.tenant_store import _fallback_store
+    for mod in (ts, ps, rev):
+        monkeypatch.setattr(mod, "_get_redis", lambda: None)
+    for name in ("SHIELD_REGISTRY_WRITE_SCOPE", "REDIS_URL", "UPSTASH_REDIS_REST_URL",
+                 "SHIELD_ROLE_BINDING"):
+        monkeypatch.delenv(name, raising=False)
+    _fallback_store.clear()
+    os_store.clear_all_for_tests()
+    ts._cache.clear() if hasattr(ts, "_cache") else None
+    ts.create_tenant(T, {"name": "Acme"})
+    ts.add_api_key(T, RUNTIME, scope="runtime")
+    ts.add_api_key(T, UNSCOPED)
+    ts.add_api_key(T, ADMIN, scope="admin")
+    yield
+    _fallback_store.clear()
+    os_store.clear_all_for_tests()
+
+
+@pytest.fixture
+def audit(monkeypatch):
+    rows = []
+    import storage.admin_audit as aa
+    monkeypatch.setattr(aa, "log_admin_action", lambda **k: rows.append(k))
+    return rows
+
+
+@pytest.fixture
+def client(stores, audit):
+    """The four routers, behind a stand-in for AuthMiddleware: the tenant and
+    the authenticating key's hash on request.state, as in production."""
+    import api.routes_identity_config as idc
+    import api.routes_mcp_admin as mcp_admin
+    import api.routes_mcp_signin as signin
+    import api.routes_principals as principals
+    from storage.tenant_store import _hash_key, resolve_tenant_by_api_key
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _auth(request: Request, call_next):
+        key = request.headers.get("X-API-Key", "")
+        tenant = resolve_tenant_by_api_key(key) if key else None
+        if tenant:
+            request.state.tenant_id = tenant
+            request.state.api_key_hash = _hash_key(key)
+        return await call_next(request)
+    for r in (principals.router, principals.sa_router, signin.router, mcp_admin.router, idc.router):
+        app.include_router(r)
+    return TestClient(app)
+
+
+@pytest.fixture
+def world(stores):
+    """A service account with a key and an OAuth client, a person, an MCP server."""
+    import asyncio
+    import time
+    import storage.principal_store as ps
+    from storage.mcp_gateway_store import set_upstream
+    from storage.oauth_store import OAuthClient, save_client
+    sa = ps.create_service_account(T, name="ci", roles=["reader"], created_by="test")
+    _, key = ps.create_principal_key(T, sa["id"], label="k")
+    asyncio.run(save_client(OAuthClient(
+        client_id="cid-1", client_name="sa", client_secret_hash="x", redirect_uris=[],
+        grant_types=["client_credentials"], token_endpoint_auth_method="client_secret_post",
+        scope="mcp", tenant_id=T, created_at=int(time.time()), principal_id=sa["id"])))
+    set_upstream(T, "github", {"url": "https://mcp.example.com", "require_verified_identity": True})
+    return {"sa": sa["id"], "key_id": key["key_id"], "client_id": "cid-1"}
+
+
+def routes(w):
+    sa, kid, cid = w["sa"], w["key_id"], w["client_id"]
+    return [
+        ("POST", "/v1/tenant/me/service-accounts", {"name": "evil", "roles": ["admin"]}),
+        ("PATCH", f"/v1/tenant/me/principals/{sa}", {"roles": ["admin"]}),
+        ("POST", f"/v1/tenant/me/principals/{sa}/keys", {"label": "mine"}),
+        ("POST", f"/v1/tenant/me/principals/{sa}/keys/{kid}/rotate", {}),
+        ("DELETE", f"/v1/tenant/me/principals/{sa}/keys/{kid}", None),
+        ("POST", f"/v1/tenant/me/principals/{sa}/oauth-clients", None),
+        ("DELETE", f"/v1/tenant/me/principals/{sa}/oauth-clients/{cid}", None),
+        ("POST", f"/v1/tenant/me/principals/{sa}/suspend", None),
+        ("POST", f"/v1/tenant/me/principals/{sa}/reactivate", None),
+        ("DELETE", f"/v1/tenant/me/service-accounts/{sa}", None),
+        ("PUT", "/v1/tenant/me/identity/policy", {"require_verified_identity": False}),
+        ("PUT", "/v1/tenant/me/mcp/servers/github/identity", {"require_verified_identity": False}),
+        ("PUT", "/v1/tenant/me/identity/role-binding", {"role_map": {"Everyone": "admin"}}),
+    ]
+
+
+ROUTE_IDS = ["create-sa", "update-sa", "mint-key", "rotate-key", "delete-key", "create-oauth",
+             "delete-oauth", "suspend", "reactivate", "remove-sa", "identity-policy",
+             "server-identity", "role-binding"]
+
+
+def call(client, method, path, body, key):
+    return client.request(method, path, json=body, headers={"X-API-Key": key})
+
+
+def snapshot(w):
+    import asyncio
+    import storage.principal_store as ps
+    from core.principal_lifecycle import principal_clients
+    from storage.identity_policy import get_policy
+    from storage.mcp_gateway_store import get_upstream
+    from storage.role_binding_config import get_config
+    return {
+        "principals": sorted((p["id"], tuple(p.get("roles") or ()), p.get("status"))
+                             for p in ps.list_principals(T)),
+        "keys": sorted(k["key_id"] for k in ps.list_principal_keys(T, w["sa"])),
+        "clients": sorted(c.client_id for c in asyncio.run(principal_clients(T, w["sa"]))),
+        "policy": get_policy(T),
+        "server": (get_upstream(T, "github") or {}).get("require_verified_identity"),
+        "binding": (get_config(T) or {}).get("role_map"),
+    }
+
+
+@pytest.mark.parametrize("i", range(13), ids=ROUTE_IDS)
+@pytest.mark.parametrize("key", [RUNTIME, UNSCOPED], ids=["runtime", "unscoped"])
+def test_enforce_refuses_a_non_admin_key_and_changes_nothing(client, world, monkeypatch, i, key):
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    before = snapshot(world)
+    method, path, body = routes(world)[i]
+    r = call(client, method, path, body, key)
+    assert r.status_code == 403, (path, r.status_code, r.text)
+    assert snapshot(world) == before
+
+
+@pytest.mark.parametrize("i", range(13), ids=ROUTE_IDS)
+def test_enforce_allows_an_admin_scoped_key(client, world, monkeypatch, i):
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    method, path, body = routes(world)[i]
+    r = call(client, method, path, body, ADMIN)
+    assert r.status_code < 300, (path, r.status_code, r.text)
+
+
+@pytest.mark.parametrize("i", range(13), ids=ROUTE_IDS)
+def test_enforce_allows_a_portal_administrator(client, world, monkeypatch, i):
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    admin = {"kind": "user", "tenant_id": T, "sub": "u1", "email": "a@acme.com", "is_admin": True}
+    monkeypatch.setattr("core.auth.portal_principal", lambda r: admin)
+    method, path, body = routes(world)[i]
+    r = call(client, method, path, body, RUNTIME)          # a stale key in the browser
+    assert r.status_code < 300, (path, r.status_code, r.text)
+
+
+@pytest.mark.parametrize("i", range(13), ids=ROUTE_IDS)
+def test_off_is_unchanged(client, world, i):
+    method, path, body = routes(world)[i]
+    r = call(client, method, path, body, RUNTIME)
+    assert r.status_code < 300, (path, r.status_code, r.text)
+
+
+@pytest.mark.parametrize("i", range(13), ids=ROUTE_IDS)
+def test_warn_allows_and_records_who_enforce_would_refuse(client, world, monkeypatch, i):
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "warn")
+    warned = []
+    monkeypatch.setattr("core.auth._record_scope_warning",
+                        lambda req, tenant, scope, action: warned.append((tenant, scope, action)))
+    method, path, body = routes(world)[i]
+    r = call(client, method, path, body, RUNTIME)
+    assert r.status_code < 300, (path, r.status_code, r.text)
+    assert warned and warned[0][0] == T and warned[0][1] == "runtime"
+
+
+@pytest.mark.parametrize("i", [0, 1, 2, 5, 7, 10], ids=["create-sa", "update-sa", "mint-key",
+                                                        "create-oauth", "suspend", "identity-policy"])
+def test_a_signed_in_non_administrator_is_refused_in_every_mode(client, world, monkeypatch, i):
+    user = {"kind": "user", "tenant_id": T, "sub": "u2", "email": "b@acme.com", "is_admin": False}
+    monkeypatch.setattr("core.auth.portal_principal", lambda r: user)
+    method, path, body = routes(world)[i]
+    for mode in ("off", "warn", "enforce"):
+        monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", mode)
+        assert call(client, method, path, body, ADMIN).status_code == 403, (mode, path)
+
+
+def test_enforce_with_an_unreadable_key_store_is_503(client, world, monkeypatch):
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    monkeypatch.setattr("core.auth._store_is_degraded", lambda: True)
+    method, path, body = routes(world)[0]
+    assert call(client, method, path, body, ADMIN).status_code == 503
+
+
+def test_the_headline_a_runtime_key_cannot_mint_itself_a_verified_admin(client, world, monkeypatch):
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    r = call(client, "POST", "/v1/tenant/me/service-accounts", {"name": "me", "roles": ["admin"]}, RUNTIME)
+    assert r.status_code == 403 and "use an admin-scoped key" in r.json()["detail"].lower()
+    r = call(client, "POST", "/v1/tenant/me/service-accounts", {"name": "ci2", "roles": ["admin"]}, ADMIN)
+    assert r.status_code == 200 and r.json()["roles"] == ["admin"]
+
+
+def test_reads_are_unchanged(client, world, monkeypatch):
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    assert call(client, "GET", "/v1/tenant/me/principals", None, RUNTIME).status_code == 200
+    assert call(client, "GET", "/v1/tenant/me/identity/policy", None, RUNTIME).status_code == 200
+
+
+# ── route-table guards, both apps ────────────────────────────────────
+
+
+def _apps():
+    """The real apps' live route tables. core.app is built under a patched
+    load_config, as every app test does (it binds load_config by name)."""
+    from unittest.mock import patch
+    import config.schema as cs
+    import admin_app
+    original = cs.config
+    cfg = original if original is not None else cs.load_config()
+    with patch("config.schema.load_config", return_value=cfg):
+        from core.app import create_app
+        data = create_app()
+    cs.config = original
+    return {"data": data, "admin": admin_app.app}
+
+
+def _reaches(fn, needles, depth=2, _seen=None):
+    """Whether fn's source, or a module-level helper it calls (to `depth`),
+    contains one of `needles`."""
+    import inspect
+    import re
+    import sys
+    _seen = _seen or set()
+    if fn in _seen:
+        return False
+    _seen.add(fn)
+    try:
+        src = inspect.getsource(fn)
+    except (OSError, TypeError):
+        return False
+    if any(n in src for n in needles):
+        return True
+    if depth == 0:
+        return False
+    mod = sys.modules.get(getattr(fn, "__module__", ""), None)
+    for name in set(re.findall(r"\b(_[A-Za-z0-9_]+)\(", src)):
+        helper = getattr(mod, name, None)
+        if callable(helper) and _reaches(helper, needles, depth - 1, _seen):
+            return True
+    return False
+
+
+def _routes(app):
+    for r in app.routes:
+        ep, path = getattr(r, "endpoint", None), getattr(r, "path", "")
+        for m in sorted((getattr(r, "methods", None) or set()) - {"HEAD", "OPTIONS"}):
+            yield m, path, ep
+
+
+IDENTITY_MODULES = {"api.routes_principals", "api.routes_identity_config"}
+IDENTITY_ROUTES = {("PUT", "/v1/tenant/me/identity/policy"),
+                   ("PUT", "/v1/tenant/me/mcp/servers/{route}/identity")}
+
+
+def test_every_identity_write_route_passes_the_write_gate():
+    """A new route that changes who is a verified caller, or what roles one has,
+    must go through require_registry_write. Enumerates the live route tables, so
+    a route added to either app is checked."""
+    seen, ungated = set(), []
+    for plane, app in _apps().items():
+        for m, path, ep in _routes(app):
+            if m not in ("POST", "PUT", "PATCH", "DELETE"):
+                continue
+            if ep.__module__ not in IDENTITY_MODULES and (m, path) not in IDENTITY_ROUTES:
+                continue
+            seen.add((m, path))
+            if not _reaches(ep, ("require_registry_write(",)):
+                ungated.append((plane, m, path))
+    assert len(seen) >= 13, sorted(seen)
+    assert not ungated, f"identity write route(s) without the write gate: {ungated}"

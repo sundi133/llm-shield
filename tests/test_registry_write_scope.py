@@ -330,7 +330,10 @@ def test_no_ungated_write_route_has_appeared():
     when a new write route appears in a module that can reach the registry.
     """
     import core.app as ca
-    app = ca.create_app() if hasattr(ca, "create_app") else ca.app
+    import admin_app
+    # Both planes: the admin plane mounts writers the data plane does not
+    # (docs/specs/principals-and-template-authz.md found three such routes).
+    apps = [ca.create_app() if hasattr(ca, "create_app") else ca.app, admin_app.app]
 
     known = {
         ("POST", "/v1/agents/registry"),
@@ -346,7 +349,7 @@ def test_no_ungated_write_route_has_appeared():
 
     import inspect
     found = set()
-    for r in app.routes:
+    for r in (r for app in apps for r in app.routes):
         ep = getattr(r, "endpoint", None)
         if not ep or ep.__module__ not in writers:
             continue

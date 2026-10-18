@@ -152,6 +152,10 @@ async def put_role_binding(body: RoleBindingConfigRequest, request: Request):
     without restating the role map.
     """
     tenant_id = _tenant_id(request)
+    # Which IdP groups become which roles decides every signed-in caller's
+    # role (docs/specs/principals-and-template-authz.md, gap 1).
+    from core.auth import require_registry_write
+    require_registry_write(request, tenant_id, action="change role binding")
     _validate(body)
 
     import time

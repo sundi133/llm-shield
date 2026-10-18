@@ -794,6 +794,10 @@ async def set_server_identity(route: str, body: IdentitySettingRequest, request:
     Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (A4)
     """
     tenant_id = _require_tenant(request)
+    # Switching a server off "verified callers only" is as good as minting a
+    # verified caller (docs/specs/principals-and-template-authz.md, gap 1).
+    from core.auth import require_registry_write
+    require_registry_write(request, tenant_id, action="change who must be a verified caller")
     cfg = get_upstream(tenant_id, route)
     if not cfg:
         raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
