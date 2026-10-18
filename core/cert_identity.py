@@ -1,6 +1,6 @@
 """Certificate-based agent identity: one verifier for forwarded client certificates.
 
-Spec: docs/specs/agent-cert-identity.md (tasks 2 to 5).
+Spec: docs/specs/agent-cert-identity.md (tasks 1 to 5).
 
 A proxy (Envoy, nginx, a cloud load balancer) performs the TLS handshake in
 which the agent proves it holds a private key, and forwards the certificate.
@@ -11,9 +11,12 @@ This module decides which registered agent that certificate is, if any:
    not revoked by an uploaded **CRL**, mapped to an agent by a **rule** that
    matches the certificate's SAN URI, SAN DNS name or subject CN.
 
-It never decides whether to trust the header that carried the certificate:
-that is the trusted-proxy boundary (core/proxy_trust.py), checked by the
-middleware that calls in here.
+Whether to trust the header that carried the certificate at all is one
+function, cert_headers_trusted(), which every middleware that reads a
+certificate header calls: the trusted-proxy boundary (core/proxy_trust.py),
+or the temporary escape hatch SHIELD_CERT_IDENTITY_TRUST_HEADER. And
+request_trust() is the one place trust_level and identity_method are decided
+from what a request proved (task 1).
 
 Storage (all tenant-scoped by key name):
   cert_anchors:{tenant}   [{id, name, pem, fingerprint, subject, not_after, added_by, added_at}]
@@ -762,8 +765,9 @@ def requirement(tenant_id: str, agent_key: str) -> str:
 
 def verified_cert_agent(request: Any) -> str:
     """The agent a proxy-verified certificate identifies on this request, or ''.
-    Only counted with the trusted-proxy boundary on: without it the middleware
-    still sets mtls_identity (with a warning) from a header anyone can send."""
+    Only counted with the trusted-proxy boundary on: with the escape hatch the
+    middleware sets mtls_identity from a header anyone can send, and that must
+    never satisfy identity.require."""
     from core.proxy_trust import trusted_proxy_only
     if not trusted_proxy_only():
         return ""
@@ -820,3 +824,117 @@ def enforce_requirement(request: Any, tenant_id: str, agent_key: str, where: str
         except Exception:
             pass
     return reason
+
+
+# ── the trust boundary and trust levels (task 1) ─────────────────────
+
+TRUST_HEADER_ENV = "SHIELD_CERT_IDENTITY_TRUST_HEADER"
+_warned: set[str] = set()
+
+
+def _warn_once(key: str, message: str, *args) -> None:
+    if key not in _warned:
+        _warned.add(key)
+        logger.warning(message, *args)
+
+
+def trust_header_escape_hatch() -> bool:
+    """SHIELD_CERT_IDENTITY_TRUST_HEADER: the old, spoofable behavior, for
+    tenants migrating to proxy mTLS or DPoP-bound tokens. Temporary."""
+    import os
+    return os.environ.get(TRUST_HEADER_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def cert_headers_trusted(request: Any, *, any_peer_path: bool = False) -> bool:
+    """Whether certificate headers on this request may identify anyone.
+
+    A certificate (or its fingerprint) is public, so a header carrying one is
+    proof of nothing unless the proxy that performed the TLS handshake sent it.
+    With the trusted-proxy boundary on, only that proxy's requests count. With
+    it off, certificate headers are ignored, unless the escape hatch is on.
+
+    any_peer_path: the guard path's X-Client-Cert-Fingerprint, which never had
+    a boundary. The escape hatch restores exactly that: any peer, on that path.
+    """
+    from core.proxy_trust import peer_is_trusted, trusted_proxy_only
+    hatch = trust_header_escape_hatch()
+    if hatch:
+        _warn_once("hatch", "%s is on: client certificate headers identify agents "
+                   "without proof that the sender holds the key, so identity is "
+                   "spoofable. Move to proxy mTLS or DPoP-bound agent tokens and "
+                   "turn it off.", TRUST_HEADER_ENV)
+    if trusted_proxy_only():
+        try:
+            if peer_is_trusted(request):
+                return True
+        except Exception:
+            return False
+        return hatch and any_peer_path
+    if hatch:
+        return True
+    _warn_once("ignored", "a client certificate header was ignored: set "
+               "SHIELD_TRUSTED_PROXY_ONLY=true and SHIELD_TRUSTED_PROXY_SECRET on "
+               "Shield, and have the proxy that terminates mTLS send the secret. "
+               "See docs/agent-cert-identity-runbook.md.")
+    return False
+
+
+def _verified_by(found: dict) -> str:
+    return "pinned" if found.get("method") == "pinned" else f"anchor:{found.get('anchor_id')}"
+
+
+def request_trust(request: Any, agent_key: Optional[str], *, tenant_id: str = "",
+                  cert_fingerprint: Optional[str] = None,
+                  adopt_verified_agent: bool = True) -> dict:
+    """What this request proved about the agent it acts as.
+
+    {agent_key, trust_level, identity_method, verified_by}, in this order:
+
+    1. a certificate verified through the trusted proxy: the guard path's
+       fingerprint header (cert_fingerprint, when that feature is on), then the
+       mTLS middleware's identity. "high". The certificate's agent replaces a
+       self-asserted X-Agent-Key unless adopt_verified_agent is False, in which
+       case it counts only when it is the claimed agent.
+    2. a verified agent token for the claimed agent: "high" when its DPoP proof
+       verified, "medium" when it is a bearer token.
+    3. a self-asserted agent key, "medium"; nothing, "low".
+
+    Never "high" from anything a caller can send without holding a key.
+    """
+    state = getattr(request, "state", None)
+    claimed = agent_key or None
+
+    def verified(agent: str, method: str, by: str) -> Optional[dict]:
+        if not agent:
+            return None
+        if claimed and agent != claimed and not adopt_verified_agent:
+            return None
+        return {"agent_key": agent if adopt_verified_agent else claimed,
+                "trust_level": "high", "identity_method": method, "verified_by": by}
+
+    if cert_fingerprint and tenant_id and cert_headers_trusted(request, any_peer_path=True):
+        found = None
+        try:
+            found = verify_fingerprint(tenant_id, cert_fingerprint)
+        except Exception:
+            logger.debug("fingerprint lookup failed", exc_info=True)
+        if found:
+            hit = verified(found["agent_key"], "cert", _verified_by(found))
+            if hit:
+                return hit
+
+    mtls = getattr(state, "mtls_identity", None)
+    if isinstance(mtls, dict) and mtls.get("agent_key"):
+        hit = verified(mtls["agent_key"], "mtls", mtls.get("verified_by") or "pinned")
+        if hit:
+            return hit
+
+    ident = getattr(state, "identity", None)
+    if (claimed and ident is not None and getattr(ident, "identity_method", "") == "agent_token"
+            and getattr(ident, "agent_id", "") == claimed):
+        pop = bool(getattr(ident, "pop_verified", False))
+        return {"agent_key": claimed, "trust_level": "high" if pop else "medium",
+                "identity_method": "agent_token", "verified_by": "dpop" if pop else "bearer"}
+
+    return {"agent_key": claimed, "trust_level": "medium" if claimed else "low",
+            "identity_method": "string_key" if claimed else "anonymous", "verified_by": None}

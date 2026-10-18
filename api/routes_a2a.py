@@ -395,6 +395,35 @@ def _a2a_auth_agent(request: Request) -> str:
     ).strip()
 
 
+def _a2a_trust(request: Request, agent_key: str) -> dict:
+    """trust_level / identity_method / verified_by for the cert_identity guard.
+
+    /a2a/* is outside ShieldMiddleware, so nothing set request.state.trust_level
+    and the guard fell back to the registry's agent-level "high" for any agent
+    with a registered certificate, which naming the agent in X-Agent-Key was
+    enough to get. Never empty now: the same precedence as the guard path,
+    without letting a certificate replace the agent this request already
+    claimed (docs/specs/agent-cert-identity.md, task 1). The escape hatch
+    SHIELD_CERT_IDENTITY_TRUST_HEADER restores the fallback.
+    """
+    state = getattr(request, "state", None)
+    if getattr(state, "trust_level", None):
+        return {"trust_level": state.trust_level,
+                "identity_method": getattr(state, "identity_method", None),
+                "verified_by": getattr(state, "identity_verified_by", None)}
+    try:
+        from core.cert_identity import request_trust, trust_header_escape_hatch
+    except ImportError:
+        return {"trust_level": "medium" if agent_key else "low",
+                "identity_method": "string_key" if agent_key else "anonymous",
+                "verified_by": None}
+    if trust_header_escape_hatch():
+        return {"trust_level": None, "identity_method": None, "verified_by": None}
+    t = request_trust(request, agent_key, adopt_verified_agent=False)
+    return {"trust_level": t["trust_level"], "identity_method": t["identity_method"],
+            "verified_by": t["verified_by"]}
+
+
 async def _run_a2a_authz(
     request: Request, tenant_id: str, params: dict, session_id: str
 ) -> dict:
@@ -447,8 +476,7 @@ async def _run_a2a_authz(
         "user_role": metadata.get("user_role", "") or "",
         "session_id": session_id,
         "tenant_id": tenant_id,
-        "trust_level": getattr(getattr(request, "state", None), "trust_level", None),
-        "identity_method": getattr(getattr(request, "state", None), "identity_method", None),
+        **_a2a_trust(request, effective_agent),
     }
 
     results: list[dict] = []
