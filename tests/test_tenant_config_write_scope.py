@@ -394,3 +394,90 @@ def test_the_global_mcp_registry_is_admin_only(planes):
                                headers={"X-API-Key": ADMIN_SCOPED}).status_code == 403
     assert planes["data"].post("/v1/shield/mcp/register", json=body,
                                headers={"X-Admin-Key": ROOT}).status_code == 200
+
+
+# ── task 4: every write route is classified ──────────────────────────
+#
+# Each POST/PUT/PATCH/DELETE on either app (outside /v1/admin, which has its
+# own guard) must reach an authorization gate, or be listed here with the
+# reason a runtime key must be able to call it. A new route fails this test
+# until someone decides which it is.
+
+GATES = ("require_registry_write(", "require_config_write(", "require_admin_caller(",
+         "require_admin_scope(", "require_admin_root_or_operator(", "authorized_tenant_scope(",
+         "_decider(", "_authorize_global_write(")
+
+OPEN_BY_DESIGN = {
+    "guard and decision checks (what an agent calls to be guarded)": {
+        ("POST", "/guardrails/input"), ("POST", "/guardrails/output"), ("POST", "/guardrails/file"),
+        ("POST", "/v1/shield/tool/check"), ("POST", "/v1/shield/tool/output"), ("POST", "/v1/shield/tool/confirm"),
+        ("POST", "/v1/shield/action/check"), ("POST", "/v1/shield/agent/check"), ("POST", "/v1/shield/agent/budget"),
+        ("POST", "/v1/shield/agent/goal"), ("POST", "/v1/shield/topic/check"), ("POST", "/v1/shield/memory/check"),
+        ("POST", "/v1/shield/memory/cleanup"), ("POST", "/v1/shield/embodied/check"), ("POST", "/v1/shield/mcp/check"),
+        ("POST", "/v1/shield/runtime/check"), ("POST", "/v1/shield/runtime/ext-authz/{path:path}"),
+        ("PUT", "/v1/shield/runtime/ext-authz/{path:path}"), ("PATCH", "/v1/shield/runtime/ext-authz/{path:path}"),
+        ("DELETE", "/v1/shield/runtime/ext-authz/{path:path}"), ("POST", "/v1/shield/hooks/claude-code"),
+        ("POST", "/v1/shield/hooks/codex"), ("POST", "/beta/litellm_basic_guardrail_api"),
+        ("POST", "/v1/agents/authorize"), ("POST", "/api/rbac/test-tool"),
+    },
+    "guarded traffic (chat, MCP, A2A)": {
+        ("POST", "/v1/shield/chat/completions"), ("POST", "/v1/chat/completions"), ("POST", "/v1/shield/chat/agent"),
+        ("POST", "/a2a/tasks/send"), ("POST", "/a2a/tasks/{task_id}/cancel"), ("POST", "/mcp/message"),
+        ("POST", "/mcp/sse/{session_id}/message"), ("POST", "/gateway/{route}/mcp"),
+        ("POST", "/gateway/t/{tenant}/{route}/mcp"), ("POST", "/v1/openapi/call"),
+    },
+    "credentials an agent obtains, and admin-gated in the handler": {
+        ("POST", "/v1/shield/cap/mint"), ("POST", "/v1/shield/cap/verify"), ("POST", "/v1/shield/auth/agent-token"),
+        ("POST", "/v1/tenant/me/agent-auth/agent-token"), ("POST", "/v1/shield/auth/revoke"),
+        ("POST", "/v1/shield/breakglass"),
+    },
+    "sign-in, OAuth and device enrollment flows": {
+        ("POST", "/oauth/token"), ("POST", "/oauth/revoke"), ("POST", "/oauth/register"), ("POST", "/oauth/consent"),
+        ("POST", "/connect/{tenant_id}/{route}/start"), ("POST", "/connect/{tenant_id}/{route}/disconnect"),
+        ("POST", "/v1/tenant/auth/logout"), ("POST", "/verify-captcha"), ("POST", "/v1/devices/enroll"),
+        ("POST", "/v1/devices/heartbeat"), ("POST", "/v1/devices/ca"),
+    },
+    "telemetry the agent or its runtime reports": {
+        ("POST", "/v1/tenant/me/audit"), ("POST", "/v1/tenant/me/siem/ingest"), ("POST", "/v1/shield/ssf/events"),
+        ("POST", "/v1/shield/runtime/events"), ("POST", "/v1/tenant/me/agentic/circuit-breakers/report"),
+        ("POST", "/v1/tenant/me/agentic/checkpoints"), ("POST", "/v1/tenant/me/aibom/ingest"),
+        ("POST", "/v1/tenant/me/aibom/snapshots"), ("POST", "/v1/shield/exceptions"),
+    },
+    "validators, simulators and generators (change nothing)": {
+        ("POST", "/v1/tenant/me/custom-policies/validate-prompt"), ("POST", "/v1/tenant/me/custom-policies/validate-sigma"),
+        ("POST", "/v1/tenant/me/policies/custom/validate"), ("POST", "/v1/tenant/me/policies/custom/validate-sigma"),
+        ("POST", "/v1/data-policies/exact-match/hash"), ("POST", "/v1/data-policies/preview-sanitization"),
+        ("POST", "/v1/data-policies/try"), ("POST", "/v1/data-policies/validate"),
+        ("POST", "/v1/tenant/me/dlp-policy/validate"), ("POST", "/v1/tenant/me/embodied-profiles/validate"),
+        ("POST", "/v1/tenant/me/embodied-profiles/{name}/simulate"), ("POST", "/v1/tenant/me/flow-control/simulate"),
+        ("POST", "/v1/tenant/me/flow-control/validate"), ("POST", "/v1/tenant/me/runtime-profiles/validate"),
+        ("POST", "/v1/tenant/me/agent-identity/test"), ("POST", "/v1/shield/policies/test"),
+        ("POST", "/v1/tenant/me/siem/test"), ("POST", "/v1/openapi/generate"),
+        ("POST", "/v1/tenant/me/compliance/evidence-pack"), ("POST", "/v1/tenant/me/hooks/claude-code/kit"),
+    },
+    "local tools with their own checks": {
+        ("POST", "/playground/llm-proxy"), ("POST", "/playground/proxy/{path:path}"),
+        ("POST", "/v1/agents/seed-test-data"),   # refused in production and under enforce
+    },
+}
+
+
+def test_every_write_route_is_gated_or_open_by_design():
+    from tests.test_principals_template_authz import _apps, _reaches, _routes
+    allowed = set().union(*OPEN_BY_DESIGN.values())
+    seen, unclassified = set(), []
+    for plane, app in _apps().items():
+        for m, path, ep in _routes(app):
+            if m not in ("POST", "PUT", "PATCH", "DELETE") or path.startswith("/v1/admin/"):
+                continue
+            seen.add((m, path))
+            if (m, path) in allowed or _reaches(ep, GATES):
+                continue
+            unclassified.append((plane, m, path, ep.__module__))
+    assert len(seen) > 150, len(seen)                  # the walk saw the real tables
+    assert not unclassified, (
+        "write route(s) with no authorization gate and no reason to be open: "
+        f"{sorted(set(unclassified))}. Gate them (require_config_write, ...) or add them to "
+        "OPEN_BY_DESIGN with the reason.")
+    stale = allowed - seen
+    assert not stale, f"OPEN_BY_DESIGN lists routes that no longer exist: {sorted(stale)}"

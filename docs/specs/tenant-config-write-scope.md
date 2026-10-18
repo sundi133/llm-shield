@@ -8,7 +8,7 @@ description: Runtime keys can still change a tenant's security configuration und
 
 # Spec: authorization for tenant configuration, path-tenant routes and human approvals
 
-> Status: **DRAFT, awaiting approval.** Branch `spec/tenant-config-write-scope`.
+> Status: **APPROVED and BUILT 2026-10-18** (all four tasks). Branch `spec/tenant-config-write-scope`.
 > The follow-up named in `docs/specs/principals-and-template-authz.md` (PR #501).
 > Related: `docs/spec-registry-write-authorization.md` (the write gate),
 > `docs/specs/killswitch-tenant-scope.md` (`authorized_tenant_scope`).
@@ -275,3 +275,39 @@ images.
 3. **D**: `require_config_write` and `SHIELD_CONFIG_WRITE_SCOPE`; the 74
    routes; test 4.
 4. **Guards**: the route-table classification test (test 5).
+
+
+## As built
+
+- **`core.auth.admin_caller`** recognizes an admin on any route: the
+  `/v1/admin` gate's identity, an SSO operator, the root key or a **managed
+  admin credential** (held to its scope through `require_admin_scope`), an
+  admin workload identity, a global master key. Managed credentials were not
+  named in section 4; without this they would have lost access to the
+  path-tenant routes they could reach before.
+- **B has no escape hatch.** A hatch that still requires a credential would
+  change nothing: every legitimate caller of these routes sends a key the
+  check recognizes. One existing test asserted the bug ("no key is a master
+  key") and now asserts the opposite.
+- **C.** Approval rules do not name approvers, so section 4.3 item 3 had
+  nothing to check against. Added instead, as part of the same finding: an
+  approver counts once (a two-approval rule needs two people), and each
+  approval records how its approver was established, so the signed grant
+  names it per approver (it used the last approver's method for all).
+- **D.** 72 handlers call `require_config_write`. `POST /v1/shield/mcp/register`
+  writes a process-wide registry with no tenant, so it is admin only (as A),
+  not tenant-gated. `POST /v1/openapi/generate` only returns generated source;
+  it is listed as a generator and stays open. Admin callers are above both
+  write gates. The registry and config gates share `_require_scoped_write`.
+- **Tests.** `tests/test_tenant_config_write_scope.py` (86). End to end, D is
+  exercised on one body-less write per group of section 4.4 (FastAPI rejects
+  a bad body before any handler runs, so a body-less request is what shows the
+  gate) plus one write with a body; every route is covered structurally by
+  the task 4 guard, which fails if any write route on either app is neither
+  gated nor listed in `OPEN_BY_DESIGN` with a reason, and if the list names a
+  route that no longer exists. On the previous code: 16 of the A/B tests fail,
+  12 of the C tests, 38 of the D tests.
+- **Existing tests** that relied on the old behavior now act as an operator
+  (path-tenant routes) or use a separate admin-scoped approver key
+  (approvals). The agent identity POC's local key is admin-scoped; the drone
+  example approves with an admin-scoped key.
