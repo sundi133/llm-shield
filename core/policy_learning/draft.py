@@ -196,7 +196,7 @@ def build(tenant_id: str, agent: str, *, window_days: int = 14, created_by: str 
         item = add({"id": f"tool:{tool}", "kind": "tool", "value": tool,
                     "roles": [x for x in roles if x], "risk": r, "status": "pending",
                     "evidence": {"observed": t["count"], "from_purpose": False,
-                                 "reason": f"called {t['count']} times; risk {r}: {why}"}})
+                                 "reason": f"risk {r}: {why}"}})
         if r == "high" and t["count"] < 3:
             qid = _qid("rare_high", tool)
             ask(qid, f"{tool} is high risk ({why}) and was called only {t['count']} time(s). "
@@ -231,7 +231,7 @@ def build(tenant_id: str, agent: str, *, window_days: int = 14, created_by: str 
         add({"id": f"tool:{tool}", "kind": "tool", "value": tool, "roles": [], "risk": r,
              "status": "pending",
              "evidence": {"observed": 0, "from_purpose": True,
-                          "reason": f"not seen; the purpose implies it ({m.get('reason', '')}); risk {r}: {why}"}})
+                          "reason": f"risk {r}: {why}", "purpose_reason": m.get("reason", "")}})
         if r == "high" and tool not in ctx["approval_tools"]:
             add({"id": f"approval:{tool}", "kind": "approval",
                  "value": {"tool": tool, "min_approvals": 2 if is_money(tool) else 1},
@@ -348,3 +348,73 @@ def simulate(draft: dict, obs: list[dict]) -> dict:
             rows.append({"tool": e["tool"], "role": e["role"], "calls": n, "verdict": verdict})
         return {"totals": totals, "rows": rows}
     return {"accepted": view(("accepted",)), "proposed": view(("accepted", "pending"))}
+
+
+# ── apply (task 3) ───────────────────────────────────────────────────
+
+
+def accepted(draft: dict, kind: str) -> list[dict]:
+    return [i for i in draft.get("items") or [] if i["kind"] == kind and i["status"] == "accepted"]
+
+
+def applied_record(record: dict, draft: dict) -> dict:
+    """The registry entry with the draft's accepted lines applied. Never adds a
+    tool, role or resource that is not an accepted line, and never empties
+    role_permissions (an empty map falls back to the global RBAC config,
+    which would widen access rather than narrow it)."""
+    new = dict(record)
+    tools = accepted(draft, "tool")
+    names = sorted({i["value"] for i in tools})
+    new["tools"] = names
+    by_role: dict[str, set] = {}
+    for i in tools:
+        for role in i.get("roles") or []:
+            by_role.setdefault(role, set()).add(i["value"])
+    if by_role:
+        new["role_permissions"] = {r: sorted(t) for r, t in sorted(by_role.items())}
+    else:
+        allowed = set(names)
+        new["role_permissions"] = {r: [t for t in (ts or []) if t in allowed]
+                                   for r, ts in (record.get("role_permissions") or {}).items()}
+    resources = [i["value"] for i in accepted(draft, "resource")]
+    if resources:
+        new["allowed_resources"] = sorted(set(resources))
+        new["require_resource_scope"] = True
+    ident = accepted(draft, "identity")
+    if ident:
+        new["identity"] = {**(record.get("identity") or {}), "require": ident[0]["value"]}
+    return new
+
+
+def approval_rules_to_add(tenant_id: str, agent: str, draft: dict) -> list[dict]:
+    """Rules for accepted approval lines that no existing rule already covers.
+    Appended, never replacing a rule."""
+    ctx = tenant_context(tenant_id, agent)
+    out = []
+    for i in accepted(draft, "approval"):
+        tool = i["value"]["tool"]
+        if tool in ctx["approval_tools"]:
+            continue
+        out.append({"rule_id": f"pfp_{agent}_{tool}"[:120], "tool_names": [tool], "agent_keys": [agent],
+                    "min_approvals": int(i["value"].get("min_approvals") or 1),
+                    "source": "policy_from_purpose", "draft_id": draft["id"]})
+    return out
+
+
+def suggestions(draft: dict, obs: list[dict]) -> list[dict]:
+    """After apply: calls seen since, outside what was applied."""
+    applied = draft.get("applied") or {}
+    if not applied:
+        return []
+    tools = set(applied.get("tools") or [])
+    roles = {r: set(ts) for r, ts in (applied.get("role_permissions") or {}).items()}
+    out = []
+    for e in obs:
+        if int(e.get("last_seen") or 0) <= int(applied.get("at") or 0):
+            continue
+        outside = e["tool"] not in tools or (roles and e["role"] and e["tool"] not in roles.get(e["role"], set()))
+        if outside:
+            out.append({"id": f"suggest:{e['tool']}|{e['role']}", "tool": e["tool"], "role": e["role"],
+                        "calls": int(e.get("count") or 0), "outcomes": e.get("outcomes") or {},
+                        "last_seen": e.get("last_seen")})
+    return out

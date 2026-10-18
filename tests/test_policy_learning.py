@@ -502,3 +502,141 @@ def test_answers_rebuild_without_asking_the_model_again(client, model):
     assert r.status_code == 200 and len(model.calls) == n
     it = items(r.json())
     assert "tool:issue_credit_note" in it and "approval:issue_credit_note" in it
+
+
+# ── task 3: review and apply ─────────────────────────────────────────
+
+
+def accept(client, d, *ids):
+    for iid in ids:
+        r = client.put(f"/v1/tenant/me/agents/{AGENT}/policy/draft/items/{iid}", json={"status": "accepted"})
+        assert r.status_code == 200, r.text
+
+
+def reject(client, iid):
+    assert client.put(f"/v1/tenant/me/agents/{AGENT}/policy/draft/items/{iid}",
+                      json={"status": "rejected"}).status_code == 200
+
+
+def a_draft(client):
+    seen("lookup_invoice", n=5, resource="invoice/55501")
+    seen("lookup_invoice", role="manager", n=2, resource="invoice/55502")
+    seen("refund_payment", n=4, resource="order/88123")
+    observe.flush()
+    return client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft", json={"use_model": False}).json()
+
+
+@pytest.fixture
+def audit(monkeypatch):
+    rows = []
+    import storage.admin_audit as aa
+    monkeypatch.setattr(aa, "log_admin_action", lambda **k: rows.append(k))
+    return rows
+
+
+def test_apply_writes_exactly_the_accepted_lines(client, store, audit):
+    from storage.agentic_control_plane import get_control_plane_config, set_control_plane_config
+    cfg = get_control_plane_config(T)
+    cfg["approvals"]["rules"] = [{"rule_id": "existing", "tool_names": ["wire_money"]}]
+    set_control_plane_config(T, cfg)
+    d = a_draft(client)
+    accept(client, d, "tool:lookup_invoice", "tool:refund_payment", "approval:refund_payment",
+           "resource:invoice/*", "identity")
+    reject(client, "resource:order/*")
+    r = client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft/apply")
+    assert r.status_code == 200, r.text
+    agent = store.kv_get(f"agents:{T}")[AGENT]
+    assert agent["tools"] == ["lookup_invoice", "refund_payment"]          # delete_account removed
+    assert agent["role_permissions"] == {"manager": ["lookup_invoice"],
+                                         "support": ["lookup_invoice", "refund_payment"]}
+    assert agent["allowed_resources"] == ["invoice/*"] and agent["require_resource_scope"] is True
+    assert agent["identity"]["require"] == "token"
+    rules = get_control_plane_config(T)["approvals"]["rules"]
+    assert [x["rule_id"] for x in rules] == ["existing", f"pfp_{AGENT}_refund_payment"]   # appended
+    assert rules[1]["min_approvals"] == 2 and rules[1]["agent_keys"] == [AGENT]
+    [row] = [x for x in audit if x["action"] == "agent_policy_applied"]
+    assert row["before"]["tools"] == ["lookup_invoice", "refund_payment", "delete_account"]
+    assert row["after"]["tools"] == ["lookup_invoice", "refund_payment"]
+
+
+def test_apply_never_empties_role_permissions(client, store):
+    store.kv_set(f"agents:{T}", {AGENT: {"agent_id": AGENT, "updated_at": 100, "description": "billing",
+                                          "tools": ["lookup_invoice", "refund_payment"],
+                                          "role_permissions": {"support": ["lookup_invoice", "refund_payment"]}}})
+    seen("lookup_invoice", role="", n=3)
+    observe.flush()
+    client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft", json={"use_model": False})
+    accept(client, None, "tool:lookup_invoice")
+    assert client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft/apply").status_code == 200
+    agent = store.kv_get(f"agents:{T}")[AGENT]
+    assert agent["role_permissions"] == {"support": ["lookup_invoice"]}      # narrowed, not emptied
+
+
+def test_apply_refuses_a_stale_draft_an_empty_one_and_a_runtime_key(client, store, monkeypatch):
+    a_draft(client)
+    r = client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft/apply")
+    assert r.status_code == 409 and r.json()["detail"]["error"] == "nothing_accepted"
+    accept(client, None, "tool:lookup_invoice")
+    agents = store.kv_get(f"agents:{T}")
+    agents[AGENT]["updated_at"] = 999
+    store.kv_set(f"agents:{T}", agents)
+    r = client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft/apply")
+    assert r.status_code == 409 and r.json()["detail"]["error"] == "agent_changed"
+    client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft", json={"use_model": False})
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    monkeypatch.setattr("core.auth.caller_key_scope", lambda r: ("runtime", True))
+    assert client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft/apply").status_code == 403
+    assert store.kv_get(f"agents:{T}")[AGENT]["tools"] == ["lookup_invoice", "refund_payment", "delete_account"]
+    monkeypatch.setattr("core.auth.caller_key_scope", lambda r: ("admin", True))
+    assert client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft/apply").status_code == 200
+
+
+def test_accept_low_risk_takes_only_observed_low_risk_lines(client, model):
+    seen("lookup_invoice", n=3)
+    seen("refund_payment", n=4)
+    model.answer = {"tools": [{"tool": "issue_credit_note", "needed": "yes", "reason": "refunds"}]}
+    observe.flush()
+    client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft", json={"use_model": True})
+    r = client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft/accept-low-risk").json()
+    assert "tool:lookup_invoice" in r["accepted"]
+    assert "tool:refund_payment" not in r["accepted"]            # high risk
+    assert "tool:issue_credit_note" not in r["accepted"]         # implied by purpose only
+
+
+def test_a_stale_line_cannot_be_accepted(client):
+    d = a_draft(client)
+    saved = drafts.load(T, AGENT)
+    saved["items"].append({"id": "tool:old_tool", "kind": "tool", "value": "old_tool", "roles": [],
+                           "risk": "low", "status": "stale", "evidence": {"observed": 1}})
+    drafts.save(T, AGENT, saved)
+    r = client.put(f"/v1/tenant/me/agents/{AGENT}/policy/draft/items/tool:old_tool", json={"status": "accepted"})
+    assert r.status_code == 409
+    assert client.put(f"/v1/tenant/me/agents/{AGENT}/policy/draft/items/nope",
+                      json={"status": "accepted"}).status_code == 404
+    assert d["id"]
+
+
+def test_suggestions_after_apply(client):
+    a_draft(client)
+    accept(client, None, "tool:lookup_invoice")
+    assert client.post(f"/v1/tenant/me/agents/{AGENT}/policy/draft/apply").status_code == 200
+    assert client.get(f"/v1/tenant/me/agents/{AGENT}/policy/suggestions").json()["suggestions"] == []
+    time.sleep(1.1)
+    seen("send_marketing_email", n=2)
+    observe.flush()
+    s = client.get(f"/v1/tenant/me/agents/{AGENT}/policy/suggestions").json()["suggestions"]
+    assert [(x["tool"], x["calls"]) for x in s] == [("send_marketing_email", 2)]
+
+
+def test_the_portal_escapes_everything_it_shows():
+    import os
+    import re
+    html = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "static", "tenant.html")).read()
+    start = html.index("// ── Suggested policy (docs/specs/policy-from-purpose.md)")
+    block = html[start:html.index("function showToast(message, type = 'info') {")]
+    for raw in ("${q.text}", "${o}", "${i.id}", "${value}", "${ev.reason", "${model.error}", "${s.tool}",
+                "${e.message}", "${model.name}"):
+        assert raw not in block, f"unescaped {raw} in the Suggested policy panel"
+    assert re.search(r'data-agent="\$\{pfpEsc\(agentId\)\}"', html)
+    assert "pfpOpen(this.dataset.agent)" in html

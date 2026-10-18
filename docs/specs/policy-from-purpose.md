@@ -8,7 +8,7 @@ description: Draft a least-privilege policy for an agent from what it is for and
 
 # Spec: policy from purpose
 
-> Status: **DRAFT, awaiting approval.** Branch `spec/policy-from-purpose`.
+> Status: **APPROVED and BUILT 2026-10-18** (all three tasks). Branch `spec/policy-from-purpose`.
 > Related: `core/runtime_policy/advisor.py` and `docs/specs/runtime-live-policy.md`
 > (the same pattern for sandbox network rules), `docs/spec-registry-write-authorization.md`
 > (who may apply), `docs/specs/tool-registry-scale.md` (the tool catalog).
@@ -234,3 +234,40 @@ can be reverted by hand.
 2. **Purpose.** The model step and questions with answers; tests 3, 4.
 3. **Review and apply.** Item decisions, apply, suggestions after apply, the
    portal tab; tests 6 to 9.
+
+
+## As built
+
+- **Observation hooks.** `/v1/shield/tool/check` records in its `finally`
+  block (every decision after setup); `/v1/shield/cap/mint` through a thin
+  wrapper that notes allowed, held (`approval_required`) or blocked (other
+  403s) and re-raises; the MCP gateway in `_audit_decision`, before the
+  audit on/off check, so learning works with the MCP audit off. The role at
+  `cap/mint` comes from `resolve_identity` (the repo's identity seam), not
+  the header. Resource shapes are computed when recorded, so no identifier
+  is ever stored, not even in the buffer.
+- **Identity proposal** uses what was recorded per call: `agent_token`,
+  `agent_token_dpop`, `cert` or `mtls` (from the guard path's
+  `identity_method`).
+- **Routes.** As section 4.1, except the bulk accept is
+  `POST .../draft/accept-low-risk`. `PUT .../draft/items/{item_id}` takes the
+  line id as a path (ids contain `/`).
+- **Apply** refuses a draft with no accepted tool line (409
+  `nothing_accepted`): applying an empty list would remove every tool. It
+  never empties `role_permissions`: an empty map makes the RBAC guard fall
+  back to the global config, which would widen access. With no role
+  information it narrows the existing roles to the accepted tools.
+- **The purpose step** stores its validated output in the draft
+  (`model_output`), so answering a question rebuilds without calling the
+  model again. A used tool the model says is not needed becomes a question
+  (`purpose_no:{tool}`).
+- **Portal.** A "Suggested policy" button on each agent card opens a panel:
+  questions, then lines by kind with risk, evidence and Accept / Reject,
+  "Accept low-risk lines that were seen", "Replay recent calls", Rebuild and
+  Apply (press twice). Every value is escaped (a test checks the panel's
+  source); the agent id reaches the panel through a `data-` attribute.
+- **Tests.** `tests/test_policy_learning.py` (53), including a recording
+  benchmark under 0.05 ms per call and a description that tries to inject
+  instructions. Simulate is listed as open by design in the route
+  classification test; every other new write route reaches
+  `require_config_write`.

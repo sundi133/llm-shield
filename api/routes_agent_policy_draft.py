@@ -10,6 +10,10 @@ gate.
     GET  /v1/tenant/me/agents/{agent_id}/policy/draft
     PUT  /v1/tenant/me/agents/{agent_id}/policy/draft/answers   {answers: {question_id: option}}
     POST /v1/tenant/me/agents/{agent_id}/policy/draft/simulate
+    PUT  /v1/tenant/me/agents/{agent_id}/policy/draft/items/{item_id}   {status: accepted | rejected}
+    POST /v1/tenant/me/agents/{agent_id}/policy/draft/accept-low-risk
+    POST /v1/tenant/me/agents/{agent_id}/policy/draft/apply
+    GET  /v1/tenant/me/agents/{agent_id}/policy/suggestions
 """
 
 from __future__ import annotations
@@ -24,6 +28,10 @@ from core.policy_learning import draft as drafts
 from core.policy_learning import observe
 
 router = APIRouter(prefix="/v1/tenant/me/agents/{agent_id}/policy", tags=["agent-policy-draft"])
+
+
+class ItemDecision(BaseModel):
+    status: str = Field(..., pattern="^(accepted|rejected)$")
 
 
 class AnswersRequest(BaseModel):
@@ -120,3 +128,100 @@ async def simulate_draft(agent_id: str, request: Request):
     d = _draft_or_404(tenant_id, agent_id)
     obs = observe.read(tenant_id, agent_id, int(d.get("window_days") or 14))
     return {"agent_id": agent_id, "draft_id": d["id"], **drafts.simulate(d, obs)}
+
+
+@router.put("/draft/items/{item_id:path}")
+async def decide_item(agent_id: str, item_id: str, body: ItemDecision, request: Request):
+    tenant_id = get_tenant_from_request(request)
+    require_config_write(request, tenant_id, "review a suggested policy")
+    d = _draft_or_404(tenant_id, agent_id)
+    for i in d["items"]:
+        if i["id"] == item_id:
+            if i["status"] == "stale" and body.status == "accepted":
+                raise HTTPException(status_code=409, detail="this line is stale: rebuild the draft")
+            i["status"] = body.status
+            drafts.save(tenant_id, agent_id, d)
+            return i
+    raise HTTPException(status_code=404, detail=f"no line '{item_id}' in this draft")
+
+
+@router.post("/draft/accept-low-risk")
+async def accept_low_risk(agent_id: str, request: Request):
+    """Accept every pending low-risk line that was observed. Lines implied only
+    by the purpose, and medium or high risk lines, still need a decision each."""
+    tenant_id = get_tenant_from_request(request)
+    require_config_write(request, tenant_id, "review a suggested policy")
+    d = _draft_or_404(tenant_id, agent_id)
+    done = []
+    for i in d["items"]:
+        if i["status"] == "pending" and i["risk"] == "low" and (i.get("evidence") or {}).get("observed"):
+            i["status"] = "accepted"
+            done.append(i["id"])
+    drafts.save(tenant_id, agent_id, d)
+    return {"accepted": done, "draft": d}
+
+
+@router.post("/draft/apply")
+async def apply_draft(agent_id: str, request: Request):
+    """Write the accepted lines to the agent's registry entry, and append the
+    accepted approval rules. 409 when the entry changed since the draft."""
+    import time
+    from core.auth import audit_actor, require_registry_write
+    from storage.admin_audit import log_admin_action
+    from storage.agentic_control_plane import get_control_plane_config, set_control_plane_config
+    from api.routes_agents_registry import _save_agents
+    from storage.tenant_store import kv_get
+
+    tenant_id = get_tenant_from_request(request)
+    require_registry_write(request, tenant_id, "apply a suggested policy")
+    require_config_write(request, tenant_id, "apply a suggested policy")
+    d = _draft_or_404(tenant_id, agent_id)
+    agents = kv_get(f"agents:{tenant_id}") or {}
+    before = agents.get(agent_id) if isinstance(agents, dict) else None
+    if not isinstance(before, dict):
+        raise HTTPException(status_code=404, detail=f"no agent '{agent_id}'")
+    if before.get("updated_at") != d.get("base_version"):
+        raise HTTPException(status_code=409, detail={
+            "error": "agent_changed",
+            "message": "the agent was edited after this draft was built; rebuild the draft"})
+    if not drafts.accepted(d, "tool"):
+        raise HTTPException(status_code=409, detail={
+            "error": "nothing_accepted",
+            "message": "accept at least one tool line: applying an empty list would remove every tool"})
+
+    after = drafts.applied_record(before, d)
+    now = int(time.time())
+    after["updated_at"] = now
+    after["updated_by"] = _actor(request)
+    agents[agent_id] = after
+    _save_agents(tenant_id, agents)
+
+    rules = drafts.approval_rules_to_add(tenant_id, agent_id, d)
+    if rules:
+        cfg = get_control_plane_config(tenant_id)
+        cfg.setdefault("approvals", {}).setdefault("rules", []).extend(rules)
+        set_control_plane_config(tenant_id, cfg)
+
+    d["applied"] = {"at": now, "by": _actor(request), "tools": after["tools"],
+                    "role_permissions": after.get("role_permissions") or {}}
+    d["base_version"] = now
+    drafts.save(tenant_id, agent_id, d)
+    try:
+        log_admin_action(action="agent_policy_applied", actor=audit_actor(request, tenant_id),
+                         tenant_id=tenant_id,
+                         source_ip=request.client.host if request.client else "",
+                         before=before, after=after,
+                         metadata={"agent_id": agent_id, "draft_id": d["id"],
+                                   "approval_rules_added": [r["rule_id"] for r in rules]})
+    except Exception:       # noqa: BLE001 - the audit must not undo an applied change
+        pass
+    return {"status": "applied", "agent": after, "approval_rules_added": rules, "draft": d}
+
+
+@router.get("/suggestions")
+async def get_suggestions(agent_id: str, request: Request):
+    """After apply: what the agent was seen doing outside the applied policy."""
+    tenant_id = get_tenant_from_request(request)
+    d = _draft_or_404(tenant_id, agent_id)
+    obs = observe.read(tenant_id, agent_id, 30)
+    return {"agent_id": agent_id, "applied": d.get("applied"), "suggestions": drafts.suggestions(d, obs)}
