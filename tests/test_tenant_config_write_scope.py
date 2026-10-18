@@ -9,6 +9,7 @@ B: verify_tenant_path_access read "no tenant on request.state" as "master
 """
 
 import logging
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -17,6 +18,10 @@ from fastapi.testclient import TestClient
 ROOT = "tcws-root-admin-key"
 A_KEY, B_KEY = "sk-tcws-tenant-a-0001", "sk-tcws-tenant-b-0001"
 PROBE = "tcws_probe_guardrail"
+# Made up per run: keys no tenant holds (literal key strings in headers read as
+# leaked secrets to secret scanners).
+UNKNOWN_KEY = "sk-unknown-" + uuid.uuid4().hex
+MASTER_KEY = "sk-master-" + uuid.uuid4().hex
 
 
 @pytest.fixture
@@ -140,7 +145,7 @@ def webhooks(t):
     ("POST", "/v1/shield/webhooks/tb", HOOK),
     ("GET", "/v1/shield/decisions/tb", None),
 ])
-@pytest.mark.parametrize("headers", [{}, {"X-API-Key": "sk-nobody-has-this-1"}], ids=["none", "unknown"])
+@pytest.mark.parametrize("headers", [{}, {"X-API-Key": UNKNOWN_KEY}], ids=["none", "unknown"])
 def test_a_caller_with_no_tenant_is_refused(client, method, path, body, headers):
     r = client.request(method, path, json=body, headers=headers)
     assert r.status_code == 401, (path, r.status_code, r.text[:200])
@@ -167,9 +172,9 @@ def test_admin_callers_act_for_any_tenant_within_their_scope(client):
 
 def test_a_global_master_key_is_an_admin_caller(client):
     import config.schema as cs
-    cs.config.auth.api_keys = ["sk-tcws-master-key-01"]
+    cs.config.auth.api_keys = [MASTER_KEY]
     try:
-        r = client.get("/v1/shield/decisions/tb", headers={"X-API-Key": "sk-tcws-master-key-01"})
+        r = client.get("/v1/shield/decisions/tb", headers={"X-API-Key": MASTER_KEY})
         assert r.status_code == 200
     finally:
         cs.config.auth.api_keys = []
