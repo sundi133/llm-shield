@@ -510,6 +510,7 @@ async def check_tool(body: ToolCheckRequest, request: Request):
         "execution_grant_id": body.execution_grant_id,
         "trust_level": getattr(request.state, "trust_level", None) if hasattr(request, "state") else None,
         "identity_method": getattr(request.state, "identity_method", None) if hasattr(request, "state") else None,
+        "verified_by": getattr(request.state, "identity_verified_by", None) if hasattr(request, "state") else None,
     }
 
     # Check for tenant-specific guardrail config (server-side, platform-enforced)

@@ -69,11 +69,20 @@ def _ip_matches(request: Request) -> bool:
 
 
 def _secret_matches(request: Request) -> bool:
-    secret = os.environ.get("SHIELD_TRUSTED_PROXY_SECRET", "")
-    if not secret:
+    """The proxy's token matches the secret. A comma-separated list accepts
+    each value, so the secret can be rotated: add the new one, move the proxy,
+    remove the old one. Every value is compared, in constant time."""
+    secrets = [s.strip() for s in os.environ.get("SHIELD_TRUSTED_PROXY_SECRET", "").split(",")
+               if s.strip()]
+    if not secrets:
         return False
     provided = request.headers.get(_SECRET_HEADER, "")
-    return bool(provided) and hmac.compare_digest(provided, secret)
+    if not provided:
+        return False
+    matched = False
+    for secret in secrets:
+        matched |= hmac.compare_digest(provided, secret)
+    return matched
 
 
 def effective_request_uri(request: Request) -> str:

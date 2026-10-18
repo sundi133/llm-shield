@@ -8,7 +8,7 @@ description: Make certificate-based agent identity mean what it says. Headers th
 
 # Spec: Certificate-based agent identity that enterprises can rely on
 
-> Status: **APPROVED 2026-10-16** (tasks 2 to 5). Branch `spec/agent-cert-identity`.
+> Status: **APPROVED 2026-10-16.** Tasks 2 to 5 merged in #498; task 1 built 2026-10-18 on `fix/cert-identity-boundary`.
 > Tasks 2 to 5 built: `core/cert_identity.py`, `guardrails/agentic/identity/cert_registry.py`,
 > `core/mtls_middleware.py`, `api/routes_agent_cert_identity.py`, `api/routes_agent_identity.py`,
 > `identity.require` in `core/middleware.py`, `api/routes_tool.py`, `api/routes_agent_chat.py`,
@@ -364,3 +364,45 @@ Differences from the plan:
   certificates, anchors and CRLs, rules, test) are added above it.
 - **One verifier for the SPIFFE path** is not done: SPIFFE keeps its own trust
   domains. Task 1's remainder.
+
+
+## As built (task 1)
+
+The narrower spec (`docs/specs/cert-fingerprint-identity.md`) was written in
+another session but never built, so this task carries all of it. Fingerprint
+normalization already landed with task 2.
+
+- **One boundary.** `core.cert_identity.cert_headers_trusted(request)`, called
+  by the mTLS and SPIFFE middlewares and by the guard path's fingerprint
+  header: with `SHIELD_TRUSTED_PROXY_ONLY` on, only the proxy's requests
+  (its secret) count; with it off, certificate headers are ignored and the
+  first one ignored logs what to set.
+- **One trust decision.** `core.cert_identity.request_trust(request, agent)`
+  sets `trust_level`, `identity_method` and the new `verified_by`
+  (`pinned`, `anchor:{id}`, `dpop`, `bearer`) on the guard path
+  (`ShieldMiddleware`) and for A2A. Precedence as section 4: a certificate
+  verified through the proxy (guard-path fingerprint, then the mTLS
+  middleware's identity; the certificate's agent replaces a self-asserted
+  `X-Agent-Key`, as the fingerprint path always did), then a verified agent
+  token for the claimed agent (`high` only with a verified DPoP proof), then
+  `string_key`/`medium` or `anonymous`/`low`.
+- **A2A** computes the same, without letting a certificate replace the agent
+  the task already claimed; never empty. The escape hatch restores the
+  registry fallback.
+- **Escape hatch** `SHIELD_CERT_IDENTITY_TRUST_HEADER`: with the boundary off,
+  every certificate header is honored as before; with it on, the guard path's
+  fingerprint header is honored from any peer (it never had a boundary), while
+  mTLS and SPIFFE keep theirs. Logs once. A certificate honored only because
+  of the hatch never satisfies `identity.require` (`verified_cert_agent`
+  still requires the boundary).
+- **Audit:** the `cert_identity` guardrail records `verified_by` in every
+  result.
+- **Proxy secret rotation:** `SHIELD_TRUSTED_PROXY_SECRET` accepts a
+  comma-separated list.
+- **Portal:** the Agent Identity page no longer tells agents to send their
+  fingerprint, explains the proxy boundary with Envoy and nginx settings, and
+  describes what trust levels do (`min_trust_for_tools`, `identity.require`).
+  README and `docs/enterprise-features.md` examples send the proxy secret.
+- **Tests:** `tests/test_cert_identity_boundary.py` (21); 10 of them fail on
+  the previous middleware and A2A code. `tests/test_mtls_proxy_trust.py` now
+  pins the shared boundary instead of the old direct imports.

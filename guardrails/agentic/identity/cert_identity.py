@@ -53,6 +53,9 @@ class CertIdentityGuardrail(BaseGuardrail):
         # Resolve trust level
         trust_level = ctx.get("trust_level")
         identity_method = ctx.get("identity_method")
+        # How a "high" was earned (pinned / anchor:{id} / dpop), recorded in
+        # every result so the audit says which verified path it was.
+        verified_by = ctx.get("verified_by")
 
         if not trust_level:
             # Look up from registry
@@ -81,6 +84,7 @@ class CertIdentityGuardrail(BaseGuardrail):
                     "agent_key": agent_key,
                     "trust_level": trust_level,
                     "identity_method": identity_method,
+                    "verified_by": verified_by,
                 },
                 latency_ms=round(elapsed, 2),
             )
@@ -107,6 +111,7 @@ class CertIdentityGuardrail(BaseGuardrail):
                     "required_trust_level": required_trust_name,
                     "required_trust_value": required_trust_value,
                     "identity_method": identity_method,
+                    "verified_by": verified_by,
                 },
                 latency_ms=round(elapsed, 2),
             )
@@ -118,6 +123,7 @@ class CertIdentityGuardrail(BaseGuardrail):
                 "agent_key": agent_key,
                 "trust_level": trust_level,
                 "identity_method": identity_method,
+                "verified_by": verified_by,
                 "tool_name": tool_name,
             },
             latency_ms=round(elapsed, 2),

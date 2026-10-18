@@ -668,8 +668,8 @@ Return sanitized output to LLM      ← LLM never sees raw PII
 
 ### How it works
 1. **Reverse proxy** (Nginx/Envoy) terminates mTLS with the agent
-2. Proxy passes `X-Client-Cert-Fingerprint` header to Shield
-3. Shield resolves fingerprint → agent_key and assigns **high** trust level
+2. Proxy forwards the certificate (`X-Forwarded-Client-Cert`) or its fingerprint (`X-Client-Cert-Fingerprint`) to Shield, with its secret in `X-Shield-Proxy-Token`
+3. Shield accepts certificate headers only from that proxy (`SHIELD_TRUSTED_PROXY_ONLY=true`, `SHIELD_TRUSTED_PROXY_SECRET`), resolves the agent and assigns **high** trust. From anyone else the headers are ignored. Setup: `docs/agent-cert-identity-runbook.md`
 4. Tools can require minimum trust level (e.g., `payment_execute` needs `high`)
 5. String-key agents still work — they get **medium** trust (full backward compat)
 
@@ -682,8 +682,9 @@ curl -X POST http://localhost:8080/v1/shield/agent/identity/register \
 
 ### Agent authenticates via cert
 ```bash
-# Reverse proxy adds X-Client-Cert-Fingerprint after mTLS
+# Reverse proxy adds X-Client-Cert-Fingerprint after mTLS, and its secret
 curl -X POST http://localhost:8080/v1/shield/tool/check \
+  -H "X-Shield-Proxy-Token: $SHIELD_TRUSTED_PROXY_SECRET" \
   -H "X-Client-Cert-Fingerprint: sha256:a1b2c3d4e5f6..." \
   -H "X-Tenant-ID: acme" \
   -d '{"agent_key": "payment-bot", "tool_name": "payment_execute"}'

@@ -20,8 +20,8 @@ from starlette.responses import Response
 logger = logging.getLogger("votal.spiffe_mw")
 
 # Shared trusted-proxy boundary (re-exported so existing imports keep working).
-from core.proxy_trust import trusted_proxy_only as _trusted_proxy_only
-from core.proxy_trust import peer_is_trusted as _peer_is_trusted
+from core.proxy_trust import trusted_proxy_only as _trusted_proxy_only  # noqa: F401
+from core.proxy_trust import peer_is_trusted as _peer_is_trusted  # noqa: F401
 
 
 class SPIFFEMiddleware(BaseHTTPMiddleware):
@@ -30,17 +30,20 @@ class SPIFFEMiddleware(BaseHTTPMiddleware):
         if not os.environ.get("SHIELD_SPIFFE_ENABLED", "").lower() in ("true", "1", "yes"):
             return await call_next(request)
 
-        # Trust boundary: in trusted-proxy-only mode, ignore client-supplied
-        # X-Forwarded-Client-Cert unless the request came from the configured
-        # proxy (Envoy). Otherwise a client that reaches Shield directly could
-        # spoof the header and impersonate a workload.
-        if _trusted_proxy_only() and not _peer_is_trusted(request):
-            return await call_next(request)
-
         # Check for X.509 SVID in client cert header
         cert_header = request.headers.get("X-Client-Cert", "").strip()
         if not cert_header:
             cert_header = request.headers.get("X-Forwarded-Client-Cert", "").strip()
+
+        # Trust boundary: a forwarded SVID counts only when the proxy that
+        # performed mTLS sent it (the chain check proves the certificate was
+        # issued, not that the sender holds its key). Without the boundary the
+        # header is ignored, unless the escape hatch is on. One boundary for
+        # every certificate header (docs/specs/agent-cert-identity.md, task 1).
+        if cert_header:
+            from core.cert_identity import cert_headers_trusted
+            if not cert_headers_trusted(request):
+                cert_header = ""
 
         if cert_header:
             try:

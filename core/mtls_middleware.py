@@ -23,10 +23,6 @@ from starlette.responses import Response
 
 logger = logging.getLogger("votal.mtls_mw")
 
-from core.proxy_trust import trusted_proxy_only, peer_is_trusted
-
-_warned_unguarded = False
-
 
 class MTLSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
@@ -34,32 +30,22 @@ class MTLSMiddleware(BaseHTTPMiddleware):
         if not os.environ.get("SHIELD_MTLS_ENABLED", "").lower() in ("true", "1", "yes"):
             return await call_next(request)
 
-        # SECURITY: this middleware derives identity from a header-carried cert by
-        # fingerprint — it does NOT prove possession of the private key (a cert is
-        # public). That is only safe when a trusted proxy (Envoy) performed real
-        # mTLS and injected the header. Gate header-derived identity to that proxy.
-        if trusted_proxy_only():
-            if not peer_is_trusted(request):
-                return await call_next(request)
-        else:
-            global _warned_unguarded
-            if not _warned_unguarded:
-                _warned_unguarded = True
-                logger.warning(
-                    "SHIELD_MTLS_ENABLED without SHIELD_TRUSTED_PROXY_ONLY: mTLS "
-                    "identity is derived from a header-carried cert fingerprint "
-                    "with no proof-of-possession and is spoofable. Set "
-                    "SHIELD_TRUSTED_PROXY_ONLY=true + SHIELD_TRUSTED_PROXY_IPS to "
-                    "the proxy that terminates mTLS."
-                )
+        # SECURITY: a certificate is public, so a header carrying one proves
+        # nothing unless the proxy that performed mTLS sent it. One boundary for
+        # every certificate header (docs/specs/agent-cert-identity.md, task 1).
+        cert_header_name = os.environ.get(
+            "SHIELD_MTLS_CERT_HEADER", "X-Forwarded-Client-Cert"
+        )
+        if not (request.headers.get(cert_header_name) or request.headers.get("X-Client-Cert-Fingerprint")):
+            return await call_next(request)
+        from core.cert_identity import cert_headers_trusted
+        if not cert_headers_trusted(request):
+            return await call_next(request)
 
         # The forwarded certificate (reverse proxy mode): the whole certificate
         # (Envoy XFCC, nginx URL-encoded, or raw PEM), or only its fingerprint.
         # The certificate is preferred: it can be checked for expiry, and can
         # be matched through the tenant's CA anchors and rules, not only pins.
-        cert_header_name = os.environ.get(
-            "SHIELD_MTLS_CERT_HEADER", "X-Forwarded-Client-Cert"
-        )
         cert_value = request.headers.get(cert_header_name, "").strip()
         fingerprint = request.headers.get("X-Client-Cert-Fingerprint", "").strip()
 

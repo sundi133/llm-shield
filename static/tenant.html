@@ -5885,7 +5885,7 @@ X-User-Role: reader</pre></div>
     <div id="tab-agent-identity" class="tab-pane hidden">
       <div class="page-header">
         <div class="page-title">Agent Identity &amp; Certificates</div>
-        <div class="page-desc">Register certificate fingerprints for strong agent authentication. Cert-based agents get high trust, string-key agents get medium.</div>
+        <div class="page-desc">Identify agents by client certificates your mTLS proxy verifies. A certificate verified through the proxy, or a key-bound agent token, gets high trust; an agent named by key gets medium.</div>
       </div>
       <!-- Certificate identity management (docs/specs/agent-cert-identity.md, tasks 2, 3, 5) -->
       <div id="id-status" style="margin-bottom:1rem;"></div>
@@ -5952,38 +5952,24 @@ X-User-Role: reader</pre></div>
           <div><div class="card-title">How It Works</div></div>
         </div>
         <div style="font-size:13px;line-height:1.7;color:var(--text-dim);">
-          <p style="margin:0 0 0.75rem;"><strong style="color:var(--text);">Trust Levels:</strong> Cert-based agents get <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;color:#10b981;">high</code> trust. String API key agents get <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;color:#f59e0b;">medium</code> trust. Higher trust = more permissive guardrails.</p>
+          <p style="margin:0 0 0.75rem;">A certificate, and its fingerprint, is public. What proves an agent is who it says is the TLS handshake in which it uses the certificate's private key. That handshake happens at your proxy (Envoy, nginx or a load balancer), which forwards the certificate to Shield. Shield accepts a forwarded certificate only from that proxy: it must send <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;">SHIELD_TRUSTED_PROXY_SECRET</code> as <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;">X-Shield-Proxy-Token</code>, with <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;">SHIELD_TRUSTED_PROXY_ONLY=true</code> set on Shield. Without that, certificate headers are ignored.</p>
 
-          <p style="margin:0 0 0.5rem;"><strong style="color:var(--text);">Step 1:</strong> Generate a certificate for your agent</p>
-          <pre style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;overflow-x:auto;margin:0 0 0.75rem;">openssl req -x509 -newkey rsa:4096 -keyout agent.key -out agent.crt -days 365 -nodes
-openssl x509 -in agent.crt -fingerprint -sha256 -noout
-# Output: SHA256 Fingerprint=AB:CD:12:34:...</pre>
+          <p style="margin:0 0 0.75rem;"><strong style="color:var(--text);">Trust levels:</strong> <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;color:#10b981;">high</code> for a certificate verified through your proxy, or an agent token whose key proof (DPoP) verified. <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;color:#f59e0b;">medium</code> for an agent named by key or a bearer agent token. <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;">low</code> for no agent. The <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;">cert_identity</code> guardrail can require a minimum trust per tool (<code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;">min_trust_for_tools</code>) and blocks callers below it. Agents can also be required to prove their identity under Agent Registry (<code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;">identity.require</code>).</p>
 
-          <p style="margin:0 0 0.5rem;"><strong style="color:var(--text);">Step 2:</strong> Register the fingerprint above using the form, or via API:</p>
-          <pre style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;overflow-x:auto;margin:0 0 0.75rem;">curl -X POST ${BASE_URL}/v1/shield/agent/identity/register \
-  -H "X-API-Key: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_key": "customer-service-agent",
-    "fingerprint": "AB:CD:12:34:...",
-    "tenant_id": "YOUR_TENANT_ID"
-  }'</pre>
+          <p style="margin:0 0 0.5rem;"><strong style="color:var(--text);">Step 1:</strong> Issue the agent a client certificate from your CA, and either register the certificate above or add your CA as a trust anchor with a mapping rule.</p>
 
-          <p style="margin:0 0 0.5rem;"><strong style="color:var(--text);">Step 3:</strong> Agent sends fingerprint with every API call:</p>
-          <pre style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;overflow-x:auto;margin:0 0 0.75rem;">curl -X POST ${BASE_URL}/v1/shield/chat/agent \
-  -H "X-API-Key: YOUR_KEY" \
-  -H "X-Client-Cert-Fingerprint: AB:CD:12:34:..." \
-  -H "Content-Type: application/json" \
-  -d '{"agent_key": "customer-service-agent", "messages": [...]}'</pre>
+          <p style="margin:0 0 0.5rem;"><strong style="color:var(--text);">Step 2:</strong> Terminate mTLS at your proxy and forward the certificate, overwriting any value the client sent. Envoy:</p>
+          <pre style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;overflow-x:auto;margin:0 0 0.75rem;">forward_client_cert_details: SANITIZE_SET
+set_current_client_cert_details: { cert: true, chain: true, uri: true }
+# and add the header X-Shield-Proxy-Token: &lt;SHIELD_TRUSTED_PROXY_SECRET&gt;</pre>
+          <p style="margin:0 0 0.5rem;">nginx:</p>
+          <pre style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;overflow-x:auto;margin:0 0 0.75rem;">ssl_verify_client on;
+proxy_set_header X-Forwarded-Client-Cert $ssl_client_escaped_cert;
+proxy_set_header X-Shield-Proxy-Token "&lt;SHIELD_TRUSTED_PROXY_SECRET&gt;";</pre>
 
-          <p style="margin:0 0 0.5rem;"><strong style="color:var(--text);">Step 4:</strong> Query trust level for any agent:</p>
-          <pre style="background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;overflow-x:auto;margin:0 0 0.75rem;">curl ${BASE_URL}/v1/shield/agent/identity/customer-service-agent?tenant_id=YOUR_TENANT_ID \
-  -H "X-API-Key: YOUR_KEY"
+          <p style="margin:0 0 0.5rem;"><strong style="color:var(--text);">Step 3:</strong> Check it with <em>Test a certificate</em> above, and call Shield through the proxy. The agent never sends its fingerprint itself.</p>
 
-# Response:
-# {"agent_key": "customer-service-agent", "trust": {"trust_level": "high", "identity_method": "cert"}}</pre>
-
-          <p style="margin:0 0 0;"><strong style="color:var(--text);">Step 5:</strong> Revoke if compromised — click <em>Revoke Cert</em> above or call <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;">POST /v1/shield/agent/identity/revoke</code>. Agent immediately drops to <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;color:#f59e0b;">medium</code> trust.</p>
+          <p style="margin:0 0 0;"><strong style="color:var(--text);">Step 4:</strong> Revoke a compromised certificate above or with <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;">POST /v1/shield/agent/identity/revoke</code>. It stops identifying the agent at once on the server that handled the request, and within 5 minutes on every other server.</p>
         </div>
       </div>
     </div>
@@ -17404,9 +17390,9 @@ async function idStatus() {
   try {
     const s = await apiCall(`${ID_API}/status`);
     const warn = [];
-    if (!s.trusted_proxy_only) warn.push('The trusted-proxy boundary is off (<code>SHIELD_TRUSTED_PROXY_ONLY</code>). A forwarded certificate or fingerprint is then a header any caller can send. Terminate mTLS at your proxy and set <code>SHIELD_TRUSTED_PROXY_ONLY=true</code> with <code>SHIELD_TRUSTED_PROXY_SECRET</code>, sent by the proxy as <code>X-Shield-Proxy-Token</code>.');
+    if (!s.trusted_proxy_only) warn.push('The trusted-proxy boundary is off (<code>SHIELD_TRUSTED_PROXY_ONLY</code>). Forwarded certificates and fingerprints are ignored until it is on. Terminate mTLS at your proxy and set <code>SHIELD_TRUSTED_PROXY_ONLY=true</code> with <code>SHIELD_TRUSTED_PROXY_SECRET</code>, sent by the proxy as <code>X-Shield-Proxy-Token</code>.');
     else if (!s.proxy_secret_set) warn.push('<code>SHIELD_TRUSTED_PROXY_SECRET</code> is not set: only the proxy IP list identifies the proxy, which is safe only when forwarded IPs are locked to it.');
-    if (s.trust_header_escape_hatch) warn.push('<code>SHIELD_CERT_IDENTITY_TRUST_HEADER</code> is on: certificate fingerprints are accepted from any caller. Use it only while migrating.');
+    if (s.trust_header_escape_hatch) warn.push('<code>SHIELD_CERT_IDENTITY_TRUST_HEADER</code> is on: certificate headers identify agents without proof the sender holds the key, so identity is spoofable. Use it only while migrating to proxy mTLS or DPoP-bound agent tokens, then turn it off.');
     if (s.agent_token_pop !== 'required') warn.push(`Agent tokens are not bound to a key (<code>SHIELD_AGENT_TOKEN_POP=${_esc(s.agent_token_pop)}</code>): a copied token works for whoever holds it. Set it to <code>required</code>.`);
     el.innerHTML = warn.length ? `<div class="card" style="border-left:3px solid var(--warning);"><div class="card-title" style="margin-bottom:0.4rem;">Setup check</div>${warn.map(w => `<div style="font-size:13px;margin:0.3rem 0;">• ${w}</div>`).join('')}</div>` : '';
   } catch (e) { el.innerHTML = ''; }

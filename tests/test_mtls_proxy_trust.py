@@ -20,9 +20,18 @@ def _req(peer):
 
 
 def test_mtls_uses_shared_proxy_trust():
-    # Both middlewares import the same boundary implementation.
-    assert mtls_mw.trusted_proxy_only is trusted_proxy_only
-    assert mtls_mw.peer_is_trusted is peer_is_trusted
+    # Every middleware that reads a certificate header goes through the one
+    # boundary, core.cert_identity.cert_headers_trusted, which is built on
+    # these helpers (docs/specs/agent-cert-identity.md, task 1).
+    import inspect
+    import core.cert_identity as ci
+    import core.middleware as shield_mw
+    for mod in (mtls_mw, spiffe_mw):
+        assert "cert_headers_trusted(request)" in inspect.getsource(mod)
+    assert "cert_headers_trusted(request, any_peer_path=True)" in inspect.getsource(ci.request_trust)
+    assert "_request_trust(" in inspect.getsource(shield_mw.ShieldMiddleware)
+    src = inspect.getsource(ci.cert_headers_trusted)
+    assert "peer_is_trusted" in src and "trusted_proxy_only" in src
     assert spiffe_mw._trusted_proxy_only is trusted_proxy_only
     assert spiffe_mw._peer_is_trusted is peer_is_trusted
 

@@ -80,6 +80,20 @@ def _identity_requirement(request, tenant_id: str, agent_key: str) -> Optional[s
     return enforce_requirement(request, tenant_id, agent_key, "guard_path")
 
 
+def _request_trust(request, agent_key, tenant_id: str, cert_fingerprint) -> dict:
+    """core.cert_identity.request_trust, guarded like _identity_requirement: a
+    slim image without the module labels by the self-asserted key alone, and a
+    certificate header identifies nobody."""
+    try:
+        from core.cert_identity import request_trust
+    except ImportError:
+        return {"agent_key": agent_key, "trust_level": "medium" if agent_key else "low",
+                "identity_method": "string_key" if agent_key else "anonymous",
+                "verified_by": None}
+    return request_trust(request, agent_key, tenant_id=tenant_id,
+                         cert_fingerprint=cert_fingerprint)
+
+
 def invalidate_registry_cache(tenant_id: str) -> None:
     """Drop the cached registry for a tenant (call after registry writes).
 
@@ -331,35 +345,23 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             if not agent_key:
                 agent_key = request.query_params.get("api_key")
 
-            # Certificate-based identity: resolve fingerprint → agent_key (enterprise feature)
-            request.state.trust_level = None
-            request.state.identity_method = None
+            # Who this request is, and how sure: a certificate verified through
+            # the trusted proxy, a verified agent token, or a self-asserted key.
+            # "high" only from something a caller cannot send without holding a
+            # key (docs/specs/agent-cert-identity.md, task 1).
             cert_fingerprint = request.headers.get("X-Client-Cert-Fingerprint") if CERT_IDENTITY_ENABLED else None
-
+            tenant_id_for_cert = None
             if cert_fingerprint:
-                # Cert fingerprint takes precedence — resolve to agent_key
                 tenant_id_for_cert = getattr(request.state, "tenant_id", None)
                 if not tenant_id_for_cert:
-                    # Try resolving tenant first from API key
                     _api_key = _extract_api_key(request)
                     if _api_key:
-                        _tid, _ = _get_cached_tenant(_api_key)
-                        tenant_id_for_cert = _tid
-
-                if tenant_id_for_cert:
-                    try:
-                        from guardrails.agentic.identity.cert_registry import resolve_agent_by_cert
-                        cert_agent = resolve_agent_by_cert(tenant_id_for_cert, cert_fingerprint)
-                        if cert_agent:
-                            agent_key = cert_agent
-                            request.state.trust_level = "high"
-                            request.state.identity_method = "cert"
-                    except Exception:
-                        pass
-
-            if not request.state.trust_level:
-                request.state.trust_level = "medium" if agent_key else "low"
-                request.state.identity_method = "string_key" if agent_key else "anonymous"
+                        tenant_id_for_cert, _ = _get_cached_tenant(_api_key)
+            trust = _request_trust(request, agent_key, tenant_id_for_cert or "", cert_fingerprint)
+            agent_key = trust["agent_key"]
+            request.state.trust_level = trust["trust_level"]
+            request.state.identity_method = trust["identity_method"]
+            request.state.identity_verified_by = trust["verified_by"]
 
             request.state.agent_key = agent_key
 

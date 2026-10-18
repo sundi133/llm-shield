@@ -606,8 +606,11 @@ curl -X POST http://localhost:8080/v1/shield/agent/identity/register \
   -H "X-Admin-Key: $ADMIN_KEY" \
   -d '{"agent_key": "payment-bot", "fingerprint": "sha256:a1b2c3...", "tenant_id": "acme"}'
 
-# With cert header (set by proxy after mTLS) → high trust → payment tools allowed
+# With cert header, set by the proxy after mTLS, with the proxy's secret → high trust
+# (Shield needs SHIELD_TRUSTED_PROXY_ONLY=true and SHIELD_TRUSTED_PROXY_SECRET;
+#  a certificate header without the secret is ignored)
 curl -X POST http://localhost:8080/v1/shield/tool/check \
+  -H "X-Shield-Proxy-Token: $SHIELD_TRUSTED_PROXY_SECRET" \
   -H "X-Client-Cert-Fingerprint: sha256:a1b2c3..." \
   -d '{"agent_key": "payment-bot", "tool_name": "payment_execute"}'
 # → allowed: true
