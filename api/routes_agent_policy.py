@@ -19,7 +19,7 @@ from storage.policy_store import (
     get_tool_policies,
     check_tool_authorization,
 )
-from core.auth import get_tenant_from_request
+from core.auth import get_tenant_from_request, require_config_write
 from storage.audit_log import audit_logger
 
 router = APIRouter(prefix="/v1/agents", tags=["agent-policies"])
@@ -176,6 +176,7 @@ async def get_agent_endpoint(
 
 @router.put("/tools/policies")
 async def set_tool_policies_endpoint(
+    request: Request,
     policies: ToolPolicies,
     tenant_id: str = Depends(get_tenant_from_request)
 ):
@@ -205,6 +206,7 @@ async def set_tool_policies_endpoint(
     }
     ```
     """
+    require_config_write(request, tenant_id, "change tool policies")
     try:
         # Convert ToolPolicy objects to dicts
         policies_dict = {}

@@ -267,6 +267,9 @@ def s3_human_approval(env: Env) -> Result:
     r = env.post(f"/v1/tenant/me/agentic/approvals/{request_id}/approve",
                  {"approver": "security-lead@poc.example", "reason": "agent identity POC"})
     grant = r.json().get("approval_grant") if r.status_code == 200 else None
+    if r.status_code == 403 and "decided by a signed-in person" in r.text:
+        return res.fail("this key may not decide approvals: run the POC with an admin-scoped "
+                        "tenant key (an agent's key cannot approve its own requests)")
     if not grant:
         return res.fail(f"approving did not return a grant: {_short(r)}")
     res.step("a human approves it; Shield signs a grant bound to this exact call")
@@ -665,6 +668,9 @@ def local_env(prefix: str):
     from storage import tenant_store as ts
     tid, key = f"poc{uuid.uuid4().hex[:8]}", "sk-poc-" + secrets.token_hex(16)
     ts.create_tenant(tid, {"name": "Agent identity POC", "plan": "enterprise"}, api_keys=[key])
+    # The POC sets up agents and approves in scenario 3 as the operator would,
+    # so its key is admin-scoped (approvals need a person or an admin key).
+    ts.add_api_key(tid, key, scope="admin")
 
     now = dt.datetime.now(dt.timezone.utc)
     ca_key = ec.generate_private_key(ec.SECP256R1())

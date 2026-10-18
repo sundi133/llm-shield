@@ -22,6 +22,7 @@ from storage.mcp_gateway_store import (
     list_upstreams,
     set_upstream,
 )
+from core.auth import require_config_write
 
 router = APIRouter(prefix="/v1/tenant/me/mcp-gateway", tags=["mcp-gateway"])
 
@@ -107,6 +108,7 @@ async def get_route(route: str, request: Request):
 @router.put("/upstreams/{route}")
 async def put_route(route: str, body: UpstreamConfigRequest, request: Request):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "change an MCP gateway upstream")
     existing = get_upstream(tenant_id, route)
     # Validate only when CREATING. A route registered before this rule existed
     # must stay editable by its owner; rejecting the update would strand it with
@@ -144,6 +146,7 @@ async def put_route(route: str, body: UpstreamConfigRequest, request: Request):
 @router.delete("/upstreams/{route}")
 async def delete_route(route: str, request: Request):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "remove an MCP gateway upstream")
     # Mirror the admin plane: a deleted route left in its profile's fan-out
     # index would block that profile from ever being deleted.
     existing = get_upstream(tenant_id, route)

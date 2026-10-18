@@ -1,8 +1,9 @@
 """Configuration management routes for LLM Shield."""
 
+import logging
 import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 import config.schema as _config_module
@@ -11,6 +12,30 @@ from core.rbac import enforcer as rbac_enforcer
 from guardrails.registry import list_guardrails
 
 router = APIRouter(prefix="/v1/shield", tags=["config"])
+
+logger = logging.getLogger("votal.config_routes")
+
+# Escape hatch for one release (docs/specs/tenant-config-write-scope.md, A):
+# any recognized credential, as before for authenticated callers. Never an
+# anonymous caller.
+_OPEN_ENV = "SHIELD_GLOBAL_CONFIG_OPEN"
+_warned_open = False
+
+
+def _authorize_global_write(request: Request) -> None:
+    """The global config is every tenant's fallback and the global RBAC: an
+    admin identity only. It had no check at all, so with the shipped config
+    any caller could change it."""
+    global _warned_open
+    from core.auth import caller_tenant_scope, require_admin_caller
+    if os.environ.get(_OPEN_ENV, "").strip().lower() in ("1", "true", "yes", "on"):
+        if not _warned_open:
+            _warned_open = True
+            logger.warning("%s is on: any tenant credential can change the global "
+                           "guardrail and RBAC config. Turn it off.", _OPEN_ENV)
+        caller_tenant_scope(request)          # 401 without a recognized credential
+        return
+    require_admin_caller(request, "tenants:write", cross_tenant=True)
 
 
 @router.get("/config")
@@ -53,12 +78,15 @@ async def get_config():
 
 
 @router.put("/config")
-async def update_config(body: dict):
-    """Update guardrail configs at runtime (in-memory only).
+async def update_config(body: dict, request: Request):
+    """Update guardrail configs at runtime (in-memory, and CONFIG_PATH if set).
 
     Accepts a dict of guardrail name -> config updates.
     Example: {"prompt_injection": {"enabled": false, "action": "warn"}}
+
+    Admin identity only (docs/specs/tenant-config-write-scope.md, finding A).
     """
+    _authorize_global_write(request)
     if _config_module.config is None:
         return JSONResponse(
             status_code=500,
@@ -121,6 +149,16 @@ async def update_config(body: dict):
 
     # Persist to disk if CONFIG_PATH is set (e.g. network volume)
     _persist_config()
+
+    try:
+        from core.auth import admin_actor
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="global_config_updated", actor=admin_actor(request),
+                         source_ip=request.client.host if request.client else "",
+                         after={"guardrails": updated, "roles": updated_roles,
+                                "agents": updated_agents})
+    except Exception:       # noqa: BLE001 - the audit must not fail the change
+        logger.debug("global config audit failed", exc_info=True)
 
     return {
         "status": "updated",

@@ -47,6 +47,11 @@ def client(app):
     create_tenant(tid, {"name": tid, "plan": "enterprise"}, api_keys=[key])
     c = TestClient(app, headers={"X-API-Key": key})
     c.tenant_id = tid
+    # The operator who approves holds an admin-scoped key; the robot's key
+    # cannot decide its own approvals (docs/specs/tenant-config-write-scope.md).
+    from storage.tenant_store import add_api_key
+    c.approver = {"X-API-Key": "sk-ec-op-" + uuid.uuid4().hex}
+    add_api_key(tid, c.approver["X-API-Key"], scope="admin")
     c.put("/v1/tenant/me/embodied-profiles/bench", json=PROFILE)
     return c
 
@@ -171,7 +176,7 @@ def signing(monkeypatch):
 
 
 def _approve(client, rid):
-    r = client.post(f"/v1/tenant/me/agentic/approvals/{rid}/approve",
+    r = client.post(f"/v1/tenant/me/agentic/approvals/{rid}/approve", headers=client.approver,
                     json={"approver": "ops@bank.example", "reason": "change CHG-7741"})
     assert r.status_code == 200, r.text
     return r.json()["approval_grant"]

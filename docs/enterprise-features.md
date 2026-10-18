@@ -84,6 +84,27 @@ curl "http://localhost:8080/v1/shield/tools/disabled?tenant_id=acme" \
   -H "X-Admin-Key: $ADMIN_KEY"
 ```
 
+### Who may change configuration, and who may approve
+
+- `PUT /v1/shield/config` (the server-wide guardrail and RBAC defaults) needs
+  an admin identity (`X-Admin-Key`, an SSO operator, or a managed admin
+  credential with `tenants:write` for all tenants).
+- Routes with a tenant in the path (`/v1/shield/policies/{tenant_id}`,
+  `/v1/shield/webhooks/{tenant_id}`, `/v1/shield/decisions/{tenant_id}`) need a
+  recognized credential: a tenant key for its own tenant, or an admin identity
+  for any. A request with no credentials gets 401.
+- Approvals (`/v1/tenant/me/agentic/approvals/{id}/approve|deny`) are decided
+  by a signed-in portal user, an admin-scoped tenant key, or an admin identity.
+  An agent's own key gets 403. `X-Approver-Sub` counts only from the trusted
+  proxy. Temporary escape hatch: `SHIELD_APPROVALS_TENANT_KEY=true` lets an
+  unscoped key decide for one release.
+- `SHIELD_CONFIG_WRITE_SCOPE` (`off` | `warn` | `enforce`) gates the tenant's
+  configuration writes (policies, tools, data and tool policies, MCP servers,
+  vault, SIEM and webhook destinations, approvals config) like
+  `SHIELD_REGISTRY_WRITE_SCOPE` gates the agent registry. Unset, it follows the
+  registry setting but never goes past `warn`: set `warn`, review the
+  `config_write_scope_warning` rows in the admin audit, then `enforce`.
+
 ### Who may use the kill switch
 - **An admin identity** (`X-Admin-Key`, or SPIFFE/mTLS when enabled as an admin
   provider) acts for the tenant it names in `tenant_id`, which is required.

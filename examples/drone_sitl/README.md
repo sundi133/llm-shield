@@ -86,10 +86,11 @@ while the aircraft waits. You have 120 seconds before the demo gives up, and
 curl -s "$SHIELD_URL/v1/tenant/me/agentic/approvals?status=pending" \
   -H "X-API-Key: $SHIELD_TENANT_KEY"
 
-# approve it, as a named person
+# approve it, as a named person: in the portal, signed in, or with an
+# admin-scoped tenant key (the drone's own key cannot approve its requests)
 curl -s -X POST \
   "$SHIELD_URL/v1/tenant/me/agentic/approvals/<request_id>/approve" \
-  -H "X-API-Key: $SHIELD_TENANT_KEY" -H 'Content-Type: application/json' \
+  -H "X-API-Key: $SHIELD_ADMIN_TENANT_KEY" -H 'Content-Type: application/json' \
   -d '{"approver":"ops-supervisor@example.com","reason":"area cleared, ground crew notified"}'
 ```
 

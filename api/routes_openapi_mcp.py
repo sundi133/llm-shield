@@ -35,6 +35,7 @@ from core.openapi.codegen.llm_enhance import enhance_tool_descriptions
 from core.openapi.codegen.deploy_kit import deploy_files
 from core.mcp.enforcement import enforce_tool_call, sanitize_tool_result
 from api.routes_mcp_server import _resolve_session_id
+from core.auth import require_config_write
 
 router = APIRouter(prefix="/v1/openapi", tags=["openapi-mcp"])
 
@@ -78,6 +79,7 @@ class GenerateRequest(BaseModel):
 async def import_spec(body: ImportRequest, request: Request):
     """Parse a spec, generate MCP tools, store them, and auto-register them."""
     tenant_id = get_tenant_from_api_key(request)
+    require_config_write(request, tenant_id, "import an OpenAPI spec")
     try:
         spec = load_spec(body.spec, external_docs=body.external_docs)
         tools = spec_to_tools(

@@ -57,6 +57,7 @@ from storage.revocation import (
     revoke_instance, revoke_jti, revoke_user,
     record_instance_owner, instance_owner,
 )
+from core.auth import require_config_write
 
 logger = logging.getLogger("votal.routes_agent_auth")
 
@@ -1263,6 +1264,7 @@ async def revoke_tenant(body: TenantRevokeRequest, request: Request):
     No platform admin key required.
     """
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "revoke an agent instance")
     owner = instance_owner(body.agent_instance_id)
     if owner is None:
         raise HTTPException(status_code=404, detail="unknown or expired agent_instance_id")

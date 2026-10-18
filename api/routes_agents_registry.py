@@ -32,6 +32,7 @@ from storage.policy_store import (  # noqa: E402
     sanitize_string as _sanitize_string,
     sanitize_value as _sanitize_value,
 )
+from core.auth import require_config_write
 
 # Ownership is METADATA, never an authorization input. Nothing in the authz
 # path may read it — it is free text a tenant admin types, and a grant that
@@ -479,6 +480,7 @@ async def save_all_tool_policies(request: Request):
     """Replace all tool policies for the tenant."""
     try:
         tenant_id = get_tenant_from_api_key(request)
+        require_config_write(request, tenant_id, "change tool policies")
         body = await request.json()
 
         if "policies" in body and isinstance(body["policies"], dict) and len(body) <= 2:
@@ -504,6 +506,7 @@ async def delete_tool_policy(tool_name: str, request: Request):
     """Delete a single tool policy."""
     try:
         tenant_id = get_tenant_from_api_key(request)
+        require_config_write(request, tenant_id, "delete a tool policy")
         policies_key = f"policies:{tenant_id}"
         policies = get_redis_data(policies_key) or {}
 
@@ -552,6 +555,7 @@ async def dismiss_unregistered(item_type: str, item_id: str, request: Request):
         raise HTTPException(status_code=400, detail="item_type must be 'agents' or 'tools'")
     try:
         tenant_id = get_tenant_from_api_key(request)
+        require_config_write(request, tenant_id, "dismiss an unregistered agent or tool")
         key = f"unregistered:{tenant_id}"
 
         data = kv_get(key) or {}
@@ -583,6 +587,7 @@ async def block_shadow_agent(agent_id: str, request: Request):
     """
     _validate_observed_agent_id(agent_id)
     tenant_id = get_tenant_from_api_key(request)
+    require_config_write(request, tenant_id, "block an unregistered agent")
 
     from storage.tenant_store import get_tenant, update_tenant
     config = get_tenant(tenant_id)
@@ -611,6 +616,7 @@ async def allow_shadow_agent(agent_id: str, request: Request):
     """
     _validate_observed_agent_id(agent_id)
     tenant_id = get_tenant_from_api_key(request)
+    require_config_write(request, tenant_id, "allow an unregistered agent")
 
     from storage.tenant_store import get_tenant, update_tenant
     config = get_tenant(tenant_id)

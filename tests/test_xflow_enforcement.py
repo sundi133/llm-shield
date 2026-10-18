@@ -75,7 +75,12 @@ def _make_tenant(app, *, policy=None, config=None, agent="research-bot"):
     if policy is not None:
         r = client.put("/v1/tenant/me/flow-control/policy", headers=headers, json=policy)
         assert r.status_code == 200, r.text
-    return SimpleNamespace(id=tid, client=client, headers=headers)
+    # The approver holds an admin-scoped key; the agent's key cannot decide its
+    # own approvals (docs/specs/tenant-config-write-scope.md, finding C).
+    from storage.tenant_store import add_api_key
+    approver = {"X-API-Key": "sk-xf-op-" + uuid.uuid4().hex}
+    add_api_key(tid, approver["X-API-Key"], scope="admin")
+    return SimpleNamespace(id=tid, client=client, headers=headers, approver=approver)
 
 
 def _check(t, tool, params=None, session="s1", **extra):
@@ -230,7 +235,7 @@ def test_principal_scope_agent_catches_session_rotation(app):
 
 def _approve(t, request_id):
     r = t.client.post(f"/v1/tenant/me/agentic/approvals/{request_id}/approve",
-                      headers=t.headers, json={"approver": "carol@corp.com", "reason": "ok"})
+                      headers=t.approver, json={"approver": "carol@corp.com", "reason": "ok"})
     assert r.status_code == 200, r.text
     return r.json()
 

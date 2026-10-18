@@ -1,5 +1,7 @@
 """Tenant self-service control plane for agentic workflow operations."""
 
+import logging
+import os
 from typing import Optional, Any
 
 from fastapi import APIRouter, HTTPException, Request, Query
@@ -24,6 +26,9 @@ from storage.agentic_control_plane import (
     reset_circuit_breaker,
     report_tool_execution,
 )
+from core.auth import require_config_write
+
+logger = logging.getLogger("votal.agentic_control_plane")
 
 router = APIRouter(prefix="/v1/tenant/me/agentic", tags=["tenant-agentic-control-plane"])
 
@@ -101,6 +106,7 @@ async def get_agentic_control_plane(request: Request):
 @router.put("/config")
 async def update_agentic_control_plane(request: Request, body: ControlPlaneConfigRequest):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "change the agentic control plane")
     config = set_control_plane_config(
         tenant_id,
         body.model_dump(exclude_none=True),
@@ -123,12 +129,67 @@ async def get_approvals(request: Request, status: Optional[str] = Query(None)):
     }
 
 
+_APPROVALS_HATCH_ENV = "SHIELD_APPROVALS_TENANT_KEY"
+_warned_hatch = False
+
+
+def _decider(request: Request, tenant_id: str, asserted: str) -> tuple[str, str]:
+    """(approver, method) for an approve/deny, or 403.
+
+    An approval exists so that a person decides, so the agent that asked must
+    not be able to answer it with the key it already holds. Allowed:
+
+    * a signed-in portal user of the tenant: the approver is the session's
+      subject, whatever the body says ("portal_session");
+    * the trusted proxy (core.proxy_trust) vouching for a person with
+      X-Approver-Sub ("sso"). From anyone else that header is ignored: it used
+      to make any caller's approval read as SSO-verified;
+    * an admin identity, or an admin-scoped tenant key ("admin"), with the
+      approver as asserted in the body.
+
+    A runtime or unscoped key is refused in every mode. Hatch
+    SHIELD_APPROVALS_TENANT_KEY (one release) lets an unscoped key decide,
+    recorded "asserted"; never a runtime key.
+    docs/specs/tenant-config-write-scope.md, finding C.
+    """
+    global _warned_hatch
+    from core.auth import admin_caller, caller_key_scope, portal_principal, require_admin_scope
+    from core.proxy_trust import peer_is_trusted, trusted_proxy_only
+
+    principal = portal_principal(request)
+    if principal and principal.get("tenant_id") == tenant_id and principal.get("sub"):
+        return principal.get("email") or principal["sub"], "portal_session"
+
+    vouched = request.headers.get("x-approver-sub", "").strip()
+    if vouched and trusted_proxy_only() and peer_is_trusted(request):
+        return vouched, "sso"
+
+    if admin_caller(request) is not None:
+        require_admin_scope(request, "tenants:write", tenant_id)
+        return asserted, "admin"
+
+    scope, _ = caller_key_scope(request)
+    if scope == "admin":
+        return asserted, "admin"
+    if scope is None and os.environ.get(_APPROVALS_HATCH_ENV, "").strip().lower() in ("1", "true", "yes", "on"):
+        if not _warned_hatch:
+            _warned_hatch = True
+            logger.warning("%s is on: an unscoped tenant key can decide approvals, so an "
+                           "agent holding one can approve its own requests. Turn it off.",
+                           _APPROVALS_HATCH_ENV)
+        return asserted, "asserted"
+    raise HTTPException(
+        status_code=403,
+        detail="approvals are decided by a signed-in person or an admin-scoped key, "
+               "not by an agent's API key")
+
+
 def _mint_request_grant(req: dict[str, Any], method: str) -> str:
     """Freeze an approved request into a signed, single-use approval grant."""
     from core.approvals import mint_grant, params_hash
 
     approvers = [
-        {"sub": a.get("approver", ""), "method": method, "at": a.get("approved_at")}
+        {"sub": a.get("approver", ""), "method": a.get("method") or method, "at": a.get("approved_at")}
         for a in req.get("approvals", [])
     ]
     # Cap/mint (L3) requests carry the real instance + resource; cooperative
@@ -151,12 +212,7 @@ def _mint_request_grant(req: dict[str, Any], method: str) -> str:
 @router.post("/approvals/{request_id}/approve")
 async def approve_request(request_id: str, body: ApprovalDecisionRequest, request: Request):
     tenant_id = _tenant_id(request)
-    # Authenticated approver: prefer an SSO-verified identity forwarded by the
-    # portal/gateway (X-Approver-Sub); fall back to the asserted value but record
-    # that it was unauthenticated so the audit + grant reflect the trust level.
-    verified_sub = request.headers.get("x-approver-sub", "").strip()
-    approver = verified_sub or body.approver
-    method = "sso" if verified_sub else "asserted"
+    approver, method = _decider(request, tenant_id, body.approver)
 
     updated = update_approval_request(
         tenant_id,
@@ -164,6 +220,7 @@ async def approve_request(request_id: str, body: ApprovalDecisionRequest, reques
         decision="approve",
         approver=approver,
         reason=body.reason,
+        method=method,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Approval request not found")
@@ -187,16 +244,19 @@ async def approve_request(request_id: str, body: ApprovalDecisionRequest, reques
 @router.post("/approvals/{request_id}/deny")
 async def deny_request(request_id: str, body: ApprovalDecisionRequest, request: Request):
     tenant_id = _tenant_id(request)
+    approver, method = _decider(request, tenant_id, body.approver)
     updated = update_approval_request(
         tenant_id,
         request_id,
         decision="deny",
-        approver=body.approver,
+        approver=approver,
         reason=body.reason,
+        method=method,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Approval request not found")
-    _audit(request, "tenant_deny_agentic_request", tenant_id=tenant_id, metadata={"request_id": request_id})
+    _audit(request, "tenant_deny_agentic_request", tenant_id=tenant_id,
+           metadata={"request_id": request_id, "approver": approver, "approver_method": method})
     return {"status": "denied", "request": updated}
 
 
@@ -212,6 +272,7 @@ async def get_execution_grants(request: Request, include_inactive: bool = Query(
 @router.post("/execution-grants")
 async def create_execution_grant(body: GrantCreateRequest, request: Request):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "create an execution grant")
     grant = issue_execution_grant(
         tenant_id,
         body.model_dump(exclude_none=True),
@@ -224,6 +285,7 @@ async def create_execution_grant(body: GrantCreateRequest, request: Request):
 @router.post("/execution-grants/{grant_id}/revoke")
 async def revoke_grant(grant_id: str, request: Request):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "revoke an execution grant")
     grant = revoke_execution_grant(tenant_id, grant_id, actor=f"tenant:{tenant_id}")
     if not grant:
         raise HTTPException(status_code=404, detail="Execution grant not found")
@@ -262,6 +324,7 @@ async def create_workflow_checkpoint(body: CheckpointCreateRequest, request: Req
 @router.post("/checkpoints/{checkpoint_id}/resume")
 async def resume_workflow_checkpoint(checkpoint_id: str, request: Request):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "resume a workflow checkpoint")
     checkpoint = resume_checkpoint(tenant_id, checkpoint_id, actor=f"tenant:{tenant_id}")
     if not checkpoint:
         raise HTTPException(status_code=404, detail="Checkpoint not found")
@@ -315,6 +378,7 @@ async def report_execution(body: ToolExecutionReportRequest, request: Request):
 @router.post("/circuit-breakers/{tool_name}/reset")
 async def reset_breaker(tool_name: str, request: Request):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "reset a circuit breaker")
     state = reset_circuit_breaker(tenant_id, tool_name, actor=f"tenant:{tenant_id}")
     _audit(request, "tenant_reset_circuit_breaker", tenant_id=tenant_id, metadata={"tool_name": tool_name})
     return {"status": "reset", "tool_state": state}

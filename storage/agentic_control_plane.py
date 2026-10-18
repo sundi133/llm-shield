@@ -199,7 +199,13 @@ def update_approval_request(
     decision: str,
     approver: str,
     reason: str = "",
+    method: str = "",
 ) -> Optional[dict[str, Any]]:
+    """Record a decision. `method` says how the approver was established
+    (portal_session, sso, admin, asserted) and is kept per approval, so a
+    grant names how each approver was known. An approver already on the
+    request does not count again: a rule needing two approvals needs two
+    people (docs/specs/tenant-config-write-scope.md, finding C)."""
     items = _load_json(_approvals_key(tenant_id), [])
     for idx, item in enumerate(items):
         if item.get("request_id") != request_id:
@@ -212,8 +218,12 @@ def update_approval_request(
             item["denied_at"] = _now()
             item["decision_reason"] = reason
         else:
-            item.setdefault("approvals", []).append(
-                {"approver": approver, "approved_at": _now(), "reason": reason}
+            approvals = item.setdefault("approvals", [])
+            if any(a.get("approver") == approver for a in approvals):
+                return item
+            approvals.append(
+                {"approver": approver, "approved_at": _now(), "reason": reason,
+                 **({"method": method} if method else {})}
             )
             if len(item["approvals"]) >= int(item.get("required_approvals", 1)):
                 item["status"] = "approved"

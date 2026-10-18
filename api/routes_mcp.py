@@ -30,8 +30,11 @@ class MCPCheckRequest(BaseModel):
 
 
 @router.post("/register")
-async def register_server(body: MCPRegisterRequest):
+async def register_server(request: Request, body: MCPRegisterRequest):
     """Register an MCP server with its tools and trust score."""
+    # The MCP server registry is process-wide (every tenant's mcp/check reads it): admin only.
+    from core.auth import require_admin_caller
+    require_admin_caller(request, "tenants:write", cross_tenant=True)
     register_mcp_server(
         name=body.name,
         url=body.url,

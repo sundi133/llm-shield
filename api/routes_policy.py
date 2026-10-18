@@ -5,7 +5,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, Request, Query, Depends
 
-from core.auth import verify_tenant_path_access
+from core.auth import require_config_write, verify_tenant_path_access
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
 
@@ -138,6 +138,7 @@ async def list_tenant_policies(
 @router.post("/{tenant_id}")
 async def create_tenant_policy(tenant_id: str, request: Request, policy: PolicyConfig):
     """Create a new data protection policy for a tenant."""
+    require_config_write(request, tenant_id, "create a data policy")
     # Verify tenant exists
     tenant = get_tenant(tenant_id)
     if not tenant:
@@ -204,6 +205,7 @@ async def update_tenant_policy(
     updates: PolicyUpdateRequest
 ):
     """Update an existing data protection policy."""
+    require_config_write(request, tenant_id, "change a data policy")
     # Check if policy exists
     existing = get_policy(tenant_id, policy_id)
     if not existing or existing.get("deleted_at"):
@@ -253,6 +255,7 @@ async def delete_tenant_policy(
     hard: bool = Query(False, description="If true, permanently delete; otherwise soft delete")
 ):
     """Delete a data protection policy."""
+    require_config_write(request, tenant_id, "delete a data policy")
     # Check if policy exists
     existing = get_policy(tenant_id, policy_id)
     if not existing:
@@ -293,6 +296,7 @@ async def delete_tenant_policy(
 @router.post("/{tenant_id}/bulk")
 async def bulk_create_policies(tenant_id: str, request: Request, policies: List[PolicyConfig]):
     """Create multiple policies at once for a tenant."""
+    require_config_write(request, tenant_id, "create data policies")
     # Verify tenant exists
     tenant = get_tenant(tenant_id)
     if not tenant:
@@ -346,6 +350,7 @@ async def bulk_create_policies(tenant_id: str, request: Request, policies: List[
 @router.post("/{tenant_id}/cache/clear")
 async def clear_tenant_policy_cache(tenant_id: str, request: Request):
     """Clear all policy cache entries for a tenant."""
+    require_config_write(request, tenant_id, "clear the policy cache")
     # Verify tenant exists
     tenant = get_tenant(tenant_id)
     if not tenant:
@@ -422,6 +427,7 @@ async def rollback_policy_endpoint(
     tenant_id: str, policy_id: str, body: RollbackRequest, request: Request
 ):
     """Rollback a policy to a previous version."""
+    require_config_write(request, tenant_id, "roll back a data policy")
     # Check policy exists
     existing = get_policy(tenant_id, policy_id)
     if not existing:

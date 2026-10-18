@@ -10,6 +10,7 @@ from guardrails.agentic.identity.cert_registry import (
     get_agent_trust,
 )
 from storage.admin_audit import log_admin_action
+from core.auth import require_config_write
 
 router = APIRouter(prefix="/v1/shield/agent/identity", tags=["agent-identity"])
 
@@ -101,6 +102,7 @@ async def register_agent_cert(
     this fingerprint will be identified as this agent with 'high' trust level.
     """
     _confine_to_tenant(scope, body.tenant_id)
+    require_config_write(request, body.tenant_id, "register an agent certificate")
     if not body.fingerprint and not body.cert_pem:
         raise HTTPException(status_code=400, detail="give cert_pem (preferred) or fingerprint")
 
@@ -146,6 +148,7 @@ async def revoke_agent_cert(
     The agent will fall back to string_key identity with 'medium' trust.
     """
     _confine_to_tenant(scope, body.tenant_id)
+    require_config_write(request, body.tenant_id, "revoke an agent certificate")
 
     revoked = revoke_cert(tenant_id=body.tenant_id, agent_key=body.agent_key,
                           fingerprint=body.fingerprint)
