@@ -8788,6 +8788,7 @@ function createAgentCard(agentId, agent) {
         </div>
         <div style="display: flex; gap: 0.5rem;">
           <button onclick="editAgent('${agentId}')" data-registry-write class="secondary" style="font-size: 11px; padding: 0.4rem 0.75rem;">Edit</button>
+          <button onclick="pfpOpen(this.dataset.agent)" data-agent="${pfpEsc(agentId)}" class="secondary" style="font-size: 11px; padding: 0.4rem 0.75rem;" title="Draft a least-privilege policy from what this agent is for and what it was seen doing">Suggested policy</button>
           <button onclick="deleteAgent('${agentId}')" data-registry-write class="danger" style="font-size: 11px; padding: 0.4rem 0.75rem; background: var(--danger); color: white; border: none;">Delete</button>
         </div>
       </div>
@@ -9270,6 +9271,175 @@ async function deleteAgent(agentId) {
   } catch (e) {
     showToast('Network error while deleting agent', 'error');
   }
+}
+
+// ── Suggested policy (docs/specs/policy-from-purpose.md) ─────────────
+// A draft least-privilege policy for one agent: questions first, then each line
+// with its evidence and risk, a replay of recent calls, and Apply. Every value
+// shown is escaped; nothing is applied until the reviewer presses Apply.
+function pfpEsc(v) {
+  if (v == null) return '';
+  return String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+let PFP_AGENT = null;
+async function pfpCall(path, options = {}) {
+  options.headers = { ...(options.headers || {}), 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
+  const r = await fetch(`${BASE_URL}/v1/tenant/me/agents/${encodeURIComponent(PFP_AGENT)}/policy${path}`, options);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = data.detail;
+    const msg = (d && typeof d === 'object') ? (d.message || d.error || JSON.stringify(d)) : (d || data.error || `HTTP ${r.status}`);
+    const err = new Error(msg); err.status = r.status; throw err;
+  }
+  return data;
+}
+function pfpModal() {
+  let m = document.getElementById('pfp-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'pfp-modal';
+  m.setAttribute('role', 'dialog');
+  m.setAttribute('aria-modal', 'true');
+  m.setAttribute('aria-labelledby', 'pfp-title');
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:120;display:flex;align-items:flex-start;justify-content:center;padding:2rem 1rem;overflow-y:auto;';
+  m.innerHTML = `<div style="background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:880px;padding:1.25rem 1.5rem;display:flex;flex-direction:column;gap:1rem;">
+      <div style="display:flex;align-items:center;gap:0.75rem;">
+        <div id="pfp-title" style="font-size:16px;font-weight:700;">Suggested policy</div>
+        <code id="pfp-agent" style="background:var(--bg-3);padding:2px 8px;border-radius:4px;"></code>
+        <button class="secondary small" style="margin-left:auto;" onclick="pfpClose()">Close</button>
+      </div>
+      <div id="pfp-body" style="display:flex;flex-direction:column;gap:1rem;font-size:13px;"></div>
+    </div>`;
+  m.addEventListener('click', e => { if (e.target === m) pfpClose(); });
+  document.body.appendChild(m);
+  return m;
+}
+function pfpClose() { const m = document.getElementById('pfp-modal'); if (m) m.remove(); PFP_AGENT = null; }
+async function pfpOpen(agentId) {
+  PFP_AGENT = agentId;
+  pfpModal();
+  document.getElementById('pfp-agent').textContent = agentId;
+  const body = document.getElementById('pfp-body');
+  body.innerHTML = '<div class="muted">Loading…</div>';
+  try {
+    pfpRender(await pfpCall('/draft'));
+  } catch (e) {
+    if (e.status === 404) pfpEmpty(); else body.innerHTML = `<div class="toast error">${pfpEsc(e.message)}</div>`;
+  }
+}
+function pfpEmpty() {
+  document.getElementById('pfp-body').innerHTML = `
+    <p style="margin:0;color:var(--text-dim);">Shield drafts a least-privilege policy from this agent's description and the tools it was seen calling through Shield. Nothing changes until you review the lines and press Apply.</p>
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+      <button class="primary" onclick="pfpBuild(true)">Build the draft</button>
+      <button class="secondary" onclick="pfpBuild(false)">Build without the model</button>
+    </div>`;
+}
+async function pfpBuild(useModel) {
+  const body = document.getElementById('pfp-body');
+  body.innerHTML = '<div class="muted">Building the draft…</div>';
+  try {
+    pfpRender(await pfpCall('/draft', { method: 'POST', body: JSON.stringify({ use_model: !!useModel }) }));
+  } catch (e) {
+    pfpEmpty();
+    body.insertAdjacentHTML('afterbegin', `<div class="toast error" style="position:static;">${pfpEsc(e.message)}</div>`);
+  }
+}
+const PFP_RISK = { low: 'var(--success, #10b981)', medium: 'var(--warning, #f59e0b)', high: 'var(--danger, #ef4444)' };
+function pfpLine(i) {
+  const ev = i.evidence || {};
+  const value = typeof i.value === 'object' ? `${i.value.tool}: ${i.value.min_approvals} approver${i.value.min_approvals === 1 ? '' : 's'}` : i.value;
+  const roles = (i.roles || []).length ? `<span class="muted"> roles ${pfpEsc(i.roles.join(', '))}</span>` : '';
+  const source = ev.observed ? `seen ${pfpEsc(ev.observed)} time${ev.observed === 1 ? '' : 's'}` : 'implied by the purpose, not seen';
+  const decided = i.status === 'accepted' ? '<span class="badge badge-success">accepted</span>'
+    : i.status === 'rejected' ? '<span class="badge">rejected</span>'
+    : i.status === 'stale' ? '<span class="badge badge-warn">stale</span>' : '';
+  const buttons = i.status === 'stale' ? '' : `
+      <button class="small ${i.status === 'accepted' ? 'primary' : 'secondary'}" data-item="${pfpEsc(i.id)}" onclick="pfpDecide(this.dataset.item,'accepted')">Accept</button>
+      <button class="small secondary" data-item="${pfpEsc(i.id)}" onclick="pfpDecide(this.dataset.item,'rejected')">Reject</button>`;
+  return `<div style="display:flex;gap:0.6rem;align-items:flex-start;padding:0.5rem 0;border-bottom:1px solid var(--border);">
+      <span title="risk" style="flex:0 0 auto;margin-top:5px;width:8px;height:8px;border-radius:50%;background:${PFP_RISK[i.risk] || 'var(--text-muted)'};"></span>
+      <div style="flex:1 1 auto;min-width:0;">
+        <div><code>${pfpEsc(value)}</code>${roles} ${decided}</div>
+        <div class="muted" style="font-size:12px;">${pfpEsc(i.risk)} risk · ${source} · ${pfpEsc(ev.reason || '')}${ev.purpose_reason ? ' · purpose: ' + pfpEsc(ev.purpose_reason) : ''}</div>
+      </div>
+      <div style="flex:0 0 auto;display:flex;gap:0.3rem;">${buttons}</div>
+    </div>`;
+}
+function pfpRender(d) {
+  const body = document.getElementById('pfp-body');
+  const qs = (d.questions || []).filter(q => !q.answer);
+  const groups = { tool: 'Tools', approval: 'Approvals', resource: 'Resources', identity: 'Identity' };
+  const model = d.model || {};
+  const modelNote = model.used ? `Built with the model${model.name ? ' (' + pfpEsc(model.name) + ')' : ''}.`
+    : `Built without the model${model.error ? ': ' + pfpEsc(model.error) : ''}.`;
+  let html = `<div class="muted" style="font-size:12px;">${modelNote} Window: last ${pfpEsc(d.window_days)} days. Nothing is preselected; medium and high risk lines need a decision each.</div>`;
+  if (d.applied) html += `<div class="toast success" style="position:static;">Applied ${new Date(d.applied.at * 1000).toLocaleString()}. <button class="small secondary" onclick="pfpSuggestions()">What it did since</button></div>`;
+  if (qs.length) {
+    html += '<div><div style="font-weight:600;margin-bottom:0.4rem;">Questions</div>';
+    qs.forEach(q => {
+      html += `<div style="padding:0.5rem 0.75rem;border-left:3px solid var(--warning, #f59e0b);background:var(--bg-3);border-radius:0 6px 6px 0;margin-bottom:0.4rem;">
+        <div>${pfpEsc(q.text)}</div>
+        <div style="display:flex;gap:0.3rem;flex-wrap:wrap;margin-top:0.4rem;">${(q.options || []).map(o =>
+          `<button class="small secondary" data-q="${pfpEsc(q.id)}" data-o="${pfpEsc(o)}" onclick="pfpAnswer(this.dataset.q,this.dataset.o)">${pfpEsc(o)}</button>`).join('')}</div>
+      </div>`;
+    });
+    html += '</div>';
+  }
+  Object.entries(groups).forEach(([kind, title]) => {
+    const lines = (d.items || []).filter(i => i.kind === kind);
+    if (!lines.length) return;
+    html += `<div><div style="font-weight:600;">${title}</div>${lines.map(pfpLine).join('')}</div>`;
+  });
+  if (!(d.items || []).length) html += '<div class="muted">No lines yet. Answer the questions above, or let the agent run through Shield and rebuild.</div>';
+  html += `<div id="pfp-sim" class="muted" style="font-size:12px;"></div>
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+      <button class="secondary" onclick="pfpAcceptLow()">Accept low-risk lines that were seen</button>
+      <button class="secondary" onclick="pfpSimulate()">Replay recent calls</button>
+      <button class="secondary" onclick="pfpBuild(true)">Rebuild</button>
+      <button class="primary" data-registry-write style="margin-left:auto;" onclick="pfpApply()">Apply accepted lines</button>
+    </div>`;
+  body.innerHTML = html;
+}
+async function pfpDecide(itemId, status) {
+  try { await pfpCall(`/draft/items/${itemId.split('/').map(encodeURIComponent).join('/')}`, { method: 'PUT', body: JSON.stringify({ status }) }); pfpRender(await pfpCall('/draft')); }
+  catch (e) { showToast(e.message, 'error'); }
+}
+async function pfpAnswer(qid, option) {
+  try { pfpRender(await pfpCall('/draft/answers', { method: 'PUT', body: JSON.stringify({ answers: { [qid]: option } }) })); }
+  catch (e) { showToast(e.message, 'error'); }
+}
+async function pfpAcceptLow() {
+  try { const r = await pfpCall('/draft/accept-low-risk', { method: 'POST' }); pfpRender(r.draft); showToast(`Accepted ${r.accepted.length} line(s)`, 'success'); }
+  catch (e) { showToast(e.message, 'error'); }
+}
+async function pfpSimulate() {
+  try {
+    const r = await pfpCall('/draft/simulate', { method: 'POST' });
+    const t = r.accepted.totals, p = r.proposed.totals;
+    document.getElementById('pfp-sim').textContent =
+      `Recent calls under the accepted lines: ${t.allowed} allowed, ${t.held} held for approval, ${t.blocked} blocked. ` +
+      `With every line not rejected: ${p.allowed} allowed, ${p.held} held, ${p.blocked} blocked.`;
+  } catch (e) { showToast(e.message, 'error'); }
+}
+async function pfpApply() {
+  const btn = document.querySelector('#pfp-body button.primary[data-registry-write]');
+  if (btn && btn.dataset.confirm !== '1') { btn.dataset.confirm = '1'; btn.textContent = 'Press again to apply'; return; }
+  try {
+    const r = await pfpCall('/draft/apply', { method: 'POST' });
+    showToast(`Applied: ${r.agent.tools.length} tool(s)${r.approval_rules_added.length ? ', ' + r.approval_rules_added.length + ' approval rule(s)' : ''}`, 'success');
+    pfpRender(r.draft);
+    if (typeof loadAgentData === 'function') loadAgentData();
+  } catch (e) { showToast(e.message, 'error'); if (btn) { btn.dataset.confirm = ''; btn.textContent = 'Apply accepted lines'; } }
+}
+async function pfpSuggestions() {
+  try {
+    const r = await pfpCall('/suggestions');
+    const el = document.getElementById('pfp-sim');
+    el.innerHTML = r.suggestions.length
+      ? 'Since applying, outside the policy: ' + r.suggestions.map(s => `<code>${pfpEsc(s.tool)}</code>${s.role ? ' (' + pfpEsc(s.role) + ')' : ''} ×${pfpEsc(s.calls)}`).join(', ') + '. Rebuild to review them.'
+      : 'Since applying, every call the agent made was inside the policy.';
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 function showToast(message, type = 'info') {

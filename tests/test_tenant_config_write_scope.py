@@ -459,6 +459,7 @@ OPEN_BY_DESIGN = {
         ("POST", "/v1/tenant/me/agent-identity/test"), ("POST", "/v1/shield/policies/test"),
         ("POST", "/v1/tenant/me/siem/test"), ("POST", "/v1/openapi/generate"),
         ("POST", "/v1/tenant/me/compliance/evidence-pack"), ("POST", "/v1/tenant/me/hooks/claude-code/kit"),
+        ("POST", "/v1/tenant/me/agents/{agent_id}/policy/draft/simulate"),
     },
     "local tools with their own checks": {
         ("POST", "/playground/llm-proxy"), ("POST", "/playground/proxy/{path:path}"),
