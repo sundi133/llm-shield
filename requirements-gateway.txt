@@ -2,7 +2,7 @@
 # The in-process allowlist + logging path needs only these; model-backed guards
 # degrade gracefully (LLM checks fail-open over HTTP) and full model DLP is opt-in
 # via enforcement_backend: http to a Shield backend.
-fastapi
+fastapi>=0.135,<0.144   # tested range; 0.141+ nests included routers (tests/route_tables.py)
 uvicorn
 httpx
 mcp>=1.2,<2   # 2.0 removed mcp.server.fastmcp and streamablehttp_client
