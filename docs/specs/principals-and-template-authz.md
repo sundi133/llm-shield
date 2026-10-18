@@ -1,12 +1,12 @@
 ---
-title: "Spec: identity writes behind the write gate, and scoped admin keys on policy templates"
+title: "Spec: identity writes behind the write gate, scoped admin keys on policy templates, and keys that cannot change tenant"
 layout: default
 nav_exclude: true
 permalink: /specs/principals-and-template-authz/
-description: A runtime tenant key can make itself a verified MCP caller with any roles, and a narrowly scoped admin credential can rewrite any tenant's guardrails. Close both with the controls that already exist.
+description: A runtime tenant key can make itself a verified MCP caller with any roles, a narrowly scoped admin credential can rewrite any tenant's guardrails, and an API key can be moved from one tenant to another by whoever knows it. Close all three.
 ---
 
-# Spec: identity writes behind the write gate, and scoped admin keys on policy templates
+# Spec: identity writes behind the write gate, scoped admin keys on policy templates, and keys that cannot change tenant
 
 > Status: **DRAFT, awaiting approval.** Branch `spec/principals-template-authz`.
 > Found mapping who can mint which credentials (2026-10-18). Related:
@@ -79,6 +79,46 @@ tenant to monitor mode, which turns off blocking for all its traffic. The
 routes also record the actor as a hash of the root key header, so a managed
 credential's action is attributed to nobody (`_actor`).
 
+### Gap 3: an API key can be moved to another tenant, and deleted from one
+
+An API key maps to its tenant through one record, `apikey:{sha256(key)}` →
+tenant id (`storage/tenant_store.py`). Every writer **overwrites** it without
+checking who owns it now:
+
+| Writer | Who can call it | How the key string is chosen |
+|---|---|---|
+| `add_api_key` via `POST /v1/tenant/me/api-keys` (`api/routes_tenant_self.py`) | Any tenant key or portal user of the tenant (write gate) | `custom_key` in the body, any value of 16+ characters |
+| `add_api_key` via `POST /v1/admin/tenants/{tenant_id}/api-keys` (`api/routes_tenant.py`) | Admin, `tenants:write` on **that** tenant | `api_key` in the body, any value |
+| `create_tenant` via `POST /v1/admin/tenants` with `api_keys` | Admin, `tenants:write` on the new tenant | the list in the body |
+
+So whoever can name a key string can move it into their tenant. From then on
+every request made with that key, its prompts and tool calls, is guarded,
+logged and billed **as the new tenant**, and the old tenant's integration
+stops working. Two concrete cases:
+
+- **The quickstart key.** `sk-test-healthcare` is published in
+  `ADMIN_DOCKER_GUIDE.md`, `DOCKER_LOCAL_TESTING.md`,
+  `docker-compose.dev.yml` and the seed route (`api/routes_agents_registry.py`).
+  It is 18 characters, so any tenant can claim it as a `custom_key`, and every
+  developer following the quickstart then sends their traffic into that
+  tenant. More generally, an unresolved `sk-test-*` key falls back to the
+  sandbox tenant (`core/auth.py`), so any such string of 16+ characters is
+  claimable before or after it is first used.
+- **Across an admin credential's scope.** A managed credential with
+  `tenants:write` on tenant A only can add tenant B's key to A (re-homing it),
+  and `DELETE /v1/admin/tenants/{tenant_id}/api-keys` deletes **any** key it is
+  given, whatever tenant owns it, so the same credential can delete B's keys.
+  Both need the key's plaintext; the scope check passes because it checks the
+  tenant in the path, not the key's owner.
+
+Also: `DELETE /v1/tenant/me/api-keys` checks the key belongs to the caller's
+tenant but has no write gate, so under `enforce` a runtime key can revoke the
+tenant's other keys (a denial of service).
+
+Not a gap: a tenant key cannot learn another tenant's key, and self-service
+never sets a scope, so none of this escalates scope. The risk is traffic
+capture and denial of service by someone who knows or can guess a key string.
+
 ### Outcome
 
 - Under `SHIELD_REGISTRY_WRITE_SCOPE=enforce`, only an admin-scoped tenant key
@@ -87,6 +127,9 @@ credential's action is attributed to nobody (`_actor`).
   everywhere else.
 - A scoped admin credential can use the policy template routes only with
   `tenants:write` (or `tenants:read` to read) for that tenant.
+- An API key belongs to one tenant for its whole life: adding it to another
+  tenant is refused (409), deleting it is possible only from the tenant that
+  owns it, and `sk-test-` keys can be created only in the sandbox tenant.
 - A test enumerates the live route tables of **both** apps so a new ungated
   route in either group fails CI.
 
@@ -108,19 +151,31 @@ credential's action is attributed to nobody (`_actor`).
 - **Admin credential scope editing.** There is no route to change a
   credential's scope; issuing a new one is the path (§5).
 - **Operator SSO roles.** Operators remain root-equivalent; separate.
+- **Finding keys already moved.** A move leaves no trace in the key record
+  (its metadata is rewritten with it). The admin audit has
+  `add_api_key` / `tenant_create_api_key` rows; reviewing them is an operator
+  task, not code.
+- **The key count check** in `POST /v1/tenant/me/api-keys` scans every
+  `apikey:*` record in Redis on each mint. A performance issue, not a security
+  one; left as is.
 
 ## 2. Plane & latency contract
 
 - Gap 1: **admin plane** only (`admin_app.py` mounts all four routers; the
   data plane mounts none of them).
 - Gap 2: **data plane** (`core/app.py` mounts `routes_policy_templates`).
+- Gap 3: **both planes** (`routes_tenant` and `routes_tenant_self` are
+  mounted on both), and the storage function every writer uses.
 - All are management routes, **off the guard path**: no guarded-traffic
   impact. The write gate adds one cached key-scope read per write; the scope
   check reads `request.state`, no I/O.
 
 ## 3. Data model
 
-No change. No new keys.
+No new keys. Gap 3 changes how `apikey:{hash}` is written: an atomic
+set-if-absent (`SET ... NX` in Redis, `setdefault` in the in-memory fallback),
+then a read of the owner when it was already present. Two concurrent adds of
+the same key to two tenants cannot both win.
 
 ## 4. API / interface
 
@@ -158,6 +213,19 @@ configuration is already `tenants:write` (`PUT /v1/admin/tenants/{tenant_id}`).
 Audit rows use `core.auth.admin_actor(request)` (`adminkey:{id}`,
 `adminroot`, `operator:{sub}`) instead of the hash of `X-Admin-Key`.
 
+**Gap 3.**
+
+| Change | Where | Result |
+|---|---|---|
+| Adding a key that already belongs to **another** tenant is refused | `storage.tenant_store.add_api_key` and `create_tenant` (so every writer, including future ones) raise `KeyInUseError`; the routes return **409** "this key is already in use", without naming the owner | Re-adding a key to the tenant that already owns it still works (it is how an admin re-scopes a key) |
+| `create_tenant` checks every key first and writes none if any is taken | `storage.tenant_store.create_tenant` | No half-created tenant |
+| `sk-test-` keys only in the sandbox tenant | `POST /v1/tenant/me/api-keys` (`custom_key`), `POST /v1/admin/tenants/{tenant_id}/api-keys`, `POST /v1/admin/tenants` | **400** "keys starting with sk-test- are reserved for the sandbox tenant" |
+| Admin delete removes the key only if that tenant owns it | `DELETE /v1/admin/tenants/{tenant_id}/api-keys` | **404** "no such key for this tenant" otherwise (the same answer whether the key is unknown or another tenant's) |
+| Self-service revoke goes through the write gate | `DELETE /v1/tenant/me/api-keys` | as the gap 1 table |
+
+To move a key between tenants on purpose (rare; a merger), an admin deletes it
+from the owning tenant, then adds it to the new one. Both steps are audited.
+
 ## 5. Security & backward compatibility
 
 **Gap 1** changes nothing under the default `off`. Deployments on `enforce`
@@ -186,6 +254,18 @@ remedy needs no deploy: the root key or an operator issues a credential with
 (`POST /v1/admin/credentials`) and revokes the old one. Migration note in the
 release notes and in `docs/policy-lifecycle.md`.
 
+**Gap 3** changes behavior for every deployment, on purpose:
+- adding a key that belongs to another tenant now fails with 409 instead of
+  silently moving it. Nothing legitimate depends on the silent move; the
+  explicit path is delete, then add;
+- new `sk-test-` keys outside the sandbox are refused. Existing ones keep
+  working (nothing is rewritten); only new mints are checked;
+- an admin delete naming another tenant's key returns 404 instead of deleting.
+
+No escape-hatch flag, for the same reason as gap 2: each would re-open a
+cross-tenant hijack, and the legitimate operation (moving a key) has an
+explicit two-step path. Migration note in the release notes.
+
 What a malicious caller can still do after this: with a runtime key under
 `off`, everything it could before (by design of `off`); under `enforce`,
 nothing on these routes. With a scoped admin credential: only the operations
@@ -209,6 +289,11 @@ images.
 | Scoped admin credential, tenant not in its list | 403 naming the tenant |
 | Scoped admin credential, catalog read without `tenants:read` | 403 |
 | Middleware-less mount (tests) | `require_admin_scope` is a no-op without `admin_identity`, as today |
+| Two tenants add the same new key at once | One wins (set-if-absent); the other gets 409 |
+| A key re-added to its own tenant with a new scope | Allowed; scope and metadata replaced, as today |
+| Redis unreachable during an add | The add fails (500), as today; nothing is overwritten |
+| A device key (`vdk_`) | Generated by Shield, never collides; the ownership rule applies unchanged |
+| The seed route's `SEED_TEST_API_KEY` | Added to the sandbox tenant, which owns it; allowed |
 
 ## 8. Test plan (Definition of Done)
 
@@ -230,7 +315,18 @@ New `tests/test_principals_template_authz.py`:
    policy-mode on A, 403 on PUT. Root key, an operator session and an
    unscoped credential: 200.
 8. Audit rows carry `adminkey:{id}` for a managed credential.
-9. **Regression guards, both apps' live route tables:**
+9. **Reproduction, gap 3.** Tenant B's key added to tenant A through
+   self-service `custom_key`, through the admin route and through
+   `create_tenant`: 409, and the key still resolves to B. `sk-test-healthcare`
+   claimed by tenant A: 400, and an unclaimed `sk-test-*` key still lands in
+   the sandbox. A credential scoped to A deleting B's key: 404, and B's key
+   still works. These fail before the fix.
+10. Re-adding a key to its own tenant with a new scope: allowed, scope
+    replaced. Delete-then-add moves a key. Concurrent adds of one key to two
+    tenants: exactly one succeeds (in-memory store and a fake Redis with `NX`).
+    `create_tenant` with one taken key writes nothing. Under `enforce`, a
+    runtime key revoking a sibling key: 403.
+11. **Regression guards, both apps' live route tables:**
    - every `/v1/admin/*` route (except `/v1/admin/auth/*`) reaches
      `require_admin_scope` or `require_admin_root_or_operator`;
    - every POST/PUT/PATCH/DELETE in `api.routes_principals`,
@@ -243,7 +339,7 @@ Existing suites stay green (`tests/test_registry_write_scope.py`, the
 principals, MCP sign-in, role-binding and policy-template tests). Full suite
 green in a clean venv; CI `pytest` passes.
 
-## Tasks (one branch, one PR, two commits)
+## Tasks (one branch, one PR, three commits)
 
 1. **Gap 1:** `require_registry_write` on the 13 routes; tests 1 to 5; the
    route-table guard for them; `test_no_ungated_write_route_has_appeared` on
@@ -251,6 +347,10 @@ green in a clean venv; CI `pytest` passes.
 2. **Gap 2:** `require_admin_scope` on the 5 template routes, `admin_actor`
    in their audit rows; tests 6 to 8; the `/v1/admin/*` route-table guard;
    `docs/policy-lifecycle.md` migration note.
+3. **Gap 3:** set-if-absent ownership in `add_api_key` and `create_tenant`
+   with `KeyInUseError` → 409 at the three routes; the `sk-test-` reservation;
+   owner check on the admin delete; write gate on self-service revoke;
+   tests 9 and 10; release note.
 
 ## Follow-up (separate spec, not part of this one)
 
