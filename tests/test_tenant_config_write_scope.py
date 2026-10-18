@@ -289,3 +289,108 @@ def test_the_root_admin_key_decides(client, approvals):
     rid = pending()
     assert decide(client, rid, {"X-API-Key": RUNTIME, "X-Admin-Key": ROOT}).status_code == 200
     assert status(rid)["approvals"][0]["method"] == "admin"
+
+
+# ── D: the configuration write gate ──────────────────────────────────
+#
+# Under enforce, a runtime key could still change the tenant's configuration.
+# The gate runs before anything is changed; requests here carry no body, so a
+# refusal is the gate's (FastAPI would 422 a bad body before any handler).
+
+ONE_PER_GROUP = [   # (plane, method, path) - one body-less write per group of the spec
+    ("data", "DELETE", "/v1/tenant/me/custom-policies/cp-1"),
+    ("data", "POST", "/v1/tenant/me/policies/custom/cp-1/disable"),
+    ("data", "DELETE", "/v1/data-policies/global/policy"),
+    ("data", "DELETE", "/v1/agents/tools/policies/refund"),
+    ("data", "POST", "/v1/agents/unregistered/stray-bot/block"),
+    ("data", "POST", "/v1/tenant/me/agentic/circuit-breakers/refund/reset"),
+    ("data", "DELETE", "/v1/tenant/me/mcp-gateway/upstreams/github"),
+    ("data", "DELETE", "/v1/shield/webhooks/ta/wh-1"),
+    ("data", "DELETE", "/v1/shield/policies/ta/p-1"),
+    ("data", "POST", "/v1/governance/reviews/rev-1/close"),
+    ("admin", "DELETE", "/v1/tenant/me/mcp/servers/github"),
+    ("admin", "DELETE", "/v1/tenant/me/vault/ref-1"),
+    ("admin", "DELETE", "/v1/tenant/me/siem/siem-1"),
+    ("admin", "DELETE", "/v1/tenant/me/aibom/components/models/m-1"),
+]
+
+
+@pytest.fixture
+def planes(app, approvals):
+    import admin_app
+    return {"data": TestClient(app), "admin": TestClient(admin_app.app)}
+
+
+@pytest.mark.parametrize("plane,method,path", ONE_PER_GROUP)
+def test_enforce_refuses_a_runtime_key_on_configuration_writes(planes, monkeypatch, plane, method, path):
+    monkeypatch.setenv("SHIELD_CONFIG_WRITE_SCOPE", "enforce")
+    r = planes[plane].request(method, path, headers={"X-API-Key": RUNTIME})
+    assert r.status_code == 403, (path, r.status_code, r.text[:200])
+    assert "SHIELD_CONFIG_WRITE_SCOPE" in r.text
+
+
+@pytest.mark.parametrize("plane,method,path", ONE_PER_GROUP)
+def test_enforce_lets_an_admin_scoped_key_through(planes, monkeypatch, plane, method, path):
+    monkeypatch.setenv("SHIELD_CONFIG_WRITE_SCOPE", "enforce")
+    r = planes[plane].request(method, path, headers={"X-API-Key": ADMIN_SCOPED})
+    assert r.status_code != 403, (path, r.status_code, r.text[:200])
+
+
+@pytest.mark.parametrize("plane,method,path", ONE_PER_GROUP)
+def test_off_is_unchanged_and_warn_records(planes, monkeypatch, plane, method, path):
+    assert planes[plane].request(method, path, headers={"X-API-Key": RUNTIME}).status_code != 403
+    monkeypatch.setenv("SHIELD_CONFIG_WRITE_SCOPE", "warn")
+    warned = []
+    monkeypatch.setattr("core.auth._record_config_warning",
+                        lambda req, tenant, scope, action: warned.append((tenant, scope)))
+    assert planes[plane].request(method, path, headers={"X-API-Key": RUNTIME}).status_code != 403
+    assert warned == [("ta", "runtime")], (path, warned)
+
+
+def test_a_change_really_is_refused(planes, monkeypatch):
+    """End to end on one write with a body: the tenant's tools stay as they were."""
+    from storage.tenant_store import get_tenant
+    monkeypatch.setenv("SHIELD_CONFIG_WRITE_SCOPE", "enforce")
+    before = (get_tenant("ta") or {}).get("tools")
+    r = planes["data"].put("/v1/tenant/me/tools", headers={"X-API-Key": RUNTIME}, json={"tools": []})
+    assert r.status_code == 403 and (get_tenant("ta") or {}).get("tools") == before
+
+
+@pytest.mark.parametrize("registry,config,expected", [
+    ("", "", "off"), ("off", "", "off"), ("warn", "", "warn"), ("enforce", "", "warn"),
+    ("enforce", "enforce", "enforce"), ("off", "enforce", "enforce"), ("enforce", "off", "off"),
+    ("off", "enforced", "off"),
+])
+def test_the_mode_follows_the_registry_mode_capped_at_warn(monkeypatch, registry, config, expected):
+    from core.auth import config_write_mode
+    for name, value in (("SHIELD_REGISTRY_WRITE_SCOPE", registry), ("SHIELD_CONFIG_WRITE_SCOPE", config)):
+        if value:
+            monkeypatch.setenv(name, value)
+        else:
+            monkeypatch.delenv(name, raising=False)
+    assert config_write_mode() == expected
+
+
+def test_admin_callers_and_portal_administrators_pass_the_gate(planes, monkeypatch):
+    monkeypatch.setenv("SHIELD_CONFIG_WRITE_SCOPE", "enforce")
+    assert planes["data"].delete("/v1/shield/webhooks/tb/wh-1", headers={"X-Admin-Key": ROOT}).status_code != 403
+    admin = {"kind": "user", "tenant_id": "ta", "sub": "u1", "email": "a@acme.example", "is_admin": True}
+    monkeypatch.setattr("core.auth.portal_principal", lambda r: admin)
+    assert planes["data"].delete("/v1/data-policies/global/policy",
+                                 headers={"X-API-Key": RUNTIME}).status_code != 403
+
+
+def test_validators_stay_open_to_a_runtime_key(planes, monkeypatch):
+    monkeypatch.setenv("SHIELD_CONFIG_WRITE_SCOPE", "enforce")
+    r = planes["data"].post("/v1/tenant/me/custom-policies/validate-sigma", headers={"X-API-Key": RUNTIME},
+                            json={"rule": "title: x"})
+    assert r.status_code != 403
+
+
+def test_the_global_mcp_registry_is_admin_only(planes):
+    body = {"name": "srv", "url": "https://mcp.example.com", "tools": ["t"], "trust_score": 1.0}
+    assert planes["data"].post("/v1/shield/mcp/register", json=body).status_code == 401
+    assert planes["data"].post("/v1/shield/mcp/register", json=body,
+                               headers={"X-API-Key": ADMIN_SCOPED}).status_code == 403
+    assert planes["data"].post("/v1/shield/mcp/register", json=body,
+                               headers={"X-Admin-Key": ROOT}).status_code == 200

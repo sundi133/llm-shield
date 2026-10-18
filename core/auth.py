@@ -657,20 +657,20 @@ def caller_key_scope(request) -> "tuple":
         return None, False
 
 
-def require_registry_write(request, tenant_id: str = "",
-                           action: str = "write the agent registry") -> None:
-    """Refuse a registry write by a key that is not admin-scoped.
-
-    No-op under `off`. Under `warn` every write proceeds and a non-admin write
-    is recorded, which is the preflight: it names the callers `enforce` would
-    break before it breaks them. Under `enforce` only an admin-scoped key
-    writes — unscoped legacy keys included, which is the whole point, since
-    every key in existence today is unscoped.
-    """
+def _require_scoped_write(request, tenant_id: str, action: str, *, mode: str,
+                          env_name: str, record) -> None:
+    """The write gate, shared by registry and configuration writes: `mode` is
+    the gate's off/warn/enforce, `env_name` the setting named in refusals,
+    `record` what warn mode writes. See require_registry_write."""
     from fastapi import HTTPException
 
-    mode = registry_write_mode()
     if mode == MODE_OFF:
+        return
+
+    # An admin caller (root or managed admin key, SSO operator, admin workload
+    # identity, master key) is above write scope: the scope of a TENANT key is
+    # what this gate checks, and admin callers carry none.
+    if admin_caller(request) is not None:
         return
 
     # Passed explicitly by callers that resolved it themselves: routes reached
@@ -686,7 +686,7 @@ def require_registry_write(request, tenant_id: str = "",
         if principal.get("is_admin"):
             return
         if mode == MODE_WARN:
-            _record_scope_warning(request, principal.get("tenant_id", ""),
+            record(request, principal.get("tenant_id", ""),
                                   "user:not-admin", action)
             return
         raise HTTPException(
@@ -714,27 +714,89 @@ def require_registry_write(request, tenant_id: str = "",
         raise HTTPException(
             status_code=503,
             detail="Cannot verify API key scope (key store unavailable). "
-                   "Registry writes are refused while "
-                   "SHIELD_REGISTRY_WRITE_SCOPE=enforce.",
+                   f"These writes are refused while {env_name}=enforce.",
         )
 
     if scope == "admin":
         return
 
     if mode == MODE_WARN:
-        _record_scope_warning(request, tenant_id, scope, action)
+        record(request, tenant_id, scope, action)
         return
 
     raise HTTPException(
         status_code=403,
         detail=(f"This API key is scoped {scope!r} and cannot {action}. "
                 f"Use an admin-scoped key. "
-                f"(SHIELD_REGISTRY_WRITE_SCOPE=enforce)")
+                f"({env_name}=enforce)")
         if scope else
         (f"This API key has no scope and cannot {action} while "
-         f"SHIELD_REGISTRY_WRITE_SCOPE=enforce. Mint an admin-scoped key "
+         f"{env_name}=enforce. Mint an admin-scoped key "
          f"(POST /v1/admin/tenants/{{tenant}}/api-keys with scope=admin)."),
     )
+
+
+
+def require_registry_write(request, tenant_id: str = "",
+                           action: str = "write the agent registry") -> None:
+    """Refuse a registry write by a key that is not admin-scoped.
+
+    No-op under `off`. Under `warn` every write proceeds and a non-admin write
+    is recorded, which is the preflight: it names the callers `enforce` would
+    break before it breaks them. Under `enforce` only an admin-scoped key
+    writes — unscoped legacy keys included, which is the whole point, since
+    every key in existence today is unscoped.
+    """
+    _require_scoped_write(request, tenant_id, action, mode=registry_write_mode(),
+                          env_name="SHIELD_REGISTRY_WRITE_SCOPE",
+                          record=_record_scope_warning)
+
+
+# Configuration writes: the tenant's guardrail, data and tool policies, MCP
+# servers, destinations and secrets. The same rule as registry writes with its
+# own switch, so turning it on is a separate, previewable step
+# (docs/specs/tenant-config-write-scope.md, finding D).
+CONFIG_WRITE_ENV = "SHIELD_CONFIG_WRITE_SCOPE"
+
+
+def config_write_mode() -> str:
+    """off | warn | enforce. Unset follows the registry mode, capped at warn:
+    a deployment already on registry `enforce` starts recording which callers
+    configuration `enforce` would refuse, and nothing breaks on upgrade. An
+    unrecognised value reads as `off`, as for the registry mode."""
+    raw = (os.environ.get(CONFIG_WRITE_ENV, "") or "").strip().lower()
+    if not raw:
+        return MODE_OFF if registry_write_mode() == MODE_OFF else MODE_WARN
+    return raw if raw in REGISTRY_WRITE_MODES else MODE_OFF
+
+
+def require_config_write(request, tenant_id: str = "",
+                         action: str = "change the tenant's configuration") -> None:
+    """Refuse a configuration write by a key that is not admin-scoped, per
+    SHIELD_CONFIG_WRITE_SCOPE. Same rule as require_registry_write: a portal
+    administrator or an admin-scoped key may write; the sandbox tenant is
+    exempt; an unreadable key store fails closed under enforce."""
+    _require_scoped_write(request, tenant_id, action, mode=config_write_mode(),
+                          env_name=CONFIG_WRITE_ENV, record=_record_config_warning)
+
+
+def _record_config_warning(request, tenant_id: str, scope, action: str) -> None:
+    """Warn mode's record for configuration writes (never raises)."""
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(
+            action="config_write_scope_warning",
+            actor=f"tenant:{tenant_id}",
+            tenant_id=tenant_id,
+            source_ip=(request.client.host if getattr(request, "client", None) else ""),
+            metadata={"scope": scope or "unscoped", "attempted": action,
+                      "path": str(getattr(request, "url", "")),
+                      "would_be_refused_under_enforce": True},
+        )
+    except Exception:
+        logger.warning("configuration write by %s-scoped key for tenant %s (%s) would be "
+                       "refused under %s=enforce", scope or "un", tenant_id, action,
+                       CONFIG_WRITE_ENV)
 
 
 def _record_scope_warning(request, tenant_id: str, scope, action: str) -> None:

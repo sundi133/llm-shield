@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Request
 from api.routes_agents_registry import get_tenant_from_api_key, get_redis_data, _save_agents
 from storage import agent_auth_stats as stats
 from storage.tenant_store import kv_get, kv_set
+from core.auth import require_config_write
 
 router = APIRouter(prefix="/v1/governance", tags=["governance"])
 
@@ -258,6 +259,7 @@ def _build_items(tenant_id: str) -> list[dict]:
 async def create_review(request: Request):
     """Create an access-review campaign, pre-populated with recommendations."""
     tenant_id = get_tenant_from_api_key(request)
+    require_config_write(request, tenant_id, "start an access review")
     try:
         body = await request.json()
     except Exception:
@@ -314,6 +316,7 @@ async def get_review(campaign_id: str, request: Request):
 async def submit_decisions(campaign_id: str, request: Request):
     """Record keep/revoke decisions: body {"decisions":[{agent_id,tool,decision,note}]}."""
     tenant_id = get_tenant_from_api_key(request)
+    require_config_write(request, tenant_id, "submit access review decisions")
     campaign = kv_get(_rev_key(tenant_id, campaign_id))
     if not campaign:
         raise HTTPException(status_code=404, detail="campaign not found")
@@ -345,6 +348,7 @@ async def submit_decisions(campaign_id: str, request: Request):
 async def close_review(campaign_id: str, request: Request):
     """Close the campaign and APPLY revoke decisions to the registry (idempotent)."""
     tenant_id = get_tenant_from_api_key(request)
+    require_config_write(request, tenant_id, "close an access review")
     campaign = kv_get(_rev_key(tenant_id, campaign_id))
     if not campaign:
         raise HTTPException(status_code=404, detail="campaign not found")

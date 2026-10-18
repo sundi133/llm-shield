@@ -26,6 +26,7 @@ from storage.agentic_control_plane import (
     reset_circuit_breaker,
     report_tool_execution,
 )
+from core.auth import require_config_write
 
 logger = logging.getLogger("votal.agentic_control_plane")
 
@@ -105,6 +106,7 @@ async def get_agentic_control_plane(request: Request):
 @router.put("/config")
 async def update_agentic_control_plane(request: Request, body: ControlPlaneConfigRequest):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "change the agentic control plane")
     config = set_control_plane_config(
         tenant_id,
         body.model_dump(exclude_none=True),
@@ -270,6 +272,7 @@ async def get_execution_grants(request: Request, include_inactive: bool = Query(
 @router.post("/execution-grants")
 async def create_execution_grant(body: GrantCreateRequest, request: Request):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "create an execution grant")
     grant = issue_execution_grant(
         tenant_id,
         body.model_dump(exclude_none=True),
@@ -282,6 +285,7 @@ async def create_execution_grant(body: GrantCreateRequest, request: Request):
 @router.post("/execution-grants/{grant_id}/revoke")
 async def revoke_grant(grant_id: str, request: Request):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "revoke an execution grant")
     grant = revoke_execution_grant(tenant_id, grant_id, actor=f"tenant:{tenant_id}")
     if not grant:
         raise HTTPException(status_code=404, detail="Execution grant not found")
@@ -320,6 +324,7 @@ async def create_workflow_checkpoint(body: CheckpointCreateRequest, request: Req
 @router.post("/checkpoints/{checkpoint_id}/resume")
 async def resume_workflow_checkpoint(checkpoint_id: str, request: Request):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "resume a workflow checkpoint")
     checkpoint = resume_checkpoint(tenant_id, checkpoint_id, actor=f"tenant:{tenant_id}")
     if not checkpoint:
         raise HTTPException(status_code=404, detail="Checkpoint not found")
@@ -373,6 +378,7 @@ async def report_execution(body: ToolExecutionReportRequest, request: Request):
 @router.post("/circuit-breakers/{tool_name}/reset")
 async def reset_breaker(tool_name: str, request: Request):
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "reset a circuit breaker")
     state = reset_circuit_breaker(tenant_id, tool_name, actor=f"tenant:{tenant_id}")
     _audit(request, "tenant_reset_circuit_breaker", tenant_id=tenant_id, metadata={"tool_name": tool_name})
     return {"status": "reset", "tool_state": state}

@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, ValidationError
 from typing import Any, Dict, List, Optional
 
-from core.auth import get_tenant_from_request, require_registry_write
+from core.auth import get_tenant_from_request, require_config_write, require_registry_write
 from core.dlp import floor
 from core.dlp_settings import (
     dlp_echo_check, dlp_fail_closed, dlp_llm_timeout_s, payload_delimiters, verdict_echoed,
@@ -249,11 +249,13 @@ def _invalidate_tool_catalog(tenant_id: str) -> None:
 
 @router.post("/tools/{tool_name}/policy")
 async def create_tool_data_policy(
+    request: Request,
     tool_name: str,
     policy: ToolDataPolicy,
     tenant_id: str = Depends(get_tenant_from_request)
 ):
     """Create or update data policy for a specific tool. Persisted in Redis."""
+    require_config_write(request, tenant_id, "change a tool's data policy")
     _reject_reserved(tool_name)
     _reject_invalid_floor(policy.dict())
     try:
@@ -333,10 +335,12 @@ async def get_all_data_policies(
 
 @router.delete("/tools/{tool_name}/policy")
 async def delete_tool_data_policy(
+    request: Request,
     tool_name: str,
     tenant_id: str = Depends(get_tenant_from_request)
 ):
     """Delete a tool's data policy from Redis."""
+    require_config_write(request, tenant_id, "delete a tool's data policy")
     _reject_reserved(tool_name)
     try:
         all_policies = _load_all(tenant_id)
@@ -595,10 +599,12 @@ async def get_global_data_policy(
 
 @router.post("/global/policy")
 async def set_global_data_policy(
+    request: Request,
     policy: GlobalDataPolicy,
     tenant_id: str = Depends(get_tenant_from_request)
 ):
     """Create or replace the tenant-wide default policy."""
+    require_config_write(request, tenant_id, "change the global data policy")
     _reject_invalid_floor(policy.dict())
     try:
         all_policies = _load_all(tenant_id)
@@ -618,9 +624,11 @@ async def set_global_data_policy(
 
 @router.delete("/global/policy")
 async def delete_global_data_policy(
+    request: Request,
     tenant_id: str = Depends(get_tenant_from_request)
 ):
     """Remove the tenant-wide default policy. Per-tool policies are untouched."""
+    require_config_write(request, tenant_id, "delete the global data policy")
     try:
         all_policies = _load_all(tenant_id)
         if GLOBAL_POLICY_KEY not in all_policies:

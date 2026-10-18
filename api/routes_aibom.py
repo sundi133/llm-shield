@@ -35,6 +35,7 @@ from storage.aibom import (
     load_declared,
     save_declared,
 )
+from core.auth import require_config_write
 
 router = APIRouter(prefix="/v1/tenant/me/aibom", tags=["aibom"])
 
@@ -224,6 +225,7 @@ async def put_manifest(request: Request):
     request before anything is written.
     """
     tenant_id = get_tenant_from_api_key(request)
+    require_config_write(request, tenant_id, "change the AI bill of materials")
     try:
         body = await request.json()
     except Exception:
@@ -265,6 +267,7 @@ async def put_components(section: str, request: Request):
     be any JSON scalar/object.
     """
     tenant_id = get_tenant_from_api_key(request)
+    require_config_write(request, tenant_id, "change AI bill of materials components")
     _validate_section(section)
     try:
         body = await request.json()
@@ -295,6 +298,7 @@ async def put_components(section: str, request: Request):
 async def delete_component(section: str, component_id: str, request: Request):
     """Remove one declared entry."""
     tenant_id = get_tenant_from_api_key(request)
+    require_config_write(request, tenant_id, "delete an AI bill of materials component")
     _validate_section(section)
     declared = load_declared(tenant_id)
     stored = declared.get(section) or {}

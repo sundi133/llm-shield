@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
-from core.auth import verify_tenant_path_access
+from core.auth import require_config_write, verify_tenant_path_access
 from core.url_safety import UnsafeURLError, validate_outbound_url
 from storage.webhook_store import (
     create_webhook,
@@ -93,6 +93,7 @@ class WebhookUpdateRequest(BaseModel):
 @router.post("/{tenant_id}")
 async def create_webhook_endpoint(tenant_id: str, body: WebhookCreateRequest, request: Request):
     """Create a new webhook for a tenant."""
+    require_config_write(request, tenant_id, "create a webhook")
     # Validate event types
     invalid = [e for e in body.events if e not in VALID_EVENTS]
     if invalid:
@@ -150,6 +151,7 @@ async def update_webhook_endpoint(
     tenant_id: str, webhook_id: str, body: WebhookUpdateRequest, request: Request
 ):
     """Update a webhook configuration."""
+    require_config_write(request, tenant_id, "change a webhook")
     if body.events:
         invalid = [e for e in body.events if e not in VALID_EVENTS]
         if invalid:
@@ -181,6 +183,7 @@ async def update_webhook_endpoint(
 @router.delete("/{tenant_id}/{webhook_id}")
 async def delete_webhook_endpoint(tenant_id: str, webhook_id: str, request: Request):
     """Delete a webhook configuration."""
+    require_config_write(request, tenant_id, "delete a webhook")
     deleted = delete_webhook(tenant_id, webhook_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Webhook '{webhook_id}' not found")

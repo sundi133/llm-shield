@@ -97,6 +97,7 @@ from storage.tool_killswitch import (
     enable_tool,
     list_disabled_tools,
 )
+from core.auth import require_config_write
 
 router = APIRouter(prefix="/v1/tenant/me/mcp", tags=["mcp-console"])
 
@@ -320,6 +321,7 @@ async def mcp_inventory(request: Request):
 async def disable(tool_name: str, body: ToolActionRequest, request: Request):
     """Kill-switch a tool for THIS tenant. Immediate effect on the guard path."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "disable an MCP tool")
     actor = _actor(request)
 
     meta = disable_tool(tenant_id=tenant_id, tool_name=tool_name,
@@ -363,6 +365,7 @@ async def enable(tool_name: str, request: Request,
     no ``route`` this lifts the fleet-wide disable, exactly as before.
     """
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "enable an MCP tool")
     actor = _actor(request)
     route = body.route if body else None
 
@@ -448,6 +451,7 @@ class RegisterServerRequest(BaseModel):
 async def register_server(body: RegisterServerRequest, request: Request):
     """Register or replace an upstream MCP server for THIS tenant."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "register an MCP server")
     actor = _actor(request)
     route = body.route
 
@@ -519,6 +523,7 @@ async def register_server(body: RegisterServerRequest, request: Request):
 async def delete_server(route: str, request: Request):
     """Remove an upstream this tenant registered."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "remove an MCP server")
     actor = _actor(request)
 
     # Drop the fan-out index entry first. A deleted route left in a profile's
@@ -590,6 +595,7 @@ async def run_scan(route: str, request: Request):
     protocol announces that.
     """
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "scan an MCP server")
     actor = _actor(request)
     cfg = get_upstream(tenant_id, route)
     if not cfg:
@@ -670,6 +676,7 @@ async def activate_server(route: str, request: Request):
     looking like routine maintenance.
     """
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "activate an MCP server")
     actor = _actor(request)
     cfg = get_upstream(tenant_id, route)
     if not cfg:
@@ -710,6 +717,7 @@ async def approve_catalog(route: str, request: Request):
     quarantined by a catalog change is republished.
     """
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "approve an MCP tool catalog")
     actor = _actor(request)
     cfg = get_upstream(tenant_id, route)
     if not cfg:
@@ -763,6 +771,7 @@ async def disable_server(route: str, body: ToolActionRequest, request: Request):
     """Stop serving a whole MCP server, keeping its config. Effective on the
     next call — the gateway re-reads config per request."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "disable an MCP server")
     actor = _actor(request)
     cfg = _set_active(tenant_id, route, False)
 
@@ -840,6 +849,7 @@ async def set_credential_scope(route: str, body: CredentialScopeRequest, request
     Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (B2)
     """
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "change an MCP server's credential scope")
     cfg = get_upstream(tenant_id, route)
     if not cfg:
         raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
@@ -891,6 +901,7 @@ async def list_server_grants(route: str, request: Request):
 async def revoke_server_grant(route: str, principal_id: str, request: Request):
     from core.mcp_credentials import revoke_grant
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "revoke an MCP server grant")
     if not await revoke_grant(tenant_id, route, principal_id):
         raise HTTPException(status_code=404, detail="that person has no connection to this server")
     try:
@@ -906,6 +917,7 @@ async def revoke_server_grant(route: str, principal_id: str, request: Request):
 async def revoke_all_server_grants(route: str, request: Request):
     from core.mcp_credentials import revoke_route_grants
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "revoke an MCP server's grants")
     if not get_upstream(tenant_id, route):
         raise HTTPException(status_code=404, detail=f"route '{route}' not configured")
     n = await revoke_route_grants(tenant_id, route)
@@ -922,6 +934,7 @@ async def revoke_all_server_grants(route: str, request: Request):
 async def enable_server(route: str, request: Request):
     """Re-enable a server previously disabled here."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "enable an MCP server")
     actor = _actor(request)
     cfg = _set_active(tenant_id, route, True)
 
@@ -1022,6 +1035,7 @@ async def oauth_disconnect(route: str, request: Request):
     Spec: docs/specs/mcp-verified-callers-and-user-credentials.md (§4.9)
     """
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "disconnect an MCP server's OAuth")
     if not get_upstream(tenant_id, route):
         raise HTTPException(status_code=404, detail=f"route '{route}' not found")
     from core.mcp_credentials import disconnect_route
@@ -1193,6 +1207,7 @@ async def oauth_connect(route: str, request: Request,
     then redirects to the callback. Returns 202 because the work is not finished.
     """
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "connect an MCP server's OAuth")
     actor = _actor(request)
     _oauth_precondition(route)
 
@@ -1388,6 +1403,7 @@ async def put_policy_profile(profile_id: str, body: ProfileRequest, request: Req
     """Create or replace a profile. Profile ids share the route charset: both
     end up in Redis keys, and one rule is easier to hold than two."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "change an MCP policy profile")
     actor = _actor(request)
     if not is_valid_route_name(profile_id):
         raise HTTPException(status_code=422,
@@ -1423,6 +1439,7 @@ async def delete_policy_profile(profile_id: str, request: Request):
     """Delete a profile. Refused while routes are bound: silently unbinding
     servers would drop their policy without anyone asking for that."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "delete an MCP policy profile")
     actor = _actor(request)
 
     bound = list_bound_routes(tenant_id, profile_id)
@@ -1465,6 +1482,7 @@ class BindingRequest(BaseModel):
 async def put_binding(route: str, body: BindingRequest, request: Request):
     """Bind a server to a policy profile and materialize its effective policy."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "change an MCP server binding")
     actor = _actor(request)
 
     cfg = get_upstream(tenant_id, route)
@@ -1522,6 +1540,7 @@ async def delete_binding(route: str, request: Request):
     """Unbind a server, dropping its materialized policy. The server keeps
     serving traffic under the tenant-wide defaults it used before binding."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "remove an MCP server binding")
     actor = _actor(request)
 
     cfg = get_upstream(tenant_id, route)

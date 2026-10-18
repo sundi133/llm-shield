@@ -30,6 +30,7 @@ from storage.custom_policies import (
     MAX_POLICIES_PER_STAGE,
     sigma_max_policies_per_stage,
 )
+from core.auth import require_config_write
 
 router = APIRouter(prefix="/v1/tenant/me/custom-policies", tags=["tenant-custom-policies"])
 
@@ -185,6 +186,7 @@ async def import_sigma_policies(request: Request, body: SigmaImportRequest):
     from core.sigma_io import import_sigma
 
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "import Sigma policies")
     try:
         result = import_sigma(tenant_id, body.sigma, stage=body.stage, action=body.action,
                               dry_run=body.dry_run, field_map=body.field_map,
@@ -270,6 +272,7 @@ async def get_custom_policy_stats(request: Request):
 async def create_custom_policy(request: Request, body: CustomPolicyRequest):
     """Create a new custom policy."""
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "create a custom policy")
 
     try:
         # Validate the definition: prompt heuristics for natural language; a
@@ -338,6 +341,7 @@ async def update_custom_policy_by_id(
 ):
     """Update an existing custom policy."""
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "change a custom policy")
 
     # Check if policy exists
     existing_policy = get_custom_policy(tenant_id, policy_id)
@@ -396,6 +400,7 @@ async def update_custom_policy_by_id(
 async def delete_custom_policy_by_id(request: Request, policy_id: str):
     """Delete a custom policy."""
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "delete a custom policy")
 
     # Get policy name for audit log
     existing_policy = get_custom_policy(tenant_id, policy_id)
@@ -423,6 +428,7 @@ async def delete_custom_policy_by_id(request: Request, policy_id: str):
 async def enable_custom_policy_by_id(request: Request, policy_id: str):
     """Enable a custom policy."""
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "enable a custom policy")
 
     success = enable_custom_policy(tenant_id, policy_id)
     if not success:
@@ -446,6 +452,7 @@ async def enable_custom_policy_by_id(request: Request, policy_id: str):
 async def disable_custom_policy_by_id(request: Request, policy_id: str):
     """Disable a custom policy."""
     tenant_id = _tenant_id(request)
+    require_config_write(request, tenant_id, "disable a custom policy")
 
     success = disable_custom_policy(tenant_id, policy_id)
     if not success:

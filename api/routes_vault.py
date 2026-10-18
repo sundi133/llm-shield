@@ -17,6 +17,7 @@ from storage.vault_store import (
     delete_vault_entry,
     list_vault_entries,
 )
+from core.auth import require_config_write
 
 router = APIRouter(prefix="/v1/tenant/me/vault", tags=["vault"])
 
@@ -43,6 +44,7 @@ class VaultCreateRequest(BaseModel):
 async def create_secret(body: VaultCreateRequest, request: Request):
     """Register a secret. Returns metadata (ref + opaque token), never the value."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "store a vault secret")
     try:
         entry = create_vault_entry(
             tenant_id, body.name, body.value, body.bindings,
@@ -65,6 +67,7 @@ async def list_secrets(request: Request):
 async def remove_secret(ref: str, request: Request):
     """Remove a secret by its reference name."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "remove a vault secret")
     if not delete_vault_entry(tenant_id, ref):
         raise HTTPException(status_code=404, detail=f"secret '{ref}' not found")
     return {"success": True, "message": f"secret '{ref}' deleted"}

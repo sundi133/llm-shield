@@ -17,6 +17,7 @@ from storage.siem_store import (
     delete_siem_config,
     get_siem_configs,
 )
+from core.auth import require_config_write
 
 router = APIRouter(prefix="/v1/tenant/me/siem", tags=["siem"])
 
@@ -50,6 +51,7 @@ class SIEMCreateRequest(BaseModel):
 async def create_siem(body: SIEMCreateRequest, request: Request):
     """Create a new SIEM integration."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "add a SIEM destination")
 
     if body.type == "splunk" and not body.url:
         raise HTTPException(status_code=400, detail="Splunk HEC URL required")
@@ -94,6 +96,7 @@ async def list_siem(request: Request):
 async def remove_siem(siem_id: str, request: Request):
     """Remove a SIEM integration."""
     tenant_id = _require_tenant(request)
+    require_config_write(request, tenant_id, "remove a SIEM destination")
     deleted = delete_siem_config(tenant_id, siem_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"SIEM integration '{siem_id}' not found")
