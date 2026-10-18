@@ -265,8 +265,11 @@ def _reaches(fn, needles, depth=2, _seen=None):
 
 
 def _routes(app):
-    for r in app.routes:
-        ep, path = getattr(r, "endpoint", None), getattr(r, "path", "")
+    from tests.route_tables import flat_routes
+    for path, r in flat_routes(app):
+        ep = getattr(r, "endpoint", None)
+        if ep is None:
+            continue
         for m in sorted((getattr(r, "methods", None) or set()) - {"HEAD", "OPTIONS"}):
             yield m, path, ep
 
@@ -417,13 +420,16 @@ def test_every_admin_route_holds_a_credential_to_its_scope():
     """Every /v1/admin route on both apps reaches require_admin_scope (or is
     root/operator only). The policy-template routes were the gap; this keeps
     the next one from appearing."""
-    missing = []
+    missing, checked = [], {"data": 0, "admin": 0}
     for plane, app in _apps().items():
         for m, path, ep in _routes(app):
             if not path.startswith("/v1/admin/") or path.startswith("/v1/admin/auth/"):
                 continue
+            checked[plane] += 1
             if not _reaches(ep, ("require_admin_scope(", "require_admin_root_or_operator(")):
                 missing.append((plane, m, path))
+    # A walk that saw nothing proves nothing (see tests/route_tables.py).
+    assert checked["data"] >= 20 and checked["admin"] >= 20, checked
     assert not missing, f"/v1/admin route(s) that ignore a credential's scope: {sorted(set(missing))}"
 
 

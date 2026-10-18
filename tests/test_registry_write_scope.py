@@ -348,8 +348,9 @@ def test_no_ungated_write_route_has_appeared():
                "api.routes_policy", "api.routes_tenant_self"}
 
     import inspect
+    from tests.route_tables import flat_routes
     found = set()
-    for r in (r for app in apps for r in app.routes):
+    for path, r in (pr for app in apps for pr in flat_routes(app)):
         ep = getattr(r, "endpoint", None)
         if not ep or ep.__module__ not in writers:
             continue
@@ -362,8 +363,10 @@ def test_no_ungated_write_route_has_appeared():
             continue
         for m in (getattr(r, "methods", None) or ()):
             if m in ("POST", "PUT", "DELETE"):
-                found.add((m, r.path))
+                found.add((m, path))
 
+    # A walk that saw nothing proves nothing (tests/route_tables.py).
+    assert ("POST", "/v1/agents/registry") in found, sorted(found)
     new = found - known
     assert not new, (
         f"new route(s) reach a registry write and may be ungated: {sorted(new)}. "
