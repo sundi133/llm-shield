@@ -1,4 +1,4 @@
-fastapi
+fastapi>=0.135,<0.144   # tested range; 0.141+ nests included routers (tests/route_tables.py)
 uvicorn
 requests
 pydantic
