@@ -8,8 +8,8 @@ description: One inventory of the AI apps, agents, MCP servers and AI services i
 
 # Spec: AI discovery beyond Shield traffic
 
-> Status: **APPROVED. Tasks 1 and 2 built; tasks 3 to 5 not started** (see
-> "As built" at the end). Branch `spec/ai-discovery`.
+> Status: **APPROVED and built** (all five tasks; see "As built" at the end).
+> Branches `spec/ai-discovery` (tasks 1, 2) and `feat/ai-discovery-actions` (tasks 3 to 5).
 > Related: `docs/specs/agent-os-events.md` (approved; agent attribution on
 > endpoints, server side built), `docs/spec-okta-parity-agent-identity.md`
 > (draft; gap G1 and an identity-provider discovery source),
@@ -277,8 +277,48 @@ Nothing is changed by discovery alone; every action is a person's.
   only the server name, the command's base name, the package or image, the
   host, and the client. Flag values (`-e`, `--token`, ...) are never returned
   as a package.
-- **Tasks 3 to 5** (proxy shipper and DNS/firewall import, `shield-mcp
-  discover`, actions and the `ai_discovered` webhook) are not built. The
-  ingest route already accepts `proxy`, `dns_log`, `repo_scan`, `idp` and
-  `custom` batches, and the portal detail view calls `aiInvActions` only when
-  it is defined.
+- **Tasks 3 to 5** are built on `feat/ai-discovery-actions`; notes below.
+
+## As built (tasks 3 to 5)
+
+- **Proxy shipper** (`deploy/swg/discovery-shipper/`, standard library only).
+  Squid sends it a discovery log over UDP (`SHIELD_DISCOVERY_LOG=host:port`;
+  unset sends nothing), so no log is written to disk; it can also tail a file
+  (`SHIPPER_LOG_FILE`). Only time, client, host and user are sent, never a path
+  or query. A batch Shield does not take (unreachable, 429, 5xx) is kept for
+  the next flush; a 4xx is dropped. Each request appears twice in Squid's log
+  (the CONNECT and the request inside it), so counts are log lines, not
+  requests.
+- **Squid** reads `ai_hosts.txt` and `blocked_hosts.txt` from
+  `/etc/squid/lists`, seeded with a placeholder by the entrypoint, which
+  reloads with SIGHUP when the shipper changes them. Verified in Docker with
+  Squid 5.7, which showed two things the config now depends on: the UDP log
+  module buffers 8 KB unless `buffer-size` is smaller than a line (`0` and
+  unitless values are refused, so `1bytes`), and `squid -k reconfigure`
+  refuses to signal PID 1. Blocked hosts get a 403 that Squid serves inside
+  the tunnel; nothing is forwarded to the host or to Shield.
+- **Public proxy** (`squid.public.conf`) honors the blocked list only. Its
+  destination allowlist (`ai_dst`) is unchanged, so "Inspect" never widens
+  what an internet-facing proxy forwards.
+- **Log import** is the request body (CSV with a header, a JSON array, or JSON
+  lines), up to 20 MB, read in a thread; `GET /import/{id}` reports progress.
+  Column names are matched loosely (host, query, qname, domain, ...).
+- **Code scan.** The offline signals (`shield_mcp/ai_signals.py`) are generated
+  from the catalog, with a drift test. Key shapes are provider-specific only;
+  OpenAI project, service and admin keys need 40+ characters so short test
+  values are not reported. A key found is sent as a catalog sighting of that
+  provider, without path, line or value.
+- **Actions.** `unblock` is added (the spec had no way back from `block`).
+  `block` also marks the entry unsanctioned when it was unreviewed or
+  sanctioned. `inspect`, `block` and `unblock` pass the registry write gate as
+  well as the config gate, like the device policy route. The MCP and agent
+  actions change nothing: they return a prefill the portal puts in the
+  existing forms; for an MCP server found by host only, the URL path must be
+  added.
+- **Device agent.** Blocked hosts are added to the PAC file and refused at
+  CONNECT with a 403 naming the policy; the device CA cannot sign for them,
+  so they are never decrypted. The message does not yet name a sanctioned
+  alternative.
+- **Webhook** `ai_discovered`: new ungoverned entries and unsanctioned entries
+  seen again, from every source except Shield's own evidence; at most 20 per
+  batch plus one summary event.

@@ -137,10 +137,18 @@ class Engine:
         with self._lock:
             self.trust, self.policy, self.rules = trust, p, compiled
             self.ai_hosts = tuple(h.lower() for h in p.get("ai_hosts") or ())
+            # AI services blocked from the AI inventory (docs/specs/ai-discovery.md,
+            # task 5): routed to the proxy by the PAC file and refused there.
+            self.blocked_hosts = tuple(h.lower() for h in
+                                       (p.get("discovery") or {}).get("blocked_hosts") or ())
 
     def is_ai_host(self, host: str) -> bool:
         h = _host(host)
         return bool(h) and any(h == e or h.endswith("." + e) for e in self.ai_hosts)
+
+    def is_blocked_host(self, host: str) -> bool:
+        h = _host(host)
+        return bool(h) and any(h == e or h.endswith("." + e) for e in self.blocked_hosts)
 
     def pinned_action(self, host: str) -> str:
         """allow_and_log or block, for an app that refuses the device CA (spec §3.1)."""

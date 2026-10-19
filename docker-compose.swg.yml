@@ -93,6 +93,36 @@ services:
       # stays somewhere they can see, rotate and destroy it. Never in an image.
       - ./deploy/swg/ssl:/etc/squid/ssl:ro
       - squid-ssldb:/var/spool/squid
+      # AI inventory lists the discovery shipper writes (inspected and blocked
+      # hosts). Without the shipper they hold a placeholder and change nothing.
+      - discovery-lists:/etc/squid/lists
+    environment:
+      # host:port of the discovery shipper; empty sends no discovery log.
+      # With --profile discovery, set SHIELD_DISCOVERY_LOG=discovery-shipper:5140
+      SHIELD_DISCOVERY_LOG: ${SHIELD_DISCOVERY_LOG:-}
+
+  # AI discovery (docs/specs/ai-discovery.md, task 3). Opt-in:
+  #
+  #   SHIELD_DISCOVERY_LOG=discovery-shipper:5140 \
+  #     docker compose -f docker-compose.swg.yml --profile discovery up -d
+  #
+  # Squid sends it the host and user of each request (UDP, never written to
+  # disk); it keeps the AI hosts the catalog recognizes, posts them to Shield
+  # every 5 minutes, and keeps Squid's inspected and blocked lists current.
+  discovery-shipper:
+    profiles: ["discovery"]
+    build:
+      context: .
+      dockerfile: deploy/swg/discovery-shipper/Dockerfile
+    image: shield-discovery-shipper
+    restart: unless-stopped
+    environment:
+      SHIELD_URL: ${SHIELD_API_BASE:-https://api.guardrails.votal.ai}
+      SHIELD_API_KEY_FILE: /run/secrets/shield_api_key
+    secrets:
+      - shield_api_key
+    volumes:
+      - discovery-lists:/lists
 
   # WebSocket screening. Opt-in via a profile, because it is a second
   # interception point and most deployments should decide to run it rather
@@ -144,4 +174,5 @@ secrets:
     file: ./deploy/swg/shield_api_key.txt
 
 volumes:
+  discovery-lists:
   squid-ssldb:

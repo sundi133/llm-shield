@@ -57,6 +57,9 @@ VALID_EVENTS = [
     # At most one per tenant per side per 5 minutes per worker, with a count.
     # Spec: docs/specs/tool-policy-fail-safe.md
     "check_unavailable",
+    # A new AI app, agent, MCP server or service that is not under Shield, or
+    # one marked unsanctioned seen again. Spec: docs/specs/ai-discovery.md
+    "ai_discovered",
 ]
 
 

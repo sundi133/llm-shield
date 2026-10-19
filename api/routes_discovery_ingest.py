@@ -72,7 +72,7 @@ async def post_batch(body: Batch, request: Request):
     try:
         from core.discovery import notify
         await notify.dispatch(tenant_id, out["events"])
-    except ImportError:
+    except Exception:                       # webhooks never fail the batch
         pass
     return {k: v for k, v in out.items() if k != "events"} | {"new_entries": len(out["events"])}
 

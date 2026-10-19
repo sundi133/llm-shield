@@ -1,0 +1,28 @@
+# Report the AI a repository uses to Shield's AI inventory on every push to
+# main (docs/specs/ai-discovery.md, task 4). Copy to .github/workflows/.
+#
+# Secrets: SHIELD_URL (for example https://api.guardrails.votal.ai) and
+# SHIELD_API_KEY (a tenant key). Only catalog sightings and MCP servers are
+# sent, attributed to the repository; file paths, line numbers and key values
+# stay in the runner.
+name: AI discovery
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "shield-mcp @ git+https://github.com/sundi133/llm-shield#subdirectory=packages/shield-mcp"
+      - name: Discover and report
+        env:
+          SHIELD_URL: ${{ secrets.SHIELD_URL }}
+          SHIELD_API_KEY: ${{ secrets.SHIELD_API_KEY }}
+        # --fail-on-key fails the build when a provider key is committed.
+        run: shield-mcp discover . --repo "${{ github.repository }}" --post --fail-on-key

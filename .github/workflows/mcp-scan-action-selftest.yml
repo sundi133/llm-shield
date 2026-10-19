@@ -27,7 +27,10 @@ jobs:
           python-version: "3.12"
 
       - name: Preinstall local shield-mcp (PyPI not published yet)
-        run: python -m pip install ./packages/shield-mcp
+        # mcp<2: the example servers below use mcp.server.fastmcp, which mcp
+        # 2.x renamed (MCPServer). Unpinned, `mcp>=1.0` now resolves to 2.x and
+        # the servers crash at import, so the scan reports unreachable.
+        run: python -m pip install ./packages/shield-mcp "mcp<2"
 
       - name: Write example MCP servers
         run: |

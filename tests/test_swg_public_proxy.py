@@ -85,7 +85,7 @@ def test_shared_sections_do_not_drift_from_the_base_config():
     base, pub = _text(BASE), _text(PUBLIC)
     for block in (
         "ssl_bump peek   step1\nssl_bump splice never_bump\n"
-        "ssl_bump bump   ai_hosts\nssl_bump splice all",
+        "ssl_bump bump   ai_hosts\nssl_bump bump   ai_hosts_shield\nssl_bump splice all",
         "icap_enable on\nicap_preview_enable on\nicap_preview_size 4096\n"
         "icap_send_client_ip on\nicap_send_client_username on",
         "http_upgrade_request_protocols websocket allow\n"

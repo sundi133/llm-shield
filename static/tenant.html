@@ -9398,6 +9398,63 @@ async function aiInvDetail(entryId, btn) {
   } catch (err) { showToast(err.message, 'error'); }
 }
 
+// Actions (spec section 4.3). Inspect, block and unblock change the device
+// policy, so they ask first; the MCP and agent actions only open the existing
+// registration forms, prefilled, and change nothing until that form is saved.
+function aiInvActions(e) {
+  const id = pfpEsc(e.id), btns = [];
+  const hasHosts = ['ai_service', 'app'].includes(e.kind) || ((e.signals || {}).domains || []).length;
+  if (hasHosts) {
+    btns.push(`<button class="small" data-entry="${id}" onclick="aiInvAct(this.dataset.entry, 'inspect')">Inspect with Shield</button>`);
+    btns.push(e.blocked
+      ? `<button class="small secondary" data-entry="${id}" onclick="aiInvAct(this.dataset.entry, 'unblock')">Unblock</button>`
+      : `<button class="small danger" data-entry="${id}" onclick="aiInvAct(this.dataset.entry, 'block')">Block</button>`);
+  }
+  if (e.kind === 'mcp_server') btns.push(`<button class="small" data-entry="${id}" onclick="aiInvAct(this.dataset.entry, 'route_through_gateway')">Route through the MCP gateway</button>`);
+  if (e.kind === 'agent') btns.push(`<button class="small" data-entry="${id}" onclick="aiInvAct(this.dataset.entry, 'register')">Register agent</button>`);
+  const flags = [e.inspected ? 'inspected by laptops and the proxy' : '', e.blocked ? 'blocked' : ''].filter(Boolean);
+  return `<div style="margin-top:0.5rem;display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;">${btns.join('')}${
+    flags.length ? `<span class="muted">${pfpEsc(flags.join(', '))}</span>` : ''}</div>`;
+}
+const AI_INV_CONFIRM = {
+  inspect: 'Add its hosts to the device policy? Laptops and the proxy will decrypt and inspect them.',
+  block: 'Block its hosts on every laptop with the device agent and on the proxy?',
+  unblock: 'Remove its hosts from the blocked list?',
+};
+async function aiInvAct(entryId, action) {
+  if (AI_INV_CONFIRM[action] && !confirm(AI_INV_CONFIRM[action])) return;
+  let out;
+  try {
+    out = await apiCall(`/v1/tenant/me/discovery/inventory/${entryId.split('/').map(encodeURIComponent).join('/')}/actions/${action}`,
+                        { method: 'POST' });
+  } catch (e) { showToast(e.message, 'error'); return; }
+  const p = out.prefill || {};
+  if (out.form === 'mcp_server') {
+    _gotoTab('mcp-gateway');
+    setTimeout(() => {
+      const set = (elId, v) => { const el = document.getElementById(elId); if (el && v != null) { el.value = v; el.dispatchEvent(new Event('change')); } };
+      set('mcp-reg-route', p.route); set('mcp-reg-transport', p.transport);
+      set('mcp-reg-url', p.url || ''); set('mcp-reg-cmd', p.command || '');
+      if (typeof mcpFocusRegister === 'function') mcpFocusRegister();
+      showToast(p.note || 'Review and register the server', 'info');
+    }, 400);
+    return;
+  }
+  if (out.form === 'agent') {
+    _gotoTab('agents');
+    setTimeout(() => {
+      showAddAgentModal();
+      document.getElementById('agent-modal-id').value = p.agent_id || '';
+      document.getElementById('agent-modal-name').value = p.name || '';
+      showToast('Describe the agent and its tools, then save. Suggested policy can draft the rest.', 'info');
+    }, 400);
+    return;
+  }
+  const hosts = (out.added || []).length ? out.added : (out.removed || []);
+  showToast(`${action === 'inspect' ? 'Inspecting' : action === 'block' ? 'Blocked' : 'Unblocked'} ${hosts.join(', ') || 'no new hosts'}`, 'success');
+  aiInvLoad();
+}
+
 // ── Suggested policy (docs/specs/policy-from-purpose.md) ─────────────
 // A draft least-privilege policy for one agent: questions first, then each line
 // with its evidence and risk, a replay of recent calls, and Apply. Every value
