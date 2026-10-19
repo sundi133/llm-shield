@@ -2655,6 +2655,11 @@
         AI BOM
         <span id="nav-badge-aibom" class="nav-badge"></span>
       </div>
+      <div class="nav-item" data-tab="model-routing">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h5l3 6 3-6h5M4 18h5l3-6M15 18h5"/></svg>
+        Model Routing
+        <span id="nav-badge-model-routing" class="nav-badge"></span>
+      </div>
       <div class="nav-item" data-tab="ai-inventory">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 110-15 7.5 7.5 0 010 15zM10.5 7.5v6M7.5 10.5h6"/></svg>
         AI Inventory
@@ -5591,6 +5596,70 @@ if __name__ == "__main__":
 
     <!-- ── AI Bill of Materials ────────────────────── -->
     <!-- AI Inventory (docs/specs/ai-discovery.md) -->
+    <div id="tab-model-routing" class="tab-pane hidden">
+      <style>
+        .mr-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; min-width: 0; }
+        .mr-form label.mr-check { flex-direction: row; align-items: center; gap: 6px; align-self: end; }
+        .mr-form input:not([type=checkbox]), .mr-form select { width: 100%; }
+      </style>
+      <div class="page-header">
+        <div>
+          <div class="page-title">Model Routing</div>
+          <div class="page-desc">Callers send a route name as <code>model</code> to Shield's chat completions endpoint. Shield runs your guardrails, picks a target by the route's rules and strategy, fails over when a provider errors or times out, and runs your output guardrails on the answer it returns. Rules only narrow where a call may go.</div>
+        </div>
+        <div class="section-toolbar">
+          <button class="small" onclick="mrLoad()">Refresh</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:1rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+          <h3 style="margin:0;">Targets</h3>
+          <button class="small" onclick="mrTargetForm()">Add target</button>
+        </div>
+        <div id="mr-target-form" class="hidden" style="margin-top:0.75rem;"></div>
+        <div style="overflow-x:auto;margin-top:0.75rem;"><table class="gov-table" style="width:100%;font-size:13px;">
+          <thead><tr><th>Target</th><th>Model</th><th>Endpoint</th><th>Where</th><th>Key</th><th>Price per 1M tokens</th><th>Health</th><th>Routes</th><th></th></tr></thead>
+          <tbody id="mr-targets"><tr><td colspan="9" class="muted" style="padding:1rem;">Loading…</td></tr></tbody>
+        </table></div>
+      </div>
+
+      <div class="card" style="margin-bottom:1rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+          <h3 style="margin:0;">Routes</h3>
+          <button class="small" onclick="mrRouteForm()">Add route</button>
+        </div>
+        <div id="mr-route-form" class="hidden" style="margin-top:0.75rem;"></div>
+        <div style="overflow-x:auto;margin-top:0.75rem;"><table class="gov-table" style="width:100%;font-size:13px;">
+          <thead><tr><th>Route (send as model)</th><th>Targets, in order</th><th>Strategy</th><th>Rules</th><th>Budget this month</th><th></th></tr></thead>
+          <tbody id="mr-routes"><tr><td colspan="6" class="muted" style="padding:1rem;">Loading…</td></tr></tbody>
+        </table></div>
+      </div>
+
+      <div class="card" style="margin-bottom:1rem;">
+        <h3 style="margin:0 0 0.5rem;">Which model would this call use?</h3>
+        <div class="mr-form" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.5rem;">
+          <label>Route <select id="mr-sim-route"></select></label>
+          <label>Guardrails that flag it <input type="text" id="mr-sim-flagged" placeholder="pii_detection, secrets_detection"></label>
+          <label>Data class header <input type="text" id="mr-sim-class" placeholder="restricted"></label>
+          <label>Role <input type="text" id="mr-sim-role"></label>
+          <label>Agent <input type="text" id="mr-sim-agent"></label>
+        </div>
+        <textarea id="mr-sim-prompt" rows="2" style="width:100%;margin-top:0.5rem;" placeholder="A sample prompt (only its length is used)"></textarea>
+        <div style="margin-top:0.5rem;"><button class="small" onclick="mrSimulate()">Check</button></div>
+        <div id="mr-sim-out" style="margin-top:0.5rem;font-size:13px;"></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 0.5rem;">Usage, last 7 days</h3>
+        <div class="muted" style="font-size:12px;margin-bottom:0.5rem;">Counts trail live traffic by up to 30 seconds. Cost uses the prices you enter on each target.</div>
+        <div style="overflow-x:auto;"><table class="gov-table" style="width:100%;font-size:13px;">
+          <thead><tr><th>Day</th><th>Route</th><th>Target</th><th>Calls</th><th>Errors</th><th>Failed over</th><th>Tokens in / out</th><th>Cost</th><th>Avg latency</th></tr></thead>
+          <tbody id="mr-usage"><tr><td colspan="9" class="muted" style="padding:1rem;">Loading…</td></tr></tbody>
+        </table></div>
+      </div>
+    </div>
+
     <div id="tab-ai-inventory" class="tab-pane hidden">
       <div class="page-header">
         <div>
@@ -9312,6 +9381,211 @@ async function deleteAgent(agentId) {
   } catch (e) {
     showToast('Network error while deleting agent', 'error');
   }
+}
+
+// ── Model Routing (docs/specs/gateway-routing-failover.md) ────────────
+// Every value shown is escaped with pfpEsc. Targets are edited in a form,
+// routes as JSON (rules are a list); the server validates both and says
+// what is wrong.
+let MR = { targets: [], routes: [], health: {}, budgets: {} };
+const MR_ROUTE_EXAMPLE = {
+  targets: ['openai-4o', 'onprem-qwen'], strategy: 'priority',
+  failover: { max_attempts: 3, deadline_s: 120, on: ['timeout', 'connect', '429', '5xx'] },
+  rules: [{ when: { flagged: ['pii_detection'] }, use: ['onprem-qwen'], note: 'PII stays on-prem' }],
+  budget: { monthly: 500, currency: 'USD', at_limit: 'warn' },
+};
+async function mrCall(path, options = {}) {
+  options.headers = { ...(options.headers || {}), 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
+  const r = await fetch(`${BASE_URL}/v1/tenant/me/gateway${path}`, options);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = data.detail;
+    const msg = (d && typeof d === 'object') ? ((d.errors || []).join('; ') || d.message || JSON.stringify(d))
+                                              : (d || data.error || `HTTP ${r.status}`);
+    const err = new Error(msg); err.status = r.status; throw err;
+  }
+  return data;
+}
+function mrPath(name) { return name.split('/').map(encodeURIComponent).join('/'); }
+function mrHost(url) { try { return new URL(url).host; } catch (e) { return url; } }
+function mrHealthDot(tid) {
+  const rows = MR.health[tid] || [];
+  if (!rows.length) return '<span class="muted">no calls yet</span>';
+  const open = rows.filter(r => r.state !== 'closed').length;
+  if (!open) return '<span class="badge badge-success">up</span>';
+  const last = rows.find(r => r.state !== 'closed');
+  return `<span class="badge badge-danger">${open === rows.length ? 'down' : 'down on ' + open + ' of ' + rows.length}</span> <span class="muted">${pfpEsc(last.last_error || '')}</span>`;
+}
+function mrRuleText(r) {
+  const w = r.when || {}, parts = [];
+  if (w.flagged) parts.push('flagged by ' + w.flagged.join(' or '));
+  if (w.data_class) parts.push('data class ' + w.data_class.join(' or '));
+  if (w.role) parts.push('role ' + w.role.join(' or '));
+  if (w.agent) parts.push('agent ' + w.agent.join(' or '));
+  if (w.prompt_tokens_over) parts.push('over ' + w.prompt_tokens_over + ' prompt tokens');
+  const cond = parts.length ? 'When ' + parts.join(' and ') : 'Always';
+  let then = r.deny ? 'refuse: ' + r.deny : 'only ' + (r.use || []).join(', ');
+  if (w.location_required) then += ' (' + w.location_required.replace('_', '-') + ' only)';
+  return cond + ', ' + then;
+}
+async function mrLoad() {
+  try {
+    const [t, r, h, u] = await Promise.all([
+      mrCall('/targets'), mrCall('/routes'),
+      mrCall('/health').catch(() => ({ targets: [] })),
+      mrCall('/usage?days=7').catch(() => ({ rows: [], budgets: [] }))]);
+    MR.targets = t.targets; MR.routes = r.routes; MR.health = {}; MR.budgets = {};
+    (h.targets || []).forEach(x => { (MR.health[x.target] = MR.health[x.target] || []).push(x); });
+    (u.budgets || []).forEach(b => { MR.budgets[b.route] = b; });
+    mrRenderTargets(); mrRenderRoutes(); mrRenderUsage(u.rows || []);
+    const down = MR.targets.filter(x => (MR.health[x.id] || []).some(r => r.state !== 'closed')).length;
+    const badge = document.getElementById('nav-badge-model-routing');
+    if (badge) badge.textContent = down ? String(down) : '';
+    document.getElementById('mr-sim-route').innerHTML = MR.routes.map(x => `<option value="${pfpEsc(x.name)}">${pfpEsc(x.name)}</option>`).join('');
+  } catch (e) {
+    document.getElementById('mr-targets').innerHTML = `<tr><td colspan="9"><div class="toast error" style="position:static;">${pfpEsc(e.message)}</div></td></tr>`;
+  }
+}
+function mrRenderTargets() {
+  const rows = MR.targets.map(t => {
+    const p = t.price ? `${pfpEsc(t.price.input_per_mtok)} in, ${pfpEsc(t.price.output_per_mtok)} out ${pfpEsc(t.price.currency)}` : '<span class="muted">not set</span>';
+    const key = { vault: 'vault ' + (t.auth.secret_ref || ''), passthrough: "caller's key", none: 'none' }[t.auth.mode] || t.auth.mode;
+    return `<tr${t.enabled ? '' : ' style="opacity:0.55"'}>
+      <td><div style="font-weight:600;">${pfpEsc(t.name)}</div><div class="muted" style="font-size:11px;">${pfpEsc(t.id)}${t.enabled ? '' : ' · disabled'}</div></td>
+      <td><code>${pfpEsc(t.model)}</code></td>
+      <td>${pfpEsc(mrHost(t.base_url))}${t.flavor === 'azure' ? ' <span class="muted">Azure</span>' : ''}</td>
+      <td>${t.location === 'on_prem' ? 'on-prem' : 'cloud'}</td>
+      <td>${pfpEsc(key)}</td><td>${p}</td><td>${mrHealthDot(t.id)}</td>
+      <td class="muted">${pfpEsc((t.routes || []).join(', '))}</td>
+      <td style="white-space:nowrap;"><button class="small secondary" data-id="${pfpEsc(t.id)}" onclick="mrTargetForm(this.dataset.id)">Edit</button>
+        <button class="small danger" data-id="${pfpEsc(t.id)}" onclick="mrDelete('targets', this.dataset.id)">Delete</button></td></tr>`;
+  }).join('');
+  document.getElementById('mr-targets').innerHTML = rows || '<tr><td colspan="9" class="muted" style="padding:1rem;">No targets yet. Add the providers and models calls may use, for example OpenAI, Azure OpenAI or an on-prem vLLM server.</td></tr>';
+}
+function mrRenderRoutes() {
+  const rows = MR.routes.map(r => {
+    const b = MR.budgets[r.name];
+    let budget = '<span class="muted">none</span>';
+    if (b && b.monthly) {
+      const pct = Math.min(100, Math.round((b.spend / b.monthly) * 100));
+      const cls = pct >= 100 ? 'var(--danger)' : pct >= 80 ? 'var(--warning, #d97706)' : 'var(--success, #16a34a)';
+      budget = `<div style="min-width:140px;"><div style="height:6px;background:var(--bg-3);border-radius:3px;overflow:hidden;"><div style="width:${pct}%;height:100%;background:${cls};"></div></div>
+        <div style="font-size:11px;">${pfpEsc(b.spend.toFixed(2))} of ${pfpEsc(b.monthly)} ${pfpEsc(b.currency)} · at limit: ${pfpEsc(b.at_limit)}${b.spend_incomplete ? ' · <span class="muted">no price on ' + pfpEsc(b.targets_without_price.join(', ')) + '</span>' : ''}</div></div>`;
+    }
+    const rules = (r.rules || []).map(x => `<div>${pfpEsc(mrRuleText(x))}</div>`).join('') || '<span class="muted">none</span>';
+    return `<tr${r.enabled === false ? ' style="opacity:0.55"' : ''}>
+      <td><code>${pfpEsc(r.name)}</code></td><td>${pfpEsc(r.targets.join(' → '))}</td>
+      <td>${pfpEsc(r.strategy.replace('_', ' '))}<div class="muted" style="font-size:11px;">up to ${pfpEsc(r.failover.max_attempts)} tries, ${pfpEsc(r.failover.deadline_s)} s</div></td>
+      <td style="font-size:12px;">${rules}</td><td>${budget}</td>
+      <td style="white-space:nowrap;"><button class="small secondary" data-name="${pfpEsc(r.name)}" onclick="mrRouteForm(this.dataset.name)">Edit</button>
+        <button class="small danger" data-name="${pfpEsc(r.name)}" onclick="mrDelete('routes', this.dataset.name)">Delete</button></td></tr>`;
+  }).join('');
+  document.getElementById('mr-routes').innerHTML = rows || '<tr><td colspan="6" class="muted" style="padding:1rem;">No routes yet. A route is a name callers send as <code>model</code>, with the targets it may use in order.</td></tr>';
+}
+function mrRenderUsage(rows) {
+  document.getElementById('mr-usage').innerHTML = rows.map(x => `<tr>
+    <td>${pfpEsc(x.day.slice(0, 4) + '-' + x.day.slice(4, 6) + '-' + x.day.slice(6))}</td><td><code>${pfpEsc(x.route)}</code></td><td>${pfpEsc(x.target)}</td>
+    <td>${pfpEsc(x.calls)}</td><td>${pfpEsc(x.errors)}</td><td>${pfpEsc(x.failovers_from)}</td>
+    <td>${pfpEsc(x.input_tokens)} / ${pfpEsc(x.output_tokens)}${x.estimated ? ' <span class="muted" title="Some streams reported no usage; tokens were estimated">est.</span>' : ''}</td>
+    <td>${pfpEsc(x.cost.toFixed(4))}</td><td>${x.latency_ms_avg == null ? '' : pfpEsc(x.latency_ms_avg) + ' ms'}</td></tr>`).join('')
+    || '<tr><td colspan="9" class="muted" style="padding:1rem;">No routed calls in the last 7 days.</td></tr>';
+}
+function mrTargetForm(id) {
+  const t = MR.targets.find(x => x.id === id) || { id: '', name: '', base_url: 'https://api.openai.com/v1', flavor: 'openai', model: '', location: 'cloud', auth: { mode: 'vault', secret_ref: '' }, price: null, enabled: true, timeout_s: 60, first_byte_timeout_s: 20, allow_private: false, azure: { deployment: '', api_version: '' } };
+  const el = document.getElementById('mr-target-form');
+  el.classList.remove('hidden');
+  const v = x => pfpEsc(x == null ? '' : x);
+  el.innerHTML = `<div class="mr-form" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0.5rem;">
+    <label>Id <input type="text" id="mrt-id" value="${v(t.id)}" ${id ? 'disabled' : ''} placeholder="openai-4o"></label>
+    <label>Name <input type="text" id="mrt-name" value="${v(t.name)}"></label>
+    <label>Base URL <input type="text" id="mrt-url" value="${v(t.base_url)}"></label>
+    <label>Model <input type="text" id="mrt-model" value="${v(t.model)}" placeholder="gpt-4o"></label>
+    <label>Format <select id="mrt-flavor"><option value="openai">OpenAI compatible</option><option value="azure">Azure OpenAI</option></select></label>
+    <label>Azure deployment <input type="text" id="mrt-dep" value="${v(t.azure.deployment)}"></label>
+    <label>Azure API version <input type="text" id="mrt-ver" value="${v(t.azure.api_version)}"></label>
+    <label>Where <select id="mrt-loc"><option value="cloud">Cloud</option><option value="on_prem">On-prem</option></select></label>
+    <label>Key <select id="mrt-auth"><option value="vault">From the secret vault</option><option value="passthrough">Caller's own (X-Shield-Upstream-Key)</option><option value="none">None</option></select></label>
+    <label>Vault reference <input type="text" id="mrt-ref" value="${v(t.auth.secret_ref)}" placeholder="shield://openai_prod"></label>
+    <label>Input price per 1M tokens <input id="mrt-pin" type="number" step="0.01" min="0" value="${v(t.price && t.price.input_per_mtok)}"></label>
+    <label>Output price per 1M tokens <input id="mrt-pout" type="number" step="0.01" min="0" value="${v(t.price && t.price.output_per_mtok)}"></label>
+    <label>Timeout (s) <input id="mrt-timeout" type="number" min="1" value="${v(t.timeout_s)}"></label>
+    <label>First byte timeout for streams (s) <input id="mrt-fb" type="number" min="1" value="${v(t.first_byte_timeout_s)}"></label>
+    <label class="mr-check"><input id="mrt-private" type="checkbox" ${t.allow_private ? 'checked' : ''}> May reach a private address</label>
+    <label class="mr-check"><input id="mrt-enabled" type="checkbox" ${t.enabled ? 'checked' : ''}> Enabled</label>
+  </div>
+  <div style="margin-top:0.5rem;display:flex;gap:0.5rem;"><button class="small" onclick="mrSaveTarget(${id ? 'true' : 'false'})">Save target</button>
+    <button class="small secondary" onclick="document.getElementById('mr-target-form').classList.add('hidden')">Cancel</button></div>`;
+  document.getElementById('mrt-flavor').value = t.flavor;
+  document.getElementById('mrt-loc').value = t.location;
+  document.getElementById('mrt-auth').value = t.auth.mode;
+}
+function mrErr(e) { return (e && e.message) || String(e); }
+async function mrSaveTarget(editing) {
+  const g = id => document.getElementById(id);
+  const id = g('mrt-id').value.trim();
+  const pin = g('mrt-pin').value, pout = g('mrt-pout').value;
+  const mode = g('mrt-auth').value;
+  const body = { name: g('mrt-name').value.trim() || id, base_url: g('mrt-url').value.trim(), model: g('mrt-model').value.trim(),
+    flavor: g('mrt-flavor').value, location: g('mrt-loc').value, allow_private: g('mrt-private').checked, enabled: g('mrt-enabled').checked,
+    timeout_s: Number(g('mrt-timeout').value || 60), first_byte_timeout_s: Number(g('mrt-fb').value || 20),
+    auth: mode === 'vault' ? { mode, secret_ref: g('mrt-ref').value.trim() } : { mode } };
+  if (body.flavor === 'azure') body.azure = { deployment: g('mrt-dep').value.trim(), api_version: g('mrt-ver').value.trim() };
+  if (pin !== '' || pout !== '') body.price = { input_per_mtok: Number(pin || 0), output_per_mtok: Number(pout || 0) };
+  try {
+    await mrCall(`/targets/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) });
+    showToast(`Saved target ${id}`, 'success');
+    g('mr-target-form').classList.add('hidden');
+    mrLoad();
+  } catch (e) { showToast(mrErr(e), 'error'); }
+}
+function mrRouteForm(name) {
+  const r = MR.routes.find(x => x.name === name);
+  const draft = r ? Object.fromEntries(Object.entries(r).filter(([k]) => !['name', 'updated_at', 'updated_by'].includes(k))) : MR_ROUTE_EXAMPLE;
+  const el = document.getElementById('mr-route-form');
+  el.classList.remove('hidden');
+  el.classList.add('mr-form');
+  el.innerHTML = `<label>Route name <input type="text" id="mrr-name" value="${pfpEsc(name || '')}" ${name ? 'disabled' : ''} placeholder="smart"></label>
+    <div class="muted" style="font-size:12px;margin:0.4rem 0;">Strategy: priority, lowest_latency, lowest_cost or weighted. Rules run in order; the first that matches narrows the targets (use) or refuses the call (deny). Conditions: flagged, data_class, role, agent, prompt_tokens_over, location_required. Budget at_limit: warn, fallback (with fallback_targets) or block.</div>
+    <textarea id="mrr-json" rows="14" style="width:100%;font-family:monospace;font-size:12px;">${pfpEsc(JSON.stringify(draft, null, 2))}</textarea>
+    <div style="margin-top:0.5rem;display:flex;gap:0.5rem;"><button class="small" onclick="mrSaveRoute()">Save route</button>
+      <button class="small secondary" onclick="document.getElementById('mr-route-form').classList.add('hidden')">Cancel</button></div>`;
+}
+async function mrSaveRoute() {
+  const name = document.getElementById('mrr-name').value.trim();
+  let body;
+  try { body = JSON.parse(document.getElementById('mrr-json').value); }
+  catch (e) { showToast('The route is not valid JSON: ' + e.message, 'error'); return; }
+  try {
+    await mrCall(`/routes/${mrPath(name)}`, { method: 'PUT', body: JSON.stringify(body) });
+    showToast(`Saved route ${name}`, 'success');
+    document.getElementById('mr-route-form').classList.add('hidden');
+    mrLoad();
+  } catch (e) { showToast(mrErr(e), 'error'); }
+}
+async function mrDelete(kind, id) {
+  const what = kind === 'routes' ? 'route' : 'target';
+  if (!confirm(`Delete ${what} ${id}?`)) return;
+  try {
+    await mrCall(`/${kind}/${kind === 'routes' ? mrPath(id) : encodeURIComponent(id)}`, { method: 'DELETE' });
+    showToast(`Deleted ${what} ${id}`, 'success');
+    mrLoad();
+  } catch (e) { showToast(mrErr(e), 'error'); }
+}
+async function mrSimulate() {
+  const g = id => document.getElementById(id);
+  const name = g('mr-sim-route').value;
+  const out = g('mr-sim-out');
+  if (!name) { out.textContent = 'Add a route first.'; return; }
+  const body = { messages: [{ role: 'user', content: g('mr-sim-prompt').value }],
+    flagged: g('mr-sim-flagged').value.split(',').map(x => x.trim()).filter(Boolean),
+    data_class: g('mr-sim-class').value.trim(), role: g('mr-sim-role').value.trim(), agent: g('mr-sim-agent').value.trim() };
+  try {
+    const r = await mrCall(`/routes/${mrPath(name)}/simulate`, { method: 'POST', body: JSON.stringify(body) });
+    if (r.outcome === 'refused') { out.innerHTML = `<span class="badge badge-danger">refused</span> ${pfpEsc(r.reason)}`; return; }
+    const skipped = (r.skipped || []).map(x => x.target + ' (' + x.reason.replace('_', ' ') + ')').join(', ');
+    out.innerHTML = `<div><strong>Tries in order:</strong> ${pfpEsc(r.order.join(' → '))}</div>
+      <div class="muted">${r.rule ? 'Decided by ' + pfpEsc(r.rule) + '. ' : 'No rule matched. '}Budget: ${pfpEsc(r.budget)}.${skipped ? ' Skipped: ' + pfpEsc(skipped) + '.' : ''}</div>`;
+  } catch (e) { out.innerHTML = `<span class="badge badge-danger">error</span> ${pfpEsc(mrErr(e))}`; }
 }
 
 // ── AI Inventory (docs/specs/ai-discovery.md) ─────────────────────────
@@ -15948,6 +16222,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'board-report') loadBoardReport();
     if (tab === 'aibom') loadAibom();
     if (tab === 'ai-inventory') aiInvLoad();
+    if (tab === 'model-routing') mrLoad();
     if (tab === 'mcp-gateway') loadMcpGateway();
     if (tab === 'agents') loadAgentData();
     if (tab === 'governance') loadGovernance();

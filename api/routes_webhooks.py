@@ -60,6 +60,10 @@ VALID_EVENTS = [
     # A new AI app, agent, MCP server or service that is not under Shield, or
     # one marked unsanctioned seen again. Spec: docs/specs/ai-discovery.md
     "ai_discovered",
+    # A model routing target's circuit opened after repeated failures. At most
+    # once per target per 10 minutes per process.
+    # Spec: docs/specs/gateway-routing-failover.md
+    "gateway_target_down",
 ]
 
 
