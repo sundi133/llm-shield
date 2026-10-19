@@ -48,6 +48,21 @@ class DeviceProxyAddon:
             until = self._passthrough.get(host)
         return bool(until and until > self.clock())
 
+    # ── blocked AI services ────────────────────────────────────────────
+
+    def _blocked_response(self, host: str) -> http.Response:
+        self.engine.note(host, "block", "this AI service is blocked by your company's AI inventory")
+        return http.Response.make(
+            403, f"{host} is blocked by your company's AI policy. Ask your security team "
+                 f"which AI services are approved.".encode(), {"Content-Type": "text/plain; charset=utf-8"})
+
+    def http_connect(self, flow: http.HTTPFlow) -> None:
+        """Refuse the tunnel to a blocked host, so it is never opened: the
+        device CA cannot sign for it, and nothing needs decrypting."""
+        host = flow.request.pretty_host
+        if self.engine.is_blocked_host(host):
+            flow.response = self._blocked_response(host)
+
     # ── TLS ────────────────────────────────────────────────────────────
 
     def tls_clienthello(self, data: tls.ClientHelloData) -> None:
@@ -80,6 +95,9 @@ class DeviceProxyAddon:
 
     async def request(self, flow: http.HTTPFlow) -> None:
         req = flow.request
+        if self.engine.is_blocked_host(req.pretty_host):        # plain HTTP
+            flow.response = self._blocked_response(req.pretty_host)
+            return
         if req.method.upper() not in ("POST", "PUT", "PATCH"):
             return
         host = req.pretty_host

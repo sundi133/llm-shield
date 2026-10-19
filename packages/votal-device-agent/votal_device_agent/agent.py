@@ -288,7 +288,8 @@ class Agent:
         if self.proxy_port is None:
             return None
         from votal_device_agent.pac import render
-        return render(self.engine.ai_hosts, self.proxy_port,
+        # Blocked hosts go to the proxy too, which refuses them.
+        return render(tuple(self.engine.ai_hosts) + tuple(getattr(self.engine, "blocked_hosts", ())), self.proxy_port,
                       fail_open=self.engine.policy.get("fail_mode") != "block")
 
     def check_model(self) -> str:

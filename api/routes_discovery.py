@@ -3,13 +3,17 @@
     GET  /v1/tenant/me/discovery/inventory?kind=&governed=&status=&source=&q=&cursor=&limit=
     GET  /v1/tenant/me/discovery/inventory/{entry_id}
     PUT  /v1/tenant/me/discovery/inventory/{entry_id}   {status, owner, note}
+    POST /v1/tenant/me/discovery/inventory/{entry_id}/actions/{action}
+         inspect | block | unblock | route_through_gateway | register | sanction | unsanction | ignore
     GET  /v1/tenant/me/discovery/events
     GET  /v1/tenant/me/discovery/catalog
     PUT  /v1/tenant/me/discovery/catalog/custom          {entries: [...]}
     POST /v1/tenant/me/discovery/import?source=dns_log&format=&name=   body: a CSV or JSON log, up to 20 MB
     GET  /v1/tenant/me/discovery/import/{job_id}
 
-Reads need the tenant; writes go through the config write gate. Off the guard path.
+Reads need the tenant; writes go through the config write gate, and actions
+that change the device policy (inspect, block, unblock) also through the
+registry write gate, like the device policy route. Off the guard path.
 """
 
 from __future__ import annotations
@@ -65,6 +69,32 @@ async def get_entry(entry_id: str, request: Request):
     subs = sorted(inventory.subjects(tenant_id, entry_id).items(), key=lambda kv: -kv[1])
     return {**entry, "subject_list": [{"subject": s, "last_seen": at} for s, at in subs[:200]],
             "subject_total": len(subs)}
+
+
+@router.post("/inventory/{entry_id:path}/actions/{action}")
+async def entry_action(entry_id: str, action: str, request: Request):
+    """Bring an entry under Shield (spec section 4.3). The MCP and agent actions
+    change nothing: they return the registration form, prefilled."""
+    from core.discovery import actions
+    tenant_id = get_tenant_from_request(request)
+    require_config_write(request, tenant_id, "act on an AI inventory entry")
+    if action in actions.POLICY_ACTIONS:
+        from core.auth import require_registry_write
+        require_registry_write(request, tenant_id, f"{action} an AI service in the device policy")
+    try:
+        out = actions.apply(tenant_id, entry_id, action, actor=_actor(request))
+    except (actions.ActionError, inventory.InventoryError) as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    if action not in ("route_through_gateway", "register"):
+        try:
+            from storage.admin_audit import log_admin_action
+            log_admin_action(action="ai_inventory_action", actor=_actor(request), tenant_id=tenant_id,
+                             after={"entry_id": entry_id, "action": action, "hosts": out.get("hosts", []),
+                                    "added": out.get("added", []), "removed": out.get("removed", []),
+                                    "status": out["entry"].get("status")})
+        except Exception:
+            pass
+    return out
 
 
 @router.put("/inventory/{entry_id:path}")
