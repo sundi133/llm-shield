@@ -6,6 +6,8 @@
     GET  /v1/tenant/me/discovery/events
     GET  /v1/tenant/me/discovery/catalog
     PUT  /v1/tenant/me/discovery/catalog/custom          {entries: [...]}
+    POST /v1/tenant/me/discovery/import?source=dns_log&format=&name=   body: a CSV or JSON log, up to 20 MB
+    GET  /v1/tenant/me/discovery/import/{job_id}
 
 Reads need the tenant; writes go through the config write gate. Off the guard path.
 """
@@ -110,3 +112,46 @@ async def put_custom_catalog(body: CustomCatalog, request: Request):
     from storage.tenant_store import kv_set
     kv_set(f"discovery_catalog:{tenant_id}", entries)
     return {"custom": entries, "count": len(entries)}
+
+
+@router.post("/import", status_code=202)
+async def import_log(request: Request, source: str = "dns_log", format: str = "", name: str = ""):
+    """A DNS or firewall log, sent as the request body (CSV with a header row,
+    or JSON). Read in the background; poll the returned job."""
+    from core.discovery import logs
+    tenant_id = get_tenant_from_request(request)
+    require_config_write(request, tenant_id, "import a network log into the AI inventory")
+    if source not in ("dns_log", "proxy"):
+        raise HTTPException(status_code=400, detail="source: dns_log (DNS or firewall) or proxy")
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > logs.MAX_BYTES:
+        raise HTTPException(status_code=413, detail="at most 20 MB per import")
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > logs.MAX_BYTES:
+            raise HTTPException(status_code=413, detail="at most 20 MB per import")
+    if not data.strip():
+        raise HTTPException(status_code=400, detail="send the log as the request body")
+    try:
+        j = logs.start(tenant_id, bytes(data), source=source, fmt=format.lower(), name=name,
+                       actor=_actor(request))
+    except logs.LogError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        from storage.admin_audit import log_admin_action
+        log_admin_action(action="ai_inventory_log_imported", actor=_actor(request), tenant_id=tenant_id,
+                         after={"job_id": j["id"], "source": source, "bytes": j["bytes"], "name": j["name"]})
+    except Exception:
+        pass
+    return j
+
+
+@router.get("/import/{job_id}")
+async def import_status(job_id: str, request: Request):
+    from core.discovery import logs
+    tenant_id = get_tenant_from_request(request)
+    j = logs.job(tenant_id, job_id)
+    if j is None:
+        raise HTTPException(status_code=404, detail=f"no import '{job_id}'")
+    return j
