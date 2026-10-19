@@ -11,6 +11,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 import config.schema as _config_module
 from core.llm_backend import async_llm_call, _build_payload, get_server_url
+from core.llm_gateway import dispatch as gw_dispatch
+from core.llm_gateway import proxy as gw_proxy
+from core.llm_gateway.select import Refusal as RoutingRefusal
 from core.models import ChatRequest, ShieldResponse
 from core.pipeline import run_pipeline
 from core.policy_mode import MONITOR, resolve_mode
@@ -575,6 +578,43 @@ async def shield_chat_completions(request: Request):
             },
         )
 
+    # Model routing (docs/specs/gateway-routing-failover.md): None unless the
+    # tenant has a route named by `model`.
+    routing_plan = await gw_proxy.resolve(
+        request, body, tenant_id, input_result, agent_key, role_name, messages
+    )
+    if isinstance(routing_plan, RoutingRefusal):
+        routing = {"route": routing_plan.route, "target": None, "attempts": [], "failovers": 0,
+                   "reason": routing_plan.reason, "code": routing_plan.code, "budget": "ok"}
+        await audit_logger.log(
+            {
+                "agent_key": agent_key,
+                "endpoint": "/v1/shield/chat/completions",
+                "input_text": last_user_msg,
+                "action_taken": "block",
+                "guardrails_triggered": [],
+                "latency_ms": round((datetime.now() - start_time).total_seconds() * 1000, 2),
+                "metadata": {
+                    "kind": "agent_chat_telemetry", "run_id": run_id,
+                    "tenant_id": tenant_id,
+                    "stage": "routing",
+                    "user_role": role_name,
+                    "blocked": True,
+                    "block_reason": routing_plan.reason,
+                    "routing": routing,
+                },
+            }
+        )
+        return JSONResponse(
+            status_code=403,
+            content={"blocked": True, "block_reason": routing_plan.reason, "routing": routing,
+                     "guardrail_results": input_result.model_dump()},
+            headers=gw_dispatch.headers_out(routing),
+        )
+
+    if body.get("stream") is True and routing_plan is not None:
+        return JSONResponse(status_code=400,
+                            content={"error": "streaming is not available on a route yet"})
     if body.get("stream") is True:
         stream_url, payload = _build_stream_payload(body, messages)
         return await _stream_chat_completion(
@@ -596,8 +636,23 @@ async def shield_chat_completions(request: Request):
     llm_response_text = ""
     usage = None
     inference_time_ms = None
+    routing = None
 
-    if upstream_url:
+    if routing_plan is not None:
+        try:
+            llm_data, routing = await gw_dispatch.complete(
+                tenant_id, routing_plan, body, messages, request.headers
+            )
+        except gw_dispatch.RoutingError as err:
+            failed = {"route": routing_plan.route["name"], "target": None, "attempts": err.attempts,
+                      "failovers": max(0, len(err.attempts) - 1), "rule": routing_plan.rule,
+                      "budget": routing_plan.budget}
+            content = {"error": gw_dispatch.describe(err), "routing": failed}
+            if isinstance(err, gw_dispatch.UpstreamRejected):
+                content["upstream_error"] = err.body
+            return JSONResponse(status_code=err.status, content=content,
+                                headers=gw_dispatch.headers_out(failed))
+    elif upstream_url:
         # Proxy to external upstream LLM
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
@@ -675,6 +730,7 @@ async def shield_chat_completions(request: Request):
                     "input_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in input_result.results],
                     "output_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in output_result.results],
                     "usage": usage or {},
+                    **({"routing": routing} if routing else {}),
                 },
             }
         )
@@ -684,18 +740,23 @@ async def shield_chat_completions(request: Request):
             for r in output_result.results
             if not r.passed and r.action == "block"
         ]
+        blocked_content = {
+            "blocked": True,
+            "block_reason": (
+                "; ".join(block_reasons)
+                if block_reasons
+                else "Blocked by output guardrail"
+            ),
+            "guardrail_results": output_result.model_dump(),
+            "tool_calls": tool_results,
+        }
+        if routing:
+            blocked_content["routing"] = routing
+            return JSONResponse(status_code=403, content=blocked_content,
+                                headers=gw_dispatch.headers_out(routing))
         return JSONResponse(
             status_code=403,
-            content={
-                "blocked": True,
-                "block_reason": (
-                    "; ".join(block_reasons)
-                    if block_reasons
-                    else "Blocked by output guardrail"
-                ),
-                "guardrail_results": output_result.model_dump(),
-                "tool_calls": tool_results,
-            },
+            content=blocked_content,
         )
 
     # Apply any redaction an output guardrail produced.
@@ -731,6 +792,7 @@ async def shield_chat_completions(request: Request):
                 "input_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in input_result.results],
                 "output_guardrails": [{"guardrail": r.guardrail_name, "passed": r.passed, "action": r.action, "message": r.message} for r in output_result.results],
                 "usage": usage or {},
+                **({"routing": routing} if routing else {}),
             },
         }
     )
@@ -749,4 +811,7 @@ async def shield_chat_completions(request: Request):
         response_data["has_blocked_tools"] = has_blocked_tools
         response_data["all_tools_allowed"] = not has_blocked_tools
 
+    if routing:
+        response_data["routing"] = routing
+        return JSONResponse(content=response_data, headers=gw_dispatch.headers_out(routing))
     return response_data

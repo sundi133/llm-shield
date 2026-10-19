@@ -68,6 +68,7 @@ from api.routes_agentic_control_plane import router as agentic_control_plane_rou
 from api.routes_identity_config import router as identity_config_router
 from api.routes_agent_policy_draft import router as agent_policy_draft_router
 from api.routes_discovery import router as discovery_router
+from api.routes_llm_gateway_admin import router as llm_gateway_admin_router
 from api.routes_flow_control import router as flow_control_router
 from api.routes_runtime_policy import router as runtime_profiles_router, edge_router as runtime_bundle_router
 from api.routes_embodied import router as embodied_profiles_router, edge_router as embodied_bundle_router
@@ -1103,6 +1104,7 @@ def create_admin_app() -> FastAPI:
     app.include_router(identity_config_router)   # /v1/tenant/me/identity/role-binding
     app.include_router(agent_policy_draft_router)  # /v1/tenant/me/agents/{id}/policy/* (suggested policy)
     app.include_router(discovery_router)  # /v1/tenant/me/discovery/* (AI inventory)
+    app.include_router(llm_gateway_admin_router)  # /v1/tenant/me/gateway/* (model routing)
     app.include_router(guardrail_metrics_router)       # /v1/tenant/me/guardrails/metrics
     app.include_router(siem_router)                    # /v1/tenant/me/siem
     app.include_router(vault_router)                   # /v1/tenant/me/vault

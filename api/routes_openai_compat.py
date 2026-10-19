@@ -30,6 +30,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from core.llm_backend import async_llm_call
+from core.llm_gateway import dispatch as gw_dispatch
+from core.llm_gateway import proxy as gw_proxy
+from core.llm_gateway.select import Refusal as RoutingRefusal
 from core.policy_mode import resolve_mode
 from core.text_utils import modified_text
 from core.tenant_pipeline import (
@@ -100,22 +103,39 @@ def _completion(
     }
 
 
-def _refusal(*, model: str, reason: str, guardrail_results, usage=None) -> JSONResponse:
+def _refusal(*, model: str, reason: str, guardrail_results, usage=None, routing=None) -> JSONResponse:
     """A blocked request rendered as a 200 content_filter completion."""
+    x_shield = {
+        "blocked": True,
+        "block_reason": reason,
+        "guardrail_results": guardrail_results,
+    }
+    headers = {"X-Shield-Blocked": "true"}
+    if routing is not None:
+        x_shield["routing"] = routing
+        headers.update(gw_dispatch.headers_out(routing))
     payload = _completion(
         model=model,
         content=reason or "This request was blocked by a content guardrail.",
         finish_reason="content_filter",
         usage=usage or {},
-        x_shield={
-            "blocked": True,
-            "block_reason": reason,
-            "guardrail_results": guardrail_results,
-        },
+        x_shield=x_shield,
     )
-    return JSONResponse(
-        status_code=200, content=payload, headers={"X-Shield-Blocked": "true"}
-    )
+    return JSONResponse(status_code=200, content=payload, headers=headers)
+
+
+def _routing_error(err, routing_plan) -> JSONResponse:
+    """Every eligible target failed, or one refused the request: an OpenAI-shaped
+    error naming the attempts. Never a fallback outside the route."""
+    routing = {"route": routing_plan.route["name"], "target": None, "attempts": err.attempts,
+               "failovers": max(0, len(err.attempts) - 1), "rule": routing_plan.rule,
+               "budget": routing_plan.budget}
+    if isinstance(err, gw_dispatch.UpstreamRejected) and isinstance(err.body, dict) and err.body.get("error"):
+        content = {**err.body, "x_shield": {"routing": routing}}
+    else:
+        content = {"error": {"message": gw_dispatch.describe(err), "type": "upstream_error",
+                             "param": None, "code": None}, "x_shield": {"routing": routing}}
+    return JSONResponse(status_code=err.status, content=content, headers=gw_dispatch.headers_out(routing))
 
 
 def _gr_summary(results) -> list[dict]:
@@ -248,7 +268,45 @@ async def openai_chat_completions(request: Request):
             guardrail_results=_gr_summary(input_result.results),
         )
 
+    # --- Model routing (docs/specs/gateway-routing-failover.md) ---
+    # None unless the tenant has a route named by `model`; then every call
+    # below is the unchanged default path.
+    routing_plan = await gw_proxy.resolve(
+        request, body, tenant_id, input_result, agent_key, role_name, messages
+    )
+    if isinstance(routing_plan, RoutingRefusal):
+        routing = {"route": routing_plan.route, "target": None, "attempts": [], "failovers": 0,
+                   "reason": routing_plan.reason, "code": routing_plan.code, "budget": "ok"}
+        await audit_logger.log(
+            {
+                "agent_key": agent_key,
+                "endpoint": _ENDPOINT,
+                "input_text": last_user_msg,
+                "action_taken": "block",
+                "guardrails_triggered": [],
+                "latency_ms": round(
+                    (datetime.now() - start_time).total_seconds() * 1000, 2
+                ),
+                "metadata": {
+                    "kind": "agent_chat_telemetry",
+                    "tenant_id": tenant_id,
+                    "stage": "routing",
+                    "user_role": role_name,
+                    "blocked": True,
+                    "block_reason": routing_plan.reason,
+                    "openai_compat": True,
+                    "routing": routing,
+                    "input_guardrails": _gr_summary(input_result.results),
+                    "output_guardrails": [],
+                },
+            }
+        )
+        return _refusal(model=model, reason=routing_plan.reason,
+                        guardrail_results=_gr_summary(input_result.results), routing=routing)
+
     # --- Streaming: reuse the existing OpenAI-SSE generator verbatim ---
+    if body.get("stream") is True and routing_plan is not None:
+        return _openai_error(400, "streaming is not available on a route yet")
     if body.get("stream") is True:
         stream_url, payload = _build_stream_payload(body, messages)
         return await _stream_chat_completion(
@@ -265,8 +323,17 @@ async def openai_chat_completions(request: Request):
         )
 
     # --- Proxy to the LLM ---
+    routing = None
     upstream_url = _get_upstream_url()
-    if upstream_url:
+    if routing_plan is not None:
+        try:
+            llm_data, routing = await gw_dispatch.complete(
+                tenant_id, routing_plan, body, messages, request.headers
+            )
+        except gw_dispatch.RoutingError as err:
+            return _routing_error(err, routing_plan)
+        model = routing["model"]
+    elif upstream_url:
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
                 f"{upstream_url}/v1/chat/completions", json=body
@@ -372,6 +439,7 @@ async def openai_chat_completions(request: Request):
                     "input_guardrails": _gr_summary(input_result.results),
                     "output_guardrails": _gr_summary(output_result.results),
                     "usage": usage or {},
+                    **({"routing": routing} if routing else {}),
                 },
             }
         )
@@ -380,6 +448,7 @@ async def openai_chat_completions(request: Request):
             reason=reason,
             guardrail_results=_gr_summary(output_result.results),
             usage=usage,
+            routing=routing,
         )
 
     # Apply any redaction/sanitization the output pipeline produced.
@@ -397,6 +466,8 @@ async def openai_chat_completions(request: Request):
     }
     if blocked_tool_calls:
         x_shield["blocked_tool_calls"] = blocked_tool_calls
+    if routing:
+        x_shield["routing"] = routing
 
     triggered = [
         r.guardrail_name
@@ -424,11 +495,12 @@ async def openai_chat_completions(request: Request):
                 "output_guardrails": _gr_summary(output_result.results),
                 "tool_call_count": len(allowed_tool_calls) + len(blocked_tool_calls),
                 "usage": usage or {},
+                **({"routing": routing} if routing else {}),
             },
         }
     )
 
-    return _completion(
+    completion = _completion(
         model=model,
         content=llm_response_text if not allowed_tool_calls else (llm_response_text or None),
         finish_reason=finish_reason,
@@ -436,3 +508,6 @@ async def openai_chat_completions(request: Request):
         x_shield=x_shield,
         tool_calls=allowed_tool_calls or None,
     )
+    if routing:
+        return JSONResponse(content=completion, headers=gw_dispatch.headers_out(routing))
+    return completion
