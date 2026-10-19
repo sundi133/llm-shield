@@ -8,7 +8,8 @@ description: One inventory of the AI apps, agents, MCP servers and AI services i
 
 # Spec: AI discovery beyond Shield traffic
 
-> Status: **DRAFT, awaiting approval.** Branch `spec/ai-discovery`.
+> Status: **APPROVED. Tasks 1 and 2 built; tasks 3 to 5 not started** (see
+> "As built" at the end). Branch `spec/ai-discovery`.
 > Related: `docs/specs/agent-os-events.md` (approved; agent attribution on
 > endpoints, server side built), `docs/spec-okta-parity-agent-identity.md`
 > (draft; gap G1 and an identity-provider discovery source),
@@ -257,3 +258,27 @@ Nothing is changed by discovery alone; every action is a person's.
 4. **Code scan.** `shield-mcp discover` and a CI example. Test 7.
 5. **Actions.** Inspect, block, route through gateway, register, review
    statuses, webhook. Test 8.
+
+## As built (tasks 1 and 2)
+
+- **Catalog.** 150 entries, not 200. A fifth kind, `framework`, holds SDKs
+  and agent frameworks (used by the code scan in task 4). Entries matched only
+  by a URL path were removed: a domain match on a shared host (for example a
+  cloud console) would mark unrelated traffic as AI.
+- **Governed.** A catalog agent counts as governed when its agent hook state is
+  `active`. "Partial" means governed, but at least one sighting came only from
+  `dns_log` or `repo_scan`, which cannot show the traffic went through Shield.
+- **Device collector.** It reports apps, IDE extensions, CLI agents, local
+  model ports and MCP servers. It does not report uncatalogued hosts: the
+  agent's PAC file only routes `ai_hosts` through the local proxy, so the agent
+  never sees other hosts. That item from task 2 is dropped; the proxy shipper
+  (task 3) covers it on networks with the SWG.
+- **Privacy.** MCP `env` values and arguments are never read into a report;
+  only the server name, the command's base name, the package or image, the
+  host, and the client. Flag values (`-e`, `--token`, ...) are never returned
+  as a package.
+- **Tasks 3 to 5** (proxy shipper and DNS/firewall import, `shield-mcp
+  discover`, actions and the `ai_discovered` webhook) are not built. The
+  ingest route already accepts `proxy`, `dns_log`, `repo_scan`, `idp` and
+  `custom` batches, and the portal detail view calls `aiInvActions` only when
+  it is defined.
