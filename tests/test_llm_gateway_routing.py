@@ -22,14 +22,16 @@ from core.models import GuardrailResult, PipelineResult
 def store(monkeypatch):
     import storage.tenant_store as ts
     monkeypatch.setattr(ts, "_get_redis", lambda: None)
-    from core.llm_gateway import health
+    from core.llm_gateway import health, usage
     ts._fallback_store.clear()
     config.reset_for_tests()
     health.reset_for_tests()
+    usage.reset_for_tests()
     yield ts
     ts._fallback_store.clear()
     config.reset_for_tests()
     health.reset_for_tests()
+    usage.reset_for_tests()
 
 
 class Upstream:

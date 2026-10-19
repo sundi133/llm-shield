@@ -384,7 +384,7 @@ def _load_snapshot(tenant_id: str) -> Snapshot:
     spend = {}
     try:
         from core.llm_gateway import usage
-        spend = usage.month_spend(tenant_id)
+        spend = usage.stored_spend(tenant_id)
     except Exception:
         logger.debug("spend not loaded", exc_info=True)
     return Snapshot(targets, routes, spend)

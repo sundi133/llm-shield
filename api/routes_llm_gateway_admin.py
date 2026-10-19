@@ -236,3 +236,24 @@ async def get_health(request: Request):
     tenant_id = get_tenant_from_request(request)
     return {"targets": health.stored(tenant_id), "flush_s": health.FLUSH_S, "open_s": health.OPEN_S,
             "fail_threshold": health.FAIL_THRESHOLD}
+
+
+@router.get("/usage")
+async def get_usage(request: Request, days: int = 7, route: str = ""):
+    """Daily calls, tokens, cost and failovers per route and target, and each
+    route's spend this month against its budget. Spend can trail live traffic
+    by one flush (30 s) per data-plane process."""
+    from core.llm_gateway import usage
+    tenant_id = get_tenant_from_request(request)
+    targets, routes = config.load(tenant_id)
+    spend = usage.month_spend(tenant_id)
+    budgets = []
+    for name, r in sorted(routes.items()):
+        b = r.get("budget") or {}
+        prices_missing = sorted(t for t in r.get("targets") or [] if not (targets.get(t) or {}).get("price"))
+        budgets.append({"route": name, "spend": round(spend.get(name, 0.0), 4),
+                        "monthly": b.get("monthly") or None, "currency": b.get("currency", "USD"),
+                        "at_limit": b.get("at_limit") if b else None,
+                        "spend_incomplete": bool(prices_missing), "targets_without_price": prices_missing})
+    return {"days": max(1, min(int(days), 95)), "rows": usage.read(tenant_id, days, route), "budgets": budgets,
+            "flush_s": usage.flush_s()}

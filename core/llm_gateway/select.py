@@ -31,6 +31,8 @@ class Plan:
     rule: str = ""                      # which rule decided, for x_shield and audit
     budget: str = "ok"                  # ok | warn | fallback
     skipped: list = field(default_factory=list)   # [{target, reason}]
+    prompt_chars: int = 0               # for a token estimate when a stream reports no usage
+    spend: float = 0.0
 
 
 @dataclass
@@ -63,6 +65,21 @@ def plan(snapshot: config.Snapshot, route: dict, ctx: CallContext, *, rng=random
         if loc:
             eligible = [t for t in eligible if (snapshot.targets.get(t) or {}).get("location") == loc]
         break
+    budget_state, spend = "ok", 0.0
+    budget = route.get("budget") or {}
+    if budget.get("monthly"):
+        from core.llm_gateway import usage
+        spend = float(snapshot.spend.get(route["name"], 0.0)) + usage.local_spend(ctx.tenant_id, route["name"])
+        if spend >= float(budget["monthly"]):
+            usage.maybe_alert_budget(ctx.tenant_id, route["name"], spend, budget)
+            at = budget.get("at_limit", "warn")
+            if at == "block":
+                return Refusal(route["name"], f"the monthly budget for route '{route['name']}' is spent "
+                                              f"({spend:.2f} of {float(budget['monthly']):.2f} "
+                                              f"{budget.get('currency', 'USD')})", "budget")
+            budget_state = at
+            if at == "fallback":
+                eligible = [t for t in eligible if t in (budget.get("fallback_targets") or [])]
     order, skipped = [], []
     for tid in eligible:
         t = snapshot.targets.get(tid)
@@ -77,7 +94,8 @@ def plan(snapshot: config.Snapshot, route: dict, ctx: CallContext, *, rng=random
     if not order:
         why = f" under {rule_note.split(':')[0]}" if rule_note else ""
         return Refusal(route["name"], f"no available target for route '{route['name']}'{why}", "no_target")
-    return Plan(route=route, targets=_order(route, order, ctx, rng), rule=rule_note, skipped=skipped)
+    return Plan(route=route, targets=_order(route, order, ctx, rng), rule=rule_note, skipped=skipped,
+                budget=budget_state, prompt_chars=ctx.prompt_chars, spend=spend)
 
 
 def matches(when: dict, ctx: CallContext) -> bool:

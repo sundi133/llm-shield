@@ -173,13 +173,28 @@ async def complete(tenant_id: str, plan: Plan, body: dict, messages: list, reque
         attempts.append({"target": target["id"], "outcome": outcome, "ms": ms})
         _note(tenant_id, target, outcome, ms)
         if outcome == "ok":
-            return data, info(plan, target, attempts)
+            routing = info(plan, target, attempts)
+            routing["cost"] = _record(tenant_id, plan, attempts, target["id"], usage=data.get("usage"))
+            return data, routing
         if outcome == "4xx":
+            _record(tenant_id, plan, attempts)
             raise UpstreamRejected(f"target '{target['id']}' refused the request ({resp.status_code})",
                                    attempts, resp.status_code, _error_body(resp))
         if not _failover_allowed(route, outcome):
             break
+    _record(tenant_id, plan, attempts)
     raise Exhausted(f"no target of route '{route['name']}' answered", attempts)
+
+
+def _record(tenant_id: str, plan: Plan, attempts: list, final: Optional[str] = None, *,
+            usage: Optional[dict] = None, estimate: Optional[tuple] = None) -> float:
+    from core.llm_gateway import usage as gw_usage
+    if not attempts:
+        return 0.0
+    targets = {t["id"]: t for t in plan.targets}
+    return round(gw_usage.record(tenant_id, plan.route["name"], attempts, targets, final=final,
+                                 usage=usage if isinstance(usage, dict) and usage else None,
+                                 estimate=estimate), 6)
 
 
 async def _attempt(tenant_id: str, target: dict, body: dict, messages: list, request_headers,
@@ -239,10 +254,12 @@ async def open_stream(tenant_id: str, plan: Plan, body: dict, messages: list, re
             client, ctx, resp = opened
             return client, ctx, resp, info(plan, target, attempts)
         if outcome == "4xx":
+            _record(tenant_id, plan, attempts)
             raise UpstreamRejected(f"target '{target['id']}' refused the request ({resp_status})",
                                    attempts, resp_status, err_body)
         if not _failover_allowed(route, outcome):
             break
+    _record(tenant_id, plan, attempts)
     raise Exhausted(f"no target of route '{route['name']}' answered", attempts)
 
 
@@ -290,9 +307,14 @@ def info(plan: Plan, target: dict, attempts: list) -> dict:
 
 
 def stream_done(tenant_id: str, plan: Plan, routing: dict):
-    """What runs when a routed stream ends: usage and cost (task 4)."""
-    def done(usage, ok: bool) -> None:
-        return None
+    """What runs when a routed stream ends: usage and cost. Without reported
+    usage, tokens are estimated from characters (marked estimated)."""
+    def done(usage, ok: bool, output_chars: int = 0) -> None:
+        attempts = list(routing.get("attempts") or [])
+        if not ok and attempts:
+            attempts[-1] = {**attempts[-1], "outcome": "stream_broken"}
+        _record(tenant_id, plan, attempts, routing.get("target") if ok else None, usage=usage,
+                estimate=(plan.prompt_chars // 4, output_chars // 4))
     return done
 
 

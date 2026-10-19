@@ -416,7 +416,7 @@ async def _stream_chat_completion(
                                     message=blocked_result.message or "Blocked by output guardrail during streaming",
                                 )
                                 if on_done:
-                                    on_done(usage, True)
+                                    on_done(usage, True, len(accumulated_text))
                                 yield b"data: [DONE]\n\n"
                                 return
 
@@ -431,7 +431,7 @@ async def _stream_chat_completion(
                 yield f"data: {json.dumps(err)}\n\n".encode("utf-8")
                 yield b"data: [DONE]\n\n"
                 if on_done:
-                    on_done(usage, False)
+                    on_done(usage, False, len(accumulated_text))
                 return
 
             # _stream_configs is already installed on the contextvar, so the
@@ -475,7 +475,7 @@ async def _stream_chat_completion(
             )
 
             if on_done:
-                on_done(usage, True)
+                on_done(usage, True, len(accumulated_text))
             yield b"data: [DONE]\n\n"
         finally:
             _request_configs.reset(cfg_token)

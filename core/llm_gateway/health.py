@@ -207,4 +207,4 @@ def reset_for_tests() -> None:
     with _lock:
         _state.clear()
         _alerted.clear()
-    _last_flush = 0.0
+    _last_flush = time.time()          # tests flush explicitly
