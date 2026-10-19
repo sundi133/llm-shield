@@ -51,6 +51,18 @@ def plan(snapshot: config.Snapshot, route: dict, ctx: CallContext, *, rng=random
     """A Plan, or a Refusal when nothing may serve this call."""
     eligible = list(route.get("targets") or [])
     rule_note = ""
+    for i, rule in enumerate(route.get("rules") or []):
+        if not rule or not matches(rule.get("when") or {}, ctx):
+            continue
+        rule_note = f"rules[{i}]" + (f": {rule['note']}" if rule.get("note") else "")
+        if "deny" in rule:
+            return Refusal(route["name"], rule["deny"], "deny")
+        # `use` narrows: only targets the route already lists, in the rule's order.
+        eligible = [t for t in rule.get("use") or [] if t in eligible]
+        loc = (rule.get("when") or {}).get("location_required")
+        if loc:
+            eligible = [t for t in eligible if (snapshot.targets.get(t) or {}).get("location") == loc]
+        break
     order, skipped = [], []
     for tid in eligible:
         t = snapshot.targets.get(tid)
@@ -63,8 +75,36 @@ def plan(snapshot: config.Snapshot, route: dict, ctx: CallContext, *, rng=random
         else:
             order.append(t)
     if not order:
-        return Refusal(route["name"], f"no available target for route '{route['name']}'", "no_target")
+        why = f" under {rule_note.split(':')[0]}" if rule_note else ""
+        return Refusal(route["name"], f"no available target for route '{route['name']}'{why}", "no_target")
     return Plan(route=route, targets=_order(route, order, ctx, rng), rule=rule_note, skipped=skipped)
+
+
+def matches(when: dict, ctx: CallContext) -> bool:
+    """Every condition present must hold. `location_required` is not a test:
+    it narrows the targets of a rule that matched."""
+    tests = 0
+    if "flagged" in when:
+        tests += 1
+        if not set(when["flagged"]) & set(ctx.flagged):
+            return False
+    if "data_class" in when:
+        tests += 1
+        if ctx.data_class not in {v.lower() for v in when["data_class"]}:
+            return False
+    if "agent" in when:
+        tests += 1
+        if not ctx.agent or ctx.agent not in when["agent"]:
+            return False
+    if "role" in when:
+        tests += 1
+        if not ctx.role or ctx.role not in when["role"]:
+            return False
+    if "prompt_tokens_over" in when:
+        tests += 1
+        if ctx.prompt_chars // 4 <= int(when["prompt_tokens_over"]):
+            return False
+    return tests > 0 or "location_required" in when
 
 
 def _order(route: dict, targets: list, ctx: CallContext, rng) -> list:
