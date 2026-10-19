@@ -8,7 +8,8 @@ description: Route each model call through Shield's OpenAI-compatible proxy to t
 
 # Spec: model routing and failover in Shield's LLM proxy
 
-> Status: **DRAFT, awaiting approval.** Branch `spec/gateway-routing-failover`.
+> Status: **APPROVED and built** (tasks 1 to 5; task 6 not started). See "As built"
+> at the end. Branch `spec/gateway-routing-failover`.
 > Related: `docs/spec-openai-compat-chat-completions.md` (the proxy this
 > extends), `docs/ai-gateway-interoperability.md` (Shield inside LiteLLM,
 > Portkey, Kong), `core/secret_vault/` (provider keys), `docs/specs/ai-discovery.md`.
@@ -364,3 +365,38 @@ guardrails); fail-open to today's path only when routing itself is unavailable
 5. **Portal tab.** Targets, routes, simulator, usage. Test 10 (portal).
 6. **Optional, separate approval: complexity condition** from the ModernBERT
    router, after the model is published and its data-plane latency measured.
+
+## As built (tasks 1 to 5)
+
+- **Simulator.** The admin image carries no input guardrail pipeline (it runs
+  on the data plane), so `POST /routes/{name}/simulate` does not run
+  guardrails: the request names the guardrails that would flag the prompt
+  (`flagged`), with the data class, role, agent and a sample for its length.
+- **A matched route never falls back.** If the route matches but cannot be
+  evaluated (a bug), the call is refused like a block, not sent to the
+  default upstream. Only a missing routing config (cold cache with the store
+  down) takes the default path.
+- **Rules.** `location_required` is not a test: it narrows the targets of a
+  rule that matched, and on its own it always applies. All other conditions
+  present must hold. The first matching rule decides.
+- **Budgets** apply after the rules: `fallback` narrows the rule's eligible
+  targets to `fallback_targets`; if that leaves none, the call is refused.
+  Spend used for decisions is the stored month total from the cached
+  snapshot plus this process's unflushed spend, so it can trail by one flush.
+- **Streaming.** Failover stops once a target answers with a status line;
+  the first-byte timeout bounds the wait for it. A routed stream that breaks
+  after starting ends with an `upstream_error` event and `[DONE]`, and is
+  counted as `stream_broken`. A stream without reported usage is costed from
+  characters (4 per token) and counted in `estimated`. The existing SSE
+  proxy, with its mid-stream output guardrails, is reused for routed streams.
+- **Health** outcomes that count as failures: timeout, connect, 429, 5xx,
+  bad response, credential unavailable, unsafe URL. A 4xx does not.
+- **Webhooks.** `gateway_target_down` is a new event; `budget_exceeded` (declared
+  before, never sent) now fires once per route per month across processes
+  via `HSETNX gw_budget_alerted:{tenant}:{yyyymm}`.
+- **Body.** Shield drops `prompt`, `system`, `x_shield` and `run_id`, sets
+  `model` to the target's, and sends the client's own `messages` (not the
+  default system message the legacy path adds).
+- **Portal.** Targets are edited in a form, routes as JSON. Checked in a
+  browser against the admin app with seeded targets, routes, usage and health.
+- **Not done:** task 6 (complexity condition) needs its own approval.
