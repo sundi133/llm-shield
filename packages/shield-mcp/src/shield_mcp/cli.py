@@ -1,4 +1,4 @@
-"""`shield-mcp scan <target>` — the CLI entry point.
+"""`shield-mcp scan <target>` and `shield-mcp discover <path>`: the CLI entry point.
 
 Exit codes (spec): 0 clean/below threshold, 2 gating findings, 3 unreachable/
 protocol error, 4 usage error.
@@ -93,7 +93,56 @@ def _build_parser() -> argparse.ArgumentParser:
         help="also gate the exit code on agent findings >= this severity "
              "(default: off — agent findings are advisory)",
     )
+    disc = sub.add_parser(
+        "discover", help="find the AI a code base uses (SDKs, MCP servers, AI hosts, provider keys)",
+        epilog="Offline by default. --post sends catalog sightings and MCP servers to Shield as "
+               "a repo_scan batch, attributed to the repository; file paths, line numbers and "
+               "key values never leave the machine.",
+    )
+    disc.add_argument("path", nargs="?", default=".", help="a directory or file (default: .)")
+    disc.add_argument("--json", action="store_true", help="machine-readable report")
+    disc.add_argument("--repo", default="", help="repository name to report as (default: the git "
+                                                 "remote's org/repo, else the folder name)")
+    disc.add_argument("--post", action="store_true",
+                      help="send the findings to Shield's AI inventory (needs --shield-url and --api-key)")
+    disc.add_argument("--shield-url", default=None, help="Shield base URL (or SHIELD_URL)")
+    disc.add_argument("--api-key", default=None, help="tenant API key (or SHIELD_API_KEY)")
+    disc.add_argument("--fail-on-key", action="store_true",
+                      help="exit 2 when a hard-coded provider key is found")
     return p
+
+
+def run_discover(args) -> int:
+    from shield_mcp import discover as dc
+    try:
+        rep = dc.scan(args.path, repo=args.repo)
+    except FileNotFoundError:
+        print(f"error: no such path: {args.path}", file=sys.stderr)
+        return EXIT_USAGE
+    posted = None
+    if args.post:
+        url = args.shield_url or os.environ.get("SHIELD_URL")
+        key = args.api_key or os.environ.get("SHIELD_API_KEY")
+        if not url or not key:
+            print("error: --post needs --shield-url and --api-key (or SHIELD_URL, SHIELD_API_KEY)",
+                  file=sys.stderr)
+            return EXIT_USAGE
+        try:
+            posted = dc.post(rep, url, key)
+        except Exception as e:
+            print(f"error: could not post to Shield: {e}", file=sys.stderr)
+            return EXIT_UNREACHABLE
+    if args.json:
+        import json
+        print(json.dumps({**rep.to_dict(), **({"posted": posted} if posted is not None else {})}, indent=2))
+    else:
+        print(dc.render_human(rep), end="")
+        if posted is not None:
+            print(f"Sent to Shield: {posted.get('accepted', 0)} accepted, "
+                  f"{posted.get('new_entries', 0)} new in the AI inventory.")
+    if args.fail_on_key and any(f.kind == "key" for f in rep.findings):
+        return EXIT_FINDINGS
+    return EXIT_CLEAN
 
 
 def run_scan(args) -> int:
@@ -168,6 +217,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.command == "scan":
         return run_scan(args)
+    if args.command == "discover":
+        return run_discover(args)
     parser.print_help(sys.stderr)
     return EXIT_USAGE
 

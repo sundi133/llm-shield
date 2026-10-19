@@ -156,7 +156,9 @@ def _package_from(command: str, args: list) -> str:
 
 
 def _host(url: str) -> str:
-    m = re.match(r"^[a-z][a-z0-9+.-]*://([^/:?#]+)", str(url or "").strip().lower())
+    # Userinfo (user:token@) is skipped: the host comes after it, and the
+    # credential must never be reported as one.
+    m = re.match(r"^[a-z][a-z0-9+.-]*://(?:[^/?#@]*@)?([^/:?#@]+)", str(url or "").strip().lower())
     return m.group(1) if m else ""
 
 

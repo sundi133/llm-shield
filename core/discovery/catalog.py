@@ -459,3 +459,16 @@ def iter_signals(catalog: Iterable[dict], field: str):
     for e in catalog:
         for v in e.get(field) or []:
             yield v, e
+
+
+def shield_mcp_signals() -> dict:
+    """What `shield-mcp discover` matches offline: package names (PyPI as is,
+    npm with an `npm:` prefix) and domain patterns, from the built-in catalog.
+    packages/shield-mcp/src/shield_mcp/ai_signals.py is generated from this;
+    tests/test_shield_mcp_discover.py fails when the two drift."""
+    packages = {}
+    for e in BUILTIN:
+        for p in e.get("packages") or []:
+            packages[str(p).lower()] = [e["id"], e["name"]]
+    return {"version": VERSION, "packages": dict(sorted(packages.items())),
+            "domains": sorted({d.split("/")[0] for e in BUILTIN for d in e.get("domains") or []})}

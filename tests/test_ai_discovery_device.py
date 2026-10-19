@@ -81,6 +81,11 @@ def test_the_collector_never_reports_secrets_paths_or_non_catalog_items(mac_home
         assert leaked not in blob, leaked
 
 
+def test_a_url_with_credentials_reports_the_host_not_the_user():
+    for url in ("https://user:pw@mcp.linear.app/sse", "https://tok@mcp.linear.app", "http://mcp.linear.app:8080/x"):
+        assert dc._host(url) == "mcp.linear.app", url
+
+
 def test_windows_apps_by_executable(tmp_path):
     (tmp_path / "Programs" / "cursor").mkdir(parents=True)
     (tmp_path / "Programs" / "cursor" / "Cursor.exe").write_bytes(b"")

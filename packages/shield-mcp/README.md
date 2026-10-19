@@ -98,3 +98,22 @@ agent never executes the target's tools; it fails open if the LLM is unreachable
 
 Part of [LLM Shield](https://github.com/sundi133/llm-shield). Specs:
 `docs/spec-mcp-scanner.md`, `docs/spec-mcp-scanner-deep.md`.
+
+## Discover the AI a code base uses
+
+`shield-mcp discover <path>` lists the LLM SDKs and agent frameworks in
+dependency files (Python and Node), the MCP servers defined in the repository,
+the AI service hosts in code and configuration, and hard-coded provider keys
+(with file and line; the value is never printed or sent).
+
+```bash
+shield-mcp discover .                        # human report
+shield-mcp discover . --json                 # machine-readable
+shield-mcp discover . --fail-on-key          # exit 2 when a provider key is committed
+shield-mcp discover . --post --shield-url "$SHIELD_URL" --api-key "$SHIELD_API_KEY"
+```
+
+`--post` adds the findings to Shield's AI inventory as a `repo_scan` source,
+attributed to the repository (`--repo`, default the git remote's `org/repo`).
+Only catalog sightings and MCP servers are sent; paths, line numbers and key
+values stay on the machine. See `examples/discover-github-action.yml` for CI.
