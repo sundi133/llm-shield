@@ -261,6 +261,10 @@ async def _audit_decision(event: dict) -> None:
                "allowed" if event.get("allowed") else
                "held" if action in ("pending_confirmation", "approval_required") else "blocked",
                via="mcp")
+        # Evidence that the gateway carries this route, for the AI inventory
+        # (docs/specs/ai-discovery.md, section 3.3). In-process, no I/O.
+        from core.discovery.guarded import mark
+        mark(event.get("tenant_id") or "", "mcp_route", event.get("route") or "")
     except Exception:
         pass
     if not _audit_enabled():

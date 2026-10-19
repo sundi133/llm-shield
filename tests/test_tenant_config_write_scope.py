@@ -447,6 +447,7 @@ OPEN_BY_DESIGN = {
         ("POST", "/v1/shield/runtime/events"), ("POST", "/v1/tenant/me/agentic/circuit-breakers/report"),
         ("POST", "/v1/tenant/me/agentic/checkpoints"), ("POST", "/v1/tenant/me/aibom/ingest"),
         ("POST", "/v1/tenant/me/aibom/snapshots"), ("POST", "/v1/shield/exceptions"),
+        ("POST", "/v1/shield/discovery/batch"),   # sightings only; never marks anything governed
     },
     "validators, simulators and generators (change nothing)": {
         ("POST", "/v1/tenant/me/custom-policies/validate-prompt"), ("POST", "/v1/tenant/me/custom-policies/validate-sigma"),
