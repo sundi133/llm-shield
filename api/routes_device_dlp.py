@@ -128,8 +128,14 @@ def bundle_policy(tenant_id: str, fleet: str) -> dict:
     from api.routes_edge import _build_bundle
     policy, _meta = _load(tenant_id)
     rules = _build_bundle(tenant_id)
-    return {**for_fleet(policy, fleet), "rules": rules["rules"],
-            "blocklists": rules["blocklists"], "rules_version": rules["version"]}
+    out = {**for_fleet(policy, fleet), "rules": rules["rules"],
+           "blocklists": rules["blocklists"], "rules_version": rules["version"]}
+    if (policy.get("discovery") or {}).get("enabled"):
+        # What the agent's collector matches against, locally
+        # (docs/specs/ai-discovery.md, task 2). Only when discovery is on.
+        from core.discovery import catalog
+        out["discovery_catalog"] = catalog.device_bundle(tenant_id)
+    return out
 
 
 @edge_router.get("/dlp-bundle")

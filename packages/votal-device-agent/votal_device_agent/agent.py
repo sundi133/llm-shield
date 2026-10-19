@@ -334,8 +334,11 @@ class Agent:
         if self.cfg.capture == "proxy" and self.cfg.ca_mode == "tenant":
             self._ensure_tenant_ca(restart=self.local_api is not None)
         out["audit"] = sync.push_audit(self.cfg, self.creds, self.audit, http=self.http)
-        out["heartbeat"] = sync.heartbeat(self.cfg, self.creds, self.heartbeat_payload(),
-                                          self.store, http=self.http)
+        payload = self.heartbeat_payload()
+        out["heartbeat"] = sync.heartbeat(self.cfg, self.creds, payload, self.store, http=self.http)
+        if out["heartbeat"] == 204 and "ai_inventory" in payload:
+            # Only now is the inventory known to have reached Shield.
+            self._disc_sent = (self._disc_pending, time.time())
         self.revoked = (out["bundle"] == "revoked" or out["audit"] == -1
                         or out["heartbeat"] == 401)
         self.last = {**out, "at": int(time.time())}
@@ -393,7 +396,37 @@ class Agent:
                "counters": dict(list(self.engine.counters.items())[:20])}
         if self.hooks.report:
             out["agent_hooks"] = self.hooks.report
+        inventory = self.ai_inventory()
+        if inventory is not None:
+            out["ai_inventory"] = inventory
         return out
+
+    # ── AI inventory (docs/specs/ai-discovery.md, task 2) ──────────────
+
+    DISCOVERY_EVERY_S = 3600
+    DISCOVERY_RESEND_S = 86400
+
+    def ai_inventory(self):
+        """What to report this heartbeat: the collector's observations when the
+        trusted bundle turns discovery on and they changed (or a day passed),
+        else None. Collects at most hourly."""
+        policy = self.engine.policy or {}
+        catalog = policy.get("discovery_catalog")
+        if not (policy.get("discovery") or {}).get("enabled") or not catalog \
+                or self.engine.trust.status not in ("verified", "grace"):
+            return None
+        now = time.time()
+        if now - getattr(self, "_disc_at", 0) >= self.DISCOVERY_EVERY_S or not hasattr(self, "_disc_obs"):
+            from votal_device_agent import discovery, platform as plat
+            self._disc_obs = discovery.collect(catalog, os_name=plat.system())
+            self._disc_at = now
+        from votal_device_agent.discovery import digest
+        d = digest(self._disc_obs)
+        sent, sent_at = getattr(self, "_disc_sent", ("", 0))
+        if d == sent and now - sent_at < self.DISCOVERY_RESEND_S:
+            return None
+        self._disc_pending = d
+        return self._disc_obs
 
     def status(self) -> dict:
         t = self.engine.trust

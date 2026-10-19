@@ -118,7 +118,25 @@ async def device_heartbeat(request: Request, body: dict = Body(...)):
         dv.heartbeat(tenant_id, device_id, body, record)
     except dv.DeviceError as e:
         raise _http(e)
+    _ai_inventory(tenant_id, device_id, record, body.get("ai_inventory"))
     return Response(status_code=204)
+
+
+def _ai_inventory(tenant_id: str, device_id: str, record, observations) -> None:
+    """The device agent's AI inventory (docs/specs/ai-discovery.md, task 2),
+    attributed to this enrolled device. Never fails the heartbeat."""
+    if not isinstance(observations, list) or not observations:
+        return
+    try:
+        from core.discovery import inventory
+        name = str((record or {}).get("hostname") or device_id)[:120]
+        subject = {"type": "device", "id": name}
+        obs = [{**o, "subject": subject} for o in observations[:inventory.OBS_MAX] if isinstance(o, dict)]
+        inventory.record(tenant_id, "device_agent", obs)
+    except Exception:
+        import logging
+        logging.getLogger("votal.discovery").warning("device %s: AI inventory not recorded", device_id,
+                                                     exc_info=True)
 
 
 def _policy_hosts(tenant_id: str) -> list:

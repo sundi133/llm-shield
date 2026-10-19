@@ -236,7 +236,7 @@ def validate_policy(raw: Any) -> dict:
     errors: list[str] = []
     # agent_hooks is optional and stored only when set (core/dlp/agent_hooks.py),
     # so tenants that never use it keep their policy hash and bundles.
-    _unknown(raw, {*DEFAULT_POLICY, "agent_hooks", "agent_os_events"}, "", errors)
+    _unknown(raw, {*DEFAULT_POLICY, "agent_hooks", "agent_os_events", "discovery"}, "", errors)
     p = {**default_policy(), **copy.deepcopy(raw)}
     if "agent_hooks" in p:
         from core.dlp import agent_hooks
@@ -247,6 +247,11 @@ def validate_policy(raw: Any) -> dict:
         from core.dlp import agent_os_events
         p["agent_os_events"] = agent_os_events.validate(
             p["agent_os_events"], errors, valid_fleet=valid_fleet, max_fleets=MAX_FLEETS)
+
+    if "discovery" in p:
+        # Optional, stored only when set (core/discovery/policy.py).
+        from core.discovery import policy as discovery_policy
+        p["discovery"] = discovery_policy.validate(p["discovery"], errors)
 
     _one_of(p["mode"], MODES, "mode", errors)
 

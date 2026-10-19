@@ -2655,6 +2655,11 @@
         AI BOM
         <span id="nav-badge-aibom" class="nav-badge"></span>
       </div>
+      <div class="nav-item" data-tab="ai-inventory">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 110-15 7.5 7.5 0 010 15zM10.5 7.5v6M7.5 10.5h6"/></svg>
+        AI Inventory
+        <span id="nav-badge-ai-inventory" class="nav-badge"></span>
+      </div>
       <div class="nav-item" data-tab="usage">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
         Usage
@@ -5585,6 +5590,42 @@ if __name__ == "__main__":
     </div>
 
     <!-- ── AI Bill of Materials ────────────────────── -->
+    <!-- AI Inventory (docs/specs/ai-discovery.md) -->
+    <div id="tab-ai-inventory" class="tab-pane hidden">
+      <div class="page-header">
+        <div>
+          <div class="page-title">AI Inventory</div>
+          <div class="page-desc">Every AI app, agent, MCP server and AI service seen in your organization, including the ones that never call Shield. Governed means its traffic passes through Shield. Bring the rest under Shield from each entry.</div>
+        </div>
+        <div class="section-toolbar">
+          <button class="small" onclick="aiInvLoad()">Refresh</button>
+        </div>
+      </div>
+      <div id="ai-inv-summary" style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem;"></div>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;align-items:center;">
+        <input id="ai-inv-q" type="search" placeholder="Search name or vendor" style="max-width:240px;" oninput="aiInvDebounce()">
+        <select id="ai-inv-kind" onchange="aiInvLoad()">
+          <option value="">All kinds</option><option value="app">Apps</option><option value="agent">Agents</option>
+          <option value="mcp_server">MCP servers</option><option value="ai_service">AI services</option>
+          <option value="model_runtime">Local models</option><option value="framework">Frameworks in code</option>
+        </select>
+        <select id="ai-inv-governed" onchange="aiInvLoad()">
+          <option value="">Governed or not</option><option value="no">Not governed</option>
+          <option value="partial">Partly governed</option><option value="yes">Governed</option>
+        </select>
+        <select id="ai-inv-status" onchange="aiInvLoad()">
+          <option value="">Any review status</option><option value="unreviewed">Unreviewed</option>
+          <option value="sanctioned">Sanctioned</option><option value="unsanctioned">Unsanctioned</option>
+          <option value="ignored">Ignored</option>
+        </select>
+      </div>
+      <div class="card" style="padding:0;overflow-x:auto;"><table class="gov-table" style="width:100%;font-size:13px;">
+        <thead><tr><th>Name</th><th>Kind</th><th>Governed</th><th>Review</th><th>Seen by</th><th>Where</th><th>Last seen</th><th></th></tr></thead>
+        <tbody id="ai-inv-rows"><tr><td colspan="8" class="muted" style="padding:1rem;">Loading…</td></tr></tbody>
+      </table></div>
+      <div id="ai-inv-more" style="margin-top:0.75rem;"></div>
+    </div>
+
     <div id="tab-aibom" class="tab-pane hidden">
       <div class="page-header">
         <div>
@@ -9271,6 +9312,90 @@ async function deleteAgent(agentId) {
   } catch (e) {
     showToast('Network error while deleting agent', 'error');
   }
+}
+
+// ── AI Inventory (docs/specs/ai-discovery.md) ─────────────────────────
+// Every value shown is escaped with pfpEsc. Review and actions are a
+// person's; nothing here changes anything by itself.
+let AI_INV_CURSOR = 0, AI_INV_TIMER = null;
+const AI_INV_KIND = { app: 'App', agent: 'Agent', mcp_server: 'MCP server', ai_service: 'AI service',
+                      model_runtime: 'Local model', framework: 'Framework in code' };
+function aiInvDebounce() { clearTimeout(AI_INV_TIMER); AI_INV_TIMER = setTimeout(() => aiInvLoad(), 300); }
+function aiInvGoverned(g) {
+  if (g === true) return '<span class="badge badge-success">governed</span>';
+  if (g === 'partial') return '<span class="badge badge-warn">partly</span>';
+  return '<span class="badge badge-danger">not governed</span>';
+}
+function aiInvWhen(t) { return t ? new Date(t * 1000).toLocaleDateString() : ''; }
+function aiInvWhere(s) {
+  const parts = [];
+  if (s.device) parts.push(`${s.device} device${s.device === 1 ? '' : 's'}`);
+  if (s.user) parts.push(`${s.user} user${s.user === 1 ? '' : 's'}`);
+  if (s.service) parts.push(`${s.service} service${s.service === 1 ? '' : 's'}`);
+  if (s.repo) parts.push(`${s.repo} repo${s.repo === 1 ? '' : 's'}`);
+  return parts.join(', ') || '';
+}
+async function aiInvLoad(more) {
+  if (!more) AI_INV_CURSOR = 0;
+  const qs = new URLSearchParams({ q: document.getElementById('ai-inv-q').value || '',
+    kind: document.getElementById('ai-inv-kind').value, governed: document.getElementById('ai-inv-governed').value,
+    status: document.getElementById('ai-inv-status').value, cursor: AI_INV_CURSOR, limit: 50 });
+  const tbody = document.getElementById('ai-inv-rows');
+  try {
+    const d = await apiCall(`/v1/tenant/me/discovery/inventory?${qs}`);
+    const s = d.summary;
+    document.getElementById('ai-inv-summary').innerHTML = [
+      ['In use', s.entries], ['Not governed', s.ungoverned], ['Partly governed', s.partial],
+      ['Unreviewed', s.by_status.unreviewed], ['New this week', s.new_this_week]]
+      .map(([k, v]) => `<div class="card" style="padding:0.6rem 0.9rem;min-width:120px;"><div class="muted" style="font-size:11px;">${pfpEsc(k)}</div><div style="font-size:20px;font-weight:700;">${pfpEsc(v)}</div></div>`).join('');
+    const badge = document.getElementById('nav-badge-ai-inventory');
+    if (badge) badge.textContent = s.ungoverned ? String(s.ungoverned) : '';
+    const rows = d.entries.map(e => `<tr>
+        <td><div style="font-weight:600;">${pfpEsc(e.name)}</div><div class="muted" style="font-size:11px;">${pfpEsc(e.vendor || '')}</div></td>
+        <td>${pfpEsc(AI_INV_KIND[e.kind] || e.kind)}</td>
+        <td>${aiInvGoverned(e.governed)}</td>
+        <td><select data-entry="${pfpEsc(e.id)}" onchange="aiInvReview(this.dataset.entry, this.value)">${
+          ['unreviewed', 'sanctioned', 'unsanctioned', 'ignored'].map(x =>
+            `<option value="${x}" ${e.status === x ? 'selected' : ''}>${x}</option>`).join('')}</select></td>
+        <td class="muted" style="font-size:12px;">${pfpEsc((e.sources || []).join(', '))}</td>
+        <td class="muted" style="font-size:12px;">${pfpEsc(aiInvWhere(e.subjects || {}))}</td>
+        <td class="muted" style="font-size:12px;">${pfpEsc(aiInvWhen(e.last_seen))}</td>
+        <td><button class="small secondary" data-entry="${pfpEsc(e.id)}" onclick="aiInvDetail(this.dataset.entry, this)">Details</button></td>
+      </tr>`).join('');
+    if (more) tbody.insertAdjacentHTML('beforeend', rows);
+    else tbody.innerHTML = rows || `<tr><td colspan="8" class="muted" style="padding:1rem;">Nothing here yet. Shield fills this from its own traffic, the device agent (turn on discovery in the device policy), the proxy shipper, DNS or firewall log imports, and <code>shield-mcp discover</code> in CI.</td></tr>`;
+    AI_INV_CURSOR = d.next_cursor || 0;
+    document.getElementById('ai-inv-more').innerHTML = d.next_cursor
+      ? `<button class="secondary small" onclick="aiInvLoad(true)">Show more (${pfpEsc(d.total - d.next_cursor)} left)</button>` : '';
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="toast error" style="position:static;">${pfpEsc(e.message)}</div></td></tr>`;
+  }
+}
+async function aiInvReview(entryId, status) {
+  try {
+    await apiCall(`/v1/tenant/me/discovery/inventory/${entryId.split('/').map(encodeURIComponent).join('/')}`,
+                  { method: 'PUT', body: JSON.stringify({ status }) });
+    showToast(`Marked ${status}`, 'success');
+  } catch (e) { showToast(e.message, 'error'); aiInvLoad(); }
+}
+async function aiInvDetail(entryId, btn) {
+  const tr = btn.closest('tr');
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('ai-inv-detail')) { next.remove(); return; }
+  try {
+    const e = await apiCall(`/v1/tenant/me/discovery/inventory/${entryId.split('/').map(encodeURIComponent).join('/')}`);
+    const sig = e.signals || {};
+    const mcp = sig.mcp ? `MCP: ${['server_name', 'command', 'package', 'host', 'client'].filter(k => sig.mcp[k]).map(k => `${k} ${sig.mcp[k]}`).join(' · ')}` : '';
+    const subs = (e.subject_list || []).slice(0, 25).map(x => `<code>${pfpEsc(x.subject)}</code> ${pfpEsc(aiInvWhen(x.last_seen))}`).join(', ');
+    const actions = (typeof aiInvActions === 'function') ? aiInvActions(e) : '';
+    tr.insertAdjacentHTML('afterend', `<tr class="ai-inv-detail"><td colspan="8" style="background:var(--bg-3);font-size:12px;">
+      <div>First seen ${pfpEsc(aiInvWhen(e.first_seen))}. ${e.governed_by && e.governed_by.length ? 'Governed by ' + pfpEsc(e.governed_by.join(', ')) + '.' : 'No Shield evidence for its traffic yet.'}</div>
+      ${sig.domains ? `<div>Domains: ${pfpEsc(sig.domains.join(', '))}</div>` : ''}
+      ${mcp ? `<div>${pfpEsc(mcp)}</div>` : ''}
+      <div>Seen on ${pfpEsc(e.subject_total)} subject(s)${subs ? ': ' + subs : ''}</div>
+      ${actions}
+    </td></tr>`);
+  } catch (err) { showToast(err.message, 'error'); }
 }
 
 // ── Suggested policy (docs/specs/policy-from-purpose.md) ─────────────
@@ -15765,6 +15890,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'guardrail-metrics') { loadGuardrailDashboard(); loadGuardrailMetrics(); }
     if (tab === 'board-report') loadBoardReport();
     if (tab === 'aibom') loadAibom();
+    if (tab === 'ai-inventory') aiInvLoad();
     if (tab === 'mcp-gateway') loadMcpGateway();
     if (tab === 'agents') loadAgentData();
     if (tab === 'governance') loadGovernance();

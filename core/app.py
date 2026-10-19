@@ -65,6 +65,7 @@ from api.routes_edge import router as edge_router
 from api.routes_rbac_test import router as rbac_test_router
 from api.routes_agent_chat import router as agent_chat_router
 from api.routes_killswitch import router as killswitch_router
+from api.routes_discovery_ingest import router as discovery_ingest_router
 from api.routes_decisions import router as decisions_router
 from api.routes_webhooks import router as webhooks_router
 from api.routes_agent_identity import router as agent_identity_router
@@ -169,6 +170,7 @@ def create_app() -> FastAPI:
     app.include_router(rbac_test_router)
     app.include_router(agent_chat_router)
     app.include_router(killswitch_router)
+    app.include_router(discovery_ingest_router)   # /v1/shield/discovery/* (AI inventory ingest)
     app.include_router(decisions_router)
     app.include_router(webhooks_router)
     app.include_router(agent_identity_router)

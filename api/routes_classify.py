@@ -344,6 +344,14 @@ async def classify(request: Request, body: dict):
     device_id = request.headers.get("x-device-id", "") or str(body.get("device_id") or "")
     # Destination = the AI site the prompt was headed to (claude.ai, etc.).
     destination = request.headers.get("x-shield-destination", "")
+    if tenant_id and destination:
+        # Evidence that Shield guards this destination, for the AI inventory
+        # (docs/specs/ai-discovery.md, section 3.3). In-process, no I/O.
+        try:
+            from core.discovery.guarded import mark
+            mark(tenant_id, "destination", destination)
+        except ImportError:
+            pass
     root_action = result.get("action", "pass")  # pass, log, warn, redact, or block
     blocked = root_action == "block"
     guardrail_results = result.get("guardrail_results", [])
