@@ -306,7 +306,19 @@ async def openai_chat_completions(request: Request):
 
     # --- Streaming: reuse the existing OpenAI-SSE generator verbatim ---
     if body.get("stream") is True and routing_plan is not None:
-        return _openai_error(400, "streaming is not available on a route yet")
+        try:
+            client, ctx, resp, routing = await gw_dispatch.open_stream(
+                tenant_id, routing_plan, body, messages, request.headers
+            )
+        except gw_dispatch.RoutingError as err:
+            return _routing_error(err, routing_plan)
+        return await _stream_chat_completion(
+            stream_url="", payload={}, body=body, context=context, agent_key=agent_key,
+            role_name=role_name, last_user_msg=last_user_msg, start_time=start_time,
+            tenant_id=tenant_id, tenant_config=tenant_config,
+            opened=(client, ctx, resp), routing=routing,
+            on_done=gw_dispatch.stream_done(tenant_id, routing_plan, routing),
+        )
     if body.get("stream") is True:
         stream_url, payload = _build_stream_payload(body, messages)
         return await _stream_chat_completion(

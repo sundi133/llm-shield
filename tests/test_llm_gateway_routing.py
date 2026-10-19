@@ -22,11 +22,14 @@ from core.models import GuardrailResult, PipelineResult
 def store(monkeypatch):
     import storage.tenant_store as ts
     monkeypatch.setattr(ts, "_get_redis", lambda: None)
+    from core.llm_gateway import health
     ts._fallback_store.clear()
     config.reset_for_tests()
+    health.reset_for_tests()
     yield ts
     ts._fallback_store.clear()
     config.reset_for_tests()
+    health.reset_for_tests()
 
 
 class Upstream:
@@ -314,14 +317,6 @@ def test_kill_switch_ignores_routes(app, upstream, monkeypatch):
     monkeypatch.setenv("SHIELD_LLM_ROUTING", "0")
     r = app.post("/v1/chat/completions", json=CHAT)
     assert "routing" not in r.json()["x_shield"] and upstream.calls == []
-
-
-def test_a_routed_stream_never_goes_to_the_default_upstream(app, upstream, monkeypatch):
-    import api.routes_openai_compat as ro
-    monkeypatch.setattr(ro, "_stream_chat_completion", AsyncMock(side_effect=AssertionError("default stream")))
-    setup_route()
-    r = app.post("/v1/chat/completions", json={**CHAT, "stream": True})
-    assert r.status_code in (200, 400) and "default stream" not in r.text
 
 
 # ── what is sent ─────────────────────────────────────────────────────

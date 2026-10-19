@@ -145,6 +145,19 @@ def _build_stream_payload(body: dict, messages: list[dict]) -> tuple[str, dict]:
     return f"{get_server_url()}/v1/chat/completions", payload
 
 
+async def _upstream_lines(resp, failed: list | None):
+    """The upstream's SSE lines. With `failed` (a routed stream), a broken
+    connection is noted there instead of raised, so the generator can end the
+    stream with an error event."""
+    try:
+        async for line in resp.aiter_lines():
+            yield line
+    except httpx.HTTPError as e:
+        if failed is None:
+            raise
+        failed.append(str(e) or type(e).__name__)
+
+
 def _extract_stream_text(data: dict) -> str:
     """Extract text delta from an OpenAI-compatible stream chunk."""
     pieces: list[str] = []
@@ -235,13 +248,24 @@ async def _stream_chat_completion(
     tenant_id: str = "",
     run_id: str = "",
     tenant_config: dict | None = None,
+    opened: tuple | None = None,
+    routing: dict | None = None,
+    on_done=None,
 ):
-    """Proxy a chat completion stream while preserving OpenAI-style SSE."""
-    client = httpx.AsyncClient(timeout=300)
-    stream_ctx = client.stream("POST", stream_url, json=payload)
-    upstream_resp = await stream_ctx.__aenter__()
+    """Proxy a chat completion stream while preserving OpenAI-style SSE.
 
-    if upstream_resp.status_code >= 400:
+    `opened` is (client, stream context, response) for a stream a model route
+    already opened (core.llm_gateway.dispatch.open_stream); then `routing` adds
+    its headers and `on_done(usage)` runs when the stream ends.
+    """
+    if opened is not None:
+        client, stream_ctx, upstream_resp = opened
+    else:
+        client = httpx.AsyncClient(timeout=300)
+        stream_ctx = client.stream("POST", stream_url, json=payload)
+        upstream_resp = await stream_ctx.__aenter__()
+
+    if opened is None and upstream_resp.status_code >= 400:
         error_text = await upstream_resp.aread()
         await stream_ctx.__aexit__(None, None, None)
         await client.aclose()
@@ -261,6 +285,8 @@ async def _stream_chat_completion(
     )
     policy_mode = resolve_mode(tenant_config)
 
+    failed: list = []
+
     async def event_generator():
         accumulated_text = ""
         usage = None
@@ -274,7 +300,7 @@ async def _stream_chat_completion(
         }
         cfg_token = _request_configs.set(_stream_configs)
         try:
-            async for line in upstream_resp.aiter_lines():
+            async for line in _upstream_lines(upstream_resp, failed if routing else None):
                 if line == "":
                     if blocked_result is None:
                         yield b"\n"
@@ -389,10 +415,24 @@ async def _stream_chat_completion(
                                     blocked_guardrail=blocked_result.guardrail_name,
                                     message=blocked_result.message or "Blocked by output guardrail during streaming",
                                 )
+                                if on_done:
+                                    on_done(usage, True)
                                 yield b"data: [DONE]\n\n"
                                 return
 
                 yield (line + "\n").encode("utf-8")
+
+            if failed:
+                # A routed target broke off mid-stream. The client already has
+                # part of an answer, so there is no failover: end it plainly.
+                err = {"error": {"message": f"the model stream from target '{routing.get('target')}' "
+                                            f"ended early", "type": "upstream_error"},
+                       "x_shield": {"routing": routing}}
+                yield f"data: {json.dumps(err)}\n\n".encode("utf-8")
+                yield b"data: [DONE]\n\n"
+                if on_done:
+                    on_done(usage, False)
+                return
 
             # _stream_configs is already installed on the contextvar, so the
             # tenant's output policies apply to this post-stream pass too.
@@ -434,6 +474,8 @@ async def _stream_chat_completion(
                 }
             )
 
+            if on_done:
+                on_done(usage, True)
             yield b"data: [DONE]\n\n"
         finally:
             _request_configs.reset(cfg_token)
@@ -448,6 +490,8 @@ async def _stream_chat_completion(
     }
     if upstream_resp.headers.get("x-request-id"):
         headers["X-Upstream-Request-Id"] = upstream_resp.headers["x-request-id"]
+    if routing:
+        headers.update(gw_dispatch.headers_out(routing))
 
     return StreamingResponse(
         event_generator(),
@@ -613,8 +657,26 @@ async def shield_chat_completions(request: Request):
         )
 
     if body.get("stream") is True and routing_plan is not None:
-        return JSONResponse(status_code=400,
-                            content={"error": "streaming is not available on a route yet"})
+        try:
+            client, ctx, resp, routing = await gw_dispatch.open_stream(
+                tenant_id, routing_plan, body, messages, request.headers
+            )
+        except gw_dispatch.RoutingError as err:
+            failed = {"route": routing_plan.route["name"], "target": None, "attempts": err.attempts,
+                      "failovers": max(0, len(err.attempts) - 1), "rule": routing_plan.rule,
+                      "budget": routing_plan.budget}
+            content = {"error": gw_dispatch.describe(err), "routing": failed}
+            if isinstance(err, gw_dispatch.UpstreamRejected):
+                content["upstream_error"] = err.body
+            return JSONResponse(status_code=err.status, content=content,
+                                headers=gw_dispatch.headers_out(failed))
+        return await _stream_chat_completion(
+            stream_url="", payload={}, body=body, context=context, agent_key=agent_key,
+            role_name=role_name, last_user_msg=last_user_msg, start_time=start_time,
+            tenant_id=tenant_id, run_id=run_id, tenant_config=tenant_config,
+            opened=(client, ctx, resp), routing=routing,
+            on_done=gw_dispatch.stream_done(tenant_id, routing_plan, routing),
+        )
     if body.get("stream") is True:
         stream_url, payload = _build_stream_payload(body, messages)
         return await _stream_chat_completion(

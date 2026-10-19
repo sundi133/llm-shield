@@ -226,3 +226,13 @@ async def delete_route(name: str, request: Request):
         raise HTTPException(status_code=404, detail=f"no route '{name}'")
     _audit(request, tenant_id, "gateway_route_deleted", {"name": name})
     return {"deleted": name}
+
+
+@router.get("/health")
+async def get_health(request: Request):
+    """Each data-plane process's last view of its targets (flushed every 30 s).
+    A target can be open in one process and closed in another."""
+    from core.llm_gateway import health
+    tenant_id = get_tenant_from_request(request)
+    return {"targets": health.stored(tenant_id), "flush_s": health.FLUSH_S, "open_s": health.OPEN_S,
+            "fail_threshold": health.FAIL_THRESHOLD}

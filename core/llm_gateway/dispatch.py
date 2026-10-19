@@ -214,10 +214,86 @@ async def _attempt(tenant_id: str, target: dict, body: dict, messages: list, req
     return "ok", data, resp
 
 
+async def open_stream(tenant_id: str, plan: Plan, body: dict, messages: list, request_headers) -> tuple:
+    """Open a streaming call: (client, stream context, response, routing info).
+
+    Failover is possible only until a target answers with a status line; once
+    a 2xx response has started, the client gets that target's stream. The
+    first-byte timeout bounds the wait for that answer.
+    """
+    route = plan.route
+    fo = route.get("failover") or {}
+    deadline = time.monotonic() + float(fo.get("deadline_s", 120))
+    max_attempts = int(fo.get("max_attempts", 3))
+    attempts: list = []
+    for target in plan.targets:
+        if len(attempts) >= max_attempts or deadline - time.monotonic() <= 0.5:
+            break
+        t0 = time.monotonic()
+        outcome, opened, resp_status, err_body = await _open_one(
+            tenant_id, target, body, messages, request_headers, deadline)
+        ms = round((time.monotonic() - t0) * 1000, 1)
+        attempts.append({"target": target["id"], "outcome": outcome, "ms": ms})
+        _note(tenant_id, target, outcome, ms)
+        if outcome == "ok":
+            client, ctx, resp = opened
+            return client, ctx, resp, info(plan, target, attempts)
+        if outcome == "4xx":
+            raise UpstreamRejected(f"target '{target['id']}' refused the request ({resp_status})",
+                                   attempts, resp_status, err_body)
+        if not _failover_allowed(route, outcome):
+            break
+    raise Exhausted(f"no target of route '{route['name']}' answered", attempts)
+
+
+async def _open_one(tenant_id: str, target: dict, body: dict, messages: list, request_headers,
+                    deadline: float):
+    url = config.target_url(target)
+    try:
+        await _check_url(url, bool(target.get("allow_private")))
+    except Exception:
+        return "unsafe_url", None, 0, None
+    try:
+        headers = headers_for(tenant_id, target, request_headers)
+    except CredentialUnavailable:
+        return "credential_unavailable", None, 0, None
+    headers["Accept"] = "text/event-stream"
+    payload = {**upstream_body(body, messages, target), "stream": True}
+    read_timeout = float(target.get("timeout_s", 60))
+    first_byte = min(float(target.get("first_byte_timeout_s", 20)), max(0.5, deadline - time.monotonic()))
+    client = _client(read_timeout)
+    ctx = client.stream("POST", url, json=payload, headers=headers)
+    try:
+        resp = await asyncio.wait_for(ctx.__aenter__(), timeout=first_byte)
+    except (asyncio.TimeoutError, httpx.TimeoutException):
+        await client.aclose()
+        return "timeout", None, 0, None
+    except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.NetworkError):
+        await client.aclose()
+        return "connect", None, 0, None
+    if resp.status_code >= 400:
+        raw = await resp.aread()
+        await ctx.__aexit__(None, None, None)
+        await client.aclose()
+        try:
+            err = json.loads(raw.decode() or "{}")
+        except ValueError:
+            err = {"error": {"message": raw.decode(errors="replace")[:500]}}
+        return _classify(resp.status_code), None, resp.status_code, err
+    return "ok", (client, ctx, resp), resp.status_code, None
+
+
 def info(plan: Plan, target: dict, attempts: list) -> dict:
     return {"route": plan.route["name"], "target": target["id"], "model": target["model"],
             "attempts": attempts, "failovers": max(0, len(attempts) - 1), "rule": plan.rule,
             "budget": plan.budget}
+
+
+def stream_done(tenant_id: str, plan: Plan, routing: dict):
+    """What runs when a routed stream ends: usage and cost (task 4)."""
+    def done(usage, ok: bool) -> None:
+        return None
+    return done
 
 
 def headers_out(routing: dict) -> dict:
@@ -227,8 +303,11 @@ def headers_out(routing: dict) -> dict:
 
 
 def _note(tenant_id: str, target: dict, outcome: str, ms: float) -> None:
-    """Health and latency bookkeeping (task 2)."""
-    return None
+    from core.llm_gateway import health
+    try:
+        health.record(tenant_id, target["id"], outcome, ms)
+    except Exception:
+        logger.debug("health not recorded", exc_info=True)
 
 
 def describe(err: RoutingError) -> str:

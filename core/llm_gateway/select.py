@@ -7,10 +7,11 @@ failover (dispatch.py) never leaves the eligible list this returns.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from typing import Optional
 
-from core.llm_gateway import config
+from core.llm_gateway import config, health
 
 
 @dataclass
@@ -46,7 +47,7 @@ def match_route(snapshot: Optional[config.Snapshot], model: str) -> Optional[dic
     return r if isinstance(r, dict) and r.get("enabled", True) else None
 
 
-def plan(snapshot: config.Snapshot, route: dict, ctx: CallContext):
+def plan(snapshot: config.Snapshot, route: dict, ctx: CallContext, *, rng=random.random):
     """A Plan, or a Refusal when nothing may serve this call."""
     eligible = list(route.get("targets") or [])
     rule_note = ""
@@ -57,8 +58,38 @@ def plan(snapshot: config.Snapshot, route: dict, ctx: CallContext):
             skipped.append({"target": tid, "reason": "missing"})
         elif not t.get("enabled", True):
             skipped.append({"target": tid, "reason": "disabled"})
+        elif not health.available(ctx.tenant_id, tid):
+            skipped.append({"target": tid, "reason": "circuit_open"})
         else:
             order.append(t)
     if not order:
         return Refusal(route["name"], f"no available target for route '{route['name']}'", "no_target")
-    return Plan(route=route, targets=order, rule=rule_note, skipped=skipped)
+    return Plan(route=route, targets=_order(route, order, ctx, rng), rule=rule_note, skipped=skipped)
+
+
+def _order(route: dict, targets: list, ctx: CallContext, rng) -> list:
+    """The strategy's order. Priority keeps the route's order; the others
+    reorder the same eligible targets and never add one."""
+    strategy = route.get("strategy", "priority")
+    if strategy == "lowest_latency":
+        # Unmeasured targets first, so a new or recovered target gets measured.
+        def key(t):
+            ms = health.latency(ctx.tenant_id, t["id"])
+            return (ms is not None, ms or 0.0)
+        return sorted(targets, key=key)
+    if strategy == "lowest_cost":
+        def cost(t):
+            p = t.get("price")
+            if not p:
+                return (1, 0.0)
+            return (0, float(p.get("input_per_mtok") or 0) + float(p.get("output_per_mtok") or 0))
+        return sorted(targets, key=cost)
+    if strategy == "weighted":
+        # A weighted shuffle (Efraimidis-Spirakis): the higher the weight, the
+        # likelier first; zero-weight targets stay as fallbacks, in route order.
+        weights = route.get("weights") or {}
+        weighted = [t for t in targets if weights.get(t["id"], 0) > 0]
+        rest = [t for t in targets if weights.get(t["id"], 0) <= 0]
+        weighted.sort(key=lambda t: -(max(rng(), 1e-12) ** (1.0 / weights[t["id"]])))
+        return weighted + rest
+    return targets
