@@ -6,12 +6,14 @@ permalink: /partners/rafay/
 description: "Enable Votal Shield multi-tenant AI guardrails on Rafay: overview, integration guide, admin and tenant provisioning, and a customer guide."
 ---
 
-# Votal Shield x Rafay — partner handoff
+# Votal Shield x Rafay: partner handoff
 
 In this section:
-- [Integration guide](/partners/rafay/integration/) — engineering: auth, runtime calls, telemetry, in-cluster/OpenShift
-- [Admin & tenant creation](/partners/rafay/admin/) — provision a Shield tenant + API key per customer
-- [For customers](/partners/rafay/customers/) — what a Rafay customer turns on and configures
+- [Onboarding runbook](/partners/rafay/onboarding/): the exact calls, in order, to set up Rafay and onboard each customer
+- [Integration guide](/partners/rafay/integration/): engineering detail (auth, runtime calls, telemetry, in-cluster and OpenShift)
+- [Admin API reference](/partners/rafay/admin/): every call Rafay makes with its admin credential
+- [How customers configure guardrails](/partners/rafay/configure/): defaults, the portal with single sign-on, or Rafay's own screens
+- [For customers](/partners/rafay/customers/): what a Rafay customer turns on and configures
 {: .mb-4 }
 
 [Download the one-page intro (PDF)](https://storage.googleapis.com/votal-public/partners/rafay/votal-shield-rafay-intro.pdf){: .btn .btn-blue }
@@ -22,8 +24,8 @@ each customer's policy isolated to that customer.
 ## What Votal Shield does
 
 Inspects AI prompts and model outputs inline and returns an **allow / block /
-redact** verdict — PII and secrets, prompt injection, unsafe content, and
-agent/tool misuse — governed by per-tenant policy. One API call before the model,
+redact** verdict on PII and secrets, prompt injection, unsafe content, and
+agent/tool misuse, governed by per-tenant policy. One API call before the model,
 one after.
 
 ## How the integration works (the model)
@@ -32,7 +34,7 @@ one after.
 - Rafay **provisions a tenant + key** per customer when they enable guardrails.
 - In Rafay's serving path: call Shield **PreCall** on the user's input, **PostCall**
   on the model's output, passing that customer's key (`X-API-Key`).
-- Shield resolves the tenant from the key and applies **that customer's policy** —
+- Shield resolves the tenant from the key and applies **that customer's policy** , 
   no cross-tenant leakage, no model keys shared with Shield.
 
 ```
@@ -42,7 +44,7 @@ customer app → Rafay serving → [PreCall /guardrails/input] → model → [Po
 ```
 
 Deploys two ways, same API: **hosted** (`api.guardrails.votal.ai`) or
-**in-cluster** (Shield container in the customer's cluster for data residency —
+**in-cluster** (Shield container in the customer's cluster for data residency , 
 Kubernetes/Helm reference in the integration guide, Appendix A).
 
 ## What's in this handoff
@@ -51,7 +53,9 @@ Kubernetes/Helm reference in the integration guide, Appendix A).
 |---|---|
 | [OpenAPI 3.1 spec](/assets/openapi-partner.json) | The curated partner API (guard, policy, telemetry, agentic surfaces; no admin internals). Import for codegen. |
 | [Integration guide](/partners/rafay/integration/) | Full engineering detail: auth, onboarding, runtime calls with schemas, telemetry, failure modes, in-cluster/OpenShift. |
-| [Admin & tenant creation](/partners/rafay/admin/) | How Rafay provisions a tenant + key per customer. |
+| [Onboarding runbook](/partners/rafay/onboarding/) | Step by step: Votal setup, Rafay setup, and per-customer onboarding, verification, rotation and offboarding. |
+| [Admin API reference](/partners/rafay/admin/) | Every call Rafay makes with its admin credential: tenants, keys, guardrails, templates, monitor or enforce, single sign-on. |
+| [How customers configure guardrails](/partners/rafay/configure/) | The three ways a customer's guardrails are set, and the calls behind each. |
 | [For customers](/partners/rafay/customers/) | What a Rafay customer turns on and configures. |
 | Sandbox tenant + key *(Votal provides)* | Integrate and validate before go-live. |
 
@@ -66,12 +70,19 @@ Kubernetes/Helm reference in the integration guide, Appendix A).
 
 ## Who provides what
 
-- **Votal provides:** admin/provisioning key, a sandbox tenant + key, base URL(s),
-  the OpenAPI + integration guide, and (if in-cluster) the Helm chart + model
+- **Votal provides:** one managed admin credential (`shadm_...`, limited and
+  expiring, never the root key), a sandbox tenant with its keys, base URL(s),
+  the OpenAPI + integration guide, and (if in-cluster) the manifests + model
   sizing.
 - **Rafay builds:** the per-customer onboarding hook, the PreCall/PostCall calls in
   the serving path, and either an embedded Shield policy portal or policy screens
   on the tenant API.
+
+## Two hosts
+
+Every API call goes to `https://api.guardrails.votal.ai`. People use
+`https://shield.votal.ai/tenant` (the customer portal). Details in the
+[onboarding runbook](/partners/rafay/onboarding/#which-host-to-call).
 
 ## One deployment setting that matters
 
