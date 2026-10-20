@@ -83,4 +83,5 @@ groups:
       - { title: Integration Guide, url: /partners/rafay/integration/ }
       - { title: Admin API Reference, url: /partners/rafay/admin/ }
       - { title: Configuring Guardrails, url: /partners/rafay/configure/ }
+      - { title: Tool Call Guardrails, url: /partners/rafay/tools/ }
       - { title: For Customers, url: /partners/rafay/customers/ }

@@ -13,6 +13,7 @@ In this section:
 - [Integration guide](/partners/rafay/integration/): engineering detail (auth, runtime calls, telemetry, in-cluster and OpenShift)
 - [Admin API reference](/partners/rafay/admin/): every call Rafay makes with its admin credential
 - [How customers configure guardrails](/partners/rafay/configure/): defaults, the portal with single sign-on, or Rafay's own screens
+- [Tool call guardrails](/partners/rafay/tools/): protect every tool call agents make, with one default policy for all tools
 - [For customers](/partners/rafay/customers/): what a Rafay customer turns on and configures
 {: .mb-4 }
 
@@ -56,6 +57,7 @@ Kubernetes/Helm reference in the integration guide, Appendix A).
 | [Onboarding runbook](/partners/rafay/onboarding/) | Step by step: Votal setup, Rafay setup, and per-customer onboarding, verification, rotation and offboarding. |
 | [Admin API reference](/partners/rafay/admin/) | Every call Rafay makes with its admin credential: tenants, keys, guardrails, templates, monitor or enforce, single sign-on. |
 | [How customers configure guardrails](/partners/rafay/configure/) | The three ways a customer's guardrails are set, and the calls behind each. |
+| [Tool call guardrails](/partners/rafay/tools/) | The three tool checkpoints, where Rafay calls them, and the default policy for all tools. |
 | [For customers](/partners/rafay/customers/) | What a Rafay customer turns on and configures. |
 | Sandbox tenant + key *(Votal provides)* | Integrate and validate before go-live. |
 

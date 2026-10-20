@@ -198,6 +198,14 @@ So PostCall handling: if `action=="block"` → suppress the output; else if
 `POST /guardrails/file`: same verdict schema plus a `file` block; use it when a
 customer uploads a document to an AI tool through Rafay.
 
+### Tool calls
+
+Agents' tool calls get three checkpoints of their own: before the call
+(`/v1/shield/tool/check`), optional argument redaction, and after the tool runs
+(`/v1/shield/tool/output`), plus one default policy for all tools. Where Rafay
+calls each, and the defaults to set at onboarding, are in
+[Tool call guardrails](/partners/rafay/tools/).
+
 ### Also in the partner spec (beyond prompt screening)
 The curated spec also publishes the **agentic / tool surfaces** Rafay may want for
 agent workloads: agent registry (`/v1/agents/registry`), tool-call RBAC
