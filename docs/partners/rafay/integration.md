@@ -6,13 +6,13 @@ permalink: /partners/rafay/integration/
 description: "Engineering guide: auth, per-customer onboarding, PreCall/PostCall runtime calls, telemetry, failure modes, and in-cluster (Helm/OpenShift) deployment."
 ---
 
-# Votal Shield — Rafay integration guide
+# Votal Shield: Rafay integration guide
 
 This is the partner handoff for enabling **Votal Shield** AI guardrails on the
 Rafay platform, multi-tenant. Pair it with the machine-readable contract:
 
 - **OpenAPI 3.1 spec:** [`/assets/openapi-partner.json`](/assets/openapi-partner.json) (curated partner
-  subset — the guard, policy, and telemetry endpoints only, never the admin
+  subset; the guard, policy, and telemetry endpoints only, never the admin
   surface). Import this into Rafay's codegen / API explorer.
 
 ## 1. Model in one paragraph
@@ -47,6 +47,16 @@ Rafay customer app ──► Rafay AI serving path
 
 Everything below is relative to the chosen base URL.
 
+### Which host for which call (hosted)
+
+| Host | Serves | Use it for |
+|---|---|---|
+| `https://api.guardrails.votal.ai` | Screening (`/guardrails/input`, `/output`, `/file`), provisioning (`/v1/admin/*`), tenant settings, custom policies, telemetry, usage and audit (`/v1/tenant/me/*`), agent and tool APIs | **Every API call Rafay makes** |
+| `https://shield.votal.ai` | The customer portal (`/tenant`) and its sign-in (`/v1/tenant/auth/login`) | **Links shown to people.** It does not serve screening or custom policies |
+
+`https://shield.votal.ai/admin` is Votal's operator console; neither Rafay staff
+nor customers need it.
+
 ## 3. Authentication
 
 Send the customer's tenant key on **every guard call**. Header priority:
@@ -56,14 +66,14 @@ Send the customer's tenant key on **every guard call**. Header priority:
 3. `Authorization: Bearer <tenant-key>`
 
 The key is hashed and mapped to exactly one tenant; the tenant's policy is applied
-automatically. **A caller cannot override the tenant** — any `tenant_id` in the
+automatically. **A caller cannot override the tenant**; any `tenant_id` in the
 body/headers that disagrees with the key is rejected (IDOR defense).
 
 > **REQUIRED deployment setting for multi-tenant isolation:**
 > Deploy the Rafay-facing Shield with **`SHIELD_GUARD_REQUIRE_KEY=enforce`**.
 > The default is `off`, under which a call with a missing/invalid key **fails
 > open** (screens with no tenant policy) instead of being refused. In a
-> multi-tenant deployment that is a silent isolation gap — set it to `enforce`
+> multi-tenant deployment that is a silent isolation gap; set it to `enforce`
 > so a bad key returns `401 missing_tenant_key` / `invalid_tenant_key`.
 
 ## 4. Onboarding a customer ("enable guardrails")
@@ -77,25 +87,31 @@ store the key against that customer. Two ways:
 > issues Rafay the **admin key and these provisioning endpoints separately** as a
 > partner capability. Do not expect them in the imported spec.
 
-Rafay holds a Shield **admin key** (`X-Admin-Key`, issued to Rafay once, out of
-band — not a tenant key). Per customer:
+Rafay holds one **managed admin credential** (`shadm_...`, sent as
+`X-Admin-Key`, issued by Votal out of band; not a tenant key and not the
+deployment's root key). Per customer:
 
 ```bash
 # create the tenant
 curl -X POST "$BASE/v1/admin/tenants" \
   -H "X-Admin-Key: $RAFAY_ADMIN_KEY" -H "content-type: application/json" \
-  -d '{"tenant_id":"rafay-cust-acme","name":"ACME Corp","api_keys":[]}'
+  -d '{"tenant_id":"rafay-cust-acme","name":"ACME Corp","plan":"pro"}'
 
-# mint that tenant's key (store the returned key against the customer in Rafay)
+# register the customer's serving key. Rafay generates it (32+ random bytes);
+# Shield stores only its hash and never returns it.
 curl -X POST "$BASE/v1/admin/tenants/rafay-cust-acme/api-keys" \
   -H "X-Admin-Key: $RAFAY_ADMIN_KEY" -H "content-type: application/json" \
-  -d '{"label":"rafay-prod","scope":"guard"}'
+  -d '{"api_key":"rfy_<random>","scope":"runtime","label":"rafay-serving","expires_in_days":180}'
 ```
-List/revoke a customer's keys: `GET` / `DELETE /v1/admin/tenants/{tenant_id}/api-keys`.
+List keys with `GET /v1/admin/tenants/{tenant_id}/api-keys`; revoke one with
+`DELETE` on the same path and `{"api_key":"..."}` in the body. The full call
+order, the second (settings) key, single sign-on and verification are in the
+[onboarding runbook](/partners/rafay/onboarding/); every admin call is in the
+[admin API reference](/partners/rafay/admin/).
 
 ### 4b. Self-service (customer mints their own)
 If the customer has a Shield portal session or an existing key, they can mint:
-`POST /v1/tenant/me/api-keys` (returns the plaintext key **once** — store it then).
+`POST /v1/tenant/me/api-keys` (returns the plaintext key **once**; store it then).
 
 > The admin key is the one high-privilege secret in this integration. It mints
 > and revokes tenants, so Rafay must hold it like any provisioning credential
@@ -104,11 +120,11 @@ If the customer has a Shield portal session or an existing key, they can mint:
 
 ## 5. Let the customer choose which guardrails are on
 
-Two options — pick one, or offer both:
-
-- **Embed the Shield tenant portal** (SSO) so the customer configures policy in
-  Shield's own UI. Lowest build cost for Rafay.
-- **Surface it in Rafay's UI** via the policy API (authed with the customer's key):
+Three ways, usually combined: a default Rafay applies with its admin credential,
+Shield's portal with single sign-on, or screens in Rafay's console. The full
+guide is [How customers configure guardrails](/partners/rafay/configure/). In
+short, for screens in Rafay's UI, call the policy API with the customer's
+**`admin`-scoped settings key** (never the `runtime` serving key):
   - `GET /v1/tenant/me/policies` → current input/output guardrails + custom policies
   - `PUT /v1/tenant/me/policies` → replace the input/output guardrail config
   - Natural-language / OWASP-style custom rules: `GET|POST /v1/tenant/me/custom-policies/`,
@@ -117,16 +133,16 @@ Two options — pick one, or offer both:
     `action` (`pass|warn|redact|block`), `stage` (`input|output`),
     `confidence_threshold` (0.5–1.0), `priority` (1–1000), `multi_turn`.
 
-New/changed policy takes effect on the next guard call for that tenant — no
+New/changed policy takes effect on the next guard call for that tenant; no
 redeploy.
 
 ## 6. Runtime: the guard calls
 
-### 6a. PreCall — screen the user's input
+### 6a. PreCall: screen the user's input
 `POST /guardrails/input`
 
 Request (only `message` is required; the tenant's configured guardrails run
-automatically — you do not list them per call):
+automatically; you do not list them per call):
 ```json
 {
   "message": "the user's prompt text",
@@ -158,9 +174,9 @@ Response:
   block to the user. The reason is the failing result's `message`.
 - `action` is the highest-severity outcome across guardrails, ranked
   `pass < log < warn < redact < block`. On `redact`, a guardrail may have rewritten
-  content — see PostCall for the sanitized payload pattern.
+  content; see PostCall for the sanitized payload pattern.
 
-### 6b. PostCall — screen the model's output (and tool results)
+### 6b. PostCall: screen the model's output (and tool results)
 `POST /guardrails/output`
 
 Request (`output` required):
@@ -171,15 +187,15 @@ Request (`output` required):
 }
 ```
 Response adds two conditional fields to the same schema:
-- `sanitization` — audit of any data-policy redaction applied
-- `sanitized_output` — **present only when the payload was modified**; forward
+- `sanitization`: audit of any data-policy redaction applied
+- `sanitized_output`: **present only when the payload was modified**; forward
   **this** to the user instead of the original.
 
 So PostCall handling: if `action=="block"` → suppress the output; else if
 `sanitized_output` is present → return it; else return the original.
 
 ### 6c. File uploads
-`POST /guardrails/file` — same verdict schema plus a `file` block; use it when a
+`POST /guardrails/file`: same verdict schema plus a `file` block; use it when a
 customer uploads a document to an AI tool through Rafay.
 
 ### Also in the partner spec (beyond prompt screening)
@@ -192,22 +208,22 @@ data policies (`/v1/data-policies/...`), and MCP gateway upstreams
 ### Optional: one-call gateway (not in the partner spec)
 If Rafay prefers Shield to also make the model call, an OpenAI-compatible endpoint
 (`POST /v1/shield/chat/completions`) does input-screen → model → output-screen in
-one request. It is **not published in the partner subset** — ask Votal to enable
+one request. It is **not published in the partner subset**; ask Votal to enable
 it if Rafay wants Shield to own the model call rather than the split
 PreCall/PostCall above.
 
 ## 7. Telemetry (per customer)
 
-- `GET /v1/tenant/me/telemetry` — **(in the partner spec)** tenant-scoped
+- `GET /v1/tenant/me/telemetry`: **(in the partner spec)** tenant-scoped
   agent/chat telemetry, keyed by the caller's own key; filters `limit`, `offset`,
   `agent_key`, `status` (`pass|warn|redact|mask|block`), `tool_name`, `q`,
   `since`, `until`. This is the partner-appropriate telemetry call.
 - `GET /v1/tenant/me/usage`, `GET /v1/tenant/me/audit`,
-  `GET /v1/tenant/me/guardrails/metrics` — usage, audit, and effectiveness (all
+  `GET /v1/tenant/me/guardrails/metrics`: usage, audit, and effectiveness (all
   in the partner spec).
 - An admin-scoped `GET /v1/shield/decisions/{tenant_id}` also exists for
   cross-tenant enforcement queries, but like the admin provisioning endpoints it
-  is **not in the partner subset** — use `/v1/tenant/me/telemetry` from Rafay.
+  is **not in the partner subset**; use `/v1/tenant/me/telemetry` from Rafay.
 
 Rafay can surface these in its own dashboard, or link customers to Shield's
 Telemetry view.
@@ -216,12 +232,14 @@ Telemetry view.
 
 - **Store/Redis outage:** Shield **fails open** (screens with a warning rather
   than taking the customer's app down). If the deployment must fail *closed*,
-  raise it with Votal — it's a deploy posture, not a per-call flag.
-- **Timeouts:** Rafay should set a client timeout on the guard call and decide
-  its own fail-open vs fail-closed if Shield is unreachable. Recommended: fail
-  closed on `PreCall` for regulated tenants, fail open otherwise — Rafay's choice
-  per customer.
-- **Latency (typical, measured — not an SLA):** Tier-1 keyword/regex `<5 ms`,
+  raise it with Votal; it's a deploy posture, not a per-call flag.
+- **Timeouts:** set a client timeout on every guard call (start at 5 seconds for
+  PreCall and 10 for PostCall, then tune from the `inference_time_ms` you see).
+  When Shield does not answer in time, apply the customer's chosen posture:
+  **fail closed** (refuse the request) for regulated customers, **fail open**
+  (forward it and record that it was not screened) otherwise. Make it a
+  per-customer setting in Rafay and default it to fail closed.
+- **Latency (typical, measured, not an SLA):** Tier-1 keyword/regex `<5 ms`,
   Tier-2 sentiment/topic `~150 ms`, Tier-3 adversarial/PII `~500 ms`. The
   response reports actual `inference_time_ms` / per-result `latency_ms` every
   call. Absolute latency varies with load and model placement; quote ranges, not
@@ -229,14 +247,18 @@ Telemetry view.
 
 ## 9. End-to-end Rafay steps (checklist)
 
-1. **Receive** from Votal: the admin key (`X-API-Key`-style `X-Admin-Key`), a
-   sandbox tenant + key, the base URL(s), and [`/assets/openapi-partner.json`](/assets/openapi-partner.json).
+1. **Receive** from Votal: the managed admin credential (`shadm_...`, sent as
+   `X-Admin-Key`), a sandbox tenant and its keys, the base URL(s), and
+   [`/assets/openapi-partner.json`](/assets/openapi-partner.json).
 2. **Import** the OpenAPI into Rafay's API tooling; generate a client.
 3. **Deploy posture:** set `SHIELD_GUARD_REQUIRE_KEY=enforce` on the Rafay-facing
-   Shield (hosted config confirmed by Votal, or in the in-cluster Helm values).
-4. **Onboarding hook:** when a Rafay customer enables guardrails, call §4a to
-   create the tenant + mint the key; store the key in Rafay's secret store keyed
-   to the customer.
+   Shield (hosted config confirmed by Votal, or in the in-cluster values), and
+   check it: a screening call with no key must return `401`.
+4. **Onboarding hook:** when a Rafay customer enables guardrails, run the
+   [onboarding runbook](/partners/rafay/onboarding/#3-for-every-customer): create
+   the tenant with a starting template, register its `runtime` key (and an
+   `admin` settings key if Rafay builds settings screens), and store the keys in
+   Rafay's secret store keyed to the customer.
 5. **Policy UX:** embed the Shield portal (§5) or build the policy screens on
    `/v1/tenant/me/policies` + `/custom-policies`.
 6. **Serving path:** wire §6a PreCall before the model and §6b PostCall after;
@@ -249,7 +271,10 @@ Telemetry view.
 
 ## 10. What Votal still needs to confirm before sending
 
-- Issue Rafay an **admin/provisioning key** and a **sandbox tenant + key**.
+- Issue Rafay a **managed admin credential** (never the root `SHIELD_ADMIN_KEY`)
+  and a **sandbox tenant with its keys**. Decide whether Rafay runs on the shared
+  hosted service or a dedicated deployment (a credential cannot yet be limited to
+  `rafay-cust-*` tenants).
 - Confirm the **deployment shape** (hosted vs in-cluster) and, if in-cluster, hand
   over the Helm chart + model sizing.
 - Confirm **`SHIELD_GUARD_REQUIRE_KEY=enforce`** is set on the Rafay-facing
@@ -259,16 +284,16 @@ Telemetry view.
 
 ---
 
-## Appendix A — In-cluster deployment (Kubernetes / Helm)
+## Appendix A: In-cluster deployment (Kubernetes / Helm)
 
 For data residency, the Shield guardrail server runs **inside the customer's
 cluster**; Rafay points its serving path at the in-cluster Service instead of the
-hosted URL. The API in sections 3–7 is identical — only the base URL changes.
+hosted URL. The API in sections 3–7 is identical; only the base URL changes.
 
 > **What Votal ships:** the container **image** (registry path provided per
 > partner) and a **packaged Helm chart on request**. The manifests below are a
 > **reference** Rafay/the customer can apply directly or fold into their own
-> chart — they are not a published chart in this repo. (A `deploy/helm/shield-identity`
+> chart; they are not a published chart in this repo. (A `deploy/helm/shield-identity`
 > chart exists for the *identity* plane; the guardrail data plane is shipped as an
 > image today.)
 
@@ -277,14 +302,14 @@ hosted URL. The API in sections 3–7 is identical — only the base URL changes
 | Image | Model | Node | Use when |
 |---|---|---|---|
 | `Dockerfile.cloud` (app only, port **80**) | calls a **remote** model endpoint Votal provides | **CPU** | lightest in-cluster footprint; model traffic may leave the cluster |
-| `Dockerfile` (app + in-cluster vLLM, ports **80** app / **8000** model) | **local** vLLM, nothing leaves the cluster | **GPU** | strict residency — the model runs in the customer's cluster too |
+| `Dockerfile` (app + in-cluster vLLM, ports **80** app / **8000** model) | **local** vLLM, nothing leaves the cluster | **GPU** | strict residency: the model runs in the customer's cluster too |
 
 Both expose the **same guard API on port 80**. The GPU image additionally runs
 vLLM on 8000 (internal to the pod).
 
 ### A.2 Shared dependency: Redis (tenant store + policy cache)
 
-Multi-tenancy needs a Redis the Shield pods share — it holds tenant→key mappings
+Multi-tenancy needs a Redis the Shield pods share; it holds tenant→key mappings
 and the policy cache. Use a managed Redis or a serverless one:
 - `REDIS_URL=redis://<host>:6379/0`, **or**
 - `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` for serverless.
@@ -293,7 +318,7 @@ and the policy cache. Use a managed Redis or a serverless one:
 
 | Env | Value | Why |
 |---|---|---|
-| `SHIELD_GUARD_REQUIRE_KEY` | **`enforce`** | **required** — else a bad key fails open (isolation gap) |
+| `SHIELD_GUARD_REQUIRE_KEY` | **`enforce`** | **required**: else a bad key fails open (isolation gap) |
 | `REDIS_URL` *(or `UPSTASH_*`)* | your Redis | tenant store + policy cache |
 | `SHIELD_ADMIN_KEY` | secret | authorizes tenant provisioning (section 4a) |
 | `LLM_MODEL_NAME` | model id | which guardrail model to use |
@@ -390,11 +415,11 @@ Ready-to-apply OpenShift manifests live in the repo's `openshift/` directory:
 
 | Manifest | Deploys |
 |---|---|
-| [`redis.yaml`](/assets/openshift/redis.yaml) | Redis (tenant store + policy cache) — the dependency from A.2 |
-| [`shield-guardrail-vllm.yaml`](/assets/openshift/shield-guardrail-vllm.yaml) | The **guardrail data plane with in-cluster vLLM** (GPU) — Deployment + Service + `Route` + model-cache PVC |
+| [`redis.yaml`](/assets/openshift/redis.yaml) | Redis (tenant store + policy cache): the dependency from A.2 |
+| [`shield-guardrail-vllm.yaml`](/assets/openshift/shield-guardrail-vllm.yaml) | The **guardrail data plane with in-cluster vLLM** (GPU): Deployment + Service + `Route` + model-cache PVC |
 | [`shield-admin.yaml`](/assets/openshift/shield-admin.yaml) | *(optional)* the admin/tenant portal (`Route`, port 8080) |
 
-The vLLM manifest is a thin wrapper — the image's entrypoint
+The vLLM manifest is a thin wrapper; the image's entrypoint
 (`scripts/start_vllm.sh`) already launches vLLM on `:8000`, waits for it, then
 runs the guard API; the manifest only schedules that image on a GPU with the
 volumes, `Route`, and env it needs. Model runs **in-cluster** (full residency).
@@ -408,14 +433,37 @@ oc get route shield-guardrail -o jsonpath='{.spec.host}'   # Rafay's base URL
 ```
 
 OpenShift specifics baked into the manifest (and why):
-- **App on port 8080**, not 80 — the restricted SCC can't bind privileged ports.
-- **`/dev/shm` as an in-memory `emptyDir`** — vLLM/NCCL need more than the 64 MB default.
+- **App on port 8080**, not 80: the restricted SCC can't bind privileged ports.
+- **`/dev/shm` as an in-memory `emptyDir`**: vLLM/NCCL need more than the 64 MB default.
 - **Model-cache PVC** (`HF_HOME`) so the 4B model isn't re-pulled on restart.
-- **`Route` timeout 120s** — Tier-2/agentic calls exceed the 30s default.
-- **GPU toleration + `nvidia.com/gpu: 1`** — needs the **NVIDIA GPU Operator** installed.
+- **`Route` timeout 120s**: Tier-2/agentic calls exceed the 30s default.
+- **GPU toleration + `nvidia.com/gpu: 1`**: needs the **NVIDIA GPU Operator** installed.
 - **fp8 by default** (L40S/L4/H100); set `VLLM_QUANTIZATION=none` on A100/V100/T4.
 - **SCC:** if the vLLM image needs root, `oc adm policy add-scc-to-user anyuid -z shield-guardrail -n shield`.
 
 For the no-GPU option (app calls a remote model), use the `llm-shield-cloud`
-image with `SKIP_VLLM=true` + `LLM_BACKEND_URL` instead — same Deployment shape,
+image with `SKIP_VLLM=true` + `LLM_BACKEND_URL` instead: same Deployment shape,
 no GPU, no model-cache PVC.
+
+### A.9 Before a customer's on-prem install goes live
+
+The manifests are a working reference. For a customer's production cluster:
+
+1. **Pin image versions.** The manifests pull `:latest`. Use a fixed version tag
+   from the registry Votal provides, mirrored into the customer's registry for
+   disconnected clusters.
+2. **Give Redis a password.** `redis.yaml` relies only on a `NetworkPolicy`, so
+   anything in the namespace can read tenant data. Add `requirepass` and put the
+   password in `REDIS_URL` (`redis://:<password>@redis:6379/0`).
+3. **The root admin key belongs to the customer.** Each install generates its
+   own `SHIELD_ADMIN_KEY` into the Secret; Votal never holds it. Rafay's
+   automation gets a managed `shadm_` credential minted on that install
+   (`POST /v1/admin/credentials`), as on the hosted service.
+4. **Set the public URLs** to the install's `Route` hosts if customers use the
+   portal or connect AI apps to MCP servers: `SHIELD_PUBLIC_BASE_URL`,
+   `SHIELD_OAUTH_ISSUER_URL` (the data plane `Route`) and
+   `SHIELD_PORTAL_BASE_URL` (the portal `Route`), on both deployments.
+5. **Disconnected clusters:** load the model into the model-cache volume
+   (`HF_HOME`) ahead of time and set `HF_HUB_OFFLINE=1`.
+6. **Same checks as hosted:** a screening call with no key returns `401`, and the
+   per-customer verification in the [onboarding runbook](/partners/rafay/onboarding/#34-verify-before-telling-the-customer-it-is-on).

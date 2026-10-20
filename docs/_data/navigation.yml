@@ -79,6 +79,8 @@ groups:
   - title: Rafay Integration
     items:
       - { title: Overview, url: /partners/rafay/ }
+      - { title: Onboarding Runbook, url: /partners/rafay/onboarding/ }
       - { title: Integration Guide, url: /partners/rafay/integration/ }
-      - { title: Admin & Tenant Creation, url: /partners/rafay/admin/ }
+      - { title: Admin API Reference, url: /partners/rafay/admin/ }
+      - { title: Configuring Guardrails, url: /partners/rafay/configure/ }
       - { title: For Customers, url: /partners/rafay/customers/ }
