@@ -25,7 +25,7 @@ host only for links you show to people.
 | Host | Use it for |
 |---|---|
 | `https://api.guardrails.votal.ai` | Every API call: screening (`/guardrails/*`), provisioning (`/v1/admin/*`), and the customer's settings, telemetry and audit (`/v1/tenant/me/*`) |
-| `https://shield.votal.ai` | People: the customer portal (`/tenant`) and its single sign-on link (`/v1/tenant/auth/login`) |
+| `https://shield.votal.ai` | People: the customer portal (`/tenant`) and its single sign-on link (`/v1/tenant/auth/login`). One API exception: the SIEM settings (`/v1/tenant/me/siem`) are served here only |
 
 For an in-cluster deployment both are the URL of the Shield `Route` or
 `Service` in that cluster.

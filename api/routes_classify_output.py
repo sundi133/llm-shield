@@ -52,9 +52,18 @@ def _apply_regex_sanitization(text: str, rules: list[dict],
 
 
 def _load_tool_data_policy(tenant_id: str, tool_name: str) -> dict:
-    """Best-effort load of the tool's data policy from Redis.
-    Returns an empty dict when no policy / no Redis is available so the
-    caller can treat the policy as absent."""
+    """Best-effort load of the data policy that judges `tool_name`.
+
+    The tenant-wide default (``__global__``, docs/spec-global-tool-data-policy.md)
+    sits beneath the tool's own policy, exactly as for tool/check and
+    tool/output (guardrails/agentic/tool/payload_risk.py): a tool policy adds
+    rules, it cannot cancel the default, unless the tool says
+    ``inherit_global: false``. When both apply the result carries them as
+    ``_layers`` (default first) so each keeps its own allowlist; a tool's
+    allowlist never exempts a value from the default's rules.
+
+    Returns an empty dict when no policy applies or no Redis is available.
+    """
     try:
         from storage.tenant_store import _get_redis
         r = _get_redis()
@@ -63,12 +72,60 @@ def _load_tool_data_policy(tenant_id: str, tool_name: str) -> dict:
         raw = r.get(f"data_policies:{tenant_id}")
         if not raw:
             return {}
-        data = json.loads(raw) if isinstance(raw, str) else raw
-        if isinstance(data, dict):
-            return data.get(tool_name) or {}
+        data = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+        if not isinstance(data, dict):
+            return {}
+        tool = data.get(tool_name) if tool_name else None
+        tool = tool if isinstance(tool, dict) else {}
+        default = _active_default(data.get(_GLOBAL_KEY), tool)
+        if not default:
+            return tool
+        if not tool:
+            return default
+        return _layered(default, tool)
     except Exception:
         pass
     return {}
+
+
+#: Mirrors api.routes_data_policies.GLOBAL_POLICY_KEY (payload_risk keeps the
+#: same copy so the guard path need not import the admin routes).
+_GLOBAL_KEY = "__global__"
+
+
+def _active_default(default, tool: dict) -> dict:
+    """The tenant-wide default, when it applies to this tool."""
+    if not isinstance(default, dict) or not default:
+        return {}
+    from guardrails.agentic.tool.payload_risk import _global_policy_enabled
+    if not _global_policy_enabled() or default.get("enabled", True) is False:
+        return {}
+    if tool.get("inherit_global", True) is False:
+        return {}
+    return default
+
+
+def _modes(policy: dict) -> tuple[bool, bool]:
+    """(regex, ai) for one policy, as _apply_tool_sanitization reads them."""
+    mode = (policy.get("sanitization_mode") or "regex").strip().lower()
+    return mode in ("regex", "both"), mode in ("ai", "both") and bool(
+        (policy.get("sanitization_intent") or "").strip())
+
+
+def _layered(default: dict, tool: dict) -> dict:
+    """One policy view over the default and a tool policy. Regex rules run per
+    layer (see _apply_tool_sanitization); the plain-language intents are
+    joined into one model pass, so the default adds no extra model call."""
+    layers = [default, tool]
+    regex = any(_modes(p)[0] and p.get("sanitization_rules") for p in layers)
+    ai = any(_modes(p)[1] for p in layers)
+    intents = [(p.get("sanitization_intent") or "").strip() for p in layers if _modes(p)[1]]
+    return {
+        "_layers": layers,
+        "sanitization_rules": [r for p in layers for r in (p.get("sanitization_rules") or [])],
+        "sanitization_intent": "\n\n".join(i for i in intents if i),
+        "sanitization_mode": "both" if (regex and ai) else ("ai" if ai else "regex"),
+    }
 
 
 async def _apply_tool_sanitization(
@@ -111,10 +168,24 @@ async def _apply_tool_sanitization(
     ai_enabled = bool(intent) and mode in ("ai", "both")
 
     # ---- Regex fast-path ----------------------------------------------
+    # One pass per layer (tenant default, then the tool's own policy), each
+    # with its own allowlist, thresholds and exact-match lists.
+    layers = policy.get("_layers") or [policy]
+    if len(layers) > 1:
+        meta["layers"] = ["default", "tool"]
     if regex_enabled and rules:
-        sanitized, regex_violations, had_block = _apply_regex_sanitization(
-            sanitized, rules, default_action=default_action, policy=policy,
-        )
+        regex_violations, had_block = [], False
+        for layer in layers:
+            layer_rules = layer.get("sanitization_rules") or []
+            if not layer_rules or (len(layers) > 1 and not _modes(layer)[0]):
+                continue
+            sanitized, found, blocked = _apply_regex_sanitization(
+                sanitized, layer_rules, default_action=default_action, policy=layer,
+            )
+            regex_violations.extend(found)
+            if blocked:
+                had_block = True
+                break
         meta["regex_violations"] = regex_violations
         if regex_violations:
             meta["applied"] = True
