@@ -22,7 +22,8 @@ ALL = {name: _text(name) for name in PAGES}
 
 
 def test_the_pages_exist_and_are_in_the_sidebar():
-    assert {"index.md", "onboarding.md", "integration.md", "admin.md", "configure.md", "customers.md"} <= set(PAGES)
+    assert {"index.md", "onboarding.md", "integration.md", "admin.md", "configure.md", "tools.md",
+            "customers.md"} <= set(PAGES)
     nav = open(os.path.join(ROOT, "docs", "_data", "navigation.yml"), encoding="utf-8").read()
     for name, text in ALL.items():
         link = re.search(r"^permalink:\s*(\S+)", text, re.M).group(1)
@@ -103,3 +104,22 @@ def test_the_partner_openapi_is_valid_json():
     with open(os.path.join(ROOT, "docs", "assets", "openapi-partner.json"), encoding="utf-8") as f:
         spec = json.load(f)
     assert spec.get("openapi", "").startswith("3.") and spec.get("paths")
+
+
+def test_tool_page_request_fields_match_the_api():
+    """The tool-call page's example bodies use fields the endpoints accept."""
+    from api.routes_tool import ToolCheckRequest, ToolOutputRequest
+    from api.routes_data_policies import DataSanitizationRule, GlobalDataPolicy
+    text = ALL["tools.md"]
+    blocks = re.findall(r"```json\n(.*?)```", text, re.S)
+    check = json.loads(blocks[0])
+    output = json.loads(blocks[2])
+    assert set(check) <= set(ToolCheckRequest.model_fields), set(check) - set(ToolCheckRequest.model_fields)
+    assert set(output) <= set(ToolOutputRequest.model_fields), set(output) - set(ToolOutputRequest.model_fields)
+    body = re.search(r"global/policy \\\n.*?-d '(\{.*?\})'", text, re.S).group(1)
+    policy = json.loads(body)   # inside single quotes, the shell passes it unchanged
+    assert set(policy) <= set(GlobalDataPolicy.model_fields), set(policy) - set(GlobalDataPolicy.model_fields)
+    for rule in policy["sanitization_rules"]:
+        assert set(rule) <= set(DataSanitizationRule.model_fields)
+        DataSanitizationRule(**rule)
+    assert "inherit_global" not in text.replace("cannot yet be set", "")

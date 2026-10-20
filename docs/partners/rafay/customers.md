@@ -1,7 +1,7 @@
 ---
 title: For customers
 parent: Rafay Integration
-nav_order: 5
+nav_order: 6
 permalink: /partners/rafay/customers/
 description: "For a Rafay customer: what AI guardrails do, how to turn them on, how to choose policies, and how to see what was blocked."
 ---
