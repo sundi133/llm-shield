@@ -1,0 +1,10 @@
+{
+  "name": "votal-guardrails-customer",
+  "interface": {"displayName": "Votal Guardrails Customer Kit"},
+  "plugins": [{
+    "name": "votal-ai-guardrails",
+    "source": {"source": "local", "path": "./plugins/votal-ai-guardrails"},
+    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+    "category": "Security"
+  }]
+}

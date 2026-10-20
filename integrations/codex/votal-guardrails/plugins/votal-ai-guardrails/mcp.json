@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "votal-shield": {
+      "type": "streamable-http",
+      "url": "https://api.guardrails.votal.ai/mcp/message",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "api_key",
+            "headerScheme": "custom_header",
+            "headerName": "X-API-Key"
+          }
+        }
+      }
+    }
+  }
+}

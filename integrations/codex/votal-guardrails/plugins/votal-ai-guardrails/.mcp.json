@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "votal-shield": {
+      "type": "streamable-http",
+      "url": "https://api.guardrails.votal.ai/mcp/message",
+      "headers": {},
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "api_key",
+            "headerScheme": "custom_header",
+            "headerName": "X-API-Key"
+          }
+        }
+      }
+    }
+  }
+}

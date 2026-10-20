@@ -1,0 +1,17 @@
+{
+  "description": "Check every submitted prompt text with Votal Shield; block rejected or unverifiable prompts.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/check_prompt.py\"",
+            "timeout": 25,
+            "statusMessage": "Checking message with Votal Shield"
+          }
+        ]
+      }
+    ]
+  }
+}

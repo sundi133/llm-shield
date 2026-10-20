@@ -1,0 +1,23 @@
+{
+  "interface": {
+    "capabilities": [],
+    "category": "Security",
+    "defaultPrompt": "Use Votal Shield to check this content and explain the guardrail decision.",
+    "developerName": "Jyotirmoy Sundi",
+    "displayName": "Votal AI Guardrails",
+    "longDescription": "Votal Shield prompt checks for supported local Codex sessions. After installation, credential setup, and hook trust, each submitted prompt text is checked against your tenant policies. Policy blocks and errors handled by the adapter stop the prompt. Includes a credential-free customer launcher and setup instructions. Explicit MCP checks remain available. Does not automatically scan attachments, generated outputs, or tool calls. Independent integration.",
+    "shortDescription": "Check prompts, tools & outputs"
+  },
+  "hooks": "./hooks/hooks.json",
+  "name": "votal-ai-guardrails",
+  "version": "0.2.0",
+  "description": "Connect to Votal Shield for input checks, output sanitization, and tool authorization checks.",
+  "author": {
+    "name": "Jyotirmoy Sundi",
+    "email": "sundi133@gmail.com"
+  },
+  "keywords": [],
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json",
+  "requires_local_executor": true
+}
