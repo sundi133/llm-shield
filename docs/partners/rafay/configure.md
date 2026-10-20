@@ -109,6 +109,43 @@ Never use the serving key (`runtime` scope) for these. On deployments that
 enforce key scopes it is refused, and keeping it read-only is what stops a
 leaked serving key from turning a customer's guardrails off.
 
+## Send decisions to the customer's SIEM
+
+Security teams usually want every guardrail decision in their own SIEM next to
+their other alerts. Each customer can stream its tenant's decisions to
+**Splunk** (HTTP Event Collector), **Microsoft Sentinel**, **Elastic**,
+**Wazuh**, or any HTTPS endpoint. Set it up in the portal, or with the
+customer's settings key on `https://shield.votal.ai` (these settings are served
+by the portal host only):
+
+```bash
+curl -X POST https://shield.votal.ai/v1/tenant/me/siem \
+  -H "X-API-Key: $SETTINGS_KEY" -H "Content-Type: application/json" \
+  -d '{"type":"splunk","url":"https://splunk.example.com:8088/services/collector",
+       "token":"<HEC token>","statuses":["block","warn"]}'
+```
+
+| Field | Meaning |
+|---|---|
+| `type` | `splunk`, `sentinel`, `elastic`, `wazuh` or `generic` |
+| `url`, `token` | The collector URL and its token (Splunk HEC token, Elastic API key, or a bearer token) |
+| `workspace_id`, `shared_key`, `log_type` | Sentinel only: the Log Analytics workspace and the table name (default `LLMShield`) |
+| `statuses` | Send only these decisions, for example `["block","warn"]`; empty sends everything |
+| `events` | Send only these event types; empty sends all |
+
+`POST /v1/tenant/me/siem/test` sends a test event, `GET /v1/tenant/me/siem`
+lists destinations, and `DELETE /v1/tenant/me/siem/{siem_id}` removes one. Each
+customer's destinations receive only that customer's events.
+
+## Import the customer's Sigma rules
+
+Security teams that already write detections as **Sigma** rules can import them
+as Shield policies: `POST /v1/tenant/me/custom-policies/import/sigma` on
+`https://api.guardrails.votal.ai` with the customer's settings key and
+`{"sigma": "<YAML, one or more rules>", "dry_run": true}` to check them first.
+Imported rules screen prompts and model responses deterministically (no model
+call); `validate-sigma` checks a rule and `export/sigma` exports policies back.
+
 ## Monitor first, then enforce
 
 Whichever way settings are made, roll out the same way:
