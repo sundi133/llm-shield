@@ -135,6 +135,13 @@ class ToolDataPolicy(BaseModel):
     #: False or unset lets it through, labelled unchecked. A default policy
     #: set to True cannot be cancelled here. Spec: docs/specs/tool-policy-fail-safe.md
     fail_closed: Optional[bool] = None
+    #: False: this tool is judged by its own rules alone, without the
+    #: tenant-wide default beneath them. For the one tool that legitimately
+    #: handles data the default forbids, so the default need not be weakened
+    #: for every other tool. Read by payload_risk._load_data_policies and
+    #: routes_classify_output._load_tool_data_policy.
+    #: Spec: docs/spec-global-tool-data-policy.md
+    inherit_global: bool = True
 
 
 class PreviewSanitizationRequest(BaseModel):

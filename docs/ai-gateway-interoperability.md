@@ -78,7 +78,7 @@ on the Shield **data plane**. No SDK required.
 | `POST {SHIELD_URL}/guardrails/input` | Input safety (pre-call) | `{"message": "<user text>"}` |
 | `POST {SHIELD_URL}/guardrails/output` | Output validation / sanitization, **and tool-argument DLP** (with `context.stage="input"`) | `{"output": "<text>"}` or `{"output": "...", "context": {"tool_name": "...", "tool_input": {...}, "agent_id": "...", "user_role": "...", "stage": "input"}}` |
 | `POST {SHIELD_URL}/v1/shield/tool/check` | Tool **RBAC + injection validation** (authorization only — no content DLP) | `{"agent_key": "...", "tool_name": "...", "user_role": "...", "tool_params": {...}}` |
-| `POST {SHIELD_URL}/v1/shield/tool/output` | **Tool-result DLP** — sanitize/redact/block tool output | `{"tool_output": "<result>", "context": {"tool_name": "...", "user_role": "..."}}` |
+| `POST {SHIELD_URL}/v1/shield/tool/output` | **Tool-result DLP**: sanitize, redact or block tool output | `{"tool_name": "...", "tool_output": "<result>", "agent_key": "...", "session_id": "..."}` |
 
 **Headers** (per request):
 
