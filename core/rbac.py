@@ -1,5 +1,6 @@
 """RBAC (Role-Based Access Control) enforcer for LLM Shield."""
 
+import fnmatch
 from typing import Optional
 
 import config.schema as _config_module
@@ -12,6 +13,10 @@ _CLEARANCE_LEVELS = {
     "confidential": 2,
     "restricted": 3,
 }
+
+
+def _matches(tool_name: str, patterns: list[str]) -> bool:
+    return any(p == tool_name or fnmatch.fnmatchcase(tool_name, p) for p in patterns)
 
 
 class RBACEnforcer:
@@ -51,13 +56,16 @@ class RBACEnforcer:
         """Check if a role is allowed to use a specific tool.
 
         Rules:
-        - If denied_tools is non-empty and tool is in it, deny.
-        - If allowed_tools is non-empty, tool must be in it.
+        - If denied_tools is non-empty and tool matches it, deny.
+        - If allowed_tools is non-empty, tool must match it.
         - If allowed_tools is empty (and not denied), allow all.
+
+        Entries are names or fnmatch patterns ("*", "crm_*"), as in the tool
+        allowlist, so a registry role of ["*"] means every tool in both.
         """
-        if role.denied_tools and tool_name in role.denied_tools:
+        if role.denied_tools and _matches(tool_name, role.denied_tools):
             return False
-        if role.allowed_tools and tool_name not in role.allowed_tools:
+        if role.allowed_tools and not _matches(tool_name, role.allowed_tools):
             return False
         return True
 

@@ -16,6 +16,7 @@ from core.auth import (SCOPE_ADMIN, SCOPE_TENANT, authorized_tenant_scope,
                        caller_tenant_scope, require_registry_write)
 from storage.tool_killswitch import disable_tool, enable_tool, list_disabled_tools
 from storage.admin_audit import log_admin_action
+from core.feature_flags import killswitch_enforcement
 from core.webhook_dispatcher import dispatch_event
 
 logger = logging.getLogger("votal.killswitch")
@@ -130,6 +131,7 @@ async def disable_tool_endpoint(tool_name: str, body: DisableToolRequest, reques
         "tenant_id": tenant_id,
         "tool_name": tool_name,
         "metadata": meta,
+        **killswitch_enforcement(),
     }
 
 
@@ -172,4 +174,5 @@ async def list_disabled_tools_endpoint(request: Request, tenant_id: Optional[str
         "tenant_id": tenant_id,
         "disabled_tools": tools,
         "count": len(tools),
+        **killswitch_enforcement(),
     }

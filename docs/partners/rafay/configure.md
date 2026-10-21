@@ -101,7 +101,7 @@ backend, never in the browser):
 | List custom policies | `GET /v1/tenant/me/custom-policies/` |
 | Add a custom policy | `POST /v1/tenant/me/custom-policies/` with `name`, `description`, `prompt` (20 to 2000 characters), `action` (`pass`, `warn`, `redact`, `block`), `stage` (`input`, `output`), `confidence_threshold` (0.5 to 1.0), `priority` (1 to 1000) |
 | Turn a custom policy on or off | `POST /v1/tenant/me/custom-policies/{id}/enable` or `/disable` |
-| Monitor or enforce | `GET` / `PUT /v1/tenant/me/policy-mode` with `{"mode":"monitor"}` or `{"mode":"enforce"}`. Votal can make this Rafay-only with `SHIELD_TENANT_POLICY_MODE_SELF_SERVICE=off`; the call then answers that the mode is managed by the administrator |
+| Monitor or enforce | `GET` / `PUT /v1/tenant/me/policy-mode` with `{"mode":"enforce"}`, or `{"mode":"monitor","reason":"..."}` (a reason is required to stop blocking, and is audited). Votal can make this Rafay-only with `SHIELD_TENANT_POLICY_MODE_SELF_SERVICE=off`; the call then answers that the mode is managed by the administrator |
 | What was blocked | `GET /v1/tenant/me/telemetry` (filters: `status`, `since`, `until`, `q`, `limit`) |
 | Usage and audit | `GET /v1/tenant/me/usage`, `GET /v1/tenant/me/audit` |
 
