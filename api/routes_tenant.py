@@ -184,13 +184,16 @@ async def add_tenant_api_key(tenant_id: str, body: dict, request: Request):
     # Both optional. A key minted without them behaves exactly as before.
     label = body.get("label") or ""
     expires_in_days = body.get("expires_in_days")
+    # Optional: binds a runtime key to one agent, for laptops
+    # (docs/specs/hooks-plugin-production.md section 5).
+    agent = body.get("agent")
     from storage.tenant_store import KeyInUseError, reserved_key_problem
     problem = reserved_key_problem(tenant_id, api_key)
     if problem:
         raise HTTPException(status_code=400, detail=problem)
     try:
         add_api_key(tenant_id, api_key, scope=scope, label=label,
-                    expires_in_days=expires_in_days)
+                    expires_in_days=expires_in_days, agent=agent)
     except KeyInUseError as e:
         # Another tenant holds this key. Adding it here used to move it, and
         # every request made with it, into this tenant. Remove it from its
@@ -206,11 +209,12 @@ async def add_tenant_api_key(tenant_id: str, body: dict, request: Request):
         source_ip=_source_ip(request),
         # Who was handed an admin key is the question this whole mechanism
         # exists to make answerable, so it belongs in the admin audit.
-        metadata={"scope": scope or "unscoped"},
+        metadata={"scope": scope or "unscoped", **({"agent": agent} if agent else {})},
     )
 
     return {"status": "added", "tenant_id": tenant_id, "scope": scope,
-            "label": label, "expires_in_days": expires_in_days}
+            "label": label, "expires_in_days": expires_in_days,
+            **({"agent": agent} if agent else {})}
 
 
 @router.get("/{tenant_id}/api-keys")

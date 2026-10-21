@@ -966,10 +966,15 @@ async def create_my_api_key(request: Request, body: dict = None):
     # calls, silently did not.
     label = (body or {}).get("label") or "" if body else ""
     expires_in_days = (body or {}).get("expires_in_days") if body else None
-    from storage.tenant_store import KeyInUseError
+    # The one scope this route sets: a laptop key bound to an agent is a
+    # runtime key, strictly less than the unscoped key minted otherwise
+    # (docs/specs/hooks-plugin-production.md section 5).
+    agent = (body or {}).get("agent") if body else None
+    from storage.tenant_store import SCOPE_RUNTIME, KeyInUseError
     try:
         add_api_key(tenant_id, api_key, label=label,
-                    expires_in_days=expires_in_days)
+                    expires_in_days=expires_in_days,
+                    **({"scope": SCOPE_RUNTIME, "agent": agent} if agent is not None else {}))
     except KeyInUseError as e:
         # Never "moves" the key: it stays with the tenant that holds it.
         raise HTTPException(status_code=409, detail=str(e))
@@ -990,6 +995,7 @@ async def create_my_api_key(request: Request, body: dict = None):
         "api_key": api_key,  # shown ONCE
         "preview": _key_preview(api_key),
         "warning": "Store this key immediately — it cannot be retrieved later.",
+        **({"scope": SCOPE_RUNTIME, "agent": agent} if agent is not None else {}),
     }
 
 

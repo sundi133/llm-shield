@@ -18,7 +18,13 @@
 # Deploy with "|| exit 2" after the command, so a missing script denies too:
 #   "command": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"C:\\Program Files\\Votal\\claude_code_hook.ps1\" || exit 2"
 #
-# Config: C:\ProgramData\Votal\hook.conf (or -Config <path>), KEY=value lines:
+# Config, in order (docs/specs/hooks-plugin-production.md section 5):
+#   1. C:\ProgramData\Votal\hook.conf, the managed file, when it exists; it
+#      wins over -Config. It must be owned by Administrators, SYSTEM or
+#      TrustedInstaller and writable by no one else, or every call is refused.
+#   2. Otherwise -Config <path>.  3. Otherwise %USERPROFILE%\.votal\hook.conf.
+#   MANAGED when the file read passes that check; then SHIELD_URL may not be
+#   a localhost address. KEY=value lines:
 #   SHIELD_URL, SHIELD_API_KEY, SHIELD_AGENT (default claude-code),
 #   SHIELD_TIMEOUT (seconds, 1 to 30, default 4), ON_UNREACHABLE (deny, the
 #   default, or allow: what a FAILURE means; Shield's own denials always deny),
@@ -26,10 +32,46 @@
 #   127.0.0.1 with its local secret instead of Shield with a tenant key).
 #   Never read from the environment. Windows PowerShell 5.1 or later.
 
-param([string]$Config = "$env:ProgramData\Votal\hook.conf",
+param([string]$Config = "",
       [ValidateSet("claude-code", "codex")][string]$Target = "claude-code")
 
 $ErrorActionPreference = "Stop"
+
+$HookVersion = '1.2.0'   # the plugin's version (plugin.json); tests pin them together
+# From the known-folder API, not $env:ProgramData: the environment is the user's.
+$ManagedConf = Join-Path ([Environment]::GetFolderPath("CommonApplicationData")) "Votal\hook.conf"
+# Administrators, SYSTEM, TrustedInstaller.
+$ManagedOwners = @("S-1-5-32-544", "S-1-5-18",
+                   "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")
+
+# Owned by a managed owner, and no one else may write, delete or re-permission
+# it. $script:ManagedWhy says what disqualified it, for the refusal message.
+$script:ManagedWhy = ""
+function Test-Managed([string]$Path) {
+    try {
+        $sid = [System.Security.Principal.SecurityIdentifier]
+        # .NET, not Get-Acl: Windows PowerShell 5.1 started from PowerShell 7
+        # inherits its PSModulePath and cannot load the cmdlet's module.
+        $fi = New-Object System.IO.FileInfo $Path
+        try { $acl = $fi.GetAccessControl() }
+        catch { $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($fi) }
+        $owner = $acl.GetOwner($sid).Value
+        if ($ManagedOwners -notcontains $owner) { $script:ManagedWhy = "owner $owner"; return $false }
+        $write = [System.Security.AccessControl.FileSystemRights]"WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, ChangePermissions, TakeOwnership"
+        foreach ($r in $acl.GetAccessRules($true, $true, $sid)) {
+            if ($r.AccessControlType -ne "Allow") { continue }
+            if ($ManagedOwners -contains $r.IdentityReference.Value) { continue }
+            # OWNER RIGHTS grants the owner, already checked above; CREATOR
+            # OWNER only seeds new children and never applies to this file.
+            if (@("S-1-3-4", "S-1-3-0") -contains $r.IdentityReference.Value) { continue }
+            if (([int]$r.FileSystemRights -band [int]$write) -ne 0) {
+                $script:ManagedWhy = "$($r.IdentityReference.Value) can write it"
+                return $false
+            }
+        }
+        return $true
+    } catch { $script:ManagedWhy = "its permissions could not be read ($($_.Exception.Message))"; return $false }
+}
 
 function Deny([string]$Why) {
     [Console]::Error.WriteLine("Blocked by Votal Shield: $Why")
@@ -74,6 +116,17 @@ $body = [Console]::In.ReadToEnd()
 if ($body -match '"hook_event_name"\s*:\s*"PostToolUse"') { $script:Event = "PostToolUse" }
 elseif ($body -match '"hook_event_name"\s*:\s*"UserPromptSubmit"') { $script:Event = "UserPromptSubmit" }
 
+$script:Mode = "user"
+if (Test-Path -LiteralPath $ManagedConf) {
+    $Config = $ManagedConf
+    if (-not (Test-Managed $Config)) {
+        Fail "$Config must be owned by Administrators and writable by no one else ($script:ManagedWhy), so this action is not allowed"
+    }
+    $script:Mode = "managed"
+} else {
+    if (-not $Config) { $Config = Join-Path $env:USERPROFILE ".votal\hook.conf" }
+    if ((Test-Path -LiteralPath $Config -PathType Leaf) -and (Test-Managed $Config)) { $script:Mode = "managed" }
+}
 if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
     Fail "hook config $Config is missing or unreadable, so this action is not allowed"
 }
@@ -108,7 +161,10 @@ if ($local) {
     if (-not $secret) { Fail "the Votal agent's local secret could not be read, so this action is not allowed" }
 } else {
     if (-not $settings.SHIELD_API_KEY) { Fail "SHIELD_API_KEY is not set in $Config, so this action is not allowed" }
-    if (-not ($url -match '^https://' -or $url -match '^http://(127\.0\.0\.1|localhost)([:/]|$)')) {
+    if ($url -match '^http://(127\.0\.0\.1|localhost)([:/]|$)') {
+        # A local stand-in answering {} would allow everything: testing only.
+        if ($script:Mode -ne "user") { Fail "SHIELD_URL must be https in a managed install, so this action is not allowed" }
+    } elseif (-not ($url -match '^https://')) {
         Fail "SHIELD_URL must be https (or a localhost address for testing)"
     }
 }
@@ -131,6 +187,9 @@ if ($local) {
     }
     $endpoint = $url.TrimEnd("/") + "/v1/shield/hooks/$Target"
 }
+$headers["X-Votal-Hook-Version"] = $HookVersion
+$headers["X-Votal-Hook-Mode"] = $script:Mode
+$headers["X-Votal-Hook-OS"] = "windows"
 try {
     $resp = Invoke-WebRequest -Uri $endpoint -Method Post `
         -Headers $headers -ContentType "application/json" `

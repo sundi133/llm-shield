@@ -1,6 +1,6 @@
 {
   "name": "votal-shield-hooks",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Applies your Votal Shield Tool Registry policies to every tool call, before and after it runs, in Claude Code and Cowork.",
   "author": {
     "name": "Votal AI"

@@ -19,8 +19,12 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+import os
+import re
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from api.routes_tool import _shield_hosts
@@ -49,23 +53,86 @@ async def _payload(request: Request) -> dict:
 
 
 @router.post("/claude-code")
-async def claude_code_pre_tool_use(request: Request, background: BackgroundTasks):
+async def claude_code_pre_tool_use(request: Request, background: BackgroundTasks,
+                                   response: Response):
     """Claude Code's PreToolUse and PostToolUse hooks."""
-    return await _handle(request, background, TARGET_CLAUDE_CODE)
+    return await _handle(request, background, TARGET_CLAUDE_CODE, response)
 
 
 @router.post("/codex")
-async def codex_hook(request: Request, background: BackgroundTasks):
+async def codex_hook(request: Request, background: BackgroundTasks, response: Response):
     """Codex's PreToolUse and PostToolUse hooks (command hooks; Codex has no
     HTTP hooks, so `claude_code_hook.sh --target codex` posts here).
     docs/specs/agent-hooks-tool-policies.md section 4.2."""
-    return await _handle(request, background, TARGET_CODEX)
+    return await _handle(request, background, TARGET_CODEX, response)
 
 
 TARGET_CLAUDE_CODE, TARGET_CODEX = "claude-code", "codex"
 
 
-async def _handle(request: Request, background: BackgroundTasks, target: str):
+ADMIN_KEY_ENV = "SHIELD_HOOKS_ALLOW_ADMIN_KEY"
+UNSCOPED_WARNING = ('299 votal "this key is unscoped: give laptops a runtime key bound to '
+                    'their agent (docs: claude-code-production-rollout)"')
+_VERSION_RE = re.compile(r"^[0-9A-Za-z.+-]{1,32}$")
+
+
+def _laptop_key_agent(request: Request, header_agent: str, response: Optional[Response]) -> str:
+    """The agent a tenant key's hook call is for (docs/specs/hooks-plugin-
+    production.md section 5). An admin-scoped key is refused: on a laptop it
+    could change the tenant's policy. A key bound to an agent uses that agent,
+    and refuses a call that names another."""
+    from core.auth import caller_key_scope
+    from storage.tenant_store import _hash_key, key_bound_agent_by_hash
+
+    scope, _ = caller_key_scope(request)
+    if scope == "admin" and os.environ.get(ADMIN_KEY_ENV, "").strip().lower() \
+            not in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=403, detail=(
+            "this is an admin-scoped key, which can change the tenant's policy; give "
+            f"laptops a runtime key ({ADMIN_KEY_ENV}=1 allows admin keys here for now)"))
+    if scope is None and response is not None:
+        response.headers["Warning"] = UNSCOPED_WARNING
+    key_hash = getattr(getattr(request, "state", None), "api_key_hash", "") or ""
+    if not key_hash:
+        raw = (request.headers.get("x-api-key") or "").strip()
+        key_hash = _hash_key(raw) if raw else ""
+    bound = key_bound_agent_by_hash(key_hash)
+    if bound:
+        if header_agent and header_agent != bound:
+            raise HTTPException(status_code=403, detail=(
+                f"this key is bound to agent '{bound}', not '{header_agent}'"))
+        return bound
+    return header_agent
+
+
+def _requires_profile(request: Request, tenant_id: str) -> bool:
+    """The tenant's hooks.require_profile: an agent with no runtime profile is
+    denied instead of allowed. Off unless set."""
+    config = getattr(getattr(request, "state", None), "tenant_config", None)
+    if not isinstance(config, dict):
+        try:
+            from storage.tenant_store import get_tenant
+            config = get_tenant(tenant_id) or {}
+        except Exception:       # noqa: BLE001 - unreadable reads as unset
+            config = {}
+    hooks_cfg = config.get("hooks") if isinstance(config.get("hooks"), dict) else {}
+    return hooks_cfg.get("require_profile") is True
+
+
+def _hook_client(request: Request) -> dict:
+    """What the hook script says about itself, for coverage. Labels only:
+    anything unexpected is recorded as unknown, never refused."""
+    h = request.headers
+    version = (h.get("x-votal-hook-version") or "").strip()
+    mode = (h.get("x-votal-hook-mode") or "").strip()
+    os_name = (h.get("x-votal-hook-os") or "").strip()
+    return {"version": version if _VERSION_RE.match(version) else "unknown",
+            "mode": mode if mode in ("managed", "user") else "unknown",
+            "os_name": os_name if os_name in ("darwin", "linux", "windows") else "unknown"}
+
+
+async def _handle(request: Request, background: BackgroundTasks, target: str,
+                  response: Optional[Response] = None):
     """Two kinds of caller:
 
     * A tenant key (managed settings or the standalone hook): X-Agent-Key names
@@ -100,6 +167,7 @@ async def _handle(request: Request, background: BackgroundTasks, target: str):
         tenant_id = get_tenant_from_request(request)
         device_id = (request.headers.get("x-device-id") or "").strip()
         agent = (request.headers.get("x-agent-key") or "").strip()[:200]
+        agent = _laptop_key_agent(request, agent, response)
         if not agent:
             raise HTTPException(status_code=400, detail="X-Agent-Key: the agent id whose "
                                 "runtime profile applies (for example claude-code)")
@@ -110,6 +178,13 @@ async def _handle(request: Request, background: BackgroundTasks, target: str):
     # One route for both events (docs/specs/agent-hooks-tool-policies.md).
     # A body without hook_event_name is a PreToolUse, as before.
     event = payload.get("hook_event_name") or "PreToolUse"
+    # hooks.require_profile: no profile means denied, not "nothing to check"
+    # (docs/specs/hooks-plugin-production.md section 5, F2).
+    no_profile = (f"agent '{agent}' has no runtime profile, and this tenant requires one"
+                  if cp is None and _requires_profile(request, tenant_id) else "")
+    if no_profile and event == "UserPromptSubmit":
+        return {} if monitor else {"decision": "block",
+                                   "reason": f"Blocked by Votal Shield: {no_profile}"}
     if event == "PostToolUse":
         return await _post_tool_use(request, background, tenant_id=tenant_id, agent=agent,
                                     cp=cp, payload=payload, user=user, device_id=device_id,
@@ -122,6 +197,8 @@ async def _handle(request: Request, background: BackgroundTasks, target: str):
     if event != "PreToolUse":
         return {}
     decision = hooks.decide(cp, payload, _shield_hosts(request))
+    if no_profile:
+        decision = hooks.Decision("deny", "tool", "", no_profile)
     if cp is not None and cp.raw.get("limits") and decision.decision != "deny" \
             and any(hooks.file_changes(payload)):
         # One store round trip, only for a write or delete under a profile
@@ -150,7 +227,7 @@ async def _handle(request: Request, background: BackgroundTasks, target: str):
     background.add_task(hook_seen.record, tenant_id, agent=agent, user=user, device=device_id,
                         decision=decision.decision, tool=tool,
                         profile=cp.name if cp else None, session_id=session, fleet=fleet,
-                        monitor=monitor)
+                        monitor=monitor, **_hook_client(request))
     try:
         raw_ev = hooks.runtime_event(
             decision, payload, agent_id=agent, profile=cp, user=user, device_id=device_id,

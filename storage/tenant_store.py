@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from typing import Optional
 
@@ -677,7 +678,8 @@ def track_usage_enabled() -> bool:
 
 def set_key_metadata(tenant_id: str, api_key: str, *, label: str = "",
                      expires_in_days: Optional[int] = None,
-                     device_id: Optional[str] = None) -> dict:
+                     device_id: Optional[str] = None,
+                     agent: Optional[str] = None) -> dict:
     """Record who this key is for and when it should stop working.
 
     Raises ValueError for a non-positive expiry: a key that expires in the past
@@ -704,6 +706,8 @@ def set_key_metadata(tenant_id: str, api_key: str, *, label: str = "",
     }
     if device_id:
         record["device_id"] = str(device_id)[:64]
+    if agent:
+        record["agent"] = str(agent)[:200]
     key_hash = _hash_key(api_key)
     # TTL slightly beyond the deadline so the record survives long enough to
     # explain an expiry rather than vanishing with the key it describes.
@@ -801,6 +805,7 @@ def list_tenant_api_keys(tenant_id: str) -> list:
             # A short fingerprint matches a row to a key without being one.
             "fingerprint": key_hash[:8],
             "scope": key_scope_by_hash(key_hash),
+            "agent": record.get("agent"),
             "created_at": record.get("created_at"),
             "expires_at": record.get("expires_at"),
             "last_used": record.get("last_used"),
@@ -809,14 +814,29 @@ def list_tenant_api_keys(tenant_id: str) -> list:
     return out
 
 
+#: An agent id a laptop key may be bound to (the hook route's X-Agent-Key).
+_BOUND_AGENT_RE = re.compile(r"^[A-Za-z0-9_.@:-]{1,200}$")
+
+
 def add_api_key(tenant_id: str, api_key: str, scope: Optional[str] = None,
                 *, label: str = "", expires_in_days: Optional[int] = None,
-                device_id: Optional[str] = None):
+                device_id: Optional[str] = None, agent: Optional[str] = None):
     """Add an API key for a tenant.
 
     scope=None keeps the pre-existing behaviour exactly: an unscoped key that
     every code path treats as it did before scopes existed.
+
+    agent binds a runtime key to one agent: the coding-agent hook route then
+    uses that agent whatever X-Agent-Key says, so whoever holds a laptop's
+    key cannot pick an agent with a weaker profile, or none
+    (docs/specs/hooks-plugin-production.md section 5). Raises ValueError for
+    an agent on any other scope, checked before anything is written.
     """
+    if agent is not None:
+        if scope != SCOPE_RUNTIME:
+            raise ValueError("agent binds a laptop key: it needs scope runtime")
+        if not isinstance(agent, str) or not _BOUND_AGENT_RE.match(agent):
+            raise ValueError("agent must be 1-200 letters, digits or . _ @ : -")
     key_hash = _hash_key(api_key)
 
     # Raises KeyInUseError if another tenant holds the key; nothing below runs,
@@ -828,9 +848,29 @@ def add_api_key(tenant_id: str, api_key: str, scope: Optional[str] = None,
     # already carried a scope must not silently inherit the old one.
     set_key_scope(api_key, scope)
     set_key_metadata(tenant_id, api_key, label=label,
-                     expires_in_days=expires_in_days, device_id=device_id)
+                     expires_in_days=expires_in_days, device_id=device_id, agent=agent)
+    _cache_delete(_bound_agent_cache_key(key_hash))
 
     logger.info(f"Added API key for tenant: {tenant_id} (scope={scope or 'unscoped'})")
+
+
+def _bound_agent_cache_key(key_hash: str) -> str:
+    return f"apikeyagent:{key_hash}"
+
+
+def key_bound_agent_by_hash(key_hash: str) -> Optional[str]:
+    """The agent a key is bound to, or None. Cached like key scopes, so the
+    hook route pays one store read per key per cache period."""
+    if not key_hash:
+        return None
+    k = _bound_agent_cache_key(key_hash)
+    cached = _cache_get(k)
+    if cached is not None:
+        return cached.get("agent")
+    record = key_metadata_by_hash(key_hash) or {}
+    agent = record.get("agent") if isinstance(record.get("agent"), str) else None
+    _cache_set(k, {"agent": agent})
+    return agent
 
 
 def remove_api_key(api_key: str):

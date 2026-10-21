@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class GuardrailPolicy(BaseModel):
@@ -140,6 +140,13 @@ class TenantCreateRequest(BaseModel):
         return _PLAN_QUOTA_DEFAULTS.get(plan, _PLAN_QUOTA_DEFAULTS["basic"])
 
 
+class TenantHooks(BaseModel):
+    """Coding-agent hook settings (docs/specs/hooks-plugin-production.md)."""
+    model_config = ConfigDict(extra="forbid")
+    # Deny an agent that has no runtime profile, instead of allowing it.
+    require_profile: bool = False
+
+
 class TenantUpdateRequest(BaseModel):
     """Request body for PUT /v1/admin/tenants/{id}. All fields optional."""
     name: Optional[str] = Field(default=None, max_length=256)
@@ -152,3 +159,6 @@ class TenantUpdateRequest(BaseModel):
     # (refuses the API key on /v1/tenant/* routes; the key still works for the
     # guard/API path). Not tenant self-service. See routes_tenant_self.
     require_sso: Optional[bool] = Field(default=None)
+    # Operator-controlled too: a customer must not be able to relax it from
+    # a laptop key.
+    hooks: Optional[TenantHooks] = None
