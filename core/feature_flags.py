@@ -30,6 +30,26 @@ TAINT_TRACKING_ENABLED = _is_enabled("SHIELD_ENABLE_TAINT_TRACKING")
 GOAL_DRIFT_ENABLED = _is_enabled("SHIELD_ENABLE_GOAL_DRIFT")
 CERT_IDENTITY_ENABLED = _is_enabled("SHIELD_ENABLE_CERT_IDENTITY")
 
+KILLSWITCH_OFF_WARNING = (
+    "The kill switch is recorded but may NOT be enforced: "
+    "SHIELD_ENABLE_KILLSWITCH is not set on this server, and without it on the "
+    "guardrail server disabled tools are still allowed. Ask your Shield "
+    "administrator to set SHIELD_ENABLE_KILLSWITCH=true on both the guardrail "
+    "and admin servers."
+)
+
+
+def killswitch_enforcement() -> dict:
+    """``enforced`` for kill switch responses, plus a warning when it is off.
+
+    Without this, disable answered "disabled" on a deployment that never
+    checks the list, and the operator believed a tool was stopped.
+    """
+    import core.feature_flags as _self
+    if _self.KILLSWITCH_ENABLED:
+        return {"enforced": True}
+    return {"enforced": False, "warning": KILLSWITCH_OFF_WARNING}
+
 
 def a2a_enforce_mode() -> str:
     """Resolve the A2A inter-agent authorization enforcement mode.

@@ -254,7 +254,15 @@ def consume_approval_request(
     agent_key: str,
     tool_name: str,
     session_id: str,
+    tool_params: Optional[dict[str, Any]] = None,
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
+    """Spend an approved request on this call. The call must be the one that
+    was approved: same agent, tool and session, and the same arguments, so an
+    approval for a 100 refund cannot be spent on a 10,000 one. A mismatch is
+    refused without consuming, and the request stays usable for the real call.
+    """
+    from core.approvals import params_hash
+
     items = _load_json(_approvals_key(tenant_id), [])
     now = _now()
     for idx, item in enumerate(items):
@@ -269,6 +277,8 @@ def consume_approval_request(
             return False, f"Approval request is {item.get('status', 'unknown')}", item
         if item.get("agent_key") != agent_key or item.get("tool_name") != tool_name or item.get("session_id") != session_id:
             return False, "Approval request does not match this tool execution", item
+        if params_hash(item.get("tool_params")) != params_hash(tool_params):
+            return False, "Approval request rejected: arguments changed since approval", item
         item["consumed_uses"] = int(item.get("consumed_uses", 0)) + 1
         if item.get("single_use", True):
             item["status"] = "consumed"

@@ -58,10 +58,26 @@ break the customer's data rules.
 
 | Field | Notes |
 |---|---|
-| `agent_key` | Required. A stable id for the customer's agent or app. Use the agent's id if the customer registered it in Shield (then its allowed-tool list applies); otherwise a stable id such as `rafay-cust-acme-default` |
+| `agent_key` | Required. The id of an agent registered for this customer (see below). An id that was never registered is refused with `Unknown agent key` |
 | `tool_name`, `tool_params` | The call exactly as the model produced it. The arguments are what the data rules judge |
-| `user_role` | The end user's role, if Rafay knows it. Role rules use it |
+| `user_role` | The end user's role. It must be one of the agent's `role_permissions`, and the tool must be on that role's list |
 | `session_id` | The conversation. Approvals and cross-app flow control are per session |
+
+**Register each customer agent first** (settings key), listing the tools it may
+call and which roles may call which. A call is allowed only when the tool is on
+both the agent's list and the role's list. The agent's `tools` names each tool;
+a role may use patterns: `["*"]` means every tool the agent has, `["crm_*"]`
+every one starting with `crm_`.
+
+```bash
+curl -X POST https://api.guardrails.votal.ai/v1/agents/registry \
+  -H "X-API-Key: $SETTINGS_KEY" -H "Content-Type: application/json" \
+  -d '{"agent_id": "rafay-cust-acme-support-bot", "name": "Acme support bot",
+       "description": "Answers customer questions and issues refunds",
+       "tools": ["crm_lookup", "send_email", "refund_payment"],
+       "role_permissions": {"support": ["crm_lookup", "send_email"],
+                            "finance": ["crm_lookup", "refund_payment"]}}'
+```
 
 Response:
 
@@ -102,9 +118,13 @@ tool's own rules, the same policies `tool/check` judges.
 
 Response: `allowed`, `action` (`pass`, `redact`, `block`) and `sanitized_output`.
 Pass `sanitized_output` to the model instead of the original result. On
-`block`, replace the result with a short note that it was withheld. This is also
-where instructions planted in a web page or document (indirect prompt injection)
-are caught before the model reads them.
+`block`, replace the result with a short note that it was withheld.
+
+`tool/output` applies the customer's data rules; it does not yet look for
+instructions planted in a web page or document (indirect prompt injection). For
+results that come from outside the customer (web pages, email, uploaded files),
+also screen the result text with `POST /guardrails/input`, which runs the
+customer's prompt attack checks, and withhold it on `block`.
 
 ## One policy for all tools
 
@@ -120,10 +140,10 @@ curl -X POST https://api.guardrails.votal.ai/v1/data-policies/global/policy \
     "sanitization_rules": [
       {"pattern_id": "us_ssn", "regex": "\\b\\d{3}-\\d{2}-\\d{4}\\b",
        "replacement": "[SSN]", "description": "US social security number",
-       "severity": "critical", "action": "redact"},
+       "severity": "high", "action": "redact"},
       {"pattern_id": "card", "regex": "\\b(?:\\d[ -]?){13,16}\\b",
        "replacement": "[CARD]", "description": "Payment card number",
-       "severity": "critical", "action": "redact"}
+       "severity": "high", "action": "redact"}
     ],
     "sanitization_intent": "Never let credentials, API keys, or customer account numbers leave any tool, even reworded or split up.",
     "sanitization_mode": "both",
@@ -134,7 +154,7 @@ curl -X POST https://api.guardrails.votal.ai/v1/data-policies/global/policy \
 
 | Field | Meaning |
 |---|---|
-| `sanitization_rules` | Patterns to find. Set `action` on each (`detect`, `redact` or `block`): without it, a match in arguments is only recorded and the tool still gets the value |
+| `sanitization_rules` | Patterns to find. Set `action` on each (`detect`, `redact` or `block`): without it, a match in arguments is only recorded and the tool still gets the value. A rule with `"severity": "critical"` always blocks, whatever its `action`; use `high` for rules that should redact |
 | `sanitization_intent` | A rule in plain words, judged by Shield's model, for what patterns miss (reworded or split-up data) |
 | `sanitization_mode` | `regex`, `ai`, or `both` (patterns first, then the model) |
 | `compliance_framework` | Optional: `hipaa`, `pci_dss` or `gdpr` |
@@ -156,11 +176,14 @@ keeps the default.
 
 | Control | Call (customer's settings key) | Effect |
 |---|---|---|
-| Kill switch | `POST /v1/shield/tools/{tool_name}/disable` (and `/enable`); `GET /v1/shield/tools/disabled` | The tool is refused for every agent of the customer, immediately |
-| Approvals | `PUT /v1/tenant/me/agentic/config` with `{"approvals":{"enabled":true,"rules":[{"rule_id":"outbound","tool_names":["send_email","transfer_funds"],"min_approvals":1}]}}` | Those tools return `pending_confirmation` until a person approves in the portal. The approval is signed and tied to the exact arguments |
+| Kill switch | `POST /v1/shield/tools/{tool_name}/disable` (and `/enable`); `GET /v1/shield/tools/disabled` | The tool is refused for every agent of the customer, immediately. Check `"enforced": true` in the response: `false` means the deployment does not enforce the kill switch yet |
+| Approvals | `PUT /v1/tenant/me/agentic/config` with `{"approvals":{"enabled":true,"rules":[{"rule_id":"outbound","tool_names":["send_email","transfer_funds"],"min_approvals":1}]}}` | Those tools return `pending_confirmation` until a person approves in the portal. The approval is tied to the exact arguments: a changed amount or recipient needs a new approval. A role that may not call the tool is refused outright, not sent for approval |
 | Monitor or enforce | Same switch as prompts (`/v1/tenant/me/policy-mode`) | Monitor records what tool checks would block |
 
-Approvals need `SHIELD_APPROVAL_TOKEN_PRIVATE_KEY` set on the deployment.
+Approvals need `SHIELD_APPROVAL_TOKEN_PRIVATE_KEY` and the kill switch needs
+`SHIELD_ENABLE_KILLSWITCH=true` on the deployment; Votal sets both. Approving
+takes a person: the portal, or the customer's settings key. The serving key
+cannot approve its own calls.
 
 ## Recommended defaults for every Rafay customer
 
@@ -168,8 +191,9 @@ Approvals need `SHIELD_APPROVAL_TOKEN_PRIVATE_KEY` set on the deployment.
    rest of the customer's policy.
 2. Require approval for tools that send, pay or delete (`send_email`,
    `transfer_funds`, `delete_*`): a customer adjusts the list in the portal.
-3. Run checkpoint 3 on every tool result, so planted instructions never reach
-   the model.
+3. Run checkpoint 3 on every tool result, and screen results from outside
+   sources with `/guardrails/input` too, so planted instructions never reach the
+   model.
 4. For regulated customers, set `"fail_closed": true`.
 
 ## Latency

@@ -45,7 +45,6 @@ from storage.agentic_control_plane import (
     evaluate_workflow_constraints,
     record_workflow_step,
     is_circuit_breaker_open,
-    list_approval_requests,
 )
 
 router = APIRouter(prefix="/v1/shield/tool", tags=["tool"])
@@ -173,6 +172,28 @@ def _shield_hosts(request) -> set:
     return hosts
 
 
+_ACCESS_GUARDS = ("rbac_guard", "tool_allowlist")
+
+
+async def _access_denial(context: dict, body: "ToolCheckRequest") -> Optional[dict]:
+    """The first rbac_guard or tool_allowlist block for this call, or None.
+
+    Both are fast, local registry lookups, so running them ahead of opening an
+    approval request costs no model call. The guard loop runs them again on the
+    approved retry, so this only moves the refusal earlier.
+    """
+    for name, cls in _CHECK_GUARDS:
+        if name not in _ACCESS_GUARDS or (body.guardrails and name not in body.guardrails):
+            continue
+        guard = cls()
+        if not guard.enabled:
+            continue
+        r = await guard.check("", context)
+        if not r.passed and r.action == "block":
+            return _format(r)
+    return None
+
+
 def _denied(results) -> bool:
     return any(not r["passed"] and r["action"] in ("block", "pending_confirmation")
                for r in results)
@@ -219,17 +240,12 @@ def _resolve_flow_approval(flow: dict, body: "ToolCheckRequest", tenant_id: Opti
     if not tenant_id:
         return _block(flow["message"] + " (no tenant to open an approval request in)")
     if body.approval_request_id:
-        # consume_approval_request binds agent, tool and session but not the
-        # arguments. Check them first, without consuming, so approval for one
+        # Bound to agent, tool, session and arguments, so approval for one
         # email cannot be spent on a different one.
-        pending = next((a for a in list_approval_requests(tenant_id)
-                        if a.get("request_id") == body.approval_request_id), None)
-        if pending is not None and \
-                params_hash(pending.get("tool_params")) != params_hash(body.tool_params):
-            return _block("Cross-app flow approval rejected: arguments changed since approval")
         ok, msg, approval = consume_approval_request(
             tenant_id, body.approval_request_id, agent_key=body.agent_key,
             tool_name=body.tool_name, session_id=body.session_id or "",
+            tool_params=body.tool_params,
         )
         if not ok:
             return _block(f"Cross-app flow approval rejected: {msg}")
@@ -657,6 +673,7 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                         agent_key=body.agent_key,
                         tool_name=body.tool_name,
                         session_id=body.session_id or "",
+                        tool_params=body.tool_params,
                     )
                     results.append(_cp_result(
                         "approval_lifecycle",
@@ -669,6 +686,14 @@ async def check_tool(body: ToolCheckRequest, request: Request):
                         _final_result = {"allowed": False, "action": "block", "guardrail_results": results}
                         return _final_result
                 else:
+                    # Who may call the tool is settled before anyone is asked to
+                    # approve it: a role that can never run it gets a refusal,
+                    # not an approval request a manager might grant.
+                    denied = await _access_denial(context, body)
+                    if denied is not None:
+                        results.append(denied)
+                        _final_result = {"allowed": False, "action": "block", "guardrail_results": results}
+                        return _final_result
                     approval = create_approval_request(
                         tenant_id,
                         agent_key=body.agent_key,
