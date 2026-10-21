@@ -50,13 +50,20 @@ $script:ManagedWhy = ""
 function Test-Managed([string]$Path) {
     try {
         $sid = [System.Security.Principal.SecurityIdentifier]
-        $acl = Get-Acl -LiteralPath $Path
+        # .NET, not Get-Acl: Windows PowerShell 5.1 started from PowerShell 7
+        # inherits its PSModulePath and cannot load the cmdlet's module.
+        $fi = New-Object System.IO.FileInfo $Path
+        try { $acl = $fi.GetAccessControl() }
+        catch { $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($fi) }
         $owner = $acl.GetOwner($sid).Value
         if ($ManagedOwners -notcontains $owner) { $script:ManagedWhy = "owner $owner"; return $false }
         $write = [System.Security.AccessControl.FileSystemRights]"WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, ChangePermissions, TakeOwnership"
         foreach ($r in $acl.GetAccessRules($true, $true, $sid)) {
             if ($r.AccessControlType -ne "Allow") { continue }
             if ($ManagedOwners -contains $r.IdentityReference.Value) { continue }
+            # OWNER RIGHTS grants the owner, already checked above; CREATOR
+            # OWNER only seeds new children and never applies to this file.
+            if (@("S-1-3-4", "S-1-3-0") -contains $r.IdentityReference.Value) { continue }
             if (([int]$r.FileSystemRights -band [int]$write) -ne 0) {
                 $script:ManagedWhy = "$($r.IdentityReference.Value) can write it"
                 return $false
