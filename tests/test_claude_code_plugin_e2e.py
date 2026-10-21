@@ -33,6 +33,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLUGIN = os.path.join(ROOT, "examples", "agent-hooks", "plugin", "votal-shield-hooks")
 CLAUDE = shutil.which("claude")
 MARKER = "votal-e2e-marker.txt"
+PROBE = "votal-shell-probe.txt"
 
 pytestmark = pytest.mark.skipif(os.environ.get("VOTAL_CLAUDE_E2E") != "1" or not CLAUDE,
                                 reason="real Claude Code: CI only (VOTAL_CLAUDE_E2E=1)")
@@ -74,6 +75,22 @@ class FakeShield:
         self._srv.shutdown()
 
 
+def _probe_plugin(tmp_path):
+    """A second plugin whose prompt hook writes which shell ran it: bash
+    expands $BASH_VERSION, cmd %COMSPEC%, PowerShell $PSVersionTable. Only
+    read when a test fails, to say how Claude Code ran the hook command."""
+    root = tmp_path / "probe-plugin"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / "hooks").mkdir()
+    (root / ".claude-plugin" / "plugin.json").write_text(json.dumps(
+        {"name": "shell-probe", "version": "0.0.1", "description": "e2e shell probe"}))
+    cmd = (f'echo "bash=[$BASH_VERSION] cmd=[%COMSPEC%] ps=[$($PSVersionTable.PSVersion)] '
+           f'root=[${{CLAUDE_PLUGIN_ROOT}}]" > {PROBE}')
+    (root / "hooks" / "hooks.json").write_text(json.dumps({"hooks": {"UserPromptSubmit": [
+        {"hooks": [{"type": "command", "command": cmd, "timeout": 10}]}]}}))
+    return str(root)
+
+
 def _run(tmp_path, shield, prompt="please run the command"):
     home = tmp_path / "home"
     (home / ".votal").mkdir(parents=True)
@@ -91,15 +108,18 @@ def _run(tmp_path, shield, prompt="please run the command"):
         env.update({
             "HOME": str(home), "USERPROFILE": str(home),
             "CLAUDE_CONFIG_DIR": str(tmp_path / "claude-config"),
-            "ANTHROPIC_BASE_URL": model.url, "ANTHROPIC_API_KEY": "sk-ant-e2e-not-a-key",
+            "ANTHROPIC_BASE_URL": model.url, "ANTHROPIC_API_KEY": "placeholder",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1",
             "DISABLE_TELEMETRY": "1"})
         r = subprocess.run([CLAUDE, "-p", prompt, "--plugin-dir", PLUGIN,
+                            "--plugin-dir", _probe_plugin(tmp_path),
                             "--permission-mode", "bypassPermissions", "--output-format", "json"],
                            cwd=project, env=env, capture_output=True, text=True, timeout=240,
                            stdin=subprocess.DEVNULL)
+        probe = project / PROBE
         diag = f"exit {r.returncode}\nstdout: {r.stdout[-2000:]}\nstderr: {r.stderr[-2000:]}\n" \
-               f"shield saw: {shield.events()}\nmodel requests: {len(model.seen)}"
+               f"shield saw: {shield.events()}\nmodel requests: {len(model.seen)}\n" \
+               f"hook shell probe: {probe.read_text(errors='replace') if probe.exists() else 'not written'}"
         return r, project, model, diag
 
 
