@@ -88,7 +88,9 @@ def test_the_plugin_fails_closed_before_a_call_and_runs_its_own_script():
     post = hooks["PostToolUse"][0]["hooks"][0]["command"]
     for cmd in (pre, post):
         assert '"${CLAUDE_PLUGIN_ROOT}/scripts/claude_code_hook.sh"' in cmd
-        assert "--target claude-code" in cmd and '--config "$HOME/.votal/hook.conf"' in cmd
+        # No --config: a managed hook.conf, when installed, must win, and
+        # without one the script reads ~/.votal/hook.conf itself.
+        assert "--target claude-code" in cmd and "--config" not in cmd
     assert pre.endswith("|| exit 2") and not post.endswith("|| exit 2")
 
 

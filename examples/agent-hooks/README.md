@@ -29,6 +29,23 @@ Use your tenant key:
 export SHIELD_TENANT_KEY=<your tenant key>
 ```
 
+**The key that goes on laptops** (`SHIELD_API_KEY` in `hook.conf`) is a
+different one: a runtime key bound to the agent, so whoever reads it off a
+laptop can only screen calls, and only as that agent. Mint it with your
+settings key:
+
+```bash
+curl -s -X POST https://shield.votal.ai/v1/tenant/me/api-keys -H "X-API-Key: $SHIELD_TENANT_KEY" -H "Content-Type: application/json" -d '{"label":"laptops","agent":"claude-code"}'
+```
+
+The hook route refuses an admin-scoped key (403): one on a laptop could change
+your policy. If you have laptops on an admin key, mint a runtime key, replace it
+in `hook.conf`, and revoke the old one. Until then, Votal can set
+`SHIELD_HOOKS_ALLOW_ADMIN_KEY=1` on the guardrail server. An unscoped key still
+works, with a `Warning` header. To deny any agent without a runtime profile
+rather than allow it, the operator sets `"hooks": {"require_profile": true}`
+with `PUT /v1/admin/tenants/{tenant_id}`.
+
 **Turn on the rules you want.** In the console, Tool Registry, default
 policy: tick the Secrets you care about (AWS access keys, passwords in
 connection strings, key=value secrets), and "Instructions to the AI in
@@ -166,6 +183,13 @@ plugins. `plugin/` is a plugin marketplace with one plugin,
 `votal-shield-hooks`: the same hooks as `claude-settings-fail-closed.json`,
 running the script it carries. It reads the same `~/.votal/hook.conf` (step 4),
 so install that first.
+
+When a managed config is installed (`/Library/Application Support/Votal/hook.conf`
+on macOS, `/etc/votal/hook.conf` on Linux, `C:\ProgramData\Votal\hook.conf` on
+Windows), the script reads that one instead, whatever the hooks pass. It must be
+owned by root (Administrators on Windows) and writable by no one else, or every
+call is refused; with it, a localhost `SHIELD_URL` is refused too. A
+`~/.votal/hook.conf` install is for trials: its owner can edit it.
 
 **Claude Code:**
 

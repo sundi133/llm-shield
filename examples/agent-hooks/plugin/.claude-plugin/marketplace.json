@@ -11,7 +11,7 @@
       "name": "votal-shield-hooks",
       "source": "./votal-shield-hooks",
       "description": "Applies your Votal Shield Tool Registry policies to every tool call, before and after it runs.",
-      "version": "1.1.0"
+      "version": "1.2.0"
     }
   ]
 }

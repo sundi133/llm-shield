@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/sh \"$HOME/.votal/claude_code_hook.sh\" --config \"$HOME/.votal/hook.conf\" --target claude-code || exit 2",
+            "command": "/bin/sh \"$HOME/.votal/claude_code_hook.sh\" --target claude-code || exit 2",
             "timeout": 30
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/sh \"$HOME/.votal/claude_code_hook.sh\" --config \"$HOME/.votal/hook.conf\" --target claude-code",
+            "command": "/bin/sh \"$HOME/.votal/claude_code_hook.sh\" --target claude-code",
             "timeout": 30
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/sh \"$HOME/.votal/claude_code_hook.sh\" --config \"$HOME/.votal/hook.conf\" --target claude-code",
+            "command": "/bin/sh \"$HOME/.votal/claude_code_hook.sh\" --target claude-code",
             "timeout": 30
           }
         ]

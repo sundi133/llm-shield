@@ -34,12 +34,22 @@
 #
 #   "command": "/bin/sh '/Library/Application Support/Votal/claude_code_hook.sh' || exit 2"
 #
-# Settings come from a root-owned config file, never from the environment
-# (Claude Code's environment is the user's). Default locations:
-#   macOS  /Library/Application Support/Votal/hook.conf
-#   Linux  /etc/votal/hook.conf
-# or --config <path> as the first argument (fixed by the admin in the
-# managed setting). Format, one per line, # for comments:
+# Settings come from a config file, never from the environment (Claude Code's
+# environment is the user's). Which file (docs/specs/hooks-plugin-production.md
+# section 5):
+#   1. The managed file, when it exists. It wins over --config, so neither a
+#      plugin nor a settings file can point the hook somewhere else:
+#        macOS  /Library/Application Support/Votal/hook.conf
+#        Linux  /etc/votal/hook.conf
+#      It and its folder must be owned by root and writable by no one else;
+#      otherwise every call is refused.
+#   2. Otherwise --config <path>.
+#   3. Otherwise ~/.votal/hook.conf (a self-install, which the user can edit).
+# The hook runs MANAGED when the file it read is owned by root and writable by
+# no one else, wherever it is; then SHIELD_URL may not be a localhost address
+# (only the Votal device agent's, with its local secret). Shield is told the
+# mode, the version and the OS, so an admin can see which laptops are managed.
+# Format, one per line, # for comments:
 #   SHIELD_URL=https://api.guardrails.votal.ai
 #   SHIELD_API_KEY=<tenant key with the runtime scope>
 #   SHIELD_AGENT=claude-code          (optional, default claude-code)
@@ -116,13 +126,30 @@ case "$TARGET" in
     claude-code|codex) ;;
     *) deny "unknown --target '$TARGET' (claude-code or codex), so this action is not allowed" ;;
 esac
-if [ -z "$CONF" ]; then
-    if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
-        CONF="/Library/Application Support/Votal/hook.conf"
-    else
-        CONF="/etc/votal/hook.conf"
-    fi
+
+HOOK_VERSION=1.2.0   # the plugin's version (plugin.json); tests pin them together
+MANAGED_UID=0
+MANAGED_CONF_DARWIN="/Library/Application Support/Votal/hook.conf"
+MANAGED_CONF_OTHER="/etc/votal/hook.conf"
+if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+    HOOK_OS=darwin MANAGED_CONF=$MANAGED_CONF_DARWIN
+else
+    HOOK_OS=linux MANAGED_CONF=$MANAGED_CONF_OTHER
 fi
+
+# The file and its folder are owned by MANAGED_UID and writable by no one else
+# (ls -n gives the numeric owner; -L judges what a symlink points at).
+managed_ok() {
+    for p in "$1" "${1%/*}"; do
+        line=$(ls -ldnL "$p" 2>/dev/null) || return 1
+        set -- $line
+        [ "$3" = "$MANAGED_UID" ] || return 1
+        case "$1" in
+            ?????w*|????????w*) return 1 ;;
+        esac
+    done
+    return 0
+}
 
 # The event comes in on stdin with the call; buffer it to read the event name
 # (the body is forwarded unchanged). Before the config, so that a broken setup
@@ -134,6 +161,15 @@ case "$(tr -d ' \t\r\n' < "$IN")" in
     *'"hook_event_name":"PostToolUse"'*) EVENT=PostToolUse ;;
     *'"hook_event_name":"UserPromptSubmit"'*) EVENT=UserPromptSubmit ;;
 esac
+MODE=user
+if [ -e "$MANAGED_CONF" ]; then
+    CONF=$MANAGED_CONF
+    managed_ok "$CONF" || fail "$CONF and its folder must be owned by root and writable by no one else, so this action is not allowed"
+    MODE=managed
+else
+    [ -n "$CONF" ] || CONF="${HOME:-}/.votal/hook.conf"
+    [ -r "$CONF" ] && managed_ok "$CONF" && MODE=managed
+fi
 [ -n "$CONF" ] && [ -r "$CONF" ] || fail "hook config $CONF is missing or unreadable, so this action is not allowed"
 
 # Parse KEY=value lines; never source the file.
@@ -174,7 +210,10 @@ if [ -n "$SECRET_FILE" ]; then
 else
     [ -n "$KEY" ] || fail "SHIELD_API_KEY is not set in $CONF, so this action is not allowed"
     case "$URL" in
-        https://*|http://127.0.0.1|http://127.0.0.1[:/]*|http://localhost|http://localhost[:/]*) ;;
+        https://*) ;;
+        http://127.0.0.1|http://127.0.0.1[:/]*|http://localhost|http://localhost[:/]*)
+            # A local stand-in answering {} would allow everything: testing only.
+            [ "$MODE" = "user" ] || fail "SHIELD_URL must be https in a managed install, so this action is not allowed" ;;
         *) fail "SHIELD_URL must be https (or a localhost address for testing)" ;;
     esac
 fi
@@ -207,6 +246,9 @@ chmod 600 "$HDRS" "$BODY"
         printf 'X-Device-Id: %s\n' "$HOST_NAME"
     fi
     printf 'X-Shield-User: %s\n' "$USER_NAME"
+    printf 'X-Votal-Hook-Version: %s\n' "$HOOK_VERSION"
+    printf 'X-Votal-Hook-Mode: %s\n' "$MODE"
+    printf 'X-Votal-Hook-OS: %s\n' "$HOOK_OS"
     printf 'Content-Type: application/json\n'
 } > "$HDRS"
 

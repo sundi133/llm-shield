@@ -34,6 +34,21 @@ jobs:
         # packages (core/, api/, storage/) import without a src layout.
         run: python -m pytest tests -q
 
+  hook-windows:
+    # The PowerShell hook, run for real under pwsh and Windows PowerShell 5.1,
+    # including the managed-mode ACL checks (docs/specs/hooks-plugin-production.md).
+    name: hook script (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pytest
+        run: python -m pip install pytest
+      - name: Run the PowerShell hook tests
+        run: python -m pytest --noconftest tests/test_hook_script_windows.py -q -rs
+
   extension:
     name: extension (node)
     runs-on: ubuntu-latest

@@ -58,8 +58,8 @@ what the policy checks decide.
   `/codex`, the coding-agent guard path. Changes there:
   - key binding and the no-profile refusal (section 5): one in-memory read of
     the key record, which the auth middleware already loads;
-  - coverage recording: written in a `BackgroundTasks` task after the
-    response, so the hook's answer waits for nothing new.
+  - coverage labels: three more fields on the existing `hook_seen` record,
+    written in the existing background task.
   - Latency budget: **under 1 ms added to the hook's answer.**
 - **Admin plane** (`admin_app.py`): the coverage read endpoint and portal card,
   in `api/routes_hooks_portal.py`, which is already in `Dockerfile.admin`. Off
@@ -70,23 +70,22 @@ what the policy checks decide.
 
 | Key | Shape | TTL | Notes |
 |---|---|---|---|
-| `hooks:seen:{tenant_id}` (hash) | field `{agent}\|{device}\|{user}` -> JSON `{"last_seen": epoch, "first_seen": epoch, "version": "1.2.0", "mode": "managed\|plugin\|unknown", "os": "darwin\|linux\|windows", "counts": {"PreToolUse": n, "PostToolUse": n, "UserPromptSubmit": n}}` | none; fields older than 90 days pruned on read | At most 5,000 fields per tenant; beyond that the oldest are dropped, with a warning in the response |
+| `hook_seen:{tenant_id}` (existing hash, `core/runtime_policy/hook_seen.py`) | field `{agent}\|{device or user}` -> the existing record plus `"hook_version": "1.2.0"`, `"hook_mode": "managed\|user\|unknown"`, `"hook_os": "darwin\|linux\|windows\|unknown"` | none (as today) | Built in task 2. Reused rather than a second hash: it already records each laptop's last call, written after the answer, at most once a minute per laptop unless the decision changes. Per-event counts dropped |
 | tenant API key record (existing) | new optional field `"agent": "<agent id>"` | n/a | Set when the key is registered for a fleet; see section 5 |
 | tenant config (existing) | new optional `"hooks": {"require_profile": bool, "stale_after_hours": int}` | n/a | `require_profile` defaults to false (section 5) |
 
 - **Tenant scoping:** the tenant always comes from the credential, never from
   a header or body. Device and user come from the script's headers and are
   labels for the admin, not trust decisions.
-- **Write cost:** one HSET per hook call. To cap it, a field is rewritten only
-  when 60 s have passed since its `last_seen`; the counts are kept in process
-  and flushed then.
+- **Write cost:** unchanged: `hook_seen` already writes at most once a minute
+  per laptop, in a background task.
 
 ## 4. API and interface
 
 **Script to Shield (data plane), new request headers:**
 
 - `X-Votal-Hook-Version: 1.2.0`
-- `X-Votal-Hook-Mode: managed|plugin` (managed when the root-owned config was read)
+- `X-Votal-Hook-Mode: managed|user` (managed when the config read is owned by root and writable by no one else; `user` for a self-install, plugin or settings file)
 - `X-Votal-Hook-OS: darwin|linux|windows`
 
 Unknown or missing values are recorded as `unknown`, never refused.
@@ -95,15 +94,17 @@ Unknown or missing values are recorded as `unknown`, never refused.
 
 | Method and path | Auth | Answer |
 |---|---|---|
-| `GET /v1/tenant/me/hooks/coverage?stale_after_hours=24&limit=200&cursor=` | portal session or tenant settings key | `{"devices":[{"agent","device","user","last_seen","version","mode","os","stale":bool}], "stale_count", "next_cursor", "truncated"}` |
+| `GET /v1/tenant/me/hooks/coverage?stale_after_hours=24&limit=200&cursor=` (task 3) | portal session or tenant settings key | `{"devices":[{"agent","device","user","last_seen","version","mode","os","stale":bool}], "stale_count", "next_cursor", "truncated"}`, read from `hook_seen`. The existing `GET /v1/tenant/me/hooks/claude-code` already lists these rows |
 | `POST /v1/tenant/me/hooks/claude-code/kit` (existing) | portal session or tenant settings key | gains `{"os": "macos\|windows\|linux", "tier": "standard\|regulated", "agent": "<id>"}`; returns `managed-settings.json`, `hook.conf` and an install script for that OS (section 6) |
 
 **Portal:** a Coverage card on the coding-agent hooks page, listing laptops,
 last seen, version and mode, with stale laptops first.
 
-**Key registration:** `POST /v1/admin/tenants/{tenant_id}/api-keys` and the
-tenant self-service key routes accept an optional `"agent"`, valid only with
-`"scope": "runtime"`.
+**Key registration:** `POST /v1/admin/tenants/{tenant_id}/api-keys` accepts an
+optional `"agent"`, valid only with `"scope": "runtime"`. The tenant's own
+`POST /v1/tenant/me/api-keys` accepts `"agent"` too and then mints a runtime
+key bound to it: the one scope that route sets, since a bound runtime key is
+strictly less than the unscoped key it mints otherwise.
 
 ## 5. Security and backward compatibility
 
@@ -116,7 +117,7 @@ tenant self-service key routes accept an optional `"agent"`, valid only with
 | The hook route refuses an **admin-scoped** tenant key (403, "use a runtime key on laptops") | **On**, behaviour change | `SHIELD_HOOKS_ALLOW_ADMIN_KEY=1` for one release; migration note in the guide | F3 |
 | Unscoped legacy keys keep working on the hook route, with a `Warning` header and a portal notice | Warn only | n/a | F3 |
 | Regulated tier in the kit: `ON_UNREACHABLE=deny`, `ON_UNREACHABLE_RESULT=withhold`, `ON_UNREACHABLE_PROMPT=block` | Kit option; the script's built-in defaults are unchanged | choose `standard` | F9 |
-| Coverage recording | On; labels only, never prompt or tool content | `SHIELD_HOOKS_COVERAGE=off` | F10 |
+| Coverage labels on `hook_seen` | On, as `hook_seen` already is; labels only, never prompt or tool content | none needed (no new write) | F10 |
 
 Ops actions, no code:
 
@@ -132,7 +133,7 @@ Ops actions, no code:
   user-level `disableAllHooks` or `allowManagedHooksOnly` affects managed and
   plugin hooks is **unverified**; task 0 decides it.
 - **Plugin mode:** the user can remove or edit the plugin. That is documented
-  as such, and visible in coverage as `mode: plugin`, stale or missing.
+  as such, and visible in coverage as `mode: user`, stale or missing.
 - **A stolen laptop key** can only screen calls for its bound agent. It cannot
   read or write policy, provided `SHIELD_CONFIG_WRITE_SCOPE=enforce` is set.
 
@@ -157,7 +158,7 @@ Ops actions, no code:
   - an install script MDM runs as root (`install.sh`, `install.ps1`) that sets
     ownership and modes.
 - **Images:** data plane and admin plane both rebuild (route changes on both).
-- **Env flags:** `SHIELD_HOOKS_ALLOW_ADMIN_KEY`, `SHIELD_HOOKS_COVERAGE`.
+- **Env flags:** `SHIELD_HOOKS_ALLOW_ADMIN_KEY`.
 
 ## 7. Failure modes and edge cases
 

@@ -160,10 +160,11 @@ def test_bad_config_denies(shell, tmp_path, text, needle):
 
 
 def test_default_config_location_is_not_the_environment(tmp_path):
-    """No --config: the root-owned default path. Nothing in the environment
-    can point the hook at another Shield."""
+    """No --config and no managed file: ~/.votal/hook.conf (a self-install).
+    No variable names a Shield or a key. docs/specs/hooks-plugin-production.md"""
     r = _run(None, args=[], env={"SHIELD_URL": "http://127.0.0.1:1", "SHIELD_API_KEY": "k",
-                                 "VOTAL_HOOK_CONF": str(tmp_path / "x")})
+                                 "VOTAL_HOOK_CONF": str(tmp_path / "x"),
+                                 "HOME": str(tmp_path)})
     if os.path.exists("/Library/Application Support/Votal/hook.conf") or \
             os.path.exists("/etc/votal/hook.conf"):
         pytest.skip("a real hook config is installed on this machine")
