@@ -1,0 +1,162 @@
+name: Hooks plugin release
+
+# Publishes the votal-shield-hooks plugin (examples/agent-hooks/plugin) as a
+# Claude Code plugin marketplace on a static HTTPS host, and as a GitHub
+# Release. Spec: docs/specs/hooks-plugin-production.md, task 5. Customer
+# guide: docs/claude-code-production-rollout.md.
+#
+# Tag hooks-plugin-v<version>; the version must equal plugin.json,
+# marketplace.json and HOOK_VERSION in both hook scripts (the packager checks).
+# A manual run (workflow_dispatch) builds and checks only, unless publish=true.
+#
+# Where: vars.HOOKS_PLUGIN_BASE_URL, default
+# https://storage.googleapis.com/votal-ai/claude-plugins. Upload credentials,
+# one of:
+#   vars.GCP_WORKLOAD_IDENTITY_PROVIDER + vars.GCP_SERVICE_ACCOUNT (preferred)
+#   secrets.GCP_SA_KEY (a service account JSON key)
+# The service account needs write access to that bucket prefix and nothing
+# else: whoever can write the zip runs code on every laptop that installs it.
+on:
+  push:
+    tags: ["hooks-plugin-v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Upload and create the release (true), or build and check only (false)"
+        default: "false"
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: hooks-plugin-release
+  cancel-in-progress: false
+
+env:
+  BASE_URL: ${{ vars.HOOKS_PLUGIN_BASE_URL || 'https://storage.googleapis.com/votal-ai/claude-plugins' }}
+
+jobs:
+  release:
+    name: Build, publish, verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: What to do
+        id: plan
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#hooks-plugin-v}"; PUBLISH=true
+          else
+            VERSION=$(python -c "import json;print(json.load(open('examples/agent-hooks/plugin/votal-shield-hooks/.claude-plugin/plugin.json'))['version'])")
+            PUBLISH="${{ inputs.publish }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "tag=hooks-plugin-v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version $VERSION, publish: $PUBLISH, to $BASE_URL"
+
+      - name: Build (refuses a version or script mismatch)
+        run: |
+          python examples/agent-hooks/plugin/package_for_bucket.py \
+            --base-url "$BASE_URL" --out dist --expect-version "${{ steps.plan.outputs.version }}"
+          cp core/runtime_policy/hook_scripts/claude_code_hook.sh core/runtime_policy/hook_scripts/claude_code_hook.ps1 dist/
+          (cd dist && sha256sum -- *.zip *.sh *.ps1 marketplace.json > SHA256SUMS && cat SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: votal-shield-hooks-${{ steps.plan.outputs.version }}
+          path: dist/
+
+      - name: Check the credentials
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SA: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          HAS_KEY: ${{ secrets.GCP_SA_KEY != '' }}
+        run: |
+          case "$BASE_URL" in
+            https://storage.googleapis.com/*) ;;
+            *) echo "::error::HOOKS_PLUGIN_BASE_URL must be a storage.googleapis.com URL for this workflow to upload"; exit 1 ;;
+          esac
+          if [ -z "$WIF$SA" ] && [ "$HAS_KEY" != "true" ]; then
+            echo "::error::Set vars.GCP_WORKLOAD_IDENTITY_PROVIDER and vars.GCP_SERVICE_ACCOUNT, or secrets.GCP_SA_KEY, to publish. Nothing was uploaded."
+            exit 1
+          fi
+
+      - name: Authenticate (workload identity)
+        if: steps.plan.outputs.publish == 'true' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Authenticate (key)
+        if: steps.plan.outputs.publish == 'true' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER == ''
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        if: steps.plan.outputs.publish == 'true'
+
+      - name: Upload (the zip first; a published version is never replaced)
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          GS="gs://${BASE_URL#https://storage.googleapis.com/}"
+          ZIP=$(cd dist && ls votal-shield-hooks-*.zip)
+          if gcloud storage objects describe "$GS/$ZIP" >/dev/null 2>&1; then
+            gcloud storage cp "$GS/$ZIP" existing.zip
+            if ! cmp -s existing.zip "dist/$ZIP"; then
+              echo "::error::$GS/$ZIP is already published with other content. Bump the version; never replace a published zip."
+              exit 1
+            fi
+            echo "$ZIP is already published, identical: not uploaded again"
+          else
+            gcloud storage cp "dist/$ZIP" "$GS/$ZIP" --cache-control="public, max-age=31536000, immutable"
+          fi
+          gcloud storage cp dist/marketplace.json "$GS/marketplace.json" --cache-control="no-cache" \
+            --content-type=application/json
+
+      - name: Verify what is served
+        if: steps.plan.outputs.publish == 'true'
+        run: |
+          curl -fsS "$BASE_URL/marketplace.json" -o served.json
+          URL=$(python -c "import json;print(json.load(open('served.json'))['plugins'][0]['source']['url'])")
+          WANT=$(python -c "import json;print(json.load(open('served.json'))['plugins'][0]['source']['sha256'])")
+          curl -fsS "$URL" -o served.zip
+          GOT=$(sha256sum served.zip | cut -d' ' -f1)
+          if [ "$GOT" != "$WANT" ]; then
+            echo "::error::the served zip's sha256 ($GOT) is not the catalog's ($WANT)"
+            exit 1
+          fi
+          echo "Served and pinned: $URL ($GOT)"
+
+      - name: GitHub release
+        if: steps.plan.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          cat > notes.md <<EOF
+          votal-shield-hooks $VERSION: Votal Shield checks for Claude Code and Cowork, before each tool call, after it, and on each prompt.
+
+          Install from the hosted catalog (Claude Code 2.1.224 or later for archive sources):
+
+              claude plugin marketplace add $BASE_URL/marketplace.json
+              claude plugin install votal-shield-hooks@votal-shield
+
+          For fleets, deploy the managed kit from the Votal portal instead: users cannot edit or remove it.
+          Guide: docs/claude-code-production-rollout.md. Verify downloads against SHA256SUMS.
+          EOF
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber --repo "${{ github.repository }}"
+          else
+            gh release create "$TAG" dist/* --repo "${{ github.repository }}" \
+              --title "Votal Shield hooks plugin $VERSION" --notes-file notes.md --target "${{ github.sha }}"
+          fi

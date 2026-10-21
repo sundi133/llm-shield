@@ -262,4 +262,11 @@ read them outside the profile.
 | 4 | Windows in the plugin and the kit: a Windows hook command (per V4), the `.ps1` shipped in the plugin, end to end on a Windows VM | 1, V4 |
 | 5 | Release workflow to the bucket with sha256 pinning; plugin 1.2.0; customer guide `docs/claude-code-production-rollout.md` (managed vs plugin, migration note for admin keys, ops flags) | 3, 4 |
 
+**Found while writing the guide (task 5), not yet built:** hooks installed
+from a kit or the plugin always enforce. The tenant's monitor/enforce switch
+(`policy_mode`) does not reach `/v1/shield/hooks/*` for a tenant key; only
+Votal device agent fleets have a monitor mode. The guide says so and tells
+admins to pilot with a small group. A follow-up could honour the tenant's
+mode on the tenant-key path.
+
 Ops, alongside task 2: the production flags and key rotation in section 5.
