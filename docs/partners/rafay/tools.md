@@ -65,8 +65,9 @@ break the customer's data rules.
 
 **Register each customer agent first** (settings key), listing the tools it may
 call and which roles may call which. A call is allowed only when the tool is on
-both the agent's list and the role's list. Names or patterns both work: `"*"`
-means every tool, `"crm_*"` every tool starting with `crm_`.
+both the agent's list and the role's list. The agent's `tools` names each tool;
+a role may use patterns: `["*"]` means every tool the agent has, `["crm_*"]`
+every one starting with `crm_`.
 
 ```bash
 curl -X POST https://api.guardrails.votal.ai/v1/agents/registry \

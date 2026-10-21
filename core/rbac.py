@@ -61,7 +61,8 @@ class RBACEnforcer:
         - If allowed_tools is empty (and not denied), allow all.
 
         Entries are names or fnmatch patterns ("*", "crm_*"), as in the tool
-        allowlist, so a registry role of ["*"] means every tool in both.
+        allowlist, so a registry role of ["*"] means every tool the agent has
+        in both guards.
         """
         if role.denied_tools and _matches(tool_name, role.denied_tools):
             return False

@@ -7,7 +7,7 @@
 3. The kill switch answered "disabled" on a deployment that never enforces
    it (SHIELD_ENABLE_KILLSWITCH unset), so operators believed a tool stopped.
 4. A role list of ["*"] passed the allowlist but failed RBAC, which matched
-   exact names only, so "every tool" could not be expressed.
+   exact names only, so "every tool this agent has" could not be expressed.
 """
 
 import uuid
@@ -142,10 +142,12 @@ def test_role_with_the_tool_still_waits_for_approval(app):
     assert d["action"] == "pending_confirmation"
 
 
-def test_star_means_every_tool_in_both_rbac_and_the_allowlist(app):
+def test_role_star_means_every_tool_the_agent_has(app):
+    # The agent's own list names each tool (the registry validates names);
+    # a role may use patterns, and both guards now read them the same way.
     t = _tenant(app)
     r = t.client.post("/v1/agents/registry", headers=t.approver, json={
-        "agent_id": "any-bot", "tools": ["*"],
+        "agent_id": "any-bot", "tools": ["lookup_weather", "crm_lookup", "send_email"],
         "role_permissions": {"support": ["*"], "crm": ["crm_*"]}})
     assert r.status_code == 200, r.text
 
@@ -160,6 +162,7 @@ def test_star_means_every_tool_in_both_rbac_and_the_allowlist(app):
     assert check("support", "lookup_weather")["allowed"] is True
     assert check("crm", "crm_lookup")["allowed"] is True
     assert check("crm", "send_email")["allowed"] is False
+    assert check("support", "drop_database")["allowed"] is False  # not on the agent's list
 
 
 def test_rbac_patterns_unit():
