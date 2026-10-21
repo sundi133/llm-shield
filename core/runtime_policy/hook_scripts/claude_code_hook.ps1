@@ -44,20 +44,26 @@ $ManagedConf = Join-Path ([Environment]::GetFolderPath("CommonApplicationData"))
 $ManagedOwners = @("S-1-5-32-544", "S-1-5-18",
                    "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")
 
-# Owned by a managed owner, and no one else may write, delete or re-permission it.
+# Owned by a managed owner, and no one else may write, delete or re-permission
+# it. $script:ManagedWhy says what disqualified it, for the refusal message.
+$script:ManagedWhy = ""
 function Test-Managed([string]$Path) {
     try {
         $sid = [System.Security.Principal.SecurityIdentifier]
         $acl = Get-Acl -LiteralPath $Path
-        if ($ManagedOwners -notcontains $acl.GetOwner($sid).Value) { return $false }
+        $owner = $acl.GetOwner($sid).Value
+        if ($ManagedOwners -notcontains $owner) { $script:ManagedWhy = "owner $owner"; return $false }
         $write = [System.Security.AccessControl.FileSystemRights]"WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, ChangePermissions, TakeOwnership"
         foreach ($r in $acl.GetAccessRules($true, $true, $sid)) {
             if ($r.AccessControlType -ne "Allow") { continue }
             if ($ManagedOwners -contains $r.IdentityReference.Value) { continue }
-            if (([int]$r.FileSystemRights -band [int]$write) -ne 0) { return $false }
+            if (([int]$r.FileSystemRights -band [int]$write) -ne 0) {
+                $script:ManagedWhy = "$($r.IdentityReference.Value) can write it"
+                return $false
+            }
         }
         return $true
-    } catch { return $false }
+    } catch { $script:ManagedWhy = "its permissions could not be read ($($_.Exception.Message))"; return $false }
 }
 
 function Deny([string]$Why) {
@@ -107,7 +113,7 @@ $script:Mode = "user"
 if (Test-Path -LiteralPath $ManagedConf) {
     $Config = $ManagedConf
     if (-not (Test-Managed $Config)) {
-        Fail "$Config must be owned by Administrators and writable by no one else, so this action is not allowed"
+        Fail "$Config must be owned by Administrators and writable by no one else ($script:ManagedWhy), so this action is not allowed"
     }
     $script:Mode = "managed"
 } else {

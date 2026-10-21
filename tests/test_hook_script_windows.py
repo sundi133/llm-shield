@@ -82,6 +82,19 @@ def _run(shell, script, args):
                           capture_output=True, timeout=60)
 
 
+def _acl(shell, path):
+    """The owner and access rules as SIDs, and who runs the test: why a file
+    was or was not judged managed."""
+    ps = (f"$a = Get-Acl -LiteralPath '{path}'; "
+          "$t = [System.Security.Principal.SecurityIdentifier]; "
+          "'me=' + [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; "
+          "'owner=' + $a.GetOwner($t).Value; "
+          "$a.GetAccessRules($true, $true, $t) | ForEach-Object { "
+          "'' + $_.IdentityReference.Value + ' ' + $_.AccessControlType + ' ' + [int]$_.FileSystemRights }")
+    return subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True,
+                          text=True, timeout=60).stdout
+
+
 def _grant_everyone_write(path):
     subprocess.run(["icacls", str(path), "/grant", "*S-1-1-0:(W)"], check=True,
                    capture_output=True)
@@ -142,4 +155,4 @@ def test_managed_mode_is_reported(shell, shield, tmp_path):
                    current_user_is_owner=True)
     r = _run(shell, script, ["-Config", str(conf)])
     assert r.returncode == 0, r.stderr
-    assert shield["seen"][-1]["x-votal-hook-mode"] == "managed"
+    assert shield["seen"][-1]["x-votal-hook-mode"] == "managed", _acl(shell, conf)
