@@ -74,12 +74,14 @@ def device_info() -> dict:
 
 
 def _hook_urllib(method: str, url: str, headers: dict, body) -> tuple:
-    """sync._urllib with a 3 s timeout: the hook script waits 4 s for this agent."""
+    """sync._urllib with a timeout a second under the hook script's, so this
+    agent answers before the script gives up on it."""
     import urllib.error
     import urllib.request
+    from votal_device_agent.agent_hooks import SCRIPT_TIMEOUT_S
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=3) as r:
+        with urllib.request.urlopen(req, timeout=SCRIPT_TIMEOUT_S - 1) as r:
             return r.status, dict(r.headers), r.read()
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers or {}), b""

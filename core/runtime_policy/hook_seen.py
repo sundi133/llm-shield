@@ -68,6 +68,35 @@ def list_seen(tenant_id: str) -> list[dict]:
     return rows[:MAX_LISTED]
 
 
+def list_all(tenant_id: str, *, older_than: float = 0) -> tuple[list[dict], list[str]]:
+    """(rows newest first, fields last seen before ``older_than``). The
+    expired ones are not in the rows; the caller may forget them. Uncapped:
+    the coverage view pages through it (docs/specs/hooks-plugin-production.md)."""
+    from core.dlp.devices import _hgetall
+
+    rows, expired = [], []
+    for field, v in (_hgetall(_key(tenant_id)) or {}).items():
+        if not isinstance(v, dict):
+            continue
+        if older_than and (v.get("at") or 0) < older_than:
+            expired.append(field)
+        else:
+            rows.append(v)
+    rows.sort(key=lambda r: r.get("at") or 0, reverse=True)
+    return rows, expired
+
+
+def forget(tenant_id: str, field: str) -> None:
+    """Drop one laptop's row. Never raises."""
+    from core.dlp.devices import _hdel
+    try:
+        _hdel(_key(tenant_id), field)
+    except Exception:       # noqa: BLE001
+        pass
+    with _lock:
+        _last.pop((tenant_id, field), None)
+
+
 def reset_for_tests() -> None:
     with _lock:
         _last.clear()

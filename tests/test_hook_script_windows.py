@@ -156,3 +156,51 @@ def test_managed_mode_is_reported(shell, shield, tmp_path):
     r = _run(shell, script, ["-Config", str(conf)])
     assert r.returncode == 0, r.stderr
     assert shield["seen"][-1]["x-votal-hook-mode"] == "managed", _acl(shell, conf)
+
+
+# ── the kit's installer, run for real (docs/specs/hooks-plugin-production.md task 3) ──
+# Writes C:\Program Files\Votal, C:\ProgramData\Votal and C:\Program Files\ClaudeCode,
+# so only on a throwaway runner: VOTAL_KIT_E2E=1 in the Windows CI job.
+
+E2E = WINDOWS and os.environ.get("VOTAL_KIT_E2E") == "1"
+PROMPT = {"session_id": "s", "hook_event_name": "UserPromptSubmit", "prompt": "hi"}
+POST = {**CALL, "hook_event_name": "PostToolUse", "tool_response": "result"}
+
+
+@pytest.fixture(scope="module")
+def installed(tmp_path_factory):
+    from core.runtime_policy import hook_kit
+    files = hook_kit.build("command", "windows", shield_url="http://127.0.0.1:9",
+                           key="rfy_e2e_key_0123456789", agent="claude-code",
+                           tenant_id="e2e", tier="regulated")
+    script = tmp_path_factory.mktemp("kit") / "install.ps1"
+    script.write_text(files["install-votal-claude-code.ps1"]["content"], encoding="utf-8")
+    r = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                        "-File", str(script)], capture_output=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return hook_kit.PATHS["windows"]
+
+
+def _installed_hook(shell, paths, payload, *args):
+    return subprocess.run([shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                           "-File", paths["script"], *args], input=json.dumps(payload).encode(),
+                          capture_output=True, timeout=60)
+
+
+@pytest.mark.skipif(not E2E, reason="real install: Windows CI only (VOTAL_KIT_E2E=1)")
+def test_installed_kit_runs_managed(shell, installed, tmp_path):
+    other = tmp_path / "mine.conf"
+    other.write_text("SHIELD_URL=https://elsewhere.example\nSHIELD_API_KEY=k\nON_UNREACHABLE=allow\n")
+    for args in ((), ("-Config", str(other))):
+        r = _installed_hook(shell, installed, CALL, *args)
+        assert r.returncode == 2 and b"must be https in a managed install" in r.stderr, r.stderr
+
+
+@pytest.mark.skipif(not E2E, reason="real install: Windows CI only (VOTAL_KIT_E2E=1)")
+def test_installed_regulated_kit_withholds_and_blocks(shell, installed):
+    r = _installed_hook(shell, installed, POST)
+    assert r.returncode == 0 and b"Shield withheld this result" in r.stdout, r
+    r = _installed_hook(shell, installed, PROMPT)
+    assert r.returncode == 0 and json.loads(r.stdout)["decision"] == "block", r
+    settings = json.loads(open(installed["managed"], encoding="utf-8").read())
+    assert set(settings["hooks"]) == {"PreToolUse", "PostToolUse", "UserPromptSubmit"}

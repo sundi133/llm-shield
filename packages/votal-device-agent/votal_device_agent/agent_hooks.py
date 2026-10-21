@@ -39,8 +39,11 @@ CLAUDE_CODE = "claude_code"
 HOOK_VERSION = "1"
 #: The same matcher the portal's rollout files use (core/runtime_policy/hook_kit.py).
 MATCHER = "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Glob|Grep|WebFetch|mcp__.*"
-HOOK_TIMEOUT_S = 10          # Claude Code's limit for the hook
-SCRIPT_TIMEOUT_S = 4         # the script's own limit: below the hook's (agent-hook-adapter 4.3)
+# Rules judged by Shield's model take seconds, so the same limits as the
+# hook kit (docs/specs/hooks-plugin-production.md): the agent's call to Shield
+# gives up first, then the script, then Claude Code.
+HOOK_TIMEOUT_S = 30          # Claude Code's limit for the hook
+SCRIPT_TIMEOUT_S = 25        # the script's own limit: below the hook's (agent-hook-adapter 4.3)
 STATE_FILE = "agent_hooks.json"
 ON_MODES = ("monitor", "enforce")
 

@@ -156,8 +156,13 @@ smoke-agent-hooks.yml`) once the `SHIELD_SMOKE_TENANT_KEY` secret is set.
   **active**, are in **settings conflict**, report an **error**, or have
   **not reported** (agent older than 0.2.0, or not synced yet).
 - The **Laptops** list shows each laptop's latest call, its fleet, user,
-  profile and decision. A laptop whose last call keeps getting older while its
-  developer is working may have lost the hook or its route to Shield.
+  profile and decision, and how the hook is installed: **managed** (a config
+  only an administrator can change) or **user install** (the plugin or a
+  settings file, which its owner can edit or remove), with the hook's version
+  and OS. A laptop that stops calling Shield looks the same as one with
+  nothing to block, so laptops quiet for longer than the window you pick
+  (24 hours by default) are listed first as **stale**. The same data is at
+  `GET /v1/tenant/me/hooks/coverage`, for your own monitoring.
 - Every denial, every "ask" and every monitor-mode would-be denial is in the
   decision audit (guardrail `runtime_boundary`, source `claude_code`) with the
   user, laptop, fleet, session and reason. Every call goes to telemetry and
@@ -178,14 +183,19 @@ For laptops that do not run the Votal device agent (including Linux).
 1. **Profile and agent.** Follow steps 1 and 2 above, or create the profile
    under **Edit profile** and choose it in **Agent Registry** (the agent's
    **Runtime profile** field).
-2. **A key for laptops.** Create a tenant API key, ideally with the
-   `runtime` scope only. It is readable on every laptop, so do not reuse an
-   admin key.
+2. **A key for laptops.** It is readable on every laptop, so mint a runtime
+   key bound to the agent: `POST /v1/tenant/me/api-keys` with
+   `{"label": "laptops", "agent": "claude-code"}`. Whoever reads it off a
+   laptop can then only screen calls, as that agent. Shield refuses an
+   admin-scoped key on laptops, and **Build files** refuses one, or a key bound
+   to another agent, before it is baked into the files.
 3. **Build the files.** Open **Laptops without the Votal agent** in the card,
-   choose the hook and the operating system, check the agent id and the
+   choose the hook, the operating system and the tier, check the agent id and the
    Shield URL (your Shield API address, not the portal's), paste the key, and
    click **Build files**. The key is used to build the files and is not
-   stored.
+   stored. **Regulated** (fail-closed hook only) also withholds tool results
+   and blocks prompts when Shield cannot answer; **Standard** lets those
+   through, and denies only tool calls.
 4. **Deploy** with your MDM:
 
 | File | What it is | Where it goes |
@@ -193,6 +203,7 @@ For laptops that do not run the Votal device agent (including Linux).
 | `managed-settings.json` | Claude Code managed settings with the hook | macOS `/Library/Application Support/ClaudeCode/`, Linux `/etc/claude-code/`, Windows `C:\Program Files\ClaudeCode\` |
 | `votal-claude-code.mobileconfig` (macOS) | The same settings as a configuration profile; try it on one Mac first | Your MDM (Jamf, Kandji, Intune) |
 | `install-votal-claude-code.sh` (macOS, Linux) | Installs everything in one step, as root; never overwrites managed settings it did not write | An MDM policy script |
+| `install-votal-claude-code.ps1` (Windows) | The same, as an administrator, with the permissions the hook checks: owner Administrators, users read only | An Intune (or other MDM) script |
 | `hook.conf` (fail-closed) | The hook's Shield URL, key and agent | macOS `/Library/Application Support/Votal/`, Linux `/etc/votal/`, Windows `C:\ProgramData\Votal\` |
 | `claude_code_hook.sh` / `.ps1` (fail-closed) | The hook | macOS `/Library/Application Support/Votal/`, Linux `/opt/votal/`, Windows `C:\Program Files\Votal\` |
 
@@ -242,9 +253,14 @@ the hook cannot see it; Votal's device agent or secure web gateway covers it.
   `/tmp`, `/var` and `/etc` on macOS are treated as their `/private/...`
   real paths.
 - **Without the agent**, keep `|| exit 2` at the end of the fail-closed hook
-  command (without it, a missing script lets actions through) and keep
-  `SHIELD_TIMEOUT` (4 seconds) below the hook's `timeout` (10 seconds). The
-  agent's settings already do both.
+  command before a call (without it, a missing script lets actions through)
+  and keep `SHIELD_TIMEOUT` (25 seconds) below the hook's `timeout`
+  (30 seconds): rules Shield's model judges take a few seconds. The kit's
+  files already do both.
+- **The managed config wins.** When `hook.conf` is at the managed path, the
+  hook reads it whatever the settings or a plugin pass, and refuses every call
+  if anyone but root (Administrators on Windows) owns it or can write it. Leave
+  the permissions the installer sets.
 - **Windows.** The Windows hook is built and tested to the same rules, but how
   Claude Code runs a hook command on Windows is still being confirmed on a
   real laptop. Pilot Windows fleets in monitor mode first.
