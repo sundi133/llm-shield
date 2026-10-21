@@ -145,6 +145,9 @@ class TenantHooks(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # Deny an agent that has no runtime profile, instead of allowing it.
     require_profile: bool = False
+    # The coverage view calls a laptop stale after this many hours without a
+    # hook call (GET /v1/tenant/me/hooks/coverage).
+    stale_after_hours: int = Field(default=24, ge=1, le=720)
 
 
 class TenantUpdateRequest(BaseModel):

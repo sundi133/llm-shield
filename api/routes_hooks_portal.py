@@ -2,6 +2,8 @@
 
 GET  /v1/tenant/me/hooks/claude-code       laptops' last hook calls, the URL to use,
                                            what is set up
+GET  /v1/tenant/me/hooks/coverage          every laptop's last call, which are managed
+                                           and on which version, which went quiet
 POST /v1/tenant/me/hooks/claude-code/kit   rollout files for laptops WITHOUT the
                                            Votal agent (managed settings,
                                            .mobileconfig, install script, hook)
@@ -13,7 +15,8 @@ GET  /v1/tenant/me/hooks/os-events         what agents did: outside-profile even
                                            and per-laptop counts (agent-os-events)
 
 Specs: docs/specs/agent-hook-adapter.md task 3, and
-docs/specs/claude-code-fleet-rollout.md task 2. Not on any guard path: the
+docs/specs/claude-code-fleet-rollout.md task 2, and
+docs/specs/hooks-plugin-production.md task 3. Not on any guard path: the
 hook route itself is api/routes_hooks.py (data plane only). The hook key
 posted to /kit builds the files and is never stored or logged.
 """
@@ -21,6 +24,7 @@ posted to /kit builds the files and is never stored or logged.
 from __future__ import annotations
 
 import copy
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Body, HTTPException, Request
@@ -78,21 +82,138 @@ async def claude_code_overview(request: Request):
             "variants": list(hook_kit.VARIANTS), "oses": list(hook_kit.OSES)}
 
 
+def _hook_key_problems(tenant_id: str, key: str, agent: str) -> tuple[list, list]:
+    """(errors, warnings) for the key the kit bakes into laptops' files
+    (docs/specs/hooks-plugin-production.md section 5). The hook route refuses
+    an admin-scoped key and a key bound to another agent, so a kit carrying one
+    would deny every call on every laptop; better to say so now."""
+    from storage.tenant_store import (SCOPE_ADMIN, SCOPE_RUNTIME, _hash_key,
+                                      key_bound_agent_by_hash, key_scope,
+                                      resolve_tenant_by_api_key)
+    if not key or not hook_kit.valid_key(key):
+        return [], []           # build() reports a missing or malformed key
+    try:
+        owner = resolve_tenant_by_api_key(key)
+        scope = key_scope(key)
+        bound = key_bound_agent_by_hash(_hash_key(key))
+    except Exception:           # noqa: BLE001 - store down: build, but say it was not checked
+        return [], ["hook_key: could not be checked (key store unavailable)"]
+    if owner != tenant_id:
+        return ["hook_key: not a key of this tenant"], []
+    if scope == SCOPE_ADMIN:
+        return ["hook_key: an admin-scoped key, which the hook route refuses (on a laptop it "
+                "could change your policy). Mint a runtime key bound to the agent: POST "
+                "/v1/tenant/me/api-keys with {\"agent\": \"" + agent + "\"}"], []
+    if bound and bound != agent:
+        return [f"hook_key: bound to agent '{bound}', not '{agent}'"], []
+    warnings = []
+    if scope != SCOPE_RUNTIME:
+        warnings.append("hook_key: unscoped. It works, but whoever reads it off a laptop can "
+                        "do anything a tenant key can; prefer a runtime key bound to the agent")
+    elif not bound:
+        warnings.append(f"hook_key: not bound to an agent, so a laptop could name another one; "
+                        f"mint one bound to '{agent}'")
+    return [], warnings
+
+
 @router.post("/claude-code/kit")
 async def claude_code_kit(request: Request, body: dict = Body(...)):
-    """Body: {variant: http|command, os: macos|linux|windows, shield_url,
-    hook_key, agent}. Returns {files: {name: {content, path, mime}}}."""
+    """Body: {variant: http|command, os: macos|linux|windows, tier:
+    standard|regulated, shield_url, hook_key, agent}. Returns {files: {name:
+    {content, path, mime}}, warnings: [...]}."""
     tenant_id = get_tenant_from_request(request)
+    key = str(body.get("hook_key") or "").strip()
+    agent = str(body.get("agent") or "claude-code").strip()
+    key_errors, warnings = _hook_key_problems(tenant_id, key, agent)
     try:
         files = hook_kit.build(
             str(body.get("variant") or ""), str(body.get("os") or ""),
             shield_url=str(body.get("shield_url") or "").strip(),
-            key=str(body.get("hook_key") or "").strip(),
-            agent=str(body.get("agent") or "claude-code").strip(), tenant_id=tenant_id)
+            key=key, agent=agent, tenant_id=tenant_id,
+            tier=str(body.get("tier") or "standard"))
     except hook_kit.KitError as e:
         raise HTTPException(status_code=422, detail={"message": "The files could not be built.",
-                                                     "errors": e.errors})
-    return {"files": files}
+                                                     "errors": e.errors + key_errors})
+    if key_errors:
+        raise HTTPException(status_code=422, detail={"message": "The files could not be built.",
+                                                     "errors": key_errors})
+    return {"files": files, "warnings": warnings}
+
+
+# ── coverage ────────────────────────────────────────────────────────
+
+COVERAGE_MAX = 5000
+EXPIRE_AFTER_S = 90 * 86400
+_STALE_DEFAULT_H = 24
+
+
+def _stale_hours(request: Request, tenant_id: str, asked: Optional[int]) -> int:
+    if asked is not None:
+        if not 1 <= asked <= 720:
+            raise HTTPException(status_code=422, detail="stale_after_hours: 1 to 720")
+        return asked
+    from storage.tenant_store import get_tenant
+    try:
+        hooks_cfg = (get_tenant(tenant_id) or {}).get("hooks") or {}
+        configured = hooks_cfg.get("stale_after_hours")
+    except Exception:       # noqa: BLE001
+        configured = None
+    return configured if isinstance(configured, int) and 1 <= configured <= 720 \
+        else _STALE_DEFAULT_H
+
+
+@router.get("/coverage")
+async def coverage(request: Request, stale_after_hours: Optional[int] = None,
+                   limit: int = 200, cursor: str = ""):
+    """Every laptop's last hook call: managed or not, which version, which OS,
+    and which went quiet. A laptop that stops calling Shield (hooks removed,
+    switched off, no route to Shield) looks like one with nothing to block;
+    `stale` is how an admin tells them apart. Stale laptops first, oldest
+    first; then the rest, newest first. Rows older than 90 days are dropped."""
+    from core.dlp import devices as dv
+
+    tenant_id = get_tenant_from_request(request)
+    if not 1 <= limit <= 1000:
+        raise HTTPException(status_code=422, detail="limit: 1 to 1000")
+    try:
+        offset = int(cursor) if cursor else 0
+    except ValueError:
+        raise HTTPException(status_code=422, detail="cursor: the next_cursor of a previous page")
+    hours = _stale_hours(request, tenant_id, stale_after_hours)
+    now = time.time()
+    rows, expired = hook_seen.list_all(tenant_id, older_than=now - EXPIRE_AFTER_S)
+    for field in expired:
+        hook_seen.forget(tenant_id, field)
+    truncated = len(rows) > COVERAGE_MAX
+    rows = rows[:COVERAGE_MAX]
+    stale_before = now - hours * 3600
+    out = []
+    for r in rows:
+        at = r.get("at") or 0
+        out.append({"agent": r.get("agent") or "", "device": r.get("device") or "",
+                    "user": r.get("user") or "", "fleet": r.get("fleet") or "",
+                    "profile": r.get("profile") or "", "decision": r.get("decision") or "",
+                    "tool": r.get("tool") or "", "monitor": bool(r.get("monitor")),
+                    "last_seen": at, "stale": at < stale_before,
+                    "version": r.get("hook_version") or "unknown",
+                    "mode": r.get("hook_mode") or "unknown",
+                    "os": r.get("hook_os") or "unknown"})
+    out.sort(key=lambda r: (not r["stale"], r["last_seen"] if r["stale"] else -r["last_seen"]))
+    page = out[offset:offset + limit]
+    try:
+        enrolled = dv.records_for(tenant_id, [r["device"] for r in page])
+    except Exception:       # noqa: BLE001
+        enrolled = {}
+    for r in page:
+        rec = enrolled.get(r["device"])
+        r["hostname"] = (rec or {}).get("hostname") or ""
+    count = lambda key: {v: sum(1 for r in out if r[key] == v)   # noqa: E731
+                         for v in sorted({r[key] for r in out})}
+    return {"devices": page, "total": len(out), "stale_count": sum(r["stale"] for r in out),
+            "stale_after_hours": hours, "by_mode": count("mode"), "by_version": count("version"),
+            "by_os": count("os"),
+            "next_cursor": str(offset + limit) if offset + limit < len(out) else "",
+            "truncated": truncated}
 
 
 # ── turn on, once ───────────────────────────────────────────────────

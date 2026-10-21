@@ -136,6 +136,7 @@ def test_bundled_scripts_match_the_canonical_ones():
     from core.runtime_policy import hook_kit
     assert vh.MATCHER == hook_kit.MATCHER
     assert vh.SCRIPT_TIMEOUT_S == hook_kit.SCRIPT_TIMEOUT_S
+    assert vh.HOOK_TIMEOUT_S == hook_kit.COMMAND_TIMEOUT_S
 
 
 # ── the agent ────────────────────────────────────────────────────────

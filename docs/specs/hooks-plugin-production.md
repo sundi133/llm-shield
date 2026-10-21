@@ -245,7 +245,7 @@ read them outside the profile.
 | 0 | Verification gate V1 to V6; results recorded here; revise sections 5 to 7 if a result changes the design | Access to a Mac, a Windows VM, Cowork, and the Claude Code docs |
 | 1 | Script hardening: managed path, owner and mode checks, no localhost in managed mode, version, mode and OS headers; plugin `hooks.json` without `--config $HOME`; `.ps1` parity; tests including Windows CI | 0 |
 | 2 | Hook route: key binding (`agent` on runtime keys), `hooks.require_profile`, admin-key refusal with escape hatch, unscoped warning; coverage recording in the background | 1 |
-| 3 | Admin plane: coverage endpoint and portal card; kit per OS and tier (managed settings, root config, install scripts) | 2 |
+| 3 | Admin plane: coverage endpoint and portal card; kit per OS and tier (managed settings with all three events, root config, install scripts including Windows); kit refuses keys the hook route would refuse; kit and device-agent timeouts raised to 25 s (script) and 30 s (hook) for model-judged rules; real-root installer runs in CI on Linux and Windows | 2 |
 | 4 | Windows in the plugin and the kit: a Windows hook command (per V4), the `.ps1` shipped in the plugin, end to end on a Windows VM | 1, V4 |
 | 5 | Release workflow to the bucket with sha256 pinning; plugin 1.2.0; customer guide `docs/claude-code-production-rollout.md` (managed vs plugin, migration note for admin keys, ops flags) | 3, 4 |
 

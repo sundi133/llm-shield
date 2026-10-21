@@ -100,25 +100,39 @@ def _build(variant="command", os_name="macos", **kw):
     ("http", "macos", {"managed-settings.json", "votal-claude-code.mobileconfig",
                        "install-votal-claude-code.sh"}),
     ("http", "linux", {"managed-settings.json", "install-votal-claude-code.sh"}),
-    ("http", "windows", {"managed-settings.json"}),
+    ("http", "windows", {"managed-settings.json", "install-votal-claude-code.ps1"}),
     ("command", "macos", {"managed-settings.json", "votal-claude-code.mobileconfig",
                           "install-votal-claude-code.sh", "hook.conf", "claude_code_hook.sh"}),
     ("command", "linux", {"managed-settings.json", "install-votal-claude-code.sh", "hook.conf",
                           "claude_code_hook.sh"}),
-    ("command", "windows", {"managed-settings.json", "hook.conf", "claude_code_hook.ps1"}),
+    ("command", "windows", {"managed-settings.json", "install-votal-claude-code.ps1", "hook.conf",
+                            "claude_code_hook.ps1"}),
 ])
 def test_files_per_variant_and_os(variant, os_name, names):
     files = _build(variant, os_name)
     assert set(files) == names
     s = json.loads(files["managed-settings.json"]["content"])
     assert s["allowManagedHooksOnly"] is True
+    # All three events (docs/specs/hooks-plugin-production.md task 3); the
+    # agent's profile decides which of them check anything.
+    assert set(s["hooks"]) == set(hook_kit.EVENTS)
+    assert s["hooks"]["PostToolUse"][0]["matcher"] == hook_kit.POST_MATCHER
+    assert "matcher" not in s["hooks"]["UserPromptSubmit"][0]
     (entry,) = s["hooks"]["PreToolUse"]
     assert entry["matcher"] == hook_kit.MATCHER
     (h,) = entry["hooks"]
+    for event in ("PostToolUse", "UserPromptSubmit"):
+        (other,) = s["hooks"][event][0]["hooks"]
+        assert other["type"] == h["type"] and other["timeout"] == h["timeout"]
+        if variant == "command":
+            # Only before a call does a failed script mean deny; after a call
+            # and on a prompt the script's own ON_UNREACHABLE_* decide.
+            assert not other["command"].endswith("|| exit 2")
+            assert other["command"] + " || exit 2" == h["command"]
     if variant == "http":
         assert h["type"] == "http" and h["url"] == URL + "/v1/shield/hooks/claude-code"
         assert h["headers"]["X-API-Key"] == KEY and h["headers"]["X-Agent-Key"] == "claude-code"
-        assert h["timeout"] == 5
+        assert h["timeout"] == hook_kit.HTTP_TIMEOUT_S == 30
     else:
         # Task 2 rules: "|| exit 2", and the script gives up before Claude Code does.
         assert h["type"] == "command" and h["command"].endswith(" || exit 2")
@@ -296,11 +310,13 @@ def test_kit_route_builds_and_does_not_keep_the_key(app):
 
     t = _tenant(app)
     secret = "sk-laptop-" + uuid.uuid4().hex
+    tenant_store.add_api_key(t.id, secret, scope="runtime", agent="claude-code")
     r = t.c.post("/v1/tenant/me/hooks/claude-code/kit", json={
         "variant": "command", "os": "macos", "shield_url": URL, "hook_key": secret,
         "agent": "claude-code"})
     assert r.status_code == 200
     assert secret in r.json()["files"]["hook.conf"]["content"]
+    assert r.json()["warnings"] == []
     stored = json.dumps(tenant_store._fallback_store, default=str) + \
         json.dumps(devices._mem_hash, default=str)
     assert secret not in stored
@@ -344,18 +360,24 @@ def test_card_is_wired():
                       ("POST", "/v1/tenant/me/hooks/enable"),
                       ("GET", "/v1/tenant/me/hooks/fleets"),
                       ("PUT", "/v1/tenant/me/hooks/fleets"),
-                      ("GET", "/v1/tenant/me/hooks/os-events")}
+                      ("GET", "/v1/tenant/me/hooks/os-events"),
+                      ("GET", "/v1/tenant/me/hooks/coverage")}
+    assert "ddApi('/hooks/coverage?'" in SCRIPT
     assert '<option value="coding-agent-baseline">' in HTML
     for v in hook_kit.VARIANTS:
         assert f'<option value="{v}">' in HTML
     for o in hook_kit.OSES:
         assert f'<option value="{o}">' in HTML
+    for t in hook_kit.TIERS:
+        assert f'<option value="{t}">' in HTML
 
 
 def test_card_escapes_what_laptops_report():
     """Device, user, agent, profile and tool come from laptops' headers."""
     body = SCRIPT[SCRIPT.index("function ccRow"):SCRIPT.index("const CC_FILE_NOTES")]
-    safe = re.compile(r"^(xfEsc\(|ddAgo\(|DD_TD$|dec\[[01]\]$|r\.profile \?|what$)")
+    # inst, hook, fleet and stale are built above from fixed strings and xfEsc.
+    safe = re.compile(r"^(xfEsc\(|ddAgo\(|DD_TD$|dec\[[01]\]$|inst\[[01]\]$|r\.profile \?|"
+                      r"(what|hook|fleet|stale)$)")
     unsafe = [m.group(1) for m in re.finditer(r"\$\{((?:[^{}]|\{[^{}]*\})+)\}", body)
               if not safe.match(m.group(1).strip())]
     assert unsafe == []
