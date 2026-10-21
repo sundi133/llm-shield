@@ -48,8 +48,10 @@ def installed(tmp_path_factory):
     r = subprocess.run(["sudo", "-n", "sh", str(script)], capture_output=True, timeout=60)
     assert r.returncode == 0, r.stderr
     yield files
-    subprocess.run(["sudo", "-n", "rm", "-rf", P["dir"], os.path.dirname(P["conf"]),
-                    P["managed"]], capture_output=True)
+    # Exactly what the installer created, never a parent of it.
+    targets = [P["dir"], os.path.dirname(P["conf"]), P["managed"]]
+    assert targets == ["/opt/votal", "/etc/votal", "/etc/claude-code/managed-settings.json"]
+    subprocess.run(["sudo", "-n", "rm", "-rf", *targets], capture_output=True)
 
 
 def test_installed_files_are_root_owned_and_read_only_to_users(installed):

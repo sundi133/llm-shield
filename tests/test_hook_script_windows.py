@@ -195,6 +195,8 @@ def test_git_bash_hands_over_to_powershell(shield, tmp_path, args):
 # so only on a throwaway runner: VOTAL_KIT_E2E=1 in the Windows CI job.
 
 E2E = WINDOWS and os.environ.get("VOTAL_KIT_E2E") == "1"
+INSTALLED_FOLDERS = (r"C:\Program Files\Votal", r"C:\ProgramData\Votal",
+                     r"C:\Program Files\ClaudeCode")
 PROMPT = {"session_id": "s", "hook_event_name": "UserPromptSubmit", "prompt": "hi"}
 POST = {**CALL, "hook_event_name": "PostToolUse", "tool_response": "result"}
 
@@ -212,11 +214,10 @@ def installed(tmp_path_factory):
     assert r.returncode == 0, r.stdout + r.stderr
     yield hook_kit.PATHS["windows"]
     # Leave no managed config behind: it would win over every later test's.
-    import ntpath
-    for p in hook_kit.PATHS["windows"].values():
-        if ":" in p:
-            subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", ntpath.dirname(p)],
-                           capture_output=True)
+    # Exactly the folders the installer creates, never a parent of one.
+    for folder in INSTALLED_FOLDERS:
+        assert folder.rstrip("\\").rsplit("\\", 1)[-1] in ("Votal", "ClaudeCode"), folder
+        subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", folder], capture_output=True)
 
 
 def _installed_hook(shell, paths, payload, *args):
