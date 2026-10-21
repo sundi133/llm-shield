@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -90,10 +91,28 @@ def build_zip(dest: Path) -> bytes:
     return dest.read_bytes()
 
 
-def package(base_url: str, out: Path) -> dict:
+def _script_versions() -> dict:
+    """The version each hook script reports to Shield (X-Votal-Hook-Version)."""
+    sh = (CANONICAL_SCRIPTS / "claude_code_hook.sh").read_text("utf-8")
+    ps1 = (CANONICAL_SCRIPTS / "claude_code_hook.ps1").read_text("utf-8")
+    m_sh = re.search(r"^HOOK_VERSION=(\S+)", sh, re.M)
+    m_ps = re.search(r"^\$HookVersion = '([^']+)'", ps1, re.M)
+    return {"claude_code_hook.sh": m_sh.group(1) if m_sh else None,
+            "claude_code_hook.ps1": m_ps.group(1) if m_ps else None}
+
+
+def package(base_url: str, out: Path, expect_version: str | None = None) -> dict:
+    """``expect_version`` (the release tag's) must equal every version in the
+    plugin, so a release never ships files that report another version."""
     base_url = _check_base_url(base_url)
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text("utf-8"))
     name, version = manifest["name"], manifest["version"]
+    if expect_version is not None and expect_version != version:
+        raise PackagingError(f"the release is {expect_version} but plugin.json says {version}: "
+                             "bump plugin.json, marketplace.json and HOOK_VERSION in both scripts")
+    for script, v in _script_versions().items():
+        if v != version:
+            raise PackagingError(f"{script} reports version {v}, plugin.json says {version}")
     source = json.loads(SOURCE_MARKETPLACE.read_text("utf-8"))
     [entry] = [p for p in source["plugins"] if p["name"] == name]
     if entry.get("version") != version:
@@ -130,9 +149,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="public https URL of the folder the two files will be in")
     ap.add_argument("--out", default=str(ROOT / "dist" / "claude-plugins"),
                     help="where to write them (default: dist/claude-plugins)")
+    ap.add_argument("--expect-version", default=None,
+                    help="refuse unless the plugin is this version (the release tag's)")
     args = ap.parse_args(argv)
     try:
-        r = package(args.base_url, Path(args.out))
+        r = package(args.base_url, Path(args.out), expect_version=args.expect_version)
     except PackagingError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2

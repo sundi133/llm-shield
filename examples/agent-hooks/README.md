@@ -223,6 +223,14 @@ Use the plugin **or** the settings file, not both: with both, every call is
 checked twice. If you added the hooks to `~/.claude/settings.json`, remove
 them there after installing the plugin.
 
+**Releases.** Tag `hooks-plugin-v<version>` (matching `plugin.json`,
+`marketplace.json` and `HOOK_VERSION` in both scripts) and the
+**Hooks plugin release** workflow builds the zip, uploads it and then the
+catalog to the bucket, refuses to replace a published zip, checks what is
+served against the sha256 pin, and creates a GitHub release with
+`SHA256SUMS`. A manual run only builds and checks unless `publish` is true.
+Customer guide: `docs/claude-code-production-rollout.md`.
+
 **From a bucket (Claude Code 2.1.224 or later):** host the plugin as a zip
 plus a `marketplace.json` on any static HTTPS host, such as a GCS bucket.
 `plugin/package_for_bucket.py` builds both: a reproducible
