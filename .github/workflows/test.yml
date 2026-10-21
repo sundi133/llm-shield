@@ -68,6 +68,37 @@ jobs:
           VOTAL_KIT_E2E: "1"
         run: python -m pytest --noconftest tests/test_hook_kit_install_e2e.py -q -rs
 
+  claude-code-plugin:
+    # The votal-shield-hooks plugin inside the real Claude Code CLI, against a
+    # scripted model and a fake Shield (tests/test_claude_code_plugin_e2e.py):
+    # a denied call never runs, a result is redacted, a blocked prompt never
+    # reaches the model. On Windows the plugin's .sh runs in Git Bash and hands
+    # over to the .ps1 (docs/specs/hooks-plugin-production.md task 4).
+    name: claude code plugin (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Claude Code and pytest
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          python -m pip install pytest
+          claude --version
+      - name: Run Claude Code with the plugin
+        env:
+          VOTAL_CLAUDE_E2E: "1"
+          CLAUDE_CODE_GIT_BASH_PATH: ${{ runner.os == 'Windows' && 'C:\Program Files\Git\bin\bash.exe' || '' }}
+        run: python -m pytest --noconftest tests/test_claude_code_plugin_e2e.py -q -rs
+
   extension:
     name: extension (node)
     runs-on: ubuntu-latest

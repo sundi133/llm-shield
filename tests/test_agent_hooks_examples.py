@@ -94,11 +94,12 @@ def test_the_plugin_fails_closed_before_a_call_and_runs_its_own_script():
     assert pre.endswith("|| exit 2") and not post.endswith("|| exit 2")
 
 
-def test_the_plugin_script_is_the_canonical_one():
-    """Regenerate with packages/votal-device-agent/packaging/sync_hook_scripts.py."""
-    with open(os.path.join(PLUGIN, "scripts", "claude_code_hook.sh"), "rb") as a, \
-            open(os.path.join(ROOT, "core", "runtime_policy", "hook_scripts",
-                              "claude_code_hook.sh"), "rb") as b:
+@pytest.mark.parametrize("name", ["claude_code_hook.sh", "claude_code_hook.ps1"])
+def test_the_plugin_scripts_are_the_canonical_ones(name):
+    """Regenerate with packages/votal-device-agent/packaging/sync_hook_scripts.py.
+    The .ps1 is what the .sh hands over to on Windows."""
+    with open(os.path.join(PLUGIN, "scripts", name), "rb") as a, \
+            open(os.path.join(ROOT, "core", "runtime_policy", "hook_scripts", name), "rb") as b:
         assert a.read() == b.read()
 
 
@@ -184,7 +185,7 @@ def test_the_zip_is_the_plugin_at_its_root_and_the_same_every_time(tmp_path):
     with zipfile.ZipFile(first["zip"]) as z:
         names = sorted(z.namelist())
         assert names == [".claude-plugin/plugin.json", "hooks/hooks.json",
-                         "scripts/claude_code_hook.sh"]
+                         "scripts/claude_code_hook.ps1", "scripts/claude_code_hook.sh"]
         mode = z.getinfo("scripts/claude_code_hook.sh").external_attr >> 16
         assert mode & 0o777 == 0o755
         with open(os.path.join(PLUGIN, "hooks", "hooks.json"), "rb") as f:
@@ -202,12 +203,17 @@ def test_the_bucket_url_must_be_plain_https(tmp_path, url):
     assert not list(tmp_path.iterdir())                   # nothing half-written
 
 
-def test_a_drifted_script_is_not_packaged(tmp_path, monkeypatch):
+@pytest.mark.parametrize("name", ["claude_code_hook.sh", "claude_code_hook.ps1"])
+def test_a_drifted_script_is_not_packaged(tmp_path, monkeypatch, name):
+    import shutil as sh
     pkg = _packager()
-    other = tmp_path / "other.sh"
-    other.write_text("#!/bin/sh\nexit 0\n")
-    monkeypatch.setattr(pkg, "CANONICAL_SCRIPT", other)
-    with pytest.raises(pkg.PackagingError, match="sync_hook_scripts"):
+    canonical = tmp_path / "canonical"
+    canonical.mkdir()
+    for n in pkg.SCRIPT_NAMES:
+        sh.copy(os.path.join(ROOT, "core", "runtime_policy", "hook_scripts", n), canonical / n)
+    (canonical / name).write_text("exit 0\n")
+    monkeypatch.setattr(pkg, "CANONICAL_SCRIPTS", canonical)
+    with pytest.raises(pkg.PackagingError, match=name):
         pkg.package(BASE, tmp_path / "out")
 
 

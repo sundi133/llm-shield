@@ -158,11 +158,45 @@ def test_managed_mode_is_reported(shell, shield, tmp_path):
     assert shield["seen"][-1]["x-votal-hook-mode"] == "managed", _acl(shell, conf)
 
 
+# ── the plugin's .sh under Git Bash hands over to the .ps1 (task 4) ──
+
+GIT_BASH = next((p for p in (r"C:\Program Files\Git\bin\bash.exe",
+                             r"C:\Program Files\Git\usr\bin\bash.exe") if os.path.exists(p)), None)
+PLUGIN_SH = os.path.join(ROOT, "examples", "agent-hooks", "plugin", "votal-shield-hooks",
+                         "scripts", "claude_code_hook.sh")
+
+
+@pytest.mark.skipif(not (WINDOWS and GIT_BASH), reason="Git Bash on Windows")
+@pytest.mark.parametrize("args", [[], ["--config", "CONF"]])
+def test_git_bash_hands_over_to_powershell(shield, tmp_path, args):
+    home = tmp_path / "home"
+    (home / ".votal").mkdir(parents=True)
+    conf = home / ".votal" / "hook.conf"
+    conf.write_text(f"SHIELD_URL={shield['url']}\nSHIELD_API_KEY=k1234567\n")
+    _grant_everyone_write(conf)                    # a user install, whoever owns it
+    args = [str(conf) if a == "CONF" else a for a in args]
+    env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
+    shield["body"] = DENY
+    r = subprocess.run([GIT_BASH, "-c", '/bin/sh "$0" "$@" --target claude-code || exit 2',
+                        PLUGIN_SH, *args], input=json.dumps(CALL).encode(),
+                       capture_output=True, env=env, timeout=60)
+    assert r.returncode == 2 and b"Blocked by Votal Shield: no" in r.stderr, r
+    h = shield["seen"][-1]
+    assert h["x-votal-hook-os"] == "windows" and h["x-votal-hook-mode"] == "user"
+    shield["body"] = b"{}"
+    r = subprocess.run([GIT_BASH, "-c", '/bin/sh "$0" "$@" --target claude-code || exit 2',
+                        PLUGIN_SH, *args], input=json.dumps(CALL).encode(),
+                       capture_output=True, env=env, timeout=60)
+    assert r.returncode == 0, r
+
+
 # ── the kit's installer, run for real (docs/specs/hooks-plugin-production.md task 3) ──
 # Writes C:\Program Files\Votal, C:\ProgramData\Votal and C:\Program Files\ClaudeCode,
 # so only on a throwaway runner: VOTAL_KIT_E2E=1 in the Windows CI job.
 
 E2E = WINDOWS and os.environ.get("VOTAL_KIT_E2E") == "1"
+INSTALLED_FOLDERS = (r"C:\Program Files\Votal", r"C:\ProgramData\Votal",
+                     r"C:\Program Files\ClaudeCode")
 PROMPT = {"session_id": "s", "hook_event_name": "UserPromptSubmit", "prompt": "hi"}
 POST = {**CALL, "hook_event_name": "PostToolUse", "tool_response": "result"}
 
@@ -178,7 +212,12 @@ def installed(tmp_path_factory):
     r = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                         "-File", str(script)], capture_output=True, timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
-    return hook_kit.PATHS["windows"]
+    yield hook_kit.PATHS["windows"]
+    # Leave no managed config behind: it would win over every later test's.
+    # Exactly the folders the installer creates, never a parent of one.
+    for folder in INSTALLED_FOLDERS:
+        assert folder.rstrip("\\").rsplit("\\", 1)[-1] in ("Votal", "ClaudeCode"), folder
+        subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", folder], capture_output=True)
 
 
 def _installed_hook(shell, paths, payload, *args):
